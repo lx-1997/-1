@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { Form, Input, Button, Card, Typography, Space, message } from 'antd';
-import { UserOutlined, LockOutlined, LoginOutlined } from '@ant-design/icons';
+import React from 'react';
+import { Form, Input, Button, Card, Typography, Space } from 'antd';
+import { UserOutlined, LockOutlined, LoginOutlined, FireOutlined } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
 
@@ -17,27 +17,51 @@ const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
   };
 
   return (
-    <div style={{
-      height: '100vh',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-    }}>
+    <div className="login-screen">
+      <aside className="login-panel">
+        <div className="login-brand">
+          <span className="login-mark"><FireOutlined /></span>
+          <div>
+            <Title level={4} style={{ color: '#fff', margin: 0 }}>深度焦点</Title>
+            <Text style={{ color: '#9fb0bb' }}>DeepFocus Investment Terminal</Text>
+          </div>
+        </div>
+
+        <div className="login-hero">
+          <h1>专业投研工作台</h1>
+          <p>把个股社区、付费研究、组合关注和智能投研工具收束到一套清晰的投资操作界面。</p>
+          <div className="login-terminal-lines">
+            <div className="login-terminal-line">
+              <span>FOCUS_POOL</span>
+              <span>实时关注</span>
+            </div>
+            <div className="login-terminal-line">
+              <span>RESEARCH_FLOW</span>
+              <span>投研内容</span>
+            </div>
+            <div className="login-terminal-line">
+              <span>AGENT_CENTER</span>
+              <span>智能协作</span>
+            </div>
+          </div>
+        </div>
+
+        <Text style={{ color: '#81929d', fontSize: 12 }}>
+          Demo workspace · For investment research workflow
+        </Text>
+      </aside>
+
+      <main className="login-form-zone">
       <Card
-        style={{
-          width: 400,
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-          borderRadius: '12px'
-        }}
-        styles={{ body: { padding: '40px' } }}
+        className="login-card"
+        styles={{ body: { padding: '34px' } }}
       >
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <div style={{ textAlign: 'center' }}>
-            <Title level={2} style={{ margin: 0, color: '#1890ff' }}>
-              交易客户端
+          <div>
+            <Title level={3} style={{ margin: 0 }}>
+              登录工作台
             </Title>
-            <Text type="secondary">专业的金融交易平台</Text>
+            <Text type="secondary">进入深度焦点投研终端</Text>
           </div>
 
           <Form
@@ -101,6 +125,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
           </div>
         </Space>
       </Card>
+      </main>
     </div>
   );
 };

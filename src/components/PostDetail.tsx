@@ -13,7 +13,6 @@ import {
   Modal,
   Rate,
   Input,
-  message,
   Badge,
   Form,
   List
@@ -61,10 +60,6 @@ const PostDetail: React.FC<PostDetailProps> = ({
   onShare,
   onAddComment
 }) => {
-  // 调试信息
-  console.log('PostDetail组件渲染，帖子ID:', post.id);
-  console.log('onLike函数:', typeof onLike);
-  console.log('onShare函数:', typeof onShare);
   const [isPurchaseModalVisible, setIsPurchaseModalVisible] = useState(false);
   const [isRatingModalVisible, setIsRatingModalVisible] = useState(false);
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
@@ -135,14 +130,12 @@ const PostDetail: React.FC<PostDetailProps> = ({
   const handleRate = () => {
     onRate(post.id, rating, feedback);
     setIsRatingModalVisible(false);
-    message.success('评分提交成功！感谢您的反馈。');
   };
 
   const handleAddComment = () => {
     if (newComment.trim()) {
       onAddComment?.(post.id, newComment);
       setNewComment('');
-      message.success('评论发布成功！');
     }
   };
 
@@ -285,16 +278,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
                 padding: '16px'
               }}
               onClick={() => {
-                console.log('=== 点赞统计被点击 ===');
-                console.log('帖子ID:', post.id);
-                console.log('onLike函数类型:', typeof onLike);
-                console.log('onLike函数:', onLike);
-                try {
-                  onLike(post.id);
-                  console.log('onLike调用成功');
-                } catch (error) {
-                  console.error('onLike调用失败:', error);
-                }
+                onLike(post.id);
               }}
             >
               <LikeOutlined style={{ fontSize: '24px', color: '#52c41a', marginBottom: '8px' }} />
@@ -340,18 +324,8 @@ const PostDetail: React.FC<PostDetailProps> = ({
                 padding: '16px'
               }}
               onClick={() => {
-                console.log('=== 分享统计被点击 ===');
-                console.log('帖子ID:', post.id);
-                console.log('onShare函数类型:', typeof onShare);
-                console.log('onShare函数:', onShare);
-                try {
-                  onShare(post.id);
-                  console.log('onShare调用成功');
-                  setIsShareModalVisible(true);
-                  console.log('分享模态框已打开');
-                } catch (error) {
-                  console.error('onShare调用失败:', error);
-                }
+                onShare(post.id);
+                setIsShareModalVisible(true);
               }}
             >
               <ShareAltOutlined style={{ fontSize: '24px', color: '#faad14', marginBottom: '8px' }} />
@@ -368,7 +342,6 @@ const PostDetail: React.FC<PostDetailProps> = ({
               type="primary" 
               icon={<LikeOutlined />}
               onClick={() => {
-                console.log('点赞按钮被点击，帖子ID:', post.id);
                 onLike(post.id);
               }}
               style={{ 
@@ -382,7 +355,6 @@ const PostDetail: React.FC<PostDetailProps> = ({
             <Button 
               icon={<ShareAltOutlined />}
               onClick={() => {
-                console.log('分享按钮被点击，帖子ID:', post.id);
                 onShare(post.id);
                 setIsShareModalVisible(true);
               }}

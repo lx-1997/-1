@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { Layout, message } from 'antd';
-import { Routes, Route } from 'react-router-dom';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { App as AntdApp, Layout } from 'antd';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import TradingLayout from './components/TradingLayout';
 import Login from './components/Login';
-import { AppState, User, ViewType } from './types';
+import { AppState, CartItem, Comment, Post, Product, ProductVariant, Stock, ViewType } from './types';
+import { getMarketQuotes, MarketQuote } from './services/marketDataService';
 import { 
   mockUser, 
   mockStocks,
@@ -17,28 +18,178 @@ import {
 } from './data/mockData';
 
 const { Content } = Layout;
+const AUTH_BYPASS_ENABLED = true;
+
+const rootViews = new Set<ViewType>([
+  'home',
+  'stocks',
+  'shop',
+  'profile',
+  'cart',
+  'orders',
+  'ai-research',
+  'agent-center',
+  'data-sources',
+  'skills',
+  'earnings-calendar'
+]);
+
+const getProductVariant = (product: Product, variantId: string): ProductVariant => {
+  return product.variants.find(variant => variant.id === variantId)
+    || product.variants[0]
+    || {
+      id: 'default',
+      name: '默认款式',
+      sku: `${product.id}-default`,
+      price: product.price,
+      stock: product.stock,
+      attributes: {}
+    };
+};
+
+const toFiniteNumber = (value?: number | null): number | undefined => {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+};
+
+const applyMarketQuotesToStocks = (stocks: Stock[], quotes: MarketQuote[]): Stock[] => {
+  const quoteBySymbol = new Map(quotes.map(quote => [quote.symbol.toUpperCase(), quote]));
+
+  return stocks.map(stock => {
+    const quote = quoteBySymbol.get(stock.symbol.toUpperCase());
+    if (!quote) {
+      return stock;
+    }
+
+    return {
+      ...stock,
+      currentPrice: quote.price,
+      changePercent: toFiniteNumber(quote.change_percent) ?? stock.changePercent,
+      priceChange: toFiniteNumber(quote.change) ?? stock.priceChange,
+      previousClose: toFiniteNumber(quote.previous_close) ?? stock.previousClose,
+      quoteVolume: toFiniteNumber(quote.volume) ?? stock.quoteVolume,
+      quoteProvider: quote.provider,
+      quoteProviderName: quote.provider_name,
+      quoteMarketTime: quote.market_time,
+      quoteFetchedAt: quote.fetched_at,
+      quoteIsRealtime: quote.is_realtime,
+      quoteDelayNote: quote.delay_note
+    };
+  });
+};
+
+const createLoggedOutState = (): AppState => ({
+  user: null,
+  selectedStock: null,
+  selectedPost: null,
+  stocks: [],
+  posts: [],
+  comments: [],
+  ratings: [],
+  payments: [],
+  purchasedPosts: [],
+  isLoading: false,
+  currentView: 'home',
+  platformBalance: 0,
+  rechargeHistory: [],
+  products: [],
+  cart: [],
+  orders: [],
+  selectedProduct: null
+});
+
+const createDemoState = (): AppState => ({
+  ...createLoggedOutState(),
+  user: mockUser,
+  stocks: mockStocks.map(stock => ({ ...stock })),
+  posts: mockPosts,
+  comments: mockComments,
+  ratings: mockRatings,
+  payments: mockPayments,
+  rechargeHistory: mockRechargeHistory,
+  platformBalance: mockRechargeHistory.reduce((sum, record) => sum + record.amount, 0),
+  products: mockProducts,
+  orders: mockOrders
+});
 
 const App: React.FC = () => {
-  const [appState, setAppState] = useState<AppState>({
-    user: null,
-    selectedStock: null,
-    selectedPost: null,
-    stocks: [],
-    posts: [],
-    comments: [],
-    ratings: [],
-    payments: [],
-    purchasedPosts: [], // 用户已购买的帖子ID列表
-    isLoading: false,
-    currentView: 'stocks',
-    platformBalance: 0, // 平台总余额
-    rechargeHistory: [], // 充值记录
-    // 商城相关
-    products: [],
-    cart: [],
-    orders: [],
-    selectedProduct: null
-  });
+  const { message } = AntdApp.useApp();
+  const stocksRef = useRef<Stock[]>([]);
+  const [isMarketDataRefreshing, setIsMarketDataRefreshing] = useState(false);
+  const [appState, setAppState] = useState<AppState>(() =>
+    AUTH_BYPASS_ENABLED ? createDemoState() : createLoggedOutState()
+  );
+
+  useEffect(() => {
+    stocksRef.current = appState.stocks;
+  }, [appState.stocks]);
+
+  const refreshMarketQuotes = useCallback(async (
+    stocksToRefresh: Stock[],
+    options: { notify?: boolean } = {}
+  ) => {
+    const symbols = stocksToRefresh.map(stock => stock.symbol);
+    if (symbols.length === 0) {
+      return;
+    }
+
+    setIsMarketDataRefreshing(true);
+    try {
+      const response = await getMarketQuotes(symbols);
+
+      if (response.quotes.length === 0) {
+        if (options.notify) {
+          message.warning('行情接口暂未返回可用报价，当前继续显示本地样例数据');
+        }
+        if (response.warnings.length > 0) {
+          console.warn('Market data warnings:', response.warnings);
+        }
+        return;
+      }
+
+      setAppState(prev => {
+        const updatedStocks = applyMarketQuotesToStocks(prev.stocks, response.quotes);
+        const selectedStock = prev.selectedStock
+          ? updatedStocks.find(stock => stock.symbol === prev.selectedStock?.symbol) || prev.selectedStock
+          : null;
+
+        return {
+          ...prev,
+          stocks: updatedStocks,
+          selectedStock
+        };
+      });
+
+      if (response.warnings.length > 0) {
+        console.warn('Market data warnings:', response.warnings);
+      }
+
+      if (options.notify) {
+        const hasRealtimeQuote = response.quotes.some(quote => quote.is_realtime);
+        message.success(`${hasRealtimeQuote ? '实时' : '最新'}行情已更新：${response.quotes.length} 个标的`);
+      }
+    } catch (error) {
+      console.warn('Market data refresh failed:', error);
+      if (options.notify) {
+        message.warning('行情服务暂不可用，当前继续显示本地样例数据');
+      }
+    } finally {
+      setIsMarketDataRefreshing(false);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (!appState.user) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      if (stocksRef.current.length > 0) {
+        void refreshMarketQuotes(stocksRef.current);
+      }
+    }, 120000);
+
+    return () => window.clearInterval(timer);
+  }, [appState.user, refreshMarketQuotes]);
 
   const handleLogin = async (username: string, password: string) => {
     setAppState(prev => ({ ...prev, isLoading: true }));
@@ -47,21 +198,10 @@ const App: React.FC = () => {
     if ((username === 'admin' && password === 'admin') || 
         (username === 'demo' && password === 'demo')) {
       setTimeout(() => {
-        setAppState(prev => ({
-          ...prev,
-          user: mockUser,
-          stocks: mockStocks,
-          posts: mockPosts,
-          comments: mockComments,
-          ratings: mockRatings,
-          payments: mockPayments,
-          rechargeHistory: mockRechargeHistory,
-          platformBalance: mockRechargeHistory.reduce((sum, record) => sum + record.amount, 0),
-          products: mockProducts,
-          orders: mockOrders,
-          isLoading: false
-        }));
+        const nextState = createDemoState();
+        setAppState(nextState);
         message.success('登录成功！欢迎使用深度焦点个股投研智库');
+        void refreshMarketQuotes(nextState.stocks, { notify: true });
       }, 1000);
     } else {
       setTimeout(() => {
@@ -72,33 +212,23 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-    setAppState({
-      user: null,
-      selectedStock: null,
-      selectedPost: null,
-      stocks: [],
-      posts: [],
-      comments: [],
-      ratings: [],
-      payments: [],
-      purchasedPosts: [],
-      isLoading: false,
-      currentView: 'stocks',
-      platformBalance: 0,
-      rechargeHistory: [],
-      products: [],
-      cart: [],
-      orders: [],
-      selectedProduct: null
-    });
+    if (AUTH_BYPASS_ENABLED) {
+      setAppState(createDemoState());
+      message.success('已重置演示会话');
+      return;
+    }
+
+    setAppState(createLoggedOutState());
     message.success('已退出登录');
   };
 
   // 选择股票
-  const handleStockSelect = (stock: any) => {
+  const handleStockSelect = (stock: Stock) => {
     setAppState(prev => ({
       ...prev,
       selectedStock: stock,
+      selectedPost: null,
+      selectedProduct: null,
       currentView: 'stock-community' // 默认进入社区页面
     }));
   };
@@ -108,15 +238,17 @@ const App: React.FC = () => {
     setAppState(prev => ({
       ...prev,
       selectedStock: null,
+      selectedPost: null,
       currentView: 'stocks'
     }));
   };
 
   // 查看内容详情
-  const handlePostClick = (post: any) => {
+  const handlePostClick = (post: Post) => {
     setAppState(prev => ({
       ...prev,
       currentView: 'post-detail',
+      selectedProduct: null,
       selectedPost: post // 添加选中的帖子到状态中
     }));
   };
@@ -127,6 +259,60 @@ const App: React.FC = () => {
       ...prev,
       currentView: 'create-post'
     }));
+  };
+
+  const handleSavePost = (postDraft: Partial<Post>) => {
+    if (!appState.user || !appState.selectedStock) {
+      message.error('请先选择个股后再发布内容');
+      return;
+    }
+
+    const isPaid = Boolean(postDraft.isPaid);
+    const price = isPaid ? Number(postDraft.price || 0) : 0;
+    const newPost: Post = {
+      id: `post_${Date.now()}`,
+      author: appState.user,
+      stockSymbol: appState.selectedStock.symbol,
+      title: postDraft.title || '未命名内容',
+      content: postDraft.content || '',
+      summary: postDraft.summary || '',
+      type: postDraft.type || 'news',
+      category: postDraft.category || 'market',
+      tags: postDraft.tags || [],
+      publishTime: new Date().toISOString(),
+      updateTime: new Date().toISOString(),
+      isPaid,
+      price,
+      paidViewers: 0,
+      totalRevenue: 0,
+      likes: 0,
+      comments: 0,
+      shares: 0,
+      views: 0,
+      qualityScore: 0,
+      totalRatings: 0,
+      status: 'published',
+      isPinned: false,
+      isHighlighted: false
+    };
+
+    setAppState(prev => ({
+      ...prev,
+      posts: [newPost, ...prev.posts],
+      selectedPost: newPost,
+      stocks: prev.stocks.map(stock =>
+        stock.symbol === newPost.stockSymbol
+          ? {
+              ...stock,
+              totalPosts: stock.totalPosts + 1,
+              totalPaidPosts: stock.totalPaidPosts + (newPost.isPaid ? 1 : 0)
+            }
+          : stock
+      ),
+      currentView: 'stock-community'
+    }));
+
+    message.success('内容发布成功！');
   };
 
   // 购买内容
@@ -163,7 +349,23 @@ const App: React.FC = () => {
         amount: amount,
         paymentTime: new Date().toISOString(),
         status: 'completed'
-      }]
+      }],
+      posts: prev.posts.map(post =>
+        post.id === postId
+          ? {
+              ...post,
+              paidViewers: post.paidViewers + 1,
+              totalRevenue: post.totalRevenue + amount
+            }
+          : post
+      ),
+      selectedPost: prev.selectedPost?.id === postId
+        ? {
+            ...prev.selectedPost,
+            paidViewers: prev.selectedPost.paidViewers + 1,
+            totalRevenue: prev.selectedPost.totalRevenue + amount
+          }
+        : prev.selectedPost
     }));
 
     message.success(`购买成功！支付金额：$${amount.toFixed(2)}，余额：$${(appState.user.balance - amount).toFixed(2)}`);
@@ -171,37 +373,107 @@ const App: React.FC = () => {
 
   // 评分
   const handleRate = (postId: string, rating: number, feedback: string) => {
-    // 这里应该调用评分API
+    if (!appState.user) {
+      message.error('请先登录');
+      return;
+    }
+
+    const newRating = {
+      id: `rating_${Date.now()}`,
+      postId,
+      userId: appState.user.id,
+      rating,
+      feedback,
+      ratingTime: new Date().toISOString(),
+      isAnonymous: false
+    };
+
+    const updatePostRating = (post: Post): Post => {
+      if (post.id !== postId) {
+        return post;
+      }
+
+      const totalRatings = post.totalRatings + 1;
+      const qualityScore = ((post.qualityScore * post.totalRatings) + rating * 20) / totalRatings;
+      return {
+        ...post,
+        totalRatings,
+        qualityScore
+      };
+    };
+
+    setAppState(prev => ({
+      ...prev,
+      ratings: [...prev.ratings, newRating],
+      posts: prev.posts.map(updatePostRating),
+      selectedPost: prev.selectedPost ? updatePostRating(prev.selectedPost) : prev.selectedPost
+    }));
+
     message.success(`评分提交成功！评分：${rating}星`);
   };
 
   // 点赞
   const handleLike = (postId: string) => {
-    console.log('handleLike被调用，帖子ID:', postId);
-    // 更新帖子的点赞数
     setAppState(prev => ({
       ...prev,
       posts: prev.posts.map(post => 
         post.id === postId 
           ? { ...post, likes: post.likes + 1 }
           : post
-      )
+      ),
+      selectedPost: prev.selectedPost?.id === postId
+        ? { ...prev.selectedPost, likes: prev.selectedPost.likes + 1 }
+        : prev.selectedPost
     }));
     message.success('点赞成功！');
   };
 
   // 分享
   const handleShare = (postId: string) => {
-    console.log('handleShare被调用，帖子ID:', postId);
-    // 更新帖子的分享数
     setAppState(prev => ({
       ...prev,
       posts: prev.posts.map(post => 
         post.id === postId 
           ? { ...post, shares: post.shares + 1 }
           : post
-      )
+      ),
+      selectedPost: prev.selectedPost?.id === postId
+        ? { ...prev.selectedPost, shares: prev.selectedPost.shares + 1 }
+        : prev.selectedPost
     }));
+  };
+
+  const handleAddComment = (postId: string, content: string) => {
+    if (!appState.user) {
+      message.error('请先登录');
+      return;
+    }
+
+    const newComment: Comment = {
+      id: `comment_${Date.now()}`,
+      postId,
+      author: appState.user,
+      content,
+      publishTime: new Date().toISOString(),
+      likes: 0,
+      replies: [],
+      isPaid: false
+    };
+
+    setAppState(prev => ({
+      ...prev,
+      comments: [newComment, ...prev.comments],
+      posts: prev.posts.map(post =>
+        post.id === postId
+          ? { ...post, comments: post.comments + 1 }
+          : post
+      ),
+      selectedPost: prev.selectedPost?.id === postId
+        ? { ...prev.selectedPost, comments: prev.selectedPost.comments + 1 }
+        : prev.selectedPost
+    }));
+
+    message.success('评论发布成功！');
   };
 
   // 充值
@@ -238,21 +510,40 @@ const App: React.FC = () => {
   };
 
   // 商城相关处理函数
-  const handleProductClick = (product: any) => {
+  const handleProductClick = (product: Product) => {
     setAppState(prev => ({
       ...prev,
       selectedProduct: product,
+      selectedPost: null,
+      selectedStock: null,
       currentView: 'product-detail'
     }));
   };
 
-  const handleAddToCart = (product: any, variantId: string, quantity: number) => {
-    const variant = product.variants.find((v: any) => v.id === variantId) || product.variants[0];
-    const cartItem = {
+  const handleAddToCart = (product: Product, variantId: string, quantity: number) => {
+    const variant = getProductVariant(product, variantId);
+    const existingItem = appState.cart.find(item => item.productId === product.id && item.variantId === variant.id);
+
+    if (variant.stock <= 0) {
+      message.warning('该商品暂时无库存');
+      return;
+    }
+
+    if (existingItem && existingItem.quantity + quantity > variant.stock) {
+      message.warning(`库存不足，当前购物车已有 ${existingItem.quantity} 件，库存 ${variant.stock} 件`);
+      return;
+    }
+
+    if (!existingItem && quantity > variant.stock) {
+      message.warning(`库存不足，当前库存 ${variant.stock} 件`);
+      return;
+    }
+
+    const cartItem: CartItem = {
       id: `cart_${Date.now()}`,
       productId: product.id,
       product: product,
-      variantId: variantId,
+      variantId: variant.id,
       variant: variant,
       quantity: quantity,
       addedAt: new Date().toISOString()
@@ -260,13 +551,25 @@ const App: React.FC = () => {
     
     setAppState(prev => ({
       ...prev,
-      cart: [...prev.cart, cartItem]
+      cart: existingItem
+        ? prev.cart.map(item =>
+            item.id === existingItem.id
+              ? { ...item, quantity: item.quantity + quantity }
+              : item
+          )
+        : [...prev.cart, cartItem]
     }));
     
-    message.success('已添加到购物车');
+    message.success(existingItem ? '已更新购物车数量' : '已添加到购物车');
   };
 
   const handleUpdateCartQuantity = (itemId: string, quantity: number) => {
+    const cartItem = appState.cart.find(item => item.id === itemId);
+    if (cartItem && quantity > cartItem.variant.stock) {
+      message.warning(`库存不足，当前库存 ${cartItem.variant.stock} 件`);
+      return;
+    }
+
     setAppState(prev => ({
       ...prev,
       cart: prev.cart.map(item => 
@@ -284,10 +587,20 @@ const App: React.FC = () => {
   };
 
   const handleCheckout = (items: any[]) => {
+    if (!appState.user) {
+      message.error('请先登录');
+      return;
+    }
+
+    if (items.length === 0) {
+      message.warning('请选择要结算的商品');
+      return;
+    }
+
     // 创建订单
     const order: any = {
       id: `order_${Date.now()}`,
-      userId: appState.user!.id,
+      userId: appState.user.id,
       items: items.map(item => ({
         id: `item_${Date.now()}_${Math.random()}`,
         productId: item.productId,
@@ -364,12 +677,12 @@ const App: React.FC = () => {
   };
 
   const handleBuyNow = (product: any, variantId: string, quantity: number) => {
-    const variant = product.variants.find((v: any) => v.id === variantId) || product.variants[0];
+    const variant = getProductVariant(product, variantId);
     const items = [{
       id: `temp_${Date.now()}`,
       productId: product.id,
       product: product,
-      variantId: variantId,
+      variantId: variant.id,
       variant: variant,
       quantity: quantity,
       addedAt: new Date().toISOString()
@@ -381,7 +694,10 @@ const App: React.FC = () => {
   const handleViewChange = (view: ViewType) => {
     setAppState(prev => ({
       ...prev,
-      currentView: view
+      currentView: view,
+      selectedStock: rootViews.has(view) ? null : prev.selectedStock,
+      selectedPost: rootViews.has(view) ? null : prev.selectedPost,
+      selectedProduct: rootViews.has(view) ? null : prev.selectedProduct
     }));
   };
 
@@ -392,10 +708,14 @@ const App: React.FC = () => {
           <Route 
             path="/login" 
             element={
-              <Login 
-                onLogin={handleLogin}
-                isLoading={appState.isLoading}
-              />
+              appState.user ? (
+                <Navigate to="/" replace />
+              ) : (
+                <Login
+                  onLogin={handleLogin}
+                  isLoading={appState.isLoading}
+                />
+              )
             } 
           />
           <Route 
@@ -413,8 +733,10 @@ const App: React.FC = () => {
                   onRate={handleRate}
                   onLike={handleLike}
                   onShare={handleShare}
+                  onAddComment={handleAddComment}
                   onRecharge={handleRecharge}
                   onViewChange={handleViewChange}
+                  onSavePost={handleSavePost}
                   onProductClick={handleProductClick}
                   onAddToCart={handleAddToCart}
                   onUpdateCartQuantity={handleUpdateCartQuantity}
@@ -424,6 +746,8 @@ const App: React.FC = () => {
                   onOrderCancel={handleOrderCancel}
                   onOrderRefund={handleOrderRefund}
                   onBuyNow={handleBuyNow}
+                  onRefreshMarketData={() => refreshMarketQuotes(appState.stocks, { notify: true })}
+                  isMarketDataRefreshing={isMarketDataRefreshing}
                 />
               ) : (
                 <Login 

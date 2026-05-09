@@ -1,23 +1,24 @@
 import React from 'react';
-import { Card, List, Tag, Typography, Space, Button, Avatar, Progress, Row, Col, Statistic } from 'antd';
+import { Tag, Typography, Space, Button, Progress } from 'antd';
 import { 
   FireOutlined, 
   StarOutlined, 
   MessageOutlined, 
-  EyeOutlined,
   DollarOutlined,
   TrophyOutlined
 } from '@ant-design/icons';
 import { Stock } from '../types';
+import { formatQuoteSourceLine, formatQuoteTimestamp } from '../utils/marketData';
 
-const { Title, Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 interface StockListProps {
   stocks: Stock[];
   onStockSelect: (stock: Stock) => void;
+  showHeader?: boolean;
 }
 
-const StockList: React.FC<StockListProps> = ({ stocks, onStockSelect }) => {
+const StockList: React.FC<StockListProps> = ({ stocks, onStockSelect, showHeader = true }) => {
   const getFocusLevelColor = (level: string) => {
     switch (level) {
       case 'high': return 'red';
@@ -46,121 +47,107 @@ const StockList: React.FC<StockListProps> = ({ stocks, onStockSelect }) => {
   };
 
   return (
-    <div style={{ padding: '16px', width: '100%', height: '100%' }}>
-      <Card 
-        title={
-          <Space>
-            <TrophyOutlined style={{ color: '#faad14' }} />
-            <span>个股专区</span>
-            <Text type="secondary">精选个股，深度投研</Text>
-          </Space>
-        }
-        extra={
+    <div className="stock-directory">
+      {showHeader && (
+        <div className="section-heading">
+          <div>
+            <h2>
+              <Space>
+                <TrophyOutlined style={{ color: '#b7791f' }} />
+                <span>个股专区</span>
+              </Space>
+            </h2>
+            <div className="section-description">精选高关注标的，沉淀社区投研和付费观点。</div>
+          </div>
           <Button type="primary" icon={<StarOutlined />}>
             申请添加个股
           </Button>
-        }
-      >
-        <Row gutter={[16, 16]}>
-          {stocks.map(stock => (
-            <Col xs={24} sm={12} lg={8} xl={6} key={stock.symbol}>
-              <Card
-                hoverable
-                onClick={() => onStockSelect(stock)}
-                style={{ cursor: 'pointer' }}
-                actions={[
-                  <Button 
-                    type="link" 
-                    icon={<MessageOutlined />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStockSelect(stock);
-                    }}
-                  >
-                    {stock.totalPosts} 篇
-                  </Button>,
-                  <Button 
-                    type="link" 
-                    icon={<DollarOutlined />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStockSelect(stock);
-                    }}
-                  >
-                    {stock.totalPaidPosts} 付费
-                  </Button>
-                ]}
-              >
-                <Card.Meta
-                  avatar={
-                    <Avatar 
-                      size={48}
-                      style={{ 
-                        backgroundColor: getFocusLevelColor(stock.focusLevel),
-                        fontSize: '18px',
-                        fontWeight: 'bold'
-                      }}
-                    >
-                      {stock.symbol}
-                    </Avatar>
-                  }
-                  title={
-                    <Space>
-                      <Text strong>{stock.name}</Text>
-                      <Tag color={getFocusLevelColor(stock.focusLevel)}>
-                        {getFocusLevelIcon(stock.focusLevel)}
-                        {getFocusLevelText(stock.focusLevel)}
-                      </Tag>
-                    </Space>
-                  }
-                  description={
-                    <div>
-                      <Paragraph ellipsis={{ rows: 2 }}>
-                        {stock.description}
-                      </Paragraph>
-                      
-                      <Space direction="vertical" style={{ width: '100%' }}>
-                        <div>
-                          <Text type="secondary">当前价格: </Text>
-                          <Text strong style={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                            ${stock.currentPrice}
-                          </Text>
-                          <Text style={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                            {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent}%
-                          </Text>
-                        </div>
-                        
-                        <div>
-                          <Text type="secondary">市值: </Text>
-                          <Text>${(stock.marketCap / 1000000000).toFixed(1)}B</Text>
-                        </div>
-                        
-                        <div>
-                          <Text type="secondary">行业: </Text>
-                          <Text>{stock.sector}</Text>
-                        </div>
-                        
-                        <div style={{ marginTop: 8 }}>
-                          <Text type="secondary">社区活跃度: </Text>
-                          <Progress 
-                            percent={stock.communityScore} 
-                            size="small" 
-                            showInfo={false}
-                            strokeColor={stock.communityScore > 80 ? '#52c41a' : stock.communityScore > 60 ? '#faad14' : '#ff4d4f'}
-                          />
-                          <Text type="secondary" style={{ fontSize: '12px' }}>
-                            {stock.communityScore}分
-                          </Text>
-                        </div>
-                      </Space>
-                    </div>
-                  }
-                />
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </Card>
+        </div>
+      )}
+
+      <div className="stock-grid">
+        {stocks.map(stock => (
+          <article
+            className="stock-card-pro"
+            key={stock.symbol}
+            onClick={() => onStockSelect(stock)}
+          >
+            <div className="stock-card-top">
+              <div>
+                <div className="stock-avatar">{stock.symbol}</div>
+                <div className="stock-card-name">{stock.name}</div>
+                <Text type="secondary">{stock.sector}</Text>
+              </div>
+              <Tag color={getFocusLevelColor(stock.focusLevel)}>
+                {getFocusLevelIcon(stock.focusLevel)}
+                {getFocusLevelText(stock.focusLevel)}
+              </Tag>
+            </div>
+
+            <div className="stock-card-desc">{stock.description}</div>
+
+            <div style={{ marginTop: 10 }}>
+              <Progress
+                percent={stock.communityScore}
+                size="small"
+                showInfo={false}
+                strokeColor={stock.communityScore > 80 ? '#12805c' : stock.communityScore > 60 ? '#b7791f' : '#c43e3e'}
+              />
+            </div>
+
+            <div className="stock-card-metrics">
+              <div>
+                <span className="mini-metric-label">价格</span>
+                <span className="mini-metric-value">${stock.currentPrice.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="mini-metric-label">涨跌</span>
+                <span className={`mini-metric-value ${stock.changePercent >= 0 ? 'quote-positive' : 'quote-negative'}`}>
+                  {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                </span>
+              </div>
+              <div>
+                <span className="mini-metric-label">内容</span>
+                <span className="mini-metric-value">
+                  <MessageOutlined /> {stock.totalPosts}
+                </span>
+              </div>
+            </div>
+
+            <div className="quote-source-line">
+              <span>{formatQuoteSourceLine(stock)}</span>
+              <span>{formatQuoteTimestamp(stock)}</span>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <Space size={6}>
+                <Button
+                  size="small"
+                  type="default"
+                  icon={<MessageOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStockSelect(stock);
+                  }}
+                >
+                  社区
+                </Button>
+                <Button
+                  size="small"
+                  type="default"
+                  icon={<DollarOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStockSelect(stock);
+                  }}
+                >
+                  {stock.totalPaidPosts} 付费
+                </Button>
+              </Space>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 };

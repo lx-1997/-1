@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Card, 
   Row, 
@@ -44,8 +44,14 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
   const [quantity, setQuantity] = useState(1);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
-  const currentPrice = selectedVariant?.price || product.price;
-  const currentStock = selectedVariant?.stock || product.stock;
+  useEffect(() => {
+    setSelectedVariant(product.variants.length > 0 ? product.variants[0] : null);
+    setQuantity(1);
+    setCurrentImageIndex(0);
+  }, [product]);
+
+  const currentPrice = selectedVariant?.price ?? product.price;
+  const currentStock = selectedVariant?.stock ?? product.stock;
   const hasDiscount = product.originalPrice && product.originalPrice > currentPrice;
   const discountPercent = hasDiscount 
     ? Math.round((1 - currentPrice / product.originalPrice!) * 100)
@@ -65,17 +71,18 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
   });
 
   const handleVariantSelect = (attributeKey: string, attributeValue: string) => {
-    // 找到匹配的款式
-    const matchingVariant = product.variants.find(variant => {
-      // 检查当前选中的属性
+    const exactVariant = product.variants.find(variant => {
       const currentAttributes = selectedVariant?.attributes || {};
       const newAttributes = { ...currentAttributes, [attributeKey]: attributeValue };
-      
-      // 检查是否有完全匹配的款式
+
       return Object.entries(newAttributes).every(([key, val]) => 
         variant.attributes[key] === val
       );
     });
+    const fallbackVariant = product.variants.find(variant =>
+      variant.attributes[attributeKey] === attributeValue && variant.stock > 0
+    ) || product.variants.find(variant => variant.attributes[attributeKey] === attributeValue);
+    const matchingVariant = exactVariant || fallbackVariant;
 
     if (matchingVariant) {
       setSelectedVariant(matchingVariant);
@@ -96,7 +103,6 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
     }
     const variantId = selectedVariant?.id || 'default';
     onAddToCart(product, variantId, quantity);
-    message.success('已添加到购物车');
   };
 
   const handleBuyNow = () => {
@@ -373,4 +379,3 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
 };
 
 export default ProductDetail;
-

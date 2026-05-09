@@ -10,7 +10,6 @@ import {
   Switch, 
   InputNumber,
   Tag,
-  message,
   Divider,
   Row,
   Col
@@ -62,7 +61,6 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
     };
 
     onSave(postData);
-    message.success('内容发布成功！');
   };
 
   const handleAddTag = () => {

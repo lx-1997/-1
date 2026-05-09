@@ -28,9 +28,14 @@ import {
   ShareAltOutlined,
   CrownOutlined,
   ArrowLeftOutlined,
-  PlusOutlined
+  PlusOutlined,
+  DatabaseOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons';
-import { Stock, Post, Comment } from '../types';
+import { Stock, Post, Comment, ViewType } from '../types';
+import StockRelatedData from './StockRelatedData';
+import ResearchFlywheel from './ResearchFlywheel';
+import { formatQuoteSourceLine, formatQuoteTimestamp, getQuoteDelayNote, getQuoteFreshnessLabel } from '../utils/marketData';
 
 const { Title, Text, Paragraph } = Typography;
 // const { TabPane } = Tabs; // 已弃用，使用items属性
@@ -47,6 +52,7 @@ interface StockCommunityProps {
   onRate: (post: Post, rating: number) => void;
   onLike: (post: Post) => void;
   onShare: (post: Post) => void;
+  onViewChange?: (view: ViewType) => void;
 }
 
 const StockCommunity: React.FC<StockCommunityProps> = ({
@@ -59,9 +65,10 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
   onPurchase,
   onRate,
   onLike,
-  onShare
+  onShare,
+  onViewChange
 }) => {
-  const [activeTab, setActiveTab] = useState('news');
+  const [activeTab, setActiveTab] = useState('network');
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isPurchaseModalVisible, setIsPurchaseModalVisible] = useState(false);
   const [isRatingModalVisible, setIsRatingModalVisible] = useState(false);
@@ -69,11 +76,14 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
   const [rating, setRating] = useState(5);
   const [feedback, setFeedback] = useState('');
 
-  // 按类型过滤帖子
-  const newsPosts = posts.filter(p => p.type === 'news');
-  const discussionPosts = posts.filter(p => p.type === 'discussion');
-  const analysisPosts = posts.filter(p => p.type === 'analysis'); // 添加分析类帖子
-  const paidPosts = posts.filter(p => p.isPaid);
+  // 按当前标的过滤帖子，避免个股页混入其他股票内容。
+  const stockPosts = posts.filter(p => p.stockSymbol === stock.symbol);
+  const stockPostIds = new Set(stockPosts.map(post => post.id));
+  const stockComments = comments.filter(comment => stockPostIds.has(comment.postId));
+  const newsPosts = stockPosts.filter(p => p.type === 'news');
+  const discussionPosts = stockPosts.filter(p => p.type === 'discussion');
+  const analysisPosts = stockPosts.filter(p => p.type === 'analysis');
+  const paidPosts = stockPosts.filter(p => p.isPaid);
 
   const handlePostClick = (post: Post) => {
     // 直接跳转到帖子详情页面，让PostDetail组件处理付费逻辑
@@ -131,7 +141,14 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
             <Button type="link" icon={<EyeOutlined />}>
               {post.views}
             </Button>,
-            <Button type="link" icon={<LikeOutlined />}>
+            <Button
+              type="link"
+              icon={<LikeOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                onLike(post);
+              }}
+            >
               {post.likes}
             </Button>,
             <Button type="link" icon={<MessageOutlined />}>
@@ -208,7 +225,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
   );
 
   return (
-    <div style={{ padding: '16px', background: '#f5f5f5', minHeight: '100vh' }}>
+    <div className="stock-community-shell">
       {/* 返回按钮和股票信息 */}
       <Card style={{ marginBottom: '16px' }}>
         <Space style={{ marginBottom: '16px' }} wrap>
@@ -237,6 +254,12 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               </Avatar>
               <Title level={3}>{stock.name}</Title>
               <Text type="secondary">{stock.sector}</Text>
+              <div className="stock-quote-meta">
+                <Tag color={stock.quoteIsRealtime ? 'green' : stock.quoteProvider === 'mock' ? 'default' : 'blue'}>
+                  {getQuoteFreshnessLabel(stock)}
+                </Tag>
+                <Text type="secondary">{formatQuoteSourceLine(stock)} · {formatQuoteTimestamp(stock)}</Text>
+              </div>
             </div>
           </Col>
           <Col xs={24} sm={8}>
@@ -246,14 +269,16 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   title="当前价格" 
                   value={stock.currentPrice} 
                   prefix="$" 
+                  precision={2}
                   valueStyle={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f', fontSize: '16px' }}
                 />
               </Col>
               <Col xs={12}>
                 <Statistic 
                   title="涨跌幅" 
-                  value={stock.changePercent} 
+                  value={Number(stock.changePercent.toFixed(2))} 
                   suffix="%" 
+                  precision={2}
                   valueStyle={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f', fontSize: '16px' }}
                   prefix={stock.changePercent >= 0 ? '+' : ''}
                 />
@@ -282,6 +307,11 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
             <div style={{ marginTop: '8px' }}>
               <Text type="secondary" style={{ fontSize: '12px' }}>社区评分: {stock.communityScore}分</Text>
             </div>
+            {getQuoteDelayNote(stock) && (
+              <div className="stock-quote-delay">
+                {getQuoteDelayNote(stock)}
+              </div>
+            )}
           </Col>
         </Row>
       </Card>
@@ -292,6 +322,23 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
           activeKey={activeTab} 
           onChange={setActiveTab}
           items={[
+            {
+              key: 'network',
+              label: (
+                <span>
+                  <ThunderboltOutlined />
+                  投研网络
+                </span>
+              ),
+              children: (
+                <ResearchFlywheel
+                  stock={stock}
+                  posts={stockPosts}
+                  comments={stockComments}
+                  onViewChange={onViewChange}
+                />
+              )
+            },
             {
               key: 'news',
               label: (
@@ -321,6 +368,16 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                 </span>
               ),
               children: renderPostList(discussionPosts)
+            },
+            {
+              key: 'data',
+              label: (
+                <span>
+                  <DatabaseOutlined />
+                  关联数据
+                </span>
+              ),
+              children: <StockRelatedData stock={stock} onViewChange={onViewChange} />
             },
             {
               key: 'paid',

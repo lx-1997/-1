@@ -1,21 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Avatar, Dropdown, Button, Space, Typography, Badge, Drawer } from 'antd';
-import {
-  DashboardOutlined,
-  FireOutlined,
-  UserOutlined,
-  LogoutOutlined,
-  SettingOutlined,
-  BellOutlined,
-  MenuOutlined
-} from '@ant-design/icons';
-import { AppState, ViewType } from '../types';
+import { Layout, Drawer } from 'antd';
+import { AppState, Post, Stock, ViewType } from '../types';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import MainContent from './MainContent';
 
 const { Sider, Content } = Layout;
-const { Text } = Typography;
 
 interface TradingLayoutProps {
   appState: AppState;
@@ -28,8 +18,10 @@ interface TradingLayoutProps {
   onRate: (postId: string, rating: number, feedback: string) => void;
   onLike: (postId: string) => void;
   onShare: (postId: string) => void;
+  onAddComment: (postId: string, content: string) => void;
   onRecharge: (amount: number, method: string) => void;
   onViewChange: (view: ViewType) => void;
+  onSavePost: (post: Partial<Post>) => void;
   // 商城相关
   onProductClick: (product: any) => void;
   onAddToCart: (product: any, variantId: string, quantity: number) => void;
@@ -40,6 +32,8 @@ interface TradingLayoutProps {
   onOrderCancel: (orderId: string) => void;
   onOrderRefund: (orderId: string) => void;
   onBuyNow: (product: any, variantId: string, quantity: number) => void;
+  onRefreshMarketData: () => void;
+  isMarketDataRefreshing: boolean;
 }
 
 const TradingLayout: React.FC<TradingLayoutProps> = ({
@@ -53,8 +47,10 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
   onRate,
   onLike,
   onShare,
+  onAddComment,
   onRecharge,
   onViewChange,
+  onSavePost,
   onProductClick,
   onAddToCart,
   onUpdateCartQuantity,
@@ -63,7 +59,9 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
   onOrderPay,
   onOrderCancel,
   onOrderRefund,
-  onBuyNow
+  onBuyNow,
+  onRefreshMarketData,
+  isMarketDataRefreshing
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [selectedMenu, setSelectedMenu] = useState('home');
@@ -84,36 +82,6 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
 
-  const menuItems = [
-    {
-      key: 'home',
-      icon: <DashboardOutlined />,
-      label: '首页'
-    }
-  ];
-
-  const userMenuItems = [
-    {
-      key: 'profile',
-      icon: <UserOutlined />,
-      label: '个人资料'
-    },
-    {
-      key: 'settings',
-      icon: <SettingOutlined />,
-      label: '设置'
-    },
-    {
-      type: 'divider' as const
-    },
-    {
-      key: 'logout',
-      icon: <LogoutOutlined />,
-      label: '退出登录',
-      onClick: onLogout
-    }
-  ];
-
   const handleMenuSelect = (key: string) => {
     setSelectedMenu(key);
     if (isMobile) {
@@ -128,7 +96,13 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
     // 根据菜单项切换视图，确保所有菜单项都能正确跳转
     switch (key) {
       case 'home':
-        // 首页不需要设置 currentView，MainContent 会根据 selectedMenu 显示
+        onViewChange('home');
+        break;
+      case 'stocks':
+        onViewChange('stocks');
+        break;
+      case 'shop':
+        onViewChange('shop');
         break;
       case 'profile':
         onViewChange('profile');
@@ -139,15 +113,56 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
       case 'orders':
         onViewChange('orders');
         break;
+      case 'ai-research':
+        onViewChange('ai-research');
+        break;
+      case 'agent-center':
+        onViewChange('agent-center');
+        break;
+      case 'skills':
+        onViewChange('skills');
+        break;
+      case 'data-sources':
+        onViewChange('data-sources');
+        break;
+      case 'earnings-calendar':
+        onViewChange('earnings-calendar');
+        break;
       case 'recharge-history':
       case 'platform-balance':
-        // 这些页面不在 ViewType 中，不需要设置 currentView
-        // MainContent 会根据 selectedMenu 显示
+        onViewChange('home');
         break;
       default:
-        // 默认显示首页
+        onViewChange('home');
         break;
     }
+  };
+
+  const handleHeaderViewChange = (view: ViewType) => {
+    const menuByView: Partial<Record<ViewType, string>> = {
+      cart: 'cart',
+      orders: 'orders',
+      'ai-research': 'ai-research',
+      'agent-center': 'agent-center',
+      skills: 'skills',
+      'data-sources': 'data-sources',
+      'earnings-calendar': 'earnings-calendar',
+      profile: 'profile',
+      home: 'home',
+      stocks: 'stocks',
+      shop: 'shop'
+    };
+
+    setSelectedMenu(menuByView[view] || 'home');
+    onViewChange(view);
+  };
+
+  const handleStockShortcut = (stock: Stock) => {
+    setSelectedMenu('stocks');
+    if (isMobile) {
+      setMobileMenuVisible(false);
+    }
+    onStockSelect(stock);
   };
 
   return (
@@ -156,11 +171,13 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
       <Header
         appState={appState}
         onLogout={onLogout}
-        onStockSelect={onStockSelect}
+        onStockSelect={handleStockShortcut}
         onRecharge={onRecharge}
         isMobile={isMobile}
         onMobileMenuToggle={() => setMobileMenuVisible(!mobileMenuVisible)}
-        onViewChange={onViewChange}
+        onViewChange={handleHeaderViewChange}
+        onRefreshMarketData={onRefreshMarketData}
+        isMarketDataRefreshing={isMarketDataRefreshing}
       />
 
       <Layout>
@@ -173,14 +190,15 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
             width={240}
             collapsedWidth={80}
             style={{
-              background: '#fff',
-              borderRight: '1px solid #f0f0f0'
+              background: '#172026',
+              borderRight: '1px solid rgba(255,255,255,0.08)'
             }}
           >
             <Sidebar
               selectedMenu={selectedMenu}
               onMenuSelect={handleMenuSelect}
               appState={appState}
+              onStockSelect={handleStockShortcut}
             />
           </Sider>
         )}
@@ -199,15 +217,17 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
               selectedMenu={selectedMenu}
               onMenuSelect={handleMenuSelect}
               appState={appState}
+              onStockSelect={handleStockShortcut}
             />
           </Drawer>
         )}
 
         {/* 主内容区域 */}
         <Content style={{ 
-          background: '#f5f5f5',
-          padding: isMobile ? '16px' : '0',
-          minHeight: 'calc(100vh - 64px)'
+          background: '#eef2f5',
+          padding: 0,
+          minHeight: 'calc(100vh - 58px)',
+          overflow: 'auto'
         }}>
           <MainContent
             selectedMenu={selectedMenu}
@@ -216,21 +236,29 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
             onBackToStocks={onBackToStocks}
             onPostClick={onPostClick}
             onCreatePost={onCreatePost}
-            onPurchase={(post: any) => onPurchase(post.id, post.price || 0)}
-            onRate={(post: any, rating: number) => onRate(post.id, rating, '')}
-            onLike={(post: any) => onLike(post.id)}
-            onShare={(post: any) => onShare(post.id)}
-            onViewChange={onViewChange}
+            onPurchase={onPurchase}
+            onRate={onRate}
+            onLike={onLike}
+            onShare={onShare}
+            onAddComment={onAddComment}
+            onViewChange={handleHeaderViewChange}
+            onSavePost={onSavePost}
             isMobile={isMobile}
             onProductClick={onProductClick}
             onAddToCart={onAddToCart}
             onUpdateCartQuantity={onUpdateCartQuantity}
             onRemoveFromCart={onRemoveFromCart}
-            onCheckout={onCheckout}
+            onCheckout={(items) => {
+              onCheckout(items);
+              setSelectedMenu('orders');
+            }}
             onOrderPay={onOrderPay}
             onOrderCancel={onOrderCancel}
             onOrderRefund={onOrderRefund}
-            onBuyNow={onBuyNow}
+            onBuyNow={(product, variantId, quantity) => {
+              onBuyNow(product, variantId, quantity);
+              setSelectedMenu('orders');
+            }}
           />
         </Content>
       </Layout>

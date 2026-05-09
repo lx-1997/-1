@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Card,
   Table,
@@ -35,11 +35,23 @@ const Cart: React.FC<CartProps> = ({
   cartItems,
   onUpdateQuantity,
   onRemoveItem,
-  onCheckout
+  onCheckout,
+  onBack
 }) => {
   const [selectedItems, setSelectedItems] = useState<string[]>(
     cartItems.map(item => item.id)
   );
+
+  useEffect(() => {
+    setSelectedItems(prev => {
+      const currentIds = cartItems.map(item => item.id);
+      const currentIdSet = new Set(currentIds);
+      const selectedExistingItems = prev.filter(id => currentIdSet.has(id));
+      const newlyAddedItems = currentIds.filter(id => !prev.includes(id));
+
+      return [...selectedExistingItems, ...newlyAddedItems];
+    });
+  }, [cartItems]);
 
   // 计算总价
   const totalAmount = cartItems
@@ -52,9 +64,9 @@ const Cart: React.FC<CartProps> = ({
 
   const handleSelectItem = (itemId: string, checked: boolean) => {
     if (checked) {
-      setSelectedItems([...selectedItems, itemId]);
+      setSelectedItems(prev => Array.from(new Set([...prev, itemId])));
     } else {
-      setSelectedItems(selectedItems.filter(id => id !== itemId));
+      setSelectedItems(prev => prev.filter(id => id !== itemId));
     }
   };
 
@@ -155,7 +167,7 @@ const Cart: React.FC<CartProps> = ({
       <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
         <Button
           icon={<ArrowLeftOutlined />}
-          onClick={() => window.history.back()}
+          onClick={onBack}
           style={{ marginBottom: '16px' }}
         >
           返回
@@ -165,7 +177,7 @@ const Cart: React.FC<CartProps> = ({
             description="购物车是空的"
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           >
-            <Button type="primary" href="#/shop">
+            <Button type="primary" onClick={onBack}>
               去购物
             </Button>
           </Empty>
@@ -178,7 +190,7 @@ const Cart: React.FC<CartProps> = ({
     <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
       <Button
         icon={<ArrowLeftOutlined />}
-        onClick={() => window.history.back()}
+        onClick={onBack}
         style={{ marginBottom: '16px' }}
       >
         返回
@@ -281,5 +293,3 @@ const Cart: React.FC<CartProps> = ({
 };
 
 export default Cart;
-
-

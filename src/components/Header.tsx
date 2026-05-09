@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout, Input, Button, Dropdown, Space, Avatar, Badge, Typography } from 'antd';
+import { Layout, Input, Button, Dropdown, Space, Avatar, Badge, Typography, message } from 'antd';
 import {
   SearchOutlined,
   BellOutlined,
@@ -7,10 +7,14 @@ import {
   FireOutlined,
   MenuOutlined,
   DollarOutlined,
-  ShoppingCartOutlined
+  ShoppingCartOutlined,
+  LogoutOutlined,
+  SettingOutlined,
+  SyncOutlined
 } from '@ant-design/icons';
 import { AppState, ViewType } from '../types';
 import RechargeModal from './RechargeModal';
+import { formatQuoteSourceLine } from '../utils/marketData';
 
 const { Header: AntHeader } = Layout;
 const { Text } = Typography;
@@ -23,6 +27,8 @@ interface HeaderProps {
   isMobile?: boolean;
   onMobileMenuToggle?: () => void;
   onViewChange?: (view: ViewType) => void;
+  onRefreshMarketData?: () => void;
+  isMarketDataRefreshing?: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -32,16 +38,34 @@ const Header: React.FC<HeaderProps> = ({
   onRecharge,
   isMobile = false,
   onMobileMenuToggle,
-  onViewChange
+  onViewChange,
+  onRefreshMarketData,
+  isMarketDataRefreshing = false
 }) => {
   const [searchValue, setSearchValue] = useState('');
   const [rechargeModalVisible, setRechargeModalVisible] = useState(false);
+  const cartItemCount = appState.cart?.reduce((sum, item) => sum + item.quantity, 0) || 0;
+  const quoteAnchor = appState.stocks.find(stock => stock.quoteProvider && stock.quoteProvider !== 'mock')
+    || appState.stocks[0];
 
   const handleSearch = (value: string) => {
-    if (value.trim()) {
-      // 这里可以搜索股票
-      console.log('搜索股票:', value.trim());
+    const keyword = value.trim().toLowerCase();
+    if (!keyword) {
+      return;
     }
+
+    const matchedStock = appState.stocks.find(stock =>
+      stock.symbol.toLowerCase().includes(keyword) ||
+      stock.name.toLowerCase().includes(keyword)
+    );
+
+    if (!matchedStock) {
+      message.warning('未找到匹配的股票');
+      return;
+    }
+
+    onStockSelect(matchedStock);
+    setSearchValue('');
   };
 
   const userMenuItems = [
@@ -52,7 +76,7 @@ const Header: React.FC<HeaderProps> = ({
     },
     {
       key: 'settings',
-      icon: <UserOutlined />,
+      icon: <SettingOutlined />,
       label: '设置'
     },
     {
@@ -60,23 +84,14 @@ const Header: React.FC<HeaderProps> = ({
     },
     {
       key: 'logout',
-      icon: <UserOutlined />,
-      label: '退出登录',
-      onClick: onLogout
+      icon: <LogoutOutlined />,
+      label: '退出登录'
     }
   ];
 
   return (
     <AntHeader
-      style={{
-        background: '#fff',
-        padding: isMobile ? '0 16px' : '0 24px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottom: '1px solid #f0f0f0',
-        height: '64px'
-      }}
+      className="terminal-header"
     >
       {/* 移动端菜单按钮 */}
       {isMobile && (
@@ -88,24 +103,19 @@ const Header: React.FC<HeaderProps> = ({
         />
       )}
 
-      <div className="header-content" style={{ flex: isMobile ? 1 : 'none' }}>
-        <div className="header-left">
-          <div className="logo">
-            <FireOutlined style={{ fontSize: '24px', color: '#ff4d4f', marginRight: '8px' }} />
-            <span className="logo-text">深度焦点</span>
-            {!isMobile && <span className="logo-subtitle">DeepFocus</span>}
-          </div>
-          {!isMobile && (
-            <div className="slogan">
-              告别噪音，专注价值
-            </div>
-          )}
+      <div className="terminal-brand">
+        <span className="brand-mark">
+          <FireOutlined />
+        </span>
+        <div className="brand-copy">
+          <span className="brand-title">深度焦点</span>
+          <span className="brand-subtitle">DeepFocus 投研终端</span>
         </div>
       </div>
 
       {/* 搜索框 - 移动端隐藏 */}
       {!isMobile && (
-        <div style={{ flex: 1, maxWidth: '400px', margin: '0 24px' }}>
+        <div className="header-search">
           <Input.Search
             placeholder="搜索股票代码或名称"
             value={searchValue}
@@ -120,20 +130,30 @@ const Header: React.FC<HeaderProps> = ({
 
       {/* 用户信息 - 移动端简化 */}
       {!isMobile && (
-        <div style={{ margin: '0 24px' }}>
-          <Space>
-            <Text type="secondary">
-              评分: {appState.user?.reputation || 0}
-            </Text>
-            <Text type="secondary">
-              收益: ¥{appState.user?.totalEarnings || 0}
-            </Text>
-            <Text strong style={{ color: '#52c41a' }}>
-              余额: ${appState.user?.balance?.toFixed(2) || '0.00'}
-            </Text>
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              平台: ${appState.platformBalance?.toFixed(2) || '0.00'}
-            </Text>
+        <div className="header-metrics">
+          <span className="market-pill">
+            声誉 <strong>{appState.user?.reputation || 0}</strong>
+          </span>
+          <span className="market-pill positive">
+            收益 <strong>¥{(appState.user?.totalEarnings || 0).toFixed(2)}</strong>
+          </span>
+          <span className="market-pill">
+            余额 <strong>${appState.user?.balance?.toFixed(2) || '0.00'}</strong>
+          </span>
+          <span className="market-pill">
+            平台 <strong>${appState.platformBalance?.toFixed(2) || '0.00'}</strong>
+          </span>
+          <span className="market-pill">
+            行情 <strong>{formatQuoteSourceLine(quoteAnchor)}</strong>
+          </span>
+          <Button
+            size="small"
+            icon={<SyncOutlined spin={isMarketDataRefreshing} />}
+            loading={isMarketDataRefreshing}
+            onClick={onRefreshMarketData}
+          >
+            刷新
+          </Button>
             <Button 
               type="primary" 
               size="small" 
@@ -142,14 +162,13 @@ const Header: React.FC<HeaderProps> = ({
             >
               充值
             </Button>
-          </Space>
         </div>
       )}
 
       {/* 通知和用户菜单 */}
-      <Space size={isMobile ? 'small' : 'middle'}>
+      <Space className="header-actions" size={isMobile ? 'small' : 'small'}>
         {/* 购物车 */}
-        <Badge count={appState.cart?.length || 0} size="small" showZero={false}>
+        <Badge count={cartItemCount} size="small" showZero={false}>
           <Button
             type="text"
             icon={<ShoppingCartOutlined />}
@@ -171,7 +190,24 @@ const Header: React.FC<HeaderProps> = ({
 
         {/* 用户菜单 */}
         <Dropdown
-          menu={{ items: userMenuItems }}
+          menu={{
+            items: userMenuItems,
+            onClick: ({ key }) => {
+              if (key === 'logout') {
+                onLogout();
+                return;
+              }
+
+              if (key === 'profile') {
+                onViewChange?.('profile');
+                return;
+              }
+
+              if (key === 'settings') {
+                message.info('设置功能开发中');
+              }
+            }
+          }}
           placement="bottomRight"
           trigger={['click']}
         >

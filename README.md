@@ -37,6 +37,8 @@
 - **前端框架**: React 18 + TypeScript
 - **UI组件库**: Ant Design 5.x
 - **图表库**: Recharts
+- **后端服务**: FastAPI + Finogrid
+- **AI推理**: OpenAI / MiniMax / OpenAI-compatible 云模型
 - **桌面应用**: Electron
 - **路由**: React Router
 - **状态管理**: React Hooks
@@ -88,6 +90,14 @@ npm install
 
 ### 开发模式
 ```bash
+# 启动后端 AI API
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-cloud.txt
+cp .env.example .env
+uvicorn deepfocus_api.main:app --host 0.0.0.0 --port 8300 --reload
+
 # 启动React开发服务器
 npm start
 
@@ -124,6 +134,11 @@ src/
 ├── data/               # 模拟数据
 ├── App.tsx             # 主应用组件
 └── index.tsx           # 应用入口
+
+backend/
+├── deepfocus_api/      # 前台调用的轻量云模型 API
+├── finogrid/           # 合并自 FinGPT 的后台、账本、通道、MCP 与 Agent 模块
+└── requirements-cloud.txt
 ```
 
 ## 🔑 演示账号
@@ -149,6 +164,41 @@ src/
 - **社区情绪分析**: 实时监控社区看涨/看跌情绪
 - **专业投研工具**: 事件日历、投研笔记、智能警报
 - **专家认证体系**: 确保社区讨论质量
+
+### FinGPT 能力中心
+- **个股投研**: 个股快照、社区内容、用户问题 → 投研摘要、催化因素、风险清单
+- **金融情绪分析**: 新闻、公告、社区文本 → positive / neutral / negative
+- **新闻蒸馏**: 多条资讯 → 决策摘要、关键信号、待验证动作
+- **财报/研报解读**: 长文本报告 → 核心结论、风险、验证问题
+- **RAG 知识库问答**: 基于 Finogrid 文档或传入资料回答问题并标注来源
+- **预测与情景推演**: 参考 FinGPT-Forecaster 思路生成短期情景
+- **稳定币/通道风险**: 面向 Finogrid 支付通道评估资产、地区、新闻风险
+- **Agent 工作台**: 运营监督、审计治理、流程改进、内部支持、资金策略 Agent 摘要
+
+所有文本型能力均支持手动输入和文件上传混合输入。当前文件抽取支持 `.txt`、`.md`、`.csv`、`.json`、`.pdf`、`.docx`、`.xlsx`、`.log`，后端接口为 `POST /api/fingpt/files/extract`。
+
+当前默认 `DEEPFOCUS_LLM_PROVIDER=mock`，用于本地无 key 演示。接入云模型后，这些能力会走 OpenAI、MiniMax 或 OpenAI-compatible API。
+
+### 数据源中心
+- **服务器/API 数据源**: 注册自有服务器接口、行情 API、网页源，支持 `GET/POST`、headers、params、`{symbol}` / `{query}` 模板。
+- **本地资料入库**: 上传研报、财报、纪要、表格、PDF、Word、Excel，抽取文本后进入证据库。
+- **Agent 抓取资料**: 通过 URL 抓取网页或接口响应，保存来源、时间、可信度和关联标的。
+- **关键词抓取**: 支持按关键词抓取公众号公开搜索结果；雪球抓取会尝试公开页面/接口，也支持配置 `DEEPFOCUS_XUEQIU_COOKIE` / `XUEQIU_TOKEN` 使用自有登录态请求。每个来源都有认证方式、风险等级、健康分和降级来源；遇到登录、验证码或 WAF 会记录失败原因并按策略走公开来源降级。
+- **资料管理台**: 本地文件和远端资料统一展示，可按标的、来源、类型、关键词、tag 筛选。
+- **标签管理**: 每份资料都能编辑标题、关联标的、可信度和多个 tag，便于后续 Agent 检索。
+- **证据检索**: 按股票代码、关键词和 tag 检索资料，供多 Agent 自动引用。
+- **持久化**: 数据源和证据保存到 `backend/.data_sources.sqlite3`。
+
+多 Agent 任务执行时会先由 `DataSourceAgent` 同步服务器/API/网页源，再由 `EvidenceAgent` 检索本地上传和抓取资料。报告中的结论会展示命中的证据来源；资料不足时会明确提示缺口。
+
+### 24h 多 Agent 投研任务中心
+- **任务队列**: 投资研究、组合复盘、风险审查、观察名单监控任务统一进入队列。
+- **常驻 worker**: 后端启动后自动运行 worker，持续拉取 `pending` 任务。
+- **多 Agent 流水线**: OrchestratorAgent、DataSourceAgent、EvidenceAgent、ResearchAgent、SentimentAgent、ScenarioAgent、RiskAgent、ReportAgent 分阶段产出日志和报告。
+- **状态持久化**: 任务、日志、结果保存到 `backend/.agent_tasks.sqlite3`，可重启后继续查看。
+- **投资者报告**: 输出投资者摘要、证据来源、情景推演、风险纪律、行动清单、反证清单。
+
+该模块用于提升投研流程和风险控制质量，不承诺收益，不自动下单。
 
 ### 用户体验
 - 响应式设计，支持不同屏幕尺寸

@@ -1,6 +1,5 @@
 import React from 'react';
-import { AppState, ViewType } from '../types';
-import Dashboard from './Dashboard';
+import { AppState, Post, ViewType } from '../types';
 import StockList from './StockList';
 import StockDetail from './StockDetail';
 import StockCommunity from './StockCommunity';
@@ -9,11 +8,15 @@ import CreatePost from './CreatePost';
 import PostDetail from './PostDetail';
 import RechargeHistory from './RechargeHistory';
 import PlatformBalance from './PlatformBalance';
-import Shop from './Shop';
 import ProductDetail from './ProductDetail';
 import Cart from './Cart';
 import Orders from './Orders';
 import HomePage from './HomePage';
+import FinGptHub from './FinGptHub';
+import InvestorAgentCenter from './InvestorAgentCenter';
+import DataSourceCenter from './DataSourceCenter';
+import SkillCenter from './SkillCenter';
+import EarningsCalendar from './EarningsCalendar';
 
 interface MainContentProps {
   selectedMenu: string;
@@ -22,11 +25,13 @@ interface MainContentProps {
   onBackToStocks: () => void;
   onPostClick: (post: any) => void;
   onCreatePost: () => void;
-  onPurchase: (post: any) => void;
-  onRate: (post: any, rating: number) => void;
-  onLike: (post: any) => void;
-  onShare: (post: any) => void;
+  onPurchase: (postId: string, amount: number) => void;
+  onRate: (postId: string, rating: number, feedback: string) => void;
+  onLike: (postId: string) => void;
+  onShare: (postId: string) => void;
+  onAddComment: (postId: string, content: string) => void;
   onViewChange: (view: ViewType) => void;
+  onSavePost: (post: Partial<Post>) => void;
   isMobile?: boolean;
   // 商城相关
   onProductClick: (product: any) => void;
@@ -51,7 +56,9 @@ const MainContent: React.FC<MainContentProps> = ({
   onRate,
   onLike,
   onShare,
+  onAddComment,
   onViewChange,
+  onSavePost,
   isMobile = false,
   onProductClick,
   onAddToCart,
@@ -64,10 +71,7 @@ const MainContent: React.FC<MainContentProps> = ({
   onBuyNow
 }) => {
   // 优先处理特殊视图（这些视图优先级最高，直接返回，不进入菜单逻辑）
-  
-  // 调试：打印当前状态
-  console.log('MainContent render:', { selectedMenu, currentView: appState.currentView });
-  
+
   // 商品详情视图
   if (appState.currentView === 'product-detail' && appState.selectedProduct) {
     return (
@@ -80,8 +84,8 @@ const MainContent: React.FC<MainContentProps> = ({
     );
   }
 
-  // 购物车视图 - 检查 currentView 或 selectedMenu
-  if (appState.currentView === 'cart' || selectedMenu === 'cart') {
+  // 购物车视图
+  if (appState.currentView === 'cart') {
     return (
       <Cart
         cartItems={appState.cart}
@@ -93,8 +97,8 @@ const MainContent: React.FC<MainContentProps> = ({
     );
   }
 
-  // 订单视图 - 检查 currentView 或 selectedMenu
-  if (appState.currentView === 'orders' || selectedMenu === 'orders') {
+  // 订单视图
+  if (appState.currentView === 'orders') {
     return (
       <Orders
         orders={appState.orders}
@@ -105,19 +109,41 @@ const MainContent: React.FC<MainContentProps> = ({
     );
   }
 
+  if (appState.currentView === 'ai-research') {
+    return <FinGptHub appState={appState} />;
+  }
+
+  if (appState.currentView === 'agent-center') {
+    return <InvestorAgentCenter appState={appState} />;
+  }
+
+  if (appState.currentView === 'skills') {
+    return <SkillCenter appState={appState} />;
+  }
+
+  if (appState.currentView === 'data-sources') {
+    return <DataSourceCenter appState={appState} />;
+  }
+
+  if (appState.currentView === 'earnings-calendar') {
+    return <EarningsCalendar appState={appState} onStockSelect={onStockSelect} />;
+  }
+
   // 创建帖子视图
   if (appState.currentView === 'create-post') {
+    if (!appState.selectedStock) {
+      return (
+        <StockList
+          stocks={appState.stocks}
+          onStockSelect={onStockSelect}
+        />
+      );
+    }
+
     return (
       <CreatePost
-        stock={appState.selectedStock!}
-        onSave={(post) => {
-          console.log('保存帖子:', post);
-          if (appState.selectedStock) {
-            onViewChange('stock-community');
-          } else {
-            onViewChange('stocks');
-          }
-        }}
+        stock={appState.selectedStock}
+        onSave={onSavePost}
         onCancel={() => {
           if (appState.selectedStock) {
             onViewChange('stock-community');
@@ -144,13 +170,11 @@ const MainContent: React.FC<MainContentProps> = ({
             onViewChange('stocks');
           }
         }}
-        onPurchase={(postId: string, amount: number) => onPurchase({ id: postId, price: amount })}
-        onRate={(postId: string, rating: number, feedback: string) => onRate({ id: postId }, rating)}
-        onLike={(postId: string) => onLike(postId)}
-        onShare={(postId: string) => onShare(postId)}
-        onAddComment={(postId: string, content: string) => {
-          console.log('添加评论:', { postId, content });
-        }}
+        onPurchase={onPurchase}
+        onRate={onRate}
+        onLike={onLike}
+        onShare={onShare}
+        onAddComment={onAddComment}
       />
     );
   }
@@ -182,28 +206,15 @@ const MainContent: React.FC<MainContentProps> = ({
           onCreatePost();
         }}
         onPostClick={onPostClick}
-        onPurchase={onPurchase}
-        onRate={onRate}
-        onLike={onLike}
-        onShare={onShare}
+        onPurchase={(post) => onPurchase(post.id, post.price)}
+        onRate={(post, rating) => onRate(post.id, rating, '')}
+        onLike={(post) => onLike(post.id)}
+        onShare={(post) => onShare(post.id)}
+        onViewChange={onViewChange}
       />
     );
   }
 
-  // 首页视图 - 整合仪表盘、个股专区、商城
-  if (selectedMenu === 'dashboard' || selectedMenu === 'stocks' || selectedMenu === 'shop' || selectedMenu === 'home') {
-    return (
-      <HomePage
-        appState={appState}
-        onStockSelect={onStockSelect}
-        onProductClick={onProductClick}
-        onAddToCart={onAddToCart}
-      />
-    );
-  }
-
-  // 根据选中的菜单项显示不同内容（确保只显示一个模块）
-  // 严格按照 selectedMenu 来决定显示哪个模块
   switch (selectedMenu) {
     case 'profile':
       return (
@@ -238,18 +249,38 @@ const MainContent: React.FC<MainContentProps> = ({
           paidPosts={appState.posts.filter(post => post.isPaid).length}
         />
       );
-    
-    default:
-      // 默认显示股票列表
-      return (
-        <StockList
-          stocks={appState.stocks}
-          onStockSelect={(stock) => {
-            onStockSelect(stock);
-          }}
-        />
-      );
   }
+
+  // 首页视图 - 整合仪表盘、个股专区、商城
+  if (
+    appState.currentView === 'home' ||
+    appState.currentView === 'stocks' ||
+    appState.currentView === 'shop' ||
+    selectedMenu === 'dashboard' ||
+    selectedMenu === 'stocks' ||
+    selectedMenu === 'shop' ||
+    selectedMenu === 'home'
+  ) {
+    return (
+      <HomePage
+        appState={appState}
+        onStockSelect={onStockSelect}
+        onProductClick={onProductClick}
+        onAddToCart={onAddToCart}
+        onViewChange={onViewChange}
+      />
+    );
+  }
+
+  return (
+    <HomePage
+      appState={appState}
+      onStockSelect={onStockSelect}
+      onProductClick={onProductClick}
+      onAddToCart={onAddToCart}
+      onViewChange={onViewChange}
+    />
+  );
 };
 
 export default MainContent;

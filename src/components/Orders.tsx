@@ -20,7 +20,6 @@ import { Order } from '../types';
 import PaymentModal from './PaymentModal';
 
 const { Title, Text } = Typography;
-const { TabPane } = Tabs;
 
 interface OrdersProps {
   orders: Order[];
@@ -79,6 +78,12 @@ const Orders: React.FC<OrdersProps> = ({
     if (activeTab === 'delivered') return order.orderStatus === 'delivered';
     return true;
   });
+  const tabItems = [
+    { key: 'all', label: `全部订单 (${orders.length})` },
+    { key: 'pending', label: `待支付 (${orders.filter(o => o.paymentStatus === 'pending').length})` },
+    { key: 'paid', label: `已支付 (${orders.filter(o => o.paymentStatus === 'paid').length})` },
+    { key: 'delivered', label: `已完成 (${orders.filter(o => o.orderStatus === 'delivered').length})` }
+  ];
 
   const columns = [
     {
@@ -208,12 +213,7 @@ const Orders: React.FC<OrdersProps> = ({
       <Title level={3} style={{ marginBottom: '24px' }}>我的订单</Title>
 
       <Card>
-        <Tabs activeKey={activeTab} onChange={setActiveTab}>
-          <TabPane tab={`全部订单 (${orders.length})`} key="all" />
-          <TabPane tab={`待支付 (${orders.filter(o => o.paymentStatus === 'pending').length})`} key="pending" />
-          <TabPane tab={`已支付 (${orders.filter(o => o.paymentStatus === 'paid').length})`} key="paid" />
-          <TabPane tab={`已完成 (${orders.filter(o => o.orderStatus === 'delivered').length})`} key="delivered" />
-        </Tabs>
+        <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
 
         {filteredOrders.length === 0 ? (
           <Empty description="暂无订单" />
@@ -346,7 +346,6 @@ const Orders: React.FC<OrdersProps> = ({
 };
 
 export default Orders;
-
 
 
 

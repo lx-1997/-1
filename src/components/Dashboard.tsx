@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Typography, Space, Avatar, Tag, Progress } from 'antd';
+import React from 'react';
+import { Typography, Space, Tag } from 'antd';
 import { 
   FireOutlined, 
   StarOutlined, 
@@ -9,9 +9,9 @@ import {
   UserOutlined
 } from '@ant-design/icons';
 import { AppState, Stock } from '../types';
-import { mockStocks } from '../data/mockData';
+import { formatQuoteSourceLine, formatQuoteTimestamp } from '../utils/marketData';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface DashboardProps {
   appState: AppState;
@@ -19,14 +19,6 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ appState, onStockSelect }) => {
-  const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
-
-  useEffect(() => {
-    if (appState.selectedStock) {
-      setSelectedStock(appState.selectedStock);
-    }
-  }, [appState.selectedStock]);
-
   const user = appState.user;
   const stocks = appState.stocks;
   const posts = appState.posts;
@@ -36,195 +28,119 @@ const Dashboard: React.FC<DashboardProps> = ({ appState, onStockSelect }) => {
   const paidPosts = posts.filter(p => p.isPaid).length;
   const totalViews = posts.reduce((sum, p) => sum + p.views, 0);
   const totalLikes = posts.reduce((sum, p) => sum + p.likes, 0);
+  const activeUsers = appState.rechargeHistory
+    .filter(record => record.status === 'success')
+    .map(record => record.userId)
+    .filter((value, index, self) => self.indexOf(value) === index).length;
+
+  const metricItems = [
+    {
+      label: '声誉评分',
+      value: user?.reputation || 0,
+      note: user?.memberLevel === 'vip' ? 'VIP 会员' : 'Premium 用户',
+      icon: <StarOutlined />
+    },
+    {
+      label: '发布内容',
+      value: totalPosts,
+      note: `${paidPosts} 篇付费研究`,
+      icon: <MessageOutlined />
+    },
+    {
+      label: '内容触达',
+      value: totalViews.toLocaleString('zh-CN'),
+      note: `${totalLikes.toLocaleString('zh-CN')} 次点赞`,
+      icon: <RiseOutlined />
+    },
+    {
+      label: '平台活跃',
+      value: activeUsers,
+      note: `平台余额 $${appState.platformBalance.toFixed(2)}`,
+      icon: <UserOutlined />
+    }
+  ];
 
   return (
-    <div style={{ padding: '16px' }}>
-      <Title level={2} style={{ marginBottom: '16px', fontSize: '20px' }}>
-        欢迎回来，{user?.username}！
-      </Title>
+    <div className="dashboard-shell">
+      <div className="dashboard-header">
+        <div>
+          <div className="dashboard-eyebrow">INVESTMENT WORKSPACE</div>
+          <h2 className="dashboard-title">欢迎回来，{user?.username}</h2>
+          <div className="dashboard-subtitle">聚合关注池、付费研究和社区信号，优先处理高价值标的。</div>
+        </div>
+        <Space size={8} wrap>
+          <Tag color="blue">Premium</Tag>
+          <Tag color="cyan">DeepFocus</Tag>
+        </Space>
+      </div>
 
-      {/* 用户统计 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: '16px' }}>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="声誉评分"
-              value={user?.reputation || 0}
-              suffix="分"
-              valueStyle={{ color: (user?.reputation || 0) > 80 ? '#52c41a' : (user?.reputation || 0) > 60 ? '#faad14' : '#ff4d4f' }}
-              prefix={<StarOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="发布内容"
-              value={totalPosts}
-              suffix="篇"
-              prefix={<MessageOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="付费内容"
-              value={paidPosts}
-              suffix="篇"
-              prefix={<DollarOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="总收益"
-              value={user?.totalEarnings || 0}
-              prefix="$"
-              precision={2}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <div className="metric-grid">
+        {metricItems.map(item => (
+          <div className="metric-tile" key={item.label}>
+            <div className="metric-label">
+              {item.icon}
+              <span>{item.label}</span>
+            </div>
+            <div className="metric-value">{item.value}</div>
+            <div className="metric-note">{item.note}</div>
+          </div>
+        ))}
+      </div>
 
-      {/* 内容统计 */}
-      <Row gutter={[12, 12]} style={{ marginBottom: '16px' }}>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="总浏览量"
-              value={totalViews}
-              prefix={<RiseOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="总点赞"
-              value={totalLikes}
-              prefix={<StarOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="关注者"
-              value={user?.followers || 0}
-              prefix={<UserOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="关注中"
-              value={user?.following || 0}
-              prefix={<UserOutlined />}
-            />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* 热门个股 */}
-      <Card 
-        title={
-          <Space>
-            <FireOutlined style={{ color: '#ff4d4f' }} />
-            <span>热门个股</span>
-          </Space>
-        }
-        style={{ marginBottom: '16px' }}
-      >
-        <Row gutter={[12, 12]}>
-          {stocks.slice(0, 4).map(stock => (
-            <Col xs={12} sm={12} lg={6} key={stock.symbol}>
-              <Card
-                hoverable
-                onClick={() => onStockSelect(stock)}
-                style={{ cursor: 'pointer' }}
-              >
-                <div style={{ textAlign: 'center' }}>
-                  <Avatar 
-                    size={48}
-                    style={{ 
-                      backgroundColor: stock.focusLevel === 'high' ? '#ff4d4f' : 
-                                     stock.focusLevel === 'medium' ? '#faad14' : '#52c41a',
-                      fontSize: '18px',
-                      fontWeight: 'bold',
-                      marginBottom: '8px'
-                    }}
-                  >
-                    {stock.symbol}
-                  </Avatar>
-                  <div>
-                    <Text strong>{stock.name}</Text>
-                  </div>
-                  <div>
-                    <Text style={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                      ${stock.currentPrice} ({stock.changePercent >= 0 ? '+' : ''}{stock.changePercent}%)
-                    </Text>
-                  </div>
-                  <div style={{ marginTop: '8px' }}>
-                    <Text type="secondary">社区活跃度: {stock.communityScore}分</Text>
-                    <Progress 
-                      percent={stock.communityScore} 
-                      size="small" 
-                      showInfo={false}
-                      strokeColor={stock.communityScore > 80 ? '#52c41a' : stock.communityScore > 60 ? '#faad14' : '#ff4d4f'}
-                    />
-                  </div>
-                </div>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </Card>
-
-      {/* 最新内容 */}
-      <Card 
-        title={
-          <Space>
-            <MessageOutlined style={{ color: '#1890ff' }} />
-            <span>最新内容</span>
-          </Space>
-        }
-      >
-        <Row gutter={[12, 12]}>
-          {posts.slice(0, 3).map(post => (
-            <Col xs={24} sm={12} lg={8} key={post.id}>
-              <Card size="small">
+      <div className="work-grid">
+        <section className="terminal-panel">
+          <div className="terminal-panel-header">
+            <div className="terminal-panel-title">
+              <FireOutlined />
+              <span>热门关注池</span>
+            </div>
+            <Text type="secondary">按社区热度排序</Text>
+          </div>
+          <div className="terminal-table">
+            {stocks.slice(0, 6).map(stock => (
+              <div className="terminal-row" key={stock.symbol} onClick={() => onStockSelect(stock)}>
                 <div>
-                  <Text strong>{post.title}</Text>
-                  <div style={{ marginTop: '8px' }}>
-                    <Text type="secondary" ellipsis={{ tooltip: post.summary }}>
-                      {post.summary}
-                    </Text>
-                  </div>
-                  <div style={{ marginTop: '8px' }}>
-                    <Space>
-                      <Text type="secondary">
-                        <MessageOutlined /> {post.comments}
-                      </Text>
-                      <Text type="secondary">
-                        <StarOutlined /> {post.likes}
-                      </Text>
-                      {post.isPaid && (
-                        <Tag color="gold">
-                          <DollarOutlined /> ${post.price}
-                        </Tag>
-                      )}
-                    </Space>
-                  </div>
+                  <span className="instrument-symbol">{stock.symbol}</span>
+                  <span className="instrument-name">{stock.name} · {stock.sector}</span>
                 </div>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </Card>
+                <div>
+                  <span className="instrument-symbol">${stock.currentPrice.toFixed(2)}</span>
+                  <span className={`instrument-name ${stock.changePercent >= 0 ? 'quote-positive' : 'quote-negative'}`}>
+                    {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                  </span>
+                </div>
+                <div className="instrument-meta">{formatQuoteSourceLine(stock)}</div>
+                <div className="instrument-meta">{formatQuoteTimestamp(stock)}</div>
+                <div className="instrument-meta">{stock.communityScore} 活跃度</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="terminal-panel">
+          <div className="terminal-panel-header">
+            <div className="terminal-panel-title">
+              <MessageOutlined />
+              <span>最新投研</span>
+            </div>
+            <Text type="secondary">{posts.length} 篇</Text>
+          </div>
+          <div className="content-list">
+            {posts.slice(0, 5).map(post => (
+              <article className="content-feed-item" key={post.id}>
+                <div className="content-feed-title">{post.title}</div>
+                <div className="content-feed-summary">{post.summary}</div>
+                <div className="content-feed-meta">
+                  <span><MessageOutlined /> {post.comments}</span>
+                  <span><StarOutlined /> {post.likes}</span>
+                  <span>{post.stockSymbol}</span>
+                  {post.isPaid && <Tag color="gold"><DollarOutlined /> ${post.price}</Tag>}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   );
 };

@@ -21,6 +21,15 @@ export interface Stock {
   marketCap: number;
   currentPrice: number;
   changePercent: number;
+  priceChange?: number;
+  previousClose?: number;
+  quoteVolume?: number;
+  quoteProvider?: string;
+  quoteProviderName?: string;
+  quoteMarketTime?: string | null;
+  quoteFetchedAt?: string;
+  quoteIsRealtime?: boolean;
+  quoteDelayNote?: string;
   description: string;
   focusLevel: 'high' | 'medium' | 'low'; // 关注度
   totalPosts: number;
@@ -183,7 +192,7 @@ export interface ShippingAddress {
 }
 
 // 视图类型
-export type ViewType = 'stocks' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders';
+export type ViewType = 'home' | 'stocks' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders' | 'ai-research' | 'agent-center' | 'data-sources' | 'skills' | 'earnings-calendar';
 
 // 应用状态
 export interface AppState {

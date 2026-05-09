@@ -11,6 +11,13 @@ dist/
 # Environment variables
 .env
 .env.local
+.venv/
+backend/.venv/
+backend/.model_config.json
+backend/.agent_tasks.sqlite3
+backend/.agent_tasks.sqlite3-*
+backend/.data_sources.sqlite3
+backend/.data_sources.sqlite3-*
 .env.development.local
 .env.test.local
 .env.production.local
@@ -28,6 +35,8 @@ Thumbs.db
 # Logs
 logs
 *.log
+__pycache__/
+*.py[cod]
 
 # Runtime data
 pids

@@ -1,58 +1,130 @@
 import React from 'react';
-import { Menu, Typography, Space, Divider } from 'antd';
+import { Menu, Typography, Space } from 'antd';
 import {
   DashboardOutlined,
   UserOutlined,
   DollarOutlined,
   BankOutlined,
   ShoppingCartOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  ExperimentOutlined,
+  RobotOutlined,
+  DatabaseOutlined,
+  ToolOutlined,
+  CalendarOutlined
 } from '@ant-design/icons';
-import { AppState } from '../types';
+import { AppState, Stock } from '../types';
 
 const { Text } = Typography;
 
 interface SidebarProps {
   selectedMenu: string;
   onMenuSelect: (key: string) => void;
+  onStockSelect: (stock: Stock) => void;
   appState: AppState;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
   selectedMenu,
   onMenuSelect,
+  onStockSelect,
   appState
 }) => {
   const menuItems = [
     {
-      key: 'home',
-      icon: <DashboardOutlined />,
-      label: '首页'
+      type: 'group' as const,
+      label: '投研中枢',
+      children: [
+        {
+          key: 'home',
+          icon: <DashboardOutlined />,
+          label: 'AI 工作台'
+        },
+        {
+          key: 'ai-research',
+          icon: <ExperimentOutlined />,
+          label: '一键检测'
+        },
+        {
+          key: 'agent-center',
+          icon: <RobotOutlined />,
+          label: '多 Agent 调度'
+        }
+      ]
     },
     {
-      key: 'cart',
-      icon: <ShoppingCartOutlined />,
-      label: '购物车'
+      type: 'group' as const,
+      label: '个股研究',
+      children: [
+        {
+          key: 'stocks',
+          icon: <DashboardOutlined />,
+          label: '个股池'
+        },
+        {
+          key: 'earnings-calendar',
+          icon: <CalendarOutlined />,
+          label: '财报日历'
+        }
+      ]
     },
     {
-      key: 'orders',
-      icon: <FileTextOutlined />,
-      label: '我的订单'
+      type: 'group' as const,
+      label: '数据与证据',
+      children: [
+        {
+          key: 'data-sources',
+          icon: <DatabaseOutlined />,
+          label: '数据中心'
+        },
+        {
+          key: 'skills',
+          icon: <ToolOutlined />,
+          label: '能力 / Skills'
+        }
+      ]
     },
     {
-      key: 'profile',
-      icon: <UserOutlined />,
-      label: '个人中心'
+      type: 'group' as const,
+      label: '商业系统',
+      children: [
+        {
+          key: 'shop',
+          icon: <ShoppingCartOutlined />,
+          label: '研究商城'
+        },
+        {
+          key: 'orders',
+          icon: <FileTextOutlined />,
+          label: '订单'
+        },
+        {
+          key: 'cart',
+          icon: <ShoppingCartOutlined />,
+          label: '购物车'
+        }
+      ]
     },
     {
-      key: 'recharge-history',
-      icon: <DollarOutlined />,
-      label: '充值记录'
-    },
-    {
-      key: 'platform-balance',
-      icon: <BankOutlined />,
-      label: '平台余额'
+      type: 'group' as const,
+      label: '账户运营',
+      children: [
+        {
+          key: 'profile',
+          icon: <UserOutlined />,
+          label: '个人中心'
+        },
+        {
+          key: 'recharge-history',
+          icon: <DollarOutlined />,
+          label: '充值记录'
+        },
+        {
+          key: 'platform-balance',
+          icon: <BankOutlined />,
+          label: '平台余额'
+        }
+      ]
     }
   ];
 
@@ -60,54 +132,41 @@ const Sidebar: React.FC<SidebarProps> = ({
   const hotStocks = appState.stocks.slice(0, 5);
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="workspace-sidebar">
       {/* 主导航菜单 */}
       <Menu
         mode="inline"
         selectedKeys={[selectedMenu]}
         items={menuItems}
         onClick={({ key }) => onMenuSelect(key)}
-        style={{
-          height: '100%',
-          borderRight: 0,
-          fontSize: '14px'
-        }}
       />
 
-      <Divider style={{ margin: '16px 0' }} />
+      <div className="sidebar-divider" />
 
       {/* 热门股票 */}
-      <div style={{ padding: '0 16px' }}>
-        <Text strong style={{ fontSize: '14px', marginBottom: '12px', display: 'block' }}>
-          热门股票
-        </Text>
-        <Space direction="vertical" style={{ width: '100%' }}>
+      <div className="sidebar-section">
+        <div className="sidebar-section-title">
+          <span>重点跟踪</span>
+          <span>Δ%</span>
+        </div>
+        <Space direction="vertical" size={2} style={{ width: '100%' }}>
           {hotStocks.map(stock => (
             <div
               key={stock.symbol}
-              style={{
-                padding: '8px 12px',
-                background: '#f5f5f5',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}
-              onClick={() => onMenuSelect('home')}
+              className="hot-stock-row"
+              onClick={() => onStockSelect(stock)}
             >
               <div>
-                <Text strong style={{ fontSize: '12px' }}>
+                <Text className="hot-stock-symbol">
                   {stock.symbol}
                 </Text>
-                <br />
-                <Text type="secondary" style={{ fontSize: '11px' }}>
+                <Text className="hot-stock-name">
                   {stock.name}
                 </Text>
               </div>
               <Text
-                type={stock.changePercent >= 0 ? 'success' : 'danger'}
-                style={{ fontSize: '12px' }}
+                className={stock.changePercent >= 0 ? 'quote-positive' : 'quote-negative'}
+                style={{ fontSize: 12, fontWeight: 700 }}
               >
                 {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
               </Text>
