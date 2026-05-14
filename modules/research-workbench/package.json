@@ -1,0 +1,15 @@
+{
+  "name": "zsxq-file-downloader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "download": "node zsxq-downloader.js --group 88888142214212",
+    "tool": "node tool-server.js"
+  },
+  "dependencies": {
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
+    "playwright-core": "^1.59.1"
+  }
+}

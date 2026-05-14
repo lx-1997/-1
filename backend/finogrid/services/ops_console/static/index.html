@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Finogrid 运维控制台</title>
+    <link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="控制台导航">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">F</div>
+          <div>
+            <strong>Finogrid</strong>
+            <span>运维控制台</span>
+          </div>
+        </div>
+
+        <nav class="nav-list" id="navList" aria-label="视图">
+          <button class="nav-item is-active" data-view="overview">总览</button>
+          <button class="nav-item" data-view="search">搜索</button>
+          <button class="nav-item" data-view="exceptions">异常</button>
+          <button class="nav-item" data-view="approvals">审批</button>
+          <button class="nav-item" data-view="agents">代理</button>
+          <button class="nav-item" data-view="ledger">账本</button>
+          <button class="nav-item" data-view="mandates">授权</button>
+          <button class="nav-item" data-view="corridors">通道</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">运维</p>
+            <h1 id="viewTitle">总览</h1>
+          </div>
+          <div class="topbar-actions">
+            <span class="status-pill" id="healthPill"><span></span>检查中</span>
+            <label class="api-key-field">
+              <span>运维密钥</span>
+              <input id="apiKeyInput" type="password" autocomplete="off" spellcheck="false">
+            </label>
+            <button class="button button-secondary" id="saveKeyButton" type="button">保存</button>
+            <button class="button" id="refreshButton" type="button">刷新</button>
+          </div>
+        </header>
+
+        <section class="command-bar" aria-label="全局搜索">
+          <input id="globalSearchInput" type="search" placeholder="搜索交易哈希、钱包、代理、批次、客户">
+          <button class="button" id="globalSearchButton" type="button">搜索</button>
+        </section>
+
+        <section class="view is-active" id="overviewView" data-title="总览">
+          <div class="metric-grid" id="overviewMetrics"></div>
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>通道活动</h2>
+                <button class="text-button" data-view-jump="corridors" type="button">打开</button>
+              </div>
+              <div id="overviewCorridors" class="chart-list"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>服务提示</h2>
+                <button class="text-button" data-view-jump="search" type="button">搜索</button>
+              </div>
+              <div id="overviewNotes" class="note-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="searchView" data-title="搜索">
+          <section class="panel">
+            <div class="toolbar">
+              <input id="searchInput" type="search" placeholder="按 ID、地址、名称、交易哈希搜索">
+              <button class="button" id="searchButton" type="button">执行搜索</button>
+            </div>
+            <div id="searchResults"></div>
+          </section>
+        </section>
+
+        <section class="view" id="exceptionsView" data-title="异常">
+          <section class="panel">
+            <div class="toolbar">
+              <select id="exceptionType">
+                <option value="all">全部异常</option>
+                <option value="held_tasks">暂挂任务</option>
+                <option value="kya_blocked">KYA 阻塞</option>
+                <option value="expired_intents">过期意图</option>
+              </select>
+              <button class="button" id="loadExceptionsButton" type="button">加载</button>
+            </div>
+            <div id="exceptionsResults"></div>
+          </section>
+        </section>
+
+        <section class="view" id="approvalsView" data-title="审批">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>待审批事项</h2>
+              <button class="button" id="loadApprovalsButton" type="button">加载</button>
+            </div>
+            <div id="approvalsResults"></div>
+          </section>
+        </section>
+
+        <section class="view" id="agentsView" data-title="代理">
+          <section class="panel">
+            <div class="toolbar">
+              <select id="agentKyaStatus">
+                <option value="">任意 KYA 状态</option>
+                <option value="unverified">未验证</option>
+                <option value="pending">待处理</option>
+                <option value="basic">基础</option>
+                <option value="enhanced">增强</option>
+              </select>
+              <input id="agentChain" type="text" placeholder="链">
+              <button class="button" id="loadAgentsButton" type="button">加载</button>
+            </div>
+            <div id="agentsResults"></div>
+          </section>
+        </section>
+
+        <section class="view" id="ledgerView" data-title="账本">
+          <section class="panel">
+            <div class="toolbar toolbar-wrap">
+              <input id="ledgerAgentId" type="text" placeholder="代理账户 ID">
+              <select id="ledgerEntryType">
+                <option value="">任意分录类型</option>
+                <option value="credit">入账</option>
+                <option value="debit">出账</option>
+                <option value="refund">退款</option>
+                <option value="fee">费用</option>
+                <option value="intent_reserve">意图冻结</option>
+                <option value="intent_release">意图释放</option>
+              </select>
+              <input id="ledgerLimit" type="number" min="1" max="500" value="100" aria-label="账本条数">
+              <button class="button" id="loadLedgerButton" type="button">加载</button>
+            </div>
+            <div id="ledgerResults"></div>
+          </section>
+        </section>
+
+        <section class="view" id="mandatesView" data-title="授权">
+          <section class="panel">
+            <div class="toolbar">
+              <select id="mandateStatus">
+                <option value="">任意状态</option>
+                <option value="draft">草稿</option>
+                <option value="active">生效中</option>
+                <option value="suspended">已暂停</option>
+                <option value="revoked">已撤销</option>
+              </select>
+              <input id="mandateAgentId" type="text" placeholder="代理账户 ID">
+              <button class="button" id="loadMandatesButton" type="button">加载</button>
+            </div>
+            <div id="mandatesResults"></div>
+          </section>
+        </section>
+
+        <section class="view" id="corridorsView" data-title="通道">
+          <section class="panel">
+            <div class="toolbar">
+              <label class="number-field">
+                <span>回看小时</span>
+                <input id="corridorHours" type="number" min="1" max="720" value="24">
+              </label>
+              <button class="button" id="loadCorridorsButton" type="button">加载</button>
+            </div>
+            <div id="corridorsResults"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

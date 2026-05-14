@@ -1,0 +1,12 @@
+node_modules/
+downloads/*
+!downloads/.gitkeep
+.tool-runs/*
+!.tool-runs/.gitkeep
+.zsxq-browser-profile/
+cookie.txt
+cookies.txt
+zsxq.curl
+*.curl
+*.cookie
+*.cookies

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>正在清理缓存</title>
+    <style>
+      body {
+        align-items: center;
+        background: #f5f7fb;
+        color: #1f2937;
+        display: flex;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        height: 100vh;
+        justify-content: center;
+        margin: 0;
+      }
+
+      main {
+        background: #fff;
+        border: 1px solid #dce3ec;
+        border-radius: 8px;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+        padding: 28px 34px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>正在清理缓存</h1>
+      <p>清理完成后会自动返回深度焦点。</p>
+    </main>
+    <script>
+      async function clearDeepFocusCache() {
+        if ("serviceWorker" in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+        }
+        if ("caches" in window) {
+          const cacheNames = await caches.keys();
+          await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+        }
+        try {
+          localStorage.clear();
+          sessionStorage.clear();
+        } catch (error) {
+          // Ignore storage errors in private or restricted browser contexts.
+        }
+        window.location.replace("/?cache-cleared=" + Date.now());
+      }
+
+      clearDeepFocusCache();
+    </script>
+  </body>
+</html>

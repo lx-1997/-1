@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>知识星球研报下载工具</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="mark">研</div>
+        <div>
+          <h1>研报下载</h1>
+          <p>知识星球附件抓取</p>
+        </div>
+      </div>
+
+      <section class="status-panel">
+        <div class="metric">
+          <span>凭证</span>
+          <strong id="credentialStatus">检测中</strong>
+        </div>
+        <div class="metric">
+          <span>任务</span>
+          <strong id="jobStatus">空闲</strong>
+        </div>
+        <div class="metric">
+          <span>文件</span>
+          <strong id="fileCount">0</strong>
+        </div>
+      </section>
+
+      <nav class="nav">
+        <button class="nav-item active" type="button" data-view="ai">对话</button>
+        <button class="nav-item" type="button" data-view="data">数据管理</button>
+        <button class="nav-item" type="button" data-view="skills">插件与技能</button>
+        <button class="nav-item" type="button" data-view="model">模型配置</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2>水木调研纪要 · 海外投行报告</h2>
+          <p id="outputPath">downloads/海外投行报告</p>
+        </div>
+        <button id="refreshBtn" class="icon-button" type="button" title="刷新状态" aria-label="刷新状态">
+          <span>↻</span>
+        </button>
+      </header>
+
+      <section id="dataView" class="view">
+        <div class="module-tabs">
+          <button class="module-tab active" type="button" data-pane="run">抓取</button>
+          <button class="module-tab" type="button" data-pane="search">搜索</button>
+          <button class="module-tab" type="button" data-pane="files">文件库</button>
+        </div>
+
+        <section id="runPane" class="data-pane active">
+          <form id="jobForm" class="tool-grid">
+          <fieldset class="panel controls">
+            <legend>参数</legend>
+            <label>
+              <span>星球 ID</span>
+              <input name="group" value="88888142214212" autocomplete="off">
+            </label>
+            <label>
+              <span>标签</span>
+              <input name="tag" value="海外投行报告" autocomplete="off">
+            </label>
+            <label>
+              <span>输出目录</span>
+              <input name="out" value="downloads/海外投行报告" autocomplete="off">
+            </label>
+            <div class="inline-fields">
+              <label>
+                <span>扩展名</span>
+                <input name="ext" value="pdf" autocomplete="off">
+              </label>
+              <label>
+                <span>数量</span>
+                <input name="limit" type="number" min="0" step="1" value="20">
+              </label>
+              <label>
+                <span>页数</span>
+                <input name="maxPages" type="number" min="0" step="1" value="0">
+              </label>
+            </div>
+            <label class="checkline">
+              <input name="listOnly" type="checkbox">
+              <span>只列出</span>
+            </label>
+          </fieldset>
+
+          <fieldset class="panel auth">
+            <legend>凭证</legend>
+            <div class="segmented">
+              <label><input type="radio" name="authMode" value="env" checked><span>环境</span></label>
+              <label><input type="radio" name="authMode" value="curl"><span>curl</span></label>
+              <label><input type="radio" name="authMode" value="cookie"><span>Cookie</span></label>
+            </div>
+            <textarea name="curlText" placeholder="粘贴浏览器复制的 curl 命令"></textarea>
+            <textarea name="cookie" placeholder="Cookie 字符串"></textarea>
+            <input name="aduid" placeholder="X-Aduid，可选" autocomplete="off">
+          </fieldset>
+
+          <div class="actions">
+            <button id="listBtn" class="secondary" type="button">列出</button>
+            <button id="downloadBtn" class="primary" type="submit">下载</button>
+            <button id="stopBtn" class="danger" type="button" disabled>停止</button>
+          </div>
+          </form>
+
+          <section class="panel log-panel">
+            <div class="section-head">
+              <h3>日志</h3>
+              <button id="clearLogBtn" class="icon-button small" type="button" title="清空日志" aria-label="清空日志">×</button>
+            </div>
+            <pre id="logBox"></pre>
+          </section>
+        </section>
+
+        <section id="searchPane" class="data-pane">
+        <section class="panel search-panel">
+          <div class="section-head">
+            <h3>模糊搜索</h3>
+            <span id="searchSummary">0 项</span>
+          </div>
+          <div class="search-controls">
+            <label>
+              <span>关键词</span>
+              <input id="keywordInput" placeholder="公司、行业、英文标题" autocomplete="off">
+            </label>
+            <label>
+              <span>扫描页数</span>
+              <input id="searchPagesInput" type="number" min="1" max="500" step="1" value="10">
+            </label>
+            <label>
+              <span>结果上限</span>
+              <input id="resultLimitInput" type="number" min="1" max="1000" step="1" value="200">
+            </label>
+            <button id="searchBtn" class="secondary" type="button">搜索</button>
+            <button id="selectAllBtn" type="button">全选</button>
+            <button id="downloadSelectedBtn" class="primary" type="button">下载选中</button>
+          </div>
+          <div id="searchError" class="inline-error" hidden></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="check-col"></th>
+                  <th>文件</th>
+                  <th>大小</th>
+                  <th>主题时间</th>
+                  <th>下载</th>
+                </tr>
+              </thead>
+              <tbody id="searchBody"></tbody>
+            </table>
+          </div>
+        </section>
+        </section>
+
+        <section id="filesPane" class="data-pane">
+        <section class="panel files-panel">
+          <div class="section-head">
+            <h3>已下载</h3>
+            <span id="sizeText"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>文件</th>
+                  <th>大小</th>
+                  <th>时间</th>
+                  <th>动作</th>
+                </tr>
+              </thead>
+              <tbody id="filesBody"></tbody>
+            </table>
+          </div>
+        </section>
+        </section>
+      </section>
+
+      <section id="skillsView" class="view">
+        <section class="module-page">
+          <div class="module-title">
+            <h3>插件与技能</h3>
+            <p>对话工作台可以调用这些能力；技能决定模型如何使用数据和文件。</p>
+          </div>
+          <div class="skill-grid">
+            <article class="skill-card">
+              <strong>解析研报</strong>
+              <p>读取当前引用文件，输出投资结论、核心观点、数据催化剂和风险点。</p>
+              <button class="secondary skill-action" type="button" data-skill="report_analysis">在对话中使用</button>
+            </article>
+            <article class="skill-card">
+              <strong>文件问答</strong>
+              <p>把已抓取文件作为引用上下文，围绕内容继续追问和抽取信息。</p>
+              <button class="secondary skill-action" type="button" data-skill="file_qa">在对话中使用</button>
+            </article>
+            <article class="skill-card">
+              <strong>数据抓取</strong>
+              <p>进入数据管理模块，按标签、关键词或选中文件抓取研报附件。</p>
+              <button class="secondary skill-action" type="button" data-target-view="data">打开数据管理</button>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section id="modelView" class="view"></section>
+
+      <section id="aiView" class="view active">
+        <section class="ai-grid">
+          <form id="modelForm" class="panel model-panel">
+            <div class="section-head">
+              <h3>模型配置</h3>
+              <span id="modelStatus">未测试</span>
+            </div>
+            <div class="panel-body">
+              <label>
+                <span>Base URL</span>
+                <input id="modelBaseUrl" name="baseUrl" value="https://api.openai.com/v1" autocomplete="off">
+              </label>
+              <label>
+                <span>API Key</span>
+                <input id="modelApiKey" name="apiKey" type="password" autocomplete="off">
+              </label>
+              <label class="checkline save-key-line">
+                <input id="saveApiKey" type="checkbox" checked>
+                <span>在本机浏览器保存 API Key</span>
+              </label>
+              <label>
+                <span>模型</span>
+                <input id="modelName" name="model" placeholder="gpt-4.1 / gpt-4o / qwen-vl..." autocomplete="off">
+              </label>
+              <div class="inline-fields model-inline">
+                <label>
+                  <span>适配</span>
+                  <select id="modelCompat" name="compat">
+                    <option value="auto" selected>自动</option>
+                    <option value="standard">标准</option>
+                    <option value="kimi">Kimi</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                </label>
+                <label>
+                  <span>温度</span>
+                  <input id="modelTemperature" name="temperature" type="number" min="0" max="2" step="0.1" value="0.2">
+                </label>
+                <label>
+                  <span>输出</span>
+                  <input id="modelMaxTokens" name="maxTokens" type="number" min="256" max="12000" step="128" value="4096">
+                </label>
+              </div>
+              <label>
+                <span>思考</span>
+                <select id="modelThinking" name="thinking">
+                  <option value="disabled" selected>关闭</option>
+                  <option value="default">默认</option>
+                  <option value="enabled">开启</option>
+                </select>
+              </label>
+              <label>
+                <span>高级参数</span>
+                <textarea id="modelExtraBody" name="extraBody" placeholder='{"top_p":0.8}'></textarea>
+              </label>
+              <div class="actions compact">
+                <button id="saveModelBtn" class="secondary" type="submit">保存</button>
+                <button id="testModelBtn" class="primary" type="button">测试</button>
+              </div>
+            </div>
+          </form>
+
+          <section class="panel chat-panel">
+            <div class="section-head">
+              <h3>对话工作台</h3>
+              <span id="chatStatus">待命</span>
+            </div>
+            <div class="panel-body">
+              <div class="chat-toolbar">
+                <input id="aiFileFilter" class="file-filter" placeholder="过滤文件" autocomplete="off">
+                <select id="aiFileSelect" class="file-select"></select>
+                <select id="chatSkill" class="skill-select">
+                  <option value="chat" selected>普通对话</option>
+                  <option value="file_qa">文件问答</option>
+                  <option value="report_analysis">解析研报</option>
+                </select>
+                <button id="addReferenceBtn" class="secondary" type="button">添加引用</button>
+                <label class="checkline context-check">
+                  <input id="includeFileContext" type="checkbox">
+                  <span>带上下文</span>
+                </label>
+              </div>
+              <div id="chatReferences" class="reference-list"></div>
+              <div id="chatMessages" class="chat-messages"></div>
+              <div class="chat-composer">
+                <textarea id="chatInput" class="chat-input" placeholder="输入消息；或直接点“解析研报”让它先读当前文件"></textarea>
+                <div class="actions compact composer-actions">
+                  <button id="refreshAiFilesBtn" class="secondary" type="button">刷新</button>
+                  <button id="parseReportBtn" class="secondary" type="button">解析研报</button>
+                  <button id="sendChatBtn" class="primary" type="button">发送</button>
+                  <button id="clearChatBtn" type="button">清空</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

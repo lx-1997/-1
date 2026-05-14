@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>点击测试页面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .test-button {
+            display: inline-block;
+            padding: 12px 24px;
+            margin: 10px;
+            background-color: #1890ff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        .test-button:hover {
+            background-color: #40a9ff;
+        }
+        .test-button:active {
+            background-color: #096dd9;
+        }
+        .stats-container {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .stat-item {
+            flex: 1;
+            padding: 20px;
+            border: 2px solid #d9d9d9;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .stat-item:hover {
+            transform: scale(1.05);
+        }
+        .stat-item.like {
+            border-color: #52c41a;
+            background-color: #f6ffed;
+        }
+        .stat-item.comment {
+            border-color: #1890ff;
+            background-color: #f0f9ff;
+        }
+        .stat-item.share {
+            border-color: #faad14;
+            background-color: #fffbe6;
+        }
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 点击功能测试页面</h1>
+        <p>如果您能看到这个页面，说明服务器正在运行。请测试以下功能：</p>
+        
+        <h2>基础按钮测试</h2>
+        <button class="test-button" onclick="testButton1()">测试按钮 1</button>
+        <button class="test-button" onclick="testButton2()">测试按钮 2</button>
+        
+        <h2>统计数据点击测试</h2>
+        <div class="stats-container">
+            <div class="stat-item" onclick="testLike()">
+                <div class="stat-number" style="color: #52c41a;">89</div>
+                <div class="stat-label">点赞</div>
+            </div>
+            <div class="stat-item comment" onclick="testComment()">
+                <div class="stat-number" style="color: #1890ff;">15</div>
+                <div class="stat-label">评论</div>
+            </div>
+            <div class="stat-item share" onclick="testShare()">
+                <div class="stat-number" style="color: #faad14;">8</div>
+                <div class="stat-label">分享</div>
+            </div>
+        </div>
+        
+        <div id="result" style="margin-top: 20px; padding: 10px; background-color: #f0f0f0; border-radius: 4px;">
+            点击上面的按钮或统计数据来测试功能...
+        </div>
+    </div>
+
+    <script>
+        function testButton1() {
+            document.getElementById('result').innerHTML = '✅ 测试按钮 1 被点击！功能正常！';
+            console.log('测试按钮 1 被点击');
+        }
+        
+        function testButton2() {
+            document.getElementById('result').innerHTML = '✅ 测试按钮 2 被点击！功能正常！';
+            console.log('测试按钮 2 被点击');
+        }
+        
+        function testLike() {
+            document.getElementById('result').innerHTML = '✅ 点赞功能被触发！数字应该增加！';
+            console.log('点赞功能被触发');
+        }
+        
+        function testComment() {
+            document.getElementById('result').innerHTML = '✅ 评论功能被触发！应该跳转到评论区！';
+            console.log('评论功能被触发');
+        }
+        
+        function testShare() {
+            document.getElementById('result').innerHTML = '✅ 分享功能被触发！应该打开分享模态框！';
+            console.log('分享功能被触发');
+        }
+    </script>
+</body>
+</html>
+
+
+
+
