@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   App as AntdApp,
   Button,
@@ -19,23 +19,22 @@ import {
   DeleteOutlined,
   DollarOutlined,
   FireOutlined,
-  GlobalOutlined,
   MessageOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
-  StarOutlined,
   TrophyOutlined
 } from '@ant-design/icons';
 import { Stock } from '../types';
 import { MarketRegion, MarketSymbolCandidate, searchMarketSymbols } from '../services/marketDataService';
 import { formatQuoteSourceLine, formatQuoteTimestamp } from '../utils/marketData';
+import { MarketSegmentKey, marketSegments, stockBelongsToSegment } from '../utils/marketSegments';
 
 const { Paragraph, Text } = Typography;
 const { Search } = Input;
 
 type StockPoolFilter = 'all' | 'subscribed' | MarketRegion;
-type StockSearchMarket = 'all' | MarketRegion;
+type StockSearchMarket = 'all' | 'global' | MarketRegion;
 
 interface StockListProps {
   stocks: Stock[];
@@ -46,6 +45,8 @@ interface StockListProps {
   onRefreshMarketData?: () => void;
   isMarketDataRefreshing?: boolean;
   showHeader?: boolean;
+  marketSegment?: MarketSegmentKey;
+  onMarketSegmentChange?: (segment: MarketSegmentKey) => void;
 }
 
 const marketMeta: Record<MarketRegion, { text: string; color: string; currency: string }> = {
@@ -75,6 +76,34 @@ const getFocusLevelText = (level: string) => {
 
 const marketOf = (stock: Stock): MarketRegion => stock.market || 'US';
 
+const defaultSearchMarketForSegment = (segment: MarketSegmentKey): StockSearchMarket => {
+  if (segment === 'a-share') return 'CN';
+  if (segment === 'global') return 'global';
+  return 'all';
+};
+
+const searchMarketOptionsForSegment = (segment: MarketSegmentKey) => {
+  if (segment === 'a-share') {
+    return [{ label: 'A股', value: 'CN' }];
+  }
+
+  if (segment === 'global') {
+    return [
+      { label: '港美股', value: 'global' },
+      { label: '港股', value: 'HK' },
+      { label: '美股', value: 'US' }
+    ];
+  }
+
+  return [
+    { label: '全市场', value: 'all' },
+    { label: 'A股', value: 'CN' },
+    { label: '港美股', value: 'global' },
+    { label: '港股', value: 'HK' },
+    { label: '美股', value: 'US' }
+  ];
+};
+
 const formatPrice = (stock: Stock) => {
   const currency = stock.currency || marketMeta[marketOf(stock)].currency;
   const value = Number(stock.currentPrice || 0);
@@ -92,33 +121,77 @@ const StockList: React.FC<StockListProps> = ({
   onToggleSubscription,
   onRefreshMarketData,
   isMarketDataRefreshing = false,
-  showHeader = true
+  showHeader = true,
+  marketSegment = 'all',
+  onMarketSegmentChange
 }) => {
   const { message } = AntdApp.useApp();
+  const [activeSegment, setActiveSegment] = useState<MarketSegmentKey>(marketSegment);
   const [poolFilter, setPoolFilter] = useState<StockPoolFilter>('all');
-  const [searchMarket, setSearchMarket] = useState<StockSearchMarket>('all');
+  const [searchMarket, setSearchMarket] = useState<StockSearchMarket>(defaultSearchMarketForSegment(marketSegment));
   const [searchText, setSearchText] = useState('');
   const [searching, setSearching] = useState(false);
   const [candidates, setCandidates] = useState<MarketSymbolCandidate[]>([]);
   const [addingSymbol, setAddingSymbol] = useState<string | null>(null);
+  const segmentMeta = marketSegments[activeSegment];
+
+  useEffect(() => {
+    setActiveSegment(marketSegment);
+  }, [marketSegment]);
+
+  useEffect(() => {
+    setPoolFilter(prev => {
+      if (prev === 'all' || prev === 'subscribed') {
+        return prev;
+      }
+      return segmentMeta.markets.includes(prev) ? prev : 'all';
+    });
+    setSearchMarket(defaultSearchMarketForSegment(activeSegment));
+    setCandidates([]);
+  }, [activeSegment, segmentMeta.markets]);
+
+  const segmentStocks = useMemo(
+    () => stocks.filter(stock => stockBelongsToSegment(stock, activeSegment)),
+    [activeSegment, stocks]
+  );
 
   const poolStats = useMemo(() => {
-    const subscribed = stocks.filter(stock => stock.isSubscribed ?? true).length;
-    const byMarket = stocks.reduce<Record<string, number>>((acc, stock) => {
+    const subscribed = segmentStocks.filter(stock => stock.isSubscribed ?? true).length;
+    const byMarket = segmentStocks.reduce<Record<string, number>>((acc, stock) => {
       const market = marketOf(stock);
       acc[market] = (acc[market] || 0) + 1;
       return acc;
     }, {});
     return { subscribed, byMarket };
-  }, [stocks]);
+  }, [segmentStocks]);
 
   const filteredStocks = useMemo(() => {
-    return stocks.filter(stock => {
+    return segmentStocks.filter(stock => {
       if (poolFilter === 'all') return true;
       if (poolFilter === 'subscribed') return stock.isSubscribed ?? true;
       return marketOf(stock) === poolFilter;
     });
-  }, [poolFilter, stocks]);
+  }, [poolFilter, segmentStocks]);
+
+  const poolFilterOptions = useMemo(() => {
+    const marketOptions = segmentMeta.markets
+      .filter(market => market !== 'OTHER')
+      .map(market => ({
+        label: `${marketMeta[market].text} ${poolStats.byMarket[market] || 0}`,
+        value: market
+      }));
+
+    return [
+      { label: `全部 ${segmentStocks.length}`, value: 'all' },
+      { label: `监控中 ${poolStats.subscribed}`, value: 'subscribed' },
+      ...marketOptions
+    ];
+  }, [poolStats.byMarket, poolStats.subscribed, segmentMeta.markets, segmentStocks.length]);
+
+  const handleSegmentChange = (segment: MarketSegmentKey) => {
+    setActiveSegment(segment);
+    onMarketSegmentChange?.(segment);
+  };
 
   const handleSearch = async (value = searchText) => {
     const keyword = value.trim();
@@ -128,16 +201,28 @@ const StockList: React.FC<StockListProps> = ({
     }
     setSearching(true);
     try {
-      const result = await searchMarketSymbols(
-        keyword,
-        searchMarket
+      const searchTargets: Array<MarketRegion | 'all'> = searchMarket === 'global'
+        ? ['HK', 'US']
+        : [searchMarket];
+      const results = await Promise.all(
+        searchTargets.map(target => searchMarketSymbols(keyword, target))
       );
-      setCandidates(result.candidates);
-      if (result.candidates.length === 0) {
+      const dedupedCandidates = new Map<string, MarketSymbolCandidate>();
+      results.forEach(result => {
+        result.candidates
+          .filter(candidate => stockBelongsToSegment(candidate, activeSegment))
+          .forEach(candidate => {
+            dedupedCandidates.set(`${candidate.market}:${candidate.symbol}`, candidate);
+          });
+      });
+      const nextCandidates = Array.from(dedupedCandidates.values());
+      setCandidates(nextCandidates);
+      if (nextCandidates.length === 0) {
         message.info('没有找到匹配标的，可以尝试完整代码，例如 AAPL、00700、600519');
       }
-      if (result.warnings.length > 0) {
-        console.warn('Market symbol search warnings:', result.warnings);
+      const warnings = results.reduce<string[]>((acc, result) => acc.concat(result.warnings), []);
+      if (warnings.length > 0) {
+        console.warn('Market symbol search warnings:', warnings);
       }
     } catch (error: any) {
       message.error(error?.message || '标的搜索失败');
@@ -168,10 +253,10 @@ const StockList: React.FC<StockListProps> = ({
             <h2>
               <Space>
                 <TrophyOutlined style={{ color: '#b7791f' }} />
-                <span>自选个股池</span>
+                <span>{segmentMeta.label}研究池</span>
               </Space>
             </h2>
-            <div className="section-description">像自选股一样维护美股、港股、A股，并订阅价格、新闻、财报和研究提醒。</div>
+            <div className="section-description">{segmentMeta.description}</div>
           </div>
           <Space wrap>
             <Tag color="blue">美股 {poolStats.byMarket.US || 0}</Tag>
@@ -184,17 +269,28 @@ const StockList: React.FC<StockListProps> = ({
         </div>
       )}
 
+      <div className="watchlist-segment-panel">
+        <Segmented
+          value={activeSegment}
+          onChange={value => handleSegmentChange(value as MarketSegmentKey)}
+          options={[
+            { label: '全市场', value: 'all' },
+            { label: 'A股', value: 'a-share' },
+            { label: '港美股', value: 'global' }
+          ]}
+        />
+        <Space wrap size={6} className="watchlist-segment-chips">
+          {segmentMeta.chips.map(chip => (
+            <Tag key={chip}>{chip}</Tag>
+          ))}
+        </Space>
+      </div>
+
       <div className="watchlist-toolbar">
         <Segmented
           value={poolFilter}
           onChange={value => setPoolFilter(value as StockPoolFilter)}
-          options={[
-            { label: `全部 ${stocks.length}`, value: 'all' },
-            { label: `已订阅 ${poolStats.subscribed}`, value: 'subscribed' },
-            { label: `美股 ${poolStats.byMarket.US || 0}`, value: 'US' },
-            { label: `港股 ${poolStats.byMarket.HK || 0}`, value: 'HK' },
-            { label: `A股 ${poolStats.byMarket.CN || 0}`, value: 'CN' }
-          ]}
+          options={poolFilterOptions}
         />
         {!showHeader && (
           <Button icon={<ReloadOutlined />} loading={isMarketDataRefreshing} onClick={onRefreshMarketData}>
@@ -207,12 +303,7 @@ const StockList: React.FC<StockListProps> = ({
         <Segmented
           value={searchMarket}
           onChange={value => setSearchMarket(value as StockSearchMarket)}
-          options={[
-            { label: '全市场', value: 'all' },
-            { label: '美股', value: 'US' },
-            { label: '港股', value: 'HK' },
-            { label: 'A股', value: 'CN' }
-          ]}
+          options={searchMarketOptionsForSegment(activeSegment)}
         />
         <Search
           allowClear
@@ -221,7 +312,7 @@ const StockList: React.FC<StockListProps> = ({
           onSearch={handleSearch}
           enterButton={<SearchOutlined />}
           loading={searching}
-          placeholder="添加自选：AAPL / 腾讯 / 00700 / 贵州茅台 / 600519"
+          placeholder={segmentMeta.searchPlaceholder}
         />
       </div>
 
@@ -281,7 +372,7 @@ const StockList: React.FC<StockListProps> = ({
                     <Text>{stock.name}</Text>
                     <Tag color={marketMeta[marketOf(stock)].color}>{marketMeta[marketOf(stock)].text}</Tag>
                     <Tag color={getFocusLevelColor(stock.focusLevel)}>{getFocusLevelText(stock.focusLevel)}</Tag>
-                    {(stock.isSubscribed ?? true) && <Tag color="green">订阅中</Tag>}
+                    {(stock.isSubscribed ?? true) && <Tag color="green">监控中</Tag>}
                   </Space>
                   <Text type="secondary">{stock.exchange || stock.sector}</Text>
                 </Space>
@@ -289,32 +380,16 @@ const StockList: React.FC<StockListProps> = ({
             },
             {
               title: '行情',
-              width: 170,
+              width: 210,
               render: (_, stock) => (
-                <Space direction="vertical" size={0}>
+                <Space direction="vertical" size={1}>
                   <Text strong>{formatPrice(stock)}</Text>
                   <Text className={stock.changePercent >= 0 ? 'quote-positive' : 'quote-negative'}>
                     {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
                     {typeof stock.priceChange === 'number' && ` / ${stock.priceChange >= 0 ? '+' : ''}${stock.priceChange.toFixed(2)}`}
                   </Text>
+                  <Text type="secondary">{formatQuoteSourceLine(stock)} · {formatQuoteTimestamp(stock)}</Text>
                 </Space>
-              )
-            },
-            {
-              title: '订阅',
-              width: 92,
-              render: (_, stock) => (
-                <Tooltip title={(stock.isSubscribed ?? true) ? '暂停订阅提醒' : '开启订阅提醒'}>
-                  <Button
-                    shape="circle"
-                    icon={(stock.isSubscribed ?? true) ? <BellFilled /> : <BellOutlined />}
-                    type={(stock.isSubscribed ?? true) ? 'primary' : 'default'}
-                    onClick={event => {
-                      event.stopPropagation();
-                      onToggleSubscription?.(stock.symbol);
-                    }}
-                  />
-                </Tooltip>
               )
             },
             {
@@ -335,40 +410,49 @@ const StockList: React.FC<StockListProps> = ({
               )
             },
             {
-              title: '来源',
-              width: 210,
+              title: '提醒',
+              width: 86,
               render: (_, stock) => (
-                <Space direction="vertical" size={0}>
-                  <Text><GlobalOutlined /> {formatQuoteSourceLine(stock)}</Text>
-                  <Text type="secondary">{formatQuoteTimestamp(stock)}</Text>
-                </Space>
+                <Tooltip title={(stock.isSubscribed ?? true) ? '暂停监控提醒' : '开启监控提醒'}>
+                  <Button
+                    shape="circle"
+                    icon={(stock.isSubscribed ?? true) ? <BellFilled /> : <BellOutlined />}
+                    type={(stock.isSubscribed ?? true) ? 'primary' : 'default'}
+                    onClick={event => {
+                      event.stopPropagation();
+                      onToggleSubscription?.(stock.symbol);
+                    }}
+                  />
+                </Tooltip>
               )
             },
             {
               title: '操作',
-              width: 170,
+              width: 132,
               render: (_, stock) => (
                 <Space size={4}>
-                  <Button
-                    size="small"
-                    icon={<MessageOutlined />}
-                    onClick={event => {
-                      event.stopPropagation();
-                      onStockSelect(stock);
-                    }}
-                  >
-                    社区
-                  </Button>
-                  <Button
-                    size="small"
-                    icon={<DollarOutlined />}
-                    onClick={event => {
-                      event.stopPropagation();
-                      onStockSelect(stock);
-                    }}
-                  >
-                    {stock.totalPaidPosts}
-                  </Button>
+                  <Tooltip title="打开标的工作区">
+                    <Button
+                      size="small"
+                      shape="circle"
+                      icon={<MessageOutlined />}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onStockSelect(stock);
+                      }}
+                    />
+                  </Tooltip>
+                  <Tooltip title={`${stock.totalPaidPosts} 篇深度报告`}>
+                    <Button
+                      size="small"
+                      shape="circle"
+                      icon={<DollarOutlined />}
+                      onClick={event => {
+                        event.stopPropagation();
+                        onStockSelect(stock);
+                      }}
+                    />
+                  </Tooltip>
                   <Popconfirm
                     title={`移除 ${stock.symbol}？`}
                     okText="移除"
@@ -381,6 +465,7 @@ const StockList: React.FC<StockListProps> = ({
                     <Button
                       size="small"
                       danger
+                      shape="circle"
                       icon={<DeleteOutlined />}
                       onClick={event => event.stopPropagation()}
                     />

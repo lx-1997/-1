@@ -10,6 +10,10 @@
     "test": "jest",
     "lint": "eslint src --ext .ts"
   },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node"
+  },
   "dependencies": {
     "axios": "^1.6.0"
   },

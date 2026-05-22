@@ -5,6 +5,7 @@ import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
@@ -24,6 +25,8 @@ from .agent_runtime import (
     stop_agent_worker,
     task_counts,
 )
+from .agent_events import agent_task_event_stream
+from .ai_supply_chain import fetch_ai_supply_chain_capacity_trends
 from .data_sources import (
     capture_agent_web_pages,
     create_data_source,
@@ -43,10 +46,24 @@ from .data_sources import (
     sync_data_source,
     update_data_item,
 )
-from .file_tools import extract_upload_file
+from .file_tools import extract_local_file, extract_upload_file
+from .cn_earnings_skill import (
+    detect_cn_earnings_request,
+    diagnose_cn_earnings,
+    enrich_cn_earnings_record_detail,
+    format_cn_earnings_skill_response,
+    scan_cn_earnings,
+)
+from .customs_hs_detail import fetch_customs_hs_detail_snapshot, search_customs_hs_detail_products
+from .customs_trade import build_customs_trade_analysis_text, fetch_customs_trade_snapshot
 from .earnings_calendar import fetch_earnings_calendar
 from .llm import CloudResearchLLM
 from .market_data import fetch_market_quotes, search_market_symbols
+from .major_event_skill import (
+    detect_major_event_request,
+    format_major_event_skill_response,
+    scan_major_events,
+)
 from .mcp_hub import (
     call_mcp_tool,
     create_mcp_server,
@@ -57,6 +74,20 @@ from .mcp_hub import (
     list_mcp_servers,
 )
 from .model_config import public_model_config, save_model_config
+from .multi_market_decision import build_multi_market_decision
+from .options_signal import fetch_options_signals
+from .professional_research import (
+    analyze_professional_report,
+    get_professional_report,
+    ingest_professional_report_from_item,
+    ingest_professional_report_text,
+    init_professional_research_db,
+    list_professional_chunks,
+    list_professional_metrics,
+    list_professional_reports,
+    query_professional_rag,
+    run_professional_eval,
+)
 from .realtime_messages import (
     create_realtime_message,
     init_realtime_message_db,
@@ -64,11 +95,30 @@ from .realtime_messages import (
     publish_data_source_items,
     realtime_message_event_stream,
 )
+from .research_workbench import (
+    WORKBENCH_DIR,
+    proxy_research_workbench,
+    stop_research_workbench,
+    warm_research_workbench,
+)
+from .shareholder_change_skill import (
+    detect_shareholder_change_request,
+    format_shareholder_change_skill_response,
+    interpret_shareholder_change,
+    scan_shareholder_changes,
+)
 from .schemas import (
     AgentBriefRequest,
     AgentRuntimeHealthResponse,
     CapabilityListResponse,
+    CnEarningsDiagnosisRequest,
+    CnEarningsDiagnosisResponse,
+    CnEarningsRecordDetailRequest,
+    CnEarningsRecordDetailResponse,
+    CnEarningsScanRequest,
+    CnEarningsScanResponse,
     CorridorRiskRequest,
+    CustomsTradeAnalysisRequest,
     DataSourceCreateRequest,
     DataSourceItemInterpretRequest,
     DataSourceItemInterpretResponse,
@@ -89,11 +139,15 @@ from .schemas import (
     FinGptTaskResponse,
     ForecastRequest,
     FileExtractionResponse,
+    GeneralChatRequest,
+    GeneralChatResponse,
     InvestmentTaskCreateRequest,
     InvestmentTaskListResponse,
     InvestmentTaskRecord,
     MarketQuoteListResponse,
     MarketSymbolSearchResponse,
+    MajorEventScanRequest,
+    MajorEventScanResponse,
     McpCapabilityListResponse,
     McpDiscoverResponse,
     McpServerCreateRequest,
@@ -104,6 +158,25 @@ from .schemas import (
     NewsSummaryRequest,
     ModelConfigRequest,
     ModelConfigResponse,
+    MultiMarketDecisionRequest,
+    MultiMarketDecisionResponse,
+    OptionsAiAnalysisRequest,
+    OptionsAiAnalysisResponse,
+    OptionsSignalResponse,
+    OrchestratorChatRequest,
+    OrchestratorChatResponse,
+    ProfessionalEvalRunRequest,
+    ProfessionalEvalRunResponse,
+    ProfessionalMetricListResponse,
+    ProfessionalRagQueryRequest,
+    ProfessionalRagQueryResponse,
+    ProfessionalReportAnalysisRequest,
+    ProfessionalReportAnalysisResponse,
+    ProfessionalReportChunkListResponse,
+    ProfessionalReportIngestRequest,
+    ProfessionalReportListResponse,
+    ProfessionalReportRecord,
+    ProfessionalWorkbenchFileIngestRequest,
     RagQueryRequest,
     RealtimeMessageCreateRequest,
     RealtimeMessageListResponse,
@@ -111,29 +184,67 @@ from .schemas import (
     ReportAnalysisRequest,
     SentimentRequest,
     SentimentResponse,
+    ShareholderChangeInterpretRequest,
+    ShareholderChangeInterpretResponse,
+    ShareholderChangeScanRequest,
+    ShareholderChangeScanResponse,
     StockAnalysisRequest,
     StockAnalysisResponse,
     StockCheckRequest,
     StockCheckResponse,
     StockCheckStep,
+    SystemReadinessCheck,
+    SystemReadinessResponse,
 )
 
 load_dotenv()
 
 
+def _safe_workbench_file_path(out: str, filename: str) -> Path:
+    root = WORKBENCH_DIR.resolve()
+    base = (root / (out or "downloads/海外投行报告")).resolve()
+    try:
+        base.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="抓取目录不在研报工作台内。") from exc
+
+    file_path = (base / filename).resolve()
+    try:
+        file_path.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="文件路径越界。") from exc
+
+    if file_path.name in {"manifest.json", "files.csv"} or file_path.name.endswith(".part"):
+        raise HTTPException(status_code=400, detail="该文件不是可入库研报。")
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="抓取文件不存在。")
+    return file_path
+
+
 def _allowed_origins() -> list[str]:
     raw = os.getenv("CORS_ORIGINS", "*")
-    return [origin.strip() for origin in raw.split(",") if origin.strip()] or ["*"]
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()] or ["*"]
+    if "*" in origins:
+        return origins
+    local_origins = [
+        f"http://{host}:{port}"
+        for host in ("localhost", "127.0.0.1")
+        for port in range(3000, 3016)
+    ]
+    return list(dict.fromkeys([*origins, *local_origins]))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_task_db()
     init_data_source_db()
+    init_professional_research_db()
     init_realtime_message_db()
     init_mcp_db()
+    await warm_research_workbench()
     await start_agent_worker()
     yield
     await stop_agent_worker()
+    await stop_research_workbench()
 
 
 app = FastAPI(
@@ -163,6 +274,162 @@ async def health() -> dict:
     }
 
 
+@app.get("/api/system/readiness", response_model=SystemReadinessResponse)
+async def system_readiness() -> SystemReadinessResponse:
+    checks = _build_system_readiness_checks()
+    weights = {
+        "model": 18,
+        "auth": 18,
+        "agent_worker": 12,
+        "data_sources": 14,
+        "market_data": 10,
+        "mcp_governance": 10,
+        "cors": 10,
+        "storage": 8,
+    }
+    score = 0.0
+    for check in checks:
+        weight = weights.get(check.key, 0)
+        if check.status == "pass":
+            score += weight
+        elif check.status == "warn":
+            score += weight * 0.5
+
+    rounded_score = int(round(max(0, min(100, score))))
+    blockers = [check.name for check in checks if check.status == "fail"]
+    warnings = [check.name for check in checks if check.status == "warn"]
+    status_label = "ready" if rounded_score >= 85 and not blockers else "degraded" if rounded_score >= 55 else "not_ready"
+    return SystemReadinessResponse(
+        status=status_label,
+        score=rounded_score,
+        generated_at=datetime.now(timezone.utc),
+        checks=checks,
+        blockers=blockers,
+        warnings=warnings,
+    )
+
+
+def _build_system_readiness_checks() -> list[SystemReadinessCheck]:
+    model_config = public_model_config()
+    sources = list_data_sources()
+    mcp_servers = list_mcp_servers()
+    origins = _allowed_origins()
+    quote_key_configured = bool(
+        os.getenv("FINNHUB_API_KEY")
+        or os.getenv("FINNHUB_TOKEN")
+        or os.getenv("ALPHAVANTAGE_API_KEY")
+        or os.getenv("ALPHA_VANTAGE_API_KEY")
+    )
+    auth_required = os.getenv("DEEPFOCUS_AUTH_REQUIRED", "").lower() == "true"
+    persistent_db_paths = [
+        os.getenv("DEEPFOCUS_AGENT_DB_PATH"),
+        os.getenv("DEEPFOCUS_DATA_SOURCE_DB_PATH"),
+        os.getenv("DEEPFOCUS_MCP_DB_PATH"),
+    ]
+    using_explicit_storage = any(path for path in persistent_db_paths)
+    high_risk_mcp_without_approval = [
+        server.name for server in mcp_servers
+        if server.risk_level == "high" and not server.approval_required
+    ]
+
+    return [
+        SystemReadinessCheck(
+            key="model",
+            name="真实模型通道",
+            status="pass" if model_config.provider != "mock" and model_config.api_key_configured else "fail",
+            detail=(
+                f"当前模型：{model_config.provider}/{model_config.model}。"
+                if model_config.provider != "mock" and model_config.api_key_configured
+                else "当前仍是 mock 或缺少 API Key，AI 投研不能作为真实结论链路。"
+            ),
+            remediation="在 FinGPT → 模型配置中保存真实模型、Base URL 和 API Key。",
+        ),
+        SystemReadinessCheck(
+            key="auth",
+            name="认证与权限",
+            status="pass" if auth_required else "fail",
+            detail=(
+                "已声明启用真实认证/RBAC。"
+                if auth_required
+                else "当前 API 未声明启用真实认证、租户隔离和 RBAC，不能作为机构生产环境。"
+            ),
+            remediation="接入后端认证、租户隔离、RBAC 和审计日志后设置 DEEPFOCUS_AUTH_REQUIRED=true。",
+        ),
+        SystemReadinessCheck(
+            key="agent_worker",
+            name="Agent Worker",
+            status="pass" if is_worker_running() else "fail",
+            detail="多 Agent 任务 worker 正在运行。" if is_worker_running() else "多 Agent 任务 worker 未运行。",
+            remediation="启动 FastAPI 后端并确认 lifespan 能正常启动 worker。",
+        ),
+        SystemReadinessCheck(
+            key="data_sources",
+            name="证据数据源",
+            status="pass" if len(sources) >= 2 else "warn" if sources else "fail",
+            detail=f"已注册 {len(sources)} 个数据源。",
+            remediation="至少配置行情、公告/财报、新闻/社区、研报文件等可追溯数据源。",
+        ),
+        SystemReadinessCheck(
+            key="market_data",
+            name="行情主数据",
+            status="pass" if quote_key_configured else "warn",
+            detail=(
+                "已配置 Finnhub/Alpha Vantage 等主行情 key。"
+                if quote_key_configured
+                else "未配置主行情 key，会依赖免费公共 fallback，时效和稳定性不足。"
+            ),
+            remediation="配置 FINNHUB_API_KEY、ALPHAVANTAGE_API_KEY 或接入本地授权行情源。",
+        ),
+        SystemReadinessCheck(
+            key="mcp_governance",
+            name="MCP 工具治理",
+            status="fail" if high_risk_mcp_without_approval else "pass" if mcp_servers else "warn",
+            detail=(
+                f"高风险 MCP 未开启审批：{', '.join(high_risk_mcp_without_approval[:3])}。"
+                if high_risk_mcp_without_approval
+                else f"已登记 {len(mcp_servers)} 个 MCP server。"
+            ),
+            remediation="高风险 MCP 必须开启人工确认、allow-list 和调用审计。",
+        ),
+        SystemReadinessCheck(
+            key="cors",
+            name="CORS 边界",
+            status="fail" if "*" in origins else "pass",
+            detail="CORS 当前允许任意来源。" if "*" in origins else f"CORS 限定在 {len(origins)} 个来源。",
+            remediation="生产环境设置 CORS_ORIGINS 为明确域名，避免使用 *。",
+        ),
+        SystemReadinessCheck(
+            key="storage",
+            name="持久化配置",
+            status="pass" if using_explicit_storage else "warn",
+            detail=(
+                "已显式配置核心 SQLite/存储路径。"
+                if using_explicit_storage
+                else "当前使用默认本地 SQLite 文件，适合单机演示，不适合多用户机构部署。"
+            ),
+            remediation="生产环境迁移到托管数据库/对象存储，并配置备份、迁移和权限。",
+        ),
+    ]
+
+
+@app.api_route(
+    "/research-workbench",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    include_in_schema=False,
+)
+async def research_workbench_root(request: Request):
+    return await proxy_research_workbench(request, "")
+
+
+@app.api_route(
+    "/research-workbench/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    include_in_schema=False,
+)
+async def research_workbench_proxy(path: str, request: Request):
+    return await proxy_research_workbench(request, path)
+
+
 @app.get("/api/fingpt/capabilities", response_model=CapabilityListResponse)
 async def capabilities() -> CapabilityListResponse:
     return llm.capabilities()
@@ -189,10 +456,184 @@ async def market_symbol_search(q: str = "", market: Optional[str] = None) -> Mar
     return await search_market_symbols(q, market=market)
 
 
-@app.get("/api/earnings/calendar", response_model=EarningsCalendarResponse)
-async def earnings_calendar(symbols: str = "", horizon: str = "3month") -> EarningsCalendarResponse:
+@app.get("/api/options/signals", response_model=OptionsSignalResponse)
+async def options_signals(
+    symbols: str = "",
+    horizon_days: int = 45,
+    max_expirations: int = 3,
+) -> OptionsSignalResponse:
     requested_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return await fetch_earnings_calendar(requested_symbols, horizon=horizon)
+    return await fetch_options_signals(
+        requested_symbols,
+        horizon_days=horizon_days,
+        max_expirations=max_expirations,
+    )
+
+
+@app.post("/api/options/ai-analysis", response_model=OptionsAiAnalysisResponse)
+async def options_ai_analysis(request: OptionsAiAnalysisRequest) -> OptionsAiAnalysisResponse:
+    return await llm.analyze_options_trend(request)
+
+
+@app.get("/api/earnings/calendar", response_model=EarningsCalendarResponse)
+async def earnings_calendar(
+    symbols: str = "",
+    horizon: str = "3month",
+    min_market_cap: Optional[float] = None,
+    include_all: bool = False,
+) -> EarningsCalendarResponse:
+    requested_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
+    return await fetch_earnings_calendar(
+        requested_symbols,
+        horizon=horizon,
+        min_market_cap=min_market_cap,
+        include_all=include_all,
+    )
+
+
+@app.post("/api/decision/multi-market", response_model=MultiMarketDecisionResponse)
+async def multi_market_decision(request: MultiMarketDecisionRequest) -> MultiMarketDecisionResponse:
+    return build_multi_market_decision(request)
+
+
+@app.get("/api/ai-supply-chain/capacity-trends")
+async def ai_supply_chain_capacity_trends(horizon: str = "3m") -> dict[str, Any]:
+    return await fetch_ai_supply_chain_capacity_trends(horizon=horizon)
+
+
+@app.get("/api/customs-trade/snapshot")
+async def customs_trade_snapshot() -> dict[str, Any]:
+    return await fetch_customs_trade_snapshot()
+
+
+@app.get("/api/customs-trade/hs-detail/search")
+async def customs_trade_hs_detail_search(q: str = "", limit: int = 20) -> dict[str, Any]:
+    return await search_customs_hs_detail_products(q, limit=limit)
+
+
+@app.get("/api/customs-trade/hs-detail")
+async def customs_trade_hs_detail(
+    query: Optional[str] = None,
+    code: Optional[str] = None,
+    months: int = 12,
+) -> dict[str, Any]:
+    return await fetch_customs_hs_detail_snapshot(query=query, code=code, months=months)
+
+
+async def _wait_for_customs_agent_task(task_id: str, *, timeout_seconds: float) -> InvestmentTaskRecord:
+    deadline = datetime.now(timezone.utc).timestamp() + timeout_seconds
+    while datetime.now(timezone.utc).timestamp() < deadline:
+        task = get_investment_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Agent task not found")
+        if task.status == "completed":
+            return task
+        if task.status in {"failed", "cancelled"}:
+            detail = task.error or (task.logs[-1].message if task.logs else "Agent task failed")
+            raise HTTPException(status_code=502, detail=detail)
+        await asyncio.sleep(1.0)
+    raise HTTPException(status_code=504, detail=f"海关投研 Agent 任务 {task_id} 尚未在限定时间内完成，请到 Agent 任务中心查看进度。")
+
+
+def _customs_agent_task_to_fingpt(task: InvestmentTaskRecord) -> FinGptTaskResponse:
+    result = task.result or {}
+    findings = result.get("agent_findings") if isinstance(result.get("agent_findings"), dict) else {}
+    evidence_sources = [
+        str(item.get("title") or item.get("source"))
+        for item in result.get("evidence", [])
+        if isinstance(item, dict) and (item.get("title") or item.get("source"))
+    ]
+    sources = [
+        f"DeepFocus Agent Task {task.id}",
+        *evidence_sources,
+    ]
+    return FinGptTaskResponse(
+        provider=llm.provider_name,
+        model=llm.model,
+        generated_at=datetime.now(timezone.utc),
+        capability="customs_trade_agent_runtime",
+        title="中国海关进出口投研Agent",
+        summary=str(result.get("investor_summary") or result.get("plain_language_takeaway") or "海关投研 Agent 已完成。"),
+        key_points=_json_list(findings.get("research")) or _json_list(result.get("watchlist"))[:6],
+        signals=_json_list(findings.get("report")) or _json_list(result.get("action_plan"))[:6],
+        risks=_json_list(result.get("risk_controls")) or _json_list(findings.get("risk")),
+        actions=_json_list(result.get("action_plan")) or _json_list(findings.get("report")),
+        sources=sources[:8],
+        confidence=_clamp(float(result.get("confidence") or 0.6), 0, 1),
+        disclaimer=str(result.get("disclaimer") or "仅供投研和运营参考，不构成投资建议、支付建议或合规结论。"),
+    )
+
+
+@app.post("/api/customs-trade/ai-analysis", response_model=FinGptTaskResponse)
+async def customs_trade_ai_analysis(request: CustomsTradeAnalysisRequest) -> FinGptTaskResponse:
+    try:
+        tab_labels = {
+            "chapters": "HS2商品结构",
+            "exports": "重点进出口商品",
+            "partners": "贸易伙伴结构",
+            "hs": "HS大类结构",
+            "fine": "HS明细商品",
+        }
+        focus = request.focus or tab_labels.get(request.selected_tab or "", request.selected_tab) or "全局海关进出口快照"
+        if not is_worker_running():
+            await start_agent_worker()
+        task = create_investment_task(
+            InvestmentTaskCreateRequest(
+                title="中国海关进出口投研Agent分析",
+                symbol="CUSTOMS_CN",
+                asset_name="中国海关进出口",
+                task_type="customs_trade_analysis",
+                engine="deepfocus",
+                horizon="最近12个月",
+                investor_profile="专业",
+                objective=f"基于中国海关进出口官方数据生成投资建议、代表股票、风险和触发条件。当前焦点：{focus}",
+                context="海关总署进出口月度快照、HS2商品、重点进出口商品、贸易伙伴和近12个月曲线。",
+                analysis_domain="customs_trade",
+                customs_focus=focus,
+                customs_focus_key=request.focus_key,
+                customs_focus_type=request.focus_type,
+                customs_selected_tab=request.selected_tab,
+                engine_config={
+                    "source": "customs_trade_module",
+                    "focus_type": request.focus_type,
+                },
+                priority=1,
+            )
+        )
+        completed = await _wait_for_customs_agent_task(task.id, timeout_seconds=95)
+        return _customs_agent_task_to_fingpt(completed)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/skills/shareholder-changes/scan", response_model=ShareholderChangeScanResponse)
+async def shareholder_change_scan(request: ShareholderChangeScanRequest) -> ShareholderChangeScanResponse:
+    return await scan_shareholder_changes(request)
+
+
+@app.post("/api/skills/shareholder-changes/interpret", response_model=ShareholderChangeInterpretResponse)
+async def shareholder_change_interpret(request: ShareholderChangeInterpretRequest) -> ShareholderChangeInterpretResponse:
+    return await interpret_shareholder_change(request, llm)
+
+
+@app.post("/api/skills/cn-earnings/scan", response_model=CnEarningsScanResponse)
+async def cn_earnings_scan(request: CnEarningsScanRequest) -> CnEarningsScanResponse:
+    return await scan_cn_earnings(request)
+
+
+@app.post("/api/skills/cn-earnings/diagnose", response_model=CnEarningsDiagnosisResponse)
+async def cn_earnings_diagnose(request: CnEarningsDiagnosisRequest) -> CnEarningsDiagnosisResponse:
+    return await diagnose_cn_earnings(request, llm)
+
+
+@app.post("/api/skills/cn-earnings/detail", response_model=CnEarningsRecordDetailResponse)
+async def cn_earnings_record_detail(request: CnEarningsRecordDetailRequest) -> CnEarningsRecordDetailResponse:
+    return await enrich_cn_earnings_record_detail(request)
+
+
+@app.post("/api/skills/major-events/scan", response_model=MajorEventScanResponse)
+async def major_event_scan(request: MajorEventScanRequest) -> MajorEventScanResponse:
+    return await scan_major_events(request)
 
 
 @app.post("/api/fingpt/files/extract", response_model=FileExtractionResponse)
@@ -349,6 +790,153 @@ async def api_upload_data_file(
     )
     publish_data_source_items([item], topic="data-source-upload", severity="success")
     return item
+
+
+@app.post("/api/pro-research/reports/upload", response_model=ProfessionalReportRecord)
+async def api_upload_professional_report(
+    file: UploadFile = File(...),
+    symbol: Optional[str] = Form(None),
+    title: Optional[str] = Form(None),
+    report_type: str = Form("other"),
+    period: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+) -> ProfessionalReportRecord:
+    extracted = await extract_upload_file(file)
+    parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
+    item = store_upload_item(
+        filename=extracted.filename,
+        text=extracted.text,
+        parser=extracted.parser,
+        content_type=extracted.content_type,
+        symbol=symbol,
+        title=title,
+        tags=[*parsed_tags, "专业财报库"],
+    )
+    publish_data_source_items([item], topic="pro-research-upload", severity="success")
+    return ingest_professional_report_text(
+        text=extracted.text,
+        title=title or extracted.filename,
+        symbol=symbol,
+        report_type=report_type,
+        period=period,
+        source_item_id=item.id,
+        parser=extracted.parser,
+        metadata={
+            "filename": extracted.filename,
+            "content_type": extracted.content_type,
+            "data_item_id": item.id,
+            "tags": [*parsed_tags, "专业财报库"],
+        },
+    )
+
+
+@app.post("/api/pro-research/reports/ingest-item", response_model=ProfessionalReportRecord)
+async def api_ingest_professional_report_item(
+    request: ProfessionalReportIngestRequest,
+) -> ProfessionalReportRecord:
+    return ingest_professional_report_from_item(request)
+
+
+@app.post("/api/pro-research/reports/ingest-workbench-file", response_model=ProfessionalReportRecord)
+async def api_ingest_professional_workbench_file(
+    request: ProfessionalWorkbenchFileIngestRequest,
+) -> ProfessionalReportRecord:
+    file_path = _safe_workbench_file_path(request.out, request.filename)
+    extracted = extract_local_file(file_path)
+    parsed_tags = [tag.strip() for tag in request.tags if tag.strip()]
+    tags = [*parsed_tags, "抓取舱", "专业财报库"]
+    item = store_upload_item(
+        filename=extracted.filename,
+        text=extracted.text,
+        parser=extracted.parser,
+        content_type=extracted.content_type,
+        symbol=request.symbol,
+        title=request.title or file_path.stem,
+        tags=tags,
+    )
+    publish_data_source_items([item], topic="pro-research-workbench-ingest", severity="success")
+    return ingest_professional_report_text(
+        text=extracted.text,
+        title=request.title or file_path.stem,
+        symbol=request.symbol,
+        report_type=request.report_type,
+        period=request.period,
+        source_item_id=item.id,
+        parser=extracted.parser,
+        metadata={
+            "filename": extracted.filename,
+            "content_type": extracted.content_type,
+            "workbench_out": request.out,
+            "workbench_path": str(file_path),
+            "data_item_id": item.id,
+            "tags": tags,
+        },
+    )
+
+
+@app.get("/api/pro-research/reports", response_model=ProfessionalReportListResponse)
+async def api_list_professional_reports(
+    symbol: Optional[str] = None,
+    limit: int = 50,
+) -> ProfessionalReportListResponse:
+    return ProfessionalReportListResponse(reports=list_professional_reports(symbol=symbol, limit=limit))
+
+
+@app.get("/api/pro-research/reports/{report_id}", response_model=ProfessionalReportRecord)
+async def api_get_professional_report(report_id: str) -> ProfessionalReportRecord:
+    report = get_professional_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Professional report not found")
+    return report
+
+
+@app.get("/api/pro-research/reports/{report_id}/chunks", response_model=ProfessionalReportChunkListResponse)
+async def api_list_professional_report_chunks(
+    report_id: str,
+    limit: int = 100,
+) -> ProfessionalReportChunkListResponse:
+    if not get_professional_report(report_id):
+        raise HTTPException(status_code=404, detail="Professional report not found")
+    return ProfessionalReportChunkListResponse(chunks=list_professional_chunks(report_id, limit=limit))
+
+
+@app.get("/api/pro-research/metrics", response_model=ProfessionalMetricListResponse)
+async def api_list_professional_metrics(
+    report_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    metric_key: Optional[str] = None,
+    limit: int = 100,
+) -> ProfessionalMetricListResponse:
+    return ProfessionalMetricListResponse(
+        metrics=list_professional_metrics(
+            report_id=report_id,
+            symbol=symbol,
+            metric_key=metric_key,
+            limit=limit,
+        )
+    )
+
+
+@app.post("/api/pro-research/rag/query", response_model=ProfessionalRagQueryResponse)
+async def api_professional_rag_query(
+    request: ProfessionalRagQueryRequest,
+) -> ProfessionalRagQueryResponse:
+    return await query_professional_rag(request)
+
+
+@app.post("/api/pro-research/reports/{report_id}/analyze", response_model=ProfessionalReportAnalysisResponse)
+async def api_analyze_professional_report(
+    report_id: str,
+    request: ProfessionalReportAnalysisRequest = ProfessionalReportAnalysisRequest(),
+) -> ProfessionalReportAnalysisResponse:
+    return await analyze_professional_report(report_id, request)
+
+
+@app.post("/api/pro-research/evals/run", response_model=ProfessionalEvalRunResponse)
+async def api_run_professional_eval(
+    request: ProfessionalEvalRunRequest,
+) -> ProfessionalEvalRunResponse:
+    return await run_professional_eval(request)
 
 
 @app.post("/api/data-sources/agent-crawl", response_model=DataSourceSyncResponse)
@@ -981,6 +1569,15 @@ async def get_agent_task(task_id: str) -> InvestmentTaskRecord:
     return task
 
 
+@app.get("/api/agents/tasks/{task_id}/events")
+async def stream_agent_task_events(task_id: str, request: Request) -> StreamingResponse:
+    return StreamingResponse(
+        agent_task_event_stream(task_id, request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/api/agents/tasks/{task_id}/retry", response_model=InvestmentTaskRecord)
 async def retry_agent_task(task_id: str) -> InvestmentTaskRecord:
     task = retry_investment_task(task_id)
@@ -1255,5 +1852,350 @@ async def corridor_risk(request: CorridorRiskRequest) -> FinGptTaskResponse:
 async def agent_brief(request: AgentBriefRequest) -> FinGptTaskResponse:
     try:
         return await llm.agent_brief(request)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/chat", response_model=GeneralChatResponse)
+async def general_chat(request: GeneralChatRequest) -> GeneralChatResponse:
+    try:
+        return await llm.general_chat(request)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _professional_chat_intent(text: str) -> bool:
+    return bool(
+        re.search(
+            r"专业财报|财报库|财报|年报|半年报|季报|研报|电话会|营收|营业收入|净利润|扣非|毛利率|ROE|现金流|资本开支|引用|溯源|评测|回归测试|幻觉",
+            text,
+            re.I,
+        )
+    )
+
+
+async def _maybe_shareholder_change_skill_chat(
+    request: OrchestratorChatRequest,
+) -> Optional[OrchestratorChatResponse]:
+    skill_request = detect_shareholder_change_request(request.message)
+    if not skill_request:
+        return None
+
+    result = await scan_shareholder_changes(skill_request)
+    market_label = {"A": "A股", "HK": "港股", "US": "美股"}.get(result.market, result.market)
+    source_label = {
+        "A": "巨潮资讯网",
+        "HK": "HKEX DI",
+        "US": "SEC EDGAR",
+    }.get(result.market, result.provider)
+    return OrchestratorChatResponse(
+        provider=result.provider,
+        model=result.model,
+        generated_at=result.generated_at,
+        agent="OrchestratorAgent",
+        engine=request.engine,
+        title="股东增减持扫描",
+        content=format_shareholder_change_skill_response(result),
+        chips=["shareholder.change.scan", source_label, f"{market_label}披露"],
+        suggested_actions=["查看高风险减持", "扩大到30天", "导出公告列表"],
+        reasoning_trace=[
+            {
+                "phase": "orchestrator",
+                "title": "OrchestratorAgent",
+                "detail": f"识别到全市场 {market_label} 股东增减持扫描意图，路由到可执行 skill。",
+                "status": "done",
+            },
+            {
+                "phase": "skill",
+                "title": "shareholder.change.scan",
+                "detail": f"调用{source_label}披露检索，窗口 {result.start_date} 至 {result.end_date}，命中 {result.total_found} 条。",
+                "status": "done",
+            },
+            {
+                "phase": "evidence",
+                "title": "EvidenceAgent",
+                "detail": "结果保留公告标题、股票代码、公告日和 PDF 原文链接，避免无来源总结。",
+                "status": "done",
+            },
+        ],
+        should_create_task=False,
+        handled_inline=True,
+        confidence=0.88 if result.records else 0.62,
+    )
+
+
+async def _maybe_cn_earnings_skill_chat(
+    request: OrchestratorChatRequest,
+) -> Optional[OrchestratorChatResponse]:
+    skill_request = detect_cn_earnings_request(request.message)
+    if not skill_request:
+        return None
+
+    result = await scan_cn_earnings(skill_request)
+    return OrchestratorChatResponse(
+        provider=result.provider,
+        model=result.model,
+        generated_at=result.generated_at,
+        agent="OrchestratorAgent",
+        engine=request.engine,
+        title="A股财报扫描",
+        content=format_cn_earnings_skill_response(result),
+        chips=["cn.earnings.scan", "巨潮资讯网", "A股财报"],
+        suggested_actions=["查看高风险财报", "扩大到90天", "进入A股财报板块"],
+        reasoning_trace=[
+            {
+                "phase": "orchestrator",
+                "title": "OrchestratorAgent",
+                "detail": "识别到全市场 A 股财报公告扫描意图，路由到可执行 skill。",
+                "status": "done",
+            },
+            {
+                "phase": "skill",
+                "title": "cn.earnings.scan",
+                "detail": f"调用巨潮公告检索，窗口 {result.start_date} 至 {result.end_date}，命中 {result.total_found} 条。",
+                "status": "done",
+            },
+            {
+                "phase": "evidence",
+                "title": "EvidenceAgent",
+                "detail": "结果保留财报公告标题、核心财务字段、PDF 摘录和原文链接，避免无来源总结。",
+                "status": "done",
+            },
+        ],
+        should_create_task=False,
+        handled_inline=True,
+        confidence=0.86 if result.records else 0.6,
+    )
+
+
+async def _maybe_major_event_skill_chat(
+    request: OrchestratorChatRequest,
+) -> Optional[OrchestratorChatResponse]:
+    skill_request = detect_major_event_request(request.message)
+    if not skill_request:
+        return None
+
+    result = await scan_major_events(skill_request)
+    return OrchestratorChatResponse(
+        provider=result.provider,
+        model=result.model,
+        generated_at=result.generated_at,
+        agent="OrchestratorAgent",
+        engine=request.engine,
+        title="A股重大事项扫描",
+        content=format_major_event_skill_response(result),
+        chips=["cn.major_event.scan", "巨潮资讯网", "A股重大事项"],
+        suggested_actions=["查看高风险事件", "扩大到90天", "进入事件中心"],
+        reasoning_trace=[
+            {
+                "phase": "orchestrator",
+                "title": "OrchestratorAgent",
+                "detail": "识别到全市场 A 股重大事项/事件预警意图，路由到可执行 skill。",
+                "status": "done",
+            },
+            {
+                "phase": "skill",
+                "title": "cn.major_event.scan",
+                "detail": f"调用巨潮公告检索，窗口 {result.start_date} 至 {result.end_date}，命中 {result.total_found} 条。",
+                "status": "done",
+            },
+            {
+                "phase": "evidence",
+                "title": "EvidenceAgent",
+                "detail": "结果保留公告标题、事件标签、PDF 摘录和原文链接，避免无来源总结。",
+                "status": "done",
+            },
+        ],
+        should_create_task=False,
+        handled_inline=True,
+        confidence=0.87 if result.records else 0.62,
+    )
+
+
+def _select_professional_chat_report(request: OrchestratorChatRequest) -> Optional[ProfessionalReportRecord]:
+    symbol = request.stock.symbol if request.stock else None
+    reports = list_professional_reports(symbol=symbol, limit=1) if symbol else []
+    if not reports:
+        reports = list_professional_reports(limit=1)
+    return reports[0] if reports else None
+
+
+def _professional_chat_trace(
+    request: OrchestratorChatRequest,
+    *,
+    report: Optional[ProfessionalReportRecord],
+    capability: str,
+) -> list[dict[str, str]]:
+    stock_label = f"{request.stock.name}（{request.stock.symbol}）" if request.stock else "未选择标的"
+    report_label = report.title if report else "未命中专业财报库"
+    return [
+        {
+            "phase": "orchestrator",
+            "title": "OrchestratorAgent",
+            "detail": f"识别为专业财报能力调用，当前标的 {stock_label}。",
+            "status": "done",
+        },
+        {
+            "phase": "evidence",
+            "title": "ProfessionalEvidence",
+            "detail": f"检索专业财报库：{report_label}。",
+            "status": "done" if report else "wait",
+        },
+        {
+            "phase": "research",
+            "title": capability,
+            "detail": "使用结构化指标、原文 chunk 和引用约束即时回答。",
+            "status": "done" if report else "wait",
+        },
+        {
+            "phase": "risk",
+            "title": "RefusalGuard",
+            "detail": "证据不足时拒答，不进入自由编造。",
+            "status": "done",
+        },
+    ]
+
+
+def _format_professional_eval(run: ProfessionalEvalRunResponse) -> str:
+    rows = [
+        f"评测完成：{run.passed}/{run.total} 通过，Pass Rate {round(run.pass_rate * 100)}%。",
+        f"引用覆盖 {round(run.citation_rate * 100)}%，答案命中 {round(run.answer_match_rate * 100)}%，拒答保护 {round(run.refusal_guard_rate * 100)}%。",
+    ]
+    for case in run.cases[:4]:
+        status_label = "通过" if case.passed else "待修正"
+        rows.append(f"- {status_label}：{case.question}")
+    return "\n".join(rows)
+
+
+def _format_professional_analysis(result: ProfessionalReportAnalysisResponse) -> str:
+    metric_lines = [
+        f"- {metric.metric_label}：{metric.raw_value}"
+        for metric in result.key_metrics[:6]
+    ]
+    sections = [
+        result.summary,
+        "",
+        "核心指标：",
+        *(metric_lines or ["- 暂未抽取到核心指标"]),
+        "",
+        "质量/风险：",
+        *[f"- {item}" for item in [*result.quality_flags[:3], *result.risks[:3]]],
+        "",
+        "下一步追问：",
+        *[f"- {item}" for item in result.follow_up_questions[:4]],
+    ]
+    return "\n".join(section for section in sections if section != "")
+
+
+async def _maybe_professional_research_chat(
+    request: OrchestratorChatRequest,
+) -> Optional[OrchestratorChatResponse]:
+    text = request.message.strip()
+    if not _professional_chat_intent(text):
+        return None
+
+    report = _select_professional_chat_report(request)
+    if not report:
+        return OrchestratorChatResponse(
+            provider=llm.provider_name,
+            model=llm.model,
+            generated_at=datetime.now(timezone.utc),
+            agent="ProfessionalResearchAgent",
+            engine=request.engine,
+            title="专业财报库",
+            content=(
+                "专业财报能力已经接入决策台，但当前还没有可用的入库报告。"
+                "你可以在这条对话上传财报/研报 PDF，或先到数据源中心入库；入库后我可以直接查指标、给引用、做财报分析和跑评测。"
+            ),
+            chips=["专业财报库", "待入库", "引用型RAG"],
+            suggested_actions=["上传财报", "入库资料", "查看数据源"],
+            reasoning_trace=_professional_chat_trace(request, report=None, capability="ProfessionalResearchAgent"),
+            should_create_task=False,
+            handled_inline=True,
+            confidence=0.72,
+        )
+
+    if re.search(r"评测|回归测试|幻觉|准确率|eval|test", text, re.I):
+        eval_run = await run_professional_eval(ProfessionalEvalRunRequest(report_id=report.id))
+        return OrchestratorChatResponse(
+            provider=llm.provider_name,
+            model=llm.model,
+            generated_at=datetime.now(timezone.utc),
+            agent="ProfessionalEvalAgent",
+            engine=request.engine,
+            title="专业财报评测",
+            content=_format_professional_eval(eval_run),
+            chips=["专业财报库", "评测集", f"通过率{round(eval_run.pass_rate * 100)}%"],
+            suggested_actions=["查看失败用例", "补充黄金集", "重新入库"],
+            reasoning_trace=_professional_chat_trace(request, report=report, capability="ProfessionalEvalAgent"),
+            should_create_task=False,
+            handled_inline=True,
+            confidence=0.84,
+        )
+
+    if re.search(r"分析|解读|体检|质量|红旗|风险|追问|总结|报告|agent", text, re.I):
+        analysis = await analyze_professional_report(
+            report.id,
+            ProfessionalReportAnalysisRequest(focus=text, use_cloud_model=True),
+        )
+        return OrchestratorChatResponse(
+            provider=llm.provider_name,
+            model=llm.model,
+            generated_at=datetime.now(timezone.utc),
+            agent="ProfessionalReportAgent",
+            engine=request.engine,
+            title="专业财报分析",
+            content=_format_professional_analysis(analysis),
+            chips=["专业财报库", "财报分析Agent", f"{len(analysis.key_metrics)}个指标"],
+            suggested_actions=["追问指标", "跑评测", "查看引用"],
+            reasoning_trace=_professional_chat_trace(request, report=report, capability="ProfessionalReportAgent"),
+            should_create_task=False,
+            handled_inline=True,
+            confidence=analysis.confidence,
+        )
+
+    rag = await query_professional_rag(
+        ProfessionalRagQueryRequest(
+            question=text,
+            report_id=report.id,
+            symbol=report.symbol,
+            top_k=6,
+            use_cloud_model=True,
+        )
+    )
+    citation_labels = [citation.citation_id for citation in rag.citations[:4]]
+    return OrchestratorChatResponse(
+        provider=llm.provider_name,
+        model=llm.model,
+        generated_at=datetime.now(timezone.utc),
+        agent="ProfessionalRagAgent",
+        engine=request.engine,
+        title="引用型财报问答",
+        content=rag.answer,
+        chips=["专业财报库", "引用型RAG", *(citation_labels or ["无证据拒答"])],
+        suggested_actions=["继续追问", "分析整份财报", "跑评测"],
+        reasoning_trace=_professional_chat_trace(request, report=report, capability="ProfessionalRagAgent"),
+        should_create_task=False,
+        handled_inline=True,
+        confidence=rag.confidence,
+    )
+
+
+@app.post("/api/agents/orchestrator-chat", response_model=OrchestratorChatResponse)
+async def orchestrator_chat(request: OrchestratorChatRequest) -> OrchestratorChatResponse:
+    try:
+        shareholder_change_reply = await _maybe_shareholder_change_skill_chat(request)
+        if shareholder_change_reply:
+            return shareholder_change_reply
+        cn_earnings_reply = await _maybe_cn_earnings_skill_chat(request)
+        if cn_earnings_reply:
+            return cn_earnings_reply
+        major_event_reply = await _maybe_major_event_skill_chat(request)
+        if major_event_reply:
+            return major_event_reply
+        professional_reply = await _maybe_professional_research_chat(request)
+        if professional_reply:
+            return professional_reply
+        return await llm.orchestrator_chat(request)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

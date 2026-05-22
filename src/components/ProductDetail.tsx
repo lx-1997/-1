@@ -93,11 +93,11 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
 
   const handleAddToCart = () => {
     if (!selectedVariant && product.variants.length > 0) {
-      message.warning('请选择订阅版本');
+      message.warning('请选择资产版本');
       return;
     }
     if (currentStock < quantity) {
-      message.warning('可订阅名额不足');
+      message.warning('可用名额不足');
       return;
     }
     const variantId = selectedVariant?.id || 'default';
@@ -106,11 +106,11 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
 
   const handleBuyNow = () => {
     if (!selectedVariant && product.variants.length > 0) {
-      message.warning('请选择订阅版本');
+      message.warning('请选择资产版本');
       return;
     }
     if (currentStock < quantity) {
-      message.warning('可订阅名额不足');
+      message.warning('可用名额不足');
       return;
     }
     const variantId = selectedVariant?.id || 'default';
@@ -214,7 +214,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                   {product.rating.toFixed(1)} ({product.ratingCount}条评价)
                 </Text>
                 <Text type="secondary">|</Text>
-                <Text type="secondary">已订阅 {product.sales}</Text>
+                <Text type="secondary">已使用 {product.sales}</Text>
               </Space>
 
               <Divider />
@@ -275,7 +275,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                           .join(', ')}
                       </Text>
                       <br />
-                      <Text type="secondary">可订阅名额：{selectedVariant.stock}</Text>
+                      <Text type="secondary">可用名额：{selectedVariant.stock}</Text>
                     </div>
                   )}
                 </div>
@@ -294,7 +294,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                   style={{ width: '120px' }}
                 />
                 <Text type="secondary" style={{ marginLeft: '16px' }}>
-                  可订阅名额 {currentStock}
+                  可用名额 {currentStock}
                 </Text>
               </div>
 
@@ -307,7 +307,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                   onClick={handleAddToCart}
                   disabled={currentStock === 0}
                 >
-                  加入订阅单
+                  加入资产单
                 </Button>
                 <Button
                   type="primary"
@@ -320,7 +320,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                 </Button>
               </Space>
 
-              {/* 商品标签 */}
+              {/* 资产标签 */}
               {product.tags.length > 0 && (
                 <div style={{ marginBottom: '24px' }}>
                   <Space wrap>
@@ -334,7 +334,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
           </Col>
         </Row>
 
-        {/* 商品详情标签页 */}
+        {/* 资产详情标签页 */}
         <Divider />
         <Tabs 
           defaultActiveKey="detail"
@@ -367,8 +367,8 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                     <Descriptions.Item label="资产名称">{product.name}</Descriptions.Item>
                     <Descriptions.Item label="资产分类">{product.category}</Descriptions.Item>
                     <Descriptions.Item label="资产编号">{product.id}</Descriptions.Item>
-                    <Descriptions.Item label="可订阅名额">{currentStock}</Descriptions.Item>
-                    <Descriptions.Item label="订阅量">{product.sales}</Descriptions.Item>
+                    <Descriptions.Item label="可用名额">{currentStock}</Descriptions.Item>
+                    <Descriptions.Item label="使用量">{product.sales}</Descriptions.Item>
                     <Descriptions.Item label="评分">{product.rating.toFixed(1)}</Descriptions.Item>
                   </Descriptions>
                 </div>

@@ -41,9 +41,9 @@ const Dashboard: React.FC<DashboardProps> = ({ appState, onStockSelect }) => {
       icon: <StarOutlined />
     },
     {
-      label: '发布内容',
+      label: '研究记录',
       value: totalPosts,
-      note: `${paidPosts} 篇付费研究`,
+      note: `${paidPosts} 篇深度报告`,
       icon: <MessageOutlined />
     },
     {
@@ -66,7 +66,7 @@ const Dashboard: React.FC<DashboardProps> = ({ appState, onStockSelect }) => {
         <div>
           <div className="dashboard-eyebrow">INVESTMENT WORKSPACE</div>
           <h2 className="dashboard-title">欢迎回来，{user?.username}</h2>
-          <div className="dashboard-subtitle">聚合关注池、付费研究和社区信号，优先处理高价值标的。</div>
+          <div className="dashboard-subtitle">聚合关注池、研究资产和证据信号，优先处理高价值标的。</div>
         </div>
         <Space size={8} wrap>
           <Tag color="blue">Premium</Tag>
@@ -94,7 +94,7 @@ const Dashboard: React.FC<DashboardProps> = ({ appState, onStockSelect }) => {
               <FireOutlined />
               <span>热门关注池</span>
             </div>
-            <Text type="secondary">按社区热度排序</Text>
+            <Text type="secondary">按活跃度和行情质量排序</Text>
           </div>
           <div className="terminal-table">
             {stocks.slice(0, 6).map(stock => (
@@ -134,7 +134,7 @@ const Dashboard: React.FC<DashboardProps> = ({ appState, onStockSelect }) => {
                   <span><MessageOutlined /> {post.comments}</span>
                   <span><StarOutlined /> {post.likes}</span>
                   <span>{post.stockSymbol}</span>
-                  {post.isPaid && <Tag color="gold"><DollarOutlined /> ${post.price}</Tag>}
+                  {post.isPaid && <Tag color="gold"><DollarOutlined /> 深度报告 ${post.price}</Tag>}
                 </div>
               </article>
             ))}

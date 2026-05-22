@@ -14,7 +14,21 @@ cp .env.example .env
 uvicorn deepfocus_api.main:app --host 0.0.0.0 --port 8300 --reload
 ```
 
+Use the long-running mode for full TradingAgents jobs:
+
+```bash
+npm run backend:long
+```
+
+This mode disables `uvicorn --reload` and raises the embedded TradingAgents
+runner timeout to 3600 seconds. The reload server is still convenient for UI/API
+development, but it can interrupt long external-agent subprocesses.
+
 The React app calls `http://localhost:8300` by default.
+
+The research workbench is also served through this backend at
+`http://localhost:8300/research-workbench/`. The backend starts the local
+workbench module automatically when the submodule dependencies are installed.
 
 ## Market data mode
 
@@ -30,6 +44,23 @@ ALPHAVANTAGE_API_KEY=your_alpha_vantage_key
 Provider order is Finnhub, Alpha Vantage, then a no-key Stooq public snapshot
 fallback. If all providers fail, the UI keeps the local sample stock universe
 but labels it as sample data instead of presenting it as live market data.
+
+`GET /api/options/signals?symbols=AAPL,NVDA&horizon_days=45&max_expirations=3`
+drives the Options Radar module. It aggregates free/delayed option-chain
+snapshots into put/call ratios, OI walls, max pain, ATM straddle expected move,
+IV skew, term structure, pin-risk, and a quality-adjusted directional score.
+Provider order is:
+
+```env
+MARKETDATA_APP_TOKEN=optional_free_account_token
+# or MARKETDATA_APP_API_KEY=optional_free_account_token
+TRADIER_ACCESS_TOKEN=reserved_for_full_chain_provider
+```
+
+The runtime tries MarketData.app first, then Nasdaq's public option-chain
+snapshot, then Yahoo Finance's public chain as a last fallback. Free sources are
+delayed and may omit IV/Greeks or bid/ask fields; responses surface these
+limitations in `risk_flags` instead of treating them as live order flow.
 
 `GET /api/earnings/calendar?symbols=TSLA,NVDA&horizon=3month` first scans the
 Nasdaq public no-key earnings calendar for matching watchlist symbols. If
@@ -97,3 +128,30 @@ MINIMAX_MODEL=MiniMax-M2.7
 
 `DEEPFOCUS_LLM_PROVIDER=mock` keeps local development runnable without GPU or API
 keys. It is useful for UI work, not production analysis.
+
+## Professional research MVP
+
+The professional financial-report kernel is mounted under `/api/pro-research`.
+It reuses the existing upload extractor and data-source evidence store, then
+keeps a separate auditable SQLite database at
+`backend/.professional_research.sqlite3`.
+
+Useful endpoints:
+
+- `POST /api/pro-research/reports/upload`: upload a PDF/Word/Excel/text report,
+  store the raw evidence, chunk the report, and extract structured metrics.
+- `POST /api/pro-research/reports/ingest-item`: promote an existing data-source
+  item into the professional report library.
+- `GET /api/pro-research/metrics?report_id=...`: inspect extracted metrics.
+- `POST /api/pro-research/rag/query`: answer with `[M1]` metric citations and
+  `[C1]` source chunk citations, refusing when evidence is missing.
+- `POST /api/pro-research/reports/{report_id}/analyze`: run the minimal
+  financial-report analysis Agent.
+- `POST /api/pro-research/evals/run`: run the built-in citation/refusal
+  regression set for a report.
+
+Run the focused backend tests with:
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/python -m pytest backend/deepfocus_api/tests/test_professional_research.py -q
+```

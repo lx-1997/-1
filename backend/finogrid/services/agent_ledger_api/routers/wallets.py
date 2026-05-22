@@ -8,7 +8,7 @@ from sqlalchemy import select
 from ..schemas import AgentWalletCreateRequest, AgentWalletCreateResponse
 from ..dependencies import get_db, get_current_agent_account
 from ..config import settings
-from .....database.models.agent_ledger import AgentAccount, AgentWallet, LoopType
+from ....database.models.agent_ledger import AgentAccount, AgentWallet, LoopType
 
 log = structlog.get_logger()
 router = APIRouter()

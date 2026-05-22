@@ -3,7 +3,6 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   Col,
   Descriptions,
   Empty,
@@ -15,26 +14,38 @@ import {
   Space,
   Statistic,
   Steps,
-  Table,
   Tag,
   Timeline,
   Typography,
   message
 } from 'antd';
 import {
+  ApiOutlined,
   AuditOutlined,
+  BarChartOutlined,
+  BranchesOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
+  DatabaseOutlined,
+  DollarOutlined,
+  FileSearchOutlined,
+  FundProjectionScreenOutlined,
+  LineChartOutlined,
+  OrderedListOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  RobotOutlined,
   SafetyCertificateOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import { AppState } from '../types';
 import {
+  AgentEngine,
   AgentRuntimeHealth,
   InvestmentTaskCreate,
   InvestmentTaskRecord,
+  InvestmentTaskResult,
   cancelAgentTask,
   createAgentTask,
   getAgentHealth,
@@ -65,6 +76,267 @@ const decisionMeta: Record<string, { color: string; text: string }> = {
   candidate: { color: 'green', text: '候选机会' }
 };
 
+const engineMeta: Record<AgentEngine, { title: string; short: string; color: string; description: string }> = {
+  deepfocus: {
+    title: 'DeepFocus Native',
+    short: 'Native',
+    color: 'cyan',
+    description: '使用本地证据层、FinGPT 能力和 DeepFocus 5 个核心 Agent 报告链路。'
+  },
+  tradingagents: {
+    title: 'TradingAgents',
+    short: 'TA',
+    color: 'purple',
+    description: '底层调用 TauricResearch/TradingAgents，前台仍收敛为 5 个核心 Agent。'
+  },
+  financial_services: {
+    title: 'Financial Services Playbook',
+    short: 'FSI',
+    color: 'geekblue',
+    description: '参考 financial-services cookbook，把财报复核、模型、Pitch、估值、KYC 和对账工作流挂到 DeepFocus 队列。'
+  }
+};
+
+const engineOptions = [
+  { value: 'deepfocus', label: 'DeepFocus' },
+  { value: 'tradingagents', label: 'TradingAgents' },
+  { value: 'financial_services', label: 'FSI Playbook' }
+];
+
+const tradingAgentsEngineConfig = {
+  max_debate_rounds: 1,
+  max_risk_discuss_rounds: 1,
+  selected_analysts: ['market', 'news', 'fundamentals'],
+  timeout_seconds: 180,
+  tool_timeout_seconds: 12,
+  web_search_limit: 4,
+  web_search_timeout_seconds: 6
+};
+
+const financialServicesEngineConfig = {
+  source_project: 'anthropics/financial-services',
+  playbooks: [
+    'market-researcher',
+    'earnings-reviewer',
+    'model-builder',
+    'pitch-agent',
+    'valuation-reviewer',
+    'kyc-screener',
+    'gl-reconciler',
+    'month-end-closer'
+  ]
+};
+
+const taskTypeOptions = [
+  { value: 'investment_research', label: '个股投研' },
+  { value: 'portfolio_review', label: '组合复盘' },
+  { value: 'risk_review', label: '风险审查' },
+  { value: 'watchlist_monitor', label: '观察名单' }
+];
+
+const profileOptions = ['保守', '稳健', '进取', '专业'].map(value => ({ value, label: value }));
+
+const taskEngine = (task?: InvestmentTaskRecord | null): AgentEngine => (
+  task?.engine || (task?.input?.engine as AgentEngine) || 'deepfocus'
+);
+
+type AgentPhaseKey = 'orchestrator' | 'evidence' | 'research' | 'risk' | 'report';
+
+const phaseDefinitions: Array<{
+  key: AgentPhaseKey;
+  title: string;
+  goal: string;
+  color: string;
+  icon: React.ReactNode;
+}> = [
+  {
+    key: 'orchestrator',
+    title: '目标拆解',
+    goal: '确认标的、周期、投资者画像和赚钱目标',
+    color: 'gray',
+    icon: <PlayCircleOutlined />
+  },
+  {
+    key: 'evidence',
+    title: '证据装填',
+    goal: '同步行情、资料、公告和本地证据',
+    color: 'blue',
+    icon: <DatabaseOutlined />
+  },
+  {
+    key: 'research',
+    title: '研究判断',
+    goal: '基本面、新闻、情绪、技术面和情景假设交叉验证',
+    color: 'cyan',
+    icon: <BarChartOutlined />
+  },
+  {
+    key: 'risk',
+    title: '亏损路径',
+    goal: '先找失效条件、仓位纪律和反证',
+    color: 'orange',
+    icon: <WarningOutlined />
+  },
+  {
+    key: 'report',
+    title: '报告输出',
+    goal: '形成观察、暂避、继续研究或候选机会',
+    color: 'green',
+    icon: <FundProjectionScreenOutlined />
+  }
+];
+
+const phaseByKey = phaseDefinitions.reduce<Record<AgentPhaseKey, typeof phaseDefinitions[number]>>((acc, phase) => {
+  acc[phase.key] = phase;
+  return acc;
+}, {} as Record<AgentPhaseKey, typeof phaseDefinitions[number]>);
+
+const resolveAgentPhase = (agent?: string | null): AgentPhaseKey => {
+  const normalized = (agent || '').toLowerCase();
+  if (normalized.includes('orchestrator') || normalized.includes('taskcenter')) return 'orchestrator';
+  if (normalized.includes('datasource') || normalized.includes('evidence')) return 'evidence';
+	  if (
+	    normalized.includes('analyst') ||
+	    normalized.includes('researchagent') ||
+	    normalized.includes('fsiworkflow') ||
+	    normalized.includes('modelbuilder') ||
+	    normalized.includes('earnings') ||
+	    normalized.includes('valuation') ||
+	    normalized.includes('pitch') ||
+	    normalized.includes('sentiment') ||
+	    normalized.includes('scenario') ||
+	    normalized.includes('debate') ||
+    normalized.includes('researchdebate') ||
+    normalized.includes('trader') ||
+    normalized.includes('technical') ||
+    normalized.includes('fundamental')
+  ) {
+    return 'research';
+  }
+	  if (
+	    normalized.includes('risk') ||
+	    normalized.includes('control') ||
+	    normalized.includes('kyc') ||
+	    normalized.includes('reconciler') ||
+	    normalized.includes('reconciliation')
+	  ) return 'risk';
+  if (
+    normalized.includes('portfolio') ||
+    normalized.includes('report') ||
+    normalized.includes('resultmapper') ||
+    normalized.includes('modelrouter')
+  ) {
+    return 'report';
+  }
+  return 'orchestrator';
+};
+
+const coreAgentNameByPhase: Record<AgentPhaseKey, string> = {
+  orchestrator: 'OrchestratorAgent',
+  evidence: 'EvidenceAgent',
+  research: 'ResearchAgent',
+  risk: 'RiskAgent',
+  report: 'ReportAgent'
+};
+
+const coreAgentNameFromLog = (agent?: string | null): string => (
+  coreAgentNameByPhase[resolveAgentPhase(agent)]
+);
+
+const boundedPercent = (value: number): number => Math.max(0, Math.min(100, Math.round(value)));
+
+const decisionReadinessScore = (task: InvestmentTaskRecord): number => {
+  const result = task.result;
+  if (!result) {
+    return boundedPercent(task.progress * 0.42);
+  }
+
+  const confidence = Math.max(0, Math.min(1, Number(result.confidence || 0)));
+  const evidenceCount = result.evidence?.length || 0;
+  const actionCount = result.action_plan?.length || 0;
+  const riskCount = result.risk_controls?.length || 0;
+  const antiThesisCount = result.disconfirming_evidence?.length || 0;
+  const watchCount = result.watchlist?.length || 0;
+
+  return boundedPercent(
+    confidence * 42 +
+    Math.min(evidenceCount, 6) * 5 +
+    Math.min(actionCount, 5) * 4 +
+    Math.min(riskCount, 5) * 4 +
+    Math.min(antiThesisCount, 4) * 3 +
+    Math.min(watchCount, 4) * 2
+  );
+};
+
+const decisionGuidance = (result?: InvestmentTaskResult | null): string => {
+  if (!result) return '等待 Agent 完成证据、反证和风险纪律后再转化为投资动作。';
+  if (result.decision === 'candidate') return '可进入候选机会池，但必须先按触发器和仓位纪律小步验证。';
+  if (result.decision === 'watch') return '保持观察，等价格行为、公告或财报触发器确认后再考虑行动。';
+  if (result.decision === 'avoid') return '暂时把资金保护放在第一位，直到关键风险被证伪或价格重新给出安全边际。';
+  return '继续补证，优先解决资料缺口和反证问题，再判断是否值得投入资金。';
+};
+
+const findingTitleMap: Record<string, string> = {
+  orchestrator: 'OrchestratorAgent',
+  adapter: 'OrchestratorAgent',
+  setup: 'EvidenceAgent',
+  evidence: 'EvidenceAgent',
+  fundamentals: 'ResearchAgent',
+  sentiment: 'ResearchAgent',
+  technical: 'ResearchAgent',
+  scenario: 'ResearchAgent',
+  debate: 'ResearchAgent',
+  fsiworkflow: 'ResearchAgent',
+  modelbuilder: 'ResearchAgent',
+  earnings: 'ResearchAgent',
+  valuation: 'ResearchAgent',
+  pitch: 'ResearchAgent',
+  research: 'ResearchAgent',
+  control: 'RiskAgent',
+  kyc: 'RiskAgent',
+  reconciler: 'RiskAgent',
+  reconciliation: 'RiskAgent',
+  risk: 'RiskAgent',
+  model: 'ReportAgent',
+  report: 'ReportAgent'
+};
+
+const agentFindingTitle = (agent: string): string => (
+  findingTitleMap[agent.toLowerCase()] || agent
+);
+
+const coreFindingEntries = (
+  findings: Record<string, string[]> = {}
+): Array<[string, string[]]> => {
+  const merged = new Map<string, string[]>();
+  Object.entries(findings).forEach(([agent, items]) => {
+    const title = agentFindingTitle(agent);
+    const existing = merged.get(title) || [];
+    merged.set(title, [...existing, ...items]);
+  });
+  return Array.from(merged.entries());
+};
+
+const getLatestLog = (task: InvestmentTaskRecord) => task.logs[task.logs.length - 1];
+
+const AGENT_HEARTBEAT_WARN_MS = 90_000;
+
+const taskHeartbeatLagMs = (task: InvestmentTaskRecord): number => {
+  if (task.status !== 'running') return 0;
+  const updatedAt = new Date(task.updated_at).getTime();
+  return Number.isFinite(updatedAt) ? Math.max(0, Date.now() - updatedAt) : 0;
+};
+
+const formatLag = (lagMs: number): string => {
+  const seconds = Math.max(0, Math.round(lagMs / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+};
+
+const isHeartbeatDelayed = (task: InvestmentTaskRecord): boolean => (
+  taskHeartbeatLagMs(task) >= AGENT_HEARTBEAT_WARN_MS
+);
+
 const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) => {
   const [health, setHealth] = useState<AgentRuntimeHealth | null>(null);
   const [tasks, setTasks] = useState<InvestmentTaskRecord[]>([]);
@@ -72,21 +344,25 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<InvestmentTaskCreate>({
-    title: '多 Agent 投研：特斯拉是否值得继续研究',
+    title: '研究 TSLA 的 1-4 周正期望机会',
     symbol: appState.stocks[0]?.symbol,
     asset_name: appState.stocks[0]?.name,
     task_type: 'investment_research',
+    engine: 'tradingagents',
     horizon: '1-4周',
     investor_profile: '稳健',
-    objective: '判断是否值得进入观察名单，并给出风险控制和验证清单。',
-    context: '请结合当前社区内容、财报变化、市场情绪和风险事件，输出投资者能看懂的结论。',
-    priority: 3
-  });
+	    objective: '判断是否存在值得投入资金关注的正期望机会，并给出风险控制、反证清单和下一步验证动作。',
+	    context: '请结合当前社区内容、财报变化、市场情绪、研报资料和风险事件，重点回答赚钱催化、亏损路径、仓位纪律和触发条件。',
+	    engine_config: tradingAgentsEngineConfig,
+	    priority: 3
+	  });
 
   const selectedTask = useMemo(
     () => tasks.find(task => task.id === selectedTaskId) || tasks[0] || null,
     [tasks, selectedTaskId]
   );
+
+  const selectedEngine = engineMeta[form.engine];
 
   const loadData = async () => {
     setLoading(true);
@@ -119,7 +395,7 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
       ...prev,
       symbol,
       asset_name: stock?.name || symbol,
-      title: `多 Agent 投研：${stock?.name || symbol}是否值得继续研究`
+      title: `研究 ${stock?.name || symbol} 的 ${prev.horizon} 机会与风险`
     }));
   };
 
@@ -129,7 +405,7 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
       const created = await createAgentTask(form);
       setSelectedTaskId(created.id);
       await loadData();
-      message.success('投研任务已进入 24h Agent 队列');
+      message.success('Agent Run 已进入队列');
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '创建任务失败');
     } finally {
@@ -148,295 +424,510 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
   };
 
   return (
-    <div style={{ padding: 16 }}>
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
-        <Card>
-          <Row gutter={[16, 16]} align="middle">
-            <Col xs={24} md={14}>
-              <Title level={3} style={{ margin: 0 }}>24h 多 Agent 投研任务中心</Title>
-              <Text type="secondary">任务排队、数据源检索、后台执行、日志留痕、结果复核。目标是提高投资决策质量，不承诺收益。</Text>
-            </Col>
-            <Col xs={24} md={10}>
-              <Row gutter={12}>
-                <Col span={6}><Statistic title="排队" value={health?.pending || 0} /></Col>
-                <Col span={6}><Statistic title="执行" value={health?.running || 0} /></Col>
-                <Col span={6}><Statistic title="完成" value={health?.completed || 0} /></Col>
-                <Col span={6}><Statistic title="失败" value={health?.failed || 0} /></Col>
-              </Row>
-              <Tag color={health?.worker_running ? 'green' : 'red'} style={{ marginTop: 8 }}>
-                {health?.worker_running ? 'worker 运行中' : 'worker 未运行'}
-              </Tag>
-            </Col>
-          </Row>
-        </Card>
+    <div className="agent-desk-shell">
+      <section className="agent-command-bar">
+        <div className="agent-command-title">
+          <RobotOutlined />
+          <div>
+            <Title level={3}>Agent 任务</Title>
+            <Text>从 Cockpit 进入的投研任务会在这里完成证据调度、反证拆解、风险复核和报告输出。</Text>
+          </div>
+        </div>
+        <div className="agent-runtime-pills">
+          <span><ClockCircleOutlined /> 任务引擎 {health?.worker_running ? '运行中' : '未运行'}</span>
+          <span>排队 {health?.pending || 0}</span>
+          <span>执行 {health?.running || 0}</span>
+          <span>完成 {health?.completed || 0}</span>
+          <span>失败 {health?.failed || 0}</span>
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={loadData}>刷新</Button>
+        </div>
+      </section>
 
-        <Row gutter={[16, 16]}>
-          <Col xs={24} xl={8}>
-            <Card title={<Space><PlayCircleOutlined />创建投研任务</Space>}>
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <section className="agent-ide-grid">
+        <aside className="agent-workspace-panel">
+          <div className="agent-panel-head">
+            <span><PlayCircleOutlined /> 新建投研任务</span>
+            <Tag color={selectedEngine.color}>{selectedEngine.short}</Tag>
+          </div>
+          <div className="agent-profit-protocol">
+            <span><DollarOutlined /> 正期望</span>
+            <span><FileSearchOutlined /> 可追溯</span>
+            <span><WarningOutlined /> 先控亏损</span>
+          </div>
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            <Select
+              value={form.symbol}
+              onChange={updateStock}
+              options={appState.stocks.map(stock => ({
+                value: stock.symbol,
+                label: `${stock.name} (${stock.symbol})`
+              }))}
+            />
+            <Input
+              value={form.title}
+              onChange={event => setForm(prev => ({ ...prev, title: event.target.value }))}
+              placeholder="这次任务要完成什么"
+            />
+            <Row gutter={8}>
+              <Col span={12}>
                 <Select
-                  value={form.symbol}
-                  onChange={updateStock}
-                  options={appState.stocks.map(stock => ({
-                    value: stock.symbol,
-                    label: `${stock.name} (${stock.symbol})`
+                  value={form.engine}
+                  options={engineOptions}
+                  onChange={value => setForm(prev => ({
+                    ...prev,
+                    engine: value as AgentEngine,
+                    objective: value === 'financial_services'
+                      ? '选择合适的金融服务工作流，生成可复核的模型、备忘录、Pitch、KYC 或对账交付件。'
+                      : prev.objective,
+                    context: value === 'financial_services'
+                      ? '请参考 financial-services cookbook 的工作流设计：先识别 playbook，再列输入包、交付件、审计检查和人工复核闸门。'
+                      : prev.context,
+                    engine_config: value === 'tradingagents'
+                      ? tradingAgentsEngineConfig
+                      : value === 'financial_services'
+                        ? financialServicesEngineConfig
+                        : {}
                   }))}
                 />
-                <Input
-                  value={form.title}
-                  onChange={event => setForm(prev => ({ ...prev, title: event.target.value }))}
-                  placeholder="任务标题"
+              </Col>
+              <Col span={12}>
+                <Select
+                  value={form.task_type}
+                  options={taskTypeOptions}
+                  onChange={value => setForm(prev => ({ ...prev, task_type: value as InvestmentTaskCreate['task_type'] }))}
                 />
-                <Row gutter={8}>
-                  <Col span={12}>
-                    <Select
-                      value={form.task_type}
-                      onChange={value => setForm(prev => ({ ...prev, task_type: value }))}
-                      options={[
-                        { value: 'investment_research', label: '个股投研' },
-                        { value: 'portfolio_review', label: '组合复盘' },
-                        { value: 'risk_review', label: '风险审查' },
-                        { value: 'watchlist_monitor', label: '观察名单' }
-                      ]}
-                    />
-                  </Col>
-                  <Col span={12}>
-                    <Select
-                      value={form.investor_profile}
-                      onChange={value => setForm(prev => ({ ...prev, investor_profile: value }))}
-                      options={['保守', '稳健', '进取', '专业'].map(value => ({ value, label: value }))}
-                    />
-                  </Col>
-                </Row>
+              </Col>
+            </Row>
+            <Row gutter={8}>
+              <Col span={12}>
+                <Select
+                  value={form.investor_profile}
+                  options={profileOptions}
+                  onChange={value => setForm(prev => ({ ...prev, investor_profile: value as InvestmentTaskCreate['investor_profile'] }))}
+                />
+              </Col>
+              <Col span={12}>
                 <Input
                   value={form.horizon}
                   onChange={event => setForm(prev => ({ ...prev, horizon: event.target.value }))}
-                  placeholder="投资周期，例如 1-4周 / 3-6个月"
+                  placeholder="周期"
                 />
-                <TextArea
-                  rows={3}
-                  value={form.objective}
-                  onChange={event => setForm(prev => ({ ...prev, objective: event.target.value }))}
-                  placeholder="任务目标"
-                />
-                <TextArea
-                  rows={6}
-                  value={form.context}
-                  onChange={event => setForm(prev => ({ ...prev, context: event.target.value }))}
-                  placeholder="补充资料、限制条件、你的问题；数据源中心资料会自动检索"
-                />
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="系统会给出研究结论、风险和行动清单，但不会替你下单，也不会保证赚钱。"
-                />
-                <Button type="primary" block icon={<ThunderboltOutlined />} loading={creating} onClick={handleCreate}>
-                  提交给多 Agent
-                </Button>
-              </Space>
-            </Card>
-          </Col>
+              </Col>
+            </Row>
+            <TextArea
+              rows={3}
+              value={form.objective}
+              onChange={event => setForm(prev => ({ ...prev, objective: event.target.value }))}
+              placeholder="目标：要回答什么投资问题"
+            />
+            <TextArea
+              rows={5}
+              value={form.context}
+              onChange={event => setForm(prev => ({ ...prev, context: event.target.value }))}
+              placeholder="补充约束、已知信息、风控要求；证据层会自动检索资料"
+            />
+            <Alert type="info" showIcon message={selectedEngine.description} />
+            <Button type="primary" block icon={<ThunderboltOutlined />} loading={creating} onClick={handleCreate}>
+              启动投研任务
+            </Button>
+          </Space>
 
-          <Col xs={24} xl={16}>
-            <Card
-              title={<Space><ClockCircleOutlined />任务队列</Space>}
-              extra={<Button icon={<ReloadOutlined />} loading={loading} onClick={loadData}>刷新</Button>}
-            >
-              <Table
-                size="small"
-                rowKey="id"
-                dataSource={tasks}
-                pagination={{ pageSize: 6 }}
-                onRow={record => ({ onClick: () => setSelectedTaskId(record.id) })}
-                columns={[
-                  {
-                    title: '任务',
-                    dataIndex: 'title',
-                    render: (value, record) => (
-                      <Space direction="vertical" size={0}>
-                        <Text strong>{value}</Text>
-                        <Text type="secondary">{record.symbol || '-'} · {record.assigned_agent || '-'}</Text>
-                      </Space>
-                    )
-                  },
-                  {
-                    title: '状态',
-                    dataIndex: 'status',
-                    width: 100,
-                    render: status => (
-                      <Badge status={statusMeta[status]?.badge || 'default'} text={statusMeta[status]?.text || status} />
-                    )
-                  },
-                  {
-                    title: '进度',
-                    dataIndex: 'progress',
-                    width: 160,
-                    render: value => <Progress percent={value} size="small" />
-                  },
-                  {
-                    title: '动作',
-                    width: 130,
-                    render: (_, record) => (
-                      <Space>
-                        {['failed', 'cancelled', 'completed'].includes(record.status) && (
-                          <Button size="small" onClick={event => { event.stopPropagation(); handleRetry(record.id); }}>重跑</Button>
-                        )}
-                        {['pending', 'running'].includes(record.status) && (
-                          <Button size="small" danger onClick={event => { event.stopPropagation(); handleCancel(record.id); }}>取消</Button>
-                        )}
-                      </Space>
-                    )
-                  }
-                ]}
-              />
-            </Card>
-          </Col>
-        </Row>
+          <div className="agent-queue-head">
+            <span>任务队列</span>
+            <Badge count={tasks.length} overflowCount={99} />
+          </div>
+          <div className="agent-run-list">
+            {tasks.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无任务" />
+            ) : tasks.map(task => {
+              const meta = statusMeta[task.status] || statusMeta.pending;
+              const engine = engineMeta[taskEngine(task)];
+              const heartbeatDelayed = isHeartbeatDelayed(task);
+              return (
+                <button
+                  key={task.id}
+                  className={`agent-run-item ${selectedTask?.id === task.id ? 'active' : ''}`}
+                  onClick={() => setSelectedTaskId(task.id)}
+                >
+                  <span className="agent-run-topline">
+                    <Text strong ellipsis>{task.title}</Text>
+                    <Tag color={engine.color}>{engine.short}</Tag>
+                  </span>
+                  <span className="agent-run-meta">
+                    <Badge status={heartbeatDelayed ? 'warning' : meta.badge} text={heartbeatDelayed ? '心跳延迟' : meta.text} />
+                    <span>{task.symbol || '-'}</span>
+                    <span>{task.progress}%</span>
+                  </span>
+                  <Progress percent={task.progress} showInfo={false} size="small" />
+                </button>
+              );
+            })}
+          </div>
+        </aside>
 
-        {selectedTask ? <TaskDetail task={selectedTask} /> : <Empty description="暂无任务" />}
-      </Space>
+        <main className="agent-thread-panel">
+          {selectedTask ? (
+            <AgentThread task={selectedTask} onRetry={handleRetry} onCancel={handleCancel} />
+          ) : (
+            <Empty description="启动或选择一个 Agent Run" />
+          )}
+        </main>
+
+        <aside className="agent-evidence-panel">
+          <EvidencePanel task={selectedTask} />
+        </aside>
+      </section>
+
+      <section className="agent-artifact-panel">
+        <ArtifactPanel task={selectedTask} />
+      </section>
     </div>
   );
 };
 
-const TaskDetail: React.FC<{ task: InvestmentTaskRecord }> = ({ task }) => {
+const AgentThread: React.FC<{
+  task: InvestmentTaskRecord;
+  onRetry: (taskId: string) => void;
+  onCancel: (taskId: string) => void;
+}> = ({ task, onRetry, onCancel }) => {
   const meta = statusMeta[task.status] || statusMeta.pending;
+  const engine = engineMeta[taskEngine(task)];
   const result = task.result;
   const decision = result ? decisionMeta[result.decision] || decisionMeta.research_more : null;
+  const heartbeatDelayed = isHeartbeatDelayed(task);
+  const heartbeatLag = taskHeartbeatLagMs(task);
 
   return (
-    <Row gutter={[16, 16]}>
-      <Col xs={24} xl={9}>
-        <Card title={<Space><AuditOutlined />任务详情</Space>} extra={<Tag color={meta.color}>{meta.text}</Tag>}>
-          <Descriptions column={1} size="small">
-            <Descriptions.Item label="标的">{task.asset_name || task.symbol || '-'}</Descriptions.Item>
-            <Descriptions.Item label="类型">{task.task_type}</Descriptions.Item>
-            <Descriptions.Item label="优先级">{task.priority}</Descriptions.Item>
-            <Descriptions.Item label="当前 Agent">{task.assigned_agent || '-'}</Descriptions.Item>
-            <Descriptions.Item label="创建时间">{new Date(task.created_at).toLocaleString()}</Descriptions.Item>
-          </Descriptions>
-          <Progress percent={task.progress} style={{ marginTop: 12 }} />
-          {task.error && <Alert type="error" showIcon message={task.error} style={{ marginTop: 12 }} />}
-        </Card>
+    <Space direction="vertical" size={14} style={{ width: '100%' }}>
+      <div className="agent-thread-header">
+        <div>
+          <Space wrap>
+            <Tag color={engine.color}>{engine.title}</Tag>
+            <Badge status={meta.badge} text={meta.text} />
+            {decision && <Tag color={decision.color}>{decision.text}</Tag>}
+          </Space>
+          <Title level={4}>{task.title}</Title>
+          <Text type="secondary">{task.asset_name || task.symbol || '未指定标的'} · {task.task_type} · {new Date(task.created_at).toLocaleString()}</Text>
+        </div>
+        <Space>
+          {['failed', 'cancelled', 'completed'].includes(task.status) && (
+            <Button onClick={() => onRetry(task.id)}>重跑</Button>
+          )}
+          {['pending', 'running'].includes(task.status) && (
+            <Button danger onClick={() => onCancel(task.id)}>取消</Button>
+          )}
+        </Space>
+      </div>
 
-        <Card title="执行日志" style={{ marginTop: 16 }}>
-          <Timeline
-            items={task.logs.map(log => ({
-              color: log.agent === task.assigned_agent ? 'blue' : 'gray',
+      <InvestmentDecisionRibbon task={task} />
+      <Progress percent={task.progress} />
+      {heartbeatDelayed && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`外部引擎心跳已延迟 ${formatLag(heartbeatLag)}`}
+          description="TradingAgents 可能仍在等待模型或行情接口；如果后端热重载打断了父进程，任务会自动失败并可重跑。"
+        />
+      )}
+      {task.error && <Alert type="error" showIcon message={task.error} />}
+      {result?.engine_status && result.engine_status !== 'completed' && (
+        <Alert
+          type="warning"
+          showIcon
+          message={result.engine_status === 'runtime_error' ? 'TradingAgents 运行失败，等待配置复核' : 'TradingAgents 运行环境待配置'}
+          description="DeepFocus 已内置 TradingAgents 引擎，并会读取 设置 → 模型配置；如果这里出现告警，通常是模型 API key、模型名、行情数据源或运行时配置还需要补齐。任务结果中会保留可复核诊断。"
+        />
+      )}
+
+      <AgentRunMap task={task} />
+
+      <div className="agent-thread-log">
+        <div className="agent-panel-head">
+          <span><ApiOutlined /> 可审计 Agent Trace</span>
+          <Text type="secondary">{task.logs.length} 条事件</Text>
+        </div>
+        <Timeline
+          items={task.logs.map(log => {
+            const phase = phaseByKey[resolveAgentPhase(log.agent)];
+            return {
+              color: phase.color,
               children: (
-                <Space direction="vertical" size={0}>
-                  <Text strong>{log.agent}</Text>
-                  <Text>{log.message}</Text>
-                  <Text type="secondary">{new Date(log.timestamp).toLocaleString()}</Text>
+              <Space direction="vertical" size={1}>
+                <Space wrap size={6}>
+                  <Text strong>{coreAgentNameFromLog(log.agent)}</Text>
+                  <Tag color={phase.color}>{phase.title}</Tag>
                 </Space>
+                <Text>{log.message}</Text>
+                <Text type="secondary">{new Date(log.timestamp).toLocaleString()}</Text>
+              </Space>
+              )
+            };
+          })}
+        />
+      </div>
+
+      {result ? (
+        <div className="agent-findings-panel">
+          <div className="agent-panel-head">
+            <span><AuditOutlined /> Agent Findings</span>
+            <Tag color={engine.color}>{result.engine_label || engine.title}</Tag>
+          </div>
+          <Steps
+            direction="vertical"
+            size="small"
+            items={coreFindingEntries(result.agent_findings || {}).map(([agent, findings]) => ({
+              title: agent,
+              description: (
+                <List
+                  size="small"
+                  dataSource={findings}
+                  renderItem={item => <List.Item>{item}</List.Item>}
+                />
               )
             }))}
           />
-        </Card>
-      </Col>
+        </div>
+      ) : (
+        <div className="agent-empty-state">
+          <ClockCircleOutlined />
+          <Text>Agent 正在排队或执行，完成后这里会展示分析链路。</Text>
+        </div>
+      )}
+    </Space>
+  );
+};
 
-      <Col xs={24} xl={15}>
-        {!result ? (
-          <Card>
-            <Empty description="任务完成后会生成投资者报告" />
-          </Card>
-        ) : (
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Card
-              title={<Space><CheckCircleOutlined />投资者摘要</Space>}
-              extra={<Tag color={decision?.color}>{decision?.text}</Tag>}
-            >
-              <Paragraph style={{ fontSize: 16 }}>{result.investor_summary}</Paragraph>
-              <Row gutter={[16, 16]}>
-                <Col xs={24} md={8}>
-                  <Statistic title="置信度" value={result.confidence * 100} precision={0} suffix="%" />
-                  <Progress percent={Math.round(result.confidence * 100)} showInfo={false} />
-                </Col>
-                <Col xs={24} md={16}>
-                  <Alert type="info" showIcon message={result.plain_language_takeaway} />
-                </Col>
-              </Row>
-            </Card>
+const InvestmentDecisionRibbon: React.FC<{ task: InvestmentTaskRecord }> = ({ task }) => {
+  const result = task.result;
+  const decision = result ? decisionMeta[result.decision] || decisionMeta.research_more : null;
+  const readiness = decisionReadinessScore(task);
+  const evidenceCount = result?.evidence?.length || 0;
+  const riskCount = result?.risk_controls?.length || 0;
+  const latestLog = getLatestLog(task);
 
-            {result.evidence && result.evidence.length > 0 && (
-              <Card title="证据来源">
-                <List
-                  size="small"
-                  dataSource={result.evidence}
-                  renderItem={item => (
-                    <List.Item>
-                      <Space direction="vertical" size={2}>
-                        <Space wrap>
-                          <Text strong>{item.title}</Text>
-                          <Tag>{item.source}</Tag>
-                          <Tag color="gold">{Math.round(item.credibility_score * 100)}%</Tag>
-                          {item.tags?.map(tag => <Tag key={tag}>{tag}</Tag>)}
-                        </Space>
-                        <Text>{item.takeaway}</Text>
-                        {item.url && <Text type="secondary">{item.url}</Text>}
-                      </Space>
-                    </List.Item>
-                  )}
-                />
-              </Card>
-            )}
+  return (
+    <div className="agent-decision-ribbon">
+      <div className="agent-decision-tile is-primary">
+        <Text type="secondary">投资动作</Text>
+        <strong>{decision?.text || statusMeta[task.status]?.text || '等待中'}</strong>
+        <span>{decisionGuidance(result)}</span>
+      </div>
+      <div className="agent-decision-tile">
+        <Text type="secondary">可执行度</Text>
+        <div className="agent-score-line">
+          <strong>{readiness}%</strong>
+          <Progress percent={readiness} showInfo={false} size="small" />
+        </div>
+        <span>由置信度、证据、行动、风险和反证共同计算。</span>
+      </div>
+      <div className="agent-decision-tile">
+        <Text type="secondary">证据 / 风控</Text>
+        <strong>{evidenceCount} / {riskCount}</strong>
+        <span>赚钱前先确认依据，亏损路径必须可见。</span>
+      </div>
+      <div className="agent-decision-tile">
+        <Text type="secondary">当前 Agent</Text>
+        <strong>{coreAgentNameFromLog(task.assigned_agent || latestLog?.agent)}</strong>
+        <span>{latestLog?.message || '等待调度。'}</span>
+      </div>
+    </div>
+  );
+};
 
-            <Card title="多 Agent 结论">
-              <Steps
-                direction="vertical"
-                size="small"
-                items={Object.entries(result.agent_findings || {}).map(([agent, findings]) => ({
-                  title: agent,
-                  description: (
-                    <List
-                      size="small"
-                      dataSource={findings}
-                      renderItem={item => <List.Item>{item}</List.Item>}
-                    />
-                  )
-                }))}
-              />
-            </Card>
+const AgentRunMap: React.FC<{ task: InvestmentTaskRecord }> = ({ task }) => {
+  const activePhase = resolveAgentPhase(task.assigned_agent);
+  const loggedPhases = new Set(task.logs.map(log => resolveAgentPhase(log.agent)));
+  const phaseItems = phaseDefinitions.map(phase => {
+    const hasLog = loggedPhases.has(phase.key);
+    const status = task.status === 'failed' && phase.key === activePhase
+      ? 'error'
+      : task.status === 'completed' || hasLog
+        ? 'finish'
+        : phase.key === activePhase || (task.status === 'pending' && phase.key === 'orchestrator')
+          ? 'process'
+          : 'wait';
 
-            <Row gutter={[16, 16]}>
-              <Col xs={24} lg={12}>
-                <Card title="情景推演">
-                  <List
-                    dataSource={result.scenarios}
-                    renderItem={scenario => (
-                      <List.Item>
-                        <Space direction="vertical">
-                          <Text strong>{scenario.case} · {scenario.probability}%</Text>
-                          <Text>{scenario.thesis}</Text>
-                          <Space wrap>{scenario.triggers.map(item => <Tag key={item}>{item}</Tag>)}</Space>
-                        </Space>
-                      </List.Item>
-                    )}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} lg={12}>
-                <Card title={<Space><SafetyCertificateOutlined />风险纪律</Space>}>
-                  <List size="small" dataSource={result.risk_controls} renderItem={item => <List.Item>{item}</List.Item>} />
-                </Card>
-              </Col>
-              <Col xs={24} lg={12}>
-                <Card title="行动清单">
-                  <List size="small" dataSource={result.action_plan} renderItem={item => <List.Item>{item}</List.Item>} />
-                </Card>
-              </Col>
-              <Col xs={24} lg={12}>
-                <Card title="反证清单">
-                  <List size="small" dataSource={result.disconfirming_evidence} renderItem={item => <List.Item>{item}</List.Item>} />
-                </Card>
-              </Col>
-            </Row>
+    return {
+      title: phase.title,
+      description: phase.goal,
+      icon: phase.icon,
+      status: status as 'wait' | 'process' | 'finish' | 'error'
+    };
+  });
 
-            <Alert type="warning" showIcon message={result.disclaimer} />
-          </Space>
-        )}
-      </Col>
-    </Row>
+  return (
+    <div className="agent-run-map">
+      <div className="agent-panel-head">
+        <span><LineChartOutlined /> 投资 Agent 运行图</span>
+        <Tag color={phaseByKey[activePhase].color}>{phaseByKey[activePhase].title}</Tag>
+      </div>
+      <Steps className="agent-stage-steps" size="small" items={phaseItems} />
+    </div>
+  );
+};
+
+const EvidencePanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }) => {
+  const result = task?.result;
+  const evidence = result?.evidence || [];
+  const averageCredibility = evidence.length
+    ? Math.round(evidence.reduce((sum, item) => sum + item.credibility_score, 0) / evidence.length * 100)
+    : 0;
+  return (
+    <Space direction="vertical" size={14} style={{ width: '100%' }}>
+      <div className="agent-panel-head">
+        <span><DatabaseOutlined /> Evidence</span>
+        <Tag>{evidence.length}</Tag>
+      </div>
+      <div className="agent-evidence-scorecard">
+        <span>
+          <Text type="secondary">平均可信度</Text>
+          <strong>{averageCredibility || '-'}{averageCredibility ? '%' : ''}</strong>
+        </span>
+        <span>
+          <Text type="secondary">资料状态</Text>
+          <strong>{evidence.length > 0 ? '可复核' : '待补证'}</strong>
+        </span>
+      </div>
+      <Descriptions column={1} size="small">
+        <Descriptions.Item label="标的">{task?.asset_name || task?.symbol || '-'}</Descriptions.Item>
+        <Descriptions.Item label="引擎">{task ? engineMeta[taskEngine(task)].title : '-'}</Descriptions.Item>
+        <Descriptions.Item label="资料策略">数据源中心 + 本地资料 + Agent 抓取</Descriptions.Item>
+      </Descriptions>
+      {evidence.length > 0 ? (
+        <List
+          className="agent-evidence-list"
+          dataSource={evidence}
+          renderItem={item => (
+            <List.Item>
+              <Space direction="vertical" size={4}>
+                <Space wrap>
+                  <Text strong>{item.title}</Text>
+                  <Tag>{item.source}</Tag>
+                  <Tag color="gold">{Math.round(item.credibility_score * 100)}%</Tag>
+                </Space>
+                <Text>{item.takeaway || '该证据已进入 Agent 上下文。'}</Text>
+                {item.url && <Text type="secondary" copyable>{item.url}</Text>}
+              </Space>
+            </List.Item>
+          )}
+        />
+      ) : (
+        <Alert
+          type="warning"
+          showIcon
+          message="暂无可展示证据"
+          description="任务完成后会显示被 Agent 引用的研报、新闻、公告或本地资料。资料不足时，报告会明确提示缺口。"
+        />
+      )}
+      <div className="agent-tool-strip">
+        <span><FileSearchOutlined /> 研报解析</span>
+        <span><DatabaseOutlined /> 数据源</span>
+        <span><SafetyCertificateOutlined /> 风控</span>
+      </div>
+    </Space>
+  );
+};
+
+const ArtifactPanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }) => {
+  const result = task?.result;
+  if (!task) {
+    return (
+      <div className="agent-artifact-empty">
+        <FileSearchOutlined />
+        <Text>选择一个 Agent Run 后，报告、情景、风险和原始输出会出现在这里。</Text>
+      </div>
+    );
+  }
+
+  if (!result) {
+    return (
+      <div className="agent-artifact-empty">
+        <ClockCircleOutlined />
+        <Text>Artifact 等待生成中。</Text>
+      </div>
+    );
+  }
+
+  const decision = decisionMeta[result.decision] || decisionMeta.research_more;
+  const readiness = decisionReadinessScore(task);
+  const scenarios = result.scenarios || [];
+  const riskControls = result.risk_controls || [];
+  const actionPlan = result.action_plan || [];
+  const disconfirmingEvidence = result.disconfirming_evidence || [];
+  const watchlist = result.watchlist || [];
+
+  return (
+    <div className="agent-artifact-grid">
+      <section className="agent-artifact-main">
+        <div className="agent-panel-head">
+          <span><CheckCircleOutlined /> 投资决策报告</span>
+          <Tag color={decision.color}>{decision.text}</Tag>
+        </div>
+        <div className="agent-verdict-top">
+          <div>
+            <Text type="secondary">Capital Action</Text>
+            <Title level={4}>{decision.text}</Title>
+          </div>
+          <Statistic title="可执行度" value={readiness} suffix="%" />
+        </div>
+        <div className={`agent-action-callout decision-${result.decision}`}>
+          <strong>{decisionGuidance(result)}</strong>
+          <span>目标是提高投资决策质量和收益机会筛选效率，不是自动下单或保证收益。</span>
+        </div>
+        <Paragraph>{result.investor_summary}</Paragraph>
+        <div className="agent-plain-takeaway">{result.plain_language_takeaway}</div>
+        <div className="agent-confidence-row">
+          <Statistic title="置信度" value={result.confidence * 100} precision={0} suffix="%" />
+          <Progress percent={Math.round(result.confidence * 100)} />
+        </div>
+      </section>
+
+      <section className="agent-artifact-list">
+        <div className="agent-panel-head"><span><BranchesOutlined /> 情景推演</span></div>
+        <List
+          size="small"
+          dataSource={scenarios}
+          renderItem={scenario => (
+            <List.Item>
+              <Space direction="vertical" size={3}>
+                <Text strong>{scenario.case} · {scenario.probability}%</Text>
+                <Text>{scenario.thesis}</Text>
+                <Space wrap>{scenario.triggers.map(item => <Tag key={item}>{item}</Tag>)}</Space>
+              </Space>
+            </List.Item>
+          )}
+        />
+      </section>
+
+      <section className="agent-artifact-list">
+        <div className="agent-panel-head"><span><WarningOutlined /> 风险纪律</span></div>
+        <List size="small" dataSource={riskControls} renderItem={item => <List.Item>{item}</List.Item>} />
+      </section>
+
+      <section className="agent-artifact-list">
+        <div className="agent-panel-head"><span><OrderedListOutlined /> 下一步动作</span></div>
+        <List size="small" dataSource={actionPlan} renderItem={item => <List.Item>{item}</List.Item>} />
+      </section>
+
+      <section className="agent-artifact-list">
+        <div className="agent-panel-head"><span><SafetyCertificateOutlined /> 反证清单</span></div>
+        <List size="small" dataSource={disconfirmingEvidence} renderItem={item => <List.Item>{item}</List.Item>} />
+      </section>
+
+      <section className="agent-artifact-list">
+        <div className="agent-panel-head"><span><LineChartOutlined /> 观察清单</span></div>
+        <List size="small" dataSource={watchlist} renderItem={item => <List.Item>{item}</List.Item>} />
+      </section>
+
+      {result.artifacts?.map(artifact => (
+        <section key={`${artifact.type}-${artifact.title}`} className="agent-artifact-raw">
+          <div className="agent-panel-head"><span>{artifact.title}</span></div>
+          <pre>{artifact.content}</pre>
+        </section>
+      ))}
+
+      <Alert type="warning" showIcon message={result.disclaimer} />
+    </div>
   );
 };
 

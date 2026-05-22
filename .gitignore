@@ -18,10 +18,14 @@ backend/.agent_tasks.sqlite3
 backend/.agent_tasks.sqlite3-*
 backend/.data_sources.sqlite3
 backend/.data_sources.sqlite3-*
+backend/.professional_research.sqlite3
+backend/.professional_research.sqlite3-*
 backend/.mcp_hub.sqlite3
 backend/.mcp_hub.sqlite3-*
 backend/.realtime_messages.sqlite3
 backend/.realtime_messages.sqlite3-*
+modules/tradingagents-runtime/.venv/
+modules/tradingagents-runtime/results/
 .env.development.local
 .env.test.local
 .env.production.local
@@ -72,3 +76,5 @@ jspm_packages/
 # Electron
 out/
 app/
+!android/app/
+!android/app/**

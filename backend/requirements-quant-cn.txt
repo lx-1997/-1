@@ -1,0 +1,32 @@
+# Optional quant stack for the multi-market decision module.
+# Designed for mainland China deployments: use a domestic PyPI mirror and local/vendor data.
+
+# Storage
+duckdb
+pyarrow
+polars
+
+# Core numeric / ML
+numpy
+pandas
+scikit-learn
+lightgbm
+xgboost
+catboost
+statsmodels
+
+# China-friendly market data
+akshare
+tushare
+futu-api
+
+# Research / backtest engines
+pyqlib
+rqalpha
+vectorbt
+backtrader
+quantstats
+
+# Reporting
+plotly
+jinja2

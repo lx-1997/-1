@@ -146,7 +146,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({
         <div style={{ background: '#f6ffed', padding: '12px', borderRadius: '6px' }}>
           <Text type="secondary" style={{ fontSize: '12px' }}>
             • 充值金额将立即到账<br/>
-            • 余额可用于购买付费内容<br/>
+            • 余额可用于开通研究资产和深度报告<br/>
             • 充值记录可在个人中心查看<br/>
             • 如有问题请联系客服
           </Text>
@@ -157,7 +157,6 @@ const RechargeModal: React.FC<RechargeModalProps> = ({
 };
 
 export default RechargeModal;
-
 
 
 

@@ -22,7 +22,7 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
   // 获取所有分类
   const categories = ['all', ...Array.from(new Set(products.map(p => p.category)))];
 
-  // 过滤和排序商品
+  // 过滤和排序研究资产
   const filteredProducts = products
     .filter(product => {
       const matchKeyword = !searchKeyword || 
@@ -58,8 +58,8 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
       {showHeader && (
         <div className="section-heading">
           <div>
-            <h2>研究订阅与模板库</h2>
-            <div className="section-description">把研报包、策略模板、数据包和专家服务沉淀为可复用研究资产。</div>
+            <h2>研究资产库</h2>
+            <div className="section-description">把研报包、策略模板、数据包和专家服务沉淀为可复用投研资产。</div>
           </div>
         </div>
       )}
@@ -91,7 +91,7 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
             style={{ width: 150 }}
           >
             <Option value="default">默认排序</Option>
-            <Option value="sales">订阅最多</Option>
+            <Option value="sales">使用最多</Option>
             <Option value="rating">评分最高</Option>
             <Option value="price-low">价格从低到高</Option>
             <Option value="price-high">价格从高到低</Option>
@@ -99,7 +99,7 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
         </Space>
       </div>
 
-      {/* 商品列表 */}
+      {/* 资产列表 */}
       {filteredProducts.length === 0 ? (
         <Empty description="暂无研究资产" />
       ) : (
@@ -181,7 +181,7 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
 
                     <div>
                       <Text type="secondary" style={{ fontSize: '12px' }}>
-                        已订阅 {product.sales}
+                        已使用 {product.sales}
                       </Text>
                     </div>
 
@@ -208,7 +208,7 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
                       block
                       style={{ marginTop: 12 }}
                     >
-                      加入订阅单
+                      加入资产单
                     </Button>
                   </div>
                 </article>

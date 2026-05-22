@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import mimetypes
 from pathlib import Path
 from typing import Optional
 
@@ -18,8 +19,17 @@ MAX_EXTRACTED_CHARS = 80_000
 async def extract_upload_file(file: UploadFile) -> FileExtractionResponse:
     raw = await file.read()
     filename = file.filename or "uploaded-file"
-    suffix = Path(filename).suffix.lower()
+    return extract_file_bytes(raw, filename=filename, content_type=file.content_type)
 
+
+def extract_local_file(file_path: Path) -> FileExtractionResponse:
+    raw = file_path.read_bytes()
+    content_type = mimetypes.guess_type(file_path.name)[0]
+    return extract_file_bytes(raw, filename=file_path.name, content_type=content_type)
+
+
+def extract_file_bytes(raw: bytes, *, filename: str, content_type: Optional[str] = None) -> FileExtractionResponse:
+    suffix = Path(filename).suffix.lower()
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -46,7 +56,7 @@ async def extract_upload_file(file: UploadFile) -> FileExtractionResponse:
 
     return FileExtractionResponse(
         filename=filename,
-        content_type=file.content_type,
+        content_type=content_type,
         text=text,
         char_count=len(text),
         truncated=truncated,

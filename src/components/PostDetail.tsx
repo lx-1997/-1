@@ -39,7 +39,7 @@ interface PostDetailProps {
   post: Post;
   currentUser: User;
   comments: CommentType[];
-  purchasedPosts: string[]; // 用户已购买的帖子ID列表
+  purchasedPosts: string[]; // 用户已开通的研究记录 ID 列表
   onBack: () => void;
   onPurchase: (postId: string, amount: number) => void;
   onRate: (postId: string, rating: number, feedback: string) => void;
@@ -67,7 +67,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
   const [feedback, setFeedback] = useState('');
   const [newComment, setNewComment] = useState('');
 
-  // 检查用户是否已购买此帖子
+  // 检查用户是否已开通此研究记录
   const hasPurchased = purchasedPosts.includes(post.id);
 
   // 滚动到评论区
@@ -147,14 +147,14 @@ const PostDetail: React.FC<PostDetailProps> = ({
       return (
         <Card style={{ textAlign: 'center', padding: '40px' }}>
           <DollarOutlined style={{ fontSize: '64px', color: '#faad14', marginBottom: '16px' }} />
-          <Title level={3}>付费内容</Title>
+          <Title level={3}>深度报告</Title>
           <Paragraph>
-            这是一篇付费内容，需要支付 <Text strong style={{ color: '#faad14', fontSize: '18px' }}>
+            这份深度报告需要支付 <Text strong style={{ color: '#faad14', fontSize: '18px' }}>
               ${post.price}
             </Text> 才能查看完整内容
           </Paragraph>
           <Paragraph type="secondary">
-            付费查看后，您可以对内容进行评分，帮助作者提升内容质量
+            开通后可以查看完整证据、模型和复盘框架
           </Paragraph>
           <Button 
             type="primary" 
@@ -162,7 +162,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
             icon={<DollarOutlined />}
             onClick={() => setIsPurchaseModalVisible(true)}
           >
-            立即购买
+            开通查看
           </Button>
         </Card>
       );
@@ -178,10 +178,10 @@ const PostDetail: React.FC<PostDetailProps> = ({
           <Card style={{ marginTop: 16, background: '#f6ffed', borderColor: '#b7eb8f' }}>
             <Space>
               <DollarOutlined style={{ color: '#52c41a' }} />
-              <Text strong>您已购买此内容</Text>
+              <Text strong>您已开通这份深度报告</Text>
             </Space>
             <div style={{ marginTop: 8 }}>
-              <Text type="secondary">如果觉得内容有价值，请给作者评分：</Text>
+              <Text type="secondary">如果证据和推理有价值，请留下质量评分：</Text>
               <Button 
                 type="link" 
                 icon={<StarOutlined />}
@@ -232,7 +232,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
 
         <Title level={2}>
           {post.title}
-          {post.isPaid && <Tag color="gold" style={{ marginLeft: 8 }}>付费内容</Tag>}
+          {post.isPaid && <Tag color="gold" style={{ marginLeft: 8 }}>深度报告</Tag>}
           {post.isPinned && <Tag color="red" style={{ marginLeft: 8 }}>置顶</Tag>}
           {post.isHighlighted && <Tag color="blue" style={{ marginLeft: 8 }}>精华</Tag>}
         </Title>
@@ -305,7 +305,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
             >
               <MessageOutlined style={{ fontSize: '24px', color: '#1890ff', marginBottom: '8px' }} />
               <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#1890ff' }}>{post.comments}</div>
-              <div style={{ fontSize: '14px', color: '#1890ff' }}>评论</div>
+              <div style={{ fontSize: '14px', color: '#1890ff' }}>讨论</div>
             </Button>
           </Col>
           <Col span={6}>
@@ -375,7 +375,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
                 zIndex: 1000
               }}
             >
-              评论 ({post.comments})
+              讨论 ({post.comments})
             </Button>
             {post.isPaid && hasPurchased && (
               <Button 
@@ -399,8 +399,8 @@ const PostDetail: React.FC<PostDetailProps> = ({
               />
             </Col>
             <Col span={8}>
-              <Statistic 
-                title="付费人数" 
+              <Statistic
+                title="开通人数"
                 value={post.paidViewers} 
                 prefix={<DollarOutlined />}
               />
@@ -418,7 +418,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
 
         {post.qualityScore > 0 && (
           <div style={{ marginTop: 16 }}>
-            <Text type="secondary">内容质量评分: </Text>
+            <Text type="secondary">研究质量评分: </Text>
             <Rate disabled defaultValue={post.qualityScore / 20} />
             <Text type="secondary" style={{ marginLeft: 8 }}>
               {post.qualityScore.toFixed(1)}分 ({post.totalRatings}人评分)
@@ -427,23 +427,23 @@ const PostDetail: React.FC<PostDetailProps> = ({
         )}
       </Card>
 
-      {/* 内容区域 */}
-      <Card title="内容详情">
+      {/* 正文区域 */}
+      <Card title="研究正文">
         {renderContent()}
       </Card>
 
-      {/* 评论区域 */}
-      <Card 
+      {/* 讨论记录 */}
+      <Card
         id="comments-section"
-        title={`评论 (${postComments.length})`} 
+        title={`讨论记录 (${postComments.length})`}
         style={{ marginTop: 16 }}
       >
-        {/* 发表评论 */}
+        {/* 记录评论 */}
         <div style={{ marginBottom: 24 }}>
           <Space.Compact style={{ width: '100%' }}>
             <TextArea
               rows={3}
-              placeholder="写下您的评论..."
+              placeholder="写下证据补充、反证或复盘备注..."
               value={newComment}
               onChange={(e) => setNewComment(e.target.value)}
               style={{ resize: 'none' }}
@@ -454,12 +454,12 @@ const PostDetail: React.FC<PostDetailProps> = ({
               onClick={handleAddComment}
               disabled={!newComment.trim()}
             >
-              发布
+              记录
             </Button>
           </Space.Compact>
         </div>
 
-        {/* 评论列表 */}
+        {/* 讨论记录 */}
         {postComments.length > 0 ? (
           <List
             dataSource={postComments}
@@ -474,7 +474,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
                         <Tag color={comment.author.reputation > 80 ? 'gold' : comment.author.reputation > 60 ? 'blue' : 'default'}>
                           {comment.author.reputation}分
                         </Tag>
-                        {comment.isPaid && <Tag color="gold">付费评论</Tag>}
+                        {comment.isPaid && <Tag color="gold">深度评论</Tag>}
                       </Space>
                       <Paragraph style={{ margin: '8px 0' }}>
                         {comment.content}
@@ -496,14 +496,14 @@ const PostDetail: React.FC<PostDetailProps> = ({
         ) : (
           <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
             <MessageOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
-            <div>暂无评论，来抢沙发吧！</div>
+            <div>暂无讨论记录</div>
           </div>
         )}
       </Card>
 
-      {/* 购买确认模态框 */}
+      {/* 开通确认模态框 */}
       <Modal
-        title="确认购买"
+        title="确认开通"
         open={isPurchaseModalVisible}
         onCancel={() => setIsPurchaseModalVisible(false)}
         footer={[
@@ -516,15 +516,15 @@ const PostDetail: React.FC<PostDetailProps> = ({
             onClick={handlePurchase}
             disabled={currentUser.balance < post.price}
           >
-            确认购买 ${post.price}
+            确认开通 ${post.price}
           </Button>
         ]}
       >
         <div style={{ textAlign: 'center' }}>
           <DollarOutlined style={{ fontSize: '48px', color: '#faad14', marginBottom: '16px' }} />
-          <Title level={4}>购买确认</Title>
+          <Title level={4}>开通确认</Title>
           <Paragraph>
-            您即将购买 <Text strong>{post.title}</Text>
+            您即将开通 <Text strong>{post.title}</Text>
           </Paragraph>
           <Paragraph>
             价格: <Text strong style={{ color: '#faad14', fontSize: '18px' }}>
@@ -538,18 +538,18 @@ const PostDetail: React.FC<PostDetailProps> = ({
           </Paragraph>
           {currentUser.balance < post.price && (
             <Paragraph type="danger">
-              余额不足，无法购买此内容
+              余额不足，无法开通这份深度报告
             </Paragraph>
           )}
           <Paragraph type="secondary">
-            购买后可以查看完整内容，并对内容进行评分
+            开通后可以查看完整证据、模型和复盘框架，并留下质量评分
           </Paragraph>
         </div>
       </Modal>
 
       {/* 评分模态框 */}
       <Modal
-        title="内容评分"
+        title="研究质量评分"
         open={isRatingModalVisible}
         onCancel={() => setIsRatingModalVisible(false)}
         footer={[
@@ -563,7 +563,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
       >
         <div>
           <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-            <Text>请为这篇内容评分：</Text>
+            <Text>请为这份研究资产评分：</Text>
             <div style={{ marginTop: '8px' }}>
               <Rate value={rating} onChange={setRating} />
             </div>
@@ -571,7 +571,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
           <Form.Item label="反馈意见（可选）">
             <TextArea
               rows={4}
-              placeholder="请分享您对这篇内容的看法和建议..."
+              placeholder="请分享您对证据质量、推理链和可执行性的看法..."
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
             />

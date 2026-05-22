@@ -94,7 +94,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
     if (selectedPost) {
       onPurchase(selectedPost);
       setIsPurchaseModalVisible(false);
-      message.success('购买成功！');
+      message.success('深度报告已开通');
     }
   };
 
@@ -233,7 +233,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
             返回
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => onCreatePost(stock)} size="small">
-            发布
+            记录
           </Button>
         </Space>
 
@@ -288,16 +288,16 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
           <Col xs={24} sm={8}>
             <Row gutter={[8, 8]}>
               <Col xs={12}>
-                <Statistic 
-                  title="总帖子" 
+                <Statistic
+                  title="研究资料"
                   value={stock.totalPosts} 
                   suffix="篇"
                   valueStyle={{ fontSize: '16px' }}
                 />
               </Col>
               <Col xs={12}>
-                <Statistic 
-                  title="付费内容" 
+                <Statistic
+                  title="深度报告"
                   value={stock.totalPaidPosts} 
                   suffix="篇"
                   valueStyle={{ color: '#faad14', fontSize: '16px' }}
@@ -305,7 +305,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               </Col>
             </Row>
             <div style={{ marginTop: '8px' }}>
-              <Text type="secondary" style={{ fontSize: '12px' }}>社区评分: {stock.communityScore}分</Text>
+              <Text type="secondary" style={{ fontSize: '12px' }}>证据网络评分: {stock.communityScore}分</Text>
             </div>
             {getQuoteDelayNote(stock) && (
               <div className="stock-quote-delay">
@@ -344,7 +344,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               label: (
                 <span>
                   <FireOutlined />
-                  资讯区 ({newsPosts.length})
+                  资讯证据 ({newsPosts.length})
                 </span>
               ),
               children: renderPostList(newsPosts)
@@ -354,7 +354,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               label: (
                 <span>
                   <StarOutlined />
-                  分析区 ({analysisPosts.length})
+                  研究观点 ({analysisPosts.length})
                 </span>
               ),
               children: renderPostList(analysisPosts)
@@ -364,7 +364,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               label: (
                 <span>
                   <MessageOutlined />
-                  讨论区 ({discussionPosts.length})
+                  讨论记录 ({discussionPosts.length})
                 </span>
               ),
               children: renderPostList(discussionPosts)
@@ -384,7 +384,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               label: (
                 <span>
                   <DollarOutlined />
-                  付费区 ({paidPosts.length})
+                  深度报告 ({paidPosts.length})
                 </span>
               ),
               children: renderPostList(paidPosts)
@@ -393,9 +393,9 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
         />
       </Card>
 
-      {/* 购买确认模态框 */}
+      {/* 开通确认模态框 */}
       <Modal
-        title="确认购买"
+        title="确认开通"
         open={isPurchaseModalVisible}
         onCancel={() => setIsPurchaseModalVisible(false)}
         footer={[
@@ -403,16 +403,16 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
             取消
           </Button>,
           <Button key="purchase" type="primary" onClick={handlePurchase}>
-            确认购买 ${selectedPost?.price}
+            确认开通 ${selectedPost?.price}
           </Button>
         ]}
       >
         {selectedPost && (
           <div style={{ textAlign: 'center' }}>
             <DollarOutlined style={{ fontSize: '48px', color: '#faad14', marginBottom: '16px' }} />
-            <Title level={4}>购买确认</Title>
+            <Title level={4}>开通确认</Title>
             <Paragraph>
-              您即将购买 <Text strong>{selectedPost.title}</Text>
+              您即将开通 <Text strong>{selectedPost.title}</Text>
             </Paragraph>
             <Paragraph>
               价格: <Text strong style={{ color: '#faad14', fontSize: '18px' }}>
@@ -420,7 +420,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               </Text>
             </Paragraph>
             <Paragraph type="secondary">
-              购买后可以查看完整内容，并对内容进行评分
+              开通后可以查看完整证据、模型和复盘框架，并留下质量评分
             </Paragraph>
           </div>
         )}
@@ -428,7 +428,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
 
       {/* 评分模态框 */}
       <Modal
-        title="内容评分"
+        title="研究质量评分"
         open={isRatingModalVisible}
         onCancel={() => setIsRatingModalVisible(false)}
         footer={[
@@ -442,7 +442,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
       >
         <div>
           <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-            <Text>请为这篇内容评分：</Text>
+            <Text>请为这份研究资产评分：</Text>
             <div style={{ marginTop: '8px' }}>
               <Rate value={rating} onChange={setRating} />
             </div>
@@ -451,7 +451,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
             <Text>反馈意见（可选）</Text>
             <TextArea
               rows={4}
-              placeholder="请分享您对这篇内容的看法和建议..."
+              placeholder="请分享您对证据质量、推理链和可执行性的看法..."
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
               style={{ marginTop: '8px' }}

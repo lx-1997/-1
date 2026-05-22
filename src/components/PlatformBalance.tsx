@@ -116,7 +116,7 @@ const PlatformBalance: React.FC<PlatformBalanceProps> = ({
         <Col span={8}>
           <Card>
             <Statistic
-              title="付费内容"
+              title="深度报告"
               value={paidPosts}
               prefix={<DollarOutlined />}
               valueStyle={{ color: '#fa8c16', fontSize: '20px' }}

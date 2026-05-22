@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Layout, Input, Button, Dropdown, Space, Avatar, Badge, Typography, message } from 'antd';
+import React, { useEffect, useState } from 'react';
+import { Layout, Input, Button, Dropdown, Space, Avatar, Badge, Typography, message, Tooltip } from 'antd';
 import {
   SearchOutlined,
   BellOutlined,
@@ -9,11 +9,15 @@ import {
   DollarOutlined,
   LogoutOutlined,
   SettingOutlined,
-  SyncOutlined
+  SyncOutlined,
+  DatabaseOutlined,
+  RobotOutlined
 } from '@ant-design/icons';
-import { AppState, ViewType } from '../types';
+import { AppState, Stock, ViewType } from '../types';
 import RechargeModal from './RechargeModal';
 import { formatQuoteSourceLine } from '../utils/marketData';
+import { SystemReadiness, getSystemReadiness } from '../services/systemHealthService';
+import { countStocksBySegment } from '../utils/marketSegments';
 
 const { Header: AntHeader } = Layout;
 const { Text } = Typography;
@@ -21,13 +25,14 @@ const { Text } = Typography;
 interface HeaderProps {
   appState: AppState;
   onLogout: () => void;
-  onStockSelect: (stock: any) => void;
+  onStockSelect: (stock: Stock) => void;
   onRecharge: (amount: number, method: string) => void;
   isMobile?: boolean;
   onMobileMenuToggle?: () => void;
   onViewChange?: (view: ViewType) => void;
   onRefreshMarketData?: () => void;
   isMarketDataRefreshing?: boolean;
+  isDemoSession?: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -39,13 +44,48 @@ const Header: React.FC<HeaderProps> = ({
   onMobileMenuToggle,
   onViewChange,
   onRefreshMarketData,
-  isMarketDataRefreshing = false
+  isMarketDataRefreshing = false,
+  isDemoSession = false
 }) => {
   const [searchValue, setSearchValue] = useState('');
   const [rechargeModalVisible, setRechargeModalVisible] = useState(false);
+  const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
   const quoteAnchor = appState.stocks.find(stock => stock.quoteProvider && stock.quoteProvider !== 'mock')
     || appState.stocks[0];
   const connectedQuoteCount = appState.stocks.filter(stock => stock.quoteProvider && stock.quoteProvider !== 'mock').length;
+  const marketSegmentCounts = countStocksBySegment(appState.stocks);
+  const readinessTone = readiness?.status === 'ready' ? 'ready' : readiness?.status === 'degraded' ? 'degraded' : 'not-ready';
+  const readinessTooltip = readiness
+    ? [
+        `系统就绪度 ${readiness.score}/100`,
+        readiness.blockers.length ? `阻塞：${readiness.blockers.join('、')}` : '',
+        readiness.warnings.length ? `提醒：${readiness.warnings.join('、')}` : ''
+      ].filter(Boolean).join('\n')
+    : '系统就绪度待检查';
+
+  useEffect(() => {
+    let mounted = true;
+
+    const refreshReadiness = async () => {
+      try {
+        const nextReadiness = await getSystemReadiness();
+        if (mounted) {
+          setReadiness(nextReadiness);
+        }
+      } catch {
+        if (mounted) {
+          setReadiness(null);
+        }
+      }
+    };
+
+    void refreshReadiness();
+    const timer = window.setInterval(refreshReadiness, 60000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const handleSearch = (value: string) => {
     const keyword = value.trim().toLowerCase();
@@ -76,7 +116,7 @@ const Header: React.FC<HeaderProps> = ({
     {
       key: 'settings',
       icon: <SettingOutlined />,
-      label: '设置'
+      label: '系统设置'
     },
     {
       type: 'divider' as const
@@ -108,7 +148,7 @@ const Header: React.FC<HeaderProps> = ({
         </span>
         <div className="brand-copy">
           <span className="brand-title">深度焦点</span>
-          <span className="brand-subtitle">DeepFocus 投研终端</span>
+          <span className="brand-subtitle">Agent Workspace</span>
         </div>
       </div>
 
@@ -116,7 +156,7 @@ const Header: React.FC<HeaderProps> = ({
       {!isMobile && (
         <div className="header-search">
           <Input.Search
-            placeholder="搜索股票代码或名称"
+            placeholder="搜索标的，加入 Agent 上下文"
             value={searchValue}
             onChange={(e) => setSearchValue(e.target.value)}
             onSearch={handleSearch}
@@ -129,35 +169,60 @@ const Header: React.FC<HeaderProps> = ({
 
       {/* 用户信息 - 移动端简化 */}
       {!isMobile && (
-        <div className="header-metrics">
-          <span className="market-pill">
-            关注 <strong>{appState.stocks.length}</strong>
-          </span>
-          <span className="market-pill">
-            资料 <strong>{appState.posts.length}</strong>
-          </span>
-          <span className="market-pill">
-            数据 <strong>{connectedQuoteCount > 0 ? `${connectedQuoteCount} 源` : '样例'}</strong>
-          </span>
-          <span className="market-pill">
-            行情 <strong>{formatQuoteSourceLine(quoteAnchor)}</strong>
-          </span>
+        <div className="header-status-cluster">
           <Button
             size="small"
-            icon={<SyncOutlined spin={isMarketDataRefreshing} />}
-            loading={isMarketDataRefreshing}
-            onClick={onRefreshMarketData}
+            icon={<RobotOutlined />}
+            onClick={() => onViewChange?.('home')}
+            className="header-agent-button"
           >
-            刷新
+            Agent
           </Button>
-            <Button 
-              type="primary" 
-              size="small" 
-              icon={<DollarOutlined />}
-              onClick={() => setRechargeModalVisible(true)}
+          <Tooltip title={`A股 ${marketSegmentCounts.aShare} · 港美 ${marketSegmentCounts.global}`}>
+            <span className="market-pill">
+              观察 <strong>{appState.stocks.length}</strong>
+            </span>
+          </Tooltip>
+          <Tooltip title={connectedQuoteCount > 0 ? `${connectedQuoteCount} 个外部行情源已接入` : '当前使用样例行情，可刷新或配置行情源'}>
+            <span className="market-pill">
+              <DatabaseOutlined />
+              <strong>{connectedQuoteCount > 0 ? `${connectedQuoteCount} 源` : '样例'}</strong>
+            </span>
+          </Tooltip>
+          <span className="market-pill">
+            证据 <strong>{appState.posts.length}</strong>
+          </span>
+          {isDemoSession && (
+            <span className="market-pill demo-mode-pill">
+              演示会话
+            </span>
+          )}
+          {readiness && (
+            <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{readinessTooltip}</span>}>
+              <span className={`market-pill readiness-pill ${readinessTone}`}>
+                就绪 <strong>{readiness.score}</strong>
+              </span>
+            </Tooltip>
+          )}
+          <Tooltip title={quoteAnchor ? formatQuoteSourceLine(quoteAnchor) : '行情待刷新'}>
+            <Button
+              size="small"
+              icon={<SyncOutlined spin={isMarketDataRefreshing} />}
+              loading={isMarketDataRefreshing}
+              onClick={onRefreshMarketData}
+              aria-label="刷新行情"
             >
-              数据额度
+              刷新
             </Button>
+          </Tooltip>
+          <Button
+            type="primary"
+            size="small"
+            icon={<DollarOutlined />}
+            onClick={() => setRechargeModalVisible(true)}
+          >
+            额度
+          </Button>
         </div>
       )}
 
@@ -189,7 +254,7 @@ const Header: React.FC<HeaderProps> = ({
               }
 
               if (key === 'settings') {
-                message.info('设置功能开发中');
+                onViewChange?.('profile');
               }
             }
           }}

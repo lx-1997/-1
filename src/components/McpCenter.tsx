@@ -417,7 +417,7 @@ const McpCenter: React.FC<McpCenterProps> = ({ appState }) => {
         <div>
           <Space align="center" size={10}>
             <span className="mcp-heading-icon"><ApiOutlined /></span>
-            <Title level={3} style={{ margin: 0 }}>MCP 中心</Title>
+            <Title level={3} style={{ margin: 0 }}>工具链：MCP 工具</Title>
           </Space>
           <Text type="secondary">Agent 工具、投研数据和交易能力的统一协议层</Text>
         </div>

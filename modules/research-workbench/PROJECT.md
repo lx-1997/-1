@@ -21,6 +21,12 @@ ZSXQ_COOKIE="你的知识星球 Cookie" ZSXQ_ADUID="你的 X-Aduid" npm run tool
 http://127.0.0.1:3927
 ```
 
+在 DeepFocus 主项目中由 FastAPI 自动托管，对外地址为：
+
+```text
+http://127.0.0.1:8300/research-workbench/
+```
+
 ## 目录
 
 ```text
@@ -34,4 +40,3 @@ downloads/           # 下载文件目录
 ## 说明
 
 这个目录不包含 `node_modules`、登录 Cookie、API Key，也不包含已下载研报文件。复制到其它位置后执行 `npm install` 即可恢复依赖。
-

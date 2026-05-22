@@ -243,7 +243,7 @@ export const mockRatings: Rating[] = [
     postId: '1',
     userId: '2',
     rating: 5,
-    feedback: '内容质量很高，分析深入，值得付费阅读。',
+    feedback: '研究质量很高，分析深入，值得开通阅读。',
     ratingTime: '2024-10-01T11:00:00Z',
     isAnonymous: false
   },
@@ -327,7 +327,7 @@ export const mockRechargeHistory: RechargeRecord[] = [
   }
 ];
 
-// 模拟研究订阅与模板数据
+// 模拟研究资产与模板数据
 export const mockProducts: Product[] = [
   {
     id: 'prod_1',

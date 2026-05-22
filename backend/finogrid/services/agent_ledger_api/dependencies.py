@@ -26,7 +26,7 @@ async def get_current_agent_account(
     db: AsyncSession = None,
 ):
     """Resolve X-Agent-API-Key to an active AgentAccount."""
-    from ....database.models.agent_ledger import AgentAccount, AgentStatus
+    from ...database.models.agent_ledger import AgentAccount, AgentStatus
 
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     result = await db.execute(
@@ -49,7 +49,7 @@ async def assert_kya_status(agent_account, required_level: str = "basic"):
     Gate: assert the agent has sufficient KYA before transacting.
     Called at the top of micropay and other outbound-payment endpoints.
     """
-    from ....database.models.agent_ledger import KYAStatus
+    from ...database.models.agent_ledger import KYAStatus
 
     order = {
         KYAStatus.UNVERIFIED: 0,

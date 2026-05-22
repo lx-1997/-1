@@ -88,7 +88,7 @@ export interface Comment {
   publishTime: string;
   likes: number;
   replies: Comment[];
-  isPaid: boolean; // 是否付费评论
+  isPaid: boolean; // 是否深度评论
 }
 
 export interface Rating {
@@ -121,28 +121,28 @@ export interface RechargeRecord {
   transactionId?: string;
 }
 
-// 商城相关类型
+// 研究资产相关类型
 export interface ProductVariant {
   id: string;
-  name: string; // 款式名称，如"红色-大号"、"蓝色-中号"
-  sku: string; // 商品SKU
+  name: string; // 资产版本名称
+  sku: string; // 资产 SKU
   price: number; // 价格
-  stock: number; // 库存
-  image?: string; // 款式图片
-  attributes: Record<string, string>; // 属性，如 { color: '红色', size: '大号' }
+  stock: number; // 可用名额
+  image?: string; // 资产图片
+  attributes: Record<string, string>; // 资产属性
 }
 
 export interface Product {
   id: string;
   name: string;
   description: string;
-  images: string[]; // 商品图片列表
-  category: string; // 商品分类
+  images: string[]; // 资产图片列表
+  category: string; // 资产分类
   price: number; // 基础价格
   originalPrice?: number; // 原价（用于显示折扣）
-  variants: ProductVariant[]; // 商品款式
-  stock: number; // 总库存
-  sales: number; // 销量
+  variants: ProductVariant[]; // 资产版本
+  stock: number; // 总可用名额
+  sales: number; // 使用量
   rating: number; // 评分（1-5）
   ratingCount: number; // 评价数量
   tags: string[]; // 标签
@@ -199,7 +199,7 @@ export interface ShippingAddress {
 }
 
 // 视图类型
-export type ViewType = 'home' | 'stocks' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders' | 'ai-research' | 'agent-center' | 'data-sources' | 'research-workbench' | 'realtime-messages' | 'mcp-center' | 'skills' | 'earnings-calendar';
+export type ViewType = 'home' | 'stocks' | 'a-share-market' | 'global-market' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders' | 'ai-research' | 'agent-center' | 'data-sources' | 'research-workbench' | 'realtime-messages' | 'mcp-center' | 'skills' | 'earnings-calendar' | 'cn-earnings' | 'shareholder-changes' | 'major-events' | 'multi-market-decision' | 'ai-supply-chain' | 'customs-trade' | 'options-signal';
 
 // 应用状态
 export interface AppState {
@@ -211,14 +211,14 @@ export interface AppState {
   comments: Comment[];
   ratings: Rating[];
   payments: Payment[];
-  purchasedPosts: string[]; // 用户已购买的帖子ID列表
+  purchasedPosts: string[]; // 用户已开通的研究记录 ID 列表
   isLoading: boolean;
   currentView: ViewType;
   platformBalance: number; // 平台总余额
   rechargeHistory: RechargeRecord[]; // 充值记录
-  // 商城相关
-  products: Product[]; // 商品列表
-  cart: CartItem[]; // 购物车
-  orders: Order[]; // 订单列表
-  selectedProduct: Product | null; // 当前选中的商品
+  // 研究资产相关
+  products: Product[]; // 资产列表
+  cart: CartItem[]; // 资产单
+  orders: Order[]; // 资产订单列表
+  selectedProduct: Product | null; // 当前选中的资产
 }

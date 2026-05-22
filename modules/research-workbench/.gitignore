@@ -3,6 +3,7 @@ downloads/*
 !downloads/.gitkeep
 .tool-runs/*
 !.tool-runs/.gitkeep
+exports/
 .zsxq-browser-profile/
 cookie.txt
 cookies.txt

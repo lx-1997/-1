@@ -7,9 +7,10 @@ const { Title, Text } = Typography;
 interface LoginProps {
   onLogin: (username: string, password: string) => void;
   isLoading: boolean;
+  demoLoginEnabled?: boolean;
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
+const Login: React.FC<LoginProps> = ({ onLogin, isLoading, demoLoginEnabled = true }) => {
   const [form] = Form.useForm();
 
   const handleSubmit = (values: { username: string; password: string }) => {
@@ -29,7 +30,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
 
         <div className="login-hero">
           <h1>专业投研工作台</h1>
-          <p>把个股社区、付费研究、组合关注和智能投研工具收束到一套清晰的投资操作界面。</p>
+          <p>把观察池、证据库、深度报告和 Agent 任务收束到一套清晰的投资操作界面。</p>
           <div className="login-terminal-lines">
             <div className="login-terminal-line">
               <span>FOCUS_POOL</span>
@@ -37,7 +38,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
             </div>
             <div className="login-terminal-line">
               <span>RESEARCH_FLOW</span>
-              <span>投研内容</span>
+              <span>证据链路</span>
             </div>
             <div className="login-terminal-line">
               <span>AGENT_CENTER</span>
@@ -118,11 +119,19 @@ const Login: React.FC<LoginProps> = ({ onLogin, isLoading }) => {
             </Form.Item>
           </Form>
 
-          <div style={{ textAlign: 'center' }}>
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              演示账号：用户名 demo，密码 demo
-            </Text>
-          </div>
+          {demoLoginEnabled ? (
+            <div style={{ textAlign: 'center' }}>
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                演示账号：用户名 demo，密码 demo
+              </Text>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center' }}>
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                演示登录已关闭，请接入真实认证服务
+              </Text>
+            </div>
+          )}
         </Space>
       </Card>
       </main>

@@ -98,6 +98,7 @@ const moduleMeta: Record<DataSourceModule, string> = {
   stock_detail: '个股详情',
   earnings_calendar: '财报日历',
   ai_research: 'AI 研究',
+  ai_supply_chain: 'AI 供应链',
   realtime_messages: '实时消息',
   agent_center: 'Agent 中心',
   data_source_center: '数据源中心',
@@ -627,8 +628,8 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
         <Card>
           <Row gutter={[16, 16]} align="middle">
             <Col xs={24} lg={12}>
-              <Title level={3} style={{ margin: 0 }}>数据源中心</Title>
-              <Text type="secondary">统一管理本地文件、远端资料、网页抓取和 Agent 证据标签</Text>
+              <Title level={3} style={{ margin: 0 }}>工具链：数据与证据</Title>
+              <Text type="secondary">统一管理本地文件、远端资料、网页抓取和 Agent 可引用的证据标签</Text>
             </Col>
             <Col xs={24} lg={12}>
               <Row gutter={12}>
@@ -961,12 +962,14 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                   rowKey="id"
                   dataSource={sources}
                   pagination={{ pageSize: 6 }}
+                  scroll={{ x: 900 }}
                   columns={[
                     {
                       title: '名称',
                       dataIndex: 'name',
+                      width: 250,
                       render: (value, record) => (
-                        <Space direction="vertical" size={0}>
+                        <Space className="data-source-name-cell" direction="vertical" size={0}>
                           <Text strong>{value}</Text>
                           <Text type="secondary">{record.description || record.config?.url || '-'}</Text>
                         </Space>
@@ -1170,12 +1173,14 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                       rowKey="id"
                       dataSource={items}
                       pagination={{ pageSize: 8 }}
+                      scroll={{ x: 980 }}
                       columns={[
                         {
                           title: '资料',
                           dataIndex: 'title',
+                          width: 420,
                           render: (value, record) => (
-                            <Space direction="vertical" size={2} style={{ maxWidth: 520 }}>
+                            <Space className="data-source-title-cell" direction="vertical" size={2}>
                               {record.url ? (
                                 <a href={record.url} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>
                                   {value}

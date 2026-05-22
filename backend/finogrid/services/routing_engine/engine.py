@@ -121,7 +121,8 @@ class RoutingEngine:
             if preferred == "USDT" and rp.usdt_enabled:
                 return AssetType.USDT
             if preferred == "USDC" and rp.usdc_enabled:
-                notes.append(f"Preferred {preferred} unavailable in corridor; falling back")
+                return AssetType.USDC
+            notes.append(f"Preferred {preferred} unavailable in corridor; falling back")
 
         # Default priority: USDT > USDC
         if rp.usdt_enabled:

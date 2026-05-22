@@ -3,7 +3,7 @@ import { apiDelete, apiGet, apiPatch, apiPost } from './apiClient';
 export type DataSourceType = 'server_api' | 'market_api' | 'upload' | 'web_page' | 'agent_crawl' | 'manual';
 export type DataSourceStatus = 'active' | 'paused' | 'error';
 export type DataSourceCategory = 'market' | 'earnings' | 'filing' | 'research' | 'sentiment' | 'upload' | 'internal' | 'other';
-export type DataSourceModule = 'home' | 'stock_detail' | 'earnings_calendar' | 'ai_research' | 'realtime_messages' | 'agent_center' | 'data_source_center' | 'custom';
+export type DataSourceModule = 'home' | 'stock_detail' | 'earnings_calendar' | 'ai_research' | 'ai_supply_chain' | 'realtime_messages' | 'agent_center' | 'data_source_center' | 'custom';
 export type DataSourceRefRole = 'primary' | 'fallback' | 'evidence' | 'signal' | 'context';
 export type TrustLevel = 'internal' | 'official' | 'media' | 'community' | 'unknown';
 export type KeywordCrawlProvider = 'xueqiu' | 'wechat_public';

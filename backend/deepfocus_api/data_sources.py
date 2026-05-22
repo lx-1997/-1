@@ -26,6 +26,7 @@ from .schemas import (
     DataSourceSyncRequest,
     DataSourceTagRecord,
 )
+from .shareholder_change_skill import detect_shareholder_change_request, scan_shareholder_changes
 
 
 DB_PATH = Path(
@@ -732,20 +733,23 @@ async def collect_task_evidence(payload: dict[str, Any], limit: int = 8) -> list
         )
         if part
     )
+    skill_evidence = await _collect_skill_evidence(query=query, limit=limit)
     await _auto_sync_sources(symbol=symbol, query=query)
-    records = list_data_items(symbol=symbol, limit=limit) if symbol else []
-    if len(records) < limit:
+    remaining_limit = max(0, limit - len(skill_evidence))
+    records = list_data_items(symbol=symbol, limit=remaining_limit) if symbol and remaining_limit else []
+    if len(records) < remaining_limit:
         existing_ids = {record.id for record in records}
         records.extend(
             record
-            for record in list_data_items(query=query, limit=limit)
+            for record in list_data_items(query=query, limit=remaining_limit)
             if record.id not in existing_ids
         )
-    records = records[:limit]
-    return [
+    records = records[:remaining_limit]
+    stored_evidence = [
         {
             "source": record.source_name,
             "source_type": record.source_type,
+            "source_category": record.source_category,
             "title": record.title,
             "symbol": record.symbol,
             "url": record.url,
@@ -756,6 +760,55 @@ async def collect_task_evidence(payload: dict[str, Any], limit: int = 8) -> list
         }
         for record in records
     ]
+    return [*skill_evidence, *stored_evidence][:limit]
+
+
+async def _collect_skill_evidence(*, query: str, limit: int) -> list[dict[str, Any]]:
+    skill_request = detect_shareholder_change_request(query)
+    if not skill_request:
+        return []
+    skill_request = skill_request.model_copy(update={"limit": min(20, max(1, limit))})
+    try:
+        result = await scan_shareholder_changes(skill_request)
+    except Exception:
+        return []
+
+    evidence: list[dict[str, Any]] = []
+    if result.records:
+        evidence.append(
+            {
+                "source": result.skill,
+                "source_type": "skill_summary",
+                "source_category": "filing",
+                "title": "A股股东增减持扫描摘要",
+                "symbol": None,
+                "url": "https://www.cninfo.com.cn/",
+                "tags": ["股东增减持", "A股公告", result.direction],
+                "credibility_score": 0.9,
+                "collected_at": result.generated_at.isoformat(),
+                "text": f"{result.summary} {result.coverage_note}",
+            }
+        )
+    evidence.extend(
+        {
+            "source": result.skill,
+            "source_type": "skill",
+            "source_category": "filing",
+            "title": record.title,
+            "symbol": record.symbol,
+            "url": record.url,
+            "tags": record.tags,
+            "credibility_score": 0.9,
+            "collected_at": result.generated_at.isoformat(),
+            "text": (
+                f"{record.announcement_date} {record.symbol} {record.name} "
+                f"{record.direction} {record.status} {record.shareholder_type} {record.title} "
+                f"{record.detail_summary or record.evidence_excerpt}"
+            ),
+        }
+        for record in result.records[:limit]
+    )
+    return evidence[:limit]
 
 
 async def _auto_sync_sources(*, symbol: Optional[str], query: str) -> None:

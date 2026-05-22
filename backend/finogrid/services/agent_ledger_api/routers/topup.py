@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..schemas import TopUpRequest, TopUpResponse
 from ..dependencies import get_db, get_current_agent_account
 from ..config import settings
-from .....database.models.agent_ledger import AgentAccount, AgentLedgerEntry
+from ....database.models.agent_ledger import AgentAccount, AgentLedgerEntry
 
 log = structlog.get_logger()
 router = APIRouter()

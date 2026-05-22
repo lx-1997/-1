@@ -79,7 +79,7 @@ const Orders: React.FC<OrdersProps> = ({
     return true;
   });
   const tabItems = [
-    { key: 'all', label: `全部订单 (${orders.length})` },
+    { key: 'all', label: `全部资产订单 (${orders.length})` },
     { key: 'pending', label: `待支付 (${orders.filter(o => o.paymentStatus === 'pending').length})` },
     { key: 'paid', label: `已支付 (${orders.filter(o => o.paymentStatus === 'paid').length})` },
     { key: 'delivered', label: `已完成 (${orders.filter(o => o.orderStatus === 'delivered').length})` }
@@ -94,7 +94,7 @@ const Orders: React.FC<OrdersProps> = ({
       render: (id: string) => <Text copyable={{ text: id }}>{id.slice(0, 8)}...</Text>
     },
     {
-      title: '商品',
+      title: '资产',
       key: 'items',
       width: '30%',
       render: (_: any, record: Order) => (
@@ -112,7 +112,7 @@ const Orders: React.FC<OrdersProps> = ({
             <Text strong>{record.items[0]?.productName}</Text>
             {record.items.length > 1 && (
               <Text type="secondary" style={{ display: 'block', fontSize: '12px' }}>
-                等{record.items.length}件商品
+                等{record.items.length}项资产
               </Text>
             )}
           </div>
@@ -210,13 +210,13 @@ const Orders: React.FC<OrdersProps> = ({
 
   return (
     <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
-      <Title level={3} style={{ marginBottom: '24px' }}>我的订单</Title>
+      <Title level={3} style={{ marginBottom: '24px' }}>我的资产订单</Title>
 
       <Card>
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
 
         {filteredOrders.length === 0 ? (
-          <Empty description="暂无订单" />
+          <Empty description="暂无资产订单" />
         ) : (
           <Table
             columns={columns}
@@ -224,15 +224,15 @@ const Orders: React.FC<OrdersProps> = ({
             rowKey="id"
             pagination={{
               pageSize: 10,
-              showTotal: (total) => `共 ${total} 条订单`
+              showTotal: (total) => `共 ${total} 条资产订单`
             }}
           />
         )}
       </Card>
 
-      {/* 订单详情模态框 */}
+      {/* 资产订单详情模态框 */}
       <Modal
-        title="订单详情"
+        title="资产订单详情"
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
         footer={null}
@@ -241,7 +241,7 @@ const Orders: React.FC<OrdersProps> = ({
         {selectedOrder && (
           <div>
             <Descriptions bordered column={2}>
-              <Descriptions.Item label="订单号">{selectedOrder.id}</Descriptions.Item>
+              <Descriptions.Item label="资产订单号">{selectedOrder.id}</Descriptions.Item>
               <Descriptions.Item label="下单时间">
                 {new Date(selectedOrder.createdAt).toLocaleString()}
               </Descriptions.Item>
@@ -251,10 +251,10 @@ const Orders: React.FC<OrdersProps> = ({
               <Descriptions.Item label="支付状态">
                 {getPaymentStatusTag(selectedOrder.paymentStatus)}
               </Descriptions.Item>
-              <Descriptions.Item label="订单状态">
+              <Descriptions.Item label="资产订单状态">
                 {getOrderStatusTag(selectedOrder.orderStatus)}
               </Descriptions.Item>
-              <Descriptions.Item label="订单金额">
+              <Descriptions.Item label="资产订单金额">
                 <Text strong style={{ color: '#ff4d4f', fontSize: '16px' }}>
                   ¥{selectedOrder.totalAmount.toFixed(2)}
                 </Text>
@@ -267,12 +267,12 @@ const Orders: React.FC<OrdersProps> = ({
             </Descriptions>
 
             <Title level={5} style={{ marginTop: '24px', marginBottom: '16px' }}>
-              商品列表
+              资产列表
             </Title>
             <Table
               columns={[
                 {
-                  title: '商品',
+                  title: '资产',
                   key: 'product',
                   render: (_: any, item: any) => (
                     <Space>
@@ -346,6 +346,5 @@ const Orders: React.FC<OrdersProps> = ({
 };
 
 export default Orders;
-
 
 

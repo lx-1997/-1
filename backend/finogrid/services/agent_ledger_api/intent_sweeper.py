@@ -19,10 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy import select
 
 from .config import settings
-from ....database.models.agent_ledger import (
+from ...database.models.agent_ledger import (
     AgentAccount, AgentWallet, PaymentIntent, AgentLedgerEntry, IntentStatus
 )
-from ....database.models.audit import AuditLog
+from ...database.models.audit import AuditLog
 
 log = structlog.get_logger()
 

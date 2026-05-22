@@ -17,7 +17,13 @@ from .schemas import (
     CorridorRiskRequest,
     FinGptTaskResponse,
     ForecastRequest,
+    GeneralChatRequest,
+    GeneralChatResponse,
     NewsSummaryRequest,
+    OptionsAiAnalysisRequest,
+    OptionsAiAnalysisResponse,
+    OrchestratorChatRequest,
+    OrchestratorChatResponse,
     RagQueryRequest,
     ReportAnalysisRequest,
     SentimentResponse,
@@ -61,7 +67,7 @@ class CloudResearchLLM:
         if provider == "minimax":
             api_key = config.get("api_key")
             if not api_key:
-                raise RuntimeError("MINIMAX_API_KEY is required when DEEPFOCUS_LLM_PROVIDER=minimax")
+                raise RuntimeError("当前 MiniMax 模型缺少 API Key，请在设置 → 模型配置中保存 API Key。")
             return AsyncOpenAI(
                 api_key=api_key,
                 base_url=config.get("base_url") or "https://api.minimax.io/v1",
@@ -70,7 +76,7 @@ class CloudResearchLLM:
         if provider in {"openai", "openai-compatible", "cloud"}:
             api_key = config.get("api_key")
             if not api_key:
-                raise RuntimeError("OPENAI_API_KEY is required when DEEPFOCUS_LLM_PROVIDER=openai")
+                raise RuntimeError(f"当前 {provider} 模型缺少 API Key，请在设置 → 模型配置中保存 API Key。")
             base_url = config.get("base_url") or None
             return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
@@ -82,6 +88,7 @@ class CloudResearchLLM:
         max_tokens: int = 2200,
         timeout_seconds: float = 35,
         force_json_first: bool = True,
+        retry_schema_hint: str | None = None,
     ) -> dict[str, Any]:
         if self.provider == "mock":
             raise RuntimeError("mock provider does not call cloud completion")
@@ -102,7 +109,7 @@ class CloudResearchLLM:
         retry_prompt = (
             f"{prompt}\n\n"
             "上一次输出不是有效 JSON 或内容为空。请重新生成更短的 JSON object："
-            "必须填充 title, summary, key_points, signals, risks, actions, sources, confidence；"
+            f"{retry_schema_hint or '必须填充 title, summary, key_points, signals, risks, actions, sources, confidence；'}"
             "不要 Markdown，不要解释文字；数组字段最多 3 项，每项不超过 18 个中文字符。"
         )
         retry_text = await self._complete_text(
@@ -119,6 +126,7 @@ class CloudResearchLLM:
             retry_prompt = (
                 f"{prompt}\n\n"
                 "上一次输出不是合法 JSON。请重新生成更短的严格 JSON："
+                f"{retry_schema_hint or ''}"
                 "不要 Markdown，不要解释文字；数组字段最多 5 项，每项不超过 24 个中文字符。"
             )
             retry_text = await self._complete_text(
@@ -157,9 +165,16 @@ class CloudResearchLLM:
                 },
                 {"role": "user", "content": prompt},
             ],
-            "temperature": max(0.01, min(config["temperature"], 1.0)),
             "max_tokens": max_tokens,
         }
+        if _is_kimi_switchable_thinking_model(self.model):
+            # Kimi K2.6/K2.5 enable thinking by default; for structured JSON calls
+            # that can spend the whole token budget on reasoning_content and return
+            # an empty content field. Disable it here and show product-level
+            # reasoning summaries from the Agent event stream instead.
+            payload["extra_body"] = {"thinking": {"type": "disabled"}}
+        else:
+            payload["temperature"] = max(0.01, min(config["temperature"], 1.0))
         if force_json:
             payload["response_format"] = {"type": "json_object"}
 
@@ -252,6 +267,64 @@ class CloudResearchLLM:
             capabilities=capabilities,
         )
 
+    async def general_chat(self, request: GeneralChatRequest) -> GeneralChatResponse:
+        if self.provider == "mock":
+            return _mock_general_chat(request, self.provider_name, self.model)
+
+        history = [
+            {
+                "role": str(item.get("role", "")).lower(),
+                "content": str(item.get("content", "")).strip()[:1200],
+            }
+            for item in request.history[-8:]
+            if str(item.get("role", "")).lower() in {"user", "assistant"} and str(item.get("content", "")).strip()
+        ]
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    "你是 DeepFocus 的普通 AI 助手。默认像正常助手一样和用户自然对话，"
+                    "可以解释产品、接上下文、澄清问题、给出简洁建议。"
+                    "不要自称 OrchestratorAgent，不要展示 Agent 链路，不要说正在调用工具。"
+                    "只有用户明确要求投研分析、研报解读、风险复核、行情判断、组合任务或上传文件时，"
+                    "才简短提示可以启动投研分析工作流；不要在普通聊天里强行要求标的。"
+                    "回答用中文，直接、友好、克制。"
+                ),
+            },
+            *history,
+            {"role": "user", "content": request.message},
+        ]
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 900,
+        }
+        if _is_kimi_switchable_thinking_model(self.model):
+            payload["extra_body"] = {"thinking": {"type": "disabled"}}
+        else:
+            payload["temperature"] = max(0.01, min(self.config["temperature"], 0.9))
+
+        try:
+            response = await asyncio.wait_for(
+                self._client().chat.completions.create(**payload),
+                timeout=28,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("普通聊天模型 28 秒内未返回，请稍后重试或换用更快的模型。") from exc
+        except Exception as exc:
+            raise RuntimeError(f"普通聊天模型调用失败：{_clean_error(exc)}") from exc
+
+        content = (response.choices[0].message.content or "").strip()
+        if not content:
+            content = "我在。你继续说。"
+        return GeneralChatResponse(
+            provider=self.provider_name,
+            model=self.model,
+            generated_at=datetime.now(timezone.utc),
+            title="DeepFocus",
+            content=content[:1600],
+        )
+
     async def analyze_stock(self, request: StockAnalysisRequest) -> StockAnalysisResponse:
         if self.provider == "mock":
             return _mock_stock_analysis(request, self.provider_name, self.model)
@@ -267,6 +340,39 @@ class CloudResearchLLM:
         )
         data = await self.complete_json(prompt)
         return _normalize_stock_analysis(data, self.provider_name, self.model)
+
+    async def analyze_options_trend(self, request: OptionsAiAnalysisRequest) -> OptionsAiAnalysisResponse:
+        if self.provider == "mock":
+            return _local_options_trend_analysis(request, self.provider_name, self.model)
+
+        payload = request.model_dump(mode="json")
+        prompt = (
+            "你是期权链投研助手。只能基于输入的期权快照判断短期股价走势倾向，"
+            "不要编造实时价格、新闻、财报或订单流；必须明确不确定性和反证条件。\n"
+            "返回严格 JSON，字段必须为：trend_label, trend_score, confidence, time_horizon, "
+            "thesis, key_drivers, upside_triggers, downside_triggers, watch_levels, risk_notes, suggested_action。\n"
+            "trend_label 只能是 看涨/震荡偏强/震荡/震荡偏弱/看跌/不可判定；"
+            "trend_score 取 0 到 100，confidence 取 0 到 1；"
+            "数组字段最多 5 项，每项不超过 28 个中文字符；thesis 不超过 150 个中文字符；"
+            "suggested_action 只能写观察、验证、风控动作，不能写确定买卖指令。\n"
+            f"输入：{json.dumps(payload, ensure_ascii=False)}"
+        )
+        try:
+            data = await self.complete_json(
+                prompt,
+                max_tokens=1400,
+                timeout_seconds=28,
+                retry_schema_hint=(
+                    "必须填充 trend_label, trend_score, confidence, time_horizon, thesis, "
+                    "key_drivers, upside_triggers, downside_triggers, watch_levels, risk_notes, suggested_action。"
+                ),
+            )
+            return _normalize_options_trend_analysis(data, request, self.provider_name, self.model)
+        except Exception as exc:
+            fallback = _local_options_trend_analysis(request, "local-rule", "options-trend-fallback-v1")
+            warning = f"云模型暂不可用，已使用本地规则：{_clean_error(exc)}"
+            fallback.risk_notes = [warning, *fallback.risk_notes][:6]
+            return fallback
 
     async def score_sentiment(self, text: str) -> SentimentResponse:
         if self.provider == "mock":
@@ -390,6 +496,180 @@ class CloudResearchLLM:
             mock_payload=_mock_agent_brief(request, self.provider_name, self.model),
         )
 
+    async def analyze_customs_trade_agent(self, context: str) -> FinGptTaskResponse:
+        if self.provider == "mock":
+            return FinGptTaskResponse(
+                provider=self.provider_name,
+                model=self.model,
+                generated_at=datetime.now(timezone.utc),
+                capability="customs_trade_agent_analysis",
+                title="中国海关进出口投研Agent",
+                summary="已基于近12个月海关数据生成外贸与产业链投研框架。",
+                key_points=["近12月趋势已读取", "结构分化需拆解", "关注量价背离"],
+                signals=["关注AI算力链", "跟踪新能源出口链", "谨慎看待大宗进口"],
+                risks=["单月波动较大", "价格影响金额", "转口扰动口径"],
+                actions=[
+                    "建议关注：专门电气设备出口链，代表股票：思源电气(002028)、特变电工(600089)、金盘科技(688676)",
+                    "建议关注：AI服务器/PCB链，代表股票：工业富联(601138)、沪电股份(002463)、中际旭创(300308)",
+                    "谨慎观察：电子零部件出口链，代表股票：立讯精密(002475)、歌尔股份(002241)",
+                    "暂时回避：对美敞口高的传统出口链，代表股票：申洲国际(02313.HK)、华利集团(300979)、顾家家居(603816)",
+                ],
+                sources=["GACC Customs Statistics"],
+                confidence=0.62,
+            )
+
+        prompt = (
+            "你是 DeepFocus 的 CustomsTradeAgent，由 EvidenceAgent、ResearchAgent、RiskAgent、ReportAgent 协作。"
+            "请基于中国海关官方数据做专业投资研究分析，并给出明确但非个性化的投资研究建议。\n"
+            "必须体现近12个月趋势、环比/同比、结构分化、产业链传导、相关资产方向、反证指标。"
+            "返回严格 JSON，字段必须为：title, summary, key_points, signals, risks, actions, sources, confidence。\n"
+            "要求：summary 开头必须给出总体投资立场，例如“总体建议：偏积极/中性偏谨慎/防守观察”；"
+            "key_points聚焦核心结论；signals写可投资产业链/主题/商品/ETF方向映射线索；"
+            "risks写口径、周期和反证风险；actions必须写成明确投资建议，使用“建议关注：”“谨慎观察：”"
+            "“暂时回避：”“加仓触发：”“减仓/止盈触发：”这类前缀。"
+            "actions必须固定覆盖三类：至少2条“建议关注：”、至少2条“谨慎观察：”、至少1条“暂时回避：”，"
+            "剩余1条可写触发条件。"
+            "每条建议关注/谨慎观察/暂时回避都必须给出2-4个代表股票或ETF，格式为“代表股票：公司A(代码)、公司B(代码)”。"
+            "不得用“相关标的”“中小标的”“代码待核实”替代代表股票；如果要写暂时回避，也必须从候选池中挑具体研究样本。"
+            "如果建议涉及“电气设备/输变电/电力设备出海”，必须优先从专门电气设备候选池选择，"
+            "例如思源电气、特变电工、金盘科技、中国西电、平高电气、许继电气；"
+            "立讯精密、工业富联只能归入电子零部件/AI服务器代工链，不能作为专门电气设备代表。"
+            "代表股票只作为研究样本池，不代表买入推荐；代码不确定时只写公司名，不要编造代码。"
+            "不要给具体个股买卖指令、目标价、收益承诺或仓位比例；数组字段最多6项，每项不超过72个中文字符。"
+            "不要 Markdown，不要输出 JSON 以外文字。\n"
+            f"海关数据与分析材料：{context[:18000]}"
+        )
+        data = await self.complete_json(
+            prompt,
+            max_tokens=2800,
+            timeout_seconds=45,
+            retry_schema_hint="必须返回 customs trade investment analysis JSON。",
+        )
+        return _normalize_task_response(
+            data,
+            self.provider_name,
+            self.model,
+            "customs_trade_agent_analysis",
+            "中国海关进出口投研Agent",
+        )
+
+    async def orchestrator_chat(self, request: OrchestratorChatRequest) -> OrchestratorChatResponse:
+        literal_reply = _literal_inline_reply(request, self.provider_name, self.model)
+        if literal_reply:
+            return literal_reply
+
+        if self.provider == "mock":
+            return _mock_orchestrator_chat(request, self.provider_name, self.model)
+
+        core_agents = ["OrchestratorAgent", "EvidenceAgent", "ResearchAgent", "RiskAgent", "ReportAgent"]
+        engine_agents = {
+            "deepfocus": core_agents,
+            "tradingagents": core_agents,
+            "financial_services": [
+                "OrchestratorAgent",
+                "EvidenceAgent",
+                "FSIWorkflowAgent",
+                "ControlAgent",
+                "ReportAgent",
+            ],
+        }
+        payload = request.model_dump(by_alias=True)
+        history = [
+            {
+                "role": str(item.get("role", ""))[:16],
+                "content": str(item.get("content", ""))[:1000],
+            }
+            for item in request.history[-8:]
+            if str(item.get("role", "")).lower() in {"user", "assistant"} and str(item.get("content", "")).strip()
+        ]
+        prompt = (
+            "你是 DeepFocus 多 Agent 工作台的 OrchestratorAgent，体验要像 Claude Code / Cursor / Codex："
+            "用户发来任何消息，你都要正常用 AI 回复，而不是说未调用 Agent。"
+            "你可以承认不知道，不能编造用户没有提供的私人事实；如果问题需要外部背景，直接说明需要用户补充。"
+            "如果用户问题涉及投资、标的、研报、文件、风险、组合、行情或监控，要说明将如何调度 5 个核心 Agent。"
+            "如果只是普通聊天、问候、联通测试，或用户要求精确简短回复，优先按字面直接回答；"
+            "不要强行带入当前标的、投资上下文或 Agent 推荐，should_create_task 必须为 false。"
+            "如果 reasoning_mode 是 fast，回答要短，reasoning_trace 返回空数组或最多 1 项；"
+            "如果 reasoning_mode 是 thinking，要返回 3 到 5 项可展示推理摘要，体现目标识别、证据判断、风险约束和下一步。"
+            "回复不要超过 220 个中文字符，像真实工作台助理，不要营销腔。\n"
+            f"当前对用户可见的核心 Agent：{', '.join(engine_agents.get(request.engine, engine_agents['deepfocus']))}。"
+            "TradingAgents 等底层引擎只作为执行映射，不要把内部角色当成同级 Agent 展示。"
+            "如果 engine 是 financial_services，要强调会按金融服务 playbook 选择 market research、earnings review、model build、pitch、valuation review、KYC 或 reconciliation 路线。\n"
+            f"最近对话上下文：{json.dumps(history, ensure_ascii=False)}\n"
+            "返回严格 JSON，字段必须为：title, content, chips, suggested_actions, reasoning_trace, should_create_task, confidence。"
+            "chips/suggested_actions 每项不超过 16 个中文字符；should_create_task 为布尔值。\n"
+            "reasoning_trace 是给用户看的可审计思路摘要，不是隐藏推理原文；每项包含 phase, title, detail, status，"
+            "status 只能是 done / working / wait / error，最多 5 项。\n"
+            '格式示例：{"title":"OrchestratorAgent","content":"...","chips":["OrchestratorAgent"],'
+            '"suggested_actions":["补充标的"],"reasoning_trace":[{"phase":"orchestrator","title":"OrchestratorAgent","detail":"判断是否需要长任务","status":"done"}],'
+            '"should_create_task":false,"confidence":0.72}\n'
+            f"输入：{json.dumps(payload, ensure_ascii=False)}"
+        )
+        try:
+            data = await self.complete_json(prompt, max_tokens=1000, timeout_seconds=20, force_json_first=True)
+            return _normalize_orchestrator_chat(data, request, self.provider_name, self.model)
+        except Exception:
+            try:
+                text = await self._complete_orchestrator_text(request, engine_agents, timeout_seconds=18)
+                return _orchestrator_text_response(text, request, self.provider_name, self.model)
+            except Exception:
+                return _mock_orchestrator_chat(request, self.provider_name, self.model)
+
+    async def _complete_orchestrator_text(
+        self,
+        request: OrchestratorChatRequest,
+        engine_agents: dict[str, list[str]],
+        timeout_seconds: float = 18,
+    ) -> str:
+        config = self.config
+        stock = request.stock
+        stock_line = f"{stock.name}（{stock.symbol}）" if stock else "未选择标的"
+        history = [
+            f"{item.get('role')}: {str(item.get('content', '')).strip()[:700]}"
+            for item in request.history[-8:]
+            if str(item.get("role", "")).lower() in {"user", "assistant"} and str(item.get("content", "")).strip()
+        ]
+        prompt = (
+            f"用户消息：{request.message}\n"
+            f"最近对话：{chr(10).join(history) if history else '无'}\n"
+            f"当前引擎：{request.engine}\n"
+            f"当前标的：{stock_line}\n"
+            f"模式：{request.mode}\n"
+            f"思考模式：{request.reasoning_mode}\n"
+            f"上传文件：{', '.join(request.attached_files) if request.attached_files else '无'}\n"
+            f"资料库数量：{request.data_source_count}；工具连接数：{request.mcp_server_count}\n"
+            f"对用户可见的核心 Agent：{', '.join(engine_agents.get(request.engine, engine_agents['deepfocus']))}\n"
+            "请直接回复用户，不要 JSON，不要 Markdown 标题，不要编造私人信息。"
+            "fast 模式要短，thinking 模式可以说明公开可展示的推理摘要。"
+            "普通聊天和联通测试要按用户字面要求回复；只有投资研究问题才说明会调度哪些 Agent。"
+            "回复不超过 220 个中文字符。"
+        )
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是 DeepFocus 的 OrchestratorAgent。你是一个真实多 Agent 工作台入口，"
+                        "负责理解用户消息、自然回复，并按需调度 Evidence/Research/Risk/Report 等核心 Agent。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": max(0.01, min(config["temperature"], 1.0)),
+            "max_tokens": 650,
+        }
+        try:
+            response = await asyncio.wait_for(
+                self._client().chat.completions.create(**payload),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(f"云模型 {timeout_seconds:.0f} 秒内未返回，请稍后重试或换用更快的模型。") from exc
+        except Exception as exc:
+            raise RuntimeError(f"云模型调用失败：{_clean_error(exc)}") from exc
+        return response.choices[0].message.content or ""
+
     async def _task(
         self,
         capability: str,
@@ -465,8 +745,26 @@ def _looks_like_response_format_error(exc: Exception) -> bool:
     )
 
 
+def _is_kimi_switchable_thinking_model(model: str) -> bool:
+    model_name = str(model or "").lower()
+    if "thinking" in model_name:
+        return False
+    return any(marker in model_name for marker in ("kimi-k2.6", "kimi-k2.5"))
+
+
 def _clean_error(exc: Exception) -> str:
     text = str(exc).strip()
+    lowered = text.lower()
+    if "invalidsubscription" in lowered or "codingplan" in lowered:
+        return (
+            "火山 Ark 返回 InvalidSubscription：当前账号没有有效 CodingPlan 订阅或订阅已过期。"
+            "模型配置已经生效，但该通道暂时不可调用；请在火山控制台续订/开通 CodingPlan，"
+            "或在设置中切换到可用的 OpenAI-compatible Base URL / 模型。"
+        )
+    if "insufficient_quota" in lowered or "quota" in lowered or "billing" in lowered:
+        return "云模型账号额度或计费状态不可用，请检查控制台额度、账单和订阅状态，或切换到可用模型。"
+    if "invalid_api_key" in lowered or "unauthorized" in lowered or "authentication" in lowered:
+        return "云模型鉴权失败，请在设置 → 模型配置中检查 API Key、Base URL 和模型名。"
     return re.sub(r"\s+", " ", text)[:400] or exc.__class__.__name__
 
 
@@ -512,6 +810,395 @@ def _normalize_task_response(
         sources=_safe_list(_first_present(data, "sources", "来源", "引用", "references")),
         confidence=_safe_confidence(_first_present(data, "confidence", "置信度")),
     )
+
+
+def _normalize_options_trend_analysis(
+    data: dict[str, Any],
+    request: OptionsAiAnalysisRequest,
+    provider: str,
+    model: str,
+) -> OptionsAiAnalysisResponse:
+    data = _unwrap_payload(data)
+    base = _local_options_trend_analysis(request, provider, model)
+    return OptionsAiAnalysisResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        symbol=request.signal.symbol,
+        trend_label=_safe_trend_label(_first_present(data, "trend_label", "走势", "趋势判断"), base.trend_label),
+        trend_score=_safe_percent(_first_present(data, "trend_score", "score", "方向分"), base.trend_score),
+        confidence=_safe_confidence(_first_present(data, "confidence", "置信度")),
+        time_horizon=str(_first_present(data, "time_horizon", "horizon", "周期") or base.time_horizon)[:40],
+        thesis=str(_first_present(data, "thesis", "summary", "摘要", "核心判断") or base.thesis)[:220],
+        key_drivers=_safe_list(_first_present(data, "key_drivers", "drivers", "核心驱动", "关键依据"))[:5] or base.key_drivers,
+        upside_triggers=_safe_list(_first_present(data, "upside_triggers", "bullish_triggers", "上行触发"))[:5] or base.upside_triggers,
+        downside_triggers=_safe_list(_first_present(data, "downside_triggers", "bearish_triggers", "下行触发"))[:5] or base.downside_triggers,
+        watch_levels=_safe_list(_first_present(data, "watch_levels", "levels", "观察价位"))[:5] or base.watch_levels,
+        risk_notes=_safe_list(_first_present(data, "risk_notes", "risks", "风险提示"))[:5] or base.risk_notes,
+        suggested_action=str(_first_present(data, "suggested_action", "action", "下一步动作") or base.suggested_action)[:160],
+    )
+
+
+def _local_options_trend_analysis(
+    request: OptionsAiAnalysisRequest,
+    provider: str,
+    model: str,
+) -> OptionsAiAnalysisResponse:
+    signal = request.signal
+    score = int(max(0, min(100, signal.score)))
+    data_quality = int(max(0, min(100, signal.data_quality)))
+    trend_label = _trend_label_from_score(score, data_quality, signal.direction)
+    conviction_weight = {"高": 0.16, "中": 0.1, "低": 0.04}.get(signal.conviction, 0.04)
+    confidence = (abs(score - 50) / 50) * 0.46 + (data_quality / 100) * 0.38 + conviction_weight
+    if signal.source_status == "unavailable" or trend_label == "不可判定":
+        confidence *= 0.45
+    elif data_quality < 45:
+        confidence *= 0.72
+    confidence = max(0.12, min(0.88, confidence))
+
+    thesis = (
+        f"{signal.symbol} 在 {request.horizon_days} 日期权窗口内呈现{trend_label}倾向："
+        f"方向分 {score}/100，数据质量 {data_quality}/100。{signal.summary}"
+    )
+    if trend_label == "不可判定":
+        thesis = (
+            f"{signal.symbol} 当前期权链不足以形成可靠走势判断；"
+            f"方向分 {score}/100，数据质量 {data_quality}/100，优先补充实时链和价格确认。"
+        )
+
+    key_drivers = list(signal.signals[:4])
+    if signal.term_structure and signal.term_structure not in key_drivers:
+        key_drivers.append(signal.term_structure)
+    if signal.unusual_flow_count:
+        key_drivers.append(f"异常大单 {signal.unusual_flow_count} 条，权利金约 {_format_money(signal.unusual_premium_notional)}")
+    key_drivers = [item for item in key_drivers if item][:5]
+    if not key_drivers:
+        key_drivers = ["期权链字段稀疏，暂以方向分和风险项为主"]
+
+    upside_triggers = _options_upside_triggers(signal)
+    downside_triggers = _options_downside_triggers(signal)
+    watch_levels = _options_watch_levels(signal)
+    risk_notes = [
+        *signal.risk_flags[:4],
+        "期权链无法单独确认主动买卖方向，需结合价格和成交量复核。",
+    ][:5]
+
+    suggested_action = _options_suggested_action(trend_label, signal)
+
+    return OptionsAiAnalysisResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        symbol=signal.symbol,
+        trend_label=trend_label,
+        trend_score=score,
+        confidence=round(confidence, 2),
+        time_horizon=f"{request.horizon_days} 日内",
+        thesis=thesis[:220],
+        key_drivers=key_drivers,
+        upside_triggers=upside_triggers,
+        downside_triggers=downside_triggers,
+        watch_levels=watch_levels,
+        risk_notes=risk_notes,
+        suggested_action=suggested_action,
+    )
+
+
+def _trend_label_from_score(score: int, data_quality: int, direction: str) -> str:
+    if direction == "不可判定" or data_quality < 18:
+        return "不可判定"
+    if score >= 72:
+        return "看涨"
+    if score >= 58:
+        return "震荡偏强"
+    if score > 42:
+        return "震荡"
+    if score > 28:
+        return "震荡偏弱"
+    return "看跌"
+
+
+def _safe_trend_label(value: Any, default: str) -> str:
+    label = str(value or default).strip()
+    return label if label in {"看涨", "震荡偏强", "震荡", "震荡偏弱", "看跌", "不可判定"} else default
+
+
+def _safe_percent(value: Any, default: int) -> int:
+    try:
+        return int(round(max(0, min(100, float(value)))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _options_upside_triggers(signal: Any) -> list[str]:
+    triggers: list[str] = []
+    if signal.call_wall:
+        triggers.append(f"放量站上 Call Wall {_format_price(signal.call_wall)}")
+    if signal.max_pain and signal.underlying_price and signal.max_pain > signal.underlying_price:
+        triggers.append(f"重心靠近 Max Pain {_format_price(signal.max_pain)}")
+    if (signal.put_call_volume_ratio or 0) < 0.9:
+        triggers.append("PCR 维持低位或继续下行")
+    if any(flow.side == "call" for flow in signal.unusual_flows[:3]):
+        triggers.append("Call 异常单继续放大")
+    return triggers[:4] or ["等待价格突破关键阻力并放量确认"]
+
+
+def _options_downside_triggers(signal: Any) -> list[str]:
+    triggers: list[str] = []
+    if signal.put_wall:
+        triggers.append(f"跌破 Put Wall {_format_price(signal.put_wall)}")
+    if signal.max_pain and signal.underlying_price and signal.max_pain < signal.underlying_price:
+        triggers.append(f"回落靠近 Max Pain {_format_price(signal.max_pain)}")
+    if (signal.put_call_volume_ratio or 0) > 1.05:
+        triggers.append("PCR 升高显示防守需求")
+    if signal.iv_skew and signal.iv_skew > 0.04:
+        triggers.append("Put IV 偏斜继续扩大")
+    if any(flow.side == "put" for flow in signal.unusual_flows[:3]):
+        triggers.append("Put 异常单继续放大")
+    return triggers[:4] or ["若跌破近价支撑，降低方向判断权重"]
+
+
+def _options_watch_levels(signal: Any) -> list[str]:
+    levels: list[str] = []
+    if signal.underlying_price:
+        levels.append(f"现价 {_format_price(signal.underlying_price)}")
+    if signal.call_wall:
+        levels.append(f"Call Wall {_format_price(signal.call_wall)}")
+    if signal.put_wall:
+        levels.append(f"Put Wall {_format_price(signal.put_wall)}")
+    if signal.max_pain:
+        levels.append(f"Max Pain {_format_price(signal.max_pain)}")
+    if signal.expected_move_pct and signal.underlying_price:
+        move = signal.underlying_price * signal.expected_move_pct
+        levels.append(f"隐含区间 {_format_price(signal.underlying_price - move)}-{_format_price(signal.underlying_price + move)}")
+    return levels[:5] or ["关键价位待补充"]
+
+
+def _options_suggested_action(trend_label: str, signal: Any) -> str:
+    if trend_label in {"看涨", "震荡偏强"}:
+        return "偏多观察，但需等待价格站上关键阻力或 Call 异常流延续；若跌破 Put Wall，应降低判断权重。"
+    if trend_label in {"看跌", "震荡偏弱"}:
+        return "偏防守观察，重点看 Put Wall、PCR 和 IV 偏斜是否继续恶化；若重新站回 Call Wall，需复核空头判断。"
+    if trend_label == "震荡":
+        return "以区间和事件风险处理，重点跟踪 Max Pain、跨式隐含区间和突破方向。"
+    return "先补充实时期权链、价格趋势和成交量，再做方向判断。"
+
+
+def _format_price(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _format_money(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "--"
+    if abs(number) >= 1_000_000:
+        return f"${number / 1_000_000:.1f}M"
+    if abs(number) >= 1_000:
+        return f"${number / 1_000:.1f}K"
+    return f"${number:.0f}"
+
+
+def _normalize_orchestrator_chat(
+    data: dict[str, Any],
+    request: OrchestratorChatRequest,
+    provider: str,
+    model: str,
+) -> OrchestratorChatResponse:
+    data = _unwrap_payload(data)
+    content = str(_first_present(data, "content", "message", "reply", "summary", "回复") or "").strip()
+    if not content:
+        content = "我在，你继续说。"
+    chips = _safe_list(_first_present(data, "chips", "agents", "标签"))
+    should_create_task = _safe_bool(_first_present(data, "should_create_task", "create_task", "需要任务"))
+    handled_inline = not should_create_task and not request.attached_files
+    if handled_inline:
+        chips = []
+    elif not chips:
+        chips = ["OrchestratorAgent", _engine_chip(request.engine)]
+    suggested_actions = _safe_list(_first_present(data, "suggested_actions", "actions", "下一步"))
+    if handled_inline:
+        suggested_actions = []
+    reasoning_trace = [] if request.reasoning_mode == "fast" or handled_inline else _safe_reasoning_trace(
+        _first_present(data, "reasoning_trace", "trace", "steps", "思路", "推理摘要"),
+        request,
+        should_create_task,
+    )
+    return OrchestratorChatResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        agent="OrchestratorAgent",
+        engine=request.engine,
+        title="DeepFocus" if handled_inline else str(_first_present(data, "title", "标题") or "OrchestratorAgent"),
+        content=content,
+        chips=chips[:6],
+        suggested_actions=suggested_actions[:4],
+        reasoning_trace=reasoning_trace,
+        should_create_task=should_create_task,
+        handled_inline=handled_inline,
+        confidence=_safe_confidence(_first_present(data, "confidence", "置信度")),
+    )
+
+
+def _orchestrator_text_response(
+    text: str,
+    request: OrchestratorChatRequest,
+    provider: str,
+    model: str,
+) -> OrchestratorChatResponse:
+    content = re.sub(r"^```(?:json|markdown)?|```$", "", text.strip(), flags=re.I | re.M).strip()
+    if not content:
+        return _mock_orchestrator_chat(request, provider, model)
+    should_create_task = _orchestrator_should_create_task(request)
+    handled_inline = not should_create_task and not request.attached_files
+    chips = [] if handled_inline else ["OrchestratorAgent", _engine_chip(request.engine)]
+    actions = [] if handled_inline else _orchestrator_suggested_actions(request)
+    return OrchestratorChatResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        agent="OrchestratorAgent",
+        engine=request.engine,
+        title="DeepFocus" if handled_inline else "OrchestratorAgent",
+        content=content[:700],
+        chips=chips,
+        suggested_actions=actions,
+        reasoning_trace=[] if handled_inline else _fallback_reasoning_trace(request, should_create_task),
+        should_create_task=should_create_task,
+        handled_inline=handled_inline,
+        confidence=0.66,
+    )
+
+
+def _literal_inline_reply(
+    request: OrchestratorChatRequest,
+    provider: str,
+    model: str,
+) -> OrchestratorChatResponse | None:
+    if request.attached_files or _orchestrator_should_create_task(request):
+        return None
+
+    match = re.search(r"只回复[：:]?[“\"]([^”\"]{1,80})[”\"]", request.message.strip())
+    if not match:
+        return None
+
+    return OrchestratorChatResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        agent="OrchestratorAgent",
+        engine=request.engine,
+        title="DeepFocus",
+        content=match.group(1),
+        chips=[],
+        suggested_actions=[],
+        reasoning_trace=[],
+        should_create_task=False,
+        handled_inline=True,
+        confidence=0.9,
+    )
+
+
+def _is_general_chat_message(request: OrchestratorChatRequest) -> bool:
+    text = request.message.strip()
+    if not text or request.attached_files or _orchestrator_should_create_task(request):
+        return False
+    return bool(re.search(r"你好|您好|hello|hi|在吗|能做什么|怎么用|联通测试|测试一下|ping", text, re.I))
+
+
+def _orchestrator_should_create_task(request: OrchestratorChatRequest) -> bool:
+    if request.attached_files:
+        return True
+    return bool(
+        re.search(
+            r"投研|投资|股票|个股|标的|财报|研报|行情|风险|仓位|组合|复盘|监控|买入|卖出|分析|研究|预测|机会|证据|估值|DCF|LBO|三表|comps|pitch|尽调|KYC|对账|reconcile|valuation|earnings|TSLA|NVDA|AAPL|MSFT",
+            request.message,
+            re.I,
+        )
+    )
+
+
+def _orchestrator_suggested_actions(request: OrchestratorChatRequest) -> list[str]:
+    if request.engine == "financial_services" and _orchestrator_should_create_task(request):
+        return ["选择工作流", "补齐输入包", "生成交付件"]
+    if _orchestrator_should_create_task(request):
+        return ["启动研究任务", "补充时间范围", "查看证据库"]
+    return []
+
+
+def _engine_chip(engine: str) -> str:
+    if engine == "tradingagents":
+        return "TradingAgents"
+    if engine == "financial_services":
+        return "FSI Playbook"
+    return "DeepFocus"
+
+
+def _fallback_reasoning_trace(request: OrchestratorChatRequest, should_create_task: bool) -> list[dict[str, str]]:
+    if request.reasoning_mode == "fast":
+        return []
+
+    if not should_create_task and not request.stock and not request.attached_files:
+        return [
+            {
+                "phase": "orchestrator",
+                "title": "OrchestratorAgent",
+                "detail": "识别为普通问答，先按用户问题直接回复。",
+                "status": "done",
+            },
+            {
+                "phase": "evidence",
+                "title": "EvidenceAgent",
+                "detail": "当前无需调用行情、资料库或上传文件。",
+                "status": "done",
+            },
+            {
+                "phase": "report",
+                "title": "ReportAgent",
+                "detail": "整理为简短回答；如继续给出投资目标，再升级为多 Agent Run。",
+                "status": "done",
+            },
+        ]
+
+    stock_label = f"{request.stock.name}（{request.stock.symbol}）" if request.stock else "未选择标的"
+    research_detail = "进入后台研究任务" if should_create_task else "即时回复，保留上下文"
+    return [
+        {
+            "phase": "orchestrator",
+            "title": "OrchestratorAgent",
+            "detail": f"模式 {request.mode}，标的 {stock_label}。",
+            "status": "done",
+        },
+        {
+            "phase": "evidence",
+            "title": "EvidenceAgent",
+            "detail": f"{request.data_source_count} 个数据源，{len(request.attached_files)} 个附件，{request.mcp_server_count} 个工具连接。",
+            "status": "done",
+        },
+        {
+            "phase": "research",
+            "title": "ResearchAgent",
+            "detail": research_detail,
+            "status": "working" if should_create_task else "done",
+        },
+        {
+            "phase": "risk",
+            "title": "RiskAgent",
+            "detail": "后续输出会把事实、推断、反证和动作分开。",
+            "status": "wait" if should_create_task else "done",
+        },
+        {
+            "phase": "report",
+            "title": "ReportAgent",
+            "detail": "最终只输出可复核结论和下一步动作。",
+            "status": "wait" if should_create_task else "done",
+        },
+    ]
 
 
 def _unwrap_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -868,6 +1555,90 @@ def _mock_agent_brief(
     )
 
 
+def _mock_general_chat(
+    request: GeneralChatRequest,
+    provider: str,
+    model: str,
+) -> GeneralChatResponse:
+    text = request.message.strip()
+    compact = re.sub(r"[\s，。！？!?,.]+", "", text).lower()
+    if re.fullmatch(r"你好|您好|嗨|哈喽|hello|hi|hey|在吗|在不在|早上好|上午好|中午好|下午好|晚上好", compact):
+        content = "你好，我在。今天想聊点什么？"
+    elif re.fullmatch(r"谢谢|谢了|感谢|多谢|thanks|thankyou|thx", compact):
+        content = "不客气。"
+    elif re.fullmatch(r"好的|好|ok|收到|明白|了解|嗯|嗯嗯", compact):
+        content = "好，我跟着。你继续说。"
+    elif re.fullmatch(r"ping|测试|测试一下|联通测试", compact):
+        content = "在，连接正常。"
+    elif re.search(r"你是谁|你能做什么|你会做什么|能干嘛|帮助|help", text, re.I):
+        content = "我是 DeepFocus。你可以正常和我聊天；需要时，我也能帮你读研报、找证据、做风险复核和生成投研任务。"
+    else:
+        content = "我在。你可以直接像正常聊天一样问我；如果需要投研分析，再说“分析这个标的”或“解读这份研报”。"
+    return GeneralChatResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        title="DeepFocus",
+        content=content,
+    )
+
+
+def _mock_orchestrator_chat(
+    request: OrchestratorChatRequest,
+    provider: str,
+    model: str,
+) -> OrchestratorChatResponse:
+    text = request.message.strip()
+    stock = request.stock
+    stock_label = f"{stock.name}（{stock.symbol}）" if stock else "当前工作区"
+    private_pattern = re.compile(r"我爸是谁|我妈是谁|我是谁|你知道我.*吗|我的.*是谁")
+    greeting_pattern = re.compile(r"^(你好|您好|嗨|哈喽|hello|hi|hey|在吗|在不在|早上好|上午好|中午好|下午好|晚上好)[！!。,.，\s]*$", re.I)
+    thanks_pattern = re.compile(r"^(谢谢|谢了|感谢|多谢|thanks|thankyou|thx|好的|好|ok|收到|明白|了解|嗯|嗯嗯)[！!。,.，\s]*$", re.I)
+    investment_pattern = re.compile(
+        r"投研|投资|股票|个股|标的|财报|研报|行情|风险|仓位|组合|复盘|监控|买入|卖出|分析|研究|预测|机会|证据|估值|DCF|LBO|三表|comps|pitch|尽调|KYC|对账|reconcile|valuation|earnings|TSLA|NVDA|AAPL|MSFT",
+        re.I,
+    )
+    if private_pattern.search(text):
+        content = "我不知道你爸爸是谁，因为当前对话没有这类个人背景信息。你可以直接告诉我背景；如果这是投资相关身份、账户或资料归属问题，我会先做证据核对再回答。"
+        actions = ["补充背景", "上传资料", "说明目标"]
+        should_create_task = False
+    elif investment_pattern.search(text) or request.attached_files:
+        content = (
+            f"收到。我会以 {stock_label} 为上下文，先由 Orchestrator 拆解目标，再调度 Evidence、Research、Risk 和 Report Agent "
+            "做证据核对、研究判断、反证约束和结论汇总。"
+        )
+        actions = ["启动研究任务", "补充时间范围", "查看证据库"]
+        should_create_task = True
+    else:
+        literal_match = re.search(r"只回复[：:]?[“\"]([^”\"]{1,80})[”\"]", text)
+        if literal_match:
+            content = literal_match.group(1)
+        elif greeting_pattern.search(text):
+            content = "你好，我在。你可以直接和我聊天；需要投研、研报或风控时，我再切到工作流。"
+        elif thanks_pattern.search(text):
+            content = "不客气。你继续说，我会跟着当前对话走。"
+        else:
+            content = "我在。你可以像正常聊天一样直接问；如果聊到标的、研报、文件或风险，我会再调用对应工作流。"
+        actions = []
+        should_create_task = False
+    handled_inline = not should_create_task and not request.attached_files
+    return OrchestratorChatResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        agent="OrchestratorAgent",
+        engine=request.engine,
+        title="DeepFocus" if handled_inline else "OrchestratorAgent",
+        content=content,
+        chips=[] if handled_inline else ["OrchestratorAgent", _engine_chip(request.engine)],
+        suggested_actions=actions,
+        reasoning_trace=[] if handled_inline else _fallback_reasoning_trace(request, should_create_task),
+        should_create_task=should_create_task,
+        handled_inline=handled_inline,
+        confidence=0.62,
+    )
+
+
 def _load_default_docs() -> list[dict[str, str]]:
     docs_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "finogrid", "docs"))
     defaults = []
@@ -954,6 +1725,51 @@ def _safe_confidence(value: Any) -> float:
         return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError):
         return 0.5
+
+
+def _safe_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "y", "1", "需要", "是", "创建"}
+    return False
+
+
+def _safe_reasoning_trace(
+    value: Any,
+    request: OrchestratorChatRequest,
+    should_create_task: bool,
+) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return _fallback_reasoning_trace(request, should_create_task)
+
+    steps: list[dict[str, str]] = []
+    for item in value:
+        if isinstance(item, dict):
+            title = str(_first_present(item, "title", "标题") or "").strip()
+            detail = str(_first_present(item, "detail", "description", "内容", "说明") or "").strip()
+            phase = str(_first_present(item, "phase", "key", "阶段") or "step").strip()
+            status = str(_first_present(item, "status", "状态") or "done").strip().lower()
+        else:
+            title = str(item).strip()
+            detail = ""
+            phase = "step"
+            status = "done"
+        if not title and not detail:
+            continue
+        if status not in {"done", "working", "wait", "error"}:
+            status = "done"
+        steps.append({
+            "phase": phase[:24] or "step",
+            "title": title[:48] or "思路摘要",
+            "detail": detail[:180],
+            "status": status,
+        })
+        if len(steps) >= 5:
+            break
+    return steps or _fallback_reasoning_trace(request, should_create_task)
 
 
 def _safe_list(value: Any) -> list[str]:

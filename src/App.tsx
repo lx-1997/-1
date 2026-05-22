@@ -18,12 +18,17 @@ import {
 } from './data/mockData';
 
 const { Content } = Layout;
-const AUTH_BYPASS_ENABLED = true;
+const authBypassFlag = process.env.REACT_APP_AUTH_BYPASS?.toLowerCase();
+const demoLoginFlag = process.env.REACT_APP_DEMO_LOGIN?.toLowerCase();
+const AUTH_BYPASS_ENABLED = authBypassFlag === 'true' || (process.env.NODE_ENV === 'development' && authBypassFlag !== 'false');
+const DEMO_LOGIN_ENABLED = demoLoginFlag !== 'false';
 const STOCK_POOL_STORAGE_KEY = 'deepfocus.stockPool.v1';
 
 const rootViews = new Set<ViewType>([
   'home',
   'stocks',
+  'a-share-market',
+  'global-market',
   'shop',
   'profile',
   'cart',
@@ -35,7 +40,13 @@ const rootViews = new Set<ViewType>([
   'realtime-messages',
   'mcp-center',
   'skills',
-  'earnings-calendar'
+  'earnings-calendar',
+  'cn-earnings',
+  'shareholder-changes',
+  'major-events',
+  'multi-market-decision',
+  'ai-supply-chain',
+  'options-signal'
 ]);
 
 const getProductVariant = (product: Product, variantId: string): ProductVariant => {
@@ -114,7 +125,7 @@ const candidateToStock = (candidate: MarketSymbolCandidate): Stock => ({
   quoteFetchedAt: new Date().toISOString(),
   quoteIsRealtime: false,
   quoteDelayNote: '已加入自选，等待行情刷新',
-  description: `${candidate.name}（${candidate.symbol}）已加入自选股池，可订阅价格、新闻、财报和研究提醒。`,
+  description: `${candidate.name}（${candidate.symbol}）已加入观察池，可监控价格、新闻、财报和研究提醒。`,
   focusLevel: 'medium',
   totalPosts: 0,
   totalPaidPosts: 0,
@@ -275,9 +286,9 @@ const App: React.FC = () => {
   const handleLogin = async (username: string, password: string) => {
     setAppState(prev => ({ ...prev, isLoading: true }));
     
-    // 模拟登录验证 - 支持多个账号
-    if ((username === 'admin' && password === 'admin') || 
-        (username === 'demo' && password === 'demo')) {
+    // 演示登录只在显式允许时开放；生产部署可用 REACT_APP_DEMO_LOGIN=false 关闭。
+    if (DEMO_LOGIN_ENABLED && ((username === 'admin' && password === 'admin') ||
+        (username === 'demo' && password === 'demo'))) {
       setTimeout(() => {
         const nextState = createDemoState();
         setAppState(nextState);
@@ -287,7 +298,7 @@ const App: React.FC = () => {
     } else {
       setTimeout(() => {
         setAppState(prev => ({ ...prev, isLoading: false }));
-        message.error('用户名或密码错误');
+        message.error(DEMO_LOGIN_ENABLED ? '用户名或密码错误' : '演示登录已关闭，请接入真实认证服务');
       }, 1000);
     }
   };
@@ -310,13 +321,15 @@ const App: React.FC = () => {
       selectedStock: stock,
       selectedPost: null,
       selectedProduct: null,
-      currentView: 'stock-community' // 默认进入社区页面
+      currentView: 'stock-community' // 默认进入标的工作区
     }));
   };
 
   const handleAddStock = async (candidate: MarketSymbolCandidate) => {
     const nextStock = candidateToStock(candidate);
-    let shouldRefresh = false;
+    const existsBeforeAdd = stocksRef.current.some(
+      stock => stock.symbol.toUpperCase() === nextStock.symbol.toUpperCase()
+    );
 
     setAppState(prev => {
       const exists = prev.stocks.some(stock => stock.symbol.toUpperCase() === nextStock.symbol.toUpperCase());
@@ -335,15 +348,14 @@ const App: React.FC = () => {
         };
       }
 
-      shouldRefresh = true;
       return {
         ...prev,
         stocks: [nextStock, ...prev.stocks]
       };
     });
 
-    message.success(`${candidate.name} 已加入自选股池并开启订阅`);
-    if (shouldRefresh) {
+    message.success(`${candidate.name} 已加入观察池并开启监控`);
+    if (!existsBeforeAdd) {
       await refreshMarketQuotes([nextStock], { notify: false });
     }
   };
@@ -355,7 +367,7 @@ const App: React.FC = () => {
       selectedStock: prev.selectedStock?.symbol === symbol ? null : prev.selectedStock,
       currentView: prev.selectedStock?.symbol === symbol ? 'stocks' : prev.currentView
     }));
-    message.success(`${symbol} 已从自选股池移除`);
+    message.success(`${symbol} 已从观察池移除`);
   };
 
   const handleToggleStockSubscription = (symbol: string) => {
@@ -380,7 +392,7 @@ const App: React.FC = () => {
           }
         : prev.selectedStock
     }));
-    message.success(subscribed ? `${symbol} 已开启订阅` : `${symbol} 已暂停订阅`);
+    message.success(subscribed ? `${symbol} 已开启监控` : `${symbol} 已暂停监控`);
   };
 
   // 返回股票列表
@@ -413,7 +425,7 @@ const App: React.FC = () => {
 
   const handleSavePost = (postDraft: Partial<Post>) => {
     if (!appState.user || !appState.selectedStock) {
-      message.error('请先选择个股后再发布内容');
+      message.error('请先选择标的后再保存研究记录');
       return;
     }
 
@@ -462,10 +474,10 @@ const App: React.FC = () => {
       currentView: 'stock-community'
     }));
 
-    message.success('内容发布成功！');
+    message.success('研究记录已保存');
   };
 
-  // 购买内容
+  // 开通深度报告
   const handlePurchase = (postId: string, amount: number) => {
     if (!appState.user) {
       message.error('请先登录');
@@ -478,13 +490,13 @@ const App: React.FC = () => {
       return;
     }
 
-    // 检查是否已经购买过
+    // 检查是否已经开通过
     if (appState.purchasedPosts.includes(postId)) {
-      message.warning('您已经购买过此内容');
+      message.warning('您已经开通过这份深度报告');
       return;
     }
 
-    // 扣减余额并记录购买
+    // 扣减余额并记录开通
     setAppState(prev => ({
       ...prev,
       user: prev.user ? {
@@ -518,7 +530,7 @@ const App: React.FC = () => {
         : prev.selectedPost
     }));
 
-    message.success(`购买成功！支付金额：$${amount.toFixed(2)}，余额：$${(appState.user.balance - amount).toFixed(2)}`);
+    message.success(`深度报告已开通，支付金额：$${amount.toFixed(2)}，余额：$${(appState.user.balance - amount).toFixed(2)}`);
   };
 
   // 评分
@@ -623,7 +635,7 @@ const App: React.FC = () => {
         : prev.selectedPost
     }));
 
-    message.success('评论发布成功！');
+    message.success('讨论记录已保存');
   };
 
   // 充值
@@ -659,7 +671,7 @@ const App: React.FC = () => {
     message.success(`充值成功！充值金额：$${amount.toFixed(2)}，支付方式：${method}，当前余额：$${(appState.user.balance + amount).toFixed(2)}`);
   };
 
-  // 商城相关处理函数
+  // 研究资产相关处理函数
   const handleProductClick = (product: Product) => {
     setAppState(prev => ({
       ...prev,
@@ -675,17 +687,17 @@ const App: React.FC = () => {
     const existingItem = appState.cart.find(item => item.productId === product.id && item.variantId === variant.id);
 
     if (variant.stock <= 0) {
-      message.warning('该商品暂时无库存');
+      message.warning('该研究资产暂时无可用名额');
       return;
     }
 
     if (existingItem && existingItem.quantity + quantity > variant.stock) {
-      message.warning(`库存不足，当前购物车已有 ${existingItem.quantity} 件，库存 ${variant.stock} 件`);
+      message.warning(`可用名额不足，当前资产单已有 ${existingItem.quantity} 项，可用 ${variant.stock} 项`);
       return;
     }
 
     if (!existingItem && quantity > variant.stock) {
-      message.warning(`库存不足，当前库存 ${variant.stock} 件`);
+      message.warning(`可用名额不足，当前可用 ${variant.stock} 项`);
       return;
     }
 
@@ -710,13 +722,13 @@ const App: React.FC = () => {
         : [...prev.cart, cartItem]
     }));
     
-    message.success(existingItem ? '已更新购物车数量' : '已添加到购物车');
+    message.success(existingItem ? '已更新资产单数量' : '已加入资产单');
   };
 
   const handleUpdateCartQuantity = (itemId: string, quantity: number) => {
     const cartItem = appState.cart.find(item => item.id === itemId);
     if (cartItem && quantity > cartItem.variant.stock) {
-      message.warning(`库存不足，当前库存 ${cartItem.variant.stock} 件`);
+      message.warning(`可用名额不足，当前可用 ${cartItem.variant.stock} 项`);
       return;
     }
 
@@ -733,22 +745,22 @@ const App: React.FC = () => {
       ...prev,
       cart: prev.cart.filter(item => item.id !== itemId)
     }));
-    message.success('已从购物车移除');
+    message.success('已从资产单移除');
   };
 
-  const handleCheckout = (items: any[]) => {
+  const handleCheckout = (items: CartItem[]) => {
     if (!appState.user) {
       message.error('请先登录');
       return;
     }
 
     if (items.length === 0) {
-      message.warning('请选择要结算的商品');
+      message.warning('请选择要开通的研究资产');
       return;
     }
 
-    // 创建订单
-    const order: any = {
+    // 创建资产订单
+    const order: AppState['orders'][number] = {
       id: `order_${Date.now()}`,
       userId: appState.user.id,
       items: items.map(item => ({
@@ -775,7 +787,7 @@ const App: React.FC = () => {
       currentView: 'orders'
     }));
 
-    message.success('订单创建成功，请完成支付');
+    message.success('资产订单已创建，请完成支付');
   };
 
   const handleOrderPay = (orderId: string, paymentMethod: 'wechat' | 'alipay') => {
@@ -826,7 +838,7 @@ const App: React.FC = () => {
     message.success('退款申请已提交');
   };
 
-  const handleBuyNow = (product: any, variantId: string, quantity: number) => {
+  const handleBuyNow = (product: Product, variantId: string, quantity: number) => {
     const variant = getProductVariant(product, variantId);
     const items = [{
       id: `temp_${Date.now()}`,
@@ -861,10 +873,11 @@ const App: React.FC = () => {
               appState.user ? (
                 <Navigate to="/" replace />
               ) : (
-                <Login
-                  onLogin={handleLogin}
-                  isLoading={appState.isLoading}
-                />
+		                <Login
+	                  onLogin={handleLogin}
+	                  isLoading={appState.isLoading}
+	                  demoLoginEnabled={DEMO_LOGIN_ENABLED}
+	                />
               )
             } 
           />
@@ -899,14 +912,16 @@ const App: React.FC = () => {
                   onAddStock={handleAddStock}
                   onRemoveStock={handleRemoveStock}
                   onToggleStockSubscription={handleToggleStockSubscription}
-                  onRefreshMarketData={() => refreshMarketQuotes(appState.stocks, { notify: true })}
-                  isMarketDataRefreshing={isMarketDataRefreshing}
-                />
+	                  onRefreshMarketData={() => refreshMarketQuotes(appState.stocks, { notify: true })}
+	                  isMarketDataRefreshing={isMarketDataRefreshing}
+	                  isDemoSession={AUTH_BYPASS_ENABLED || appState.user?.id === mockUser.id}
+	                />
               ) : (
-                <Login 
-                  onLogin={handleLogin}
-                  isLoading={appState.isLoading}
-                />
+	                <Login
+	                  onLogin={handleLogin}
+	                  isLoading={appState.isLoading}
+	                  demoLoginEnabled={DEMO_LOGIN_ENABLED}
+	                />
               )
             } 
           />

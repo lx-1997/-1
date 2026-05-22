@@ -96,6 +96,10 @@ def save_model_config(request: ModelConfigRequest) -> ModelConfigResponse:
             ),
             encoding="utf-8",
         )
+        try:
+            CONFIG_PATH.chmod(0o600)
+        except OSError:
+            pass
         next_config["config_source"] = str(CONFIG_PATH)
     else:
         next_config["config_source"] = "request-not-persisted"

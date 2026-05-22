@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import uuid
+from typing import Optional
+
 from sqlalchemy import String, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -15,22 +17,22 @@ class AuditLog(Base, UUIDMixin, TimestampMixin):
 
     # Actor
     actor_type: Mapped[str] = mapped_column(String(64), nullable=False)  # client|agent|system|operator
-    actor_id: Mapped[str | None] = mapped_column(String(255))
+    actor_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Action
     action: Mapped[str] = mapped_column(String(128), nullable=False)
-    resource_type: Mapped[str | None] = mapped_column(String(64))
-    resource_id: Mapped[str | None] = mapped_column(String(255))
+    resource_type: Mapped[Optional[str]] = mapped_column(String(64))
+    resource_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Context
-    corridor_code: Mapped[str | None] = mapped_column(String(2))
-    client_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    corridor_code: Mapped[Optional[str]] = mapped_column(String(2))
+    client_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    task_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
 
     # Data
-    before_state: Mapped[dict | None] = mapped_column(JSONB)
-    after_state: Mapped[dict | None] = mapped_column(JSONB)
-    detail: Mapped[str | None] = mapped_column(Text)
-    ip_address: Mapped[str | None] = mapped_column(String(45))
-    request_id: Mapped[str | None] = mapped_column(String(255))
+    before_state: Mapped[Optional[dict]] = mapped_column(JSONB)
+    after_state: Mapped[Optional[dict]] = mapped_column(JSONB)
+    detail: Mapped[Optional[str]] = mapped_column(Text)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45))
+    request_id: Mapped[Optional[str]] = mapped_column(String(255))

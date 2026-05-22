@@ -8,7 +8,7 @@ from sqlalchemy import select
 from ..schemas import KYASubmitRequest, KYAStatusResponse
 from ..dependencies import get_db, get_current_agent_account
 from ..config import settings
-from .....database.models.agent_ledger import AgentAccount, AgentKYA, KYAStatus
+from ....database.models.agent_ledger import AgentAccount, AgentKYA, KYAStatus
 
 log = structlog.get_logger()
 router = APIRouter()

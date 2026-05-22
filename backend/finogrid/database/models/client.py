@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import uuid
 from enum import Enum as PyEnum
+from typing import Optional
+
 from sqlalchemy import String, Boolean, Enum, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -39,8 +41,8 @@ class Client(Base, UUIDMixin, TimestampMixin):
     kyb_status: Mapped[KYBStatus] = mapped_column(
         Enum(KYBStatus), default=KYBStatus.NOT_STARTED, nullable=False
     )
-    kyb_provider_ref: Mapped[str | None] = mapped_column(String(255))
-    webhook_url: Mapped[str | None] = mapped_column(String(1024))
+    kyb_provider_ref: Mapped[Optional[str]] = mapped_column(String(255))
+    webhook_url: Mapped[Optional[str]] = mapped_column(String(1024))
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
     corridor_permissions: Mapped[list["ClientCorridorPermission"]] = relationship(

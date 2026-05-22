@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import uuid
+from typing import Optional
+
 from sqlalchemy import String, Numeric, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,17 +25,17 @@ class PayoutInstruction(Base, UUIDMixin, TimestampMixin):
 
     # Amounts
     amount_usd: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
-    amount_asset: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    asset: Mapped[str | None] = mapped_column(String(16))  # USDT | USDC
+    amount_asset: Mapped[Optional[float]] = mapped_column(Numeric(18, 6))
+    asset: Mapped[Optional[str]] = mapped_column(String(16))  # USDT | USDC
 
     # Recipient
     recipient_name: Mapped[str] = mapped_column(String(512), nullable=False)
-    recipient_wallet: Mapped[str | None] = mapped_column(String(255))
-    recipient_bank_account: Mapped[str | None] = mapped_column(String(255))
-    recipient_mobile_money: Mapped[str | None] = mapped_column(String(255))
+    recipient_wallet: Mapped[Optional[str]] = mapped_column(String(255))
+    recipient_bank_account: Mapped[Optional[str]] = mapped_column(String(255))
+    recipient_mobile_money: Mapped[Optional[str]] = mapped_column(String(255))
     recipient_extra: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     # Routing outcome
-    delivery_mode: Mapped[str | None] = mapped_column(String(16))  # wallet | fiat
-    partner: Mapped[str | None] = mapped_column(String(128))
+    delivery_mode: Mapped[Optional[str]] = mapped_column(String(16))  # wallet | fiat
+    partner: Mapped[Optional[str]] = mapped_column(String(128))
     raw_payload: Mapped[dict] = mapped_column(JSONB, default=dict)

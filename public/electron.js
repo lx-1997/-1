@@ -1,20 +1,45 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, shell } = require('electron');
 const isDev = require('electron-is-dev');
 const path = require('path');
 
 let mainWindow;
+const DEV_SERVER_URL = process.env.ELECTRON_RENDERER_URL || 'http://localhost:3000';
+
+function isSafeAppNavigation(url) {
+  if (isDev) {
+    return url.startsWith(DEV_SERVER_URL) || url.startsWith('http://127.0.0.1:3000');
+  }
+
+  return url.startsWith('file://');
+}
+
+function openExternal(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      shell.openExternal(url);
+    }
+  } catch {
+    // Ignore malformed external navigation attempts.
+  }
+}
 
 function createWindow() {
   // 创建浏览器窗口
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1200,
-    minHeight: 800,
+    width: 1440,
+    height: 920,
+    minWidth: 1024,
+    minHeight: 720,
+    backgroundColor: '#eef2f5',
+    autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      enableRemoteModule: true
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      enableRemoteModule: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     },
     icon: path.join(__dirname, 'icon.png'),
     titleBarStyle: 'default',
@@ -22,11 +47,25 @@ function createWindow() {
   });
 
   // 加载应用
-  const startUrl = isDev 
-    ? 'http://localhost:3000' 
+  const startUrl = isDev
+    ? DEV_SERVER_URL
     : `file://${path.join(__dirname, '../build/index.html')}`;
-  
+
   mainWindow.loadURL(startUrl);
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isSafeAppNavigation(url)) {
+      openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isSafeAppNavigation(url)) {
+      event.preventDefault();
+      openExternal(url);
+    }
+  });
 
   // 窗口准备好后显示
   mainWindow.once('ready-to-show', () => {

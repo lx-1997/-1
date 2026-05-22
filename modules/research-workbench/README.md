@@ -35,7 +35,9 @@ node zsxq-downloader.js --group 88888142214212 --tag 海外投行报告 --ext pd
 
 ## 可视化工具
 
-启动本地工具：
+在主项目中使用时，后端会把工具挂到 `http://127.0.0.1:8300/research-workbench/`。
+
+也可以单独启动本地工具：
 
 ```bash
 npm run tool

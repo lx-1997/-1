@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import uuid
 from enum import Enum as PyEnum
+from typing import Optional
+
 from sqlalchemy import String, Enum, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -36,9 +38,9 @@ class ExecutionEvent(Base, UUIDMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("payout_tasks.id", ondelete="CASCADE"), nullable=False
     )
     event_type: Mapped[EventType] = mapped_column(Enum(EventType), nullable=False)
-    partner: Mapped[str | None] = mapped_column(String(128))
-    partner_ref: Mapped[str | None] = mapped_column(String(255))
+    partner: Mapped[Optional[str]] = mapped_column(String(128))
+    partner_ref: Mapped[Optional[str]] = mapped_column(String(255))
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
-    note: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[Optional[str]] = mapped_column(Text)
 
     task: Mapped["PayoutTask"] = relationship("PayoutTask", back_populates="execution_events")

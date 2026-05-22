@@ -1,33 +1,122 @@
 import React from 'react';
-import { AppState, Post, ViewType } from '../types';
+import { AppState, CartItem, Post, Product, Stock, ViewType } from '../types';
 import { MarketSymbolCandidate } from '../services/marketDataService';
-import StockList from './StockList';
-import StockDetail from './StockDetail';
-import StockCommunity from './StockCommunity';
-import ExpertClub from './ExpertClub';
-import CreatePost from './CreatePost';
-import PostDetail from './PostDetail';
-import RechargeHistory from './RechargeHistory';
-import PlatformBalance from './PlatformBalance';
-import ProductDetail from './ProductDetail';
-import Cart from './Cart';
-import Orders from './Orders';
-import HomePage from './HomePage';
-import FinGptHub from './FinGptHub';
-import InvestorAgentCenter from './InvestorAgentCenter';
-import DataSourceCenter from './DataSourceCenter';
-import ResearchWorkbench from './ResearchWorkbench';
-import RealtimeMessages from './RealtimeMessages';
-import McpCenter from './McpCenter';
-import SkillCenter from './SkillCenter';
-import EarningsCalendar from './EarningsCalendar';
+import { lazyWithPreload } from '../utils/lazyWithPreload';
+
+const StockList = lazyWithPreload(() => import('./StockList'));
+const StockDetail = lazyWithPreload(() => import('./StockDetail'));
+const StockCommunity = lazyWithPreload(() => import('./StockCommunity'));
+const CreatePost = lazyWithPreload(() => import('./CreatePost'));
+const PostDetail = lazyWithPreload(() => import('./PostDetail'));
+const RechargeHistory = lazyWithPreload(() => import('./RechargeHistory'));
+const PlatformBalance = lazyWithPreload(() => import('./PlatformBalance'));
+const ProductDetail = lazyWithPreload(() => import('./ProductDetail'));
+const Cart = lazyWithPreload(() => import('./Cart'));
+const Orders = lazyWithPreload(() => import('./Orders'));
+const HomePage = lazyWithPreload(() => import('./HomePage'));
+const FinGptHub = lazyWithPreload(() => import('./FinGptHub'));
+const InvestorAgentCenter = lazyWithPreload(() => import('./InvestorAgentCenter'));
+const DataSourceCenter = lazyWithPreload(() => import('./DataSourceCenter'));
+const ResearchWorkbench = lazyWithPreload(() => import('./ResearchWorkbench'));
+const RealtimeMessages = lazyWithPreload(() => import('./RealtimeMessages'));
+const McpCenter = lazyWithPreload(() => import('./McpCenter'));
+const SkillCenter = lazyWithPreload(() => import('./SkillCenter'));
+const EarningsCalendar = lazyWithPreload(() => import('./EarningsCalendar'));
+const CnEarningsCenter = lazyWithPreload(() => import('./CnEarningsCenter'));
+const ShareholderChangeCenter = lazyWithPreload(() => import('./ShareholderChangeCenter'));
+const MajorEventCenter = lazyWithPreload(() => import('./MajorEventCenter'));
+const ProfileSettings = lazyWithPreload(() => import('./ProfileSettings'));
+const MultiMarketDecisionCenter = lazyWithPreload(() => import('./MultiMarketDecisionCenter'));
+const AiSupplyChainCycleCenter = lazyWithPreload(() => import('./AiSupplyChainCycleCenter'));
+const CustomsTradeCenter = lazyWithPreload(() => import('./CustomsTradeCenter'));
+const OptionsSignalCenter = lazyWithPreload(() => import('./OptionsSignalCenter'));
+
+const modulePreloaders: Record<string, Array<() => Promise<unknown>>> = {
+  home: [HomePage.preload, StockList.preload],
+  stocks: [HomePage.preload, StockList.preload, StockCommunity.preload, StockDetail.preload],
+  'a-share-market': [HomePage.preload, StockList.preload, StockCommunity.preload, StockDetail.preload],
+  'global-market': [HomePage.preload, StockList.preload, StockCommunity.preload, StockDetail.preload],
+  shop: [HomePage.preload, ProductDetail.preload, Cart.preload, Orders.preload],
+  profile: [ProfileSettings.preload],
+  cart: [Cart.preload, Orders.preload],
+  orders: [Orders.preload],
+  'ai-research': [FinGptHub.preload],
+  'agent-center': [InvestorAgentCenter.preload],
+  skills: [SkillCenter.preload],
+  'data-sources': [DataSourceCenter.preload],
+  'research-workbench': [ResearchWorkbench.preload],
+  'realtime-messages': [RealtimeMessages.preload],
+  'mcp-center': [McpCenter.preload],
+  'earnings-calendar': [EarningsCalendar.preload],
+  'cn-earnings': [CnEarningsCenter.preload],
+  'shareholder-changes': [ShareholderChangeCenter.preload],
+  'major-events': [MajorEventCenter.preload],
+  'multi-market-decision': [MultiMarketDecisionCenter.preload],
+  'options-signal': [OptionsSignalCenter.preload],
+  'ai-supply-chain': [AiSupplyChainCycleCenter.preload],
+  'customs-trade': [CustomsTradeCenter.preload],
+  'stock-community': [StockCommunity.preload, PostDetail.preload, CreatePost.preload],
+  'stock-detail': [StockDetail.preload, StockCommunity.preload],
+  'create-post': [CreatePost.preload],
+  'post-detail': [PostDetail.preload],
+  'product-detail': [ProductDetail.preload]
+};
+
+const idlePreloadOrder = [
+  'home',
+  'stocks',
+  'a-share-market',
+  'global-market',
+  'agent-center',
+  'earnings-calendar',
+  'ai-supply-chain',
+  'customs-trade',
+  'options-signal',
+  'ai-research',
+  'data-sources',
+  'realtime-messages',
+  'mcp-center',
+  'skills',
+  'shop',
+  'profile'
+];
+
+const runPreloaders = async (preloaders: Array<() => Promise<unknown>>, concurrency = 4) => {
+  const uniquePreloaders = Array.from(new Set(preloaders));
+  let cursor = 0;
+  const workerCount = Math.min(concurrency, uniquePreloaders.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < uniquePreloaders.length) {
+      const preload = uniquePreloaders[cursor];
+      cursor += 1;
+      try {
+        await preload();
+      } catch (error) {
+        console.warn('Module preload failed:', error);
+      }
+    }
+  }));
+};
+
+export function preloadMainContentModules(key: string): Promise<void> {
+  const preloaders = modulePreloaders[key] || [];
+  return runPreloaders(preloaders);
+}
+
+export function preloadCoreWorkspaceModules(): Promise<void> {
+  const preloaders = idlePreloadOrder.reduce<Array<() => Promise<unknown>>>((acc, key) => (
+    acc.concat(modulePreloaders[key] || [])
+  ), []);
+  return runPreloaders(preloaders, 3);
+}
 
 interface MainContentProps {
   selectedMenu: string;
   appState: AppState;
-  onStockSelect: (stock: any) => void;
+  onStockSelect: (stock: Stock) => void;
   onBackToStocks: () => void;
-  onPostClick: (post: any) => void;
+  onPostClick: (post: Post) => void;
   onCreatePost: () => void;
   onPurchase: (postId: string, amount: number) => void;
   onRate: (postId: string, rating: number, feedback: string) => void;
@@ -38,15 +127,15 @@ interface MainContentProps {
   onSavePost: (post: Partial<Post>) => void;
   isMobile?: boolean;
   // 商城相关
-  onProductClick: (product: any) => void;
-  onAddToCart: (product: any, variantId: string, quantity: number) => void;
+  onProductClick: (product: Product) => void;
+  onAddToCart: (product: Product, variantId: string, quantity: number) => void;
   onUpdateCartQuantity: (itemId: string, quantity: number) => void;
   onRemoveFromCart: (itemId: string) => void;
-  onCheckout: (items: any[]) => void;
+  onCheckout: (items: CartItem[]) => void;
   onOrderPay: (orderId: string, paymentMethod: 'wechat' | 'alipay') => void;
   onOrderCancel: (orderId: string) => void;
   onOrderRefund: (orderId: string) => void;
-  onBuyNow: (product: any, variantId: string, quantity: number) => void;
+  onBuyNow: (product: Product, variantId: string, quantity: number) => void;
   onAddStock: (candidate: MarketSymbolCandidate) => Promise<void> | void;
   onRemoveStock: (symbol: string) => void;
   onToggleStockSubscription: (symbol: string) => void;
@@ -86,7 +175,7 @@ const MainContent: React.FC<MainContentProps> = ({
 }) => {
   // 优先处理特殊视图（这些视图优先级最高，直接返回，不进入菜单逻辑）
 
-  // 商品详情视图
+  // 资产详情视图
   if (appState.currentView === 'product-detail' && appState.selectedProduct) {
     return (
       <ProductDetail
@@ -98,7 +187,7 @@ const MainContent: React.FC<MainContentProps> = ({
     );
   }
 
-  // 购物车视图
+  // 资产单视图
   if (appState.currentView === 'cart') {
     return (
       <Cart
@@ -140,7 +229,7 @@ const MainContent: React.FC<MainContentProps> = ({
   }
 
   if (appState.currentView === 'research-workbench') {
-    return <ResearchWorkbench />;
+    return <ResearchWorkbench appState={appState} onViewChange={onViewChange} />;
   }
 
   if (appState.currentView === 'realtime-messages') {
@@ -153,6 +242,38 @@ const MainContent: React.FC<MainContentProps> = ({
 
   if (appState.currentView === 'earnings-calendar') {
     return <EarningsCalendar appState={appState} onStockSelect={onStockSelect} />;
+  }
+
+  if (appState.currentView === 'cn-earnings') {
+    return <CnEarningsCenter appState={appState} onStockSelect={onStockSelect} />;
+  }
+
+  if (appState.currentView === 'shareholder-changes') {
+    return <ShareholderChangeCenter appState={appState} onStockSelect={onStockSelect} />;
+  }
+
+  if (appState.currentView === 'major-events') {
+    return <MajorEventCenter appState={appState} onStockSelect={onStockSelect} />;
+  }
+
+  if (appState.currentView === 'multi-market-decision') {
+    return <MultiMarketDecisionCenter appState={appState} />;
+  }
+
+  if (appState.currentView === 'ai-supply-chain') {
+    return <AiSupplyChainCycleCenter appState={appState} />;
+  }
+
+  if (appState.currentView === 'customs-trade') {
+    return <CustomsTradeCenter appState={appState} />;
+  }
+
+  if (appState.currentView === 'options-signal') {
+    return <OptionsSignalCenter appState={appState} />;
+  }
+
+  if (appState.currentView === 'profile') {
+    return <ProfileSettings appState={appState} />;
   }
 
   // 创建帖子视图
@@ -248,11 +369,7 @@ const MainContent: React.FC<MainContentProps> = ({
 
   switch (selectedMenu) {
     case 'profile':
-      return (
-        <ExpertClub
-          posts={appState.posts}
-        />
-      );
+      return <ProfileSettings appState={appState} />;
     
     case 'recharge-history':
       return (
@@ -286,9 +403,13 @@ const MainContent: React.FC<MainContentProps> = ({
   if (
     appState.currentView === 'home' ||
     appState.currentView === 'stocks' ||
+    appState.currentView === 'a-share-market' ||
+    appState.currentView === 'global-market' ||
     appState.currentView === 'shop' ||
     selectedMenu === 'dashboard' ||
     selectedMenu === 'stocks' ||
+    selectedMenu === 'a-share-market' ||
+    selectedMenu === 'global-market' ||
     selectedMenu === 'shop' ||
     selectedMenu === 'home'
   ) {

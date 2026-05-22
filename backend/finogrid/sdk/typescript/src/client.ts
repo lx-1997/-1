@@ -39,6 +39,7 @@
  *     payment_intent_id: intent.payment_intent_id,
  *   });
  */
+import { randomUUID } from "crypto";
 import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
 import {
   FinogridClientConfig,
@@ -207,7 +208,7 @@ export class X402Helper {
       asset: requirement.asset,
       payTo: requirement.payTo,
       amount: opts.amount ?? requirement.maxAmountRequired,
-      nonce: crypto.randomUUID(),
+      nonce: randomUUID(),
       timestamp: String(Date.now() / 1000),
       resource: requirement.resource,
     };

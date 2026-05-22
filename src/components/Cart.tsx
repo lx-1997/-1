@@ -72,7 +72,7 @@ const Cart: React.FC<CartProps> = ({
 
   const handleCheckout = () => {
     if (selectedItems.length === 0) {
-      message.warning('请选择要结算的商品');
+      message.warning('请选择要开通的研究资产');
       return;
     }
     const itemsToCheckout = cartItems.filter(item => selectedItems.includes(item.id));
@@ -81,7 +81,7 @@ const Cart: React.FC<CartProps> = ({
 
   const columns = [
     {
-      title: '商品信息',
+      title: '资产信息',
       key: 'product',
       width: '40%',
       render: (_: any, record: CartItem) => (
@@ -174,11 +174,11 @@ const Cart: React.FC<CartProps> = ({
         </Button>
         <Card>
           <Empty
-            description="购物车是空的"
+            description="资产单是空的"
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           >
             <Button type="primary" onClick={onBack}>
-              去购物
+              去资产库
             </Button>
           </Empty>
         </Card>
@@ -198,7 +198,7 @@ const Cart: React.FC<CartProps> = ({
 
       <Card>
         <Title level={3} style={{ marginBottom: '24px' }}>
-          <ShoppingCartOutlined /> 购物车 ({calculateCartItemCount(cartItems)}件商品)
+          <ShoppingCartOutlined /> 资产单 ({calculateCartItemCount(cartItems)}项资产)
         </Title>
 
         <div style={{ marginBottom: '16px' }}>
@@ -230,7 +230,7 @@ const Cart: React.FC<CartProps> = ({
               <Table.Summary.Row>
                 <Table.Summary.Cell index={0} colSpan={4}>
                   <div style={{ textAlign: 'right', paddingRight: '16px' }}>
-                    <Text>已选择 {selectedItems.length} 件商品，合计：</Text>
+                    <Text>已选择 {selectedItems.length} 项资产，合计：</Text>
                     <Text strong style={{ fontSize: '20px', color: '#ff4d4f', marginLeft: '8px' }}>
                       {formatTotalPrice(totalAmount)}
                     </Text>
@@ -245,7 +245,7 @@ const Cart: React.FC<CartProps> = ({
                     disabled={selectedItems.length === 0}
                     block
                   >
-                    结算 ({selectedItems.length})
+                    开通 ({selectedItems.length})
                   </Button>
                 </Table.Summary.Cell>
               </Table.Summary.Row>
@@ -254,7 +254,7 @@ const Cart: React.FC<CartProps> = ({
         />
       </Card>
 
-      {/* 底部结算栏（移动端） */}
+      {/* 底部开通栏（移动端） */}
       <div
         style={{
           position: 'sticky',
@@ -283,7 +283,7 @@ const Cart: React.FC<CartProps> = ({
               onClick={handleCheckout}
               disabled={selectedItems.length === 0}
             >
-              结算 ({selectedItems.length})
+              开通 ({selectedItems.length})
             </Button>
           </Col>
         </Row>

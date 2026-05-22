@@ -80,8 +80,8 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
         title={
           <Space>
             <StarOutlined style={{ color: '#1890ff' }} />
-            <span>发布内容</span>
-            <Text type="secondary">为 {stock.name} ({stock.symbol}) 发布新内容</Text>
+            <span>记录研究假设</span>
+            <Text type="secondary">为 {stock.name} ({stock.symbol}) 沉淀证据、观点和复盘条件</Text>
           </Space>
         }
         extra={
@@ -92,7 +92,7 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
               icon={<SaveOutlined />}
               onClick={() => form.submit()}
             >
-              发布
+              保存记录
             </Button>
           </Space>
         }
@@ -111,7 +111,7 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
             label="标题"
             rules={[{ required: true, message: '请输入标题' }]}
           >
-            <Input placeholder="请输入内容标题" size="large" />
+            <Input placeholder="请输入研究标题" size="large" />
           </Form.Item>
 
           <Form.Item
@@ -119,20 +119,20 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
             label="摘要"
             rules={[{ required: true, message: '请输入摘要' }]}
           >
-            <TextArea 
-              rows={3} 
-              placeholder="请输入内容摘要，简要描述主要内容" 
+            <TextArea
+              rows={3}
+              placeholder="写下核心结论、证据线索或待验证假设"
             />
           </Form.Item>
 
           <Form.Item
             name="content"
-            label="内容"
-            rules={[{ required: true, message: '请输入内容' }]}
+            label="正文"
+            rules={[{ required: true, message: '请输入正文' }]}
           >
-            <TextArea 
-              rows={10} 
-              placeholder="请输入详细内容，支持 Markdown 格式" 
+            <TextArea
+              rows={10}
+              placeholder="请输入证据、推理、反证和复盘条件，支持 Markdown 格式"
             />
           </Form.Item>
 
@@ -140,13 +140,13 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
             <Col span={12}>
               <Form.Item
                 name="type"
-                label="内容类型"
-                rules={[{ required: true, message: '请选择内容类型' }]}
+                label="记录类型"
+                rules={[{ required: true, message: '请选择记录类型' }]}
               >
-                <Select placeholder="选择内容类型">
-                  <Option value="news">资讯</Option>
-                  <Option value="analysis">分析</Option>
-                  <Option value="discussion">讨论</Option>
+                <Select placeholder="选择记录类型">
+                  <Option value="news">资讯证据</Option>
+                  <Option value="analysis">研究观点</Option>
+                  <Option value="discussion">讨论记录</Option>
                   <Option value="qa">问答</Option>
                 </Select>
               </Form.Item>
@@ -200,7 +200,7 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
 
           <Divider />
 
-          <Form.Item label="付费设置">
+          <Form.Item label="访问权限">
             <Space direction="vertical" style={{ width: '100%' }}>
               <Space>
                 <Switch 
@@ -209,7 +209,7 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
                   checkedChildren={<DollarOutlined />}
                   unCheckedChildren={<EyeOutlined />}
                 />
-                <Text>{isPaid ? '付费内容' : '免费内容'}</Text>
+                <Text>{isPaid ? '深度报告' : '公开记录'}</Text>
               </Space>
               
               {isPaid && (
@@ -238,12 +238,12 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
               {isPaid ? (
                 <>
                   <DollarOutlined style={{ color: '#faad14' }} />
-                  付费内容将获得更多曝光，用户付费查看后可以评分，有助于提升您的声誉
+                  深度报告适合放入完整模型、证据引用和复盘框架
                 </>
               ) : (
                 <>
                   <EyeOutlined style={{ color: '#52c41a' }} />
-                  免费内容有助于建立声誉，获得更多关注者
+                  公开记录适合沉淀线索、假设和可验证问题
                 </>
               )}
             </Text>

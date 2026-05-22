@@ -121,6 +121,23 @@ const skillDefinitions: SkillDefinition[] = [
     invocation: 'filing.parse({ file_id, symbol, period })'
   },
   {
+    id: 'cn-earnings-scan',
+    name: 'A股财报扫描',
+    category: 'data',
+    description: '扫描 A 股年报、季报、业绩预告和业绩快报公告，抽取营业收入、净利润、EPS、ROE、现金流和风险提示。',
+    agents: ['OrchestratorAgent', 'EvidenceAgent', '财报解读 Agent'],
+    inputs: ['market', 'window', 'report_types[]', 'limit'],
+    outputs: ['earnings_records[]', 'financial_metrics[]', 'risk_flags[]', 'source_links[]'],
+    dependencies: ['巨潮资讯网公告检索', 'PDF 正文解析', 'Agent 语义路由'],
+    permissions: ['读取公开公告', '访问外部数据源'],
+    maturity: 'production',
+    risk: 'medium',
+    latency: '8-30 秒',
+    successRate: 88,
+    usage: 0,
+    invocation: 'cn.earnings.scan({ market: "A", window: "30d", detail: true })'
+  },
+  {
     id: 'rag-evidence-retrieval',
     name: '证据检索 RAG',
     category: 'data',
@@ -136,6 +153,23 @@ const skillDefinitions: SkillDefinition[] = [
     successRate: 94,
     usage: 203,
     invocation: 'rag.retrieve({ question, tags, top_k: 8 })'
+  },
+  {
+    id: 'shareholder-change-scan',
+    name: '股东增减持扫描',
+    category: 'data',
+    description: '扫描 A 股公告中的股东、董监高、控股股东增持/减持计划、进展和结果，输出可追溯公告列表和风险分层。',
+    agents: ['OrchestratorAgent', 'EvidenceAgent', 'RiskAgent'],
+    inputs: ['market', 'window', 'direction', 'limit'],
+    outputs: ['change_records[]', 'risk_buckets[]', 'source_links[]', 'coverage_note'],
+    dependencies: ['巨潮资讯网公告检索', 'Skill Executor', 'Agent 语义路由'],
+    permissions: ['读取公开公告', '访问外部数据源'],
+    maturity: 'production',
+    risk: 'medium',
+    latency: '5-20 秒',
+    successRate: 90,
+    usage: 0,
+    invocation: 'shareholder.change.scan({ market: "A", window: "7d", direction: "all" })'
   },
   {
     id: 'risk-discipline-check',
@@ -228,12 +262,12 @@ const orchestrationTemplates: SkillTemplate[] = [
   {
     name: '个股深度研究',
     objective: '从资料、情绪、财报和风险纪律四层生成投资者报告。',
-    skills: ['证据检索 RAG', '市场情绪扫描', '财报与公告拆解', '情景矩阵生成', '风险纪律审查']
+    skills: ['证据检索 RAG', '市场情绪扫描', 'A股财报扫描', '财报与公告拆解', '情景矩阵生成', '风险纪律审查']
   },
   {
     name: '盘前风险扫描',
     objective: '开盘前检查关注池异常，生成需要人工复核的预警。',
-    skills: ['观察名单监控', '市场情绪扫描', '风险纪律审查']
+    skills: ['观察名单监控', 'A股财报扫描', '股东增减持扫描', '市场情绪扫描', '风险纪律审查']
   },
   {
     name: '组合复盘',

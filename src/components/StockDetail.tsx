@@ -93,7 +93,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
             返回个股列表
           </Button>
           <Button type="primary" icon={<MessageOutlined />} onClick={onCreatePost}>
-            发布内容
+            记录研究
           </Button>
         </Space>
 
@@ -143,14 +143,14 @@ const StockDetail: React.FC<StockDetailProps> = ({
               </Col>
               <Col span={6}>
                 <Statistic
-                  title="总内容"
+                  title="研究资料"
                   value={stock.totalPosts}
                   suffix="篇"
                 />
               </Col>
               <Col span={6}>
                 <Statistic
-                  title="付费内容"
+                  title="深度报告"
                   value={stock.totalPaidPosts}
                   suffix="篇"
                 />
@@ -171,7 +171,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
               label: (
                 <span>
                   <MessageOutlined />
-                  资讯分析 ({filteredPosts.length})
+                  资讯证据 ({filteredPosts.length})
                 </span>
               ),
               children: (
@@ -205,7 +205,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
                     title={
                       <Space>
                         <Text strong>{post.title}</Text>
-                        {post.isPaid && <Tag color="gold">付费内容</Tag>}
+                        {post.isPaid && <Tag color="gold">深度报告</Tag>}
                         {post.isPinned && <Tag color="red">置顶</Tag>}
                         {post.isHighlighted && <Tag color="blue">精华</Tag>}
                         <Tag color={getCategoryColor(post.category)}>
@@ -246,7 +246,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
                           </Text>
                           {post.isPaid && (
                             <Text type="secondary">
-                              <DollarOutlined /> ${post.price} · {post.paidViewers}人付费
+                              <DollarOutlined /> ${post.price} · {post.paidViewers}人开通
                             </Text>
                           )}
                         </Space>
@@ -269,7 +269,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
               label: (
                 <span>
                   <MessageOutlined />
-                  讨论区 ({filteredComments.length})
+                  讨论记录 ({filteredComments.length})
                 </span>
               ),
               children: (
@@ -290,7 +290,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
                         <Tag color={comment.author.reputation > 80 ? 'gold' : comment.author.reputation > 60 ? 'blue' : 'default'}>
                           {comment.author.reputation}分
                         </Tag>
-                        {comment.isPaid && <Tag color="gold">付费评论</Tag>}
+                        {comment.isPaid && <Tag color="gold">深度评论</Tag>}
                       </Space>
                     }
                     description={

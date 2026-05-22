@@ -3,23 +3,31 @@ import { Menu, Typography, Space } from 'antd';
 import {
   DashboardOutlined,
   UserOutlined,
+  AuditOutlined,
   FileTextOutlined,
   ExperimentOutlined,
   RobotOutlined,
   DatabaseOutlined,
+  FundProjectionScreenOutlined,
   ToolOutlined,
   CalendarOutlined,
+  BarChartOutlined,
   ThunderboltOutlined,
   ApiOutlined,
-  FolderOpenOutlined
+  FolderOpenOutlined,
+  GlobalOutlined,
+  EyeOutlined,
+  PartitionOutlined
 } from '@ant-design/icons';
 import { AppState, Stock } from '../types';
+import { countStocksBySegment } from '../utils/marketSegments';
 
 const { Text } = Typography;
 
 interface SidebarProps {
   selectedMenu: string;
   onMenuSelect: (key: string) => void;
+  onMenuPreload?: (key: string) => void;
   onStockSelect: (stock: Stock) => void;
   appState: AppState;
 }
@@ -27,97 +35,133 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({
   selectedMenu,
   onMenuSelect,
+  onMenuPreload,
   onStockSelect,
   appState
 }) => {
+  const segmentStats = countStocksBySegment(appState.stocks);
+
+  const menuLabel = (key: string, label: string) => (
+    <span
+      onMouseEnter={() => onMenuPreload?.(key)}
+      onFocus={() => onMenuPreload?.(key)}
+    >
+      {label}
+    </span>
+  );
+
   const menuItems = [
     {
       type: 'group' as const,
-      label: '今日工作流',
+      label: '工作流',
       children: [
         {
           key: 'home',
           icon: <DashboardOutlined />,
-          label: '信息雷达'
+          label: menuLabel('home', 'Agent Cockpit')
         },
-        {
-          key: 'ai-research',
-          icon: <ExperimentOutlined />,
-          label: 'AI 投研体检'
-        },
-        {
-          key: 'agent-center',
-          icon: <RobotOutlined />,
-          label: '报告工厂'
-        }
-      ]
-    },
-    {
-      type: 'group' as const,
-      label: '个股与宏观',
-      children: [
         {
           key: 'stocks',
-          icon: <DashboardOutlined />,
-          label: '个股池'
-        },
-        {
-          key: 'earnings-calendar',
-          icon: <CalendarOutlined />,
-          label: '事件日历'
-        }
-      ]
-    },
-    {
-      type: 'group' as const,
-      label: '证据与连接',
-      children: [
-        {
-          key: 'realtime-messages',
-          icon: <ThunderboltOutlined />,
-          label: '新闻 / 消息流'
-        },
-        {
-          key: 'data-sources',
-          icon: <DatabaseOutlined />,
-          label: '数据源与研报'
+          icon: <EyeOutlined />,
+          label: menuLabel('stocks', `观察池 ${segmentStats.all}`)
         },
         {
           key: 'research-workbench',
           icon: <FolderOpenOutlined />,
-          label: '研报工作台'
+          label: menuLabel('research-workbench', '研报工作台')
         },
+        {
+          key: 'data-sources',
+          icon: <DatabaseOutlined />,
+          label: menuLabel('data-sources', '证据库')
+        },
+        {
+          key: 'agent-center',
+          icon: <RobotOutlined />,
+          label: menuLabel('agent-center', 'Agent 任务')
+        }
+      ]
+    },
+    {
+      type: 'group' as const,
+      label: '决策',
+      children: [
+        {
+          key: 'multi-market-decision',
+          icon: <FundProjectionScreenOutlined />,
+          label: menuLabel('multi-market-decision', '策略与组合')
+        },
+        {
+          key: 'earnings-calendar',
+          icon: <CalendarOutlined />,
+          label: menuLabel('earnings-calendar', '事件日历')
+        },
+        {
+          key: 'options-signal',
+          icon: <BarChartOutlined />,
+          label: menuLabel('options-signal', '期权雷达')
+        },
+        {
+          key: 'realtime-messages',
+          icon: <ThunderboltOutlined />,
+          label: menuLabel('realtime-messages', '信号流')
+        }
+      ]
+    },
+    {
+      type: 'group' as const,
+      label: '专题',
+      children: [
+        {
+          key: 'ai-research',
+          icon: <ExperimentOutlined />,
+          label: menuLabel('ai-research', '单标的体检')
+        },
+        {
+          key: 'cn-earnings',
+          icon: <FileTextOutlined />,
+          label: menuLabel('cn-earnings', 'A股财报')
+        },
+        {
+          key: 'shareholder-changes',
+          icon: <AuditOutlined />,
+          label: menuLabel('shareholder-changes', '股东变动')
+        },
+        {
+          key: 'major-events',
+          icon: <ThunderboltOutlined />,
+          label: menuLabel('major-events', '重大事项')
+        },
+        {
+          key: 'ai-supply-chain',
+          icon: <PartitionOutlined />,
+          label: menuLabel('ai-supply-chain', 'AI 供应链')
+        },
+        {
+          key: 'customs-trade',
+          icon: <GlobalOutlined />,
+          label: menuLabel('customs-trade', '海关进出口')
+        }
+      ]
+    },
+    {
+      type: 'group' as const,
+      label: '系统',
+      children: [
         {
           key: 'mcp-center',
           icon: <ApiOutlined />,
-          label: '外部工具连接'
+          label: menuLabel('mcp-center', '工具连接')
         },
         {
           key: 'skills',
           icon: <ToolOutlined />,
-          label: '自定义 Skills'
-        }
-      ]
-    },
-    {
-      type: 'group' as const,
-      label: '研究订阅',
-      children: [
-        {
-          key: 'shop',
-          icon: <FileTextOutlined />,
-          label: '研报 / 模板库'
-        }
-      ]
-    },
-    {
-      type: 'group' as const,
-      label: '账户',
-      children: [
+          label: menuLabel('skills', '技能编排')
+        },
         {
           key: 'profile',
           icon: <UserOutlined />,
-          label: '个人设置'
+          label: menuLabel('profile', '系统设置')
         }
       ]
     }
@@ -141,14 +185,17 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* 热门股票 */}
       <div className="sidebar-section">
         <div className="sidebar-section-title">
-          <span>重点跟踪</span>
+          <span>核心标的</span>
           <span>Δ%</span>
         </div>
         <Space direction="vertical" size={2} style={{ width: '100%' }}>
           {hotStocks.map(stock => (
-            <div
+            <button
               key={stock.symbol}
+              type="button"
               className="hot-stock-row"
+              onMouseEnter={() => onMenuPreload?.('stock-community')}
+              onFocus={() => onMenuPreload?.('stock-community')}
               onClick={() => onStockSelect(stock)}
             >
               <div>
@@ -165,8 +212,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               >
                 {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
               </Text>
-            </div>
+            </button>
           ))}
+          {hotStocks.length === 0 && (
+            <Text className="sidebar-empty-note">暂无跟踪标的</Text>
+          )}
         </Space>
       </div>
     </div>

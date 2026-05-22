@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import uuid
 from enum import Enum as PyEnum
+from typing import Optional
+
 from sqlalchemy import String, Numeric, Enum, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -78,21 +80,21 @@ class PayoutTask(Base, UUIDMixin, TimestampMixin):
     recipient_name: Mapped[str] = mapped_column(String(512), nullable=False)
     recipient_ref: Mapped[str] = mapped_column(String(255), nullable=False)  # internal ID
     amount_usd: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
-    preferred_asset: Mapped[AssetType | None] = mapped_column(Enum(AssetType))
-    preferred_mode: Mapped[DeliveryMode | None] = mapped_column(Enum(DeliveryMode))
+    preferred_asset: Mapped[Optional[AssetType]] = mapped_column(Enum(AssetType))
+    preferred_mode: Mapped[Optional[DeliveryMode]] = mapped_column(Enum(DeliveryMode))
 
     # Resolved by routing engine
-    resolved_asset: Mapped[AssetType | None] = mapped_column(Enum(AssetType))
-    resolved_mode: Mapped[DeliveryMode | None] = mapped_column(Enum(DeliveryMode))
-    partner_route: Mapped[str | None] = mapped_column(String(128))
-    fallback_route: Mapped[str | None] = mapped_column(String(128))
+    resolved_asset: Mapped[Optional[AssetType]] = mapped_column(Enum(AssetType))
+    resolved_mode: Mapped[Optional[DeliveryMode]] = mapped_column(Enum(DeliveryMode))
+    partner_route: Mapped[Optional[str]] = mapped_column(String(128))
+    fallback_route: Mapped[Optional[str]] = mapped_column(String(128))
 
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), default=TaskStatus.PENDING, nullable=False
     )
-    compliance_result: Mapped[dict | None] = mapped_column(JSONB)
-    partner_tx_id: Mapped[str | None] = mapped_column(String(255))
-    failure_reason: Mapped[str | None] = mapped_column(Text)
+    compliance_result: Mapped[Optional[dict]] = mapped_column(JSONB)
+    partner_tx_id: Mapped[Optional[str]] = mapped_column(String(255))
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text)
     retry_count: Mapped[int] = mapped_column(default=0)
     beneficiary_data: Mapped[dict] = mapped_column(JSONB, default=dict)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)

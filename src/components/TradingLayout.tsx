@@ -1,19 +1,99 @@
-import React, { useState, useEffect } from 'react';
-import { Layout, Drawer } from 'antd';
-import { AppState, Post, Stock, ViewType } from '../types';
+import React, { Suspense, startTransition, useCallback, useEffect, useRef, useState } from 'react';
+import { Layout, Drawer, Spin } from 'antd';
+import { AppState, CartItem, Post, Product, Stock, ViewType } from '../types';
 import { MarketSymbolCandidate } from '../services/marketDataService';
 import Sidebar from './Sidebar';
 import Header from './Header';
-import MainContent from './MainContent';
+import MainContent, { preloadCoreWorkspaceModules, preloadMainContentModules } from './MainContent';
+import { getMarketSegmentForStock } from '../utils/marketSegments';
 
 const { Sider, Content } = Layout;
+
+const menuByView: Partial<Record<ViewType, string>> = {
+  cart: 'cart',
+  orders: 'orders',
+  'ai-research': 'ai-research',
+  'agent-center': 'agent-center',
+  skills: 'skills',
+  'data-sources': 'data-sources',
+  'research-workbench': 'research-workbench',
+  'realtime-messages': 'realtime-messages',
+  'mcp-center': 'mcp-center',
+  'earnings-calendar': 'earnings-calendar',
+  'cn-earnings': 'cn-earnings',
+  'shareholder-changes': 'shareholder-changes',
+  'major-events': 'major-events',
+  'multi-market-decision': 'multi-market-decision',
+  'options-signal': 'options-signal',
+  'ai-supply-chain': 'ai-supply-chain',
+  'customs-trade': 'customs-trade',
+  profile: 'profile',
+  home: 'home',
+  stocks: 'stocks',
+  'a-share-market': 'a-share-market',
+  'global-market': 'global-market',
+  shop: 'shop'
+};
+
+const viewByMenu: Partial<Record<string, ViewType>> = {
+  home: 'home',
+  stocks: 'stocks',
+  'a-share-market': 'a-share-market',
+  'global-market': 'global-market',
+  shop: 'shop',
+  profile: 'profile',
+  cart: 'cart',
+  orders: 'orders',
+  'ai-research': 'ai-research',
+  'agent-center': 'agent-center',
+  skills: 'skills',
+  'data-sources': 'data-sources',
+  'research-workbench': 'research-workbench',
+  'realtime-messages': 'realtime-messages',
+  'mcp-center': 'mcp-center',
+  'earnings-calendar': 'earnings-calendar',
+  'cn-earnings': 'cn-earnings',
+  'shareholder-changes': 'shareholder-changes',
+  'major-events': 'major-events',
+  'multi-market-decision': 'multi-market-decision',
+  'options-signal': 'options-signal',
+  'ai-supply-chain': 'ai-supply-chain',
+  'customs-trade': 'customs-trade'
+};
+
+const WorkspaceFallback: React.FC = () => (
+  <div className="workspace-loading-state">
+    <Spin size="large" />
+    <span>正在加载工作台...</span>
+  </div>
+);
+
+type IdleWindow = Window & typeof globalThis & {
+  requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+const scheduleIdleWork = (callback: () => void, timeout = 1800) => {
+  if (typeof window === 'undefined') {
+    return () => undefined;
+  }
+
+  const idleWindow = window as IdleWindow;
+  if (idleWindow.requestIdleCallback && idleWindow.cancelIdleCallback) {
+    const handle = idleWindow.requestIdleCallback(callback, { timeout });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+
+  const handle = window.setTimeout(callback, timeout);
+  return () => window.clearTimeout(handle);
+};
 
 interface TradingLayoutProps {
   appState: AppState;
   onLogout: () => void;
-  onStockSelect: (stock: any) => void;
+  onStockSelect: (stock: Stock) => void;
   onBackToStocks: () => void;
-  onPostClick: (post: any) => void;
+  onPostClick: (post: Post) => void;
   onCreatePost: () => void;
   onPurchase: (postId: string, amount: number) => void;
   onRate: (postId: string, rating: number, feedback: string) => void;
@@ -24,20 +104,21 @@ interface TradingLayoutProps {
   onViewChange: (view: ViewType) => void;
   onSavePost: (post: Partial<Post>) => void;
   // 商城相关
-  onProductClick: (product: any) => void;
-  onAddToCart: (product: any, variantId: string, quantity: number) => void;
+  onProductClick: (product: Product) => void;
+  onAddToCart: (product: Product, variantId: string, quantity: number) => void;
   onUpdateCartQuantity: (itemId: string, quantity: number) => void;
   onRemoveFromCart: (itemId: string) => void;
-  onCheckout: (items: any[]) => void;
+  onCheckout: (items: CartItem[]) => void;
   onOrderPay: (orderId: string, paymentMethod: 'wechat' | 'alipay') => void;
   onOrderCancel: (orderId: string) => void;
   onOrderRefund: (orderId: string) => void;
-  onBuyNow: (product: any, variantId: string, quantity: number) => void;
+  onBuyNow: (product: Product, variantId: string, quantity: number) => void;
   onAddStock: (candidate: MarketSymbolCandidate) => Promise<void> | void;
   onRemoveStock: (symbol: string) => void;
   onToggleStockSubscription: (symbol: string) => void;
   onRefreshMarketData: () => void;
   isMarketDataRefreshing: boolean;
+  isDemoSession?: boolean;
 }
 
 const TradingLayout: React.FC<TradingLayoutProps> = ({
@@ -68,12 +149,14 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
   onRemoveStock,
   onToggleStockSubscription,
   onRefreshMarketData,
-  isMarketDataRefreshing
+  isMarketDataRefreshing,
+  isDemoSession = false
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [selectedMenu, setSelectedMenu] = useState('home');
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
+  const preloadedMenusRef = useRef<Set<string>>(new Set());
 
   // 检测屏幕尺寸
   useEffect(() => {
@@ -89,103 +172,64 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
 
+  useEffect(() => {
+    const nextMenu = menuByView[appState.currentView];
+    if (nextMenu && nextMenu !== selectedMenu) {
+      setSelectedMenu(nextMenu);
+    }
+  }, [appState.currentView, selectedMenu]);
+
+  const preloadMenu = useCallback((key: string) => {
+    if (preloadedMenusRef.current.has(key)) {
+      return;
+    }
+
+    preloadedMenusRef.current.add(key);
+    void preloadMainContentModules(key);
+  }, []);
+
+  useEffect(() => {
+    preloadMenu(appState.currentView);
+  }, [appState.currentView, preloadMenu]);
+
+  useEffect(() => scheduleIdleWork(() => {
+    void preloadCoreWorkspaceModules();
+  }), []);
+
   const handleMenuSelect = (key: string) => {
+    preloadMenu(key);
     setSelectedMenu(key);
     if (isMobile) {
       setMobileMenuVisible(false);
     }
     
-    // 如果切换到非股票相关菜单，清除选中的股票
-    if (key !== 'home' && appState.selectedStock) {
-      onBackToStocks();
-    }
-    
-    // 根据菜单项切换视图，确保所有菜单项都能正确跳转
-    switch (key) {
-      case 'home':
-        onViewChange('home');
-        break;
-      case 'stocks':
-        onViewChange('stocks');
-        break;
-      case 'shop':
-        onViewChange('shop');
-        break;
-      case 'profile':
-        onViewChange('profile');
-        break;
-      case 'cart':
-        onViewChange('cart');
-        break;
-      case 'orders':
-        onViewChange('orders');
-        break;
-      case 'ai-research':
-        onViewChange('ai-research');
-        break;
-      case 'agent-center':
-        onViewChange('agent-center');
-        break;
-      case 'skills':
-        onViewChange('skills');
-        break;
-      case 'data-sources':
-        onViewChange('data-sources');
-        break;
-      case 'research-workbench':
-        onViewChange('research-workbench');
-        break;
-      case 'realtime-messages':
-        onViewChange('realtime-messages');
-        break;
-      case 'mcp-center':
-        onViewChange('mcp-center');
-        break;
-      case 'earnings-calendar':
-        onViewChange('earnings-calendar');
-        break;
-      case 'recharge-history':
-      case 'platform-balance':
-        onViewChange('home');
-        break;
-      default:
-        onViewChange('home');
-        break;
-    }
+    startTransition(() => {
+      // 如果切换到非股票相关菜单，清除选中的股票
+      if (key !== 'home' && appState.selectedStock) {
+        onBackToStocks();
+      }
+
+      onViewChange(viewByMenu[key] || 'home');
+    });
   };
 
   const handleHeaderViewChange = (view: ViewType) => {
-    const menuByView: Partial<Record<ViewType, string>> = {
-      cart: 'cart',
-      orders: 'orders',
-      'ai-research': 'ai-research',
-      'agent-center': 'agent-center',
-      skills: 'skills',
-      'data-sources': 'data-sources',
-      'research-workbench': 'research-workbench',
-      'realtime-messages': 'realtime-messages',
-      'mcp-center': 'mcp-center',
-      'earnings-calendar': 'earnings-calendar',
-      profile: 'profile',
-      home: 'home',
-      stocks: 'stocks',
-      shop: 'shop'
-    };
-
+    preloadMenu(view);
     setSelectedMenu(menuByView[view] || 'home');
-    onViewChange(view);
+    startTransition(() => onViewChange(view));
   };
 
   const handleStockShortcut = (stock: Stock) => {
-    setSelectedMenu('stocks');
+    preloadMenu('stock-community');
+    setSelectedMenu(getMarketSegmentForStock(stock) === 'a-share' ? 'a-share-market' : 'global-market');
     if (isMobile) {
       setMobileMenuVisible(false);
     }
-    onStockSelect(stock);
+    startTransition(() => onStockSelect(stock));
   };
 
   return (
-    <Layout style={{ height: '100vh' }}>
+    <Layout className="trading-layout" style={{ height: '100vh' }}>
       {/* 顶部导航栏 */}
       <Header
         appState={appState}
@@ -197,25 +241,24 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
         onViewChange={handleHeaderViewChange}
         onRefreshMarketData={onRefreshMarketData}
         isMarketDataRefreshing={isMarketDataRefreshing}
+        isDemoSession={isDemoSession}
       />
 
       <Layout>
         {/* 桌面端侧边栏 */}
         {!isMobile && (
           <Sider
+            className="workspace-sider"
             collapsible
             collapsed={collapsed}
             onCollapse={setCollapsed}
             width={240}
             collapsedWidth={80}
-            style={{
-              background: '#172026',
-              borderRight: '1px solid rgba(255,255,255,0.08)'
-            }}
           >
             <Sidebar
               selectedMenu={selectedMenu}
               onMenuSelect={handleMenuSelect}
+              onMenuPreload={preloadMenu}
               appState={appState}
               onStockSelect={handleStockShortcut}
             />
@@ -235,6 +278,7 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
             <Sidebar
               selectedMenu={selectedMenu}
               onMenuSelect={handleMenuSelect}
+              onMenuPreload={preloadMenu}
               appState={appState}
               onStockSelect={handleStockShortcut}
             />
@@ -243,47 +287,49 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
 
         {/* 主内容区域 */}
         <Content style={{ 
-          background: '#eef2f5',
+          background: 'var(--app-bg)',
           padding: 0,
           minHeight: 'calc(100vh - 58px)',
           overflow: 'auto'
-        }}>
-          <MainContent
-            selectedMenu={selectedMenu}
-            appState={appState}
-            onStockSelect={onStockSelect}
-            onBackToStocks={onBackToStocks}
-            onPostClick={onPostClick}
-            onCreatePost={onCreatePost}
-            onPurchase={onPurchase}
-            onRate={onRate}
-            onLike={onLike}
-            onShare={onShare}
-            onAddComment={onAddComment}
-            onViewChange={handleHeaderViewChange}
-            onSavePost={onSavePost}
-            isMobile={isMobile}
-            onProductClick={onProductClick}
-            onAddToCart={onAddToCart}
-            onUpdateCartQuantity={onUpdateCartQuantity}
-            onRemoveFromCart={onRemoveFromCart}
-            onCheckout={(items) => {
-              onCheckout(items);
-              setSelectedMenu('orders');
-            }}
-            onOrderPay={onOrderPay}
-            onOrderCancel={onOrderCancel}
-            onOrderRefund={onOrderRefund}
-            onBuyNow={(product, variantId, quantity) => {
-              onBuyNow(product, variantId, quantity);
-              setSelectedMenu('orders');
-            }}
-            onAddStock={onAddStock}
-            onRemoveStock={onRemoveStock}
-            onToggleStockSubscription={onToggleStockSubscription}
-            onRefreshMarketData={onRefreshMarketData}
-            isMarketDataRefreshing={isMarketDataRefreshing}
-          />
+        }} className={`workspace-content workspace-content-${appState.currentView}`}>
+          <Suspense fallback={<WorkspaceFallback />}>
+            <MainContent
+              selectedMenu={selectedMenu}
+              appState={appState}
+              onStockSelect={onStockSelect}
+              onBackToStocks={onBackToStocks}
+              onPostClick={onPostClick}
+              onCreatePost={onCreatePost}
+              onPurchase={onPurchase}
+              onRate={onRate}
+              onLike={onLike}
+              onShare={onShare}
+              onAddComment={onAddComment}
+              onViewChange={handleHeaderViewChange}
+              onSavePost={onSavePost}
+              isMobile={isMobile}
+              onProductClick={onProductClick}
+              onAddToCart={onAddToCart}
+              onUpdateCartQuantity={onUpdateCartQuantity}
+              onRemoveFromCart={onRemoveFromCart}
+              onCheckout={(items) => {
+                onCheckout(items);
+                setSelectedMenu('orders');
+              }}
+              onOrderPay={onOrderPay}
+              onOrderCancel={onOrderCancel}
+              onOrderRefund={onOrderRefund}
+              onBuyNow={(product, variantId, quantity) => {
+                onBuyNow(product, variantId, quantity);
+                setSelectedMenu('orders');
+              }}
+              onAddStock={onAddStock}
+              onRemoveStock={onRemoveStock}
+              onToggleStockSubscription={onToggleStockSubscription}
+              onRefreshMarketData={onRefreshMarketData}
+              isMarketDataRefreshing={isMarketDataRefreshing}
+            />
+          </Suspense>
         </Content>
       </Layout>
     </Layout>

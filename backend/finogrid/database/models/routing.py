@@ -1,6 +1,8 @@
 """Routing and compliance profile models."""
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import String, Boolean, Integer, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,7 +28,7 @@ class RoutingProfile(Base, UUIDMixin, TimestampMixin):
     # Primary and fallback partners
     wallet_partner: Mapped[str] = mapped_column(String(128), default="bridge")
     fiat_partner: Mapped[str] = mapped_column(String(128))
-    fallback_partner: Mapped[str | None] = mapped_column(String(128))
+    fallback_partner: Mapped[Optional[str]] = mapped_column(String(128))
 
     # Limits
     min_amount_usd: Mapped[float] = mapped_column(Numeric(18, 2), default=10.0)
@@ -60,7 +62,7 @@ class ComplianceProfile(Base, UUIDMixin, TimestampMixin):
 
     # Travel Rule
     travel_rule_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    travel_rule_threshold_usd: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    travel_rule_threshold_usd: Mapped[Optional[float]] = mapped_column(Numeric(18, 2))
 
     # Originator / beneficiary capture
     originator_data_required: Mapped[bool] = mapped_column(Boolean, default=True)

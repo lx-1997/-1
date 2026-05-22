@@ -1,7 +1,19 @@
 """Unit tests for MiniMax sentiment provider and LLM client."""
 import os
 import pytest
+from functools import wraps
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def async_patch_env(values, *, clear=False):
+    """Patch os.environ around async tests without hiding their coroutine nature."""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            with patch.dict(os.environ, values, clear=clear):
+                return await func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +51,7 @@ class TestMiniMaxSentimentProvider:
         provider.load()  # Should not raise
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_score_positive(self):
         from finogrid.fingpt_integration.sentiment.minimax_provider import MiniMaxSentimentProvider
         provider = MiniMaxSentimentProvider()
@@ -56,7 +68,7 @@ class TestMiniMaxSentimentProvider:
         assert result["raw"] == "positive"
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_score_negative(self):
         from finogrid.fingpt_integration.sentiment.minimax_provider import MiniMaxSentimentProvider
         provider = MiniMaxSentimentProvider()
@@ -72,7 +84,7 @@ class TestMiniMaxSentimentProvider:
         assert result["score"] == -1
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_score_neutral(self):
         from finogrid.fingpt_integration.sentiment.minimax_provider import MiniMaxSentimentProvider
         provider = MiniMaxSentimentProvider()
@@ -88,7 +100,7 @@ class TestMiniMaxSentimentProvider:
         assert result["score"] == 0
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_score_api_error_returns_neutral(self):
         from finogrid.fingpt_integration.sentiment.minimax_provider import MiniMaxSentimentProvider
         provider = MiniMaxSentimentProvider()
@@ -101,7 +113,7 @@ class TestMiniMaxSentimentProvider:
         assert "error" in result
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_score_temperature_is_low(self):
         """Verify MiniMax uses near-zero temperature (0.01) for deterministic output."""
         from finogrid.fingpt_integration.sentiment.minimax_provider import MiniMaxSentimentProvider
@@ -119,7 +131,7 @@ class TestMiniMaxSentimentProvider:
         assert call_kwargs["max_tokens"] == 5
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_score_corridor_news(self):
         from finogrid.fingpt_integration.sentiment.minimax_provider import MiniMaxSentimentProvider
         provider = MiniMaxSentimentProvider()
@@ -143,7 +155,7 @@ class TestMiniMaxSentimentProvider:
         assert results[0]["headline"] == "Brazil economy grows"
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_score_truncates_long_text(self):
         from finogrid.fingpt_integration.sentiment.minimax_provider import MiniMaxSentimentProvider
         provider = MiniMaxSentimentProvider()
@@ -217,7 +229,7 @@ class TestMiniMaxLLMClient:
             MiniMaxLLMClient()
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_chat_returns_text(self):
         from finogrid.fingpt_integration.minimax_llm_client import MiniMaxLLMClient
         client = MiniMaxLLMClient()
@@ -232,7 +244,7 @@ class TestMiniMaxLLMClient:
         assert result == "This is a test response."
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_chat_strips_whitespace(self):
         from finogrid.fingpt_integration.minimax_llm_client import MiniMaxLLMClient
         client = MiniMaxLLMClient()
@@ -247,7 +259,7 @@ class TestMiniMaxLLMClient:
         assert result == "response with spaces"
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_chat_api_error_raises(self):
         from finogrid.fingpt_integration.minimax_llm_client import MiniMaxLLMClient
         client = MiniMaxLLMClient()
@@ -258,7 +270,7 @@ class TestMiniMaxLLMClient:
             await client.chat("prompt")
 
     @pytest.mark.asyncio
-    @patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"})
+    @async_patch_env({"MINIMAX_API_KEY": "test-key"})
     async def test_chat_passes_correct_params(self):
         from finogrid.fingpt_integration.minimax_llm_client import MiniMaxLLMClient
         client = MiniMaxLLMClient(model="MiniMax-M2.7-highspeed", temperature=0.3, max_tokens=512)

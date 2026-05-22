@@ -7,6 +7,8 @@ Uses the same FinGPT prompt template with GPT-3.5-turbo.
 from __future__ import annotations
 
 import os
+from typing import Optional
+
 import structlog
 from openai import AsyncOpenAI
 
@@ -30,7 +32,10 @@ class OpenAISentimentFallback:
 
     def __init__(self, model: str = "gpt-3.5-turbo"):
         self.model = model
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = AsyncOpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=_clean_openai_base_url(os.getenv("OPENAI_BASE_URL")) or "https://api.openai.com/v1",
+        )
 
     def load(self):
         pass  # Nothing to load for OpenAI
@@ -99,3 +104,16 @@ def get_sentiment_analyzer():
     # Default: OpenAI
     log.info("sentiment_using_openai_fallback")
     return OpenAISentimentFallback()
+
+
+def _clean_openai_base_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        candidate = value.strip()
+        candidate.encode("utf-8")
+    except UnicodeError:
+        return None
+    if not candidate.startswith(("http://", "https://")):
+        return None
+    return candidate

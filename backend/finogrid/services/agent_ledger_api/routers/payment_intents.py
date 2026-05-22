@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from ..schemas import PaymentIntentCreateRequest, PaymentIntentCreateResponse, PaymentIntentSupersede
 from ..dependencies import get_db, get_current_agent_account
-from .....database.models.agent_ledger import (
+from ....database.models.agent_ledger import (
     AgentAccount, AgentWallet, PaymentIntent, IntentStatus, LoopType
 )
 

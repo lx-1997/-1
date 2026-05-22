@@ -99,12 +99,11 @@ pip install -r requirements-cloud.txt
 cp .env.example .env
 uvicorn deepfocus_api.main:app --host 0.0.0.0 --port 8300 --reload
 
+# 跑 TradingAgents 这类长任务时，使用无 reload 的常驻后端
+npm run backend:long
+
 # 启动React开发服务器
 npm start
-
-# 可选：启动研报工作台模块
-npm run research-workbench:install
-npm run research-workbench
 
 # 在另一个终端启动Electron
 npm run electron-dev
@@ -197,19 +196,47 @@ modules/
 - **证据检索**: 按股票代码、关键词和 tag 检索资料，供多 Agent 自动引用。
 - **持久化**: 数据源和证据保存到 `backend/.data_sources.sqlite3`。
 
-多 Agent 任务执行时会先由 `DataSourceAgent` 同步服务器/API/网页源，再由 `EvidenceAgent` 检索本地上传和抓取资料。报告中的结论会展示命中的证据来源；资料不足时会明确提示缺口。
+多 Agent 任务对用户默认展示 5 个核心角色：`OrchestratorAgent`、`EvidenceAgent`、`ResearchAgent`、`RiskAgent`、`ReportAgent`。其中 `EvidenceAgent` 内部负责同步服务器/API/网页源并检索本地上传和抓取资料。报告中的结论会展示命中的证据来源；资料不足时会明确提示缺口。
+
+### 专业财报研究内核（最小专业版）
+- **财报解析复用现有上传链路**: `POST /api/pro-research/reports/upload` 会沿用文件抽取能力，同时把原文保存到数据源中心和专业财报库。
+- **结构化指标库**: 自动抽取营业收入、归母净利润、扣非净利润、毛利率、ROE、经营现金流、资本开支等核心字段，保存到 `backend/.professional_research.sqlite3`。
+- **引用型 RAG**: `POST /api/pro-research/rag/query` 先检索结构化指标和原文 chunk，回答必须带 `[M1]` / `[C1]` 引用；证据不足会明确拒答。
+- **财报分析 Agent**: `POST /api/pro-research/reports/{report_id}/analyze` 输出核心指标、利润质量红旗、风险片段、追问清单和证据引用。
+- **评测集**: `POST /api/pro-research/evals/run` 可基于入库报告自动生成最小回归用例，检查答案命中、引用覆盖和拒答保护。
+
+这套内核先用轻量规则和 SQLite 保证可复现、可审计；配置真实模型后，摘要生成可以走云模型，但数字和引用仍由结构化库与证据库兜底。
 
 ### 研报工作台模块
-- 主应用侧边栏新增 **研报工作台** 入口，默认嵌入 `http://127.0.0.1:3927`。
-- 子模块位于 `modules/research-workbench`，保留独立 `tool-server.js`、`zsxq-downloader.js` 和 `tool-public/`。
-- 首次使用执行 `npm run research-workbench:install` 安装模块依赖；之后执行 `npm run research-workbench` 启动。
+- 主应用侧边栏新增 **研报工作台** 入口，默认通过后端 `http://127.0.0.1:8300/research-workbench/` 访问。
+- 子模块位于 `modules/research-workbench`，保留独立 `tool-server.js`、`zsxq-downloader.js` 和 `tool-public/`，由 FastAPI 后端自动拉起并代理。
+- 根目录 `npm install` 会通过 `postinstall` 安装工作台子模块依赖；如需手动补装，可执行 `npm run research-workbench:install`。
 - 如需改用其他地址，可在 React 环境变量中设置 `REACT_APP_RESEARCH_WORKBENCH_URL`。
+
+### 多市场智能选股与回测中心
+- 侧边栏新增 **多市场策略**，面向 A 股、港股、美股分模块输出市场风格、板块意见、个股候选、大涨前概率排序、回测验证计划和中国大陆可运行依赖清单。
+- 后端接口为 `POST /api/decision/multi-market`，默认使用本地规则编排，不把 GitHub、Yahoo Finance、OpenBB、Polygon、Alpaca、OpenAI 作为硬依赖。
+- A 股模块规划为 `AKShare/Tushare/RQData + Qlib + RQAlpha`；港股模块规划为 `Futu OpenD/LongPort + vectorbt/Backtrader`；美股模块规划为 `Futu/LongPort/Wind/Choice/本地数据 + vectorbt/Backtrader/Zipline-reloaded`。
+- 可选量化依赖清单位于 `backend/requirements-quant-cn.txt`。在中国大陆环境建议先配置国内 PyPI 镜像，再按需安装：
+```bash
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+pip install -r backend/requirements-quant-cn.txt
+```
+
+### 期权雷达
+- 侧边栏新增 **期权雷达**，面向美股/ETF 自选池输出 Put/Call Ratio、关键 OI 墙、Max Pain、ATM 跨式预期波动、IV 偏斜、期限结构和数据质量。
+- 后端接口为 `GET /api/options/signals?symbols=AAPL,NVDA&horizon_days=45&max_expirations=3`。
+- 默认数据源顺序为 `MarketData.app`、`Nasdaq Public Option Chain`、`Yahoo Finance public chain`。`MarketData.app` 建议配置 `MARKETDATA_APP_TOKEN` 或 `MARKETDATA_APP_API_KEY`；无 token 时只适合作为可用性兜底。
+- 期权模块明确标记免费源延迟和字段缺口；Nasdaq 兜底通常没有 IV/Greeks，不能替代实时订单流或券商合规行情。
 
 ### 24h 多 Agent 投研任务中心
 - **任务队列**: 投资研究、组合复盘、风险审查、观察名单监控任务统一进入队列。
 - **常驻 worker**: 后端启动后自动运行 worker，持续拉取 `pending` 任务。
-- **多 Agent 流水线**: OrchestratorAgent、DataSourceAgent、EvidenceAgent、ResearchAgent、SentimentAgent、ScenarioAgent、RiskAgent、ReportAgent 分阶段产出日志和报告。
+- **多 Agent 流水线**: 默认收敛为 OrchestratorAgent、EvidenceAgent、ResearchAgent、RiskAgent、ReportAgent 五段；情绪、情景、TradingAgents analyst/debate/trader 等底层角色作为内部执行细节，不作为同级 Agent 暴露。
+- **Financial Services Playbook**: 可选择参考 `anthropics/financial-services` 的工作流画像，把 market researcher、earnings reviewer、model builder、pitch agent、valuation reviewer、KYC screener、GL reconciler 等能力纳入 DeepFocus 队列与报告结构。
 - **状态持久化**: 任务、日志、结果保存到 `backend/.agent_tasks.sqlite3`，可重启后继续查看。
+- **长任务心跳**: TradingAgents 外部 runner 会定期刷新任务状态；运行完整多 Agent 分析时建议用 `npm run backend:long`，避免开发模式 reload 中断子进程。
+- **网页研究工具**: TradingAgents 的 news/social 分析师会注入 `deepfocus_web_search` 和 `deepfocus_read_url`，可在 Yahoo/Google RSS 限流或资料不足时主动搜索公开网页并读取可访问页面。
 - **投资者报告**: 输出投资者摘要、证据来源、情景推演、风险纪律、行动清单、反证清单。
 
 该模块用于提升投研流程和风险控制质量，不承诺收益，不自动下单。

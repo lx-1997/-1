@@ -10,7 +10,7 @@ from ..schemas import (
     AgentAccountCreateRequest, AgentAccountCreateResponse, AgentBalanceResponse
 )
 from ..dependencies import get_db, get_current_agent_account
-from .....database.models.agent_ledger import AgentAccount, AgentLedgerEntry
+from ....database.models.agent_ledger import AgentAccount, AgentLedgerEntry
 
 log = structlog.get_logger()
 router = APIRouter()
