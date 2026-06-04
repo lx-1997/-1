@@ -16,7 +16,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .eastmoney_announcements import EASTMONEY_HEADERS, EASTMONEY_SOURCE_NAME, query_eastmoney_announcements
+from .shared_utils import display_value, join_nonempty, parse_date, clean_title, to_float, dedupe, safe_float, short_text, safe_error
 from .schemas import (
+
     ShareholderChangeInterpretRequest,
     ShareholderChangeInterpretResponse,
     ShareholderChangeRecord,
@@ -31,6 +33,7 @@ CNINFO_SOURCE_NAME = "巨潮资讯网"
 HKEX_SOURCE_NAME = "HKEX Disclosure of Interests"
 SEC_SOURCE_NAME = "SEC EDGAR Form 4"
 REQUEST_TIMEOUT = httpx.Timeout(12.0, connect=5.0)
+MAX_CONCURRENT_QUERIES = 4
 MAX_PAGES_PER_KEYWORD = 8
 PDF_DETAIL_MAX_BYTES = 10 * 1024 * 1024
 PDF_DETAIL_MAX_PAGES = 6
@@ -135,14 +138,21 @@ async def scan_shareholder_changes(request: ShareholderChangeScanRequest) -> Sha
     raw_total = 0
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=CNINFO_HEADERS, follow_redirects=True) as client:
-        for keyword in keywords:
-            rows, total, provider_warnings = await _query_cninfo_keyword(
-                client=client,
-                keyword=keyword,
-                start_at=start_at,
-                end_at=end_at,
-                limit=max(request.limit * 2, 240),
-            )
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
+
+        async def query_keyword(keyword: str) -> tuple[list[dict[str, Any]], int, list[str]]:
+            async with semaphore:
+                return await _query_cninfo_keyword(
+                    client=client,
+                    keyword=keyword,
+                    start_at=start_at,
+                    end_at=end_at,
+                    limit=max(request.limit * 2, 240),
+                )
+
+        # 多方向关键词并发查询（gather 保序，setdefault 仍保留首个关键词命中，语义不变）
+        query_results = await asyncio.gather(*(query_keyword(keyword) for keyword in keywords))
+        for rows, total, provider_warnings in query_results:
             raw_total += total
             warnings.extend(provider_warnings)
             for row in rows:
@@ -203,7 +213,7 @@ async def scan_shareholder_changes(request: ShareholderChangeScanRequest) -> Sha
         detail_success_count=detail_success,
         summary=summary,
         records=limited_records,
-        warnings=_dedupe(warnings)[:8],
+        warnings=dedupe(warnings)[:8],
         coverage_note=coverage_note,
         skill_invocation=(
             f"shareholder.change.scan({{ market: '{request.market}', window: '{request.days}d', "
@@ -233,8 +243,8 @@ async def interpret_shareholder_change(
         return _normalize_shareholder_interpretation(data, record, llm_adapter)
     except Exception as exc:  # noqa: BLE001
         fallback = _fallback_shareholder_interpretation(record, llm_adapter)
-        fallback.risks = _dedupe([f"云模型暂不可用：{_safe_error(exc)}", *fallback.risks])[:4]
-        fallback.actions = _dedupe(["检查模型配置后重试 AI 解读", *fallback.actions])[:4]
+        fallback.risks = dedupe([f"云模型暂不可用：{safe_error(exc)}", *fallback.risks])[:4]
+        fallback.actions = dedupe(["检查模型配置后重试 AI 解读", *fallback.actions])[:4]
         fallback.confidence = min(fallback.confidence, 0.5)
         return fallback
 
@@ -276,14 +286,14 @@ def _normalize_shareholder_interpretation(
         name=record.name,
         title=record.title,
         tone=_safe_interpret_tone(data.get("tone") or data.get("signal"), fallback.tone),
-        verdict=_short_text(data.get("verdict") or fallback.verdict, 42),
-        summary=_short_text(data.get("summary") or data.get("interpretation") or fallback.summary, 120),
+        verdict=short_text(data.get("verdict") or fallback.verdict, 42),
+        summary=short_text(data.get("summary") or data.get("interpretation") or fallback.summary, 120),
         points=_safe_text_list(data.get("points") or data.get("positives") or data.get("insights"))[:4] or fallback.points,
         risks=_safe_text_list(data.get("risks") or data.get("concerns"))[:4] or fallback.risks,
         questions=_safe_text_list(data.get("questions") or data.get("watch_questions"))[:4] or fallback.questions,
         actions=_safe_text_list(data.get("actions") or data.get("next_steps"))[:4] or fallback.actions,
         evidence=_safe_text_list(data.get("evidence") or data.get("sources"))[:5] or fallback.evidence,
-        confidence=_safe_float(data.get("confidence"), default=fallback.confidence, low=0, high=1),
+        confidence=safe_float(data.get("confidence"), default=fallback.confidence, low=0, high=1),
     )
 
 
@@ -293,10 +303,10 @@ def _fallback_shareholder_interpretation(
 ) -> ShareholderChangeInterpretResponse:
     direction_label = {"increase": "增持", "decrease": "减持", "mixed": "增减持", "unknown": "持股变动"}.get(record.direction, "持股变动")
     status_label = {"plan": "计划", "progress": "进展", "completed": "完成/终止", "other": "披露"}.get(record.status, "披露")
-    holder = _join_nonempty(record.shareholder_names[:3], separator="、") or record.shareholder_hint or record.shareholder_type or "披露主体"
+    holder = join_nonempty(record.shareholder_names[:3], separator="、") or record.shareholder_hint or record.shareholder_type or "披露主体"
     tone = "positive" if record.direction == "increase" and record.risk_level == "low" else "risk" if record.direction == "decrease" else "watch"
     verdict = "偏正面但需核验" if tone == "positive" else "存在供给压力" if tone == "risk" else "需打开原文核验"
-    points = _dedupe(
+    points = dedupe(
         [
             f"{holder}{direction_label}{record.name or record.symbol}",
             f"披露阶段为{status_label}，不能只按标题判断强度",
@@ -304,7 +314,7 @@ def _fallback_shareholder_interpretation(
             f"涉及股数：{record.change_shares}" if record.change_shares else "",
         ]
     )[:4]
-    risks = _dedupe(
+    risks = dedupe(
         [
             "规则兜底结果，不是云模型生成" if getattr(llm_adapter, "provider", "mock") == "mock" else "",
             "金额或价格缺失会降低判断强度" if not record.change_amount and not record.price_range else "",
@@ -312,21 +322,21 @@ def _fallback_shareholder_interpretation(
             "计划公告不等于实际成交" if record.status == "plan" else "",
         ]
     )[:4]
-    questions = _dedupe(
+    questions = dedupe(
         [
             "是否已完成真实成交？" if record.status == "plan" else "是否足额完成或存在终止？",
             "成交价格是否偏离近期市场价格？",
             "资金来源和变动原因是否清楚？",
         ]
     )
-    actions = _dedupe(
+    actions = dedupe(
         [
             "打开原文核验数量、均价和金额",
             "检查同一主体是否有连续披露",
             "结合股价区间判断市场冲击",
         ]
     )
-    evidence = _dedupe([record.title, record.detail_summary, record.evidence_excerpt, record.url])[:5]
+    evidence = dedupe([record.title, record.detail_summary, record.evidence_excerpt, record.url])[:5]
     return ShareholderChangeInterpretResponse(
         provider=getattr(llm_adapter, "provider_name", "local-rules"),
         model=getattr(llm_adapter, "model", "shareholder-change-local-rules"),
@@ -372,8 +382,8 @@ def format_shareholder_change_skill_response(result: ShareholderChangeScanRespon
             holder_text = "、".join(record.shareholder_names[:8]) or record.shareholder_hint or record.shareholder_type or "未识别"
             if len(record.shareholder_names) > 8:
                 holder_text += "等"
-            quantity_text = f"{_display_value(record.change_shares)} / {_display_value(record.change_ratio)}"
-            holding_text = _join_nonempty(
+            quantity_text = f"{display_value(record.change_shares)} / {display_value(record.change_ratio)}"
+            holding_text = join_nonempty(
                 [
                     f"变动前：{record.holding_before}" if record.holding_before else "",
                     f"变动后：{record.holding_after}" if record.holding_after else "",
@@ -385,11 +395,11 @@ def format_shareholder_change_skill_response(result: ShareholderChangeScanRespon
                     f"{index}. {record.announcement_date} {record.symbol} {record.name} | {direction}/{status} | 风险：{record.risk_level}",
                     f"   股东/人员：{holder_text}",
                     (
-                        f"   数量/比例：{quantity_text}；方式：{_display_value(record.change_method)}；"
-                        f"期间：{_display_value(record.change_period)}"
+                        f"   数量/比例：{quantity_text}；方式：{display_value(record.change_method)}；"
+                        f"期间：{display_value(record.change_period)}"
                     ),
                     (
-                        f"   价格/金额：{_display_value(record.price_range)} / {_display_value(record.change_amount)}；"
+                        f"   价格/金额：{display_value(record.price_range)} / {display_value(record.change_amount)}；"
                         f"{holding_text or '持股变化：未识别'}"
                     ),
                     f"   公告：{record.title}",
@@ -458,7 +468,7 @@ async def _scan_hk_shareholder_changes(request: ShareholderChangeScanRequest) ->
         detail_success_count=len(limited_records),
         summary=_build_summary(records, request.direction, start_at, end_at, "HK"),
         records=limited_records,
-        warnings=_dedupe(warnings)[:8],
+        warnings=dedupe(warnings)[:8],
         coverage_note=(
             "来源为 HKEX Disclosure of Interests 每日摘要，覆盖主要股东以及董事/高管权益披露；"
             "当前从 HTML 摘要抽取股票、披露主体、事件日期、买卖股数、价格和变动前后持仓，原始 DI 表单链接保留用于核验。"
@@ -527,7 +537,7 @@ async def _scan_us_shareholder_changes(request: ShareholderChangeScanRequest) ->
         detail_success_count=sum(1 for record in limited_records if record.detail_quality in {"full", "partial"}),
         summary=summary,
         records=limited_records,
-        warnings=_dedupe(warnings)[:8],
+        warnings=dedupe(warnings)[:8],
         coverage_note=(
             "来源为 SEC EDGAR 当前 Form 4 申报 feed；已抓取 Form 4 XML 抽取发行人、内部人、交易代码、股数、价格和交易后持仓。"
             "P/A 通常视作增持或取得权益，S/F/D 通常视作减持或处分权益；复杂期权、税款扣缴和衍生品交易需打开原文核验。"
@@ -547,7 +557,7 @@ async def _scan_us_shareholder_changes(request: ShareholderChangeScanRequest) ->
             limit=effective_limit,
         )
         if stale_response is not None:
-            stale_response.warnings = _dedupe(
+            stale_response.warnings = dedupe(
                 [
                     "SEC EDGAR 当前触发 429 限流，已保留最近一次成功结果；请稍后再刷新。",
                     *warnings,
@@ -579,7 +589,7 @@ def _get_us_form4_cached_response(cache_key: str) -> Optional[ShareholderChangeS
     if (datetime.now(timezone.utc) - cached_at).total_seconds() > US_FORM4_CACHE_TTL_SECONDS:
         return None
     copied = _copy_scan_response(response)
-    copied.warnings = _dedupe(["使用最近 10 分钟内缓存，避免重复触发 SEC 限流。", *copied.warnings])[:8]
+    copied.warnings = dedupe(["使用最近 10 分钟内缓存，避免重复触发 SEC 限流。", *copied.warnings])[:8]
     return copied
 
 
@@ -634,7 +644,7 @@ async def _query_hkex_summary_day(
             return [], []
         response.raise_for_status()
     except Exception as exc:  # noqa: BLE001 - provider failures should not break the whole skill
-        return [], [f"HKEX DI {summary_date.isoformat()} {summary_type} 查询失败：{_safe_error(exc)}"]
+        return [], [f"HKEX DI {summary_date.isoformat()} {summary_type} 查询失败：{safe_error(exc)}"]
 
     records: list[ShareholderChangeRecord] = []
     for row_html in _hkex_summary_rows(response.text):
@@ -693,7 +703,7 @@ def _record_from_hkex_summary_row(
     direction_label = {"increase": "增持", "decrease": "减持", "mixed": "增减持", "unknown": "持股变动"}[direction]
     title = f"{shareholder_name or shareholder_type} {direction_label} {issuer_name} ({stock_code})"
     risk_level = "high" if direction == "decrease" else "low" if direction == "increase" else "medium"
-    detail_summary = _join_nonempty(
+    detail_summary = join_nonempty(
         [
             f"披露主体：{shareholder_name}" if shareholder_name else "",
             f"事件日：{relevant_event_date}" if relevant_event_date else "",
@@ -719,7 +729,7 @@ def _record_from_hkex_summary_row(
         source_name=HKEX_SOURCE_NAME,
         announcement_id=serial,
         risk_level=risk_level,  # type: ignore[arg-type]
-        tags=_dedupe(["港股", direction_label, shareholder_type, share_class, summary_type]),
+        tags=dedupe(["港股", direction_label, shareholder_type, share_class, summary_type]),
         shareholder_names=[shareholder_name] if shareholder_name else [],
         change_shares=shares_involved,
         change_ratio=ratio_change,
@@ -730,7 +740,7 @@ def _record_from_hkex_summary_row(
         holding_before=holding_before,
         holding_after=holding_after,
         detail_summary=detail_summary or title,
-        evidence_excerpt=_join_nonempty(
+        evidence_excerpt=join_nonempty(
             [
                 f"序号 {serial}" if serial else "",
                 shareholder_name,
@@ -822,7 +832,7 @@ def _format_hk_reason_method(*, reason_code: str, direction: str, share_position
             "mixed": "权益变动",
         }.get(direction, "权益变动")
 
-    return _join_nonempty([action, share_position_label, f"代码 {clean_code}"], separator=" · ")
+    return join_nonempty([action, share_position_label, f"代码 {clean_code}"], separator=" · ")
 
 
 def _normalize_hk_chain_key_part(value: Any) -> str:
@@ -830,7 +840,7 @@ def _normalize_hk_chain_key_part(value: Any) -> str:
 
 
 def _merge_hk_disclosure_chain_record(target: ShareholderChangeRecord, duplicate: ShareholderChangeRecord) -> None:
-    target_names = _dedupe(
+    target_names = dedupe(
         [
             *list((target.metadata or {}).get("collapsed_holder_names") or []),
             *list(target.shareholder_names or []),
@@ -842,24 +852,24 @@ def _merge_hk_disclosure_chain_record(target: ShareholderChangeRecord, duplicate
     target.shareholder_hint = _format_hk_holder_chain_label(target_names)
     target.shareholder_type = _join_holder_types(target.shareholder_type, duplicate.shareholder_type)
     target.risk_level = target.risk_level if _risk_rank(target.risk_level) >= _risk_rank(duplicate.risk_level) else duplicate.risk_level
-    target.tags = _dedupe([*target.tags, *duplicate.tags, "合并披露"])
+    target.tags = dedupe([*target.tags, *duplicate.tags, "合并披露"])
 
     source_count = int((target.metadata or {}).get("collapsed_disclosure_count") or 1) + 1
-    serials = _dedupe(
+    serials = dedupe(
         [
             *list((target.metadata or {}).get("collapsed_serials") or []),
             target.announcement_id,
             duplicate.announcement_id,
         ]
     )
-    urls = _dedupe(
+    urls = dedupe(
         [
             *list((target.metadata or {}).get("collapsed_urls") or []),
             target.url,
             duplicate.url,
         ]
     )
-    summary_types = _dedupe(
+    summary_types = dedupe(
         [
             *list((target.metadata or {}).get("collapsed_summary_types") or []),
             str((target.metadata or {}).get("summary_type") or ""),
@@ -878,7 +888,7 @@ def _merge_hk_disclosure_chain_record(target: ShareholderChangeRecord, duplicate
     direction_label = {"increase": "增持", "decrease": "减持", "mixed": "增减持", "unknown": "持股变动"}[target.direction]
     holder_label = _format_hk_holder_chain_label(target_names)
     target.title = f"{holder_label} {direction_label} {target.name} ({target.symbol})"
-    chain_summary = _join_nonempty(
+    chain_summary = join_nonempty(
         [
             f"合并 {source_count} 条 HKEX DI 链式披露",
             f"披露主体：{holder_label}",
@@ -891,7 +901,7 @@ def _merge_hk_disclosure_chain_record(target: ShareholderChangeRecord, duplicate
         separator="；",
     )
     target.detail_summary = chain_summary or target.detail_summary
-    target.evidence_excerpt = _join_nonempty(
+    target.evidence_excerpt = join_nonempty(
         [
             f"{source_count} 条合并披露",
             holder_label,
@@ -904,7 +914,7 @@ def _merge_hk_disclosure_chain_record(target: ShareholderChangeRecord, duplicate
 
 
 def _format_hk_holder_chain_label(names: list[str]) -> str:
-    clean_names = _dedupe([name for name in names if name and not _is_generic_holder_descriptor(name)])
+    clean_names = dedupe([name for name in names if name and not _is_generic_holder_descriptor(name)])
     if not clean_names:
         return "多名披露主体"
     if len(clean_names) == 1:
@@ -914,7 +924,7 @@ def _format_hk_holder_chain_label(names: list[str]) -> str:
 
 
 def _join_holder_types(left: str, right: str) -> str:
-    types = _dedupe([part for value in (left, right) for part in re.split(r"\s*/\s*|、", value or "")])
+    types = dedupe([part for value in (left, right) for part in re.split(r"\s*/\s*|、", value or "")])
     return " / ".join(types)
 
 
@@ -923,7 +933,7 @@ async def _enrich_hk_records_with_chinese_names(
     client: httpx.AsyncClient,
     records: list[ShareholderChangeRecord],
 ) -> None:
-    codes = _dedupe([record.symbol.zfill(5) for record in records if re.fullmatch(r"\d{1,5}", record.symbol or "")])
+    codes = dedupe([record.symbol.zfill(5) for record in records if re.fullmatch(r"\d{1,5}", record.symbol or "")])
     if not codes:
         return
     localized_names = await _fetch_sina_hk_chinese_names(client, codes)
@@ -1007,7 +1017,7 @@ async def _query_sec_form4_entries(
                 break
             root = ET.fromstring(response.content)
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"SEC EDGAR 当前 Form 4 feed 查询失败：{_safe_error(exc)}")
+            warnings.append(f"SEC EDGAR 当前 Form 4 feed 查询失败：{safe_error(exc)}")
             break
 
         namespace = {"atom": "http://www.w3.org/2005/Atom"}
@@ -1066,7 +1076,7 @@ async def _record_from_sec_form4_entry(
             return _record_from_sec_atom_entry(entry)
         root = ET.fromstring(response.content)
     except Exception as exc:  # noqa: BLE001
-        warnings.append(f"SEC Form 4 XML 解析失败：{_safe_error(exc)}")
+        warnings.append(f"SEC Form 4 XML 解析失败：{safe_error(exc)}")
         return _record_from_sec_atom_entry(entry)
 
     issuer_name = _xml_text(root, "issuer/issuerName") or "Unknown issuer"
@@ -1099,25 +1109,25 @@ async def _record_from_sec_form4_entry(
     primary_transactions = [
         transaction for transaction in transactions if _sec_code_direction(transaction["code"]) in {direction, "mixed"}
     ] or transactions
-    shares_total = sum(value for value in (_to_float(transaction["shares"]) for transaction in primary_transactions) if value is not None)
-    prices = [value for value in (_to_float(transaction["price"]) for transaction in primary_transactions) if value is not None]
+    shares_total = sum(value for value in (to_float(transaction["shares"]) for transaction in primary_transactions) if value is not None)
+    prices = [value for value in (to_float(transaction["price"]) for transaction in primary_transactions) if value is not None]
     amount_total = 0.0
     for transaction in primary_transactions:
-        shares = _to_float(transaction["shares"])
-        price = _to_float(transaction["price"])
+        shares = to_float(transaction["shares"])
+        price = to_float(transaction["price"])
         if shares is not None and price is not None:
             amount_total += shares * price
 
-    shareholder_type = " / ".join(_dedupe(relationship_labels)) or "Insider"
+    shareholder_type = " / ".join(dedupe(relationship_labels)) or "Insider"
     risk_level = "high" if direction == "decrease" and relationship_labels else "low" if direction == "increase" else "medium"
     owner_text = "、".join(owner_names[:4]) or _sec_owner_from_title(entry.get("title", ""))
     accession = _sec_accession_from_url(index_url)
     title = f"Form 4: {owner_text or shareholder_type} {direction_label} {issuer_name} ({symbol})"
     price_range = _format_price_range(prices, "$")
     holding_after = _last_nonempty([transaction["holding_after"] for transaction in primary_transactions])
-    detail_summary = _join_nonempty(
+    detail_summary = join_nonempty(
         [
-            f"交易代码：{'/'.join(_dedupe(codes))}" if codes else "",
+            f"交易代码：{'/'.join(dedupe(codes))}" if codes else "",
             f"股数：{_format_shares(shares_total)}" if shares_total else "",
             f"价格：{price_range}" if price_range else "",
             f"交易后持仓：{holding_after}" if holding_after else "",
@@ -1139,14 +1149,14 @@ async def _record_from_sec_form4_entry(
         source_name=SEC_SOURCE_NAME,
         announcement_id=accession,
         risk_level=risk_level,  # type: ignore[arg-type]
-        tags=_dedupe(["美股", "Form 4", direction_label, shareholder_type]),
+        tags=dedupe(["美股", "Form 4", direction_label, shareholder_type]),
         shareholder_names=owner_names,
         change_shares=_format_shares(shares_total) if shares_total else "",
         change_ratio="",
         change_amount=_format_money(amount_total, "$") if amount_total else "",
         price_range=price_range,
         change_period=period,
-        change_method=" / ".join(_dedupe(codes)),
+        change_method=" / ".join(dedupe(codes)),
         holding_after=holding_after,
         detail_summary=detail_summary or title,
         evidence_excerpt=f"{issuer_name} · {owner_text} · {detail_summary}".strip(" ·"),
@@ -1189,7 +1199,7 @@ async def _sec_get(
             response = await client.get(url, params=params)
         except Exception as exc:  # noqa: BLE001
             if attempt >= len(SEC_RETRY_BACKOFF_SECONDS):
-                warnings.append(f"{label} 请求失败：{_safe_error(exc)}")
+                warnings.append(f"{label} 请求失败：{safe_error(exc)}")
                 return None
             await asyncio.sleep(SEC_RETRY_BACKOFF_SECONDS[attempt])
             continue
@@ -1208,7 +1218,7 @@ async def _sec_get(
         try:
             response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"{label} 查询失败：{_safe_error(exc)}")
+            warnings.append(f"{label} 查询失败：{safe_error(exc)}")
             return None
         return response
 
@@ -1285,7 +1295,7 @@ async def _enrich_records_with_pdf_details(
             detail = await _extract_pdf_detail(client, record)
         except Exception as exc:  # noqa: BLE001 - keep the skill useful even if one PDF layout fails
             record.detail_source = "unavailable"
-            warnings.append(f"{record.symbol or record.name} PDF 明细解析失败：{_safe_error(exc)}")
+            warnings.append(f"{record.symbol or record.name} PDF 明细解析失败：{safe_error(exc)}")
             continue
         _apply_pdf_detail(record, detail)
         if record.detail_quality != "title_only":
@@ -1423,7 +1433,7 @@ def _extract_shareholder_names(text: str) -> list[str]:
         if match:
             names.extend(_split_holder_names(match.group(1)))
 
-    return _dedupe([name for name in names if _looks_like_holder_name(name)])[:12]
+    return dedupe([name for name in names if _looks_like_holder_name(name)])[:12]
 
 
 def _split_holder_names(value: str) -> list[str]:
@@ -1689,7 +1699,7 @@ def _build_detail_summary(
         f"价格：{price_range}" if price_range else "",
         f"金额：{change_amount}" if change_amount else "",
     ]
-    return _join_nonempty(parts, separator="；")
+    return join_nonempty(parts, separator="；")
 
 
 def _detail_quality(
@@ -1722,7 +1732,7 @@ def _methods_from_text(text: str) -> list[str]:
         ("询价转让", "询价转让"),
     ]
     methods = [label for token, label in method_aliases if token in text]
-    return _dedupe(methods)
+    return dedupe(methods)
 
 
 def _first_match(text: str, patterns: list[str], *, keep_groups: bool = False) -> Any:
@@ -1770,16 +1780,6 @@ def _trim_excerpt(value: str) -> str:
     if len(excerpt) > 220:
         excerpt = f"{excerpt[:220]}..."
     return excerpt
-
-
-def _display_value(value: str) -> str:
-    return value.strip() if value and value.strip() else "未识别"
-
-
-def _join_nonempty(values: list[str], *, separator: str) -> str:
-    return separator.join(value for value in values if value)
-
-
 def _coverage_note(detail_attempted: int, detail_success: int) -> str:
     if detail_attempted:
         return (
@@ -1825,7 +1825,7 @@ async def _query_cninfo_keyword(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001 - skill should return auditable warnings instead of crashing
-            warnings.append(f"{CNINFO_SOURCE_NAME} 查询“{keyword}”失败：{_safe_error(exc)}")
+            warnings.append(f"{CNINFO_SOURCE_NAME} 查询“{keyword}”失败：{safe_error(exc)}")
             break
 
         total = max(total, int(payload.get("totalAnnouncement") or payload.get("totalRecordNum") or 0))
@@ -1840,11 +1840,11 @@ async def _query_cninfo_keyword(
 
 
 def _record_from_cninfo_row(row: dict[str, Any]) -> Optional[ShareholderChangeRecord]:
-    title = _clean_title(str(row.get("announcementTitle") or row.get("shortTitle") or ""))
+    title = clean_title(str(row.get("announcementTitle") or row.get("shortTitle") or ""))
     if not title or not re.search(r"增持|减持|持股变动|股份变动", title):
         return None
     symbol = str(row.get("secCode") or "").strip()
-    name = _clean_title(str(row.get("secName") or row.get("tileSecName") or ""))
+    name = clean_title(str(row.get("secName") or row.get("tileSecName") or ""))
     announcement_id = str(row.get("announcementId") or "").strip()
     announcement_date = _announcement_date(row.get("announcementTime"))
     direction = _infer_direction(title)
@@ -1910,35 +1910,17 @@ async def _query_eastmoney_fallback(
 
 
 def _date_range(request: ShareholderChangeScanRequest) -> tuple[date, date]:
-    end_at = _parse_date(request.end_date) or datetime.now(CN_TZ).date()
-    start_at = _parse_date(request.start_date) or (end_at - timedelta(days=request.days - 1))
+    end_at = parse_date(request.end_date) or datetime.now(CN_TZ).date()
+    start_at = parse_date(request.start_date) or (end_at - timedelta(days=request.days - 1))
     if start_at > end_at:
         start_at, end_at = end_at, start_at
     return start_at, end_at
-
-
-def _parse_date(value: Optional[str]) -> Optional[date]:
-    if not value:
-        return None
-    try:
-        return datetime.strptime(value[:10], "%Y-%m-%d").date()
-    except ValueError:
-        return None
-
-
 def _keywords_for_direction(direction: str) -> list[str]:
     if direction == "increase":
         return ["增持"]
     if direction == "decrease":
         return ["减持"]
     return ["增持", "减持"]
-
-
-def _clean_title(value: str) -> str:
-    without_tags = re.sub(r"</?em>", "", value)
-    return unescape(without_tags).replace("\u3000", " ").strip()
-
-
 def _announcement_date(value: Any) -> str:
     try:
         timestamp = int(value) / 1000
@@ -2018,7 +2000,7 @@ def _tags_for_record(title: str, direction: str, status: str, shareholder_type: 
         tags.append(shareholder_type)
     if "可转债" in title:
         tags.append("可转债")
-    return _dedupe(tags)
+    return dedupe(tags)
 
 
 def _apply_title_fallback(record: ShareholderChangeRecord) -> None:
@@ -2047,7 +2029,7 @@ def _title_holder_names(title: str, issuer_name: str = "") -> list[str]:
         match = re.search(pattern, title)
         if match:
             candidates.extend(_split_holder_names(match.group(1)))
-    return _dedupe(
+    return dedupe(
         [
             value
             for value in candidates
@@ -2089,7 +2071,7 @@ def _title_detail_summary(record: ShareholderChangeRecord) -> str:
         f"方式：{record.change_method}" if record.change_method else "",
         "数量、比例、价格和期间需打开原文核验",
     ]
-    return _join_nonempty(parts, separator="；")
+    return join_nonempty(parts, separator="；")
 
 
 def _clean_html_cell(value: str) -> str:
@@ -2125,7 +2107,7 @@ def _format_hk_share_count(value: str) -> str:
     if not number_match:
         return re.sub(r"\([LSP]\)", "", text, flags=re.I).strip()
     number = number_match.group(0)
-    parsed = _to_float(number)
+    parsed = to_float(number)
     if parsed is None:
         return f"{number} 股"
     return f"{parsed:,.0f} 股"
@@ -2141,16 +2123,16 @@ def _format_hk_price_text(value: str) -> str:
 def _first_hk_number(value: str) -> Optional[float]:
     text = _compact_hk_disclosure_text(value)
     match = re.search(r"-?\d[\d,]*(?:\.\d+)?", text)
-    return _to_float(match.group(0)) if match else None
+    return to_float(match.group(0)) if match else None
 
 
 def _parse_hk_price(value: str) -> tuple[str, Optional[float]]:
     text = _compact_hk_disclosure_text(value)
     match = re.search(r"\b([A-Z]{3})\b\s*(-?\d+(?:\.\d+)?)", text, re.I)
     if match:
-        return match.group(1).upper(), _to_float(match.group(2))
+        return match.group(1).upper(), to_float(match.group(2))
     fallback = re.search(r"-?\d+(?:\.\d+)?", text)
-    return "HKD", _to_float(fallback.group(0)) if fallback else None
+    return "HKD", to_float(fallback.group(0)) if fallback else None
 
 
 def _format_hk_estimated_amount(shares_value: str, price_value: str) -> str:
@@ -2189,7 +2171,7 @@ def _infer_hk_direction(balance_cells: list[str], reason_code: str) -> tuple[str
                 direction = "decrease"
             else:
                 direction = "unknown"
-            ratio_change = _join_nonempty(
+            ratio_change = join_nonempty(
                 [
                     f"{ratio_before}%" if ratio_before else "",
                     f"{ratio_after}%" if ratio_after else "",
@@ -2220,7 +2202,7 @@ def _hk_position_pairs(cells: list[str]) -> list[dict[str, str]]:
 def _position_value(positions: list[dict[str, str]], marker: str) -> Optional[float]:
     for position in positions:
         if position.get("marker") == marker:
-            return _to_float(position.get("shares", ""))
+            return _first_hk_number(position.get("shares", ""))
     return None
 
 
@@ -2233,7 +2215,7 @@ def _position_ratio(positions: list[dict[str, str]], marker: str) -> str:
 
 def _format_position_summary(positions: list[dict[str, str]]) -> str:
     return " / ".join(
-        _join_nonempty(
+        join_nonempty(
             [
                 _format_hk_share_count(position.get("shares", "")),
                 f"{position.get('ratio', '')}%".strip("%") + "%" if position.get("ratio") else "",
@@ -2249,8 +2231,8 @@ def _format_position_summary(positions: list[dict[str, str]]) -> str:
 def _sec_filing_date(summary: str, updated: str) -> Optional[date]:
     filed_match = re.search(r"Filed:\s*</b>\s*(\d{4}-\d{2}-\d{2})", summary or "", re.I)
     if filed_match:
-        return _parse_date(filed_match.group(1))
-    return _parse_date(updated)
+        return parse_date(filed_match.group(1))
+    return parse_date(updated)
 
 
 def _xml_text(node: ET.Element, path: str) -> str:
@@ -2291,18 +2273,6 @@ def _sec_direction_from_codes(codes: list[str]) -> str:
     if "increase" in directions:
         return "increase"
     return "unknown"
-
-
-def _to_float(value: str) -> Optional[float]:
-    cleaned = re.sub(r"[^0-9.\-]", "", value or "")
-    if not cleaned or cleaned in {"-", "."}:
-        return None
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
-
-
 def _sec_owner_from_title(title: str) -> str:
     match = re.search(r"4\s+-\s+(.+?)\s+\(\d+\)", title or "")
     return match.group(1).strip() if match else ""
@@ -2362,28 +2332,17 @@ def _build_summary(
 
 
 def _default_record_sort_key(record: ShareholderChangeRecord) -> tuple[int, str]:
-    parsed = _parse_date(record.announcement_date) or date.min
+    parsed = parse_date(record.announcement_date) or date.min
     return (-parsed.toordinal(), record.symbol)
 
 
 def _risk_rank(level: str) -> int:
     return {"high": 3, "medium": 2, "low": 1}.get(level, 0)
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    for value in values:
-        clean = str(value or "").strip()
-        if clean and clean not in result:
-            result.append(clean)
-    return result
-
-
 def _safe_text_list(value: Any) -> list[str]:
     if value is None:
         return []
     raw_values = value if isinstance(value, list) else [value]
-    return _dedupe([_short_text(item, 90) for item in raw_values if str(item or "").strip()])
+    return dedupe([short_text(item, 90) for item in raw_values if str(item or "").strip()])
 
 
 def _safe_interpret_tone(value: Any, default: str = "neutral") -> str:
@@ -2391,25 +2350,3 @@ def _safe_interpret_tone(value: Any, default: str = "neutral") -> str:
     if clean in {"positive", "watch", "risk", "neutral"}:
         return clean
     return default if default in {"positive", "watch", "risk", "neutral"} else "neutral"
-
-
-def _safe_float(value: Any, *, default: float, low: float, high: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not (low <= number <= high):
-        return default
-    return number
-
-
-def _short_text(value: Any, limit: int) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 1)].rstrip() + "…"
-
-
-def _safe_error(exc: Exception) -> str:
-    text = str(exc).strip()
-    return text[:240] or exc.__class__.__name__

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import re
@@ -11,7 +12,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .eastmoney_announcements import EASTMONEY_HEADERS, EASTMONEY_SOURCE_NAME, query_eastmoney_announcements
+from .shared_utils import safe_int, safe_float, short_text, parse_date, clean_title, display_value, join_nonempty, dedupe, safe_error
 from .schemas import (
+
     CnEarningsDiagnosisAgentStep,
     CnEarningsDiagnosisRequest,
     CnEarningsDiagnosisResponse,
@@ -27,6 +30,7 @@ CNINFO_QUERY_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
 CNINFO_STATIC_BASE = "https://static.cninfo.com.cn"
 CNINFO_SOURCE_NAME = "巨潮资讯网"
 REQUEST_TIMEOUT = httpx.Timeout(12.0, connect=5.0)
+MAX_CONCURRENT_QUERIES = 4
 MAX_PAGES_PER_KEYWORD = 8
 PDF_DETAIL_MAX_BYTES = 14 * 1024 * 1024
 PDF_DETAIL_MAX_PAGES = 12
@@ -92,7 +96,7 @@ def detect_cn_earnings_request(message: str) -> Optional[CnEarningsScanRequest]:
     return CnEarningsScanRequest(
         market="A",
         days=max(1, min(days, 180)),
-        report_types=_dedupe(report_types),  # type: ignore[arg-type]
+        report_types=dedupe(report_types),  # type: ignore[arg-type]
         limit=max(1, min(limit, 300)),
     )
 
@@ -105,14 +109,21 @@ async def scan_cn_earnings(request: CnEarningsScanRequest) -> CnEarningsScanResp
     raw_total = 0
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=CNINFO_HEADERS, follow_redirects=True) as client:
-        for keyword in keywords:
-            rows, total, provider_warnings = await _query_cninfo_keyword(
-                client=client,
-                keyword=keyword,
-                start_at=start_at,
-                end_at=end_at,
-                limit=max(request.limit * 2, 240),
-            )
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
+
+        async def query_keyword(keyword: str) -> tuple[list[dict[str, Any]], int, list[str]]:
+            async with semaphore:
+                return await _query_cninfo_keyword(
+                    client=client,
+                    keyword=keyword,
+                    start_at=start_at,
+                    end_at=end_at,
+                    limit=max(request.limit * 2, 240),
+                )
+
+        # 多 report_type 关键词并发查询（保持 gather 返回顺序，去重偏好逻辑与顺序无关）
+        query_results = await asyncio.gather(*(query_keyword(keyword) for keyword in keywords))
+        for rows, total, provider_warnings in query_results:
             raw_total += total
             warnings.extend(provider_warnings)
             for row in rows:
@@ -177,7 +188,7 @@ async def scan_cn_earnings(request: CnEarningsScanRequest) -> CnEarningsScanResp
         detail_success_count=detail_success,
         summary=summary,
         records=limited_records,
-        warnings=_dedupe(warnings)[:8],
+        warnings=dedupe(warnings)[:8],
         coverage_note=coverage_note,
     )
 
@@ -204,8 +215,8 @@ async def diagnose_cn_earnings(
         return _normalize_cn_earnings_diagnosis(data, record, llm_adapter)
     except Exception as exc:  # noqa: BLE001 - keep the diagnosis button useful in dev/offline mode
         fallback = _fallback_cn_earnings_diagnosis(record, llm_adapter)
-        fallback.concerns = _dedupe([f"云模型暂不可用：{_safe_error(exc)}", *fallback.concerns])[:5]
-        fallback.actions = _dedupe(["检查模型配置后重试 AI 诊断", *fallback.actions])[:5]
+        fallback.concerns = dedupe([f"云模型暂不可用：{safe_error(exc)}", *fallback.concerns])[:5]
+        fallback.actions = dedupe(["检查模型配置后重试 AI 诊断", *fallback.actions])[:5]
         fallback.confidence = min(fallback.confidence, 0.52)
         return fallback
 
@@ -229,12 +240,12 @@ async def enrich_cn_earnings_record_detail(
             except Exception as exc:  # noqa: BLE001
                 record.detail_source = "unavailable"
                 record.detail_quality = "title_only"
-                warnings.append(f"{record.symbol or record.name} 财报 PDF 明细解析失败：{_safe_error(exc)}")
+                warnings.append(f"{record.symbol or record.name} 财报 PDF 明细解析失败：{safe_error(exc)}")
 
     return CnEarningsRecordDetailResponse(
         generated_at=datetime.now(timezone.utc),
         record=record,
-        warnings=_dedupe(warnings),
+        warnings=dedupe(warnings),
     )
 
 
@@ -257,12 +268,12 @@ def format_cn_earnings_skill_response(result: CnEarningsScanResponse) -> str:
                 [
                     f"{index}. {record.announcement_date} {record.symbol} {record.name} | {_report_type_label(record.report_type)} | 风险：{record.risk_level}",
                     (
-                        f"   营收/同比：{_display_value(record.revenue)} / {_display_value(record.revenue_yoy)}；"
-                        f"归母净利/同比：{_display_value(record.net_profit)} / {_display_value(record.net_profit_yoy)}"
+                        f"   营收/同比：{display_value(record.revenue)} / {display_value(record.revenue_yoy)}；"
+                        f"归母净利/同比：{display_value(record.net_profit)} / {display_value(record.net_profit_yoy)}"
                     ),
                     (
-                        f"   扣非净利：{_display_value(record.deducted_net_profit)}；"
-                        f"EPS：{_display_value(record.eps)}；ROE：{_display_value(record.roe)}；经营现金流：{_display_value(record.operating_cash_flow)}"
+                        f"   扣非净利：{display_value(record.deducted_net_profit)}；"
+                        f"EPS：{display_value(record.eps)}；ROE：{display_value(record.roe)}；经营现金流：{display_value(record.operating_cash_flow)}"
                     ),
                     f"   公告：{record.title}",
                     f"   原文：{record.url}",
@@ -318,7 +329,7 @@ async def _query_cninfo_keyword(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"{CNINFO_SOURCE_NAME} 查询“{keyword}”失败：{_safe_error(exc)}")
+            warnings.append(f"{CNINFO_SOURCE_NAME} 查询“{keyword}”失败：{safe_error(exc)}")
             break
 
         total = max(total, int(payload.get("totalAnnouncement") or payload.get("totalRecordNum") or 0))
@@ -333,11 +344,11 @@ async def _query_cninfo_keyword(
 
 
 def _record_from_cninfo_row(row: dict[str, Any]) -> Optional[CnEarningsRecord]:
-    title = _clean_title(str(row.get("announcementTitle") or row.get("shortTitle") or ""))
+    title = clean_title(str(row.get("announcementTitle") or row.get("shortTitle") or ""))
     if not _is_financial_report_title(title):
         return None
     symbol = str(row.get("secCode") or "").strip()
-    name = _clean_title(str(row.get("secName") or row.get("tileSecName") or ""))
+    name = clean_title(str(row.get("secName") or row.get("tileSecName") or ""))
     report_type = _infer_report_type(title)
     fiscal_year, fiscal_period = _infer_fiscal_period(title, report_type)
     announcement_id = str(row.get("announcementId") or "").strip()
@@ -438,7 +449,7 @@ async def _enrich_records_with_pdf_details(
             detail = await _extract_pdf_detail(client, record)
         except Exception as exc:  # noqa: BLE001
             record.detail_source = "unavailable"
-            warnings.append(f"{record.symbol or record.name} 财报 PDF 明细解析失败：{_safe_error(exc)}")
+            warnings.append(f"{record.symbol or record.name} 财报 PDF 明细解析失败：{safe_error(exc)}")
             continue
         _apply_pdf_detail(record, detail)
         if record.detail_quality != "title_only":
@@ -474,7 +485,7 @@ async def _find_parseable_report_variant(
     if not declared_size_kb or declared_size_kb * 1024 <= PDF_DETAIL_MAX_BYTES:
         return None
 
-    end_at = _parse_date(record.announcement_date) or datetime.now(CN_TZ).date()
+    end_at = parse_date(record.announcement_date) or datetime.now(CN_TZ).date()
     start_at = end_at - timedelta(days=75)
     rows, _, _ = await _query_cninfo_keyword(
         client=client,
@@ -549,7 +560,7 @@ def _extract_report_detail_from_text(text: str, record: CnEarningsRecord) -> dic
     eps = _single_metric(text, "基本每股收益")
     roe = _single_metric(text, "加权平均净资产收益率")
     gross_margin = _gross_margin(text)
-    risk_flags = _dedupe([*record.risk_flags, *_risk_flags_from_text(text)])
+    risk_flags = dedupe([*record.risk_flags, *_risk_flags_from_text(text)])
     key_takeaways = _build_key_takeaways(
         revenue=revenue,
         revenue_yoy=revenue_yoy,
@@ -596,7 +607,7 @@ def _apply_pdf_detail(record: CnEarningsRecord, detail: dict[str, Any]) -> None:
             continue
         if value:
             setattr(record, field, value)
-    record.tags = _dedupe([*record.tags, *record.risk_flags])
+    record.tags = dedupe([*record.tags, *record.risk_flags])
     _apply_title_fallback(record)
 
 
@@ -651,7 +662,7 @@ def _normalize_cn_earnings_diagnosis(
     record: CnEarningsRecord,
     llm_adapter: Any,
 ) -> CnEarningsDiagnosisResponse:
-    score = _safe_int(data.get("overall_score") or data.get("score"), default=50, low=0, high=100)
+    score = safe_int(data.get("overall_score") or data.get("score"), default=50, low=0, high=100)
     signal = _safe_diagnosis_signal(data.get("diagnosis_signal") or data.get("signal"))
     risk_level = _safe_cn_risk(data.get("risk_level"), default=record.risk_level)
     financial_quality = _safe_financial_quality(data.get("financial_quality") or data.get("quality"))
@@ -671,15 +682,15 @@ def _normalize_cn_earnings_diagnosis(
         risk_level=risk_level,
         financial_quality=financial_quality,
         overall_score=score,
-        summary=_short_text(data.get("summary") or data.get("diagnosis") or _fallback_summary(record), 120),
-        verdict=_short_text(data.get("verdict") or _fallback_verdict(record), 60),
+        summary=short_text(data.get("summary") or data.get("diagnosis") or _fallback_summary(record), 120),
+        verdict=short_text(data.get("verdict") or _fallback_verdict(record), 60),
         agent_steps=agent_steps[:4],
         positives=_safe_text_list(data.get("positives") or data.get("strengths") or data.get("opportunities"))[:4],
         concerns=_safe_text_list(data.get("concerns") or data.get("risks"))[:4],
         questions=_safe_text_list(data.get("questions") or data.get("watch_questions"))[:4],
         actions=_safe_text_list(data.get("actions") or data.get("next_steps"))[:4],
         evidence=_safe_text_list(data.get("evidence") or data.get("sources"))[:5],
-        confidence=_safe_float(data.get("confidence"), default=0.66, low=0, high=1),
+        confidence=safe_float(data.get("confidence"), default=0.66, low=0, high=1),
     )
 
 
@@ -723,25 +734,25 @@ def _default_agent_steps(record: CnEarningsRecord) -> list[CnEarningsDiagnosisAg
         CnEarningsDiagnosisAgentStep(
             agent="EarningsReviewer",
             role="指标复核",
-            finding=_short_text("; ".join(record.key_takeaways) or _fallback_metric_line(record), 80),
+            finding=short_text("; ".join(record.key_takeaways) or _fallback_metric_line(record), 80),
             status="done" if record.detail_quality != "title_only" else "watch",
         ),
         CnEarningsDiagnosisAgentStep(
             agent="QualityAgent",
             role="质量判断",
-            finding=_short_text(_quality_finding(record), 80),
+            finding=short_text(_quality_finding(record), 80),
             status="done" if record.operating_cash_flow or record.roe or record.gross_margin else "watch",
         ),
         CnEarningsDiagnosisAgentStep(
             agent="RiskForensicsAgent",
             role="风险扫描",
-            finding=_short_text("; ".join(record.risk_flags) or "未从标题和已抽取字段识别重大风险词", 80),
+            finding=short_text("; ".join(record.risk_flags) or "未从标题和已抽取字段识别重大风险词", 80),
             status="risk" if record.risk_level == "high" else "watch" if record.risk_flags else "done",
         ),
         CnEarningsDiagnosisAgentStep(
             agent="ActionAgent",
             role="后续动作",
-            finding=_short_text(_fallback_actions(record)[0], 80),
+            finding=short_text(_fallback_actions(record)[0], 80),
             status="watch",
         ),
     ]
@@ -797,7 +808,7 @@ def _fallback_financial_quality(record: CnEarningsRecord) -> str:
 def _fallback_summary(record: CnEarningsRecord) -> str:
     metric_line = _fallback_metric_line(record)
     risk_line = f"风险标签：{'、'.join(record.risk_flags[:3])}" if record.risk_flags else "暂未识别重大风险标签"
-    return _short_text(f"{record.name}{_report_type_label(record.report_type)}已抽取{record.detail_quality}明细，{metric_line}，{risk_line}。", 110)
+    return short_text(f"{record.name}{_report_type_label(record.report_type)}已抽取{record.detail_quality}明细，{metric_line}，{risk_line}。", 110)
 
 
 def _fallback_verdict(record: CnEarningsRecord) -> str:
@@ -837,7 +848,7 @@ def _fallback_positives(record: CnEarningsRecord) -> list[str]:
         positives.append(f"归母净利同比{record.net_profit_yoy}")
     if record.detail_quality == "full":
         positives.append("PDF 明细抽取完整")
-    return _dedupe(positives)[:4]
+    return dedupe(positives)[:4]
 
 
 def _fallback_concerns(record: CnEarningsRecord) -> list[str]:
@@ -850,7 +861,7 @@ def _fallback_concerns(record: CnEarningsRecord) -> list[str]:
         concerns.append("未抽取到 PDF 明细")
     elif record.detail_quality == "partial":
         concerns.append("部分指标仍缺失")
-    return _dedupe(concerns)[:4]
+    return dedupe(concerns)[:4]
 
 
 def _fallback_questions(record: CnEarningsRecord) -> list[str]:
@@ -863,7 +874,7 @@ def _fallback_questions(record: CnEarningsRecord) -> list[str]:
         questions.insert(0, f"风险标签是否被原文确认：{record.risk_flags[0]}")
     if record.detail_quality != "full":
         questions.insert(0, "缺失指标是否在 PDF 后续页披露")
-    return _dedupe(questions)[:4]
+    return dedupe(questions)[:4]
 
 
 def _fallback_actions(record: CnEarningsRecord) -> list[str]:
@@ -874,7 +885,7 @@ def _fallback_actions(record: CnEarningsRecord) -> list[str]:
     ]
     if record.risk_level == "high":
         actions.insert(0, "优先核验亏损/非标/ST 风险")
-    return _dedupe(actions)[:4]
+    return dedupe(actions)[:4]
 
 
 def _fallback_evidence(record: CnEarningsRecord) -> list[str]:
@@ -886,7 +897,7 @@ def _fallback_evidence(record: CnEarningsRecord) -> list[str]:
         record.evidence_excerpt,
         record.url,
     ]
-    return _dedupe([item for item in evidence if item])[:5]
+    return dedupe([item for item in evidence if item])[:5]
 
 
 def _metric_direction(value: str) -> int:
@@ -914,14 +925,14 @@ def _safe_agent_steps(value: Any) -> list[CnEarningsDiagnosisAgentStep]:
     steps: list[CnEarningsDiagnosisAgentStep] = []
     for item in value:
         if isinstance(item, dict):
-            agent = _short_text(item.get("agent") or item.get("name") or "Agent", 32)
-            role = _short_text(item.get("role") or item.get("title") or "诊断", 40)
-            finding = _short_text(item.get("finding") or item.get("detail") or item.get("summary") or "", 90)
+            agent = short_text(item.get("agent") or item.get("name") or "Agent", 32)
+            role = short_text(item.get("role") or item.get("title") or "诊断", 40)
+            finding = short_text(item.get("finding") or item.get("detail") or item.get("summary") or "", 90)
             status = str(item.get("status") or "done")
         else:
             agent = "Agent"
             role = "诊断"
-            finding = _short_text(item, 90)
+            finding = short_text(item, 90)
             status = "done"
         if not finding:
             continue
@@ -938,7 +949,7 @@ def _safe_text_list(value: Any) -> list[str]:
         raw_values = value
     else:
         raw_values = []
-    return _dedupe([_short_text(item, 80) for item in raw_values if str(item or "").strip()])
+    return dedupe([short_text(item, 80) for item in raw_values if str(item or "").strip()])
 
 
 def _safe_diagnosis_signal(value: Any) -> str:
@@ -967,31 +978,6 @@ def _safe_financial_quality(value: Any) -> str:
     if text in {"strong", "stable", "mixed", "weak", "unknown"}:
         return text
     return "unknown"
-
-
-def _safe_int(value: Any, *, default: int, low: int, high: int) -> int:
-    try:
-        number = int(float(value))
-    except (TypeError, ValueError):
-        number = default
-    return max(low, min(high, number))
-
-
-def _safe_float(value: Any, *, default: float, low: float, high: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(low, min(high, number))
-
-
-def _short_text(value: Any, limit: int) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if len(text) > limit:
-        return f"{text[:limit]}..."
-    return text
-
-
 def _is_financial_report_title(title: str) -> bool:
     if not re.search(r"年度报告|半年度报告|第一季度报告|第三季度报告|一季度报告|三季度报告|业绩预告|业绩快报|业绩预增|业绩预减", title):
         return False
@@ -1048,7 +1034,7 @@ def _keywords_for_report_types(report_types: list[str]) -> list[str]:
     }
     if report_types:
         keywords = [keyword for report_type in report_types for keyword in mapping.get(report_type, [])]
-        return _dedupe(keywords) or ["年度报告", "半年度报告", "第一季度报告", "第三季度报告", "业绩预告", "业绩快报"]
+        return dedupe(keywords) or ["年度报告", "半年度报告", "第一季度报告", "第三季度报告", "业绩预告", "业绩快报"]
     return ["年度报告", "半年度报告", "第一季度报告", "第三季度报告", "业绩预告", "业绩快报"]
 
 
@@ -1117,7 +1103,7 @@ def _risk_flags_from_text(text: str) -> list[str]:
     for pattern, label in checks:
         if re.search(pattern, text, re.I):
             flags.append(label)
-    return _dedupe(flags)
+    return dedupe(flags)
 
 
 def _risk_level_from_flags(flags: list[str], title: str) -> str:
@@ -1165,22 +1151,11 @@ def _compact_pdf_text(text: str) -> str:
 
 
 def _date_range(request: CnEarningsScanRequest) -> tuple[date, date]:
-    end_at = _parse_date(request.end_date) or datetime.now(CN_TZ).date()
-    start_at = _parse_date(request.start_date) or (end_at - timedelta(days=request.days - 1))
+    end_at = parse_date(request.end_date) or datetime.now(CN_TZ).date()
+    start_at = parse_date(request.start_date) or (end_at - timedelta(days=request.days - 1))
     if start_at > end_at:
         start_at, end_at = end_at, start_at
     return start_at, end_at
-
-
-def _parse_date(value: Optional[str]) -> Optional[date]:
-    if not value:
-        return None
-    try:
-        return datetime.strptime(value[:10], "%Y-%m-%d").date()
-    except ValueError:
-        return None
-
-
 def _announcement_date(value: Any) -> str:
     try:
         timestamp = int(value) / 1000
@@ -1229,13 +1204,13 @@ def _tags_for_record(title: str, report_type: str, risk_level: str) -> list[str]
         tags.append("预告")
     if "业绩快报" in title:
         tags.append("快报")
-    return _dedupe(tags)
+    return dedupe(tags)
 
 
 def _apply_title_fallback(record: CnEarningsRecord) -> None:
     if not record.key_takeaways:
-        period = _join_nonempty([record.fiscal_year, record.fiscal_period], separator="")
-        record.key_takeaways = _dedupe(
+        period = join_nonempty([record.fiscal_year, record.fiscal_period], separator="")
+        record.key_takeaways = dedupe(
             [
                 f"{period or _report_type_label(record.report_type)}公告已命中",
                 "核心财务指标需打开原文核验" if record.detail_quality == "title_only" else "",
@@ -1245,7 +1220,7 @@ def _apply_title_fallback(record: CnEarningsRecord) -> None:
         record.evidence_excerpt = record.title
     if not record.risk_flags:
         record.risk_flags = _risk_flags_from_text(record.title)
-    record.tags = _dedupe([*record.tags, *record.risk_flags])
+    record.tags = dedupe([*record.tags, *record.risk_flags])
 
 
 def _build_summary(records: list[CnEarningsRecord], start_at: date, end_at: date) -> str:
@@ -1285,13 +1260,6 @@ def _report_type_label(report_type: str) -> str:
 
 def _risk_rank(level: str) -> int:
     return {"high": 3, "medium": 2, "low": 1}.get(level, 0)
-
-
-def _clean_title(value: str) -> str:
-    without_tags = re.sub(r"</?em>", "", value)
-    return unescape(without_tags).replace("\u3000", " ").strip()
-
-
 def _clean_number(value: str) -> str:
     return value.replace("，", ",").strip()
 
@@ -1312,29 +1280,3 @@ def _trim_excerpt(value: str) -> str:
     if len(excerpt) > 240:
         excerpt = f"{excerpt[:240]}..."
     return excerpt
-
-
-def _display_value(value: str) -> str:
-    return value.strip() if value and value.strip() else "未识别"
-
-
-def _join_nonempty(values: list[str], *, separator: str) -> str:
-    return separator.join(value for value in values if value)
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    for value in values:
-        clean = str(value or "").strip()
-        if clean and clean not in result:
-            result.append(clean)
-    return result
-
-
-def _safe_error(exc: Exception) -> str:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, httpx.TimeoutException):
-        return "timeout"
-    text = str(exc).strip()
-    return text[:240] or exc.__class__.__name__
