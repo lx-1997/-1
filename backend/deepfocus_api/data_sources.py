@@ -554,7 +554,7 @@ async def _fetch_keyword_provider(
 def _xueqiu_access_blocked(warnings: list[str]) -> bool:
     # 同时覆盖两类告警：①正常 HTTP 4xx 响应（"雪球返回 HTTP 403…"）；
     # ②连接/代理层异常（"雪球请求失败：403 Forbidden" / 超时 / Connection，无 "HTTP " 前缀）。
-    pattern = r"WAF|验证码|反爬|Forbidden|雪球请求失败|HTTP\s*4(?:0[13]|18|29)|\b4(?:0[13]|18|29)\b"
+    pattern = r"WAF|验证码|反爬|Forbidden|雪球请求失败|HTTP\s*4(?:0[13]|18|29)"
     return any(re.search(pattern, warning, re.IGNORECASE) for warning in warnings)
 
 

@@ -138,6 +138,7 @@ async def fetch_official_news(
             warnings=warnings,
             items=[],
         )
+        _cache[source_key] = (now, empty_response)  # 负缓存：失败侧也写入，避免每次轮询反复打上游（TTL 同 CACHE_TTL_SECONDS）
         return _slice_response(empty_response, safe_limit, cache_age_seconds=0)
 
     page_title = pages[0][2]

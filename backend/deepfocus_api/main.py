@@ -67,7 +67,7 @@ from .cn_earnings_skill import (
 from .customs_hs_detail import fetch_customs_hs_detail_snapshot, search_customs_hs_detail_products
 from .customs_trade import build_customs_trade_analysis_text, fetch_customs_trade_snapshot
 from .earnings_calendar import fetch_earnings_calendar
-from .llm import CloudResearchLLM
+from .llm import CloudResearchLLM, extract_citable_sources
 from .market_data import fetch_market_quotes, search_market_symbols
 from .market_layers import build_market_data_layer_status
 from .major_event_skill import (
@@ -86,6 +86,7 @@ from .mcp_hub import (
 )
 from .model_config import public_model_config, save_model_config
 from .multi_market_decision import build_multi_market_decision
+from .tear_sheet import build_portfolio_review, build_tear_sheet
 from .options_signal import fetch_options_signals
 from .official_news import fetch_official_news
 from .premarket_opportunity import build_premarket_opportunity_radar
@@ -262,7 +263,9 @@ from .schemas import (
     StockCheckRequest,
     StockCheckResponse,
     StockCheckStep,
+    PortfolioReviewResponse,
     SystemReadinessCheck,
+    TearSheetResponse,
     SystemReadinessResponse,
     GreeksRequest,
     GreeksResponse,
@@ -617,6 +620,58 @@ async def premarket_opportunities() -> PremarketOpportunityResponse:
     return attach_data_quality(await build_premarket_opportunity_radar())
 
 
+@app.get("/api/stock/tear-sheet", response_model=TearSheetResponse)
+async def stock_tear_sheet(
+    symbol: str,
+    name: str = "",
+    market_cap: Optional[float] = None,
+) -> TearSheetResponse:
+    """个股速判卡：聚合行情/财报/期权多源证据，由确定性引擎逐维度判定。
+
+    每块数据缺失时诚实标 insufficient，整体可信度取各维度最差档（引擎已算，不经 attach 覆盖）。
+    """
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol 不能为空")
+
+    quote = None
+    earnings_events: list = []
+    options_signal = None
+    try:
+        quotes_resp = await fetch_market_quotes([sym])
+        quote = quotes_resp.quotes[0] if quotes_resp.quotes else None
+    except Exception:
+        quote = None
+    try:
+        earnings_resp = await fetch_earnings_calendar([sym], horizon="3month")
+        earnings_events = list(earnings_resp.events)
+    except Exception:
+        earnings_events = []
+    try:
+        options_resp = await fetch_options_signals([sym])
+        options_signal = options_resp.signals[0] if options_resp.signals else None
+    except Exception:
+        options_signal = None
+
+    return build_tear_sheet(
+        symbol=sym,
+        name=name or sym,
+        market_cap=market_cap,
+        currency=(quote.currency if quote else "USD"),
+        quote=quote,
+        earnings_events=earnings_events,
+        options_signal=options_signal,
+    )
+
+
+@app.get("/api/portfolio/review", response_model=PortfolioReviewResponse)
+async def portfolio_review() -> PortfolioReviewResponse:
+    """组合风险速判：基于本地持仓与风控摘要的买方视角一页纸（集中度/行业敞口/回撤/止损纪律）。"""
+    from .risk_management import get_risk_summary
+
+    return build_portfolio_review(get_risk_summary())
+
+
 @app.get("/api/official-news/cctv", response_model=OfficialNewsResponse)
 async def official_cctv_news(
     source: str = "xinwenlianbo",
@@ -932,6 +987,7 @@ async def api_upload_professional_report(
     period: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
 ) -> ProfessionalReportRecord:
+    _reject_non_ingestible_file(file.filename or "")
     extracted = await extract_upload_file(file)
     parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
     item = store_upload_item(
@@ -2079,9 +2135,91 @@ async def agent_brief(request: AgentBriefRequest) -> FinGptTaskResponse:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+def _chat_query_tokens(text: str) -> list[str]:
+    """把提问切成检索相关性词元：ASCII 词 + 中文 2-gram 滑窗（解决中文整段不匹配，
+    比共享的 `_query_tokens`（整段切）更细，仅用于 chat 检索结果的相关性重排）。"""
+    out: list[str] = []
+    for run in re.findall(r"[a-z0-9]{2,}|[一-鿿]+", (text or "").lower()):
+        if run.isascii() or len(run) <= 2:
+            out.append(run)
+        else:
+            out.extend(run[i:i + 2] for i in range(len(run) - 1))
+    seen: set[str] = set()
+    result: list[str] = []
+    for tok in out:
+        if tok not in seen:
+            seen.add(tok)
+            result.append(tok)
+    return result
+
+
+def _augment_context_with_retrieval(request: GeneralChatRequest) -> None:
+    """检索增强（RAG）：挂载证据库且要求检索时，按本次提问 + 聚焦标的从证据库
+    主动拉取相关条目，覆盖前端兜底的 recent_items，让 [n] 内联引用与问题真正相关。
+
+    - 有聚焦标的：symbol + query 词元做相关性检索；为空则回退 symbol-only（最近+高可信）。
+    - 无聚焦标的：用提问词元尽力检索。
+    - 检索为空时不覆盖（保留前端兜底 recent_items），保证至少有来源可引用。
+    list_data_items 已按 credibility_score 优先排序，引用来源天然偏高可信。
+    """
+    ctx = request.context
+    if not isinstance(ctx, dict):
+        return
+    evidence = ctx.get("evidence_sources")
+    if not isinstance(evidence, dict) or not evidence.get("retrieve"):
+        return
+    symbol = str(ctx.get("focused_symbol") or "").strip() or None
+    message = (request.message or "").strip()
+    query = message[:80] or None
+    try:
+        # 取较大候选池（12）供相关性重排，再裁到 top5。
+        items: list[Any] = []
+        if symbol:
+            items = list_data_items(symbol=symbol, query=query, limit=12, sort="time_desc")
+            if not items:
+                items = list_data_items(symbol=symbol, limit=12, sort="time_desc")
+        elif query:
+            items = list_data_items(query=query, limit=12, sort="time_desc")
+    except Exception:
+        return
+    if not items:
+        return
+    # 去重：同题条目（同一文章被多次入库）只保留可信度最高的一条，避免 [2][3][4] 重复引用。
+    deduped: list[Any] = []
+    seen_titles: set[str] = set()
+    for item in items:
+        key = (item.title or "").strip()
+        if key and key in seen_titles:
+            continue
+        seen_titles.add(key)
+        deduped.append(item)
+    # 相关性重排：按提问 2-gram 词元命中标题+正文的次数排序（credibility 作次序），
+    # 让最贴合本次提问的证据排前被引用；提问无重合时退化为原 credibility 序（list 已排好）。
+    q_tokens = _chat_query_tokens(message)
+    if q_tokens and len(deduped) > 1:
+        def _relevance(it: Any) -> int:
+            hay = f"{it.title or ''} {it.text_preview or ''}".lower()
+            return sum(1 for tok in q_tokens if tok in hay)
+        deduped.sort(key=lambda it: (_relevance(it), it.credibility_score), reverse=True)
+    evidence["recent_items"] = [
+        {
+            "title": item.title,
+            "symbol": item.symbol,
+            "source": item.source_name,
+            "url": item.url or "",
+            "credibility": item.credibility_score,
+            # 用完整正文（截断）而非短 preview，让模型有足够内容做综合+准确引用，而不只是贴标题。
+            "preview": (item.text or item.text_preview or "")[:360].strip(),
+        }
+        for item in deduped[:5]
+    ]
+    evidence["retrieved"] = True
+
+
 @app.post("/api/agents/chat", response_model=GeneralChatResponse)
 async def general_chat(request: GeneralChatRequest) -> GeneralChatResponse:
     try:
+        _augment_context_with_retrieval(request)
         return attach_data_quality(await llm.general_chat(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2092,6 +2230,12 @@ async def general_chat_stream(request: GeneralChatRequest) -> StreamingResponse:
     """SSE stream of assistant text deltas for the home chat (token-by-token)."""
 
     async def event_generator() -> AsyncIterator[str]:
+        # 检索增强：按本次提问主动从证据库拉相关条目（RAG），再抽编号来源。
+        _augment_context_with_retrieval(request)
+        # 先回传本次可引用的编号来源（前端据此把 [n] 渲染成可点引用 + 来源列表）。
+        sources = extract_citable_sources(request.context)
+        if sources:
+            yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
         try:
             async for delta in llm.general_chat_stream(request):
                 yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
