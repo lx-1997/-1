@@ -15,6 +15,7 @@ from .shared_utils import (
     dedupe,
     fmt_pct,
     fmt_usd,
+    profit_factor,
     safe_float,
     safe_int,
     utc_now_iso,
@@ -796,11 +797,7 @@ def get_pnl_summary() -> dict[str, Any]:
         "win_rate": round(len(winning) / len(records) * 100, 1) if records else 0,
         "avg_win": round(total_wins / len(winning), 2) if winning else 0,
         "avg_loss": round(total_losses / len(losing), 2) if losing else 0,
-        "profit_factor": (
-            round(min(total_wins / total_losses, 999.99), 2)
-            if total_losses > 0
-            else (999.99 if total_wins > 0 else 0.0)
-        ),
+        "profit_factor": profit_factor(total_wins, total_losses),
         "total_return_pct": round(sum(r.get("return_pct", 0) for r in records), 2),
         "best_trade": max(records, key=lambda r: r.get("realized_pnl", 0)) if records else None,
         "worst_trade": min(records, key=lambda r: r.get("realized_pnl", 0)) if records else None,

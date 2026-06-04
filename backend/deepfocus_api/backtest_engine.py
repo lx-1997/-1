@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from .shared_utils import (
     dedupe,
+    profit_factor,
     safe_float,
     safe_int,
     utc_now_iso,
@@ -305,7 +306,6 @@ def calculate_backtest_metrics(
 
     total_profit = sum(positive_returns) * initial_capital if positive_returns else 0
     total_loss = abs(sum(negative_returns) * initial_capital) if negative_returns else 0
-    profit_factor = (total_profit / total_loss) if total_loss > 0 else 0
 
     benchmark_return = 0.0
     alpha = 0.0
@@ -341,7 +341,6 @@ def calculate_backtest_metrics(
     beta = _clamp_metric(beta, -10.0, 10.0)
     alpha = _clamp_metric(alpha, -1.0e4, 1.0e4)
     information_ratio = _clamp_metric(information_ratio, -100.0, 100.0)
-    profit_factor = min(profit_factor, 999.99)
 
     return {
         "total_return": round(total_return, 2),
@@ -354,7 +353,7 @@ def calculate_backtest_metrics(
         "max_drawdown_pct": round(max_dd_pct, 2),
         "calmar_ratio": round(calmar, 4),
         "win_rate": round(win_rate, 1),
-        "profit_factor": round(profit_factor, 2),
+        "profit_factor": profit_factor(total_profit, total_loss),
         "total_trades": len(returns),
         "avg_trade_return": round(mean_return * 100, 4),
         "benchmark_return": round(benchmark_return, 2),
