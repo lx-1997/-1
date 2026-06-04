@@ -5,7 +5,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -30,6 +30,93 @@ from .schemas import (
     StockAnalysisRequest,
     StockAnalysisResponse,
 )
+
+
+ORCHESTRATOR_ROLE = "Orchestrator"
+CORE_ROLE_NAMES = ["Orchestrator", "Evidence", "Analyst", "Risk"]
+OUTPUT_ROLE_NAME = "Report Builder"
+VISIBLE_ROLE_NAMES = [*CORE_ROLE_NAMES, OUTPUT_ROLE_NAME]
+ROLE_TEXT_REPLACEMENTS = (
+    ("OrchestratorAgent", "Orchestrator"),
+    ("EvidenceAgent", "Evidence"),
+    ("ResearchAgent", "Analyst"),
+    ("RiskAgent", "Risk"),
+    ("ReportAgent", "Report Builder"),
+    ("Research Agent", "Analyst"),
+    ("Report Agent", "Report Builder"),
+    ("5 个核心 Agent", "4 个核心角色 + 报告输出层"),
+    ("五个核心 Agent", "4 个核心角色 + 报告输出层"),
+    ("多 Agent Run", "投研任务"),
+    ("多 Agent 工作台", "投研工作台"),
+    ("多 Agent", "核心链路"),
+    ("投研任务 收束", "投研任务收束"),
+    ("核心链路 证据范围", "核心链路；证据范围"),
+    ("核心链路证据范围", "核心链路；证据范围"),
+)
+
+
+def _display_role_text(value: Any) -> str:
+    text = str(value or "")
+    for old, new in ROLE_TEXT_REPLACEMENTS:
+        text = text.replace(old, new)
+    return re.sub(r"核心链路\s+证据范围", "核心链路；证据范围", re.sub(r"投研任务\s+收束", "投研任务收束", text))
+
+
+def _strip_thinking_blocks(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(r"<think\b[^>]*>.*?</think>\s*", "", text, flags=re.I | re.S)
+    return text.strip()
+
+
+class _ThinkingStripper:
+    """Incrementally removes <think>...</think> spans from a streamed token sequence.
+
+    Holds a short tail between chunks so an open/close tag split across chunk
+    boundaries is still detected before any content leaks.
+    """
+
+    _OPEN = re.compile(r"<think\b[^>]*>", re.I)
+    _CLOSE = re.compile(r"</think\s*>", re.I)
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+
+    def feed(self, text: str) -> str:
+        self._buf += text
+        out = ""
+        while self._buf:
+            if not self._in_think:
+                match = self._OPEN.search(self._buf)
+                if not match:
+                    # Emit everything except a short tail (in case "<think" is split).
+                    keep = min(len(self._buf), 8)
+                    out += self._buf[:len(self._buf) - keep]
+                    self._buf = self._buf[len(self._buf) - keep:]
+                    break
+                out += self._buf[:match.start()]
+                self._buf = self._buf[match.end():]
+                self._in_think = True
+            else:
+                match = self._CLOSE.search(self._buf)
+                if not match:
+                    keep = min(len(self._buf), 9)
+                    self._buf = self._buf[len(self._buf) - keep:]
+                    break
+                self._buf = self._buf[match.end():]
+                self._in_think = False
+        return out
+
+    def flush(self) -> str:
+        if self._in_think:
+            return ""
+        out = self._buf
+        self._buf = ""
+        return out
+
+
+def _clean_display_text(value: Any) -> str:
+    return _display_role_text(_strip_thinking_blocks(value)).strip()
 
 
 class CloudResearchLLM:
@@ -70,7 +157,7 @@ class CloudResearchLLM:
                 raise RuntimeError("当前 MiniMax 模型缺少 API Key，请在设置 → 模型配置中保存 API Key。")
             return AsyncOpenAI(
                 api_key=api_key,
-                base_url=config.get("base_url") or "https://api.minimax.io/v1",
+                base_url=config.get("base_url") or "https://api.minimaxi.com/v1",
             )
 
         if provider in {"openai", "openai-compatible", "cloud"}:
@@ -175,6 +262,11 @@ class CloudResearchLLM:
             payload["extra_body"] = {"thinking": {"type": "disabled"}}
         else:
             payload["temperature"] = max(0.01, min(config["temperature"], 1.0))
+        if self.provider == "minimax" and self.model.lower().startswith("minimax-m3"):
+            # MiniMax M3 may otherwise spend the whole completion on <think>
+            # content before emitting JSON. Its OpenAI-compatible endpoint
+            # supports splitting/turning off thinking for low-latency calls.
+            payload["extra_body"] = {"reasoning_split": True, "thinking": {"type": "disabled"}}
         if force_json:
             payload["response_format"] = {"type": "json_object"}
 
@@ -198,8 +290,8 @@ class CloudResearchLLM:
             else:
                 raise RuntimeError(f"云模型调用失败：{_clean_error(exc)}") from exc
 
-        text = response.choices[0].message.content or "{}"
-        return text
+        text = _strip_thinking_blocks(response.choices[0].message.content or "{}")
+        return text or "{}"
 
     def capabilities(self) -> CapabilityListResponse:
         mode = "mock" if self.provider == "mock" else "cloud"
@@ -267,9 +359,15 @@ class CloudResearchLLM:
             capabilities=capabilities,
         )
 
-    async def general_chat(self, request: GeneralChatRequest) -> GeneralChatResponse:
-        if self.provider == "mock":
-            return _mock_general_chat(request, self.provider_name, self.model)
+    def _build_general_chat_payload(self, request: GeneralChatRequest) -> tuple[dict[str, Any], bool]:
+        """Build the chat-completion payload shared by general_chat and its streaming variant.
+
+        Returns (payload, has_context).
+        """
+        module_context = request.context
+        context_block = ""
+        if module_context:
+            context_block = _build_module_context_block(module_context)
 
         history = [
             {
@@ -279,31 +377,48 @@ class CloudResearchLLM:
             for item in request.history[-8:]
             if str(item.get("role", "")).lower() in {"user", "assistant"} and str(item.get("content", "")).strip()
         ]
+
+        system_content = (
+            "你是 DeepFocus 的 AI 助手。默认像正常助手一样和用户自然对话，"
+            "可以解释产品、接上下文、澄清问题、给出简洁建议。"
+            "不要自称 Orchestrator，不要展示核心链路，不要说正在调用工具。"
+            "只有用户明确要求投研分析、研报解读、风险复核、行情判断、组合任务或上传文件时，"
+            "才简短提示可以启动投研分析工作流；不要在普通聊天里强行要求标的。"
+            "回答用中文，直接、友好、克制。"
+        )
+        if context_block:
+            system_content = (
+                f"{context_block}\n\n"
+                "你是 DeepFocus 的卖方级投研分析师，上方是用户挂载给你的信息集（自选股/页面数据/证据库/附件/可用工具）。\n"
+                "纪律（务必遵守）：\n"
+                "1) 事实性结论必须有据——优先引用上方信息集中的具体内容，并在句末或要点后标注来源，"
+                "如「（依据：证据库《标题》）」「（依据：自选股行情）」「（依据：附件 note.txt）」。\n"
+                "2) 上方信息集没有支撑的判断，明确标注「（未经证据支持，需进一步核验）」，绝不编造价格、新闻、财报数字或事件。\n"
+                "3) 回答末尾用一行「依据：…」汇总本次用到的来源；若几乎没有可用证据，直说「当前信息集不足以支撑结论」并给出需要补的数据。\n"
+                "4) 中文作答，专业、精准、克制；区分事实与推测。"
+            )
+
         messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": (
-                    "你是 DeepFocus 的普通 AI 助手。默认像正常助手一样和用户自然对话，"
-                    "可以解释产品、接上下文、澄清问题、给出简洁建议。"
-                    "不要自称 OrchestratorAgent，不要展示 Agent 链路，不要说正在调用工具。"
-                    "只有用户明确要求投研分析、研报解读、风险复核、行情判断、组合任务或上传文件时，"
-                    "才简短提示可以启动投研分析工作流；不要在普通聊天里强行要求标的。"
-                    "回答用中文，直接、友好、克制。"
-                ),
-            },
+            {"role": "system", "content": system_content},
             *history,
             {"role": "user", "content": request.message},
         ]
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": 900,
+            "max_tokens": 1200 if context_block else 900,
         }
         if _is_kimi_switchable_thinking_model(self.model):
             payload["extra_body"] = {"thinking": {"type": "disabled"}}
         else:
             payload["temperature"] = max(0.01, min(self.config["temperature"], 0.9))
+        return payload, bool(context_block)
 
+    async def general_chat(self, request: GeneralChatRequest) -> GeneralChatResponse:
+        if self.provider == "mock":
+            return _mock_general_chat(request, self.provider_name, self.model)
+
+        payload, has_context = self._build_general_chat_payload(request)
         try:
             response = await asyncio.wait_for(
                 self._client().chat.completions.create(**payload),
@@ -314,7 +429,7 @@ class CloudResearchLLM:
         except Exception as exc:
             raise RuntimeError(f"普通聊天模型调用失败：{_clean_error(exc)}") from exc
 
-        content = (response.choices[0].message.content or "").strip()
+        content = _strip_thinking_blocks(response.choices[0].message.content or "")
         if not content:
             content = "我在。你继续说。"
         return GeneralChatResponse(
@@ -322,8 +437,43 @@ class CloudResearchLLM:
             model=self.model,
             generated_at=datetime.now(timezone.utc),
             title="DeepFocus",
-            content=content[:1600],
+            content=content[:2000] if has_context else content[:1600],
         )
+
+    async def general_chat_stream(self, request: GeneralChatRequest) -> AsyncIterator[str]:
+        """Yield assistant text deltas (with <think> blocks stripped) for SSE streaming."""
+        if self.provider == "mock":
+            text = _mock_general_chat(request, self.provider_name, self.model).content
+            for index in range(0, len(text), 6):
+                yield text[index:index + 6]
+            return
+
+        payload, _ = self._build_general_chat_payload(request)
+        payload["stream"] = True
+        try:
+            stream = await self._client().chat.completions.create(**payload)
+        except Exception as exc:
+            raise RuntimeError(f"普通聊天模型调用失败：{_clean_error(exc)}") from exc
+
+        stripper = _ThinkingStripper()
+        emitted = False
+        async for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta.content or ""
+            except (AttributeError, IndexError):
+                delta = ""
+            if not delta:
+                continue
+            visible = stripper.feed(delta)
+            if visible:
+                emitted = True
+                yield visible
+        tail = stripper.flush()
+        if tail:
+            emitted = True
+            yield tail
+        if not emitted:
+            yield "我在。你继续说。"
 
     async def analyze_stock(self, request: StockAnalysisRequest) -> StockAnalysisResponse:
         if self.provider == "mock":
@@ -390,15 +540,25 @@ class CloudResearchLLM:
             "label 只能是 positive/neutral/negative，score 取 -1 到 1。\n"
             f"文本：{text[:2000]}"
         )
-        data = await self.complete_json(prompt)
-        label = _safe_label(data.get("label"))
-        return SentimentResponse(
-            provider=self.provider_name,
-            model=self.model,
-            label=label,
-            score=_safe_score(data.get("score"), default=0),
-            rationale=str(data.get("rationale") or "模型未给出解释。"),
-        )
+        try:
+            data = await self.complete_json(prompt)
+            label = _safe_label(data.get("label"))
+            return SentimentResponse(
+                provider=self.provider_name,
+                model=self.model,
+                label=label,
+                score=_safe_score(data.get("score"), default=0),
+                rationale=str(data.get("rationale") or "模型未给出解释。"),
+            )
+        except Exception as exc:
+            label, score = _quick_sentiment(text)
+            return SentimentResponse(
+                provider="local-rule",
+                model="sentiment-fallback-v1",
+                label=label,
+                score=score,
+                rationale=f"云模型暂不可用（{_clean_error(exc)}），已使用本地规则判断。",
+            )
 
     async def summarize_news(self, request: NewsSummaryRequest) -> FinGptTaskResponse:
         payload = request.model_dump(by_alias=True)
@@ -519,32 +679,39 @@ class CloudResearchLLM:
             )
 
         prompt = (
-            "你是 DeepFocus 的 CustomsTradeAgent，由 EvidenceAgent、ResearchAgent、RiskAgent、ReportAgent 协作。"
-            "请基于中国海关官方数据做专业投资研究分析，并给出明确但非个性化的投资研究建议。\n"
-            "必须体现近12个月趋势、环比/同比、结构分化、产业链传导、相关资产方向、反证指标。"
-            "返回严格 JSON，字段必须为：title, summary, key_points, signals, risks, actions, sources, confidence。\n"
-            "要求：summary 开头必须给出总体投资立场，例如“总体建议：偏积极/中性偏谨慎/防守观察”；"
-            "key_points聚焦核心结论；signals写可投资产业链/主题/商品/ETF方向映射线索；"
-            "risks写口径、周期和反证风险；actions必须写成明确投资建议，使用“建议关注：”“谨慎观察：”"
-            "“暂时回避：”“加仓触发：”“减仓/止盈触发：”这类前缀。"
-            "actions必须固定覆盖三类：至少2条“建议关注：”、至少2条“谨慎观察：”、至少1条“暂时回避：”，"
-            "剩余1条可写触发条件。"
-            "每条建议关注/谨慎观察/暂时回避都必须给出2-4个代表股票或ETF，格式为“代表股票：公司A(代码)、公司B(代码)”。"
-            "不得用“相关标的”“中小标的”“代码待核实”替代代表股票；如果要写暂时回避，也必须从候选池中挑具体研究样本。"
-            "如果建议涉及“电气设备/输变电/电力设备出海”，必须优先从专门电气设备候选池选择，"
-            "例如思源电气、特变电工、金盘科技、中国西电、平高电气、许继电气；"
-            "立讯精密、工业富联只能归入电子零部件/AI服务器代工链，不能作为专门电气设备代表。"
-            "代表股票只作为研究样本池，不代表买入推荐；代码不确定时只写公司名，不要编造代码。"
-            "不要给具体个股买卖指令、目标价、收益承诺或仓位比例；数组字段最多6项，每项不超过72个中文字符。"
-            "不要 Markdown，不要输出 JSON 以外文字。\n"
-            f"海关数据与分析材料：{context[:18000]}"
+            "你是 DeepFocus 海关贸易投研分析师。基于中国海关官方数据做短而专业的投研速析。\n"
+            "只输出一个 JSON object，不要 Markdown，不要解释过程。字段：summary, key_points, signals, risks, actions, sources, confidence。"
+            "summary 必须以“总体建议：”开头；每个数组最多2项，每项不超过40个中文字符。"
+            "FACTS 里的 m 是当前官方月份；当月同比、环比和顺差只能称为该月份，不要写成其他月份。"
+            "sum.export.yoy/sum.import.yoy 是整体出口/进口同比；hs[].ex_yoy/hs[].im_yoy 才是对应 HS 类目同比，不能混用。"
+            "如需验证持续性，请写“后续月份”或“下一期数据”，不要写已观测月份。"
+            "actions 只能使用“建议关注：”“谨慎观察：”“暂时回避：”“验证触发：”这类投研措辞；"
+            "不要使用买入、卖出、加仓、减仓、超配、回调布局、配置、权重、正面暴露等交易或组合指令。"
+            "代表股票只从事实包候选池选择。"
+            "不要目标价、收益承诺或仓位比例。\n"
+            f"FACTS={context[:1200]}"
         )
-        data = await self.complete_json(
+        text = await self._complete_text(
             prompt,
-            max_tokens=2800,
-            timeout_seconds=45,
-            retry_schema_hint="必须返回 customs trade investment analysis JSON。",
+            max_tokens=850,
+            timeout_seconds=40,
+            force_json=False,
         )
+        try:
+            data = _extract_json(text)
+            if not _has_meaningful_json(data):
+                raise ValueError("empty customs JSON")
+        except ValueError:
+            clean_text = _strip_thinking_blocks(text)
+            if len(clean_text.strip()) < 40 or clean_text.strip() in {"{}", "[]"}:
+                raise RuntimeError("MiniMax 未返回可用海关分析正文。")
+            return _task_response_from_text(
+                clean_text,
+                self.provider_name,
+                self.model,
+                "customs_trade_agent_analysis",
+                "中国海关进出口投研Agent",
+            )
         return _normalize_task_response(
             data,
             self.provider_name,
@@ -561,17 +728,11 @@ class CloudResearchLLM:
         if self.provider == "mock":
             return _mock_orchestrator_chat(request, self.provider_name, self.model)
 
-        core_agents = ["OrchestratorAgent", "EvidenceAgent", "ResearchAgent", "RiskAgent", "ReportAgent"]
+        core_agents = VISIBLE_ROLE_NAMES
         engine_agents = {
             "deepfocus": core_agents,
             "tradingagents": core_agents,
-            "financial_services": [
-                "OrchestratorAgent",
-                "EvidenceAgent",
-                "FSIWorkflowAgent",
-                "ControlAgent",
-                "ReportAgent",
-            ],
+            "financial_services": core_agents,
         }
         payload = request.model_dump(by_alias=True)
         history = [
@@ -583,25 +744,25 @@ class CloudResearchLLM:
             if str(item.get("role", "")).lower() in {"user", "assistant"} and str(item.get("content", "")).strip()
         ]
         prompt = (
-            "你是 DeepFocus 多 Agent 工作台的 OrchestratorAgent，体验要像 Claude Code / Cursor / Codex："
-            "用户发来任何消息，你都要正常用 AI 回复，而不是说未调用 Agent。"
+            "你是 DeepFocus 投研工作台的 Orchestrator，体验要像 Claude Code / Cursor / Codex："
+            "用户发来任何消息，你都要正常用 AI 回复，而不是说未调用核心链路。"
             "你可以承认不知道，不能编造用户没有提供的私人事实；如果问题需要外部背景，直接说明需要用户补充。"
-            "如果用户问题涉及投资、标的、研报、文件、风险、组合、行情或监控，要说明将如何调度 5 个核心 Agent。"
+            "如果用户问题涉及投资、标的、研报、文件、风险、组合、行情或监控，要说明将如何调度 4 个核心角色和报告输出层。"
             "如果只是普通聊天、问候、联通测试，或用户要求精确简短回复，优先按字面直接回答；"
-            "不要强行带入当前标的、投资上下文或 Agent 推荐，should_create_task 必须为 false。"
+            "不要强行带入当前标的、投资上下文或投研推荐，should_create_task 必须为 false。"
             "如果 reasoning_mode 是 fast，回答要短，reasoning_trace 返回空数组或最多 1 项；"
             "如果 reasoning_mode 是 thinking，要返回 3 到 5 项可展示推理摘要，体现目标识别、证据判断、风险约束和下一步。"
             "回复不要超过 220 个中文字符，像真实工作台助理，不要营销腔。\n"
-            f"当前对用户可见的核心 Agent：{', '.join(engine_agents.get(request.engine, engine_agents['deepfocus']))}。"
-            "TradingAgents 等底层引擎只作为执行映射，不要把内部角色当成同级 Agent 展示。"
+            f"当前对用户可见的核心角色：{', '.join(engine_agents.get(request.engine, engine_agents['deepfocus']))}。"
+            "TradingAgents 等底层引擎只作为执行映射，不要把内部角色当成同级角色展示。"
             "如果 engine 是 financial_services，要强调会按金融服务 playbook 选择 market research、earnings review、model build、pitch、valuation review、KYC 或 reconciliation 路线。\n"
             f"最近对话上下文：{json.dumps(history, ensure_ascii=False)}\n"
             "返回严格 JSON，字段必须为：title, content, chips, suggested_actions, reasoning_trace, should_create_task, confidence。"
             "chips/suggested_actions 每项不超过 16 个中文字符；should_create_task 为布尔值。\n"
             "reasoning_trace 是给用户看的可审计思路摘要，不是隐藏推理原文；每项包含 phase, title, detail, status，"
             "status 只能是 done / working / wait / error，最多 5 项。\n"
-            '格式示例：{"title":"OrchestratorAgent","content":"...","chips":["OrchestratorAgent"],'
-            '"suggested_actions":["补充标的"],"reasoning_trace":[{"phase":"orchestrator","title":"OrchestratorAgent","detail":"判断是否需要长任务","status":"done"}],'
+            '格式示例：{"title":"Orchestrator","content":"...","chips":["Orchestrator"],'
+            '"suggested_actions":["补充标的"],"reasoning_trace":[{"phase":"orchestrator","title":"Orchestrator","detail":"判断是否需要长任务","status":"done"}],'
             '"should_create_task":false,"confidence":0.72}\n'
             f"输入：{json.dumps(payload, ensure_ascii=False)}"
         )
@@ -614,6 +775,89 @@ class CloudResearchLLM:
                 return _orchestrator_text_response(text, request, self.provider_name, self.model)
             except Exception:
                 return _mock_orchestrator_chat(request, self.provider_name, self.model)
+
+    async def orchestrator_chat_with_context(
+        self,
+        request: OrchestratorChatRequest,
+        cross_module_injection: str,
+    ) -> OrchestratorChatResponse:
+        if self.provider == "mock":
+            return _mock_orchestrator_chat(request, self.provider_name, self.model)
+
+        history = [
+            {
+                "role": str(item.get("role", ""))[:16],
+                "content": str(item.get("content", ""))[:1000],
+            }
+            for item in request.history[-6:]
+            if str(item.get("role", "")).lower() in {"user", "assistant"} and str(item.get("content", "")).strip()
+        ]
+
+        stock_info = ""
+        if request.stock:
+            stock_info = f"当前标的：{request.stock.name or ''}（{request.stock.symbol}） 价格：{request.stock.price}"
+
+        prompt = (
+            f"{cross_module_injection}\n"
+            "你是 DeepFocus 的资深投资分析师。系统已经为你自动聚合了以上跨模块实测数据——"
+            "包括实时行情、宏观环境、持仓风险、数据源证据和财报指标。\n"
+            "请基于这些真实数据，对用户的问题做出专业、具体、有数据支撑的回答。\n"
+            "不要泛泛而谈，要引用上面的具体数据。如果数据不足，坦诚说明。\n"
+            f"当前标的：{stock_info}\n"
+            f"对话历史：{json.dumps(history, ensure_ascii=False)}\n"
+            "返回严格 JSON，字段必须为：title, content, chips, suggested_actions, reasoning_trace, should_create_task, confidence。\n"
+            "chips 每项不超过16个中文字符；suggested_actions 每项不超过20个中文字符。\n"
+            "reasoning_trace 包含 phase(title/detail/status)，status为 done/working/wait/error。\n"
+            '格式示例：{"title":"NVIDIA分析","content":"基于当前VIX...","chips":["查看基本面","风险评估"],'
+            '"suggested_actions":["查看详细财报"],"reasoning_trace":[],"should_create_task":false,"confidence":0.82}\n'
+            f"用户问题：{request.message}"
+        )
+
+        try:
+            data = await self.complete_json(prompt, max_tokens=1600, timeout_seconds=30, force_json_first=True)
+            return _normalize_orchestrator_chat(data, request, self.provider_name, self.model)
+        except Exception:
+            try:
+                text = await self._complete_orchestrator_text_with_context(request, cross_module_injection, timeout_seconds=22)
+                return _orchestrator_text_response(text, request, self.provider_name, self.model)
+            except Exception:
+                return _mock_orchestrator_chat(request, self.provider_name, self.model)
+
+    async def _complete_orchestrator_text_with_context(
+        self,
+        request: OrchestratorChatRequest,
+        cross_module_injection: str,
+        timeout_seconds: int = 22,
+    ) -> str:
+        history = [
+            {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
+            for item in request.history[-6:]
+        ]
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": (
+                f"{cross_module_injection}\n"
+                "你是资深投资分析师。基于上面的跨模块数据回答用户问题，专业、具体、引用数据。"
+            )},
+            *history,
+            {"role": "user", "content": request.message},
+        ]
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 1600,
+        }
+        if _is_kimi_switchable_thinking_model(self.model):
+            payload["extra_body"] = {"thinking": {"type": "disabled"}}
+        else:
+            payload["temperature"] = 0.5
+        try:
+            response = await asyncio.wait_for(
+                self._client().chat.completions.create(**payload),
+                timeout=timeout_seconds,
+            )
+            return _strip_thinking_blocks(response.choices[0].message.content or "")
+        except Exception:
+            raise
 
     async def _complete_orchestrator_text(
         self,
@@ -638,10 +882,10 @@ class CloudResearchLLM:
             f"思考模式：{request.reasoning_mode}\n"
             f"上传文件：{', '.join(request.attached_files) if request.attached_files else '无'}\n"
             f"资料库数量：{request.data_source_count}；工具连接数：{request.mcp_server_count}\n"
-            f"对用户可见的核心 Agent：{', '.join(engine_agents.get(request.engine, engine_agents['deepfocus']))}\n"
+            f"对用户可见的核心角色：{', '.join(engine_agents.get(request.engine, engine_agents['deepfocus']))}\n"
             "请直接回复用户，不要 JSON，不要 Markdown 标题，不要编造私人信息。"
             "fast 模式要短，thinking 模式可以说明公开可展示的推理摘要。"
-            "普通聊天和联通测试要按用户字面要求回复；只有投资研究问题才说明会调度哪些 Agent。"
+            "普通聊天和联通测试要按用户字面要求回复；只有投资研究问题才说明会调度哪些角色。"
             "回复不超过 220 个中文字符。"
         )
         payload: dict[str, Any] = {
@@ -650,8 +894,8 @@ class CloudResearchLLM:
                 {
                     "role": "system",
                     "content": (
-                        "你是 DeepFocus 的 OrchestratorAgent。你是一个真实多 Agent 工作台入口，"
-                        "负责理解用户消息、自然回复，并按需调度 Evidence/Research/Risk/Report 等核心 Agent。"
+                        "你是 DeepFocus 的 Orchestrator。你是一个真实投研工作台入口，"
+                        "负责理解用户消息、自然回复，并按需调度 Evidence、Analyst、Risk 和 Report Builder。"
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -692,6 +936,61 @@ class CloudResearchLLM:
         )
         data = await self.complete_json(prompt, max_tokens=2200)
         return _normalize_task_response(data, self.provider_name, self.model, capability, title)
+
+    async def analyze_market_dashboard(
+        self,
+        title: str,
+        indicators_json: str,
+        market_type: str = "global",
+    ) -> dict[str, Any]:
+        if self.provider == "mock":
+            return {
+                "title": f"{title} AI分析",
+                "summary": "Mock模式：无AI分析可用。请在模型配置中设置真实LLM Provider。",
+                "key_points": ["当前为Mock模式"],
+                "signals": [],
+                "risks": ["无AI分析"],
+                "actions": ["配置真实LLM Provider以启用AI分析"],
+                "sources": [],
+                "confidence": 0.0,
+            }
+
+        market_name = "全球宏观" if market_type == "global" else "A股大盘"
+        prompt = (
+            f"你是一个顶级华尔街宏观对冲基金经理。请对以下{market_name}市场指标仪表盘进行综合分析，给出专业投资判断。\n"
+            f"标题：{title}\n"
+            "要求：\n"
+            "1. 综合分析所有指标之间的交叉信号，不要孤立看单项\n"
+            "2. 识别出指标之间的矛盾和一致性（例如VIX低但信用利差走阔）= 牛熊分歧信号\n"
+            "3. 给出当前市场所处的周期位置判断\n"
+            "4. 列出最重要的3-5个交易/投资注意事项\n"
+            "5. 如果有极端信号必须明确指出\n\n"
+            "返回严格 JSON，字段必须为：title, summary, key_points, signals, risks, actions, sources, confidence。\n"
+            "title: 分析标题（不超过18个中文字符）\n"
+            "summary: 核心结论摘要（不超过200个中文字符）\n"
+            "key_points: 3-5个关键发现（每项不超过28个中文字符）\n"
+            "signals: 识别出的主要市场信号（每项不超过20个中文字符，命名格式如 'VIX低波动=看多'）\n"
+            "risks: 当前面临的主要风险（每项不超过20个中文字符）\n"
+            "actions: 建议采取的行动/关注点（每项不超过20个中文字符）\n"
+            "sources: 引用支持本分析的关键指标来源（最多3项）\n"
+            "confidence: 0到1之间的置信度\n\n"
+            '格式示例：{"title":"风险偏好修复中","summary":"多项指标指向市场从恐慌中恢复，但信用利差仍偏宽暗示结构性风险未消","key_points":["VIX回落至正常区间","收益率曲线倒挂幅度收窄","资金流向防御板块"],"signals":["VIX回落=风险偏好回升","利差偏宽=信用风险仍存"],"risks":["意外通胀数据","地缘冲突升级"],"actions":["逐步减少对冲头寸","关注信用债机会","保留5%现金"],"sources":["VIX恐慌指数","HYG-LQD信用利差","CPI同比"],"confidence":0.72}\n\n'
+            f"输入数据：{indicators_json}"
+        )
+        try:
+            data = await self.complete_json(prompt, max_tokens=2200, timeout_seconds=25)
+            return _normalize_market_dashboard_analysis(data)
+        except Exception:
+            return {
+                "title": f"{title} AI分析",
+                "summary": "AI分析暂时不可用，请稍后重试。",
+                "key_points": ["AI服务暂时不可用"],
+                "signals": [],
+                "risks": ["AI分析服务异常"],
+                "actions": ["稍后重试或检查模型配置"],
+                "sources": [],
+                "confidence": 0.0,
+            }
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -752,6 +1051,116 @@ def _is_kimi_switchable_thinking_model(model: str) -> bool:
     return any(marker in model_name for marker in ("kimi-k2.6", "kimi-k2.5"))
 
 
+def _build_module_context_block(ctx: dict[str, Any]) -> str:
+    module = str(ctx.get("module", "") or "")
+    title = str(ctx.get("title", "") or "")
+    summary = str(ctx.get("summary", "") or "")
+    data = ctx.get("data") or {}
+    updated = str(ctx.get("lastUpdated", "") or "")
+    focused = str(ctx.get("focused_symbol", "") or "")
+    watchlist = ctx.get("watchlist")
+
+    lines: list[str] = []
+    if title or module:
+        lines.append(f"用户当前正在查看模块：{title}")
+        if module:
+            lines.append(f"模块标识：{module}")
+    if summary:
+        lines.append(f"模块摘要：{summary}")
+    if updated:
+        lines.append(f"数据更新时间：{updated}")
+
+    if data and isinstance(data, dict):
+        data_str = json.dumps(data, ensure_ascii=False, default=str)
+        if len(data_str) > 2400:
+            data_str = data_str[:2400] + "..."
+        lines.append(f"当前模块数据：{data_str}")
+
+    # AI 原生数据打通：把用户的聚焦标的和自选股带给模型。
+    if focused:
+        lines.append(f"用户当前聚焦标的：{focused}")
+    if isinstance(watchlist, list) and watchlist:
+        items: list[str] = []
+        for entry in watchlist[:12]:
+            if not isinstance(entry, dict):
+                continue
+            symbol = str(entry.get("symbol", "") or "")
+            name = str(entry.get("name", "") or "")
+            change = entry.get("change_percent")
+            change_str = f"{change:+.2f}%" if isinstance(change, (int, float)) else ""
+            label = " ".join(part for part in [symbol, name, change_str] if part)
+            if label:
+                items.append(label)
+        if items:
+            lines.append(f"用户自选股（{len(items)}）：{'；'.join(items)}")
+
+    # 可插拔证据库：用户挂载了「证据库」上下文时带上已接入源与相关证据条目。
+    evidence = ctx.get("evidence_sources")
+    if isinstance(evidence, dict):
+        connected = evidence.get("connected")
+        if isinstance(connected, list) and connected:
+            source_labels = [
+                f"{c.get('name', '')}（{c.get('category', '')}/{c.get('items', 0)}条）"
+                for c in connected
+                if isinstance(c, dict) and c.get("name")
+            ]
+            if source_labels:
+                lines.append(f"已接入证据源：{'；'.join(source_labels[:10])}")
+        recent = evidence.get("recent_items")
+        if isinstance(recent, list) and recent:
+            item_labels = []
+            for it in recent[:6]:
+                if not isinstance(it, dict):
+                    continue
+                title = str(it.get("title", "") or "")
+                source = str(it.get("source", "") or "")
+                preview = str(it.get("preview", "") or "")
+                item_labels.append(f"《{title}》[{source}] {preview}".strip())
+            if item_labels:
+                lines.append("相关证据条目：\n" + "\n".join(f"- {label}" for label in item_labels))
+
+    # 可插拔工具：用户挂载了「工具」上下文时带上已连接的 MCP 工具清单。
+    tools = ctx.get("tools")
+    if isinstance(tools, dict):
+        available_tools = tools.get("available_tools")
+        if isinstance(available_tools, list) and available_tools:
+            tool_labels = [
+                f"{t.get('name', '')}（{t.get('description', '')[:40]}）"
+                for t in available_tools[:12]
+                if isinstance(t, dict) and t.get("name")
+            ]
+            if tool_labels:
+                lines.append(f"可用工具（MCP）：{'；'.join(tool_labels)}")
+
+    # 可插拔技能：用户挂载「技能」上下文时带上 Agent 可调度的专业能力清单。
+    skills = ctx.get("skills")
+    if isinstance(skills, list) and skills:
+        skill_labels = [
+            f"{s.get('name', '')}（{s.get('description', '')}）"
+            for s in skills[:14]
+            if isinstance(s, dict) and s.get("name")
+        ]
+        if skill_labels:
+            lines.append(f"可调度技能：{'；'.join(skill_labels)}")
+
+    # 用户在对话中附加的文件内容。
+    attachments = ctx.get("attachments")
+    if isinstance(attachments, list) and attachments:
+        blocks = []
+        for att in attachments[:5]:
+            if not isinstance(att, dict):
+                continue
+            name = str(att.get("name", "") or "附件")
+            content = str(att.get("content", "") or "")
+            if len(content) > 4000:
+                content = content[:4000] + "…(已截断)"
+            blocks.append(f"【附件：{name}】\n{content}")
+        if blocks:
+            lines.append("用户附加的文件：\n" + "\n\n".join(blocks))
+
+    return "\n".join(lines)
+
+
 def _clean_error(exc: Exception) -> str:
     text = str(exc).strip()
     lowered = text.lower()
@@ -788,6 +1197,20 @@ def _normalize_stock_analysis(
     )
 
 
+def _normalize_market_dashboard_analysis(data: dict[str, Any]) -> dict[str, Any]:
+    data = _unwrap_payload(data)
+    return {
+        "title": str(data.get("title", "") or "宏观分析")[:36],
+        "summary": str(data.get("summary", "") or "")[:300],
+        "key_points": _safe_list(data.get("key_points"))[:6],
+        "signals": _safe_list(data.get("signals"))[:8],
+        "risks": _safe_list(data.get("risks"))[:8],
+        "actions": _safe_list(data.get("actions"))[:8],
+        "sources": _safe_list(data.get("sources"))[:5],
+        "confidence": max(0.0, min(1.0, float(data.get("confidence", 0.0) or 0.0))),
+    }
+
+
 def _normalize_task_response(
     data: dict[str, Any],
     provider: str,
@@ -796,19 +1219,92 @@ def _normalize_task_response(
     fallback_title: str,
 ) -> FinGptTaskResponse:
     data = _unwrap_payload(data)
+    summary = str(_first_present(data, "summary", "摘要", "executive_summary", "核心摘要") or "暂无摘要。")
+    key_points = _safe_list(_first_present(data, "key_points", "keyPoints", "要点", "核心结论", "关键要点"))
+    signals = _safe_list(_first_present(data, "signals", "信号", "投资信号", "催化因素", "catalysts"))
+    risks = _safe_list(_first_present(data, "risks", "风险", "风险点", "主要风险"))
+    actions = _safe_list(_first_present(data, "actions", "动作", "建议动作", "下一步动作", "watch_items"))
+    if capability == "customs_trade_agent_analysis":
+        summary = _sanitize_customs_research_language(summary)
+        if not summary.startswith("总体建议"):
+            summary = f"总体建议：{summary}"
+        key_points = [_sanitize_customs_research_language(item) for item in key_points]
+        signals = [_sanitize_customs_research_language(item) for item in signals]
+        risks = [_sanitize_customs_research_language(item) for item in risks]
+        actions = [_sanitize_customs_research_language(item) for item in actions]
     return FinGptTaskResponse(
         provider=provider,
         model=model,
         generated_at=datetime.now(timezone.utc),
         capability=capability,
         title=str(_first_present(data, "title", "标题") or fallback_title),
-        summary=str(_first_present(data, "summary", "摘要", "executive_summary", "核心摘要") or "暂无摘要。"),
-        key_points=_safe_list(_first_present(data, "key_points", "keyPoints", "要点", "核心结论", "关键要点")),
-        signals=_safe_list(_first_present(data, "signals", "信号", "投资信号", "催化因素", "catalysts")),
-        risks=_safe_list(_first_present(data, "risks", "风险", "风险点", "主要风险")),
-        actions=_safe_list(_first_present(data, "actions", "动作", "建议动作", "下一步动作", "watch_items")),
+        summary=summary,
+        key_points=key_points,
+        signals=signals,
+        risks=risks,
+        actions=actions,
         sources=_safe_list(_first_present(data, "sources", "来源", "引用", "references")),
         confidence=_safe_confidence(_first_present(data, "confidence", "置信度")),
+    )
+
+
+def _sanitize_customs_research_language(value: Any) -> str:
+    text = _clean_display_text(value)
+    replacements = (
+        ("高新技朌", "高新技术"),
+        ("高新技木", "高新技术"),
+        ("买入", "建议关注"),
+        ("卖出", "暂时回避"),
+        ("加仓", "加强跟踪"),
+        ("减仓", "降低研究优先级"),
+        ("超配", "提高研究优先级"),
+        ("回调布局", "等待验证"),
+        ("配置权重", "研究优先级"),
+        ("覆盖权重", "观察优先级"),
+        ("权重", "优先级"),
+        ("正面暴露", "重点观察"),
+        ("负面暴露", "谨慎观察"),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
+def _task_response_from_text(
+    text: str,
+    provider: str,
+    model: str,
+    capability: str,
+    fallback_title: str,
+) -> FinGptTaskResponse:
+    clean = _strip_thinking_blocks(text)
+    clean = re.sub(r"```(?:json)?|```", "", clean, flags=re.I).strip()
+    lines = [
+        re.sub(r"^[\s\-•*#一二三四五六七八九十、：:.]+", "", line).strip()
+        for line in clean.splitlines()
+        if line.strip()
+    ]
+    useful_lines = [line for line in lines if line and line not in {"{", "}", "[", "]"}]
+    summary = next((line for line in useful_lines if "总体建议" in line), useful_lines[0] if useful_lines else clean[:220])
+    bullets = [line for line in useful_lines if line != summary][:8]
+    if capability == "customs_trade_agent_analysis":
+        summary = _sanitize_customs_research_language(summary)
+        if not summary.startswith("总体建议"):
+            summary = f"总体建议：{summary}"
+        bullets = [_sanitize_customs_research_language(item) for item in bullets]
+    return FinGptTaskResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        capability=capability,
+        title=fallback_title,
+        summary=summary[:320],
+        key_points=bullets[:3],
+        signals=bullets[3:5],
+        risks=bullets[5:7],
+        actions=bullets[7:8],
+        sources=["MiniMax-M3", "GACC Customs Statistics"],
+        confidence=0.62,
     )
 
 
@@ -1010,17 +1506,17 @@ def _normalize_orchestrator_chat(
     model: str,
 ) -> OrchestratorChatResponse:
     data = _unwrap_payload(data)
-    content = str(_first_present(data, "content", "message", "reply", "summary", "回复") or "").strip()
+    content = _clean_display_text(_first_present(data, "content", "message", "reply", "summary", "回复"))
     if not content:
         content = "我在，你继续说。"
-    chips = _safe_list(_first_present(data, "chips", "agents", "标签"))
+    chips = [_clean_display_text(item) for item in _safe_list(_first_present(data, "chips", "agents", "标签"))]
     should_create_task = _safe_bool(_first_present(data, "should_create_task", "create_task", "需要任务"))
     handled_inline = not should_create_task and not request.attached_files
     if handled_inline:
         chips = []
     elif not chips:
-        chips = ["OrchestratorAgent", _engine_chip(request.engine)]
-    suggested_actions = _safe_list(_first_present(data, "suggested_actions", "actions", "下一步"))
+        chips = [ORCHESTRATOR_ROLE, _engine_chip(request.engine)]
+    suggested_actions = [_clean_display_text(item) for item in _safe_list(_first_present(data, "suggested_actions", "actions", "下一步"))]
     if handled_inline:
         suggested_actions = []
     reasoning_trace = [] if request.reasoning_mode == "fast" or handled_inline else _safe_reasoning_trace(
@@ -1032,9 +1528,9 @@ def _normalize_orchestrator_chat(
         provider=provider,
         model=model,
         generated_at=datetime.now(timezone.utc),
-        agent="OrchestratorAgent",
+        agent=ORCHESTRATOR_ROLE,
         engine=request.engine,
-        title="DeepFocus" if handled_inline else str(_first_present(data, "title", "标题") or "OrchestratorAgent"),
+        title="DeepFocus" if handled_inline else _clean_display_text(_first_present(data, "title", "标题") or ORCHESTRATOR_ROLE),
         content=content,
         chips=chips[:6],
         suggested_actions=suggested_actions[:4],
@@ -1051,20 +1547,20 @@ def _orchestrator_text_response(
     provider: str,
     model: str,
 ) -> OrchestratorChatResponse:
-    content = re.sub(r"^```(?:json|markdown)?|```$", "", text.strip(), flags=re.I | re.M).strip()
+    content = _clean_display_text(re.sub(r"^```(?:json|markdown)?|```$", "", text.strip(), flags=re.I | re.M))
     if not content:
         return _mock_orchestrator_chat(request, provider, model)
     should_create_task = _orchestrator_should_create_task(request)
     handled_inline = not should_create_task and not request.attached_files
-    chips = [] if handled_inline else ["OrchestratorAgent", _engine_chip(request.engine)]
+    chips = [] if handled_inline else [ORCHESTRATOR_ROLE, _engine_chip(request.engine)]
     actions = [] if handled_inline else _orchestrator_suggested_actions(request)
     return OrchestratorChatResponse(
         provider=provider,
         model=model,
         generated_at=datetime.now(timezone.utc),
-        agent="OrchestratorAgent",
+        agent=ORCHESTRATOR_ROLE,
         engine=request.engine,
-        title="DeepFocus" if handled_inline else "OrchestratorAgent",
+        title="DeepFocus" if handled_inline else ORCHESTRATOR_ROLE,
         content=content[:700],
         chips=chips,
         suggested_actions=actions,
@@ -1091,7 +1587,7 @@ def _literal_inline_reply(
         provider=provider,
         model=model,
         generated_at=datetime.now(timezone.utc),
-        agent="OrchestratorAgent",
+        agent=ORCHESTRATOR_ROLE,
         engine=request.engine,
         title="DeepFocus",
         content=match.group(1),
@@ -1147,20 +1643,20 @@ def _fallback_reasoning_trace(request: OrchestratorChatRequest, should_create_ta
         return [
             {
                 "phase": "orchestrator",
-                "title": "OrchestratorAgent",
+                "title": "Orchestrator",
                 "detail": "识别为普通问答，先按用户问题直接回复。",
                 "status": "done",
             },
             {
                 "phase": "evidence",
-                "title": "EvidenceAgent",
+                "title": "Evidence",
                 "detail": "当前无需调用行情、资料库或上传文件。",
                 "status": "done",
             },
             {
                 "phase": "report",
-                "title": "ReportAgent",
-                "detail": "整理为简短回答；如继续给出投资目标，再升级为多 Agent Run。",
+                "title": "Report Builder",
+                "detail": "整理为简短回答；如继续给出投资目标，再升级为投研任务。",
                 "status": "done",
             },
         ]
@@ -1170,31 +1666,31 @@ def _fallback_reasoning_trace(request: OrchestratorChatRequest, should_create_ta
     return [
         {
             "phase": "orchestrator",
-            "title": "OrchestratorAgent",
+            "title": "Orchestrator",
             "detail": f"模式 {request.mode}，标的 {stock_label}。",
             "status": "done",
         },
         {
             "phase": "evidence",
-            "title": "EvidenceAgent",
+            "title": "Evidence",
             "detail": f"{request.data_source_count} 个数据源，{len(request.attached_files)} 个附件，{request.mcp_server_count} 个工具连接。",
             "status": "done",
         },
         {
             "phase": "research",
-            "title": "ResearchAgent",
+            "title": "Analyst",
             "detail": research_detail,
             "status": "working" if should_create_task else "done",
         },
         {
             "phase": "risk",
-            "title": "RiskAgent",
+            "title": "Risk",
             "detail": "后续输出会把事实、推断、反证和动作分开。",
             "status": "wait" if should_create_task else "done",
         },
         {
             "phase": "report",
-            "title": "ReportAgent",
+            "title": "Report Builder",
             "detail": "最终只输出可复核结论和下一步动作。",
             "status": "wait" if should_create_task else "done",
         },
@@ -1236,6 +1732,32 @@ def _mock_stock_analysis(
     change = stock.change_percent or 0
     label, score = _quick_sentiment(
         " ".join([stock.name, stock.description or "", *[p.summary or p.title for p in request.posts]])
+    )
+    risk_level = "high" if abs(change) >= 5 else "medium" if abs(change) >= 2 else "low"
+    label_text = {"positive": "积极", "neutral": "中性", "negative": "谨慎"}.get(label, "中性")
+    name = stock.name or stock.symbol
+    move = f"最新涨跌 {change:+.2f}%" if change else "近端价格波动有限"
+    summary = (
+        f"【演示数据】这是本地 mock 模型为 {name}（{stock.symbol}）生成的示例投研摘要，"
+        f"用于界面演示，不构成真实分析或投资依据。{move}，情绪倾向偏{label_text}，"
+        f"已纳入 {len(request.posts)} 条社区/资讯样本。接入云端模型后将替换为真实结论。"
+    )
+    return StockAnalysisResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        executive_summary=summary,
+        sentiment_label=label,
+        sentiment_score=score,
+        risk_level=risk_level,
+        catalysts=["示例：关注后续业绩与订单兑现", "示例：行业景气与政策催化"],
+        risks=["演示内容，非真实风险评估", "请以接入云端模型后的结论为准"],
+        watch_items=[f"{name} 官方公告与财报", "成交量与资金面变化"],
+        suggested_questions=[
+            f"{name} 的核心增长驱动是什么？",
+            "当前估值处于什么区间？",
+            "最大的下行风险有哪些？",
+        ],
     )
 
 
@@ -1447,7 +1969,7 @@ def _infer_article_actions(text: str, asset: str) -> list[str]:
         actions.append("关注监管审批、路测数据和本地训练数据进展")
     if any(word in lowered for word in ("降价", "售价")):
         actions.append("观察订单、交付、库存和毛利率是否同步变化")
-    actions.append("把事件放入多 Agent 投研队列做证据复核")
+    actions.append("把事件放入核心链路投研队列做证据复核")
     return _dedupe_short(actions)
 
 
@@ -1604,7 +2126,7 @@ def _mock_orchestrator_chat(
         should_create_task = False
     elif investment_pattern.search(text) or request.attached_files:
         content = (
-            f"收到。我会以 {stock_label} 为上下文，先由 Orchestrator 拆解目标，再调度 Evidence、Research、Risk 和 Report Agent "
+            f"收到。我会以 {stock_label} 为上下文，先由 Orchestrator 拆解目标，再调度 Evidence、Analyst、Risk 和 Report Builder "
             "做证据核对、研究判断、反证约束和结论汇总。"
         )
         actions = ["启动研究任务", "补充时间范围", "查看证据库"]
@@ -1626,11 +2148,11 @@ def _mock_orchestrator_chat(
         provider=provider,
         model=model,
         generated_at=datetime.now(timezone.utc),
-        agent="OrchestratorAgent",
+        agent=ORCHESTRATOR_ROLE,
         engine=request.engine,
-        title="DeepFocus" if handled_inline else "OrchestratorAgent",
+        title="DeepFocus" if handled_inline else ORCHESTRATOR_ROLE,
         content=content,
-        chips=[] if handled_inline else ["OrchestratorAgent", _engine_chip(request.engine)],
+        chips=[] if handled_inline else [ORCHESTRATOR_ROLE, _engine_chip(request.engine)],
         suggested_actions=actions,
         reasoning_trace=[] if handled_inline else _fallback_reasoning_trace(request, should_create_task),
         should_create_task=should_create_task,
@@ -1748,12 +2270,12 @@ def _safe_reasoning_trace(
     steps: list[dict[str, str]] = []
     for item in value:
         if isinstance(item, dict):
-            title = str(_first_present(item, "title", "标题") or "").strip()
-            detail = str(_first_present(item, "detail", "description", "内容", "说明") or "").strip()
+            title = _clean_display_text(_first_present(item, "title", "标题"))
+            detail = _clean_display_text(_first_present(item, "detail", "description", "内容", "说明"))
             phase = str(_first_present(item, "phase", "key", "阶段") or "step").strip()
             status = str(_first_present(item, "status", "状态") or "done").strip().lower()
         else:
-            title = str(item).strip()
+            title = _clean_display_text(item)
             detail = ""
             phase = "step"
             status = "done"
