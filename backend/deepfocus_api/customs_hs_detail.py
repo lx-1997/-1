@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .shared_utils import num, safe_int, pct_change, fmt_usd, fmt_pct, safe_error
+
 import asyncio
 import copy
 import re
@@ -157,7 +159,15 @@ async def fetch_customs_hs_detail_snapshot(
 
     warnings: list[str] = []
     async with httpx.AsyncClient(timeout=22, follow_redirects=True, headers=REQUEST_HEADERS) as client:
-        product = await _resolve_product(client, clean_query, clean_code)
+        try:
+            product = await _resolve_product(client, clean_query, clean_code)
+        except Exception as exc:
+            warnings.append(f"UN Comtrade 商品参考表读取失败，仅用内置别名匹配（{safe_error(exc)}）")
+            if clean_code:
+                product = _merge_product({"code": clean_code, "name": ""}, _alias_by_code(clean_code))
+            else:
+                local_candidates = _alias_candidates(clean_query)
+                product = local_candidates[0] if local_candidates else None
         if not product:
             search_result = await search_customs_hs_detail_products(clean_query or clean_code, limit=8)
             response = {
@@ -181,14 +191,20 @@ async def fetch_customs_hs_detail_snapshot(
             _HS_DETAIL_CACHE[cache_key] = (now, copy.deepcopy(response))
             return response
 
-        latest_period = await _fetch_latest_available_period(client)
-        periods = _recent_periods(latest_period, months)
-        monthly_payloads = await _fetch_monthly_world_rows(client, product["code"], periods)
-        monthly_points = _build_monthly_points(monthly_payloads)
-        export_partners, import_partners = await asyncio.gather(
-            _fetch_partner_rows(client, product["code"], latest_period, "X"),
-            _fetch_partner_rows(client, product["code"], latest_period, "M"),
-        )
+        try:
+            latest_period = await _fetch_latest_available_period(client)
+            periods = _recent_periods(latest_period, months)
+            monthly_payloads = await _fetch_monthly_world_rows(client, product["code"], periods)
+            monthly_points = _build_monthly_points(monthly_payloads)
+            export_partners, import_partners = await asyncio.gather(
+                _fetch_partner_rows(client, product["code"], latest_period, "X"),
+                _fetch_partner_rows(client, product["code"], latest_period, "M"),
+            )
+        except Exception as exc:
+            warnings.append(f"UN Comtrade HS6 明细/贸易伙伴数据读取失败，相关曲线暂缺（{safe_error(exc)}）")
+            latest_period = None
+            monthly_points = []
+            export_partners, import_partners = [], []
 
     if latest_period and latest_period < _current_period():
         warnings.append(
@@ -232,22 +248,22 @@ def build_customs_hs_detail_analysis_text(detail: dict[str, Any]) -> str:
     ]
     for row in detail.get("monthly_points") or []:
         lines.append(
-            f"- {row.get('month')}: 出口{_fmt_usd(row.get('export_value_usd'))}、进口{_fmt_usd(row.get('import_value_usd'))}、"
-            f"差额{_fmt_usd(row.get('balance_value_usd'), signed=True)}；"
+            f"- {row.get('month')}: 出口{fmt_usd(row.get('export_value_usd'))}、进口{fmt_usd(row.get('import_value_usd'))}、"
+            f"差额{fmt_usd(row.get('balance_value_usd'), signed=True)}；"
             f"出口数量{_fmt_quantity(row.get('export_quantity'), row.get('export_quantity_unit'))}、"
             f"进口数量{_fmt_quantity(row.get('import_quantity'), row.get('import_quantity_unit'))}；"
-            f"出口环比{_fmt_pct(row.get('export_mom_pct'))}、进口环比{_fmt_pct(row.get('import_mom_pct'))}。"
+            f"出口环比{fmt_pct(row.get('export_mom_pct'))}、进口环比{fmt_pct(row.get('import_mom_pct'))}。"
         )
     if detail.get("top_export_partners"):
         lines.append("最新月出口目的地：")
         lines.extend(
-            f"- {row.get('partner_zh') or row.get('partner')}: {_fmt_usd(row.get('value_usd'))}，数量{_fmt_quantity(row.get('quantity'), row.get('quantity_unit'))}"
+            f"- {row.get('partner_zh') or row.get('partner')}: {fmt_usd(row.get('value_usd'))}，数量{_fmt_quantity(row.get('quantity'), row.get('quantity_unit'))}"
             for row in (detail.get("top_export_partners") or [])[:8]
         )
     if detail.get("top_import_partners"):
         lines.append("最新月进口来源地：")
         lines.extend(
-            f"- {row.get('partner_zh') or row.get('partner')}: {_fmt_usd(row.get('value_usd'))}，数量{_fmt_quantity(row.get('quantity'), row.get('quantity_unit'))}"
+            f"- {row.get('partner_zh') or row.get('partner')}: {fmt_usd(row.get('value_usd'))}，数量{_fmt_quantity(row.get('quantity'), row.get('quantity_unit'))}"
             for row in (detail.get("top_import_partners") or [])[:8]
         )
     if detail.get("warnings"):
@@ -303,7 +319,7 @@ async def _fetch_hs_reference(client: httpx.AsyncClient) -> list[dict[str, Any]]
                 "code": code,
                 "name": name,
                 "name_zh": None,
-                "aggr_level": _safe_int(row.get("aggrLevel")),
+                "aggr_level": safe_int(row.get("aggrLevel")),
                 "is_leaf": str(row.get("isLeaf")) == "1",
                 "quantity_unit": row.get("standardUnitAbbr"),
                 "source": "UN Comtrade HS reference",
@@ -347,7 +363,7 @@ async def _fetch_monthly_world_rows(
         by_period = {
             str(row.get("period")): row
             for row in rows
-            if _safe_int(row.get("partnerCode")) == 0
+            if safe_int(row.get("partnerCode")) == 0
         }
         for period in periods:
             result[(period, flow)] = by_period.get(period)
@@ -364,7 +380,7 @@ async def _fetch_partner_rows(
     parsed = [
         _parse_partner_row(row, flow)
         for row in rows
-        if _safe_int(row.get("partnerCode")) not in (None, 0) and not row.get("isAggregate")
+        if safe_int(row.get("partnerCode")) not in (None, 0) and not row.get("isAggregate")
     ]
     return sorted(parsed, key=lambda row: row.get("value_usd") or 0, reverse=True)
 
@@ -420,8 +436,8 @@ def _build_monthly_points(rows_by_key: dict[tuple[str, str], Optional[dict[str, 
     for period in periods:
         export_row = rows_by_key.get((period, "X")) or {}
         import_row = rows_by_key.get((period, "M")) or {}
-        export_value = _num(export_row.get("primaryValue"))
-        import_value = _num(import_row.get("primaryValue"))
+        export_value = num(export_row.get("primaryValue"))
+        import_value = num(import_row.get("primaryValue"))
         point = {
             "period": period,
             "month": f"{period[:4]}-{period[4:]}",
@@ -429,23 +445,23 @@ def _build_monthly_points(rows_by_key: dict[tuple[str, str], Optional[dict[str, 
             "import_value_usd": import_value,
             "trade_value_usd": _sum_optional(export_value, import_value),
             "balance_value_usd": _subtract(export_value, import_value),
-            "export_quantity": _num(export_row.get("qty")),
+            "export_quantity": num(export_row.get("qty")),
             "export_quantity_unit": export_row.get("qtyUnitAbbr") or export_row.get("altQtyUnitAbbr"),
-            "import_quantity": _num(import_row.get("qty")),
+            "import_quantity": num(import_row.get("qty")),
             "import_quantity_unit": import_row.get("qtyUnitAbbr") or import_row.get("altQtyUnitAbbr"),
-            "export_unit_value_usd": _unit_value(export_value, _num(export_row.get("qty"))),
-            "import_unit_value_usd": _unit_value(import_value, _num(import_row.get("qty"))),
+            "export_unit_value_usd": _unit_value(export_value, num(export_row.get("qty"))),
+            "import_unit_value_usd": _unit_value(import_value, num(import_row.get("qty"))),
             "cmd_desc": export_row.get("cmdDesc") or import_row.get("cmdDesc"),
         }
-        point["export_mom_pct"] = _pct_change(
+        point["export_mom_pct"] = pct_change(
             point.get("export_value_usd"),
             previous.get("export_value_usd") if previous else None,
         )
-        point["import_mom_pct"] = _pct_change(
+        point["import_mom_pct"] = pct_change(
             point.get("import_value_usd"),
             previous.get("import_value_usd") if previous else None,
         )
-        point["trade_mom_pct"] = _pct_change(
+        point["trade_mom_pct"] = pct_change(
             point.get("trade_value_usd"),
             previous.get("trade_value_usd") if previous else None,
         )
@@ -455,8 +471,8 @@ def _build_monthly_points(rows_by_key: dict[tuple[str, str], Optional[dict[str, 
 
 
 def _parse_partner_row(row: dict[str, Any], flow: str) -> dict[str, Any]:
-    value = _num(row.get("primaryValue"))
-    quantity = _num(row.get("qty"))
+    value = num(row.get("primaryValue"))
+    quantity = num(row.get("qty"))
     return {
         "direction": "export" if flow == "X" else "import",
         "partner": row.get("partnerDesc") or "",
@@ -618,22 +634,6 @@ def _normalize_query(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
 
 
-def _num(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return round(float(value), 6)
-    except (TypeError, ValueError):
-        return None
-
-
-def _safe_int(value: Any) -> Optional[int]:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _subtract(left: Optional[float], right: Optional[float]) -> Optional[float]:
     if left is None or right is None:
         return None
@@ -646,44 +646,14 @@ def _sum_optional(left: Optional[float], right: Optional[float]) -> Optional[flo
     return round((left or 0) + (right or 0), 6)
 
 
-def _pct_change(current: Optional[float], previous: Optional[float]) -> Optional[float]:
-    if current is None or previous in (None, 0):
-        return None
-    return round((current - previous) / abs(previous) * 100, 3)
-
-
 def _unit_value(value: Optional[float], quantity: Optional[float]) -> Optional[float]:
     if value is None or quantity in (None, 0):
         return None
     return round(value / quantity, 6)
-
-
-def _fmt_usd(value: Optional[float], signed: bool = False) -> str:
-    if value is None:
-        return "—"
-    prefix = "+" if signed and value > 0 else "-" if value < 0 else ""
-    abs_value = abs(value)
-    if abs_value >= 1_000_000_000:
-        return f"{prefix}${abs_value / 1_000_000_000:.2f}B"
-    if abs_value >= 1_000_000:
-        return f"{prefix}${abs_value / 1_000_000:.2f}M"
-    if abs_value >= 1_000:
-        return f"{prefix}${abs_value / 1_000:.1f}K"
-    return f"{prefix}${abs_value:.0f}"
-
-
 def _fmt_quantity(value: Optional[float], unit: Optional[str]) -> str:
     if value is None:
         return "—"
     return f"{value:,.0f}{unit or ''}"
-
-
-def _fmt_pct(value: Optional[float]) -> str:
-    if value is None:
-        return "—"
-    return f"{'+' if value > 0 else ''}{value:.1f}%"
-
-
 def _partner_zh(name: str) -> Optional[str]:
     mapping = {
         "World": "全球",

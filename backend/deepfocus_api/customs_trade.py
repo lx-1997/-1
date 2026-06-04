@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from .shared_utils import num, pct_change, fmt_usd, fmt_pct, safe_error
+
 import asyncio
 import copy
+import json
 import re
 from datetime import datetime, timezone
 from html import unescape
@@ -282,12 +285,24 @@ async def fetch_customs_trade_snapshot() -> dict[str, Any]:
         preliminary_response, detailed_response = await asyncio.gather(
             client.get(PRELIMINARY_URL),
             client.get(DETAILED_URL),
+            return_exceptions=True,
         )
-        preliminary_response.raise_for_status()
-        detailed_response.raise_for_status()
-
-        preliminary_links = _extract_links(preliminary_response.text, PRELIMINARY_URL)
-        detailed_links = _extract_links(detailed_response.text, DETAILED_URL)
+        try:
+            if isinstance(preliminary_response, Exception):
+                raise preliminary_response
+            preliminary_response.raise_for_status()
+            preliminary_links = _extract_links(preliminary_response.text, PRELIMINARY_URL)
+        except Exception as exc:
+            warnings.append(f"海关英文站总量/重点商品快报读取失败，相关数据暂缺（{safe_error(exc)}）")
+            preliminary_links = {}
+        try:
+            if isinstance(detailed_response, Exception):
+                raise detailed_response
+            detailed_response.raise_for_status()
+            detailed_links = _extract_links(detailed_response.text, DETAILED_URL)
+        except Exception as exc:
+            warnings.append(f"海关英文站明细页（分国别/HS章节）读取失败，相关数据暂缺（{safe_error(exc)}）")
+            detailed_links = {}
         monthly_report_links: dict[str, dict[str, str]] = {}
         try:
             monthly_index_response = await client.get(MONTHLY_REPORT_URL)
@@ -507,7 +522,7 @@ def build_customs_trade_analysis_text(
     selected_tab: Optional[str] = None,
     focus_key: Optional[str] = None,
 ) -> str:
-    """Condense the customs snapshot into a model-readable Chinese briefing."""
+    """Condense the customs snapshot into a compact model-readable Chinese briefing."""
     total_items = (snapshot.get("total") or {}).get("items") or {}
     total = total_items.get("total") or {}
     export = total_items.get("export") or {}
@@ -515,24 +530,18 @@ def build_customs_trade_analysis_text(
     balance = total_items.get("balance") or {}
 
     lines = [
-        "请作为专业外贸、产业链与资产研究 Agent，基于以下中国海关官方进出口数据做一键投研分析。",
-        "分析框架：EvidenceAgent核对数据口径，ResearchAgent提炼产业链变化，RiskAgent识别反证与口径风险，ReportAgent输出可执行跟踪清单。",
-        "输出请使用中文，覆盖：总体判断、出口/进口动能、HS商品结构、重点商品、贸易伙伴、产业链映射、潜在受益/承压资产方向、风险和下一步验证动作。",
-        "不要给出买卖建议或合规结论；所有判断必须落在数据变化、产业链传导和待验证指标上。",
+        "中国海关进出口 AI 快速事实包。请基于事实判断外贸动能、产业链传导、代表研究样本和反证风险。",
         "",
         f"数据月份：{snapshot.get('month_label') or snapshot.get('observed_month') or '未知'}",
         f"统计单位：{snapshot.get('unit') or 'USD million'}",
         f"当前前端关注：{focus or '全局海关进出口快照'}",
         f"当前视图：{selected_tab or '未指定'}",
         "",
-        "投资映射候选池（必须按子链条选择代表股票，不要混用）：",
-        "- 专门电气设备/输变电/变压器：思源电气(002028)、特变电工(600089)、金盘科技(688676)、中国西电(601179)、平高电气(600312)、许继电气(000400)。",
-        "- 电表/用电自动化与配网设备：海兴电力(603556)、三星医疗(601567)、炬华科技(300360)、正泰电器(601877)。",
-        "- 逆变器/电源与储能设备：阳光电源(300274)、德业股份(605117)、固德威(688390)、科士达(002518)。",
-        "- 电子零部件/连接器/消费电子制造：立讯精密(002475)、歌尔股份(002241)、领益智造(002600)、鹏鼎控股(002938)。",
-        "- AI服务器/代工/PCB/光模块：工业富联(601138)、沪电股份(002463)、中际旭创(300308)、新易盛(300502)。",
-        "- 工控自动化/伺服/工业电气：汇川技术(300124)、麦格米特(002851)、鸣志电器(603728)。",
-        "- 传统出口/对美敞口观察池：申洲国际(02313.HK)、华利集团(300979)、顾家家居(603816)、浙江永强(002489)。",
+        "投资映射候选池：",
+        "- 电力设备出海：思源电气(002028)、特变电工(600089)、金盘科技(688676)、中国西电(601179)。",
+        "- AI硬件/PCB/光模块：工业富联(601138)、沪电股份(002463)、中际旭创(300308)、新易盛(300502)。",
+        "- 电子零部件：立讯精密(002475)、歌尔股份(002241)、鹏鼎控股(002938)。",
+        "- 传统出口观察：申洲国际(02313.HK)、华利集团(300979)、顾家家居(603816)。",
         "",
         "一、总量指标",
         _analysis_total_line("当月进出口", total.get("current_usd_mn"), total.get("mom_pct"), total.get("yoy_current_pct")),
@@ -545,50 +554,50 @@ def build_customs_trade_analysis_text(
 
     monthly_rows = snapshot.get("monthly_trend") or []
     if monthly_rows:
-        last_12 = monthly_rows[-12:]
-        first = last_12[0]
-        latest = last_12[-1]
+        recent_months = monthly_rows[-6:]
+        first = recent_months[0]
+        latest = recent_months[-1]
         lines.extend(
             [
                 "",
-                "二、最近12个月总量趋势（完整读取）",
+                "二、最近6个月总量趋势（用于AI快速判断）",
                 (
                     f"{first.get('month')} 至 {latest.get('month')}："
-                    f"出口 {_fmt_usd(first.get('export_usd_mn'))} -> {_fmt_usd(latest.get('export_usd_mn'))}，"
-                    f"进口 {_fmt_usd(first.get('import_usd_mn'))} -> {_fmt_usd(latest.get('import_usd_mn'))}，"
-                    f"差额 {_fmt_usd(first.get('balance_usd_mn'), signed=True)} -> {_fmt_usd(latest.get('balance_usd_mn'), signed=True)}。"
+                    f"出口 {fmt_usd(first.get('export_usd_mn'))} -> {fmt_usd(latest.get('export_usd_mn'))}，"
+                    f"进口 {fmt_usd(first.get('import_usd_mn'))} -> {fmt_usd(latest.get('import_usd_mn'))}，"
+                    f"差额 {fmt_usd(first.get('balance_usd_mn'), signed=True)} -> {fmt_usd(latest.get('balance_usd_mn'), signed=True)}。"
                 ),
-                "近12个月当月进出口明细：",
-                *_analysis_monthly_lines(last_12),
+                "近6个月当月进出口明细：",
+                *_analysis_monthly_lines(recent_months),
             ]
         )
 
     lines.extend(
         [
             "",
-            "三、当前选中项近12个月曲线",
-            *_analysis_focus_trend_lines(snapshot, selected_tab=selected_tab, focus_key=focus_key),
+            "三、当前选中项近6个月曲线",
+            *_analysis_focus_trend_lines(snapshot, selected_tab=selected_tab, focus_key=focus_key)[-6:],
             "",
-            "四、HS2商品章结构（按累计贸易额排序）",
-            *_analysis_hs_lines(snapshot.get("hs_chapters") or [], limit=12),
+            "四、HS2商品章结构 Top 6（按累计贸易额排序）",
+            *_analysis_hs_lines(snapshot.get("hs_chapters") or [], limit=6),
             "",
-            "五、HS2头部商品近12个月动能摘要",
-            *_analysis_hs_trend_summary(snapshot, snapshot.get("hs_chapters") or [], limit=10),
+            "五、HS2头部商品动能摘要 Top 4",
+            *_analysis_hs_trend_summary(snapshot, snapshot.get("hs_chapters") or [], limit=4),
             "",
-            "六、重点出口商品（按累计金额排序）",
-            *_analysis_commodity_lines(snapshot.get("major_exports") or [], limit=12),
+            "六、重点出口商品 Top 6（按累计金额排序）",
+            *_analysis_commodity_lines(snapshot.get("major_exports") or [], limit=6),
             "",
-            "七、重点出口商品近12个月动能摘要",
-            *_analysis_commodity_trend_summary(snapshot, snapshot.get("major_exports") or [], limit=10),
+            "七、重点出口商品动能摘要 Top 4",
+            *_analysis_commodity_trend_summary(snapshot, snapshot.get("major_exports") or [], limit=4),
             "",
-            "八、重点进口商品（按累计金额排序）",
-            *_analysis_commodity_lines(snapshot.get("major_imports") or [], limit=12),
+            "八、重点进口商品 Top 6（按累计金额排序）",
+            *_analysis_commodity_lines(snapshot.get("major_imports") or [], limit=6),
             "",
-            "九、重点进口商品近12个月动能摘要",
-            *_analysis_commodity_trend_summary(snapshot, snapshot.get("major_imports") or [], limit=10),
+            "九、重点进口商品动能摘要 Top 4",
+            *_analysis_commodity_trend_summary(snapshot, snapshot.get("major_imports") or [], limit=4),
             "",
-            "十、主要贸易伙伴（按累计总额排序）",
-            *_analysis_partner_lines(snapshot.get("partners") or [], limit=12),
+            "十、主要贸易伙伴 Top 6（按累计总额排序）",
+            *_analysis_partner_lines(snapshot.get("partners") or [], limit=6),
         ]
     )
 
@@ -603,6 +612,96 @@ def build_customs_trade_analysis_text(
         lines.extend(["", "十二、数据源提示", *(f"- {warning}" for warning in snapshot.get("warnings") or [])])
 
     return "\n".join(line for line in lines if line is not None)
+
+
+def build_customs_trade_ai_snapshot(
+    snapshot: dict[str, Any],
+    focus: Optional[str] = None,
+    *,
+    selected_tab: Optional[str] = None,
+    focus_key: Optional[str] = None,
+) -> str:
+    """Build a tiny JSON fact pack for button-level cloud AI analysis."""
+    total_items = (snapshot.get("total") or {}).get("items") or {}
+    monthly_rows = snapshot.get("monthly_trend") or []
+    partners = [row for row in (snapshot.get("partners") or []) if isinstance(row, dict) and not row.get("is_region_header")]
+    payload = {
+        "m": snapshot.get("month_label") or snapshot.get("observed_month"),
+        "unit": "USD mn",
+        "focus": focus or "全局海关进出口快照",
+        "tab": selected_tab,
+        "key": focus_key,
+        "sum": {
+            "trade": _ai_total_item(total_items.get("total")),
+            "export": _ai_total_item(total_items.get("export")),
+            "import": _ai_total_item(total_items.get("import")),
+            "balance": _ai_total_item(total_items.get("balance")),
+        },
+        "stocks": {
+            "电力设备": ["思源电气(002028)", "特变电工(600089)", "金盘科技(688676)"],
+            "AI硬件": ["工业富联(601138)", "沪电股份(002463)", "中际旭创(300308)"],
+            "电子零部件": ["立讯精密(002475)", "歌尔股份(002241)", "鹏鼎控股(002938)"],
+            "传统出口": ["申洲国际(02313.HK)", "华利集团(300979)", "顾家家居(603816)"],
+        },
+        "hs": [_ai_hs_item(row) for row in (snapshot.get("hs_chapters") or [])[:3] if isinstance(row, dict)],
+        "exports": [_ai_commodity_item(row) for row in (snapshot.get("major_exports") or [])[:3] if isinstance(row, dict)],
+        "imports": [_ai_commodity_item(row) for row in (snapshot.get("major_imports") or [])[:2] if isinstance(row, dict)],
+        "partners": [_ai_partner_item(row) for row in partners[:3]],
+        "months": [
+            {
+                "m": row.get("month"),
+                "ex": row.get("export_usd_mn"),
+                "im": row.get("import_usd_mn"),
+                "bal": row.get("balance_usd_mn"),
+                "ex_mom": row.get("export_mom_pct"),
+                "im_mom": row.get("import_mom_pct"),
+            }
+            for row in monthly_rows[-3:]
+            if isinstance(row, dict)
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _ai_total_item(row: Optional[dict[str, Any]]) -> dict[str, Any]:
+    row = row or {}
+    return {
+        "cur": row.get("current_usd_mn"),
+        "ytd": row.get("ytd_usd_mn"),
+        "mom": row.get("mom_pct"),
+        "yoy": row.get("yoy_current_pct"),
+        "ytd_yoy": row.get("yoy_ytd_pct"),
+    }
+
+
+def _ai_hs_item(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "code": row.get("code"),
+        "name": row.get("description_zh") or row.get("name_zh") or row.get("description") or row.get("name"),
+        "ytd": row.get("ytd_trade_usd_mn"),
+        "ex_yoy": row.get("yoy_export_pct"),
+        "im_yoy": row.get("yoy_import_pct"),
+    }
+
+
+def _ai_commodity_item(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": row.get("commodity_zh") or row.get("commodity"),
+        "ytd": row.get("ytd_value_usd_mn"),
+        "yoy": row.get("value_yoy_pct"),
+        "mom": row.get("value_mom_pct"),
+        "qty_mom": row.get("quantity_mom_pct"),
+    }
+
+
+def _ai_partner_item(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": row.get("name_zh") or row.get("name"),
+        "ytd": row.get("ytd_total_usd_mn"),
+        "yoy": row.get("yoy_total_pct"),
+        "ex_yoy": row.get("yoy_export_pct"),
+        "im_yoy": row.get("yoy_import_pct"),
+    }
 
 
 async def _fetch_optional_page(
@@ -827,11 +926,11 @@ def _parse_total_table(page: Optional[dict[str, Any]]) -> dict[str, Any]:
         record = {
             "key": key,
             "item": item,
-            "current_usd_mn": _num(row[1], scale),
-            "ytd_usd_mn": _num(row[2], scale),
-            "mom_pct": _num(row[3]),
-            "yoy_current_pct": _num(row[4]),
-            "yoy_ytd_pct": _num(row[5]),
+            "current_usd_mn": num(row[1], scale),
+            "ytd_usd_mn": num(row[2], scale),
+            "mom_pct": num(row[3]),
+            "yoy_current_pct": num(row[4]),
+            "yoy_ytd_pct": num(row[5]),
         }
         parsed_rows.append(record)
         items[key] = record
@@ -857,14 +956,14 @@ def _parse_monthly_summary(page: Optional[dict[str, Any]]) -> list[dict[str, Any
         parsed.append(
             {
                 "month": month,
-                "total_usd_mn": _num(row[1], scale),
-                "export_usd_mn": _num(row[2], scale),
-                "import_usd_mn": _num(row[3], scale),
-                "balance_usd_mn": _num(row[4], scale),
-                "ytd_total_usd_mn": _num(row[5], scale),
-                "ytd_export_usd_mn": _num(row[6], scale),
-                "ytd_import_usd_mn": _num(row[7], scale),
-                "ytd_balance_usd_mn": _num(row[8], scale),
+                "total_usd_mn": num(row[1], scale),
+                "export_usd_mn": num(row[2], scale),
+                "import_usd_mn": num(row[3], scale),
+                "balance_usd_mn": num(row[4], scale),
+                "ytd_total_usd_mn": num(row[5], scale),
+                "ytd_export_usd_mn": num(row[6], scale),
+                "ytd_import_usd_mn": num(row[7], scale),
+                "ytd_balance_usd_mn": num(row[8], scale),
             }
         )
     return sorted(parsed, key=lambda row: row["month"])
@@ -880,25 +979,25 @@ def _parse_partner_table(page: Optional[dict[str, Any]]) -> list[dict[str, Any]]
             continue
         name = row[0]
         display_name = name.rstrip(":")
-        if name.upper() == "TOTAL" or not _num(row[1]):
+        if name.upper() == "TOTAL" or not num(row[1]):
             continue
-        ytd_export = _num(row[4], scale)
-        ytd_import = _num(row[6], scale)
+        ytd_export = num(row[4], scale)
+        ytd_import = num(row[6], scale)
         parsed.append(
             {
                 "name": display_name,
                 "name_zh": PARTNER_ZH.get(display_name),
                 "is_region_header": name.endswith(":"),
-                "current_total_usd_mn": _num(row[1], scale),
-                "ytd_total_usd_mn": _num(row[2], scale),
-                "current_export_usd_mn": _num(row[3], scale),
+                "current_total_usd_mn": num(row[1], scale),
+                "ytd_total_usd_mn": num(row[2], scale),
+                "current_export_usd_mn": num(row[3], scale),
                 "ytd_export_usd_mn": ytd_export,
-                "current_import_usd_mn": _num(row[5], scale),
+                "current_import_usd_mn": num(row[5], scale),
                 "ytd_import_usd_mn": ytd_import,
                 "ytd_balance_usd_mn": _subtract(ytd_export, ytd_import),
-                "yoy_total_pct": _num(row[7]),
-                "yoy_export_pct": _num(row[8]),
-                "yoy_import_pct": _num(row[9]),
+                "yoy_total_pct": num(row[7]),
+                "yoy_export_pct": num(row[8]),
+                "yoy_import_pct": num(row[9]),
             }
         )
     return parsed
@@ -913,25 +1012,25 @@ def _parse_hs_table(page: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
         if len(row) < 5 or row[0].lower().startswith("hs section"):
             continue
         name = row[0]
-        if name.upper() == "TOTAL" or name.strip().isdigit() or not _num(row[1]):
+        if name.upper() == "TOTAL" or name.strip().isdigit() or not num(row[1]):
             continue
         hs_code, description = _split_hs_name(name)
         section_key = _section_key(name)
         name_zh = HS_CHAPTER_ZH.get(hs_code or "") or HS_SECTION_ZH.get(section_key or "")
         if len(row) >= 7:
-            current_export = _num(row[1], scale)
-            ytd_export = _num(row[2], scale)
-            current_import = _num(row[3], scale)
-            ytd_import = _num(row[4], scale)
-            yoy_export = _num(row[5])
-            yoy_import = _num(row[6])
+            current_export = num(row[1], scale)
+            ytd_export = num(row[2], scale)
+            current_import = num(row[3], scale)
+            ytd_import = num(row[4], scale)
+            yoy_export = num(row[5])
+            yoy_import = num(row[6])
         else:
-            current_export = _num(row[1], scale)
+            current_export = num(row[1], scale)
             ytd_export = current_export
-            current_import = _num(row[2], scale)
+            current_import = num(row[2], scale)
             ytd_import = current_import
-            yoy_export = _num(row[3])
-            yoy_import = _num(row[4])
+            yoy_export = num(row[3])
+            yoy_import = num(row[4])
         record = {
             "name": name,
             "name_zh": name_zh,
@@ -969,23 +1068,23 @@ def _parse_major_commodities_table(
         if len(row) < 6 or row[0].lower() in {"commodity", "quantity"}:
             continue
         commodity = row[0].replace("*", "").strip()
-        current_quantity = _num(row[2])
-        current_value = _num(row[3], value_scale)
+        current_quantity = num(row[2])
+        current_value = num(row[3], value_scale)
         if len(row) >= 8:
-            ytd_quantity = _num(row[4])
-            ytd_value = _num(row[5], value_scale)
+            ytd_quantity = num(row[4])
+            ytd_value = num(row[5], value_scale)
             has_previous_ytd_columns = len(row) >= 10
-            previous_ytd_quantity = _num(row[6]) if has_previous_ytd_columns else None
-            previous_ytd_value = _num(row[7], value_scale) if has_previous_ytd_columns else None
-            quantity_yoy = _num(row[8]) if has_previous_ytd_columns else _num(row[6])
-            value_yoy = _num(row[9]) if has_previous_ytd_columns else _num(row[7])
+            previous_ytd_quantity = num(row[6]) if has_previous_ytd_columns else None
+            previous_ytd_value = num(row[7], value_scale) if has_previous_ytd_columns else None
+            quantity_yoy = num(row[8]) if has_previous_ytd_columns else num(row[6])
+            value_yoy = num(row[9]) if has_previous_ytd_columns else num(row[7])
         else:
             ytd_quantity = current_quantity
             ytd_value = current_value
             previous_ytd_quantity = None
             previous_ytd_value = None
-            quantity_yoy = _num(row[4])
-            value_yoy = _num(row[5])
+            quantity_yoy = num(row[4])
+            value_yoy = num(row[5])
         if not commodity or ytd_value is None:
             continue
         zh_map = MAJOR_IMPORT_ZH if direction == "import" else MAJOR_EXPORT_ZH
@@ -1032,20 +1131,6 @@ def _table_currency(rows: list[list[str]]) -> str:
     if "us$" in unit_text or "usd" in unit_text:
         return "USD"
     return ""
-
-
-def _num(value: Any, scale: float = 1.0) -> Optional[float]:
-    if value is None:
-        return None
-    text = str(value).strip().replace(",", "")
-    if not text or text in {"-", "—", "–"}:
-        return None
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
-    if not match:
-        return None
-    return round(float(match.group(0)) * scale, 3)
-
-
 def _subtract(left: Optional[float], right: Optional[float]) -> Optional[float]:
     if left is None or right is None:
         return None
@@ -1062,19 +1147,19 @@ def _enrich_monthly_mom(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ordered = sorted(rows, key=lambda row: row["month"])
     previous: Optional[dict[str, Any]] = None
     for row in ordered:
-        row["total_mom_pct"] = _pct_change(
+        row["total_mom_pct"] = pct_change(
             row.get("total_usd_mn"),
             previous.get("total_usd_mn") if previous else None,
         )
-        row["export_mom_pct"] = _pct_change(
+        row["export_mom_pct"] = pct_change(
             row.get("export_usd_mn"),
             previous.get("export_usd_mn") if previous else None,
         )
-        row["import_mom_pct"] = _pct_change(
+        row["import_mom_pct"] = pct_change(
             row.get("import_usd_mn"),
             previous.get("import_usd_mn") if previous else None,
         )
-        row["balance_mom_pct"] = _pct_change(
+        row["balance_mom_pct"] = pct_change(
             row.get("balance_usd_mn"),
             previous.get("balance_usd_mn") if previous else None,
         )
@@ -1089,15 +1174,15 @@ def _enrich_partner_mom(
     previous_by_key = {_partner_key(row): row for row in previous_rows if _partner_key(row)}
     for row in rows:
         previous = previous_by_key.get(_partner_key(row))
-        row["mom_total_pct"] = _pct_change(
+        row["mom_total_pct"] = pct_change(
             row.get("current_total_usd_mn"),
             previous.get("current_total_usd_mn") if previous else None,
         )
-        row["mom_export_pct"] = _pct_change(
+        row["mom_export_pct"] = pct_change(
             row.get("current_export_usd_mn"),
             previous.get("current_export_usd_mn") if previous else None,
         )
-        row["mom_import_pct"] = _pct_change(
+        row["mom_import_pct"] = pct_change(
             row.get("current_import_usd_mn"),
             previous.get("current_import_usd_mn") if previous else None,
         )
@@ -1111,15 +1196,15 @@ def _enrich_hs_mom(
     previous_by_key = {_hs_key(row): row for row in previous_rows if _hs_key(row)}
     for row in rows:
         previous = previous_by_key.get(_hs_key(row))
-        row["mom_trade_pct"] = _pct_change(
+        row["mom_trade_pct"] = pct_change(
             row.get("current_trade_usd_mn"),
             previous.get("current_trade_usd_mn") if previous else None,
         )
-        row["mom_export_pct"] = _pct_change(
+        row["mom_export_pct"] = pct_change(
             row.get("current_export_usd_mn"),
             previous.get("current_export_usd_mn") if previous else None,
         )
-        row["mom_import_pct"] = _pct_change(
+        row["mom_import_pct"] = pct_change(
             row.get("current_import_usd_mn"),
             previous.get("current_import_usd_mn") if previous else None,
         )
@@ -1133,11 +1218,11 @@ def _enrich_major_commodity_mom(
     previous_by_key = {_commodity_key(row): row for row in previous_rows if _commodity_key(row)}
     for row in rows:
         previous = previous_by_key.get(_commodity_key(row))
-        row["quantity_mom_pct"] = _pct_change(
+        row["quantity_mom_pct"] = pct_change(
             row.get("current_quantity"),
             previous.get("current_quantity") if previous else None,
         )
-        row["value_mom_pct"] = _pct_change(
+        row["value_mom_pct"] = pct_change(
             row.get("current_value_usd_mn"),
             previous.get("current_value_usd_mn") if previous else None,
         )
@@ -1189,14 +1274,6 @@ def _build_major_commodity_trends(
                     }
                 )
     return {key: sorted(points, key=lambda point: point["month"]) for key, points in trends.items()}
-
-
-def _pct_change(current: Optional[float], previous: Optional[float]) -> Optional[float]:
-    if current is None or previous in (None, 0):
-        return None
-    return round((current / previous - 1) * 100, 1)
-
-
 def _partner_key(row: dict[str, Any]) -> str:
     return str(row.get("name") or "").rstrip(":").strip().lower()
 
@@ -1289,13 +1366,13 @@ def _analysis_hs_lines(rows: list[dict[str, Any]], limit: int) -> list[str]:
         lines.append(
             "- "
             f"{code} {name}："
-            f"累计贸易 {_fmt_usd(row.get('ytd_trade_usd_mn'))}，"
-            f"累计出口 {_fmt_usd(row.get('ytd_export_usd_mn'))}，"
-            f"累计进口 {_fmt_usd(row.get('ytd_import_usd_mn'))}，"
-            f"差额 {_fmt_usd(row.get('ytd_balance_usd_mn'), signed=True)}，"
-            f"贸易环比 {_fmt_pct(row.get('mom_trade_pct'))}，"
-            f"出口同比 {_fmt_pct(row.get('yoy_export_pct'))}，"
-            f"进口同比 {_fmt_pct(row.get('yoy_import_pct'))}。"
+            f"累计贸易 {fmt_usd(row.get('ytd_trade_usd_mn'))}，"
+            f"累计出口 {fmt_usd(row.get('ytd_export_usd_mn'))}，"
+            f"累计进口 {fmt_usd(row.get('ytd_import_usd_mn'))}，"
+            f"差额 {fmt_usd(row.get('ytd_balance_usd_mn'), signed=True)}，"
+            f"贸易环比 {fmt_pct(row.get('mom_trade_pct'))}，"
+            f"出口同比 {fmt_pct(row.get('yoy_export_pct'))}，"
+            f"进口同比 {fmt_pct(row.get('yoy_import_pct'))}。"
         )
     return lines or ["- 暂无HS结构数据。"]
 
@@ -1307,11 +1384,11 @@ def _analysis_commodity_lines(rows: list[dict[str, Any]], limit: int) -> list[st
         lines.append(
             "- "
             f"{name}："
-            f"累计金额 {_fmt_usd(row.get('ytd_value_usd_mn'))}，"
-            f"当月金额 {_fmt_usd(row.get('current_value_usd_mn'))}，"
-            f"金额环比 {_fmt_pct(row.get('value_mom_pct'))}，"
-            f"金额同比 {_fmt_pct(row.get('value_yoy_pct'))}，"
-            f"数量环比 {_fmt_pct(row.get('quantity_mom_pct'))}，"
+            f"累计金额 {fmt_usd(row.get('ytd_value_usd_mn'))}，"
+            f"当月金额 {fmt_usd(row.get('current_value_usd_mn'))}，"
+            f"金额环比 {fmt_pct(row.get('value_mom_pct'))}，"
+            f"金额同比 {fmt_pct(row.get('value_yoy_pct'))}，"
+            f"数量环比 {fmt_pct(row.get('quantity_mom_pct'))}，"
             f"单位 {row.get('quantity_unit') or '-'}。"
         )
     return lines or ["- 暂无重点商品数据。"]
@@ -1325,12 +1402,12 @@ def _analysis_partner_lines(rows: list[dict[str, Any]], limit: int) -> list[str]
         lines.append(
             "- "
             f"{name}："
-            f"累计总额 {_fmt_usd(row.get('ytd_total_usd_mn'))}，"
-            f"累计出口 {_fmt_usd(row.get('ytd_export_usd_mn'))}，"
-            f"累计进口 {_fmt_usd(row.get('ytd_import_usd_mn'))}，"
-            f"差额 {_fmt_usd(row.get('ytd_balance_usd_mn'), signed=True)}，"
-            f"总额环比 {_fmt_pct(row.get('mom_total_pct'))}，"
-            f"总额同比 {_fmt_pct(row.get('yoy_total_pct'))}。"
+            f"累计总额 {fmt_usd(row.get('ytd_total_usd_mn'))}，"
+            f"累计出口 {fmt_usd(row.get('ytd_export_usd_mn'))}，"
+            f"累计进口 {fmt_usd(row.get('ytd_import_usd_mn'))}，"
+            f"差额 {fmt_usd(row.get('ytd_balance_usd_mn'), signed=True)}，"
+            f"总额环比 {fmt_pct(row.get('mom_total_pct'))}，"
+            f"总额同比 {fmt_pct(row.get('yoy_total_pct'))}。"
         )
     return lines or ["- 暂无伙伴结构数据。"]
 
@@ -1341,13 +1418,13 @@ def _analysis_monthly_lines(rows: list[dict[str, Any]]) -> list[str]:
         lines.append(
             "- "
             f"{row.get('month')}："
-            f"进出口 {_fmt_usd(row.get('total_usd_mn'))}"
-            f"（环比 {_fmt_pct(row.get('total_mom_pct'))}），"
-            f"出口 {_fmt_usd(row.get('export_usd_mn'))}"
-            f"（环比 {_fmt_pct(row.get('export_mom_pct'))}），"
-            f"进口 {_fmt_usd(row.get('import_usd_mn'))}"
-            f"（环比 {_fmt_pct(row.get('import_mom_pct'))}），"
-            f"差额 {_fmt_usd(row.get('balance_usd_mn'), signed=True)}。"
+            f"进出口 {fmt_usd(row.get('total_usd_mn'))}"
+            f"（环比 {fmt_pct(row.get('total_mom_pct'))}），"
+            f"出口 {fmt_usd(row.get('export_usd_mn'))}"
+            f"（环比 {fmt_pct(row.get('export_mom_pct'))}），"
+            f"进口 {fmt_usd(row.get('import_usd_mn'))}"
+            f"（环比 {fmt_pct(row.get('import_mom_pct'))}），"
+            f"差额 {fmt_usd(row.get('balance_usd_mn'), signed=True)}。"
         )
     return lines or ["- 暂无近12个月总量数据。"]
 
@@ -1366,7 +1443,7 @@ def _analysis_focus_trend_lines(
             return [f"- 选中重点商品 {focus_key} 暂无近12个月曲线。"]
         return [
             "- "
-            f"{point.get('month')}：金额 {_fmt_usd(point.get('value_usd_mn'))}，"
+            f"{point.get('month')}：金额 {fmt_usd(point.get('value_usd_mn'))}，"
             f"数量 {_fmt_quantity(point.get('quantity'))}。"
             for point in points[-12:]
         ]
@@ -1375,10 +1452,10 @@ def _analysis_focus_trend_lines(
         return [f"- 选中HS项 {focus_key} 暂无近12个月曲线。"]
     return [
         "- "
-        f"{point.get('month')}：贸易额 {_fmt_usd(point.get('trade_usd_mn'))}，"
-        f"出口 {_fmt_usd(point.get('export_usd_mn'))}，"
-        f"进口 {_fmt_usd(point.get('import_usd_mn'))}，"
-        f"差额 {_fmt_usd(point.get('balance_usd_mn'), signed=True)}。"
+        f"{point.get('month')}：贸易额 {fmt_usd(point.get('trade_usd_mn'))}，"
+        f"出口 {fmt_usd(point.get('export_usd_mn'))}，"
+        f"进口 {fmt_usd(point.get('import_usd_mn'))}，"
+        f"差额 {fmt_usd(point.get('balance_usd_mn'), signed=True)}。"
         for point in points[-12:]
     ]
 
@@ -1436,16 +1513,16 @@ def _analysis_total_line(
     *,
     signed: bool = False,
 ) -> str:
-    pieces = [f"{label}：{_fmt_usd(value, signed=signed)}"]
+    pieces = [f"{label}：{fmt_usd(value, signed=signed)}"]
     if mom is not None:
-        pieces.append(f"环比 {_fmt_pct(mom)}")
+        pieces.append(f"环比 {fmt_pct(mom)}")
     if yoy is not None:
-        pieces.append(f"同比 {_fmt_pct(yoy)}")
+        pieces.append(f"同比 {fmt_pct(yoy)}")
     return "，".join(pieces) + "。"
 
 
 def _analysis_series(rows: list[dict[str, Any]], key: str) -> str:
-    return "；".join(f"{row.get('month')} {_fmt_usd(row.get(key))}" for row in rows)
+    return "；".join(f"{row.get('month')} {fmt_usd(row.get(key))}" for row in rows)
 
 
 def _trend_summary(points: list[dict[str, Any]], key: str) -> str:
@@ -1458,10 +1535,10 @@ def _trend_summary(points: list[dict[str, Any]], key: str) -> str:
     last3 = _avg_tail(values, 3)
     prev3 = _avg_previous(values, 3, 3)
     return (
-        f"最新 {_fmt_usd(latest)}，"
-        f"月环比 {_fmt_pct(_pct_change(latest, previous))}，"
-        f"近3月均值较前3月 {_fmt_pct(_pct_change(last3, prev3))}，"
-        f"12个月区间 {_fmt_usd(min(values))} 至 {_fmt_usd(max(values))}"
+        f"最新 {fmt_usd(latest)}，"
+        f"月环比 {fmt_pct(pct_change(latest, previous))}，"
+        f"近3月均值较前3月 {fmt_pct(pct_change(last3, prev3))}，"
+        f"12个月区间 {fmt_usd(min(values))} 至 {fmt_usd(max(values))}"
     )
 
 
@@ -1476,8 +1553,8 @@ def _quantity_trend_summary(points: list[dict[str, Any]]) -> str:
     prev3 = _avg_previous(values, 3, 3)
     return (
         f"最新 {_fmt_quantity(latest)}，"
-        f"月环比 {_fmt_pct(_pct_change(latest, previous))}，"
-        f"近3月均值较前3月 {_fmt_pct(_pct_change(last3, prev3))}"
+        f"月环比 {fmt_pct(pct_change(latest, previous))}，"
+        f"近3月均值较前3月 {fmt_pct(pct_change(last3, prev3))}"
     )
 
 
@@ -1510,26 +1587,6 @@ def _avg_tail(values: list[float], count: int) -> Optional[float]:
 def _avg_previous(values: list[float], count: int, offset: int) -> Optional[float]:
     previous = [float(value) for value in values[-count - offset:-offset] if isinstance(value, (int, float))]
     return round(sum(previous) / len(previous), 3) if previous else None
-
-
-def _fmt_usd(value: Optional[float], *, signed: bool = False) -> str:
-    if value is None:
-        return "缺失"
-    prefix = "+" if signed and value > 0 else "-" if value < 0 else ""
-    abs_value = abs(value)
-    if abs_value >= 1_000_000:
-        return f"{prefix}{abs_value / 1_000_000:.2f}万亿美元"
-    if abs_value >= 1_000:
-        return f"{prefix}{abs_value / 1_000:.1f}十亿美元"
-    return f"{prefix}{abs_value:.1f}百万美元"
-
-
-def _fmt_pct(value: Optional[float]) -> str:
-    if value is None:
-        return "缺失"
-    return f"{'+' if value > 0 else ''}{value:.1f}%"
-
-
 def _fmt_quantity(value: Optional[float]) -> str:
     if value is None:
         return "缺失"

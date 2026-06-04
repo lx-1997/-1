@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +47,15 @@ from .data_sources import (
     sync_data_source,
     update_data_item,
 )
+from .dulus_runtime import (
+    build_dulus_runtime_status,
+    create_dulus_memory,
+    init_dulus_runtime_db,
+    inspect_authorized_webbridge,
+    list_dulus_memories,
+    list_dulus_tools,
+    run_dulus_roundtable,
+)
 from .file_tools import extract_local_file, extract_upload_file
 from .cn_earnings_skill import (
     detect_cn_earnings_request,
@@ -59,6 +69,7 @@ from .customs_trade import build_customs_trade_analysis_text, fetch_customs_trad
 from .earnings_calendar import fetch_earnings_calendar
 from .llm import CloudResearchLLM
 from .market_data import fetch_market_quotes, search_market_symbols
+from .market_layers import build_market_data_layer_status
 from .major_event_skill import (
     detect_major_event_request,
     format_major_event_skill_response,
@@ -76,6 +87,8 @@ from .mcp_hub import (
 from .model_config import public_model_config, save_model_config
 from .multi_market_decision import build_multi_market_decision
 from .options_signal import fetch_options_signals
+from .official_news import fetch_official_news
+from .premarket_opportunity import build_premarket_opportunity_radar
 from .professional_research import (
     analyze_professional_report,
     get_professional_report,
@@ -88,6 +101,46 @@ from .professional_research import (
     query_professional_rag,
     run_professional_eval,
 )
+from .shared_utils import clamp
+from .risk_management import (
+    calculate_greeks,
+    calculate_position_risk,
+    close_position,
+    create_position,
+    delete_position,
+    get_pnl_summary,
+    get_position,
+    get_risk_limits,
+    get_risk_summary,
+    init_risk_db,
+    list_pnl_records,
+    list_positions,
+    PositionAlreadyClosedError,
+    refresh_position_prices,
+    update_position,
+    update_risk_limit,
+)
+from .backtest_engine import (
+    calculate_backtest_metrics,
+    compute_equity_curve_from_trades,
+    create_backtest,
+    delete_backtest,
+    get_backtest,
+    init_backtest_db,
+    list_backtests,
+    update_backtest,
+)
+from .backtest_executor import run_backtest, list_backtest_results
+from .agent_loop import run_agent_research_loop
+from .market_dashboard import (
+    fetch_market_dashboard,
+    fetch_ashare_dashboard,
+)
+from .tushare_data import fetch_ashare_structured_data
+from .cross_module_aggregator import (
+    gather_all_for_stock,
+    build_injection_block,
+)
 from .realtime_messages import (
     create_realtime_message,
     init_realtime_message_db,
@@ -95,6 +148,7 @@ from .realtime_messages import (
     publish_data_source_items,
     realtime_message_event_stream,
 )
+from .report_url_ingest import extract_report_url
 from .research_workbench import (
     WORKBENCH_DIR,
     proxy_research_workbench,
@@ -135,6 +189,15 @@ from .schemas import (
     DataSourceSyncRequest,
     DataSourceSyncResponse,
     DataSourceTagListResponse,
+    DulusMemoryCreateRequest,
+    DulusMemoryListResponse,
+    DulusMemoryRecord,
+    DulusRoundtableRequest,
+    DulusRoundtableResponse,
+    DulusRuntimeStatusResponse,
+    DulusToolRecord,
+    DulusWebBridgeInspectRequest,
+    DulusWebBridgeInspectResponse,
     EarningsCalendarResponse,
     FinGptTaskResponse,
     ForecastRequest,
@@ -145,7 +208,9 @@ from .schemas import (
     InvestmentTaskListResponse,
     InvestmentTaskRecord,
     MarketQuoteListResponse,
+    MarketDataLayerStatusResponse,
     MarketSymbolSearchResponse,
+    AShareStructuredDataResponse,
     MajorEventScanRequest,
     MajorEventScanResponse,
     McpCapabilityListResponse,
@@ -156,6 +221,7 @@ from .schemas import (
     McpToolCallRequest,
     McpToolCallResponse,
     NewsSummaryRequest,
+    OfficialNewsResponse,
     ModelConfigRequest,
     ModelConfigResponse,
     MultiMarketDecisionRequest,
@@ -165,6 +231,7 @@ from .schemas import (
     OptionsSignalResponse,
     OrchestratorChatRequest,
     OrchestratorChatResponse,
+    PremarketOpportunityResponse,
     ProfessionalEvalRunRequest,
     ProfessionalEvalRunResponse,
     ProfessionalMetricListResponse,
@@ -176,6 +243,7 @@ from .schemas import (
     ProfessionalReportIngestRequest,
     ProfessionalReportListResponse,
     ProfessionalReportRecord,
+    ProfessionalReportUrlIngestRequest,
     ProfessionalWorkbenchFileIngestRequest,
     RagQueryRequest,
     RealtimeMessageCreateRequest,
@@ -184,6 +252,7 @@ from .schemas import (
     ReportAnalysisRequest,
     SentimentRequest,
     SentimentResponse,
+    attach_data_quality,
     ShareholderChangeInterpretRequest,
     ShareholderChangeInterpretResponse,
     ShareholderChangeScanRequest,
@@ -195,6 +264,30 @@ from .schemas import (
     StockCheckStep,
     SystemReadinessCheck,
     SystemReadinessResponse,
+    GreeksRequest,
+    GreeksResponse,
+    PnlRecord,
+    PnlSummaryResponse,
+    PositionCloseRequest,
+    PositionCreateRequest,
+    PositionListResponse,
+    PositionRecord,
+    PositionRiskMetrics,
+    PositionUpdateRequest,
+    RiskAlert,
+    RiskLimitRecord,
+    RiskLimitUpdateRequest,
+    RiskSummaryResponse,
+    BacktestCreateRequest,
+    BacktestListResponse,
+    BacktestMetricsRequest,
+    BacktestMetricsResponse,
+    BacktestRecord,
+    MarketDashboardResponse,
+    DashboardAnalysisResponse,
+    ModuleContextChatRequest,
+    CrossModuleResearchRequest,
+    CrossModuleResearchResponse,
 )
 
 load_dotenv()
@@ -240,6 +333,9 @@ async def lifespan(app: FastAPI):
     init_professional_research_db()
     init_realtime_message_db()
     init_mcp_db()
+    init_risk_db()
+    init_backtest_db()
+    init_dulus_runtime_db()
     await warm_research_workbench()
     await start_agent_worker()
     yield
@@ -359,7 +455,7 @@ def _build_system_readiness_checks() -> list[SystemReadinessCheck]:
             key="agent_worker",
             name="Agent Worker",
             status="pass" if is_worker_running() else "fail",
-            detail="多 Agent 任务 worker 正在运行。" if is_worker_running() else "多 Agent 任务 worker 未运行。",
+            detail="投研任务 worker 正在运行。" if is_worker_running() else "投研任务 worker 未运行。",
             remediation="启动 FastAPI 后端并确认 lifespan 能正常启动 worker。",
         ),
         SystemReadinessCheck(
@@ -448,12 +544,32 @@ async def update_model_config(request: ModelConfigRequest) -> ModelConfigRespons
 @app.get("/api/market/quotes", response_model=MarketQuoteListResponse)
 async def market_quotes(symbols: str = "") -> MarketQuoteListResponse:
     requested_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return await fetch_market_quotes(requested_symbols)
+    return attach_data_quality(await fetch_market_quotes(requested_symbols))
 
 
 @app.get("/api/market/search", response_model=MarketSymbolSearchResponse)
 async def market_symbol_search(q: str = "", market: Optional[str] = None) -> MarketSymbolSearchResponse:
     return await search_market_symbols(q, market=market)
+
+
+@app.get("/api/market/data-layers", response_model=MarketDataLayerStatusResponse)
+async def market_data_layers(symbol: Optional[str] = None, keyword: Optional[str] = None) -> MarketDataLayerStatusResponse:
+    return await build_market_data_layer_status(symbol=symbol, keyword=keyword)
+
+
+@app.get("/api/market/ashare/structured", response_model=AShareStructuredDataResponse)
+async def ashare_structured_data(
+    symbol: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 120,
+) -> AShareStructuredDataResponse:
+    return await fetch_ashare_structured_data(
+        symbol,
+        start_date=start_date,
+        end_date=end_date,
+        limit=max(1, min(limit, 500)),
+    )
 
 
 @app.get("/api/options/signals", response_model=OptionsSignalResponse)
@@ -463,16 +579,16 @@ async def options_signals(
     max_expirations: int = 3,
 ) -> OptionsSignalResponse:
     requested_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return await fetch_options_signals(
+    return attach_data_quality(await fetch_options_signals(
         requested_symbols,
         horizon_days=horizon_days,
         max_expirations=max_expirations,
-    )
+    ))
 
 
 @app.post("/api/options/ai-analysis", response_model=OptionsAiAnalysisResponse)
 async def options_ai_analysis(request: OptionsAiAnalysisRequest) -> OptionsAiAnalysisResponse:
-    return await llm.analyze_options_trend(request)
+    return attach_data_quality(await llm.analyze_options_trend(request))
 
 
 @app.get("/api/earnings/calendar", response_model=EarningsCalendarResponse)
@@ -483,17 +599,31 @@ async def earnings_calendar(
     include_all: bool = False,
 ) -> EarningsCalendarResponse:
     requested_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    return await fetch_earnings_calendar(
+    return attach_data_quality(await fetch_earnings_calendar(
         requested_symbols,
         horizon=horizon,
         min_market_cap=min_market_cap,
         include_all=include_all,
-    )
+    ))
 
 
 @app.post("/api/decision/multi-market", response_model=MultiMarketDecisionResponse)
 async def multi_market_decision(request: MultiMarketDecisionRequest) -> MultiMarketDecisionResponse:
-    return build_multi_market_decision(request)
+    return attach_data_quality(build_multi_market_decision(request))
+
+
+@app.get("/api/agents/premarket-opportunities", response_model=PremarketOpportunityResponse)
+async def premarket_opportunities() -> PremarketOpportunityResponse:
+    return attach_data_quality(await build_premarket_opportunity_radar())
+
+
+@app.get("/api/official-news/cctv", response_model=OfficialNewsResponse)
+async def official_cctv_news(
+    source: str = "xinwenlianbo",
+    limit: int = 30,
+    refresh: bool = False,
+) -> OfficialNewsResponse:
+    return await fetch_official_news(source=source, limit=limit, refresh=refresh)
 
 
 @app.get("/api/ai-supply-chain/capacity-trends")
@@ -532,7 +662,7 @@ async def _wait_for_customs_agent_task(task_id: str, *, timeout_seconds: float) 
             detail = task.error or (task.logs[-1].message if task.logs else "Agent task failed")
             raise HTTPException(status_code=502, detail=detail)
         await asyncio.sleep(1.0)
-    raise HTTPException(status_code=504, detail=f"海关投研 Agent 任务 {task_id} 尚未在限定时间内完成，请到 Agent 任务中心查看进度。")
+    raise HTTPException(status_code=504, detail=f"海关投研任务 {task_id} 尚未在限定时间内完成，请到投研任务中心查看进度。")
 
 
 def _customs_agent_task_to_fingpt(task: InvestmentTaskRecord) -> FinGptTaskResponse:
@@ -559,7 +689,7 @@ def _customs_agent_task_to_fingpt(task: InvestmentTaskRecord) -> FinGptTaskRespo
         risks=_json_list(result.get("risk_controls")) or _json_list(findings.get("risk")),
         actions=_json_list(result.get("action_plan")) or _json_list(findings.get("report")),
         sources=sources[:8],
-        confidence=_clamp(float(result.get("confidence") or 0.6), 0, 1),
+        confidence=clamp(float(result.get("confidence") or 0.6), 0, 1),
         disclaimer=str(result.get("disclaimer") or "仅供投研和运营参考，不构成投资建议、支付建议或合规结论。"),
     )
 
@@ -777,6 +907,7 @@ async def api_upload_data_file(
     title: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
 ) -> DataSourceItemRecord:
+    _reject_non_ingestible_file(file.filename or "")
     extracted = await extract_upload_file(file)
     parsed_tags = [tag.strip() for tag in (tags or "").split(",") if tag.strip()]
     item = store_upload_item(
@@ -837,10 +968,73 @@ async def api_ingest_professional_report_item(
     return ingest_professional_report_from_item(request)
 
 
+@app.post("/api/pro-research/reports/ingest-url", response_model=ProfessionalReportRecord)
+async def api_ingest_professional_report_url(
+    request: ProfessionalReportUrlIngestRequest,
+) -> ProfessionalReportRecord:
+    extracted = await extract_report_url(request.url)
+    tags = list(dict.fromkeys([*request.tags, "URL入库", "专业财报库"]))
+    title = request.title or extracted.title
+    item = store_upload_item(
+        filename=extracted.filename,
+        text=extracted.text,
+        parser=extracted.parser,
+        content_type=extracted.content_type,
+        symbol=request.symbol,
+        title=title,
+        tags=tags,
+        url=extracted.final_url,
+        metadata={
+            "source_url": extracted.url,
+            "final_url": extracted.final_url,
+            "parser": extracted.parser,
+            "truncated": extracted.truncated,
+            "tags": tags,
+        },
+    )
+    publish_data_source_items([item], topic="pro-research-url-ingest", severity="success")
+    return ingest_professional_report_text(
+        text=extracted.text,
+        title=title,
+        symbol=request.symbol,
+        report_type=request.report_type,
+        period=request.period,
+        source_item_id=item.id,
+        parser=extracted.parser,
+        metadata={
+            "filename": extracted.filename,
+            "content_type": extracted.content_type,
+            "source_url": extracted.url,
+            "final_url": extracted.final_url,
+            "data_item_id": item.id,
+            "tags": tags,
+            "truncated": extracted.truncated,
+        },
+    )
+
+
+_JUNK_FILENAMES = {".ds_store", "thumbs.db", "desktop.ini", ".localized"}
+_INGESTIBLE_SUFFIXES = {
+    ".pdf", ".docx", ".doc", ".txt", ".md", ".markdown",
+    ".html", ".htm", ".csv", ".xlsx", ".xls", ".pptx", ".rtf", ".json",
+}
+
+
+def _reject_non_ingestible_file(filename: str) -> None:
+    """拒绝系统/隐藏/垃圾文件与不支持的类型，避免 .DS_Store 之类被切块入 RAG。"""
+    base = Path((filename or "").strip()).name
+    if not base or base.lower() in _JUNK_FILENAMES or base.startswith("."):
+        raise HTTPException(status_code=422, detail=f"该文件疑似系统/隐藏文件（{base or '空文件名'}），不是可入库的研报。")
+    suffix = Path(base).suffix.lower()
+    if suffix and suffix not in _INGESTIBLE_SUFFIXES:
+        raise HTTPException(status_code=422, detail=f"暂不支持的研报文件类型：{suffix}。支持 PDF/Word/Excel/PPT/TXT/Markdown/HTML/CSV。")
+
+
 @app.post("/api/pro-research/reports/ingest-workbench-file", response_model=ProfessionalReportRecord)
 async def api_ingest_professional_workbench_file(
     request: ProfessionalWorkbenchFileIngestRequest,
 ) -> ProfessionalReportRecord:
+    _reject_non_ingestible_file(request.filename)
     file_path = _safe_workbench_file_path(request.out, request.filename)
     extracted = extract_local_file(file_path)
     parsed_tags = [tag.strip() for tag in request.tags if tag.strip()]
@@ -1224,8 +1418,8 @@ async def _stock_check_single_pass(
     verdict = str(data.get("verdict") or "谨慎观察")
     if verdict not in {"重点跟踪", "谨慎观察", "暂不行动"}:
         verdict = "谨慎观察"
-    score = int(round(_clamp(_number_value(data.get("score"), 50), 0, 100)))
-    confidence = _clamp(_number_value(data.get("confidence"), 0.6), 0, 1)
+    score = int(round(clamp(_number_value(data.get("score"), 50), 0, 100)))
+    confidence = clamp(_number_value(data.get("confidence"), 0.6), 0, 1)
     label = str(data.get("sentiment_label") or "neutral").lower()
     if label not in {"positive", "neutral", "negative"}:
         label = "neutral"
@@ -1233,7 +1427,7 @@ async def _stock_check_single_pass(
         provider=llm.provider_name,
         model=llm.model,
         label=label,
-        score=_clamp(_number_value(data.get("sentiment_score"), 0), -1, 1),
+        score=clamp(_number_value(data.get("sentiment_score"), 0), -1, 1),
         rationale=str(data.get("sentiment_rationale") or "一键检测综合判断。"),
     )
     stock_analysis = StockAnalysisResponse(
@@ -1265,7 +1459,7 @@ async def _stock_check_single_pass(
             risks=_json_list(section.get("risks")),
             actions=_json_list(section.get("actions")),
             sources=_json_list(section.get("sources")) or ["一键检测输入"],
-            confidence=_clamp(_number_value(section.get("confidence"), confidence), 0, 1),
+            confidence=clamp(_number_value(section.get("confidence"), confidence), 0, 1),
         )
 
     checks = [
@@ -1378,7 +1572,7 @@ def _stock_check_score(
         score -= 5 if any(word in joined for word in bearish_words) else 0
     if request.stock.change_percent is not None:
         score += max(-6, min(6, request.stock.change_percent))
-    return int(round(_clamp(score, 0, 100)))
+    return int(round(clamp(score, 0, 100)))
 
 
 def _fallback_stock_analysis(request: StockCheckRequest) -> StockAnalysisResponse:
@@ -1521,10 +1715,6 @@ def _number_value(value: Any, default: float) -> float:
         return default
 
 
-def _clamp(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
-
-
 def _clean_step_error(exc: Exception) -> str:
     text = re.sub(r"\s+", " ", str(exc)).strip()
     return text[:260] or exc.__class__.__name__
@@ -1594,10 +1784,43 @@ async def cancel_agent_task(task_id: str) -> InvestmentTaskRecord:
     return task
 
 
+@app.get("/api/dulus/status", response_model=DulusRuntimeStatusResponse)
+async def dulus_status() -> DulusRuntimeStatusResponse:
+    return build_dulus_runtime_status(llm)
+
+
+@app.get("/api/dulus/tools", response_model=list[DulusToolRecord])
+async def dulus_tools() -> list[DulusToolRecord]:
+    return list_dulus_tools()
+
+
+@app.get("/api/dulus/memory", response_model=DulusMemoryListResponse)
+async def dulus_memory(limit: int = 20, scope: Optional[str] = None) -> DulusMemoryListResponse:
+    return list_dulus_memories(limit=limit, scope=scope)
+
+
+@app.post("/api/dulus/memory", response_model=DulusMemoryRecord)
+async def dulus_memory_create(request: DulusMemoryCreateRequest) -> DulusMemoryRecord:
+    return create_dulus_memory(request)
+
+
+@app.post("/api/dulus/webbridge/inspect", response_model=DulusWebBridgeInspectResponse)
+async def dulus_webbridge_inspect(request: DulusWebBridgeInspectRequest) -> DulusWebBridgeInspectResponse:
+    return inspect_authorized_webbridge(request)
+
+
+@app.post("/api/dulus/roundtable", response_model=DulusRoundtableResponse)
+async def dulus_roundtable(request: DulusRoundtableRequest) -> DulusRoundtableResponse:
+    try:
+        return await run_dulus_roundtable(llm, request)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/ai/stock-analysis", response_model=StockAnalysisResponse)
 async def stock_analysis(request: StockAnalysisRequest) -> StockAnalysisResponse:
     try:
-        return await llm.analyze_stock(request)
+        return attach_data_quality(await llm.analyze_stock(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1605,7 +1828,7 @@ async def stock_analysis(request: StockAnalysisRequest) -> StockAnalysisResponse
 @app.post("/api/ai/sentiment", response_model=SentimentResponse)
 async def sentiment(request: SentimentRequest) -> SentimentResponse:
     try:
-        return await llm.score_sentiment(request.text)
+        return attach_data_quality(await llm.score_sentiment(request.text))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1756,7 +1979,7 @@ async def stock_check(request: StockCheckRequest) -> StockCheckResponse:
         for item in [news_result, report_result, rag_result, forecast_result, agent_result]
         if item is not None
     ]
-    confidence = _clamp(
+    confidence = clamp(
         (sum(task_confidences) / len(task_confidences)) if task_confidences else 0.55,
         0,
         1,
@@ -1811,7 +2034,7 @@ async def stock_check(request: StockCheckRequest) -> StockCheckResponse:
 @app.post("/api/fingpt/news-summary", response_model=FinGptTaskResponse)
 async def news_summary(request: NewsSummaryRequest) -> FinGptTaskResponse:
     try:
-        return await llm.summarize_news(request)
+        return attach_data_quality(await llm.summarize_news(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1819,7 +2042,7 @@ async def news_summary(request: NewsSummaryRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/report-analysis", response_model=FinGptTaskResponse)
 async def report_analysis(request: ReportAnalysisRequest) -> FinGptTaskResponse:
     try:
-        return await llm.analyze_report(request)
+        return attach_data_quality(await llm.analyze_report(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1827,7 +2050,7 @@ async def report_analysis(request: ReportAnalysisRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/rag-query", response_model=FinGptTaskResponse)
 async def rag_query(request: RagQueryRequest) -> FinGptTaskResponse:
     try:
-        return await llm.rag_query(request)
+        return attach_data_quality(await llm.rag_query(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1835,7 +2058,7 @@ async def rag_query(request: RagQueryRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/forecast", response_model=FinGptTaskResponse)
 async def forecast(request: ForecastRequest) -> FinGptTaskResponse:
     try:
-        return await llm.forecast(request)
+        return attach_data_quality(await llm.forecast(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1843,7 +2066,7 @@ async def forecast(request: ForecastRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/corridor-risk", response_model=FinGptTaskResponse)
 async def corridor_risk(request: CorridorRiskRequest) -> FinGptTaskResponse:
     try:
-        return await llm.corridor_risk(request)
+        return attach_data_quality(await llm.corridor_risk(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1851,7 +2074,7 @@ async def corridor_risk(request: CorridorRiskRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/agent-brief", response_model=FinGptTaskResponse)
 async def agent_brief(request: AgentBriefRequest) -> FinGptTaskResponse:
     try:
-        return await llm.agent_brief(request)
+        return attach_data_quality(await llm.agent_brief(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1859,9 +2082,33 @@ async def agent_brief(request: AgentBriefRequest) -> FinGptTaskResponse:
 @app.post("/api/agents/chat", response_model=GeneralChatResponse)
 async def general_chat(request: GeneralChatRequest) -> GeneralChatResponse:
     try:
-        return await llm.general_chat(request)
+        return attach_data_quality(await llm.general_chat(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/chat/stream")
+async def general_chat_stream(request: GeneralChatRequest) -> StreamingResponse:
+    """SSE stream of assistant text deltas for the home chat (token-by-token)."""
+
+    async def event_generator() -> AsyncIterator[str]:
+        try:
+            async for delta in llm.general_chat_stream(request):
+                yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
+        except Exception as exc:  # noqa: BLE001 — surface the error into the client stream
+            yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+        else:
+            yield 'data: {"done": true}\n\n'
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _professional_chat_intent(text: str) -> bool:
@@ -1892,7 +2139,7 @@ async def _maybe_shareholder_change_skill_chat(
         provider=result.provider,
         model=result.model,
         generated_at=result.generated_at,
-        agent="OrchestratorAgent",
+        agent="Orchestrator",
         engine=request.engine,
         title="股东增减持扫描",
         content=format_shareholder_change_skill_response(result),
@@ -1901,7 +2148,7 @@ async def _maybe_shareholder_change_skill_chat(
         reasoning_trace=[
             {
                 "phase": "orchestrator",
-                "title": "OrchestratorAgent",
+                "title": "Orchestrator",
                 "detail": f"识别到全市场 {market_label} 股东增减持扫描意图，路由到可执行 skill。",
                 "status": "done",
             },
@@ -1913,7 +2160,7 @@ async def _maybe_shareholder_change_skill_chat(
             },
             {
                 "phase": "evidence",
-                "title": "EvidenceAgent",
+                "title": "Evidence",
                 "detail": "结果保留公告标题、股票代码、公告日和 PDF 原文链接，避免无来源总结。",
                 "status": "done",
             },
@@ -1936,7 +2183,7 @@ async def _maybe_cn_earnings_skill_chat(
         provider=result.provider,
         model=result.model,
         generated_at=result.generated_at,
-        agent="OrchestratorAgent",
+        agent="Orchestrator",
         engine=request.engine,
         title="A股财报扫描",
         content=format_cn_earnings_skill_response(result),
@@ -1945,7 +2192,7 @@ async def _maybe_cn_earnings_skill_chat(
         reasoning_trace=[
             {
                 "phase": "orchestrator",
-                "title": "OrchestratorAgent",
+                "title": "Orchestrator",
                 "detail": "识别到全市场 A 股财报公告扫描意图，路由到可执行 skill。",
                 "status": "done",
             },
@@ -1957,7 +2204,7 @@ async def _maybe_cn_earnings_skill_chat(
             },
             {
                 "phase": "evidence",
-                "title": "EvidenceAgent",
+                "title": "Evidence",
                 "detail": "结果保留财报公告标题、核心财务字段、PDF 摘录和原文链接，避免无来源总结。",
                 "status": "done",
             },
@@ -1980,7 +2227,7 @@ async def _maybe_major_event_skill_chat(
         provider=result.provider,
         model=result.model,
         generated_at=result.generated_at,
-        agent="OrchestratorAgent",
+        agent="Orchestrator",
         engine=request.engine,
         title="A股重大事项扫描",
         content=format_major_event_skill_response(result),
@@ -1989,7 +2236,7 @@ async def _maybe_major_event_skill_chat(
         reasoning_trace=[
             {
                 "phase": "orchestrator",
-                "title": "OrchestratorAgent",
+                "title": "Orchestrator",
                 "detail": "识别到全市场 A 股重大事项/事件预警意图，路由到可执行 skill。",
                 "status": "done",
             },
@@ -2001,7 +2248,7 @@ async def _maybe_major_event_skill_chat(
             },
             {
                 "phase": "evidence",
-                "title": "EvidenceAgent",
+                "title": "Evidence",
                 "detail": "结果保留公告标题、事件标签、PDF 摘录和原文链接，避免无来源总结。",
                 "status": "done",
             },
@@ -2031,20 +2278,20 @@ def _professional_chat_trace(
     return [
         {
             "phase": "orchestrator",
-            "title": "OrchestratorAgent",
+            "title": "Orchestrator",
             "detail": f"识别为专业财报能力调用，当前标的 {stock_label}。",
             "status": "done",
         },
         {
             "phase": "evidence",
-            "title": "ProfessionalEvidence",
+            "title": "Evidence",
             "detail": f"检索专业财报库：{report_label}。",
             "status": "done" if report else "wait",
         },
         {
             "phase": "research",
-            "title": capability,
-            "detail": "使用结构化指标、原文 chunk 和引用约束即时回答。",
+            "title": "Analyst",
+            "detail": f"调用{capability}，使用结构化指标、原文 chunk 和引用约束即时回答。",
             "status": "done" if report else "wait",
         },
         {
@@ -2100,7 +2347,7 @@ async def _maybe_professional_research_chat(
             provider=llm.provider_name,
             model=llm.model,
             generated_at=datetime.now(timezone.utc),
-            agent="ProfessionalResearchAgent",
+            agent="Orchestrator",
             engine=request.engine,
             title="专业财报库",
             content=(
@@ -2109,7 +2356,7 @@ async def _maybe_professional_research_chat(
             ),
             chips=["专业财报库", "待入库", "引用型RAG"],
             suggested_actions=["上传财报", "入库资料", "查看数据源"],
-            reasoning_trace=_professional_chat_trace(request, report=None, capability="ProfessionalResearchAgent"),
+            reasoning_trace=_professional_chat_trace(request, report=None, capability="专业财报库"),
             should_create_task=False,
             handled_inline=True,
             confidence=0.72,
@@ -2121,13 +2368,13 @@ async def _maybe_professional_research_chat(
             provider=llm.provider_name,
             model=llm.model,
             generated_at=datetime.now(timezone.utc),
-            agent="ProfessionalEvalAgent",
+            agent="Orchestrator",
             engine=request.engine,
             title="专业财报评测",
             content=_format_professional_eval(eval_run),
             chips=["专业财报库", "评测集", f"通过率{round(eval_run.pass_rate * 100)}%"],
             suggested_actions=["查看失败用例", "补充黄金集", "重新入库"],
-            reasoning_trace=_professional_chat_trace(request, report=report, capability="ProfessionalEvalAgent"),
+            reasoning_trace=_professional_chat_trace(request, report=report, capability="专业财报评测"),
             should_create_task=False,
             handled_inline=True,
             confidence=0.84,
@@ -2142,13 +2389,13 @@ async def _maybe_professional_research_chat(
             provider=llm.provider_name,
             model=llm.model,
             generated_at=datetime.now(timezone.utc),
-            agent="ProfessionalReportAgent",
+            agent="Orchestrator",
             engine=request.engine,
             title="专业财报分析",
             content=_format_professional_analysis(analysis),
-            chips=["专业财报库", "财报分析Agent", f"{len(analysis.key_metrics)}个指标"],
+            chips=["专业财报库", "财报分析技能", f"{len(analysis.key_metrics)}个指标"],
             suggested_actions=["追问指标", "跑评测", "查看引用"],
-            reasoning_trace=_professional_chat_trace(request, report=report, capability="ProfessionalReportAgent"),
+            reasoning_trace=_professional_chat_trace(request, report=report, capability="专业财报分析"),
             should_create_task=False,
             handled_inline=True,
             confidence=analysis.confidence,
@@ -2168,16 +2415,73 @@ async def _maybe_professional_research_chat(
         provider=llm.provider_name,
         model=llm.model,
         generated_at=datetime.now(timezone.utc),
-        agent="ProfessionalRagAgent",
+        agent="Orchestrator",
         engine=request.engine,
         title="引用型财报问答",
         content=rag.answer,
         chips=["专业财报库", "引用型RAG", *(citation_labels or ["无证据拒答"])],
         suggested_actions=["继续追问", "分析整份财报", "跑评测"],
-        reasoning_trace=_professional_chat_trace(request, report=report, capability="ProfessionalRagAgent"),
+        reasoning_trace=_professional_chat_trace(request, report=report, capability="引用型财报问答"),
         should_create_task=False,
         handled_inline=True,
         confidence=rag.confidence,
+    )
+
+
+def _is_research_intent(message: str) -> bool:
+    msg = message.lower()
+    research_keywords = [
+        "分析", "调研", "研究", "评估", "诊断",
+        "analyze", "research", "evaluate", "assess", "review",
+        "怎么样", "怎么看", "如何", "建议", "推荐",
+        "财报", "基本面", "估值", "营收", "利润",
+        "风险", "仓位", "持仓", "前景", "未来",
+        "earning", "financial", "report", "outlook", "risk",
+        "季报", "年报", "中报", "业绩",
+    ]
+    return any(kw in msg for kw in research_keywords)
+
+
+@app.post("/api/agents/cross-module-research", response_model=CrossModuleResearchResponse)
+async def cross_module_research(request: CrossModuleResearchRequest) -> CrossModuleResearchResponse:
+    if not request.symbol:
+        raise HTTPException(status_code=400, detail="symbol is required")
+    data = await gather_all_for_stock(
+        symbol=request.symbol,
+        include_macro=request.include_macro,
+        include_risk=request.include_risk,
+        include_evidence=request.include_evidence,
+        include_metrics=request.include_metrics,
+        include_supply_chain=request.include_supply_chain,
+        include_trade=request.include_trade,
+    )
+    return CrossModuleResearchResponse(**data)
+
+
+@app.post("/api/agents/research-loop/stream")
+async def research_loop_stream(
+    request: Request,
+    symbol: str = "",
+    question: str = "",
+):
+    if not symbol or not question:
+        raise HTTPException(status_code=400, detail="symbol and question are required")
+
+    async def event_generator() -> AsyncIterator[str]:
+        async for event in run_agent_research_loop(llm, symbol, question, request):
+            if await request.is_disconnected():
+                break
+            yield event
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
     )
 
 
@@ -2186,16 +2490,301 @@ async def orchestrator_chat(request: OrchestratorChatRequest) -> OrchestratorCha
     try:
         shareholder_change_reply = await _maybe_shareholder_change_skill_chat(request)
         if shareholder_change_reply:
-            return shareholder_change_reply
+            return attach_data_quality(shareholder_change_reply)
         cn_earnings_reply = await _maybe_cn_earnings_skill_chat(request)
         if cn_earnings_reply:
-            return cn_earnings_reply
+            return attach_data_quality(cn_earnings_reply)
         major_event_reply = await _maybe_major_event_skill_chat(request)
         if major_event_reply:
-            return major_event_reply
+            return attach_data_quality(major_event_reply)
         professional_reply = await _maybe_professional_research_chat(request)
         if professional_reply:
-            return professional_reply
-        return await llm.orchestrator_chat(request)
+            return attach_data_quality(professional_reply)
+
+        stock_symbol = (request.stock.symbol or "").strip() if request.stock else ""
+        if stock_symbol and _is_research_intent(request.message):
+            try:
+                aggregated = await gather_all_for_stock(
+                    stock_symbol,
+                    include_macro=request.include_macro,
+                    include_risk=request.include_risk,
+                    include_evidence=request.include_evidence,
+                    include_metrics=request.include_metrics,
+                    include_supply_chain=request.include_supply_chain,
+                    include_trade=request.include_trade,
+                )
+                injection = build_injection_block(aggregated)
+                return attach_data_quality(await llm.orchestrator_chat_with_context(request, injection))
+            except Exception:
+                pass
+
+        return attach_data_quality(await llm.orchestrator_chat(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/risk/greeks", response_model=GreeksResponse)
+async def risk_greeks(request: GreeksRequest) -> GreeksResponse:
+    result = calculate_greeks(
+        underlying_price=request.underlying_price,
+        strike=request.strike,
+        days_to_expiry=request.days_to_expiry,
+        risk_free_rate=request.risk_free_rate,
+        implied_vol=request.implied_vol,
+        option_type=request.option_type,
+    )
+    return GreeksResponse(**result)
+
+
+@app.get("/api/risk/positions", response_model=PositionListResponse)
+async def risk_positions(status: Optional[str] = None) -> PositionListResponse:
+    positions = list_positions(status=status if status else None)
+    enriched = []
+    for pos in positions:
+        risk = calculate_position_risk(pos)
+        enriched.append({**pos, **risk})
+    return PositionListResponse(positions=[PositionRecord(**p) for p in enriched])
+
+
+@app.post("/api/risk/positions", response_model=PositionRecord)
+async def risk_create_position(request: PositionCreateRequest) -> PositionRecord:
+    pos = create_position(
+        symbol=request.symbol,
+        name=request.name,
+        market=request.market,
+        asset_class=request.asset_class,
+        direction=request.direction,
+        entry_price=request.entry_price,
+        quantity=request.quantity,
+        stop_loss=request.stop_loss,
+        take_profit=request.take_profit,
+        position_size_pct=request.position_size_pct,
+        sector=request.sector,
+        strategy=request.strategy,
+        notes=request.notes,
+        tags=request.tags,
+        greeks=request.greeks,
+    )
+    risk = calculate_position_risk(pos)
+    return PositionRecord(**{**pos, **risk})
+
+
+@app.get("/api/risk/positions/{position_id}", response_model=PositionRecord)
+async def risk_get_position(position_id: str) -> PositionRecord:
+    pos = get_position(position_id)
+    if not pos:
+        raise HTTPException(status_code=404, detail="Position not found")
+    risk = calculate_position_risk(pos)
+    return PositionRecord(**{**pos, **risk})
+
+
+@app.put("/api/risk/positions/{position_id}", response_model=PositionRecord)
+async def risk_update_position(position_id: str, request: PositionUpdateRequest) -> PositionRecord:
+    updates = {k: v for k, v in request.model_dump().items() if v is not None}
+    pos = update_position(position_id, **updates)
+    if not pos:
+        raise HTTPException(status_code=404, detail="Position not found")
+    risk = calculate_position_risk(pos)
+    return PositionRecord(**{**pos, **risk})
+
+
+@app.delete("/api/risk/positions/{position_id}")
+async def risk_delete_position(position_id: str) -> dict:
+    if not delete_position(position_id):
+        raise HTTPException(status_code=404, detail="Position not found")
+    return {"status": "deleted", "id": position_id}
+
+
+@app.post("/api/risk/positions/{position_id}/close", response_model=PositionRecord)
+async def risk_close_position(position_id: str, request: PositionCloseRequest) -> PositionRecord:
+    try:
+        pos = close_position(position_id, request.exit_price, request.exit_reason)
+    except PositionAlreadyClosedError:
+        raise HTTPException(status_code=409, detail="该持仓已平仓，请勿重复平仓。")
+    if not pos:
+        raise HTTPException(status_code=404, detail="Position not found")
+    risk = calculate_position_risk(pos)
+    return PositionRecord(**{**pos, **risk})
+
+
+@app.post("/api/risk/positions/refresh")
+async def risk_refresh_prices() -> dict:
+    updated = refresh_position_prices()
+    return {"status": "ok", "updated_count": len(updated), "positions": updated}
+
+
+@app.get("/api/risk/summary", response_model=RiskSummaryResponse)
+async def risk_summary() -> RiskSummaryResponse:
+    data = get_risk_summary()
+    from .risk_management import calculate_position_risk
+    enriched = []
+    for pos in data.get("open_positions", []):
+        risk = calculate_position_risk(pos)
+        enriched.append({**pos, **risk})
+    data["open_positions"] = enriched
+    return RiskSummaryResponse(**data)
+
+
+@app.get("/api/risk/limits")
+async def risk_limits() -> list[RiskLimitRecord]:
+    limits = get_risk_limits()
+    return [RiskLimitRecord(**lim) for lim in limits]
+
+
+@app.put("/api/risk/limits/{key}", response_model=RiskLimitRecord)
+async def risk_update_limit(key: str, request: RiskLimitUpdateRequest) -> RiskLimitRecord:
+    lim = update_risk_limit(key, request.value, request.enabled)
+    if not lim:
+        raise HTTPException(status_code=404, detail="Risk limit not found")
+    return RiskLimitRecord(**lim)
+
+
+@app.get("/api/risk/pnl", response_model=PnlSummaryResponse)
+async def risk_pnl_summary() -> PnlSummaryResponse:
+    return PnlSummaryResponse(**get_pnl_summary())
+
+
+@app.get("/api/risk/pnl/records")
+async def risk_pnl_records(position_id: Optional[str] = None, limit: int = 100) -> list[PnlRecord]:
+    records = list_pnl_records(position_id=position_id, limit=limit)
+    return [PnlRecord(**r) for r in records]
+
+
+@app.post("/api/backtest/{backtest_id}/run")
+async def backtest_run(backtest_id: str, request: Request) -> StreamingResponse:
+    bt = get_backtest(backtest_id)
+    if not bt:
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    if bt.get("status") == "running":
+        raise HTTPException(status_code=409, detail="Backtest is already running")
+
+    async def event_gen():
+        async for event in run_backtest(backtest_id, request):
+            if await request.is_disconnected():
+                break
+            yield event
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache", "Connection": "keep-alive",
+            "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+@app.get("/api/backtest/aggregate")
+async def backtest_aggregate_for_research(symbol: str = "") -> dict:
+    if not symbol:
+        return {"backtests": [], "symbol": "", "total": 0}
+    return await list_backtest_results(symbol)
+
+
+@app.get("/api/backtest", response_model=BacktestListResponse)
+async def backtest_list(limit: int = 50) -> BacktestListResponse:
+    backtests = list_backtests(limit=limit)
+    return BacktestListResponse(backtests=[BacktestRecord(**bt) for bt in backtests])
+
+
+@app.post("/api/backtest", response_model=BacktestRecord)
+async def backtest_create(request: BacktestCreateRequest) -> BacktestRecord:
+    bt = create_backtest(
+        name=request.name,
+        market=request.market,
+        strategy_type=request.strategy_type,
+        symbols=request.symbols,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        initial_capital=request.initial_capital,
+        benchmark=request.benchmark,
+        parameters=request.parameters,
+    )
+    return BacktestRecord(**bt)
+
+
+@app.get("/api/backtest/{backtest_id}", response_model=BacktestRecord)
+async def backtest_get(backtest_id: str) -> BacktestRecord:
+    bt = get_backtest(backtest_id)
+    if not bt:
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    return BacktestRecord(**bt)
+
+
+@app.delete("/api/backtest/{backtest_id}")
+async def backtest_delete(backtest_id: str) -> dict:
+    if not delete_backtest(backtest_id):
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    return {"status": "deleted", "id": backtest_id}
+
+
+@app.post("/api/backtest/metrics", response_model=BacktestMetricsResponse)
+async def backtest_metrics(request: BacktestMetricsRequest) -> BacktestMetricsResponse:
+    metrics = calculate_backtest_metrics(
+        equity_curve=request.equity_curve,
+        benchmark_curve=request.benchmark_curve,
+        initial_capital=request.initial_capital,
+    )
+    return BacktestMetricsResponse(**metrics)
+
+
+@app.get("/api/market-dashboard", response_model=MarketDashboardResponse)
+async def market_dashboard() -> MarketDashboardResponse:
+    data = await fetch_market_dashboard()
+    return MarketDashboardResponse(**data)
+
+
+@app.get("/api/market-dashboard/ashare", response_model=MarketDashboardResponse)
+async def ashare_dashboard() -> MarketDashboardResponse:
+    data = await fetch_ashare_dashboard()
+    return MarketDashboardResponse(**data)
+
+
+@app.post("/api/market-dashboard/analyze", response_model=DashboardAnalysisResponse)
+async def market_dashboard_analyze() -> DashboardAnalysisResponse:
+    dashboard = await fetch_market_dashboard()
+    indicators_data = json.dumps(
+        [
+            {
+                "name": ind["name"],
+                "value": ind["value"],
+                "unit": ind["unit"],
+                "signal": ind["signal"],
+                "status": ind["status"],
+            }
+            for cat in dashboard.get("categories", [])
+            for ind in cat.get("indicators", [])
+        ],
+        ensure_ascii=False,
+    )
+    result = await llm.analyze_market_dashboard(
+        title=f"整体信号：{dashboard['overall_signal']} (评分{dashboard['overall_score']})",
+        indicators_json=indicators_data,
+        market_type="global",
+    )
+    return DashboardAnalysisResponse(**result)
+
+
+@app.post("/api/market-dashboard/ashare/analyze", response_model=DashboardAnalysisResponse)
+async def ashare_dashboard_analyze() -> DashboardAnalysisResponse:
+    dashboard = await fetch_ashare_dashboard()
+    indicators_data = json.dumps(
+        [
+            {
+                "name": ind["name"],
+                "value": ind["value"],
+                "unit": ind["unit"],
+                "signal": ind["signal"],
+                "status": ind["status"],
+            }
+            for cat in dashboard.get("categories", [])
+            for ind in cat.get("indicators", [])
+        ],
+        ensure_ascii=False,
+    )
+    result = await llm.analyze_market_dashboard(
+        title=f"A股整体信号：{dashboard['overall_signal']} (评分{dashboard['overall_score']})",
+        indicators_json=indicators_data,
+        market_type="ashare",
+    )
+    return DashboardAnalysisResponse(**result)

@@ -1,207 +1,42 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useReducer, useState } from 'react';
 import { App as AntdApp, Layout } from 'antd';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import TradingLayout from './components/TradingLayout';
 import Login from './components/Login';
-import { AppState, CartItem, Comment, Post, Product, ProductVariant, Stock, ViewType } from './types';
-import { getMarketQuotes, MarketQuote, MarketSymbolCandidate } from './services/marketDataService';
-import { 
-  mockUser, 
-  mockStocks,
-  mockPosts,
-  mockComments,
-  mockRatings,
-  mockPayments,
-  mockRechargeHistory,
-  mockProducts,
-  mockOrders
-} from './data/mockData';
+import AIChatPanel from './components/AIChatPanel';
+import { ModuleContextProvider } from './contexts/ModuleContext';
+import { CartItem, Comment, Post, Product, Stock, ViewType } from './types';
+import { getMarketQuotes, MarketSymbolCandidate } from './services/marketService';
+import { mockUser } from './data/mockData';
+import { appReducer, getInitialState, createDemoState, getProductVariant } from './state/appReducer';
+import { applyMarketQuotesToStocks, candidateToStock, STOCK_POOL_STORAGE_KEY } from './utils/stockPool';
 
 const { Content } = Layout;
 const authBypassFlag = process.env.REACT_APP_AUTH_BYPASS?.toLowerCase();
 const demoLoginFlag = process.env.REACT_APP_DEMO_LOGIN?.toLowerCase();
 const AUTH_BYPASS_ENABLED = authBypassFlag === 'true' || (process.env.NODE_ENV === 'development' && authBypassFlag !== 'false');
 const DEMO_LOGIN_ENABLED = demoLoginFlag !== 'false';
-const STOCK_POOL_STORAGE_KEY = 'deepfocus.stockPool.v1';
 
-const rootViews = new Set<ViewType>([
-  'home',
-  'stocks',
-  'a-share-market',
-  'global-market',
-  'shop',
-  'profile',
-  'cart',
-  'orders',
-  'ai-research',
-  'agent-center',
-  'data-sources',
-  'research-workbench',
-  'realtime-messages',
-  'mcp-center',
-  'skills',
-  'earnings-calendar',
-  'cn-earnings',
-  'shareholder-changes',
-  'major-events',
-  'multi-market-decision',
-  'ai-supply-chain',
-  'options-signal'
-]);
-
-const getProductVariant = (product: Product, variantId: string): ProductVariant => {
-  return product.variants.find(variant => variant.id === variantId)
-    || product.variants[0]
-    || {
-      id: 'default',
-      name: '默认款式',
-      sku: `${product.id}-default`,
-      price: product.price,
-      stock: product.stock,
-      attributes: {}
-    };
-};
-
-const toFiniteNumber = (value?: number | null): number | undefined => {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-};
-
-const marketCurrency = (market?: string): string => {
-  if (market === 'HK') return 'HKD';
-  if (market === 'CN') return 'CNY';
-  return 'USD';
-};
-
-const enrichDefaultStock = (stock: Stock): Stock => ({
-  ...stock,
-  market: stock.market || 'US',
-  exchange: stock.exchange || 'US',
-  currency: stock.currency || marketCurrency(stock.market || 'US'),
-  isSubscribed: stock.isSubscribed ?? true,
-  subscriptionTopics: stock.subscriptionTopics || ['price', 'news', 'earnings', 'research'],
-  addedAt: stock.addedAt || new Date().toISOString()
-});
-
-const loadSavedStockPool = (): Stock[] | null => {
-  if (typeof window === 'undefined') {
-    return null;
+// 行情轮询会高频触发；仅在 dev 且告警内容变化时打印一次，避免控制台刷屏。
+let lastMarketWarningSignature = '';
+function logMarketWarningsOnce(warnings: string[]): void {
+  if (process.env.NODE_ENV === 'production' || !warnings || warnings.length === 0) {
+    return;
   }
-
-  try {
-    const raw = window.localStorage.getItem(STOCK_POOL_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return null;
-    }
-    return parsed.map(stock => enrichDefaultStock(stock as Stock));
-  } catch (error) {
-    console.warn('Failed to load stock pool:', error);
-    return null;
+  const signature = [...warnings].sort().join('|');  // 排序后比对，避免后端异步告警顺序变化导致重复打印
+  if (signature === lastMarketWarningSignature) {
+    return;
   }
-};
-
-const candidateToStock = (candidate: MarketSymbolCandidate): Stock => ({
-  symbol: candidate.symbol,
-  name: candidate.name,
-  market: candidate.market,
-  exchange: candidate.exchange || candidate.security_type,
-  currency: marketCurrency(candidate.market),
-  quoteId: candidate.quote_id || undefined,
-  isSubscribed: true,
-  subscriptionTopics: ['price', 'news', 'earnings', 'research'],
-  addedAt: new Date().toISOString(),
-  sector: candidate.security_type || (candidate.market === 'US' ? '美股' : candidate.market === 'HK' ? '港股' : 'A股'),
-  marketCap: 0,
-  currentPrice: 0,
-  changePercent: 0,
-  priceChange: 0,
-  previousClose: 0,
-  quoteVolume: 0,
-  quoteProvider: candidate.provider,
-  quoteProviderName: candidate.provider_name,
-  quoteFetchedAt: new Date().toISOString(),
-  quoteIsRealtime: false,
-  quoteDelayNote: '已加入自选，等待行情刷新',
-  description: `${candidate.name}（${candidate.symbol}）已加入观察池，可监控价格、新闻、财报和研究提醒。`,
-  focusLevel: 'medium',
-  totalPosts: 0,
-  totalPaidPosts: 0,
-  communityScore: 50
-});
-
-const applyMarketQuotesToStocks = (stocks: Stock[], quotes: MarketQuote[]): Stock[] => {
-  const quoteBySymbol = new Map(quotes.map(quote => [quote.symbol.toUpperCase(), quote]));
-
-  return stocks.map(stock => {
-    const quote = quoteBySymbol.get(stock.symbol.toUpperCase());
-    if (!quote) {
-      return stock;
-    }
-
-    return {
-      ...stock,
-      currentPrice: quote.price,
-      changePercent: toFiniteNumber(quote.change_percent) ?? stock.changePercent,
-      priceChange: toFiniteNumber(quote.change) ?? stock.priceChange,
-      previousClose: toFiniteNumber(quote.previous_close) ?? stock.previousClose,
-      quoteVolume: toFiniteNumber(quote.volume) ?? stock.quoteVolume,
-      quoteProvider: quote.provider,
-      quoteProviderName: quote.provider_name,
-      quoteMarketTime: quote.market_time,
-      quoteFetchedAt: quote.fetched_at,
-      quoteIsRealtime: quote.is_realtime,
-      quoteDelayNote: quote.delay_note
-    };
-  });
-};
-
-const createLoggedOutState = (): AppState => ({
-  user: null,
-  selectedStock: null,
-  selectedPost: null,
-  stocks: [],
-  posts: [],
-  comments: [],
-  ratings: [],
-  payments: [],
-  purchasedPosts: [],
-  isLoading: false,
-  currentView: 'home',
-  platformBalance: 0,
-  rechargeHistory: [],
-  products: [],
-  cart: [],
-  orders: [],
-  selectedProduct: null
-});
-
-const createDemoState = (): AppState => {
-  const savedStockPool = loadSavedStockPool();
-  return {
-    ...createLoggedOutState(),
-    user: mockUser,
-    stocks: (savedStockPool || mockStocks).map(stock => enrichDefaultStock({ ...stock })),
-    posts: mockPosts,
-    comments: mockComments,
-    ratings: mockRatings,
-    payments: mockPayments,
-    rechargeHistory: mockRechargeHistory,
-    platformBalance: mockRechargeHistory.reduce((sum, record) => sum + record.amount, 0),
-    products: mockProducts,
-    orders: mockOrders
-  };
-};
+  lastMarketWarningSignature = signature;
+  console.warn('Market data warnings:', warnings);
+}
 
 const App: React.FC = () => {
   const { message } = AntdApp.useApp();
   const stocksRef = useRef<Stock[]>([]);
   const [isMarketDataRefreshing, setIsMarketDataRefreshing] = useState(false);
-  const [appState, setAppState] = useState<AppState>(() =>
-    AUTH_BYPASS_ENABLED ? createDemoState() : createLoggedOutState()
-  );
+  const [chatPanelOpen, setChatPanelOpen] = useState(false);
+  const [appState, dispatch] = useReducer(appReducer, undefined, getInitialState);
 
   useEffect(() => {
     stocksRef.current = appState.stocks;
@@ -232,28 +67,20 @@ const App: React.FC = () => {
         if (options.notify) {
           message.warning('行情接口暂未返回可用报价，当前继续显示本地样例数据');
         }
-        if (response.warnings.length > 0) {
-          console.warn('Market data warnings:', response.warnings);
-        }
+        logMarketWarningsOnce(response.warnings);
         return;
       }
 
-      setAppState(prev => {
-        const updatedStocks = applyMarketQuotesToStocks(prev.stocks, response.quotes);
-        const selectedStock = prev.selectedStock
-          ? updatedStocks.find(stock => stock.symbol === prev.selectedStock?.symbol) || prev.selectedStock
-          : null;
+      const updatedStocks = applyMarketQuotesToStocks(stocksRef.current, response.quotes);
+      const currentSelected = stocksRef.current.find(
+        stock => stock.symbol === appState.selectedStock?.symbol
+      );
+      const selectedStock = appState.selectedStock
+        ? updatedStocks.find(stock => stock.symbol === appState.selectedStock?.symbol) || currentSelected || appState.selectedStock
+        : null;
+      dispatch({ type: 'SET_APP_STATE', payload: { stocks: updatedStocks, selectedStock } });
 
-        return {
-          ...prev,
-          stocks: updatedStocks,
-          selectedStock
-        };
-      });
-
-      if (response.warnings.length > 0) {
-        console.warn('Market data warnings:', response.warnings);
-      }
+      logMarketWarningsOnce(response.warnings);
 
       if (options.notify) {
         const hasRealtimeQuote = response.quotes.some(quote => quote.is_realtime);
@@ -267,7 +94,7 @@ const App: React.FC = () => {
     } finally {
       setIsMarketDataRefreshing(false);
     }
-  }, [message]);
+  }, [message, appState.selectedStock]);
 
   useEffect(() => {
     if (!appState.user) {
@@ -284,20 +111,19 @@ const App: React.FC = () => {
   }, [appState.user, refreshMarketQuotes]);
 
   const handleLogin = async (username: string, password: string) => {
-    setAppState(prev => ({ ...prev, isLoading: true }));
-    
-    // 演示登录只在显式允许时开放；生产部署可用 REACT_APP_DEMO_LOGIN=false 关闭。
+    dispatch({ type: 'SET_LOADING', payload: true });
+
     if (DEMO_LOGIN_ENABLED && ((username === 'admin' && password === 'admin') ||
         (username === 'demo' && password === 'demo'))) {
       setTimeout(() => {
         const nextState = createDemoState();
-        setAppState(nextState);
+        dispatch({ type: 'LOGIN' });
         message.success('登录成功！欢迎使用深度焦点个股投研智库');
         void refreshMarketQuotes(nextState.stocks, { notify: true });
       }, 1000);
     } else {
       setTimeout(() => {
-        setAppState(prev => ({ ...prev, isLoading: false }));
+        dispatch({ type: 'SET_LOADING', payload: false });
         message.error(DEMO_LOGIN_ENABLED ? '用户名或密码错误' : '演示登录已关闭，请接入真实认证服务');
       }, 1000);
     }
@@ -305,25 +131,19 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     if (AUTH_BYPASS_ENABLED) {
-      setAppState(createDemoState());
+      dispatch({ type: 'SET_APP_STATE', payload: createDemoState() });
       message.success('已重置演示会话');
       return;
     }
 
-    setAppState(createLoggedOutState());
+    dispatch({ type: 'LOGOUT' });
     message.success('已退出登录');
   };
 
   // 选择股票
-  const handleStockSelect = (stock: Stock) => {
-    setAppState(prev => ({
-      ...prev,
-      selectedStock: stock,
-      selectedPost: null,
-      selectedProduct: null,
-      currentView: 'stock-community' // 默认进入标的工作区
-    }));
-  };
+  const handleStockSelect = useCallback((stock: Stock) => {
+    dispatch({ type: 'SELECT_STOCK', payload: stock });
+  }, []);
 
   const handleAddStock = async (candidate: MarketSymbolCandidate) => {
     const nextStock = candidateToStock(candidate);
@@ -331,12 +151,11 @@ const App: React.FC = () => {
       stock => stock.symbol.toUpperCase() === nextStock.symbol.toUpperCase()
     );
 
-    setAppState(prev => {
-      const exists = prev.stocks.some(stock => stock.symbol.toUpperCase() === nextStock.symbol.toUpperCase());
-      if (exists) {
-        return {
-          ...prev,
-          stocks: prev.stocks.map(stock =>
+    dispatch({ type: 'SET_APP_STATE', payload: {
+      stocks: (() => {
+        const exists = appState.stocks.some(stock => stock.symbol.toUpperCase() === nextStock.symbol.toUpperCase());
+        if (exists) {
+          return appState.stocks.map(stock =>
             stock.symbol.toUpperCase() === nextStock.symbol.toUpperCase()
               ? {
                   ...stock,
@@ -344,15 +163,11 @@ const App: React.FC = () => {
                   subscriptionTopics: stock.subscriptionTopics || nextStock.subscriptionTopics
                 }
               : stock
-          )
-        };
-      }
-
-      return {
-        ...prev,
-        stocks: [nextStock, ...prev.stocks]
-      };
-    });
+          );
+        }
+        return [nextStock, ...appState.stocks];
+      })()
+    }});
 
     message.success(`${candidate.name} 已加入观察池并开启监控`);
     if (!existsBeforeAdd) {
@@ -360,68 +175,30 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRemoveStock = (symbol: string) => {
-    setAppState(prev => ({
-      ...prev,
-      stocks: prev.stocks.filter(stock => stock.symbol !== symbol),
-      selectedStock: prev.selectedStock?.symbol === symbol ? null : prev.selectedStock,
-      currentView: prev.selectedStock?.symbol === symbol ? 'stocks' : prev.currentView
-    }));
+  const handleRemoveStock = useCallback((symbol: string) => {
+    dispatch({ type: 'REMOVE_STOCK', payload: symbol });
     message.success(`${symbol} 已从观察池移除`);
-  };
+  }, [message]);
 
-  const handleToggleStockSubscription = (symbol: string) => {
-    let subscribed = false;
-    setAppState(prev => ({
-      ...prev,
-      stocks: prev.stocks.map(stock => {
-        if (stock.symbol !== symbol) {
-          return stock;
-        }
-        subscribed = !(stock.isSubscribed ?? true);
-        return {
-          ...stock,
-          isSubscribed: subscribed,
-          subscriptionTopics: stock.subscriptionTopics?.length ? stock.subscriptionTopics : ['price', 'news', 'earnings', 'research']
-        };
-      }),
-      selectedStock: prev.selectedStock?.symbol === symbol
-        ? {
-            ...prev.selectedStock,
-            isSubscribed: subscribed
-          }
-        : prev.selectedStock
-    }));
-    message.success(subscribed ? `${symbol} 已开启监控` : `${symbol} 已暂停监控`);
-  };
+  const handleToggleStockSubscription = useCallback((symbol: string) => {
+    const stock = stocksRef.current.find(s => s.symbol === symbol);
+    const willSubscribed = !(stock?.isSubscribed ?? true);
+    dispatch({ type: 'TOGGLE_STOCK_SUBSCRIPTION', payload: symbol });
+    message.success(willSubscribed ? `${symbol} 已开启监控` : `${symbol} 已暂停监控`);
+  }, [message]);
 
   // 返回股票列表
-  const handleBackToStocks = () => {
-    setAppState(prev => ({
-      ...prev,
-      selectedStock: null,
-      selectedPost: null,
-      currentView: 'stocks'
-    }));
-  };
+  const handleBackToStocks = useCallback(() => {
+    dispatch({ type: 'BACK_TO_STOCKS' });
+  }, []);
 
-  // 查看内容详情
-  const handlePostClick = (post: Post) => {
-    setAppState(prev => ({
-      ...prev,
-      currentView: 'post-detail',
-      selectedProduct: null,
-      selectedPost: post // 添加选中的帖子到状态中
-    }));
-  };
+  const handlePostClick = useCallback((post: Post) => {
+    dispatch({ type: 'SELECT_POST', payload: post });
+  }, []);
 
-  // 创建新内容
-  const handleCreatePost = () => {
-    setAppState(prev => ({
-      ...prev,
-      currentView: 'create-post'
-    }));
-  };
+  const handleCreatePost = useCallback(() => {
+    dispatch({ type: 'CREATE_POST' });
+  }, []);
 
   const handleSavePost = (postDraft: Partial<Post>) => {
     if (!appState.user || !appState.selectedStock) {
@@ -458,11 +235,10 @@ const App: React.FC = () => {
       isHighlighted: false
     };
 
-    setAppState(prev => ({
-      ...prev,
-      posts: [newPost, ...prev.posts],
+    dispatch({ type: 'SET_APP_STATE', payload: {
+      posts: [newPost, ...appState.posts],
       selectedPost: newPost,
-      stocks: prev.stocks.map(stock =>
+      stocks: appState.stocks.map(stock =>
         stock.symbol === newPost.stockSymbol
           ? {
               ...stock,
@@ -472,7 +248,7 @@ const App: React.FC = () => {
           : stock
       ),
       currentView: 'stock-community'
-    }));
+    }});
 
     message.success('研究记录已保存');
   };
@@ -497,22 +273,21 @@ const App: React.FC = () => {
     }
 
     // 扣减余额并记录开通
-    setAppState(prev => ({
-      ...prev,
-      user: prev.user ? {
-        ...prev.user,
-        balance: prev.user.balance - amount
+    dispatch({ type: 'SET_APP_STATE', payload: {
+      user: appState.user ? {
+        ...appState.user,
+        balance: appState.user.balance - amount
       } : null,
-      purchasedPosts: [...prev.purchasedPosts, postId],
-      payments: [...prev.payments, {
+      purchasedPosts: [...appState.purchasedPosts, postId],
+      payments: [...appState.payments, {
         id: `payment_${Date.now()}`,
-        userId: prev.user!.id,
+        userId: appState.user!.id,
         postId: postId,
         amount: amount,
         paymentTime: new Date().toISOString(),
         status: 'completed'
       }],
-      posts: prev.posts.map(post =>
+      posts: appState.posts.map(post =>
         post.id === postId
           ? {
               ...post,
@@ -521,14 +296,14 @@ const App: React.FC = () => {
             }
           : post
       ),
-      selectedPost: prev.selectedPost?.id === postId
+      selectedPost: appState.selectedPost?.id === postId
         ? {
-            ...prev.selectedPost,
-            paidViewers: prev.selectedPost.paidViewers + 1,
-            totalRevenue: prev.selectedPost.totalRevenue + amount
+            ...appState.selectedPost,
+            paidViewers: appState.selectedPost.paidViewers + 1,
+            totalRevenue: appState.selectedPost.totalRevenue + amount
           }
-        : prev.selectedPost
-    }));
+        : appState.selectedPost
+    }});
 
     message.success(`深度报告已开通，支付金额：$${amount.toFixed(2)}，余额：$${(appState.user.balance - amount).toFixed(2)}`);
   };
@@ -564,46 +339,24 @@ const App: React.FC = () => {
       };
     };
 
-    setAppState(prev => ({
-      ...prev,
-      ratings: [...prev.ratings, newRating],
-      posts: prev.posts.map(updatePostRating),
-      selectedPost: prev.selectedPost ? updatePostRating(prev.selectedPost) : prev.selectedPost
-    }));
+    dispatch({ type: 'SET_APP_STATE', payload: {
+      ratings: [...appState.ratings, newRating],
+      posts: appState.posts.map(updatePostRating),
+      selectedPost: appState.selectedPost ? updatePostRating(appState.selectedPost) : appState.selectedPost
+    }});
 
     message.success(`评分提交成功！评分：${rating}星`);
   };
 
   // 点赞
-  const handleLike = (postId: string) => {
-    setAppState(prev => ({
-      ...prev,
-      posts: prev.posts.map(post => 
-        post.id === postId 
-          ? { ...post, likes: post.likes + 1 }
-          : post
-      ),
-      selectedPost: prev.selectedPost?.id === postId
-        ? { ...prev.selectedPost, likes: prev.selectedPost.likes + 1 }
-        : prev.selectedPost
-    }));
+  const handleLike = useCallback((postId: string) => {
+    dispatch({ type: 'LIKE_POST', payload: postId });
     message.success('点赞成功！');
-  };
+  }, [message]);
 
-  // 分享
-  const handleShare = (postId: string) => {
-    setAppState(prev => ({
-      ...prev,
-      posts: prev.posts.map(post => 
-        post.id === postId 
-          ? { ...post, shares: post.shares + 1 }
-          : post
-      ),
-      selectedPost: prev.selectedPost?.id === postId
-        ? { ...prev.selectedPost, shares: prev.selectedPost.shares + 1 }
-        : prev.selectedPost
-    }));
-  };
+  const handleShare = useCallback((postId: string) => {
+    dispatch({ type: 'SHARE_POST', payload: postId });
+  }, []);
 
   const handleAddComment = (postId: string, content: string) => {
     if (!appState.user) {
@@ -622,65 +375,32 @@ const App: React.FC = () => {
       isPaid: false
     };
 
-    setAppState(prev => ({
-      ...prev,
-      comments: [newComment, ...prev.comments],
-      posts: prev.posts.map(post =>
+    dispatch({ type: 'SET_APP_STATE', payload: {
+      comments: [newComment, ...appState.comments],
+      posts: appState.posts.map(post =>
         post.id === postId
           ? { ...post, comments: post.comments + 1 }
           : post
       ),
-      selectedPost: prev.selectedPost?.id === postId
-        ? { ...prev.selectedPost, comments: prev.selectedPost.comments + 1 }
-        : prev.selectedPost
-    }));
+      selectedPost: appState.selectedPost?.id === postId
+        ? { ...appState.selectedPost, comments: appState.selectedPost.comments + 1 }
+        : appState.selectedPost
+    }});
 
     message.success('讨论记录已保存');
   };
 
   // 充值
-  const handleRecharge = (amount: number, method: string) => {
-    if (!appState.user) {
-      message.error('请先登录');
-      return;
-    }
-
-    // 生成交易ID
-    const transactionId = `${method.toUpperCase()}${Date.now()}`;
-    const newRechargeRecord = {
-      id: `recharge_${Date.now()}`,
-      userId: appState.user.id,
-      amount,
-      method,
-      status: 'success' as const,
-      createdAt: new Date().toISOString(),
-      transactionId
-    };
-
-    // 模拟充值成功
-    setAppState(prev => ({
-      ...prev,
-      user: prev.user ? {
-        ...prev.user,
-        balance: prev.user.balance + amount
-      } : null,
-      rechargeHistory: [newRechargeRecord, ...prev.rechargeHistory],
-      platformBalance: prev.platformBalance + amount
-    }));
-
-    message.success(`充值成功！充值金额：$${amount.toFixed(2)}，支付方式：${method}，当前余额：$${(appState.user.balance + amount).toFixed(2)}`);
-  };
+  const handleRecharge = useCallback((amount: number, method: string) => {
+    const newBalance = (appState.user?.balance ?? 0) + amount;
+    dispatch({ type: 'RECHARGE', payload: { amount, method } });
+    message.success(`充值成功！充值金额：$${amount.toFixed(2)}，支付方式：${method}，当前余额：$${newBalance.toFixed(2)}`);
+  }, [message, appState.user]);
 
   // 研究资产相关处理函数
-  const handleProductClick = (product: Product) => {
-    setAppState(prev => ({
-      ...prev,
-      selectedProduct: product,
-      selectedPost: null,
-      selectedStock: null,
-      currentView: 'product-detail'
-    }));
-  };
+  const handleProductClick = useCallback((product: Product) => {
+    dispatch({ type: 'SELECT_PRODUCT', payload: product });
+  }, []);
 
   const handleAddToCart = (product: Product, variantId: string, quantity: number) => {
     const variant = getProductVariant(product, variantId);
@@ -701,27 +421,8 @@ const App: React.FC = () => {
       return;
     }
 
-    const cartItem: CartItem = {
-      id: `cart_${Date.now()}`,
-      productId: product.id,
-      product: product,
-      variantId: variant.id,
-      variant: variant,
-      quantity: quantity,
-      addedAt: new Date().toISOString()
-    };
-    
-    setAppState(prev => ({
-      ...prev,
-      cart: existingItem
-        ? prev.cart.map(item =>
-            item.id === existingItem.id
-              ? { ...item, quantity: item.quantity + quantity }
-              : item
-          )
-        : [...prev.cart, cartItem]
-    }));
-    
+    dispatch({ type: 'ADD_TO_CART', payload: { product, variantId, quantity } });
+
     message.success(existingItem ? '已更新资产单数量' : '已加入资产单');
   };
 
@@ -732,23 +433,29 @@ const App: React.FC = () => {
       return;
     }
 
-    setAppState(prev => ({
-      ...prev,
-      cart: prev.cart.map(item => 
+    dispatch({ type: 'SET_APP_STATE', payload: {
+      cart: appState.cart.map(item =>
         item.id === itemId ? { ...item, quantity } : item
       )
-    }));
+    }});
   };
 
-  const handleRemoveFromCart = (itemId: string) => {
-    setAppState(prev => ({
-      ...prev,
-      cart: prev.cart.filter(item => item.id !== itemId)
-    }));
+  const handleRemoveFromCart = useCallback((itemId: string) => {
+    dispatch({ type: 'REMOVE_FROM_CART', payload: itemId });
     message.success('已从资产单移除');
-  };
+  }, [message]);
 
-  const handleCheckout = (items: CartItem[]) => {
+  const handleOrderCancel = useCallback((orderId: string) => {
+    dispatch({ type: 'ORDER_CANCEL', payload: orderId });
+    message.success('订单已取消');
+  }, [message]);
+
+  const handleOrderRefund = useCallback((orderId: string) => {
+    dispatch({ type: 'ORDER_REFUND', payload: orderId });
+    message.success('退款申请已提交');
+  }, [message]);
+
+  const handleCheckout = useCallback((items: CartItem[]) => {
     if (!appState.user) {
       message.error('请先登录');
       return;
@@ -759,86 +466,11 @@ const App: React.FC = () => {
       return;
     }
 
-    // 创建资产订单
-    const order: AppState['orders'][number] = {
-      id: `order_${Date.now()}`,
-      userId: appState.user.id,
-      items: items.map(item => ({
-        id: `item_${Date.now()}_${Math.random()}`,
-        productId: item.productId,
-        productName: item.product.name,
-        variantId: item.variantId,
-        variantName: item.variant.name,
-        quantity: item.quantity,
-        price: item.variant.price,
-        image: item.product.images[0]
-      })),
-      totalAmount: items.reduce((sum, item) => sum + item.variant.price * item.quantity, 0),
-      paymentMethod: 'wechat' as const,
-      paymentStatus: 'pending' as const,
-      orderStatus: 'pending' as const,
-      createdAt: new Date().toISOString()
-    };
-
-    setAppState(prev => ({
-      ...prev,
-      orders: [order, ...prev.orders],
-      cart: prev.cart.filter(item => !items.find(i => i.id === item.id)),
-      currentView: 'orders'
-    }));
-
+    dispatch({ type: 'CHECKOUT', payload: items });
     message.success('资产订单已创建，请完成支付');
-  };
+  }, [message, appState.user]);
 
-  const handleOrderPay = (orderId: string, paymentMethod: 'wechat' | 'alipay') => {
-    const order = appState.orders.find(o => o.id === orderId);
-    if (!order) return;
-
-    // 模拟支付成功
-    setTimeout(() => {
-      setAppState(prev => ({
-        ...prev,
-        orders: prev.orders.map(o => 
-          o.id === orderId 
-            ? { 
-                ...o, 
-                paymentStatus: 'paid' as const,
-                orderStatus: 'processing' as const,
-                paidAt: new Date().toISOString(),
-                transactionId: `${paymentMethod.toUpperCase()}${Date.now()}`
-              }
-            : o
-        )
-      }));
-      message.success('支付成功！');
-    }, 1000);
-  };
-
-  const handleOrderCancel = (orderId: string) => {
-    setAppState(prev => ({
-      ...prev,
-      orders: prev.orders.map(o => 
-        o.id === orderId 
-          ? { ...o, orderStatus: 'cancelled' as const }
-          : o
-      )
-    }));
-    message.success('订单已取消');
-  };
-
-  const handleOrderRefund = (orderId: string) => {
-    setAppState(prev => ({
-      ...prev,
-      orders: prev.orders.map(o => 
-        o.id === orderId 
-          ? { ...o, paymentStatus: 'refunded' as const }
-          : o
-      )
-    }));
-    message.success('退款申请已提交');
-  };
-
-  const handleBuyNow = (product: Product, variantId: string, quantity: number) => {
+  const handleBuyNow = useCallback((product: Product, variantId: string, quantity: number) => {
     const variant = getProductVariant(product, variantId);
     const items = [{
       id: `temp_${Date.now()}`,
@@ -850,84 +482,92 @@ const App: React.FC = () => {
       addedAt: new Date().toISOString()
     }];
     handleCheckout(items);
+  }, [handleCheckout]);
+
+  const handleOrderPay = (orderId: string, paymentMethod: 'wechat' | 'alipay') => {
+    const order = appState.orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    setTimeout(() => {
+      dispatch({ type: 'ORDER_PAY', payload: { orderId, paymentMethod } });
+      message.success('支付成功！');
+    }, 1000);
   };
 
-  // 视图切换
-  const handleViewChange = (view: ViewType) => {
-    setAppState(prev => ({
-      ...prev,
-      currentView: view,
-      selectedStock: rootViews.has(view) ? null : prev.selectedStock,
-      selectedPost: rootViews.has(view) ? null : prev.selectedPost,
-      selectedProduct: rootViews.has(view) ? null : prev.selectedProduct
-    }));
-  };
+  const handleViewChange = useCallback((view: ViewType) => {
+    dispatch({ type: 'SET_VIEW', payload: view });
+  }, []);
 
   return (
-    <Layout className="trading-layout">
-      <Content>
-        <Routes>
-          <Route 
-            path="/login" 
-            element={
-              appState.user ? (
-                <Navigate to="/" replace />
-              ) : (
-		                <Login
-	                  onLogin={handleLogin}
-	                  isLoading={appState.isLoading}
-	                  demoLoginEnabled={DEMO_LOGIN_ENABLED}
-	                />
-              )
-            } 
-          />
-          <Route 
-            path="/*" 
-            element={
-              appState.user ? (
-                <TradingLayout
-                  appState={appState}
-                  onLogout={handleLogout}
-                  onStockSelect={handleStockSelect}
-                  onBackToStocks={handleBackToStocks}
-                  onPostClick={handlePostClick}
-                  onCreatePost={handleCreatePost}
-                  onPurchase={handlePurchase}
-                  onRate={handleRate}
-                  onLike={handleLike}
-                  onShare={handleShare}
-                  onAddComment={handleAddComment}
-                  onRecharge={handleRecharge}
-                  onViewChange={handleViewChange}
-                  onSavePost={handleSavePost}
-                  onProductClick={handleProductClick}
-                  onAddToCart={handleAddToCart}
-                  onUpdateCartQuantity={handleUpdateCartQuantity}
-                  onRemoveFromCart={handleRemoveFromCart}
-                  onCheckout={handleCheckout}
-                  onOrderPay={handleOrderPay}
-                  onOrderCancel={handleOrderCancel}
-                  onOrderRefund={handleOrderRefund}
-                  onBuyNow={handleBuyNow}
-                  onAddStock={handleAddStock}
-                  onRemoveStock={handleRemoveStock}
-                  onToggleStockSubscription={handleToggleStockSubscription}
-	                  onRefreshMarketData={() => refreshMarketQuotes(appState.stocks, { notify: true })}
-	                  isMarketDataRefreshing={isMarketDataRefreshing}
-	                  isDemoSession={AUTH_BYPASS_ENABLED || appState.user?.id === mockUser.id}
-	                />
-              ) : (
-	                <Login
-	                  onLogin={handleLogin}
-	                  isLoading={appState.isLoading}
-	                  demoLoginEnabled={DEMO_LOGIN_ENABLED}
-	                />
-              )
-            } 
-          />
-        </Routes>
-      </Content>
-    </Layout>
+    <ModuleContextProvider>
+      <Layout className="trading-layout">
+        <Content>
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                appState.user ? (
+                  <Navigate to="/" replace />
+                ) : (
+                  <Login
+                    onLogin={handleLogin}
+                    isLoading={appState.isLoading}
+                    demoLoginEnabled={DEMO_LOGIN_ENABLED}
+                  />
+                )
+              }
+            />
+            <Route
+              path="/*"
+              element={
+                appState.user ? (
+                  <TradingLayout
+                    appState={appState}
+                    onLogout={handleLogout}
+                    onStockSelect={handleStockSelect}
+                    onBackToStocks={handleBackToStocks}
+                    onPostClick={handlePostClick}
+                    onCreatePost={handleCreatePost}
+                    onPurchase={handlePurchase}
+                    onRate={handleRate}
+                    onLike={handleLike}
+                    onShare={handleShare}
+                    onAddComment={handleAddComment}
+                    onRecharge={handleRecharge}
+                    onViewChange={handleViewChange}
+                    onSavePost={handleSavePost}
+                    onProductClick={handleProductClick}
+                    onAddToCart={handleAddToCart}
+                    onUpdateCartQuantity={handleUpdateCartQuantity}
+                    onRemoveFromCart={handleRemoveFromCart}
+                    onCheckout={handleCheckout}
+                    onOrderPay={handleOrderPay}
+                    onOrderCancel={handleOrderCancel}
+                    onOrderRefund={handleOrderRefund}
+                    onBuyNow={handleBuyNow}
+                    onAddStock={handleAddStock}
+                    onRemoveStock={handleRemoveStock}
+                    onToggleStockSubscription={handleToggleStockSubscription}
+                    onRefreshMarketData={() => refreshMarketQuotes(appState.stocks, { notify: true })}
+                    isMarketDataRefreshing={isMarketDataRefreshing}
+                    isDemoSession={AUTH_BYPASS_ENABLED || appState.user?.id === mockUser.id}
+                    chatPanelOpen={chatPanelOpen}
+                    onToggleChatPanel={() => setChatPanelOpen(v => !v)}
+                  />
+                ) : (
+                  <Login
+                    onLogin={handleLogin}
+                    isLoading={appState.isLoading}
+                    demoLoginEnabled={DEMO_LOGIN_ENABLED}
+                  />
+                )
+              }
+            />
+          </Routes>
+        </Content>
+      </Layout>
+      <AIChatPanel open={chatPanelOpen} onClose={() => setChatPanelOpen(false)} />
+    </ModuleContextProvider>
   );
 };
 

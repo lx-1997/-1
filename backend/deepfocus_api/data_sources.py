@@ -27,6 +27,8 @@ from .schemas import (
     DataSourceTagRecord,
 )
 from .shareholder_change_skill import detect_shareholder_change_request, scan_shareholder_changes
+from .shared_utils import utc_now_iso, safe_int
+
 
 
 DB_PATH = Path(
@@ -77,12 +79,6 @@ KEYWORD_PROVIDER_POLICIES: dict[str, dict[str, Any]] = {
         "notes": "公开搜索结果可能存在风控或页面结构变化。",
     },
 }
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> bool:
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in columns:
@@ -99,7 +95,7 @@ def _backfill_source_categories(conn: sqlite3.Connection, *, force: bool = False
             continue
         conn.execute(
             "UPDATE data_sources SET category = ?, updated_at = ? WHERE id = ?",
-            (_infer_source_category(row["name"], row["source_type"]), now_iso(), row["id"]),
+            (_infer_source_category(row["name"], row["source_type"]), utc_now_iso(), row["id"]),
         )
 
 
@@ -194,7 +190,7 @@ def create_data_source(request: DataSourceCreateRequest) -> DataSourceRecord:
     if request.source_type in {"server_api", "market_api", "web_page"} and not request.url:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="该数据源类型需要配置 URL。")
 
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     source_id = str(uuid.uuid4())
     config = {
         "url": request.url,
@@ -302,7 +298,7 @@ def save_data_source_module_ref(request: DataSourceModuleRefCreateRequest) -> Da
     if not source:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Data source not found")
 
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     ref_id = str(uuid.uuid4())
     record = {
         "id": ref_id,
@@ -393,7 +389,7 @@ async def sync_data_source(source_id: str, request: DataSourceSyncRequest) -> tu
             for item in items[: request.limit]
             if item.get("text")
         ]
-        _update_source(source.id, status="active", last_sync_at=now_iso(), last_error=None)
+        _update_source(source.id, status="active", last_sync_at=utc_now_iso(), last_error=None)
         return get_data_source(source.id) or source, saved
     except HTTPException:
         raise
@@ -451,17 +447,21 @@ async def keyword_crawl_data_source(
             fallback_used = True
             effective_provider = str(fallback_provider)
             attempted_providers.append(effective_provider)
-            fallback_items, fallback_warnings = await _fetch_keyword_provider(
-                effective_provider,
-                request=request,
-                keyword=keyword,
-            )
-            warnings = [
-                *warnings,
-                f"已按源策略降级到 {KEYWORD_PROVIDER_POLICIES[effective_provider]['name']}。",
-                *fallback_warnings,
-            ]
-            raw_items = fallback_items
+            fallback_name = KEYWORD_PROVIDER_POLICIES[effective_provider]["name"]
+            warnings = [*warnings, f"已按源策略降级到 {fallback_name}。"]
+            try:
+                fallback_items, fallback_warnings = await _fetch_keyword_provider(
+                    effective_provider,
+                    request=request,
+                    keyword=keyword,
+                )
+                warnings = [*warnings, *fallback_warnings]
+                raw_items = fallback_items
+            except HTTPException as exc:
+                # 降级源也失败时不再抛 502，转为告警 + 空结果，与雪球路径保持一致的优雅降级。
+                warnings.append(f"降级源 {fallback_name} 也暂不可用：{exc.detail}")
+            except Exception as exc:  # noqa: BLE001 - 网络/解析异常统一降级
+                warnings.append(f"降级源 {fallback_name} 也暂不可用：{exc}")
 
         source = _keyword_source_for_provider(effective_provider)
 
@@ -495,7 +495,7 @@ async def keyword_crawl_data_source(
         _update_source(
             source.id,
             status=status_value,
-            last_sync_at=now_iso(),
+            last_sync_at=utc_now_iso(),
             last_error="；".join(warnings[:3]) if warnings else None,
         )
         meta = {
@@ -552,7 +552,10 @@ async def _fetch_keyword_provider(
 
 
 def _xueqiu_access_blocked(warnings: list[str]) -> bool:
-    return any(re.search(r"WAF|验证码|反爬|HTTP 401|HTTP 403|HTTP 418|HTTP 429", warning, re.IGNORECASE) for warning in warnings)
+    # 同时覆盖两类告警：①正常 HTTP 4xx 响应（"雪球返回 HTTP 403…"）；
+    # ②连接/代理层异常（"雪球请求失败：403 Forbidden" / 超时 / Connection，无 "HTTP " 前缀）。
+    pattern = r"WAF|验证码|反爬|Forbidden|雪球请求失败|HTTP\s*4(?:0[13]|18|29)|\b4(?:0[13]|18|29)\b"
+    return any(re.search(pattern, warning, re.IGNORECASE) for warning in warnings)
 
 
 def _public_keyword_provider_policy(provider: str) -> dict[str, Any]:
@@ -560,6 +563,10 @@ def _public_keyword_provider_policy(provider: str) -> dict[str, Any]:
     policy["provider"] = provider
     policy["configured"] = provider != "xueqiu" or bool(_configured_xueqiu_cookie())
     return policy
+
+
+def list_keyword_provider_policies() -> list[dict[str, Any]]:
+    return [_public_keyword_provider_policy(provider) for provider in KEYWORD_PROVIDER_POLICIES]
 
 
 def store_upload_item(
@@ -571,6 +578,8 @@ def store_upload_item(
     symbol: Optional[str] = None,
     title: Optional[str] = None,
     tags: Optional[list[str]] = None,
+    url: Optional[str] = None,
+    metadata: Optional[dict[str, Any]] = None,
 ) -> DataSourceItemRecord:
     source_id = _ensure_builtin_source(
         name="本地上传资料",
@@ -588,11 +597,11 @@ def store_upload_item(
         title=title or filename,
         text=text,
         symbol=symbol,
-        url=None,
+        url=url,
         tags=tags or [],
-        metadata={"filename": filename, "parser": parser, "content_type": content_type},
+        metadata={"filename": filename, "parser": parser, "content_type": content_type, **(metadata or {})},
         credibility_score=_credibility_score(source.trust_level),
-        collected_at=now_iso(),
+        collected_at=utc_now_iso(),
     )
 
 
@@ -682,7 +691,7 @@ def update_data_item(item_id: str, request: DataSourceItemUpdateRequest) -> Opti
         interpretation = request.ai_interpretation.strip()
         if interpretation:
             metadata["ai_interpretation"] = interpretation[:20000]
-            metadata["ai_interpretation_updated_at"] = now_iso()
+            metadata["ai_interpretation_updated_at"] = utc_now_iso()
         else:
             metadata.pop("ai_interpretation", None)
             metadata.pop("ai_interpretation_updated_at", None)
@@ -868,7 +877,7 @@ async def _fetch_source_items(
     response.raise_for_status()
 
     content_type = response.headers.get("content-type", "")
-    collected_at = now_iso()
+    collected_at = utc_now_iso()
     if "application/json" in content_type.lower():
         return _items_from_json(
             response.json(),
@@ -1004,7 +1013,7 @@ async def _fetch_wechat_public_keyword(
                     "freshness_window": freshness_label,
                     "capture_mode": "search_result",
                 },
-                "collected_at": published_at or now_iso(),
+                "collected_at": published_at or utc_now_iso(),
             }
         )
         if len(items) >= limit:
@@ -1276,7 +1285,7 @@ def _parse_xueqiu_json(
                     **engagement_metadata,
                     "raw_keys": sorted(raw.keys())[:40],
                 },
-                "collected_at": published_at or now_iso(),
+                "collected_at": published_at or utc_now_iso(),
             }
         )
     return items
@@ -1308,7 +1317,7 @@ def _xueqiu_author_metadata(raw: dict[str, Any]) -> dict[str, Any]:
     if isinstance(user, dict):
         author_name = _first_text(user, ("screen_name", "name", "username", "nick_name"))
         author_id = _first_text(user, ("id", "user_id", "uid"))
-        followers_count = _safe_int(user.get("followers_count") or user.get("followers"))
+        followers_count = safe_int(user.get("followers_count") or user.get("followers"))
         verified = user.get("verified")
     else:
         author_name = str(user).strip() if user is not None else None
@@ -1325,10 +1334,10 @@ def _xueqiu_author_metadata(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _xueqiu_engagement_metadata(raw: dict[str, Any]) -> dict[str, Optional[int]]:
     return {
-        "like_count": _safe_int(raw.get("like_count") or raw.get("likeCount")),
-        "reply_count": _safe_int(raw.get("reply_count") or raw.get("replyCount") or raw.get("comment_count")),
-        "retweet_count": _safe_int(raw.get("retweet_count") or raw.get("retweetCount") or raw.get("share_count")),
-        "view_count": _safe_int(raw.get("view_count") or raw.get("viewCount")),
+        "like_count": safe_int(raw.get("like_count") or raw.get("likeCount")),
+        "reply_count": safe_int(raw.get("reply_count") or raw.get("replyCount") or raw.get("comment_count")),
+        "retweet_count": safe_int(raw.get("retweet_count") or raw.get("retweetCount") or raw.get("share_count")),
+        "view_count": safe_int(raw.get("view_count") or raw.get("viewCount")),
     }
 
 
@@ -1385,7 +1394,7 @@ def _parse_xueqiu_html(
                 "url": url,
                 "tags": _normalize_tags([keyword, "雪球", *( [symbol] if symbol else [] )]),
                 "metadata": {"provider": "xueqiu", "search_url": crawl_url, "capture_mode": "html_result"},
-                "collected_at": now_iso(),
+                "collected_at": utc_now_iso(),
             }
         )
         if len(items) >= limit:
@@ -1482,7 +1491,7 @@ def _store_data_item(
     collected_at: Optional[str],
 ) -> DataSourceItemRecord:
     init_data_source_db()
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     item_id = str(uuid.uuid4())
     clean_text = _clean_text(text)[:MAX_STORED_TEXT_CHARS]
     clean_title = (title or source_name).strip()[:240]
@@ -1584,7 +1593,7 @@ def _ensure_builtin_source(*, name: str, source_type: str, description: str, tru
         ).fetchone()
         if row:
             return row["id"]
-        timestamp = now_iso()
+        timestamp = utc_now_iso()
         source_id = str(uuid.uuid4())
         category = _infer_source_category(name, source_type)
         conn.execute(
@@ -1707,8 +1716,8 @@ def _sort_data_items(records: list[DataSourceItemRecord], sort: str) -> list[Dat
         return sorted(
             records,
             key=lambda record: (
-                0 if _safe_int(record.metadata.get("rank")) is not None else 1,
-                _safe_int(record.metadata.get("rank")) or 1_000_000,
+                0 if safe_int(record.metadata.get("rank")) is not None else 1,
+                safe_int(record.metadata.get("rank")) or 1_000_000,
                 -record.credibility_score,
                 -_iso_timestamp(record.created_at),
             ),
@@ -1722,17 +1731,8 @@ def _sort_data_items(records: list[DataSourceItemRecord], sort: str) -> list[Dat
         ),
         reverse=True,
     )
-
-
-def _safe_int(value: Any) -> Optional[int]:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _coerce_epoch_seconds(value: Any) -> Optional[float]:
-    timestamp = _safe_int(value)
+    timestamp = safe_int(value)
     if timestamp is None:
         return None
     if timestamp > 10_000_000_000:
@@ -1765,7 +1765,7 @@ def _normalize_tags(tags: list[str]) -> list[str]:
 def _update_source(source_id: str, **updates: Any) -> None:
     if not updates:
         return
-    updates["updated_at"] = now_iso()
+    updates["updated_at"] = utc_now_iso()
     assignments = ", ".join(f"{key} = ?" for key in updates)
     values = list(updates.values()) + [source_id]
     with _connect() as conn:
