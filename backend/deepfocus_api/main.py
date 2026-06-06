@@ -98,6 +98,7 @@ from .mcp_tools import discover_mcp_agent_tools
 from .data_store import (
     history as data_history,
     init_data_store,
+    latest as data_latest,
     record as record_datapoint,
     stats as data_stats,
 )
@@ -196,6 +197,7 @@ from .realtime_messages import (
     realtime_message_event_stream,
     register_post_message_hook,
 )
+from .dao_bridge import run_dao_bridge
 from .recall_subscriptions import (
     create_recall_subscription,
     delete_recall_subscription,
@@ -447,7 +449,14 @@ async def lifespan(app: FastAPI):
     init_dulus_runtime_db()
     await warm_research_workbench()
     await start_agent_worker()
+    # DAO 财经事件桥接：后台轮询 DAO 事件 API → 灌进实时消息流（金融终端用）
+    dao_bridge_task = asyncio.create_task(run_dao_bridge())
     yield
+    dao_bridge_task.cancel()
+    try:
+        await dao_bridge_task
+    except BaseException:
+        pass
     await stop_agent_worker()
     await stop_research_workbench()
 
@@ -1078,10 +1087,24 @@ async def stock_tear_sheet(
     return await _enhance_tear_sheet_narrative(ts)
 
 
+# 速判卡读缓存 TTL（秒）：结论分钟级不变，agent 同一会话反复研判同一标的时免去重建 13 个并发源。
+# 仅作用于工具路径，用户端点 /api/stock/tear-sheet 始终实时（不读缓存）。
+_VERDICT_TOOL_CACHE_TTL = 120.0
+
+
 async def _tool_get_stock_verdict(symbol: str, market: Optional[str] = None) -> Any:
-    """工具：返回确定性引擎的速判卡结论（不触发 LLM 叙述）。verdict/score/各维度信号均为 ground truth。"""
+    """工具：返回确定性引擎的速判卡结论（不触发 LLM 叙述）。verdict/score/各维度信号均为 ground truth。
+
+    短 TTL 读缓存（data_store）：命中则直接返回上次结果（标 cached=True），避免重复重建 13 个并发请求。
+    """
+    sym = (symbol or "").strip().upper()
+    cache_key = f"{sym}|{(market or '').upper()}"
+    cached = data_latest("verdict_tool", cache_key, max_age_seconds=_VERDICT_TOOL_CACHE_TTL)
+    if cached:
+        return {**cached, "cached": True}
+
     ts = await _build_stock_tear_sheet_core(symbol, market=market or "")
-    return {
+    result = {
         "symbol": ts.symbol,
         "name": ts.name,
         "price": ts.price,
@@ -1102,6 +1125,8 @@ async def _tool_get_stock_verdict(symbol: str, market: Optional[str] = None) -> 
             for dim in ts.dimensions
         ],
     }
+    record_datapoint("verdict_tool", cache_key, result)  # 写入缓存（同时供历史）
+    return result
 
 
 register_tool(AgentTool(
@@ -1284,9 +1309,9 @@ async def portfolio_review() -> PortfolioReviewResponse:
 
 
 async def _gather_macro_inputs() -> dict:
-    """宏观速判/晨报共用的真实数据输入：github 月度（市场/利率/油/金）+ 市场看板 live 风险三件套。
+    """宏观速判/晨报共用的真实数据输入：github 月度（市场/利率/油/金）+ 美国看板 live 六件套 + 中国宏观四件套。
 
-    五路并发拉取，任一失败诚实降级为空（由速判侧标 insufficient），不互相阻断。
+    六路并发拉取，任一失败诚实降级为空（由速判侧标 insufficient），不互相阻断。
     """
     from .github_data import (
         fetch_gold_history,
@@ -1294,7 +1319,7 @@ async def _gather_macro_inputs() -> dict:
         fetch_sp500_index_history,
         fetch_us10y_history,
     )
-    from .market_dashboard import get_macro_risk_indicators
+    from .market_dashboard import get_china_macro_indicators, get_macro_risk_indicators
 
     async def _safe(coro):
         try:
@@ -1302,6 +1327,8 @@ async def _gather_macro_inputs() -> dict:
         except Exception:
             return None
 
+    # github 四路 + 美国看板与 github 不同源可并发；中国看板与美国看板共享 Sina/东财上游，
+    # 冷取并发会互相饿死（实测 china 返回空），故待美国看板完成后再取，二者各自 120/300s 缓存兜住时延。
     sp500, rates, oil, gold, risk = await asyncio.gather(
         _safe(fetch_sp500_index_history()),
         _safe(fetch_us10y_history()),
@@ -1309,12 +1336,14 @@ async def _gather_macro_inputs() -> dict:
         _safe(fetch_gold_history()),
         _safe(get_macro_risk_indicators()),
     )
+    china = await _safe(get_china_macro_indicators())
     return {
         "sp500_history": sp500 or [],
         "rates_history": rates or [],
         "oil_history": oil or [],
         "gold_history": gold or [],
         "risk_indicators": risk or {},
+        "china_indicators": china or {},
     }
 
 

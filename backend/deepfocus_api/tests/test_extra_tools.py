@@ -92,3 +92,61 @@ def test_options_signal_passthrough(monkeypatch):
     monkeypatch.setattr(nasdaq_data, "fetch_nasdaq_options", fake)
     out = asyncio.run(agent_tools.execute_tool("get_options_signal", {"symbol": "AAPL"}))
     assert out["ok"] is True and out["data"]["put_call_ratio"] == 0.85
+
+
+def test_verdict_tool_read_cache(monkeypatch, tmp_path):
+    # 短 TTL 读缓存：同一标的第二次调用走缓存（不重建），标 cached=True。
+    from datetime import datetime, timezone
+
+    from deepfocus_api import data_store
+    from deepfocus_api.schemas import TearSheetResponse
+
+    monkeypatch.setattr(data_store, "DB_PATH", tmp_path / "ds.sqlite3")
+    data_store.init_data_store()
+
+    calls = {"n": 0}
+    fake_ts = TearSheetResponse(
+        symbol="AAPL", name="Apple", generated_at=datetime.now(timezone.utc),
+        overall_verdict="重点跟踪", overall_score=42, confidence=0.7,
+    )
+
+    async def fake_core(symbol, name="", market_cap=None, market=""):
+        calls["n"] += 1
+        return fake_ts
+
+    monkeypatch.setattr(_main, "_build_stock_tear_sheet_core", fake_core)
+
+    out1 = asyncio.run(agent_tools.execute_tool("get_stock_verdict", {"symbol": "AAPL"}))
+    out2 = asyncio.run(agent_tools.execute_tool("get_stock_verdict", {"symbol": "AAPL"}))
+
+    assert calls["n"] == 1  # 第二次命中缓存，未重建
+    assert "cached" not in out1["data"]  # 首次非缓存
+    assert out2["data"]["cached"] is True  # 二次缓存命中
+    assert out2["data"]["overall_verdict"] == "重点跟踪"
+
+
+def test_verdict_tool_cache_expired_rebuilds(monkeypatch, tmp_path):
+    # max_age 到期 → 不命中 → 重建。用极短 TTL 模拟。
+    from datetime import datetime, timezone
+
+    from deepfocus_api import data_store
+    from deepfocus_api.schemas import TearSheetResponse
+
+    monkeypatch.setattr(data_store, "DB_PATH", tmp_path / "ds.sqlite3")
+    monkeypatch.setattr(_main, "_VERDICT_TOOL_CACHE_TTL", -1.0)  # 恒过期
+    data_store.init_data_store()
+
+    calls = {"n": 0}
+
+    async def fake_core(symbol, name="", market_cap=None, market=""):
+        calls["n"] += 1
+        return TearSheetResponse(
+            symbol="AAPL", name="Apple", generated_at=datetime.now(timezone.utc),
+            overall_verdict="重点跟踪", overall_score=42, confidence=0.7,
+        )
+
+    monkeypatch.setattr(_main, "_build_stock_tear_sheet_core", fake_core)
+
+    asyncio.run(agent_tools.execute_tool("get_stock_verdict", {"symbol": "AAPL"}))
+    asyncio.run(agent_tools.execute_tool("get_stock_verdict", {"symbol": "AAPL"}))
+    assert calls["n"] == 2  # TTL 恒过期 → 每次都重建
