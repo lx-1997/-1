@@ -1207,8 +1207,11 @@ async def _tool_get_macro_environment(symbol: str = "", market: Optional[str] = 
 
     def _last(series: Any) -> Any:
         if isinstance(series, list) and series:
-            date, value = series[-1]
-            return {"date": date, "value": value}
+            try:
+                date, value = series[-1]  # 每元素应为 (date, value) 2-元组
+                return {"date": date, "value": value}
+            except (ValueError, TypeError):
+                return None
         return None
 
     snap = {

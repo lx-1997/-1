@@ -196,6 +196,24 @@ def test_run_tool_agent_emits_tool_progress(monkeypatch):
     assert events.index(("tool_start", "get_market_quote")) < events.index(("tool_result", "get_market_quote"))
 
 
+def test_emit_failure_does_not_break_agent(monkeypatch):
+    # emit 抛错（如 SSE 消费端断开）必须被吞掉，研究结果照常返回——不能因进度上报失败丢掉答案。
+    async def bad_emit(etype, payload):
+        raise RuntimeError("consumer gone")
+
+    script = [
+        _FakeResponse(_FakeMessage(tool_calls=[_FakeToolCall("c1", "get_market_quote", '{"symbol":"AAPL"}')])),
+        _FakeResponse(_FakeMessage(content="完成。", tool_calls=None)),
+    ]
+    llm = _make_llm(monkeypatch, script=script, fake_execute=_recording_execute())
+
+    result = asyncio.run(llm.run_tool_agent(question="分析 AAPL", emit=bad_emit))
+
+    assert result is not None  # 不回退 None
+    assert result["answer"] == "完成。"
+    assert len(result["tool_trace"]) == 1
+
+
 def test_run_tool_agent_no_emit_unchanged(monkeypatch):
     # emit=None（默认）时行为与非流式完全一致。
     script = [_FakeResponse(_FakeMessage(content="直接答。", tool_calls=None))]

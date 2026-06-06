@@ -1029,16 +1029,14 @@ class CloudResearchLLM:
                         args = json.loads(tc.function.arguments or "{}")
                     except (ValueError, TypeError):
                         args = {}
-                    if emit:
-                        await emit("tool_start", {"tool": tc.function.name, "args": args})
+                    await _safe_emit(emit, "tool_start", {"tool": tc.function.name, "args": args})
                     result = await execute_tool(tc.function.name, args, extra_tools=mcp_tools)
                     summary = _summarize_tool_result(result)
-                    if emit:
-                        await emit("tool_result", {
-                            "tool": tc.function.name,
-                            "ok": bool(result.get("ok")),
-                            "summary": summary,
-                        })
+                    await _safe_emit(emit, "tool_result", {
+                        "tool": tc.function.name,
+                        "ok": bool(result.get("ok")),
+                        "summary": summary,
+                    })
                     trace.append({
                         "tool": tc.function.name,
                         "args": args,
@@ -1394,6 +1392,16 @@ def _looks_like_response_format_error(exc: Exception) -> bool:
             "不支持",
         )
     )
+
+
+async def _safe_emit(emit, event_type: str, payload: dict[str, Any]) -> None:
+    """best-effort 进度上报：emit 失败（如 SSE 消费端断开/异常）绝不能毁掉真研究结果。"""
+    if not emit:
+        return
+    try:
+        await emit(event_type, payload)
+    except Exception:
+        return
 
 
 def _summarize_tool_result(result: dict[str, Any]) -> str:
