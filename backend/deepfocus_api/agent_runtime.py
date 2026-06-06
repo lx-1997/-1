@@ -11,18 +11,28 @@ import uuid
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import httpx
 
-from .agent_engines import AgentEngineRunContext, TradingAgentsAdapter
-from .customs_hs_detail import build_customs_hs_detail_analysis_text, fetch_customs_hs_detail_snapshot
-from .customs_trade import build_customs_trade_analysis_text, fetch_customs_trade_snapshot
+from .agent_engines import (
+    DEFAULT_ENGINE_KEY,
+    AgentEngineExecution,
+    AgentEngineRunContext,
+    AgentEngineSpec,
+    TradingAgentsAdapter,
+    register_engine,
+    resolve_engine,
+)
+from .customs_hs_detail import fetch_customs_hs_detail_snapshot
+from .customs_trade import build_customs_trade_ai_snapshot, fetch_customs_trade_snapshot
 from .data_sources import collect_task_evidence, keyword_crawl_data_source
 from .llm import CloudResearchLLM
 from .market_data import fetch_market_quotes
 from .options_signal import fetch_options_signals
 from .professional_research import analyze_professional_report, list_professional_reports, query_professional_rag
+from .shared_utils import utc_now_iso
 from .schemas import (
     DataSourceKeywordCrawlRequest,
     InvestmentTaskCreateRequest,
@@ -73,10 +83,6 @@ _worker_task: Optional[asyncio.Task] = None
 _worker_stop_event: Optional[asyncio.Event] = None
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def init_task_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
@@ -123,7 +129,7 @@ def init_task_db() -> None:
 def create_investment_task(request: InvestmentTaskCreateRequest) -> InvestmentTaskRecord:
     init_task_db()
     task_id = str(uuid.uuid4())
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     input_payload = request.model_dump()
     record = {
         "id": task_id,
@@ -143,7 +149,7 @@ def create_investment_task(request: InvestmentTaskCreateRequest) -> InvestmentTa
                 {
                     "timestamp": timestamp,
                     "agent": "TaskCenter",
-                    "message": "任务已进入投研队列，等待多 Agent 调度。",
+                    "message": "任务已进入投研队列，等待核心链路调度。",
                 }
             ],
             ensure_ascii=False,
@@ -195,7 +201,7 @@ def retry_investment_task(task_id: str) -> Optional[InvestmentTaskRecord]:
     if not task or task.status not in {"failed", "cancelled", "completed"}:
         return task
     logs = [entry.model_dump() for entry in task.logs]
-    logs.append({"timestamp": now_iso(), "agent": "TaskCenter", "message": "任务已重新排队。"})
+    logs.append({"timestamp": utc_now_iso(), "agent": "TaskCenter", "message": "任务已重新排队。"})
     _update_task(
         task_id,
         status="pending",
@@ -215,7 +221,7 @@ def cancel_investment_task(task_id: str) -> Optional[InvestmentTaskRecord]:
         return task
     _terminate_task_runtime_process(task_id)
     logs = [entry.model_dump() for entry in task.logs]
-    logs.append({"timestamp": now_iso(), "agent": "TaskCenter", "message": "用户取消任务。"})
+    logs.append({"timestamp": utc_now_iso(), "agent": "TaskCenter", "message": "用户取消任务。"})
     _update_task(
         task_id,
         status="cancelled",
@@ -223,7 +229,7 @@ def cancel_investment_task(task_id: str) -> Optional[InvestmentTaskRecord]:
         logs_json=json.dumps(logs, ensure_ascii=False),
         runtime_pid=None,
         runtime_kind=None,
-        completed_at=now_iso(),
+        completed_at=utc_now_iso(),
     )
     return get_investment_task(task_id)
 
@@ -350,7 +356,7 @@ async def _worker_loop(stop_event: asyncio.Event) -> None:
 
 
 def _claim_next_task() -> Optional[InvestmentTaskRecord]:
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     with _connect() as conn:
         row = conn.execute(
             """
@@ -373,7 +379,7 @@ def _claim_next_task() -> Optional[InvestmentTaskRecord]:
         conn.commit()
     task = get_investment_task(row["id"])
     if task:
-        _append_log(task.id, "OrchestratorAgent", "任务已启动，开始拆解为多 Agent 投研流程。", progress=8)
+        _append_log(task.id, "OrchestratorAgent", "任务已启动，开始拆解为核心投研流程。", progress=8)
     return task
 
 
@@ -383,7 +389,7 @@ async def _process_task(task: InvestmentTaskRecord) -> None:
         if task.task_type == "customs_trade_analysis" or payload.get("analysis_domain") == "customs_trade":
             await _process_customs_trade_task(task)
             return
-        engine = task.engine or payload.get("engine") or "deepfocus"
+        engine = task.engine or payload.get("engine") or DEFAULT_ENGINE_KEY
         _append_log(task.id, "EvidenceAgent", "同步服务器/API/网页数据源，并检索本地上传资料。", progress=14)
         evidence = await collect_task_evidence(payload)
         evidence_message = (
@@ -401,11 +407,11 @@ async def _process_task(task: InvestmentTaskRecord) -> None:
                 f"研报模块命中 {len(professional_evidence)} 条专业证据，已注入投研上下文。",
                 progress=20,
             )
-        elif payload.get("symbol"):
+        elif payload.get("symbol") or payload.get("asset_name"):
             _append_log(
                 task.id,
                 "EvidenceAgent",
-                "研报模块已查询，但未命中该标的的入库研报/财报。",
+                "研报模块已按代码/名称查询，但未命中该标的的入库研报/财报。",
                 progress=20,
             )
             external_research_evidence = await _collect_external_research_evidence(payload)
@@ -459,89 +465,37 @@ async def _process_task(task: InvestmentTaskRecord) -> None:
         if market_quote:
             _append_log(task.id, "EvidenceAgent", _quote_log_message(market_quote), progress=24)
         payload_with_evidence = {**payload, "evidence": evidence, "market_quote": market_quote}
-        stages = _engine_stages(engine)
+        spec = resolve_engine(engine)
+        stages = (
+            _execution_risk_stages()
+            if task.task_type in ("risk_review", "portfolio_review")
+            else spec.stages
+        )
         for agent, message, progress in stages:
             _append_log(task.id, agent, message, progress=progress)
             await asyncio.sleep(0.15)
 
-        if engine == "tradingagents":
-            run_context = AgentEngineRunContext(
-                task_id=task.id,
-                title=task.title,
-                symbol=task.symbol or payload.get("symbol") or "",
-                asset_name=task.asset_name or payload.get("asset_name") or "",
-                task_type=task.task_type,
+        # run_context 携带 heartbeat / runtime 进程登记回调（两者均为零副作用的闭包工厂，
+        # 仅在引擎真正调用时才写库）；非 tradingagents 引擎不读取它，构造无代价。
+        run_context = AgentEngineRunContext(
+            task_id=task.id,
+            title=task.title,
+            symbol=task.symbol or payload.get("symbol") or "",
+            asset_name=task.asset_name or payload.get("asset_name") or "",
+            task_type=task.task_type,
+            payload=payload_with_evidence,
+            evidence=evidence,
+            heartbeat=_make_task_heartbeat(task.id),
+            register_runtime_process=_register_task_runtime_process(task.id),
+        )
+        result = await spec.runner(
+            AgentEngineExecution(
+                task=task,
                 payload=payload_with_evidence,
                 evidence=evidence,
-                heartbeat=_make_task_heartbeat(task.id),
-                register_runtime_process=_register_task_runtime_process(task.id),
+                run_context=run_context,
             )
-            engine_result = await TradingAgentsAdapter().run(run_context)
-            for agent, message, progress in engine_result.logs:
-                _append_log(task.id, agent, message, progress=progress)
-            result = _normalize_investment_result(engine_result.result, task)
-            if result.get("engine_status") != "completed":
-                issue = _safe_short(
-                    str(result.get("investor_summary") or result.get("plain_language_takeaway") or "TradingAgents 未稳定完成。"),
-                    260,
-                )
-                _append_log(
-                    task.id,
-                    "ModelRouter",
-                    f"TradingAgents 未在可用时间内完成，已切换为 DeepFocus Native 兜底报告：{issue}",
-                    progress=92,
-                )
-                result = await _tradingagents_fallback_investment_result(
-                    task,
-                    evidence,
-                    payload_with_evidence,
-                    issue,
-                )
-        elif engine == "financial_services":
-            llm = CloudResearchLLM()
-            if llm.provider == "mock":
-                result = _financial_services_playbook_result(task, evidence=evidence, payload_override=payload_with_evidence)
-            else:
-                try:
-                    result = await asyncio.wait_for(
-                        _cloud_investment_result(llm, task, payload_with_evidence),
-                        timeout=min(AGENT_LLM_TIMEOUT_SECONDS, AGENT_REPORT_CLOUD_TIMEOUT_SECONDS),
-                    )
-                    result = _apply_financial_services_overlay(result, task, payload_with_evidence, evidence)
-                except Exception as exc:
-                    guidance = _cloud_failure_guidance(exc)
-                    _append_log(
-                        task.id,
-                        "ModelRouter",
-                        f"云模型不可用，已切换为 Financial Services 本地 playbook：{guidance}",
-                        progress=92,
-                    )
-                    result = _financial_services_playbook_result(
-                        task,
-                        evidence=evidence,
-                        payload_override=payload_with_evidence,
-                        engine_status="cloud_fallback",
-                    )
-                    result["confidence"] = min(float(result.get("confidence", 0.5)), 0.58)
-        else:
-            llm = CloudResearchLLM()
-            if llm.provider == "mock":
-                result = _mock_investment_result(task, evidence=evidence, payload_override=payload_with_evidence)
-            else:
-                try:
-                    result = await asyncio.wait_for(
-                        _cloud_investment_result(llm, task, payload_with_evidence),
-                        timeout=min(AGENT_LLM_TIMEOUT_SECONDS, AGENT_REPORT_CLOUD_TIMEOUT_SECONDS),
-                    )
-                except Exception as exc:
-                    guidance = _cloud_failure_guidance(exc)
-                    _append_log(
-                        task.id,
-                        "ModelRouter",
-                        f"云模型不可用，已切换为本地投研兜底：{guidance}",
-                        progress=92,
-                    )
-                    result = _cloud_fallback_investment_result(task, evidence, guidance, llm, payload_with_evidence)
+        )
 
         current = get_investment_task(task.id)
         if not current or current.status != "running":
@@ -554,7 +508,7 @@ async def _process_task(task: InvestmentTaskRecord) -> None:
             result_json=json.dumps(result, ensure_ascii=False),
             runtime_pid=None,
             runtime_kind=None,
-            completed_at=now_iso(),
+            completed_at=utc_now_iso(),
         )
     except Exception as exc:
         current = get_investment_task(task.id)
@@ -568,30 +522,153 @@ async def _process_task(task: InvestmentTaskRecord) -> None:
             error=str(exc),
             runtime_pid=None,
             runtime_kind=None,
-            completed_at=now_iso(),
+            completed_at=utc_now_iso(),
         )
 
 
+# --- 引擎实现：阶段常量 + runner ---------------------------------------------
+# 三个引擎都登记进 ENGINE_REGISTRY（见本段末尾的 register_engine 调用）。新增引擎只需：
+#   1) 写一个 `async def _run_xxx_engine(ex) -> dict` runner；
+#   2) register_engine(AgentEngineSpec(key=..., label=..., runner=..., stages=...)) 一行；
+#   3) 把 key 加进 schemas.AgentEngine（Literal，API 入参校验，有同步测试守卫）。
+# 不再需要改 _process_task / _engine_stages / _engine_label。
+
+_TRADINGAGENTS_STAGES = [
+    ("ResearchAgent", "底层调用 TradingAgents analyst team 完成 market / news / fundamentals 分析。", 32),
+    ("ResearchAgent", "吸收 bull / bear debate 与 trader proposal，形成研究假设。", 55),
+    ("RiskAgent", "映射 TradingAgents 风险经理结论，复核流动性和仓位纪律。", 76),
+    ("ReportAgent", "把 TradingAgents 组合经理结论映射为 DeepFocus 投资报告。", 84),
+]
+
+_FINANCIAL_SERVICES_STAGES = [
+    ("FSIWorkflowAgent", "按 financial-services cookbook 选择 market research、earnings、model、pitch、valuation、KYC 或 reconciliation 路线。", 30),
+    ("ModelBuilderAgent", "抽取模型输入、估值假设、可比公司和三表/DCF/LBO 工作底稿需求。", 52),
+    ("ControlAgent", "加入审计、引用、审批、KYC/对账和人工复核闸门。", 72),
+    ("ReportAgent", "把金融服务工作流压缩为可交付备忘录、模型清单和后续动作。", 88),
+]
+
+_DEEPFOCUS_STAGES = [
+    ("ResearchAgent", "梳理业务事实、情绪信号、核心问题和投资假设。", 35),
+    ("ResearchAgent", "生成牛市/基准/熊市情景和触发条件。", 55),
+    ("RiskAgent", "识别亏损路径、失效条件和仓位纪律。", 72),
+    ("ReportAgent", "合并为投资者可读的决策报告。", 90),
+]
+
+
+async def _run_tradingagents_engine(ex: AgentEngineExecution) -> dict[str, Any]:
+    """对接 TradingAgents 多智能体团队；未稳定完成则回退 DeepFocus Native 兜底报告。"""
+    task = ex.task
+    engine_result = await TradingAgentsAdapter().run(ex.run_context)
+    for agent, message, progress in engine_result.logs:
+        _append_log(task.id, agent, message, progress=progress)
+    result = _normalize_investment_result(engine_result.result, task)
+    if result.get("engine_status") != "completed":
+        issue = _safe_short(
+            str(result.get("investor_summary") or result.get("plain_language_takeaway") or "TradingAgents 未稳定完成。"),
+            260,
+        )
+        _append_log(
+            task.id,
+            "ModelRouter",
+            f"TradingAgents 未在可用时间内完成，已切换为 DeepFocus Native 兜底报告：{issue}",
+            progress=92,
+        )
+        result = await _tradingagents_fallback_investment_result(
+            task,
+            ex.evidence,
+            ex.payload,
+            issue,
+        )
+    return result
+
+
+async def _run_financial_services_engine(ex: AgentEngineExecution) -> dict[str, Any]:
+    """金融服务 cookbook 工作流；云模型不可用回退本地 playbook（并压低置信度）。"""
+    task = ex.task
+    llm = CloudResearchLLM()
+    if llm.provider == "mock":
+        return _financial_services_playbook_result(task, evidence=ex.evidence, payload_override=ex.payload)
+    try:
+        result = await asyncio.wait_for(
+            _cloud_investment_result(llm, task, ex.payload),
+            timeout=min(AGENT_LLM_TIMEOUT_SECONDS, AGENT_REPORT_CLOUD_TIMEOUT_SECONDS),
+        )
+        return _apply_financial_services_overlay(result, task, ex.payload, ex.evidence)
+    except Exception as exc:
+        guidance = _cloud_failure_guidance(exc)
+        _append_log(
+            task.id,
+            "ModelRouter",
+            f"云模型不可用，已切换为 Financial Services 本地 playbook：{guidance}",
+            progress=92,
+        )
+        result = _financial_services_playbook_result(
+            task,
+            evidence=ex.evidence,
+            payload_override=ex.payload,
+            engine_status="cloud_fallback",
+        )
+        result["confidence"] = min(float(result.get("confidence", 0.5)), 0.58)
+        return result
+
+
+async def _run_deepfocus_engine(ex: AgentEngineExecution) -> dict[str, Any]:
+    """DeepFocus 原生证据增强投研；云模型不可用回退本地兜底报告。"""
+    task = ex.task
+    llm = CloudResearchLLM()
+    if llm.provider == "mock":
+        return _mock_investment_result(task, evidence=ex.evidence, payload_override=ex.payload)
+    try:
+        return await asyncio.wait_for(
+            _cloud_investment_result(llm, task, ex.payload),
+            timeout=min(AGENT_LLM_TIMEOUT_SECONDS, AGENT_REPORT_CLOUD_TIMEOUT_SECONDS),
+        )
+    except Exception as exc:
+        guidance = _cloud_failure_guidance(exc)
+        _append_log(
+            task.id,
+            "ModelRouter",
+            f"云模型不可用，已切换为本地投研兜底：{guidance}",
+            progress=92,
+        )
+        return _cloud_fallback_investment_result(task, ex.evidence, guidance, llm, ex.payload)
+
+
+register_engine(AgentEngineSpec(
+    key="deepfocus",
+    label="DeepFocus Native",
+    runner=_run_deepfocus_engine,
+    stages=_DEEPFOCUS_STAGES,
+    description="DeepFocus 原生投研引擎：证据增强的多情景研究报告，云模型不可用时回退本地兜底。",
+))
+register_engine(AgentEngineSpec(
+    key="tradingagents",
+    label="TradingAgents",
+    runner=_run_tradingagents_engine,
+    stages=_TRADINGAGENTS_STAGES,
+    description="对接 TradingAgents 多智能体团队（market/news/fundamentals + bull/bear debate），未完成回退 DeepFocus Native。",
+))
+register_engine(AgentEngineSpec(
+    key="financial_services",
+    label="Financial Services Playbook",
+    runner=_run_financial_services_engine,
+    stages=_FINANCIAL_SERVICES_STAGES,
+    description="按金融服务 cookbook 选择 market/earnings/model/pitch/valuation/KYC/对账 工作流，叠加审计与人工复核闸门。",
+))
+
+
 def _engine_stages(engine: str) -> list[tuple[str, str, int]]:
-    if engine == "tradingagents":
-        return [
-            ("ResearchAgent", "底层调用 TradingAgents analyst team 完成 market / news / fundamentals 分析。", 32),
-            ("ResearchAgent", "吸收 bull / bear debate 与 trader proposal，形成研究假设。", 55),
-            ("RiskAgent", "映射 TradingAgents 风险经理结论，复核流动性和仓位纪律。", 76),
-            ("ReportAgent", "把 TradingAgents 组合经理结论映射为 DeepFocus 投资报告。", 84),
-        ]
-    if engine == "financial_services":
-        return [
-            ("FSIWorkflowAgent", "按 financial-services cookbook 选择 market research、earnings、model、pitch、valuation、KYC 或 reconciliation 路线。", 30),
-            ("ModelBuilderAgent", "抽取模型输入、估值假设、可比公司和三表/DCF/LBO 工作底稿需求。", 52),
-            ("ControlAgent", "加入审计、引用、审批、KYC/对账和人工复核闸门。", 72),
-            ("ReportAgent", "把金融服务工作流压缩为可交付备忘录、模型清单和后续动作。", 88),
-        ]
+    """兼容旧调用方：阶段已收敛进注册表，这里只做查表。"""
+    return resolve_engine(engine).stages
+
+
+def _execution_risk_stages() -> list[tuple[str, str, int]]:
     return [
-        ("ResearchAgent", "梳理业务事实、情绪信号、核心问题和投资假设。", 35),
-        ("ResearchAgent", "生成牛市/基准/熊市情景和触发条件。", 55),
-        ("RiskAgent", "识别亏损路径、失效条件和仓位纪律。", 72),
-        ("ReportAgent", "合并为投资者可读的决策报告。", 90),
+        ("ExecutionAgent", "分析订单簿深度、流动性状况和最优执行算法选择。", 20),
+        ("ExecutionAgent", "计算VWAP/TWAP执行路径、冲击成本和滑点预估。", 40),
+        ("RiskAgent", "评估头寸风险：VaR、Greeks、压力测试和相关性分析。", 60),
+        ("RiskAgent", "生成止损/止盈建议、仓位调整方案和尾部风险对冲策略。", 80),
+        ("ReportAgent", "输出执行风险报告和交易前检查清单。", 95),
     ]
 
 
@@ -600,7 +677,7 @@ async def _process_customs_trade_task(task: InvestmentTaskRecord) -> None:
     _append_log(
         task.id,
         "OrchestratorAgent",
-        "识别为海关进出口专题任务，切换到 CustomsTradeAgent 编排。",
+        "识别为海关进出口专题任务，切换到海关专题工作流。",
         progress=10,
     )
     _append_log(
@@ -619,7 +696,7 @@ async def _process_customs_trade_task(task: InvestmentTaskRecord) -> None:
         progress=32,
     )
     focus = str(payload.get("customs_focus") or payload.get("objective") or "全局海关进出口快照")
-    context = build_customs_trade_analysis_text(
+    context = build_customs_trade_ai_snapshot(
         snapshot,
         focus=focus,
         selected_tab=payload.get("customs_selected_tab"),
@@ -639,7 +716,24 @@ async def _process_customs_trade_task(task: InvestmentTaskRecord) -> None:
             months=12,
         )
         product = detail_snapshot.get("product") or {}
-        context = f"{context}\n{build_customs_hs_detail_analysis_text(detail_snapshot)}"
+        detail_points = detail_snapshot.get("monthly_points") or []
+        context = (
+            f"{context}\nHS_DETAIL="
+            + json.dumps(
+                {
+                    "product": {
+                        "code": product.get("code") or detail_snapshot.get("code"),
+                        "name": product.get("name_zh") or product.get("name"),
+                        "industry": product.get("industry"),
+                    },
+                    "recent_months": detail_points[-3:],
+                    "top_export_partners": (detail_snapshot.get("top_export_partners") or [])[:3],
+                    "top_import_partners": (detail_snapshot.get("top_import_partners") or [])[:3],
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+        )
         _append_log(
             task.id,
             "EvidenceAgent",
@@ -653,10 +747,20 @@ async def _process_customs_trade_task(task: InvestmentTaskRecord) -> None:
         progress=52,
     )
     llm = CloudResearchLLM()
-    analysis = await asyncio.wait_for(
-        llm.analyze_customs_trade_agent(context),
-        timeout=min(AGENT_LLM_TIMEOUT_SECONDS, AGENT_REPORT_CLOUD_TIMEOUT_SECONDS),
-    )
+    try:
+        analysis = await asyncio.wait_for(
+            llm.analyze_customs_trade_agent(context),
+            timeout=min(AGENT_LLM_TIMEOUT_SECONDS, AGENT_REPORT_CLOUD_TIMEOUT_SECONDS),
+        )
+    except Exception as exc:
+        guidance = _cloud_failure_guidance(exc)
+        _append_log(
+            task.id,
+            "ModelRouter",
+            f"云模型未稳定返回，已切换为海关专题本地规则分析：{guidance}",
+            progress=68,
+        )
+        analysis = _local_customs_trade_analysis(snapshot, payload, guidance, llm)
     _append_log(
         task.id,
         "RiskAgent",
@@ -675,7 +779,7 @@ async def _process_customs_trade_task(task: InvestmentTaskRecord) -> None:
     _append_log(
         task.id,
         "ReportAgent",
-        "海关进出口投研 Agent 报告已生成，并写入 Agent Workspace 任务结果。",
+        "海关进出口投研报告已生成，并写入投研任务结果。",
         progress=98,
     )
     _update_task(
@@ -686,8 +790,134 @@ async def _process_customs_trade_task(task: InvestmentTaskRecord) -> None:
         result_json=json.dumps(result, ensure_ascii=False),
         runtime_pid=None,
         runtime_kind=None,
-        completed_at=now_iso(),
+        completed_at=utc_now_iso(),
     )
+
+
+def _local_customs_trade_analysis(
+    snapshot: dict[str, Any],
+    payload: dict[str, Any],
+    reason: str,
+    llm: CloudResearchLLM,
+) -> SimpleNamespace:
+    total_items = (snapshot.get("total") or {}).get("items") or {}
+    total = total_items.get("total") or {}
+    export = total_items.get("export") or {}
+    import_row = total_items.get("import") or {}
+    balance = total_items.get("balance") or {}
+    focus = str(payload.get("customs_focus") or "全局海关进出口快照")
+    month_label = snapshot.get("month_label") or snapshot.get("observed_month") or "未知月份"
+    hs_rows = [row for row in (snapshot.get("hs_chapters") or []) if isinstance(row, dict)]
+    export_rows = [row for row in (snapshot.get("major_exports") or []) if isinstance(row, dict)]
+    import_rows = [row for row in (snapshot.get("major_imports") or []) if isinstance(row, dict)]
+    partner_rows = [row for row in (snapshot.get("partners") or []) if isinstance(row, dict)]
+
+    top_hs = _customs_row_label(hs_rows[0]) if hs_rows else "HS商品结构"
+    second_hs = _customs_row_label(hs_rows[1]) if len(hs_rows) > 1 else "出口链条"
+    top_export = _customs_row_label(export_rows[0]) if export_rows else "重点出口商品"
+    top_import = _customs_row_label(import_rows[0]) if import_rows else "重点进口商品"
+    top_partner = _customs_row_label(partner_rows[0]) if partner_rows else "主要贸易伙伴"
+
+    key_points = [
+        f"{month_label} 进出口总额同比 {total.get('yoy_current_pct') if total.get('yoy_current_pct') is not None else '待核'}%，出口同比 {export.get('yoy_current_pct') if export.get('yoy_current_pct') is not None else '待核'}%。",
+        f"累计出口同比 {export.get('yoy_ytd_pct') if export.get('yoy_ytd_pct') is not None else '待核'}%，累计进口同比 {import_row.get('yoy_ytd_pct') if import_row.get('yoy_ytd_pct') is not None else '待核'}%。",
+        f"当前焦点为 {focus}，优先观察 {top_hs}、{top_export} 和 {top_partner} 的量价变化。",
+        f"贸易差额当月口径 {balance.get('current_usd_mn') if balance.get('current_usd_mn') is not None else '待核'} 百万美元，需区分外需和价格因素。",
+        f"本轮使用本地规则兜底，云模型 {llm.provider_name}/{llm.model} 未完成：{_safe_short(reason, 90)}",
+    ]
+    signals = [
+        f"建议关注：{top_hs} 与 {second_hs} 的近12个月趋势延续性。",
+        f"建议关注：{top_export} 对电力设备、电子零部件或AI硬件链的传导。",
+        f"谨慎观察：{top_import} 是否反映大宗价格或内需修复，而非纯数量改善。",
+        f"跟踪伙伴：{top_partner} 的累计总额和对美/东盟/RCEP敞口变化。",
+    ]
+    actions = [
+        "建议关注：专门电气设备出口链，代表股票：思源电气(002028)、特变电工(600089)、金盘科技(688676)",
+        "建议关注：AI服务器/PCB/光模块链，代表股票：工业富联(601138)、沪电股份(002463)、中际旭创(300308)",
+        "谨慎观察：电子零部件出口链，代表股票：立讯精密(002475)、歌尔股份(002241)、鹏鼎控股(002938)",
+        "谨慎观察：传统出口链，代表股票：申洲国际(02313.HK)、华利集团(300979)、顾家家居(603816)",
+        "暂时回避：单月放量但缺少连续验证的商品链，等待连续2个月量价确认",
+        "验证触发：出口金额、数量和主要伙伴需求连续改善且行业订单同步验证",
+    ]
+    risks = [
+        "海关单月数据受春节错位、价格波动、补报和转口影响较大。",
+        "金额改善可能来自价格而非数量，需联动数量、单价和订单验证。",
+        "重点商品英文口径可能存在合并分类，代表股票只作研究样本池。",
+        "云模型本轮未完成，结论按保守置信度处理，建议恢复后复跑。",
+    ]
+    sources = [
+        str(source.get("name") or source.get("url"))
+        for source in (snapshot.get("sources") or [])
+        if isinstance(source, dict) and (source.get("name") or source.get("url"))
+    ]
+    return SimpleNamespace(
+        title="中国海关进出口投研Agent（本地兜底）",
+        summary=f"总体建议：中性偏谨慎。{month_label} 海关数据可用于筛选产业链线索，但本轮云模型未稳定返回，已按本地规则生成保守分析。",
+        key_points=key_points[:6],
+        signals=signals[:6],
+        risks=risks[:6],
+        actions=actions[:6],
+        sources=(sources or ["GACC Customs Statistics"])[:6],
+        confidence=0.54,
+        disclaimer="仅供投研参考，不构成投资建议。云模型恢复后建议复跑并复核引用。",
+    )
+
+
+def _customs_row_label(row: dict[str, Any]) -> str:
+    return str(
+        row.get("name_zh")
+        or row.get("commodity_zh")
+        or row.get("name")
+        or row.get("commodity")
+        or row.get("partner_zh")
+        or row.get("partner")
+        or row.get("code")
+        or "未命名项目"
+    )
+
+
+def _normalize_customs_month_text(value: Any, month_label: str) -> str:
+    text = _safe_short(str(value or ""), 500)
+    match = re.search(r"-(\d{2})$", str(month_label or ""))
+    if not match:
+        return text
+    current_month = int(match.group(1))
+    current_text = f"{current_month}月"
+    metric_suffix = r"(?:进出口|进口|出口|贸易|顺差|逆差|机电|高新技术|集成电路|数据|同比|环比|当月)"
+    text = re.sub(rf"(?<!\d)(?:[1-9]|1[0-2])月(?={metric_suffix})", current_text, text)
+    text = re.sub(rf"需{re.escape(current_text)}数据验证", "需后续月份数据验证", text)
+    text = re.sub(rf"{re.escape(current_text)}数据验证", "后续月份数据验证", text)
+    return text
+
+
+def _normalize_customs_fact_text(value: Any, snapshot: dict[str, Any]) -> str:
+    text = _safe_short(str(value or ""), 500)
+    total_items = (snapshot.get("total") or {}).get("items") or {}
+    export_yoy = ((total_items.get("export") or {}).get("yoy_current_pct"))
+    import_yoy = ((total_items.get("import") or {}).get("yoy_current_pct"))
+    hs85 = next(
+        (
+            row
+            for row in (snapshot.get("hs_chapters") or [])
+            if isinstance(row, dict) and str(row.get("code") or "") == "85"
+        ),
+        {},
+    )
+    hs85_export_yoy = hs85.get("yoy_export_pct")
+    hs85_import_yoy = hs85.get("yoy_import_pct")
+    if "HS85" in text and hs85_export_yoy is not None and export_yoy is not None:
+        text = re.sub(
+            rf"HS85(?:当月)?出口同比[+＋]?{re.escape(str(export_yoy))}%",
+            f"HS85出口同比+{hs85_export_yoy}%",
+            text,
+        )
+    if "HS85" in text and hs85_import_yoy is not None and import_yoy is not None:
+        text = re.sub(
+            rf"HS85(?:当月)?进口同比[+＋]?{re.escape(str(import_yoy))}%",
+            f"HS85进口同比+{hs85_import_yoy}%",
+            text,
+        )
+    return text
 
 
 def _customs_trade_task_result(
@@ -696,14 +926,20 @@ def _customs_trade_task_result(
     payload: dict[str, Any],
     task: InvestmentTaskRecord,
 ) -> dict[str, Any]:
+    month_label = snapshot.get("month_label") or snapshot.get("observed_month") or "未知月份"
+    summary = _normalize_customs_month_text(getattr(analysis, "summary", "") or "", month_label)
     actions = list(getattr(analysis, "actions", []) or [])
     risks = list(getattr(analysis, "risks", []) or [])
     key_points = list(getattr(analysis, "key_points", []) or [])
     signals = list(getattr(analysis, "signals", []) or [])
     sources = list(getattr(analysis, "sources", []) or [])
+    summary = _normalize_customs_fact_text(summary, snapshot)
+    actions = [_normalize_customs_fact_text(_normalize_customs_month_text(item, month_label), snapshot) for item in actions]
+    risks = [_normalize_customs_fact_text(_normalize_customs_month_text(item, month_label), snapshot) for item in risks]
+    key_points = [_normalize_customs_fact_text(_normalize_customs_month_text(item, month_label), snapshot) for item in key_points]
+    signals = [_normalize_customs_fact_text(_normalize_customs_month_text(item, month_label), snapshot) for item in signals]
     confidence = _normalize_confidence(getattr(analysis, "confidence", 0.62))
     decision = "candidate" if any("建议关注" in item for item in actions) else "research_more"
-    month_label = snapshot.get("month_label") or snapshot.get("observed_month") or "未知月份"
     focus = str(payload.get("customs_focus") or "全局海关进出口快照")
     source_items = [
         {
@@ -722,7 +958,7 @@ def _customs_trade_task_result(
         "engine": "deepfocus",
         "engine_label": "DeepFocus Native",
         "engine_status": "completed",
-        "investor_summary": getattr(analysis, "summary", "") or "海关进出口投研 Agent 已完成。",
+        "investor_summary": summary or "海关进出口投研任务已完成。",
         "decision": decision,
         "confidence": confidence,
         "agent_findings": {
@@ -764,12 +1000,12 @@ def _customs_trade_task_result(
         "watchlist": _dedupe_strings([*signals, *actions])[:8],
         "disconfirming_evidence": risks[:6],
         "evidence": source_items,
-        "plain_language_takeaway": getattr(analysis, "summary", "") or "",
+        "plain_language_takeaway": summary or "",
         "disclaimer": getattr(analysis, "disclaimer", None) or "仅供投研参考，不构成投资建议。",
         "artifacts": [
             {
                 "type": "customs_trade_agent_analysis",
-                "title": getattr(analysis, "title", "中国海关进出口投研Agent"),
+                "title": getattr(analysis, "title", "中国海关进出口投研"),
                 "content": json.dumps(
                     analysis.model_dump(mode="json") if hasattr(analysis, "model_dump") else {},
                     ensure_ascii=False,
@@ -814,6 +1050,84 @@ def _professional_research_question(payload: dict[str, Any]) -> str:
     )
 
 
+def _professional_report_match_text(report: Any) -> str:
+    metadata = getattr(report, "metadata", None)
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata_parts: list[str] = []
+    for key in ("filename", "source_url", "url", "source_name"):
+        value = metadata.get(key)
+        if value:
+            metadata_parts.append(str(value))
+    tags = metadata.get("tags")
+    if isinstance(tags, list):
+        metadata_parts.extend(str(tag) for tag in tags if tag)
+    elif isinstance(tags, str):
+        metadata_parts.append(tags)
+    return " ".join(
+        part
+        for part in (
+            str(getattr(report, "symbol", "") or ""),
+            str(getattr(report, "title", "") or ""),
+            str(getattr(report, "period", "") or ""),
+            str(getattr(report, "report_type", "") or ""),
+            *metadata_parts,
+        )
+        if part
+    )
+
+
+def _professional_report_relevance_score(report: Any, *, symbol: str, name: str) -> int:
+    report_symbol = str(getattr(report, "symbol", "") or "").strip().upper()
+    base_symbol = symbol.split(".")[0].upper()
+    title = str(getattr(report, "title", "") or "")
+    title_compact = _compact_for_match(title)
+    full_text = _professional_report_match_text(report)
+    full_compact = _compact_for_match(full_text)
+    score = 0
+    if symbol and report_symbol == symbol:
+        score += 100
+    elif base_symbol and report_symbol.split(".")[0] == base_symbol:
+        score += 92
+
+    for alias in _asset_aliases(symbol, name):
+        compact_alias = _compact_for_match(alias)
+        if len(compact_alias) < 2:
+            continue
+        if compact_alias == _compact_for_match(report_symbol):
+            score += 80
+        elif compact_alias and compact_alias in title_compact:
+            score += 45
+        elif compact_alias and compact_alias in full_compact:
+            score += 25
+
+    return score
+
+
+def _find_professional_reports_for_payload(
+    payload: dict[str, Any],
+    *,
+    report_limit: int,
+) -> list[Any]:
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    name = str(payload.get("asset_name") or "").strip()
+    direct_reports: list[Any] = []
+    if symbol:
+        direct_reports = list_professional_reports(symbol=symbol, limit=report_limit)
+    if direct_reports:
+        return direct_reports[:report_limit]
+
+    candidate_limit = max(report_limit * 12, 48)
+    candidates = list_professional_reports(limit=candidate_limit)
+    scored = [
+        (score, report)
+        for report in candidates
+        if (score := _professional_report_relevance_score(report, symbol=symbol, name=name)) > 0
+    ]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [report for _, report in scored[:report_limit]]
+
+
 async def _collect_professional_research_evidence(
     payload: dict[str, Any],
     *,
@@ -821,21 +1135,22 @@ async def _collect_professional_research_evidence(
     evidence_limit: int = 4,
 ) -> list[dict[str, Any]]:
     symbol = str(payload.get("symbol") or "").strip().upper()
-    if not symbol:
-        return []
 
     try:
-        reports = list_professional_reports(symbol=symbol, limit=report_limit)
+        reports = _find_professional_reports_for_payload(payload, report_limit=report_limit)
     except Exception:
         return []
     if not reports:
         return []
 
-    question = _professional_research_question(payload) or f"{symbol} 基本面、估值、风险和买卖点"
+    asset_name = str(payload.get("asset_name") or "").strip()
+    target_label = " / ".join(item for item in (asset_name, symbol) if item) or "该标的"
+    question = _professional_research_question(payload) or f"{target_label} 基本面、估值、风险和买卖点"
     evidence: list[dict[str, Any]] = []
     for report in reports:
         if len(evidence) >= evidence_limit:
             break
+        report_symbol = str(report.symbol or symbol or "").strip().upper() or None
 
         try:
             analysis = await analyze_professional_report(
@@ -856,11 +1171,11 @@ async def _collect_professional_research_evidence(
                     "source_type": "professional_report_analysis",
                     "source_category": "research",
                     "title": report.title,
-                    "symbol": report.symbol,
+                    "symbol": report_symbol,
                     "url": None,
                     "tags": _dedupe_strings([
                         "专业研报",
-                        "财报分析Agent",
+                        "财报分析技能",
                         report.report_type,
                         report.period or "",
                     ]),
@@ -889,7 +1204,7 @@ async def _collect_professional_research_evidence(
             rag = await query_professional_rag(
                 ProfessionalRagQueryRequest(
                     question=question,
-                    symbol=symbol,
+                    symbol=report_symbol or symbol or None,
                     report_id=report.id,
                     top_k=4,
                     use_cloud_model=False,
@@ -906,11 +1221,11 @@ async def _collect_professional_research_evidence(
                         "source_type": "professional_rag",
                         "source_category": "research",
                         "title": f"{report.title}：引用型RAG",
-                        "symbol": report.symbol,
+                        "symbol": report_symbol,
                         "url": None,
                         "tags": ["专业研报", "引用型RAG"],
                         "credibility_score": max(float(rag.confidence or 0), 0.7),
-                        "collected_at": now_iso(),
+                        "collected_at": utc_now_iso(),
                         "text": "\n".join(
                             item
                             for item in (
@@ -1015,7 +1330,7 @@ def _collect_ai_capacity_utilization_evidence(payload: dict[str, Any]) -> list[d
     if not any(token in haystack for token in ai_tokens) or not any(token in haystack for token in capacity_tokens):
         return []
 
-    collected_at = now_iso()
+    collected_at = utc_now_iso()
     return [
         {
             "source": "AI产业链产能利用率模块",
@@ -1143,7 +1458,7 @@ def _sec_filing_evidence_from_submissions(
                 "url": _sec_filing_url(cik, accession, primary_doc),
                 "tags": _dedupe_strings(["SEC", "EDGAR", "官方文件", form_text, "财报" if form_text in {"10-K", "10-Q", "20-F"} else "公告"]),
                 "credibility_score": 0.94,
-                "collected_at": accepted or now_iso(),
+                "collected_at": accepted or utc_now_iso(),
                 "text": "\n".join(
                     part
                     for part in (
@@ -1347,7 +1662,7 @@ async def _cloud_investment_result(
             "输出要包含交付件清单、输入缺口、模型/表格审计规则、引用/审批闸门和人工复核点。\n"
         )
     prompt = (
-        "你是华尔街投研委员会级别的 ReportAgent。只输出一个 JSON object，不要 Markdown，不要解释。\n"
+        "你是华尔街投研委员会级别的 Report Builder。只输出一个 JSON object，不要 Markdown，不要解释。\n"
         "任务：给投资研究报告生成判断层，不要写长文，不要承诺收益，不要编造没有给出的实时数据。\n"
         "JSON 字段：investor_summary, decision, confidence, agent_findings, scenarios, "
         "risk_controls, action_plan, watchlist, disconfirming_evidence, evidence, "
@@ -2093,7 +2408,7 @@ def _apply_financial_services_overlay(
     result["engine_status"] = engine_status or result.get("engine_status") or "completed"
     result["investor_summary"] = (
         f"{workflow_label} 已挂到 DeepFocus 任务链路：先确认输入包和工作流，再交给专门 worker 生成模型、"
-        f"备忘录或控制清单，最后由 ReportAgent 输出可复核结论。当前对象：{name}（{symbol}）。"
+        f"备忘录或控制清单，最后由 Report Builder 输出可复核结论。当前对象：{name}（{symbol}）。"
     )
 
     findings = result.get("agent_findings") if isinstance(result.get("agent_findings"), dict) else {}
@@ -2442,11 +2757,8 @@ def _quote_summary(quote: dict[str, Any]) -> str:
 
 
 def _engine_label(engine: str) -> str:
-    if engine == "tradingagents":
-        return "TradingAgents"
-    if engine == "financial_services":
-        return "Financial Services Playbook"
-    return "DeepFocus Native"
+    """引擎展示名，单一事实源在注册表（未知 key 回退默认引擎名）。"""
+    return resolve_engine(engine).label
 
 
 def _institutional_memo(
@@ -2747,7 +3059,7 @@ def _append_log(task_id: str, agent: str, message: str, progress: Optional[int] 
         except (TypeError, ValueError):
             bounded_progress = None
     logs = [entry.model_dump() for entry in task.logs]
-    log_entry: dict[str, Any] = {"timestamp": now_iso(), "agent": agent, "message": message}
+    log_entry: dict[str, Any] = {"timestamp": utc_now_iso(), "agent": agent, "message": message}
     if bounded_progress is not None:
         log_entry["progress"] = bounded_progress
     logs.append(log_entry)
@@ -2836,7 +3148,7 @@ def _terminate_registered_runtime(pid: Any, kind: Any) -> bool:
 def _update_task(task_id: str, **updates: Any) -> None:
     if not updates:
         return
-    updates["updated_at"] = now_iso()
+    updates["updated_at"] = utc_now_iso()
     assignments = ", ".join(f"{key} = ?" for key in updates)
     values = list(updates.values()) + [task_id]
     with _connect() as conn:

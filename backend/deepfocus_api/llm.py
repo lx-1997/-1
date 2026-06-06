@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -9,6 +10,8 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
+from .agent_tools import execute_tool, openai_tool_specs
+from .mcp_tools import discover_mcp_agent_tools
 from .model_config import load_model_config
 from .schemas import (
     AgentBriefRequest,
@@ -24,6 +27,7 @@ from .schemas import (
     OptionsAiAnalysisResponse,
     OrchestratorChatRequest,
     OrchestratorChatResponse,
+    OrchestratorReasoningStep,
     RagQueryRequest,
     ReportAnalysisRequest,
     SentimentResponse,
@@ -66,6 +70,51 @@ def _strip_thinking_blocks(value: Any) -> str:
     text = str(value or "")
     text = re.sub(r"<think\b[^>]*>.*?</think>\s*", "", text, flags=re.I | re.S)
     return text.strip()
+
+
+def _cred_tier_label(c: Any) -> str:
+    """可信度 0–1 → 档位文案（与前端 credibility.ts 同档：≥0.75 高可信、≥0.5 中、<0.5 存疑）。"""
+    if not isinstance(c, (int, float)):
+        return "未知"
+    if c >= 0.75:
+        return "高可信"
+    if c >= 0.5:
+        return "中"
+    return "存疑"
+
+
+def extract_citable_sources(ctx: Any) -> list[dict[str, Any]]:
+    """从挂载上下文里抽出可引用的编号来源（证据条目 + 附件），供内联 [n] 引用。"""
+    if not isinstance(ctx, dict):
+        return []
+    raw: list[dict[str, Any]] = []
+    evidence = ctx.get("evidence_sources")
+    if isinstance(evidence, dict):
+        for item in (evidence.get("recent_items") or [])[:8]:
+            if isinstance(item, dict) and item.get("title"):
+                cred = item.get("credibility")
+                raw.append({
+                    "title": str(item.get("title", "")),
+                    "source": str(item.get("source", "") or "证据库"),
+                    "url": str(item.get("url", "") or ""),
+                    "credibility": float(cred) if isinstance(cred, (int, float)) else None,
+                })
+    attachments = ctx.get("attachments")
+    if isinstance(attachments, list):
+        for att in attachments[:5]:
+            if isinstance(att, dict) and att.get("name"):
+                # 用户主动附加的文件视为权威上下文。
+                raw.append({"title": str(att.get("name", "")), "source": "附件", "url": "", "credibility": 1.0})
+    # 按标题去重（不同来源/挂载方式都可能带入重复条目），保留首次出现，连续编号。
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw:
+        key = item["title"].strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return [{"n": index + 1, **item} for index, item in enumerate(deduped)]
 
 
 class _ThinkingStripper:
@@ -293,6 +342,62 @@ class CloudResearchLLM:
         text = _strip_thinking_blocks(response.choices[0].message.content or "{}")
         return text or "{}"
 
+    async def complete_vision(
+        self,
+        prompt: str,
+        image_pngs: list[bytes],
+        *,
+        max_tokens: int = 2200,
+        timeout_seconds: float = 120,
+        force_json: bool = True,
+    ) -> str:
+        """多模态：把若干页面图像 + 指令发给视觉模型，返回已剥离 <think> 的文本。
+
+        用于图片型研报（无文字层）——直接让模型「看」页面截图做解读。"""
+        if self.provider == "mock":
+            raise RuntimeError("mock provider does not call vision completion")
+        if not image_pngs:
+            raise RuntimeError("没有可分析的页面图像")
+
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for png in image_pngs:
+            b64 = base64.b64encode(png).decode("ascii")
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            })
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens,
+            "temperature": max(0.01, min(self.config["temperature"], 1.0)),
+        }
+        if force_json:
+            payload["response_format"] = {"type": "json_object"}
+
+        async def _create() -> Any:
+            return await asyncio.wait_for(
+                self._client().chat.completions.create(**payload),
+                timeout=timeout_seconds,
+            )
+
+        try:
+            response = await _create()
+        except Exception as exc:
+            if force_json and _looks_like_response_format_error(exc):
+                payload.pop("response_format", None)
+                try:
+                    response = await _create()
+                except asyncio.TimeoutError as timeout_exc:
+                    raise RuntimeError(f"视觉模型 {timeout_seconds:.0f} 秒内未返回，请稍后重试。") from timeout_exc
+            elif isinstance(exc, asyncio.TimeoutError):
+                raise RuntimeError(f"视觉模型 {timeout_seconds:.0f} 秒内未返回，请稍后重试。") from exc
+            else:
+                raise RuntimeError(f"视觉模型调用失败：{_clean_error(exc)}") from exc
+
+        return _strip_thinking_blocks(response.choices[0].message.content or "") or ""
+
     def capabilities(self) -> CapabilityListResponse:
         mode = "mock" if self.provider == "mock" else "cloud"
         capabilities = [
@@ -395,7 +500,20 @@ class CloudResearchLLM:
                 "如「（依据：证据库《标题》）」「（依据：自选股行情）」「（依据：附件 note.txt）」。\n"
                 "2) 上方信息集没有支撑的判断，明确标注「（未经证据支持，需进一步核验）」，绝不编造价格、新闻、财报数字或事件。\n"
                 "3) 回答末尾用一行「依据：…」汇总本次用到的来源；若几乎没有可用证据，直说「当前信息集不足以支撑结论」并给出需要补的数据。\n"
-                "4) 中文作答，专业、精准、克制；区分事实与推测。"
+                "4) 中文作答，专业、精准、克制；区分事实与推测。\n"
+                "5) 对每条来源先判断「与本问题是否相关 + 可信度高低」：优先用高可信来源；**存疑**来源（论坛传闻/营销号/单一转载）需谨慎，"
+                "只在能与其它来源交叉印证时使用，并注明「单一来源待核验」；与问题无关的来源不要硬引。源之间冲突时点明分歧、不要简单取一。"
+            )
+
+        citable = extract_citable_sources(module_context)
+        if citable:
+            source_lines = "\n".join(
+                f"[{s['n']}] 《{s['title']}》— {s['source']}〔可信度：{_cred_tier_label(s.get('credibility'))}〕"
+                for s in citable
+            )
+            system_content += (
+                f"\n\n可引用来源（按编号，引用支撑结论的内容时用 [n] 内联标注，可多个如 [1][3]，不要引用未列出的编号；"
+                f"先按上面的纪律 5 判断每条来源是否该用）：\n{source_lines}"
             )
 
         messages: list[dict[str, str]] = [
@@ -490,6 +608,115 @@ class CloudResearchLLM:
         )
         data = await self.complete_json(prompt)
         return _normalize_stock_analysis(data, self.provider_name, self.model)
+
+    async def synthesize_review_narrative(self, *, subject, verdict, score, confidence, dimensions, view="stock"):
+        """通用：把确定性引擎算出的多维证据 + verdict 合成 2-3 句专业速判（个股/组合/宏观共用）。
+
+        verdict/score 由引擎判定、不可推翻；LLM 只做叙述合成。
+        mock/失败/无有效维度 → None（上层回退确定性模板叙述）。
+        """
+        if self.provider == "mock":
+            return None
+        active = [d for d in (dimensions or []) if d.signal != "insufficient"]
+        if not active:
+            return None
+        views = {
+            "stock": ("卖方投研 PM", "①为什么是这个结论；②哪几个维度相互印证、哪些彼此矛盾；③当前最该盯的一个催化或风险"),
+            "portfolio": ("买方组合风险经理", "①组合当前最大的风险敞口在哪；②哪些维度需要立即行动；③与当前市场/利率环境是否匹配"),
+            "macro": ("宏观策略师", "①当前风险偏好的核心驱动；②对股/债/大类配置的方向含义；③最该警惕的转向信号"),
+        }
+        role, focus = views.get(view, views["stock"])
+        dims_text = "\n".join(
+            f"- {d.label}（信号 {d.signal}/置信 {d.confidence}/{d.data_quality.level}）：{d.headline}；"
+            f"证据：{'、'.join(d.evidence)}"
+            for d in active
+        )
+        prompt = (
+            f"你是{role}。下面是「{subject}」由确定性引擎算出的多维证据与结论。"
+            "结论由引擎判定、不可推翻，你只负责把证据合成一段速判，不得改变方向或编造数据。\n\n"
+            f"确定性结论：{verdict}（综合评分 {score}、置信度 {confidence}）\n"
+            f"各维度证据：\n{dims_text}\n\n"
+            f"请用中文写 2-3 句专业速判：{focus}。要求：直接给观点、引用上面出现过的具体数值、"
+            "不要罗列维度名清单、不写免责声明、不超过 120 个中文字。"
+            "仅返回 JSON：{\"narrative\": \"...\"}"
+        )
+        try:
+            data = await self.complete_json(
+                prompt, max_tokens=700, timeout_seconds=14, force_json_first=True,
+                retry_schema_hint="只需填充 narrative 一个字段，2-3 句、不超过 120 字。",
+            )
+        except Exception:
+            return None
+        narrative = (data or {}).get("narrative")
+        if isinstance(narrative, str) and narrative.strip():
+            return narrative.strip()
+        return None
+
+    async def synthesize_tear_sheet_narrative(self, ts):
+        """个股速判卡叙述合成（薄封装通用方法）。"""
+        return await self.synthesize_review_narrative(
+            subject=ts.name or ts.symbol,
+            verdict=ts.overall_verdict,
+            score=ts.overall_score,
+            confidence=ts.confidence,
+            dimensions=ts.dimensions,
+            view="stock",
+        )
+
+    async def synthesize_briefing_headline(self, macro, portfolio, watchlist=None):
+        """投研晨报：把宏观 + 组合（+ 自选股行业暴露）合成一句买方晨会纪要。mock/失败 → None。"""
+        if self.provider == "mock":
+            return None
+        macro_dims = "；".join(f"{d.label}：{d.headline}" for d in macro.dimensions if d.signal != "insufficient")
+        port_dims = "；".join(f"{d.label}：{d.headline}" for d in portfolio.dimensions if d.signal != "insufficient")
+        wl = ""
+        sectors = getattr(watchlist, "sectors", None) if watchlist else None
+        if sectors:
+            wl = "；自选股行业暴露：" + "、".join(f"{s.sector} {s.pct}%" for s in sectors[:3])
+        prompt = (
+            "你是买方投研晨会主持。基于下面确定性引擎算出的宏观与组合速判，写一段「今日晨会纪要」。"
+            "结论不可推翻，你只做叙述合成、不得编造数据。\n\n"
+            f"宏观环境：{macro.overall_verdict}。{macro_dims}\n"
+            f"组合风险：{portfolio.overall_verdict}。{port_dims}{wl}\n\n"
+            "要求：2-3 句中文，点名具体驱动因子（引用上面出现的数值/方向）、给出与市场环境匹配的可执行关注点，"
+            "不复述维度名清单、不写免责声明、不超过 100 个中文字。仅返回 JSON：{\"headline\": \"...\"}"
+        )
+        try:
+            data = await self.complete_json(
+                prompt, max_tokens=600, timeout_seconds=14, force_json_first=True,
+                retry_schema_hint="只需填充 headline 一个字段，2-3 句、不超过 100 字。",
+            )
+        except Exception:
+            return None
+        headline = (data or {}).get("headline")
+        if isinstance(headline, str) and headline.strip():
+            return headline.strip()
+        return None
+
+    async def parse_screen_query(self, query):
+        """把自然语言选股需求解析成对速判卡维度信号的筛选条件。mock/失败/空 → None。"""
+        if self.provider == "mock":
+            return None
+        prompt = (
+            "你是选股助手。把用户的自然语言选股需求，翻译成对「个股速判卡维度信号」的筛选条件。\n"
+            "可用维度（key：bullish 的含义）：\n"
+            "momentum：上涨动能强；catalyst：盈利超预期/增长；valuation：便宜或接近52周低；"
+            "consensus：分析师目标价上行/买入评级；fund_flow：主力资金净流入；scale：大盘股；"
+            "market：大盘强势(risk-on)；macro：利率下行/估值顺风。\n"
+            f"用户需求：{query}\n"
+            "返回 JSON：{\"criteria\":[{\"dim\":\"维度key\",\"want\":\"bullish|bearish|neutral\"}],\"summary\":\"一句话复述筛选条件\"}。"
+            "只选用户明确提到或强烈隐含的维度（通常 1-4 个），不要全选；want 多数情况是 bullish。"
+        )
+        try:
+            data = await self.complete_json(
+                prompt, max_tokens=500, timeout_seconds=12, force_json_first=True,
+                retry_schema_hint="只需 criteria(数组，每项含 dim+want) 和 summary 两个字段。",
+            )
+        except Exception:
+            return None
+        if isinstance(data, dict) and isinstance(data.get("criteria"), list):
+            return data
+        return None
 
     async def analyze_options_trend(self, request: OptionsAiAnalysisRequest) -> OptionsAiAnalysisResponse:
         if self.provider == "mock":
@@ -719,6 +946,112 @@ class CloudResearchLLM:
             "customs_trade_agent_analysis",
             "中国海关进出口投研Agent",
         )
+
+    async def run_tool_agent(
+        self,
+        *,
+        question: str,
+        context_hint: str = "",
+        max_rounds: int = 4,
+        timeout_seconds: float = 30.0,
+    ) -> "dict[str, Any] | None":
+        """AI 原生 tool-use 闭环：模型自主选工具 → 服务端真实取数 → 结果回灌 → 再推理。
+
+        返回 {"answer", "tool_trace", "rounds", "truncated"}；mock provider、工具不被支持、
+        或任何失败 → 返回 None，调用方回退既有路径（红线：永不因 tool-agent 破坏现有体验）。
+        verdict/信号仍由确定性引擎给出，模型只负责挑数据 + 解释，不编造结论。
+        """
+        if self.provider == "mock":
+            return None
+
+        # 动态合并外部 MCP 工具（已启用+免审批+streamable_http），best-effort，失败不影响内部工具。
+        mcp_tools: dict[str, Any] = {}
+        try:
+            for mcp_tool in await discover_mcp_agent_tools():
+                mcp_tools[mcp_tool.name] = mcp_tool
+        except Exception:
+            mcp_tools = {}
+
+        tool_specs = openai_tool_specs(extra_tools=mcp_tools)
+        system = (
+            "你是 DeepFocus 的资深投研分析师，具备工具调用能力。"
+            "当回答涉及具体标的的行情/财报/资金流/估值/卖方一致预期时，必须先调用相应工具取真实数据，"
+            "再据此作答，不得凭记忆编造数字。工具返回 ok=false 或 data=null 表示该源暂无数据，"
+            "要如实说明而非杜撰。拿到足够数据后用简洁专业的中文给出有数据支撑的结论（不超过 220 字），"
+            "不做收益承诺。"
+        )
+        user = question if not context_hint else f"{context_hint}\n\n{question}"
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        trace: list[dict[str, Any]] = []
+
+        try:
+            for round_index in range(max_rounds):
+                response = await asyncio.wait_for(
+                    self._client().chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        tools=tool_specs,
+                        tool_choice="auto",
+                        max_tokens=1200,
+                    ),
+                    timeout=timeout_seconds,
+                )
+                message = response.choices[0].message
+                tool_calls = list(getattr(message, "tool_calls", None) or [])
+                if not tool_calls:
+                    answer = _strip_thinking_blocks(message.content or "").strip()
+                    return {"answer": answer, "tool_trace": trace, "rounds": round_index, "truncated": False}
+
+                messages.append({
+                    "role": "assistant",
+                    "content": message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments or "{}",
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                })
+                for tc in tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except (ValueError, TypeError):
+                        args = {}
+                    result = await execute_tool(tc.function.name, args, extra_tools=mcp_tools)
+                    trace.append({
+                        "tool": tc.function.name,
+                        "args": args,
+                        "ok": bool(result.get("ok")),
+                        "summary": _summarize_tool_result(result),
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result, ensure_ascii=False)[:3500],
+                    })
+
+            # 用满轮次仍未收敛 → 去掉 tools 逼出一段最终结论。
+            final = await asyncio.wait_for(
+                self._client().chat.completions.create(
+                    model=self.model,
+                    messages=messages + [{"role": "user", "content": "请基于以上已获取的数据直接给出最终结论。"}],
+                    max_tokens=1000,
+                ),
+                timeout=timeout_seconds,
+            )
+            answer = _strip_thinking_blocks(final.choices[0].message.content or "").strip()
+            return {"answer": answer, "tool_trace": trace, "rounds": max_rounds, "truncated": True}
+        except Exception:
+            # 工具不被模型支持、超时或任何异常 → 回退既有路径。
+            return None
 
     async def orchestrator_chat(self, request: OrchestratorChatRequest) -> OrchestratorChatResponse:
         literal_reply = _literal_inline_reply(request, self.provider_name, self.model)
@@ -1044,6 +1377,21 @@ def _looks_like_response_format_error(exc: Exception) -> bool:
     )
 
 
+def _summarize_tool_result(result: dict[str, Any]) -> str:
+    """把一次工具返回压成给用户看的一行 trace 摘要。"""
+    if not result.get("ok"):
+        return f"失败：{str(result.get('error') or '')[:60]}"
+    data = result.get("data")
+    if data is None:
+        return "暂无数据（已优雅降级）"
+    if isinstance(data, dict):
+        keys = list(data.keys())[:4]
+        return "命中字段：" + ", ".join(str(k) for k in keys)
+    if isinstance(data, list):
+        return f"命中 {len(data)} 条"
+    return str(data)[:60]
+
+
 def _is_kimi_switchable_thinking_model(model: str) -> bool:
     model_name = str(model or "").lower()
     if "thinking" in model_name:
@@ -1142,6 +1490,54 @@ def _build_module_context_block(ctx: dict[str, Any]) -> str:
         ]
         if skill_labels:
             lines.append(f"可调度技能：{'；'.join(skill_labels)}")
+
+    # AI 原生自我记忆：召回的过往相关讨论（让模型延续历史结论、避免自相矛盾）。
+    memory = ctx.get("memory")
+    if isinstance(memory, dict):
+        recalled = memory.get("recalled")
+        if isinstance(recalled, list) and recalled:
+            mem_labels = []
+            for m in recalled[:3]:
+                if not isinstance(m, dict):
+                    continue
+                title = str(m.get("title", "") or "")
+                when = str(m.get("when", "") or "")
+                summary = str(m.get("summary", "") or "")
+                mem_labels.append(f"- 《{title}》（{when}）：{summary}".strip())
+            if mem_labels:
+                lines.append(
+                    "过往相关讨论（你与该用户的历史，可延续结论但若有新证据应说明变化）：\n"
+                    + "\n".join(mem_labels)
+                )
+
+    # AI 原生自我进化：对该标的的历史判断 + 置信度校准（让模型自我感知、按校准纠偏）。
+    decision_history = ctx.get("decision_history")
+    if isinstance(decision_history, dict):
+        past = decision_history.get("past")
+        if isinstance(past, list) and past:
+            dec_labels = []
+            for d in past[:4]:
+                if not isinstance(d, dict):
+                    continue
+                action = str(d.get("action", "") or "")
+                conf = d.get("confidence")
+                conf_str = f"{round(float(conf) * 100)}%" if isinstance(conf, (int, float)) else "?"
+                when = str(d.get("when", "") or "")
+                outcome = str(d.get("outcome", "") or "pending")
+                dec_labels.append(f"- {when}：{action}（置信 {conf_str}，兑现：{outcome}）")
+            cal = decision_history.get("calibration")
+            cal_note = ""
+            if isinstance(cal, dict) and cal.get("resolved"):
+                tendency = str(cal.get("tendency", "") or "")
+                cal_note = (
+                    f"\n校准：已兑现 {cal.get('resolved')} 次、命中 {cal.get('correct')} 次"
+                    f"（倾向：{tendency}）。若历史偏过度自信，请对本次置信度更克制。"
+                )
+            if dec_labels:
+                lines.append(
+                    "你对该标的的历史判断（自我进化记忆，参考但以最新证据为准）：\n"
+                    + "\n".join(dec_labels) + cal_note
+                )
 
     # 用户在对话中附加的文件内容。
     attachments = ctx.get("attachments")
@@ -1568,6 +1964,54 @@ def _orchestrator_text_response(
         should_create_task=should_create_task,
         handled_inline=handled_inline,
         confidence=0.66,
+    )
+
+
+def tool_agent_to_orchestrator_response(
+    result: dict[str, Any],
+    request: OrchestratorChatRequest,
+    provider: str,
+    model: str,
+) -> OrchestratorChatResponse | None:
+    """把 run_tool_agent 的结果映射成 Orchestrator 回复；answer 为空 → None（调用方回退）。
+
+    tool_trace 直接展示为可审计的 reasoning_trace（真实工具执行轨迹，不是隐藏推理原文），
+    这正是「AI 原生」相对旧 orchestrator「promise-only」的区别：能看到模型真的调了哪些工具。
+    """
+    answer = _clean_display_text(str(result.get("answer") or "")).strip()
+    if not answer:
+        return None
+    trace_items = list(result.get("tool_trace") or [])
+    steps: list[OrchestratorReasoningStep] = [
+        OrchestratorReasoningStep(
+            phase="tool",
+            title=f"调用 {item.get('tool', '工具')}",
+            detail=str(item.get("summary") or "")[:120],
+            status="done" if item.get("ok") else "error",
+        )
+        for item in trace_items[:5]
+    ]
+    steps.append(OrchestratorReasoningStep(
+        phase="synthesis",
+        title="综合作答",
+        detail=(f"基于 {len(trace_items)} 次工具取数合成结论。" if trace_items else "未触发工具，直接作答。"),
+        status="done",
+    ))
+    any_ok = any(item.get("ok") for item in trace_items)
+    return OrchestratorChatResponse(
+        provider=provider,
+        model=model,
+        generated_at=datetime.now(timezone.utc),
+        agent=ORCHESTRATOR_ROLE,
+        engine=request.engine,
+        title="DeepFocus 投研 Agent",
+        content=answer[:700],
+        chips=[],
+        suggested_actions=[],
+        reasoning_trace=steps,
+        should_create_task=False,
+        handled_inline=True,
+        confidence=0.78 if any_ok else 0.62,
     )
 
 
@@ -2170,46 +2614,6 @@ def _load_default_docs() -> list[dict[str, str]]:
             with open(path, "r", encoding="utf-8", errors="ignore") as handle:
                 defaults.append({"source": relative, "text": handle.read()[:4000]})
     return defaults
-    if change > 2:
-        label, score = "positive", max(score, 0.35)
-    elif change < -2:
-        label, score = "negative", min(score, -0.35)
-
-    risk = "high" if abs(change) >= 5 else "medium" if abs(change) >= 2 else "low"
-    post_count = len(request.posts)
-    summary = (
-        f"{stock.name}（{stock.symbol}）当前涨跌幅约 {change:.2f}%。"
-        f"系统已汇总 {post_count} 条社区/资讯内容，建议重点核验基本面变化、资金面和事件催化。"
-    )
-    return StockAnalysisResponse(
-        provider=provider,
-        model=model,
-        generated_at=datetime.now(timezone.utc),
-        executive_summary=summary,
-        sentiment_label=label,
-        sentiment_score=score,
-        risk_level=risk,
-        catalysts=[
-            "社区关注度变化",
-            "近期价格动量",
-            "基本面事件更新",
-        ],
-        risks=[
-            "信息源仍以模拟数据为主",
-            "短期波动可能放大",
-            "需补充真实公告和财报",
-        ],
-        watch_items=[
-            "成交量是否同步放大",
-            "财报或指引变化",
-            "核心业务新闻验证",
-        ],
-        suggested_questions=[
-            "上涨由业绩还是情绪驱动？",
-            "风险事件是否已被定价？",
-            "同业估值是否更有吸引力？",
-        ],
-    )
 
 
 def _quick_sentiment(text: str) -> tuple[str, float]:

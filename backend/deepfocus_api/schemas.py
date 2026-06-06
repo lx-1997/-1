@@ -79,6 +79,34 @@ def classify_data_quality(provider: str | None, *, reasons: list[str] | None = N
             detail="当前为本地演示模型（mock），以下内容为示例，不能作为投资依据。请在「设置 → 模型配置」接入云端模型以获取真实分析。",
             reasons=extra,
         )
+    if value == "google-finance":
+        return DataQuality(
+            level="degraded",
+            label="准实时",
+            detail="行情来自 Google Finance 真实公开数据，可能延迟约 15 分钟（非官方实时 feed），可作参考。",
+            reasons=extra,
+        )
+    if value == "portfolio":
+        return DataQuality(
+            level="degraded",
+            label="本地持仓",
+            detail="基于本地录入的持仓与成本计算；盈亏/回撤随录入价或刷新的准实时价，非交易所实时结算，可作管理参考。",
+            reasons=extra,
+        )
+    if value == "portfolio-live":
+        return DataQuality(
+            level="degraded",
+            label="准实时持仓",
+            detail="盈亏/回撤已用 Google Finance 准实时价刷新（可能延迟约 15 分钟），优于录入静态价。",
+            reasons=extra,
+        )
+    if value == "multi-market-rule":
+        return DataQuality(
+            level="degraded",
+            label="规则模型 · 准实时输入",
+            detail="多市场候选评分为透明的规则模型，输入行情已用真实准实时数据刷新（可能延迟约 15 分钟）；模块就绪度/依赖/回测计划为能力规划（规划中），非已落地的真实回测结果，仅供研究参考。",
+            reasons=extra,
+        )
     if value.startswith("local") or value in _DEGRADED_PROVIDERS:
         return DataQuality(
             level="degraded",
@@ -95,6 +123,183 @@ def attach_data_quality(response: Any, *, reasons: list[str] | None = None) -> A
         return response
     response.data_quality = classify_data_quality(getattr(response, "provider", None), reasons=reasons)
     return response
+
+
+TearSheetSignal = Literal["bullish", "neutral", "bearish", "insufficient"]
+TearSheetVerdict = Literal["重点跟踪", "中性观察", "谨慎回避", "数据不足"]
+
+
+class CitedSource(BaseModel):
+    """一条维度的可溯源出处：点击 url 可查看原始公开数据，体现 claim↔证据↔来源闭环。"""
+
+    label: str
+    provider: str = ""
+    url: Optional[str] = None
+    quality: DataQualityLevel = "live"
+
+
+class TearSheetDimension(BaseModel):
+    """速判卡的单个维度：信号 + 支撑证据 + 置信度 + 数据可信度 + 可溯源出处。"""
+
+    key: str
+    label: str
+    signal: TearSheetSignal = "insufficient"
+    score: int = Field(default=0, ge=-100, le=100)
+    headline: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+    sources: list[CitedSource] = Field(default_factory=list)
+
+
+class TearSheetResponse(BaseModel):
+    """个股速判卡：多维度证据校验的机构级一页纸。"""
+
+    symbol: str
+    name: str = ""
+    generated_at: datetime
+    provider: str = "evidence-engine"
+    price: Optional[float] = None
+    change_percent: Optional[float] = None
+    currency: str = "USD"
+    overall_verdict: TearSheetVerdict = "数据不足"
+    overall_score: int = Field(default=0, ge=-100, le=100)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    narrative: str = ""
+    narrative_provider: str = ""
+    dimensions: list[TearSheetDimension] = Field(default_factory=list)
+    price_series: list[dict] = Field(default_factory=list)
+    sp500_series: list[dict] = Field(default_factory=list)
+    us10y_series: list[dict] = Field(default_factory=list)
+    disclaimer: str = "个股速判卡基于多源证据的规则化判定，仅供投研参考，不构成投资建议。"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+PortfolioVerdict = Literal["稳健", "需关注", "高风险", "空仓"]
+
+
+class PortfolioReviewResponse(BaseModel):
+    """组合风险速判：买方视角的持仓集中度/行业敞口/回撤/止损纪律一页纸。"""
+
+    portfolio_name: str = "我的组合"
+    generated_at: datetime
+    position_count: int = 0
+    total_value: Optional[float] = None
+    total_pnl_pct: Optional[float] = None
+    overall_verdict: PortfolioVerdict = "空仓"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    narrative: str = ""
+    narrative_provider: str = "rule-template"
+    dimensions: list[TearSheetDimension] = Field(default_factory=list)
+    sp500_series: list[dict] = Field(default_factory=list)
+    us10y_series: list[dict] = Field(default_factory=list)
+    alerts: list[str] = Field(default_factory=list)
+    disclaimer: str = "组合速判基于本地持仓与风控规则，仅供风险管理参考，不构成投资建议。"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+MacroVerdict = Literal["风险偏好", "中性", "避险", "数据不足"]
+
+
+class MacroReviewResponse(BaseModel):
+    """宏观环境速判：市场/利率/通胀/避险四维度的机构级一页纸。"""
+
+    generated_at: datetime
+    overall_verdict: MacroVerdict = "数据不足"
+    overall_score: int = Field(default=0, ge=-100, le=100)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    narrative: str = ""
+    narrative_provider: str = "rule-template"
+    dimensions: list[TearSheetDimension] = Field(default_factory=list)
+    sp500_series: list[dict] = Field(default_factory=list)
+    us10y_series: list[dict] = Field(default_factory=list)
+    disclaimer: str = "宏观环境速判基于公开市场数据的规则化判定，仅供研究参考，不构成投资建议。"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class WatchlistSectorBucket(BaseModel):
+    sector: str
+    count: int = 0
+    pct: int = 0
+
+
+class WatchlistSummary(BaseModel):
+    """自选股的行业暴露 + 大盘环境关联（github S&P500 成分 GICS 行业，真实数据）。"""
+
+    total: int = 0
+    covered: int = 0
+    sectors: list[WatchlistSectorBucket] = Field(default_factory=list)
+    note: str = ""
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class BriefingResponse(BaseModel):
+    """投研晨报：宏观风险偏好 + 组合风险的买方晨会一页纸（多引擎规则化聚合）。"""
+
+    generated_at: datetime
+    headline: str = ""
+    headline_provider: str = "rule-template"
+    macro_verdict: MacroVerdict = "数据不足"
+    portfolio_verdict: PortfolioVerdict = "空仓"
+    macro: MacroReviewResponse
+    portfolio: PortfolioReviewResponse
+    watchlist: Optional[WatchlistSummary] = None
+    disclaimer: str = "投研晨报为多引擎规则化聚合，仅供研究参考，不构成投资建议。"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class StockCompareItem(BaseModel):
+    symbol: str
+    name: str = ""
+    overall_verdict: TearSheetVerdict = "数据不足"
+    overall_score: int = 0
+    sector: Optional[str] = None
+    market_cap: Optional[float] = None
+    dimensions: list[TearSheetDimension] = Field(default_factory=list)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class StockCompareResponse(BaseModel):
+    """多标的横向对比：逐维度信号灯矩阵。个股实时行情受限时相关维度诚实显示数据不足，
+    真实可区分维度（规模 / 行业 / 市场背景）正常呈现。"""
+
+    generated_at: datetime
+    items: list[StockCompareItem] = Field(default_factory=list)
+    disclaimer: str = "横向对比为规则化速判聚合；个股实时行情受限时部分维度显示数据不足，仅供研究参考。"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class StockScreenCriterion(BaseModel):
+    dim: str
+    want: str = "bullish"
+    label: str = ""
+
+
+class StockScreenMatch(BaseModel):
+    symbol: str
+    name: str = ""
+    overall_verdict: TearSheetVerdict = "数据不足"
+    overall_score: int = 0
+    matched_all: bool = False
+    hit_count: int = 0
+    hit_labels: list[str] = Field(default_factory=list)
+    miss_labels: list[str] = Field(default_factory=list)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class StockScreenResponse(BaseModel):
+    """自然语言选股：LLM 把需求解析成对速判卡维度信号的筛选条件，引擎对候选逐一判定后筛选排序。"""
+
+    generated_at: datetime
+    query: str = ""
+    criteria_summary: str = ""
+    criteria: list[StockScreenCriterion] = Field(default_factory=list)
+    matches: list[StockScreenMatch] = Field(default_factory=list)
+    scanned: int = 0
+    provider: str = "rule-template"
+    disclaimer: str = "自然语言选股基于确定性速判引擎逐维度判定 + AI 解析筛选意图，仅供研究参考，不构成投资建议。"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
 
 
 class StockAnalysisResponse(BaseModel):
@@ -313,6 +518,42 @@ class DataSourceTagListResponse(BaseModel):
     tags: list[DataSourceTagRecord]
 
 
+class CorpusCredibilityBands(BaseModel):
+    """可信度分档（与 grounding/前端徽标一致：≥0.75 高可信、≥0.5 中、<0.5 存疑）。"""
+    high: int = 0
+    mid: int = 0
+    low: int = 0
+
+
+class CorpusSymbolCoverage(BaseModel):
+    symbol: str
+    count: int
+    avg_credibility: float
+
+
+class CorpusSourceQuality(BaseModel):
+    source_name: str
+    count: int
+    avg_credibility: float
+
+
+class CorpusFreshness(BaseModel):
+    last_24h: int = 0
+    last_7d: int = 0
+    last_30d: int = 0
+    older: int = 0
+
+
+class DataSourceCorpusStats(BaseModel):
+    """证据语料的质量与覆盖聚合（全量扫描）——证据库「精品」概览用。"""
+    total: int
+    avg_credibility: float
+    credibility_bands: CorpusCredibilityBands
+    symbol_coverage: list[CorpusSymbolCoverage] = Field(default_factory=list)
+    source_quality: list[CorpusSourceQuality] = Field(default_factory=list)
+    freshness: CorpusFreshness
+
+
 class DataSourceSyncResponse(BaseModel):
     source: DataSourceRecord
     imported_count: int
@@ -371,6 +612,95 @@ class RealtimeMessageListResponse(BaseModel):
     messages: list[RealtimeMessageRecord]
 
 
+RecallChannel = Literal["email", "webpush"]
+RecallScope = Literal["watchlist", "all"]
+RecallDeliveryStatus = Literal["sent", "skipped", "pending", "error"]
+
+
+class RecallSubscriptionCreateRequest(BaseModel):
+    channel: RecallChannel
+    address: str  # 邮箱地址 / Web Push 订阅信息(JSON 串)
+    symbols: list[str] = Field(default_factory=list)
+    severities: list[RealtimeMessageSeverity] = Field(default_factory=lambda: ["warning", "critical"])
+    scope: RecallScope = "watchlist"
+    label: Optional[str] = None
+
+
+class RecallSubscriptionRecord(BaseModel):
+    id: str
+    channel: RecallChannel
+    address: str
+    symbols: list[str] = Field(default_factory=list)
+    severities: list[RealtimeMessageSeverity] = Field(default_factory=list)
+    scope: RecallScope
+    label: Optional[str] = None
+    active: bool = True
+    created_at: str
+
+
+class RecallSubscriptionListResponse(BaseModel):
+    subscriptions: list[RecallSubscriptionRecord]
+
+
+class RecallDeliveryResult(BaseModel):
+    subscription_id: str
+    channel: RecallChannel
+    address: str
+    status: RecallDeliveryStatus
+    detail: str = ""
+
+
+class RecallDispatchResponse(BaseModel):
+    message_id: str
+    matched: int
+    deliveries: list[RecallDeliveryResult] = Field(default_factory=list)
+
+
+class RecallDeliveryRecord(BaseModel):
+    """持久化的召回投递记录（含点击回流时间），用于留存度量。"""
+    id: str
+    subscription_id: str
+    message_id: str
+    channel: RecallChannel
+    address: str
+    status: RecallDeliveryStatus
+    detail: str = ""
+    target_url: Optional[str] = None
+    created_at: str
+    clicked_at: Optional[str] = None
+
+
+class RecallDeliveryLogResponse(BaseModel):
+    deliveries: list[RecallDeliveryRecord] = Field(default_factory=list)
+
+
+class RecallMetricsResponse(BaseModel):
+    """召回闭环验真：投递→点击→回流的可度量指标。"""
+    delivered: int = 0          # 真实送达（status=sent）
+    clicked: int = 0            # 其中被点击回流的条数
+    click_through_rate: float = 0.0  # clicked / delivered
+    skipped: int = 0            # 通道未配置/未命中而跳过
+    error: int = 0             # 投递失败
+    by_channel: dict[str, int] = Field(default_factory=dict)  # 各通道送达数
+
+
+class ShareSnapshotCreateRequest(BaseModel):
+    title: str
+    summary: str
+    byline: Optional[str] = None
+    kind: str = "conclusion"
+
+
+class ShareSnapshotRecord(BaseModel):
+    id: str
+    title: str
+    summary: str
+    byline: Optional[str] = None
+    kind: str
+    created_at: str
+    views: int = 0
+
+
 OfficialNewsSource = Literal["xinwenlianbo", "cctv-news", "cctv-economy"]
 
 
@@ -400,6 +730,69 @@ class OfficialNewsResponse(BaseModel):
     cache_age_seconds: int = 0
     warnings: list[str] = Field(default_factory=list)
     items: list[OfficialNewsItem]
+
+
+class PersonVoiceItem(BaseModel):
+    """一条人物近期发言/相关报道：标题(发言/观点) + 出处 + 时间 + 可点击溯源。"""
+
+    id: str
+    title: str
+    summary: str = ""
+    url: str
+    source_name: str
+    published_at: Optional[str] = None
+    reported_date: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    importance_score: int = Field(default=55, ge=0, le=100)
+
+
+class PersonProfile(BaseModel):
+    """焦点人物档案 + 近期发言聚合。"""
+
+    id: str
+    name: str
+    en_name: str = ""
+    role: str = ""
+    org: str = ""
+    image: str = ""
+    image_credit: str = ""
+    avatar: str = ""
+    monogram: str = ""
+    accent: str = "#2563eb"
+    bio: str = ""
+    topics: list[str] = Field(default_factory=list)
+    why_it_matters: str = ""
+    items: list[PersonVoiceItem] = Field(default_factory=list)
+    item_count: int = 0
+    latest_date: Optional[str] = None
+    digest: str = ""
+    digest_provider: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class PeopleSpotlightResponse(BaseModel):
+    """人物专题：焦点人物头像墙 → 近期发言 / 观点 / 来源。"""
+
+    provider: str = "google-news"
+    generated_at: str
+    figures: list[PersonProfile] = Field(default_factory=list)
+    total_items: int = 0
+    cache_age_seconds: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class PersonDigestResponse(BaseModel):
+    """单人物的 AI 近期观点综述（由近期发言合成，方向不可编造，失败回退确定性模板）。"""
+
+    id: str
+    name: str
+    digest: str = ""
+    digest_provider: str = ""
+    item_count: int = 0
+    generated_at: str
+    data_quality: DataQuality = Field(default_factory=DataQuality)
 
 
 McpTransport = Literal["streamable_http", "stdio", "hosted"]
@@ -508,6 +901,8 @@ class MarketQuote(BaseModel):
     fetched_at: str
     is_realtime: bool = False
     delay_note: str = ""
+    wk52_high: Optional[float] = None
+    wk52_low: Optional[float] = None
 
 
 MarketRegion = Literal["US", "HK", "CN", "OTHER"]
@@ -542,6 +937,56 @@ class MarketSymbolSearchResponse(BaseModel):
     provider: str
     fetched_at: str
     warnings: list[str] = Field(default_factory=list)
+
+
+class ResearchReportItem(BaseModel):
+    id: str
+    source: Literal["eastmoney"] = "eastmoney"
+    title: str
+    org: str = ""
+    date: str = ""
+    symbol: Optional[str] = None
+    market: MarketRegion = "CN"
+    rating: Optional[str] = None
+    stock_name: Optional[str] = None
+    pdf_url: str
+    preview_url: str
+
+
+class ResearchReportSearchResponse(BaseModel):
+    keyword: str
+    resolved_symbol: Optional[str] = None
+    resolved_market: Optional[MarketRegion] = None
+    items: list[ResearchReportItem] = Field(default_factory=list)
+    provider: str
+    fetched_at: str
+    warnings: list[str] = Field(default_factory=list)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class ResearchVisionAnalyzeRequest(BaseModel):
+    pdf_url: Optional[str] = None
+    workbench_filename: Optional[str] = None
+    workbench_out: str = "downloads/海外投行报告"
+    title: Optional[str] = None
+    symbol: Optional[str] = None
+    max_pages: int = 6
+
+
+class ResearchVisionAnalysisResponse(BaseModel):
+    title: str = ""
+    symbol: Optional[str] = None
+    summary: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    rating: Optional[str] = None
+    target_price: Optional[str] = None
+    confidence: float = 0.5
+    pages_analyzed: int = 0
+    provider: str = ""
+    mode: Literal["vision"] = "vision"
+    disclaimer: str = ""
+    data_quality: DataQuality = Field(default_factory=DataQuality)
 
 
 MarketDataLayerKind = Literal["free_quote", "structured_ashare", "sentiment"]
@@ -1264,7 +1709,33 @@ class MajorEventScanResponse(BaseModel):
 
 
 TaskStatus = Literal["pending", "running", "waiting_approval", "failed", "completed", "cancelled"]
+# API 入参校验用的引擎枚举。唯一事实源是 agent_runtime 的 ENGINE_REGISTRY；
+# tests/test_agent_engine_registry.py 守卫两者同步（新增引擎时这里也要补一项）。
 AgentEngine = Literal["deepfocus", "tradingagents", "financial_services"]
+
+
+class AgentEngineInfo(BaseModel):
+    key: str
+    label: str
+    description: str = ""
+    stage_count: int
+
+
+class AgentEngineListResponse(BaseModel):
+    default: str
+    engines: list[AgentEngineInfo]
+
+
+class AgentToolInfo(BaseModel):
+    name: str
+    description: str
+    parameters: list[str]
+
+
+class AgentToolListResponse(BaseModel):
+    # enabled: tool-use agent 路径是否已启用（DEEPFOCUS_TOOL_AGENT 开关）。
+    enabled: bool
+    tools: list[AgentToolInfo]
 
 
 class InvestmentTaskCreateRequest(BaseModel):
@@ -1576,6 +2047,14 @@ class DulusToolTrace(BaseModel):
     status: DulusTraceStatus = "completed"
 
 
+class DulusCitableSource(BaseModel):
+    n: int
+    title: str
+    source: str = "证据库"
+    url: str = ""
+    credibility: Optional[float] = None
+
+
 class DulusAgentTurn(BaseModel):
     participant_id: str
     participant_name: str
@@ -1603,6 +2082,7 @@ class DulusRoundtableResponse(BaseModel):
     tool_traces: list[DulusToolTrace] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
+    citable_sources: list[DulusCitableSource] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0, le=1)
     disclaimer: str = "合规版 Dulus Runtime 不捕获第三方网页会话；输出仅供投研和工作流参考。"
 

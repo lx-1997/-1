@@ -4,6 +4,8 @@ import asyncio
 import csv
 import os
 import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import StringIO
 from typing import Any, Iterable, Optional
@@ -11,6 +13,8 @@ from typing import Any, Iterable, Optional
 import httpx
 
 from .schemas import MarketQuote, MarketQuoteListResponse, MarketSymbolCandidate, MarketSymbolSearchResponse
+from .shared_utils import to_float, safe_error, utc_now_iso
+
 
 
 MAX_SYMBOLS = 30
@@ -36,7 +40,7 @@ def normalize_symbols(symbols: Iterable[str]) -> list[str]:
 async def search_market_symbols(query: str, market: Optional[str] = None) -> MarketSymbolSearchResponse:
     cleaned_query = query.strip()
     normalized_market = _normalize_market_filter(market)
-    fetched_at = _utc_now()
+    fetched_at = utc_now_iso()
     warnings: list[str] = []
 
     if not cleaned_query:
@@ -71,7 +75,7 @@ async def search_market_symbols(query: str, market: Optional[str] = None) -> Mar
                 if candidate and (not normalized_market or candidate.market == normalized_market)
             ]
         except Exception as exc:  # noqa: BLE001 - search must degrade to direct symbol entry
-            warnings.append(f"Eastmoney search failed: {_safe_error(exc)}.")
+            warnings.append(f"Eastmoney search failed: {safe_error(exc)}.")
 
     if not candidates:
         fallback = _direct_symbol_candidate(cleaned_query, normalized_market)
@@ -88,9 +92,81 @@ async def search_market_symbols(query: str, market: Optional[str] = None) -> Mar
     )
 
 
+# --- 行情数据源注册表 -------------------------------------------------------
+# 多源回退链（Finnhub→Alpha→东财→新浪→腾讯→Stooq→东财兜底）声明式化：每个源一行，
+# fetch_market_quotes 用单循环按序补齐缺失符号。加/调序/删一个源 = 改这张表，不再改
+# 控制流，也消除了原先 6 次重复的 `missing = …` 与 3 次 `remaining_china = …` 样板。
+# 与 agent 引擎注册表（agent_engines.ENGINE_REGISTRY）同构。
+
+
+def _finnhub_api_key() -> Optional[str]:
+    return os.getenv("FINNHUB_API_KEY") or os.getenv("FINNHUB_TOKEN")
+
+
+def _alpha_vantage_api_key() -> Optional[str]:
+    return os.getenv("ALPHAVANTAGE_API_KEY") or os.getenv("ALPHA_VANTAGE_API_KEY")
+
+
+def _is_cn_hk_symbol(symbol: str) -> bool:
+    return _infer_market(symbol) in {"CN", "HK"}
+
+
+# 统一的源取数签名：(client, 待补符号, api_key) -> (quotes, warnings)。无需 key 的源忽略第三参。
+QuoteFetch = Callable[
+    ["httpx.AsyncClient", list[str], Optional[str]],
+    Awaitable[tuple[list[MarketQuote], list[str]]],
+]
+
+
+@dataclass
+class QuoteProvider:
+    key: str
+    name: str
+    fetch: QuoteFetch
+    api_key: Callable[[], Optional[str]] = lambda: None
+    requires_key: bool = False
+    # 该源服务哪些符号：默认全部；中国源只服务 A股/港股，避免对美股做无谓请求。
+    serves: Callable[[str], bool] = lambda _symbol: True
+
+
+# 顺序即优先级：靠前的源先补齐，靠后的源只处理仍缺失的符号。
+QUOTE_PROVIDERS: list[QuoteProvider] = [
+    QuoteProvider(
+        "finnhub", "Finnhub",
+        lambda c, s, k: _fetch_finnhub_quotes(c, s, k),
+        api_key=_finnhub_api_key, requires_key=True,
+    ),
+    QuoteProvider(
+        "alpha_vantage", "Alpha Vantage",
+        lambda c, s, k: _fetch_alpha_vantage_quotes(c, s, k),
+        api_key=_alpha_vantage_api_key, requires_key=True,
+    ),
+    QuoteProvider(
+        "eastmoney_cn", "东方财富公共行情",
+        lambda c, s, k: _fetch_eastmoney_quotes(c, s), serves=_is_cn_hk_symbol,
+    ),
+    QuoteProvider(
+        "sina", "新浪财经",
+        lambda c, s, k: _fetch_sina_quotes(c, s), serves=_is_cn_hk_symbol,
+    ),
+    QuoteProvider(
+        "tencent", "腾讯财经",
+        lambda c, s, k: _fetch_tencent_quotes(c, s), serves=_is_cn_hk_symbol,
+    ),
+    QuoteProvider(
+        "stooq", "Stooq",
+        lambda c, s, k: _fetch_stooq_quotes(c, s),
+    ),
+    QuoteProvider(
+        "eastmoney_fallback", "东方财富公共行情",
+        lambda c, s, k: _fetch_eastmoney_quotes(c, s),
+    ),
+]
+
+
 async def fetch_market_quotes(symbols: Iterable[str]) -> MarketQuoteListResponse:
     requested_symbols = normalize_symbols(symbols)
-    fetched_at = _utc_now()
+    fetched_at = utc_now_iso()
     warnings: list[str] = []
     quote_by_symbol: dict[str, MarketQuote] = {}
 
@@ -105,53 +181,19 @@ async def fetch_market_quotes(symbols: Iterable[str]) -> MarketQuoteListResponse
     headers = {"User-Agent": "DeepFocus/0.1 market-data"}
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=headers) as client:
         missing = requested_symbols
-
-        finnhub_key = os.getenv("FINNHUB_API_KEY") or os.getenv("FINNHUB_TOKEN")
-        if finnhub_key:
-            quotes, provider_warnings = await _fetch_finnhub_quotes(client, missing, finnhub_key)
+        for provider in QUOTE_PROVIDERS:
+            if not missing:
+                break
+            targets = [symbol for symbol in missing if provider.serves(symbol)]
+            if not targets:
+                continue
+            api_key = provider.api_key()
+            if provider.requires_key and not api_key:
+                continue
+            quotes, provider_warnings = await provider.fetch(client, targets, api_key)
             _merge_quotes(quote_by_symbol, quotes)
             warnings.extend(provider_warnings)
             missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
-
-        alpha_key = os.getenv("ALPHAVANTAGE_API_KEY") or os.getenv("ALPHA_VANTAGE_API_KEY")
-        if missing and alpha_key:
-            quotes, provider_warnings = await _fetch_alpha_vantage_quotes(client, missing, alpha_key)
-            _merge_quotes(quote_by_symbol, quotes)
-            warnings.extend(provider_warnings)
-            missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
-
-        if missing:
-            china_symbols = [symbol for symbol in missing if _infer_market(symbol) in {"CN", "HK"}]
-            if china_symbols:
-                quotes, provider_warnings = await _fetch_sina_quotes(client, china_symbols)
-                _merge_quotes(quote_by_symbol, quotes)
-                warnings.extend(provider_warnings)
-                missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
-
-        if missing:
-            china_symbols = [symbol for symbol in missing if _infer_market(symbol) in {"CN", "HK"}]
-            if china_symbols:
-                quotes, provider_warnings = await _fetch_eastmoney_quotes(client, china_symbols)
-                _merge_quotes(quote_by_symbol, quotes)
-                warnings.extend(provider_warnings)
-                missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
-
-        if missing:
-            quotes, provider_warnings = await _fetch_stooq_quotes(client, missing)
-            _merge_quotes(quote_by_symbol, quotes)
-            warnings.extend(provider_warnings)
-            missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
-
-        if missing:
-            quotes, provider_warnings = await _fetch_sina_quotes(client, missing)
-            _merge_quotes(quote_by_symbol, quotes)
-            warnings.extend(provider_warnings)
-            missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
-
-        if missing:
-            quotes, provider_warnings = await _fetch_eastmoney_quotes(client, missing)
-            _merge_quotes(quote_by_symbol, quotes)
-            warnings.extend(provider_warnings)
 
     ordered_quotes = [
         quote_by_symbol[symbol]
@@ -193,19 +235,19 @@ async def _fetch_finnhub_quotes(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001 - provider failures must not break the app
-            warnings.append(f"Finnhub failed for {symbol}: {_safe_error(exc)}.")
+            warnings.append(f"Finnhub failed for {symbol}: {safe_error(exc)}.")
             return None
 
-        price = _to_float(payload.get("c"))
+        price = to_float(payload.get("c"))
         if price is None or price <= 0:
             return None
 
-        previous_close = _to_float(payload.get("pc"))
-        change = _to_float(payload.get("d"))
+        previous_close = to_float(payload.get("pc"))
+        change = to_float(payload.get("d"))
         if change is None and previous_close is not None:
             change = price - previous_close
 
-        change_percent = _to_float(payload.get("dp"))
+        change_percent = to_float(payload.get("dp"))
         if change_percent is None and previous_close:
             change_percent = ((price - previous_close) / previous_close) * 100
 
@@ -215,14 +257,14 @@ async def _fetch_finnhub_quotes(
             change=change,
             change_percent=change_percent,
             previous_close=previous_close,
-            open_price=_to_float(payload.get("o")),
-            high=_to_float(payload.get("h")),
-            low=_to_float(payload.get("l")),
+            open_price=to_float(payload.get("o")),
+            high=to_float(payload.get("h")),
+            low=to_float(payload.get("l")),
             currency="USD",
             provider="finnhub",
             provider_name="Finnhub",
             market_time=_timestamp_to_iso(payload.get("t")),
-            fetched_at=_utc_now(),
+            fetched_at=utc_now_iso(),
             is_realtime=True,
             delay_note="Finnhub quote endpoint; exchange entitlement may still affect delay.",
         )
@@ -251,7 +293,7 @@ async def _fetch_alpha_vantage_quotes(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Alpha Vantage failed for {symbol}: {_safe_error(exc)}.")
+            warnings.append(f"Alpha Vantage failed for {symbol}: {safe_error(exc)}.")
             return None
 
         if payload.get("Note") or payload.get("Information"):
@@ -259,25 +301,25 @@ async def _fetch_alpha_vantage_quotes(
             return None
 
         quote = payload.get("Global Quote") or {}
-        price = _to_float(quote.get("05. price"))
+        price = to_float(quote.get("05. price"))
         if price is None or price <= 0:
             return None
 
         return MarketQuote(
             symbol=symbol,
             price=price,
-            change=_to_float(quote.get("09. change")),
-            change_percent=_to_float(quote.get("10. change percent")),
-            previous_close=_to_float(quote.get("08. previous close")),
-            open_price=_to_float(quote.get("02. open")),
-            high=_to_float(quote.get("03. high")),
-            low=_to_float(quote.get("04. low")),
-            volume=_to_float(quote.get("06. volume")),
+            change=to_float(quote.get("09. change")),
+            change_percent=to_float(quote.get("10. change percent")),
+            previous_close=to_float(quote.get("08. previous close")),
+            open_price=to_float(quote.get("02. open")),
+            high=to_float(quote.get("03. high")),
+            low=to_float(quote.get("04. low")),
+            volume=to_float(quote.get("06. volume")),
             currency="USD",
             provider="alpha_vantage",
             provider_name="Alpha Vantage",
             market_time=quote.get("07. latest trading day"),
-            fetched_at=_utc_now(),
+            fetched_at=utc_now_iso(),
             is_realtime=False,
             delay_note="Free tier latest available quote; not guaranteed real-time.",
         )
@@ -312,7 +354,7 @@ async def _fetch_eastmoney_quotes(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Eastmoney quote failed for {symbol}: {_safe_error(exc)}.")
+            warnings.append(f"Eastmoney quote failed for {symbol}: {safe_error(exc)}.")
             return None
 
         data = payload.get("data") or {}
@@ -337,12 +379,12 @@ async def _fetch_eastmoney_quotes(
             open_price=_scaled_number(data.get("f46"), price_divisor),
             high=_scaled_number(data.get("f44"), price_divisor),
             low=_scaled_number(data.get("f45"), price_divisor),
-            volume=_to_float(data.get("f47")),
+            volume=to_float(data.get("f47")),
             currency=currency,
             provider="eastmoney",
             provider_name="东方财富公共行情",
             market_time=None,
-            fetched_at=_utc_now(),
+            fetched_at=utc_now_iso(),
             is_realtime=False,
             delay_note=f"免费公共行情快照，覆盖{market}市场；稳定性依赖公开接口可用性。",
         )
@@ -376,7 +418,7 @@ async def _fetch_sina_quotes(
         )
         response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
-        warnings.append(f"Sina quote failed: {_safe_error(exc)}.")
+        warnings.append(f"Sina quote failed: {safe_error(exc)}.")
         return [], warnings
 
     quotes: list[MarketQuote] = []
@@ -396,6 +438,47 @@ async def _fetch_sina_quotes(
     return quotes, warnings
 
 
+async def _fetch_tencent_quotes(
+    client: httpx.AsyncClient,
+    symbols: list[str],
+) -> tuple[list[MarketQuote], list[str]]:
+    entries = [entry for entry in (_tencent_symbol(symbol) for symbol in symbols) if entry]
+    if not entries:
+        return [], []
+
+    warnings: list[str] = []
+    code_to_symbol = {code: symbol for symbol, code, _market, _currency in entries}
+    code_to_meta = {code: (market, currency) for _symbol, code, market, currency in entries}
+
+    try:
+        response = await client.get(
+            "https://qt.gtimg.cn/q=" + ",".join(code_to_symbol),
+            headers={
+                "Referer": "https://stockapp.finance.qq.com/",
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"Tencent quote failed: {safe_error(exc)}.")
+        return [], warnings
+
+    quotes: list[MarketQuote] = []
+    for match in re.finditer(r"v_([^=]+)=\"(.*?)\";", response.text, flags=re.S):
+        provider_code, raw = match.groups()
+        symbol = code_to_symbol.get(provider_code)
+        if not symbol or not raw:
+            continue
+        market, currency = code_to_meta.get(provider_code, ("OTHER", "USD"))
+        quote = _parse_tencent_quote(symbol, raw.split("~"), market, currency)
+        if quote:
+            quotes.append(quote)
+
+    if not quotes:
+        warnings.append("Tencent public quote returned no usable quotes.")
+    return quotes, warnings
+
+
 def _parse_sina_quote(
     symbol: str,
     provider_code: str,
@@ -404,8 +487,8 @@ def _parse_sina_quote(
     currency: str,
 ) -> Optional[MarketQuote]:
     if provider_code.startswith(("sh", "sz", "bj")) and len(fields) >= 32:
-        price = _to_float(fields[3])
-        previous_close = _to_float(fields[2])
+        price = to_float(fields[3])
+        previous_close = to_float(fields[2])
         if price is None or price <= 0:
             return None
         change = price - previous_close if previous_close is not None else None
@@ -417,17 +500,17 @@ def _parse_sina_quote(
             change=change,
             change_percent=change_percent,
             previous_close=previous_close,
-            open_price=_to_float(fields[1]),
-            high=_to_float(fields[4]),
-            low=_to_float(fields[5]),
-            volume=_to_float(fields[8]),
+            open_price=to_float(fields[1]),
+            high=to_float(fields[4]),
+            low=to_float(fields[5]),
+            volume=to_float(fields[8]),
             currency=currency,
             market_time=market_time,
             market=market,
         )
 
     if provider_code.startswith("hk") and len(fields) >= 19:
-        price = _to_float(fields[6])
+        price = to_float(fields[6])
         if price is None or price <= 0:
             return None
         date_text = str(fields[17] or "").replace("/", "-")
@@ -435,32 +518,32 @@ def _parse_sina_quote(
         return _sina_quote_record(
             symbol=symbol,
             price=price,
-            change=_to_float(fields[7]),
-            change_percent=_to_float(fields[8]),
-            previous_close=_to_float(fields[3]),
-            open_price=_to_float(fields[2]),
-            high=_to_float(fields[4]),
-            low=_to_float(fields[5]),
-            volume=_to_float(fields[12]),
+            change=to_float(fields[7]),
+            change_percent=to_float(fields[8]),
+            previous_close=to_float(fields[3]),
+            open_price=to_float(fields[2]),
+            high=to_float(fields[4]),
+            low=to_float(fields[5]),
+            volume=to_float(fields[12]),
             currency=currency,
             market_time=market_time,
             market=market,
         )
 
     if provider_code.startswith("gb_") and len(fields) >= 11:
-        price = _to_float(fields[1])
+        price = to_float(fields[1])
         if price is None or price <= 0:
             return None
         return _sina_quote_record(
             symbol=symbol,
             price=price,
-            change=_to_float(fields[4]),
-            change_percent=_to_float(fields[2]),
-            previous_close=_to_float(fields[26]) if len(fields) > 26 else None,
-            open_price=_to_float(fields[5]),
-            high=_to_float(fields[6]),
-            low=_to_float(fields[7]),
-            volume=_to_float(fields[10]),
+            change=to_float(fields[4]),
+            change_percent=to_float(fields[2]),
+            previous_close=to_float(fields[26]) if len(fields) > 26 else None,
+            open_price=to_float(fields[5]),
+            high=to_float(fields[6]),
+            low=to_float(fields[7]),
+            volume=to_float(fields[10]),
             currency=currency,
             market_time=fields[3] or None,
             market=market,
@@ -498,9 +581,48 @@ def _sina_quote_record(
         provider="sina",
         provider_name="新浪财经公共行情",
         market_time=market_time,
-        fetched_at=_utc_now(),
+        fetched_at=utc_now_iso(),
         is_realtime=False,
         delay_note=f"免费公共行情快照，覆盖{market}市场；稳定性依赖公开接口可用性。",
+    )
+
+
+def _parse_tencent_quote(
+    symbol: str,
+    fields: list[str],
+    market: str,
+    currency: str,
+) -> Optional[MarketQuote]:
+    if len(fields) < 35:
+        return None
+    price = to_float(fields[3])
+    if price is None or price <= 0:
+        return None
+    change = to_float(fields[31])
+    previous_close = to_float(fields[4])
+    if change is None and previous_close is not None:
+        change = price - previous_close
+    change_percent = to_float(fields[32])
+    if change_percent is None and change is not None and previous_close:
+        change_percent = (change / previous_close) * 100
+
+    return MarketQuote(
+        symbol=symbol,
+        price=price,
+        change=change,
+        change_percent=change_percent,
+        previous_close=previous_close,
+        open_price=to_float(fields[5]),
+        high=to_float(fields[33]),
+        low=to_float(fields[34]),
+        volume=to_float(fields[36]) if len(fields) > 36 else to_float(fields[6]),
+        currency=currency,
+        provider="tencent",
+        provider_name="腾讯公共行情",
+        market_time=_normalize_tencent_time(fields[30]),
+        fetched_at=utc_now_iso(),
+        is_realtime=False,
+        delay_note=f"腾讯免费公共行情快照，覆盖{market}市场；稳定性依赖公开接口可用性。",
     )
 
 
@@ -526,7 +648,7 @@ async def _fetch_stooq_quotes(
             )
             response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Stooq fallback failed for {symbol}: {_safe_error(exc)}.")
+            warnings.append(f"Stooq fallback failed for {symbol}: {safe_error(exc)}.")
             return None
 
         rows = list(csv.DictReader(StringIO(response.text.strip())))
@@ -537,11 +659,11 @@ async def _fetch_stooq_quotes(
         resolved_symbol = _from_stooq_symbol(row.get("Symbol", ""))
         if not _same_quote_symbol(resolved_symbol, symbol):
             return None
-        price = _to_float(row.get("Close"))
+        price = to_float(row.get("Close"))
         if price is None or price <= 0:
             return None
 
-        open_price = _to_float(row.get("Open"))
+        open_price = to_float(row.get("Open"))
         change = price - open_price if open_price else None
         change_percent = ((change / open_price) * 100) if change is not None and open_price else None
         market_time = _join_market_time(row.get("Date"), row.get("Time"))
@@ -551,14 +673,14 @@ async def _fetch_stooq_quotes(
             change=change,
             change_percent=change_percent,
             open_price=open_price,
-            high=_to_float(row.get("High")),
-            low=_to_float(row.get("Low")),
-            volume=_to_float(row.get("Volume")),
+            high=to_float(row.get("High")),
+            low=to_float(row.get("Low")),
+            volume=to_float(row.get("Volume")),
             currency="USD",
             provider="stooq",
             provider_name="Stooq",
             market_time=market_time,
-            fetched_at=_utc_now(),
+            fetched_at=utc_now_iso(),
             is_realtime=False,
             delay_note="No-key public fallback; usually delayed or latest snapshot.",
         )
@@ -583,14 +705,17 @@ def _candidate_from_eastmoney(row: dict[str, Any]) -> Optional[MarketSymbolCandi
     quote_id = str(row.get("QuoteID") or "").strip()
     classify = str(row.get("Classify") or "")
     security_type_name = str(row.get("SecurityTypeName") or "")
-    security_type = str(row.get("SecurityType") or "")
+    type_us = str(row.get("TypeUS") or "")
     if not code or not name or not quote_id:
         return None
 
     market = "OTHER"
     symbol = code
     exchange = security_type_name or str(row.get("JYS") or "")
-    if classify == "UsStock" and security_type in {"20", "21"}:
+    # 美股：东财 suggest 对很多标的（如 TSLA）返回 SecurityType="7"/TypeUS="1"，
+    # 旧逻辑限定 SecurityType in {20,21} 会漏掉它们。放宽为：凡 classify==UsStock
+    # （或 TypeUS=="1"/SecurityTypeName=="美股"）均产出 market="US" 候选。
+    if classify == "UsStock" or type_us == "1" or security_type_name == "美股":
         market = "US"
         symbol = code
     elif classify == "HK" or security_type_name == "港股":
@@ -728,8 +853,20 @@ def _sina_symbol(symbol: str) -> Optional[tuple[str, str, str, str]]:
     return None
 
 
+def _tencent_symbol(symbol: str) -> Optional[tuple[str, str, str, str]]:
+    value = symbol.strip().upper()
+    code = value.split(".")[0]
+    if value.endswith(".SH") or (re.fullmatch(r"\d{6}", code) and code.startswith("6")):
+        return symbol, f"sh{code}", "A股", "CNY"
+    if value.endswith(".SZ") or re.fullmatch(r"[03]\d{5}", code):
+        return symbol, f"sz{code}", "A股", "CNY"
+    if value.endswith(".HK") or re.fullmatch(r"\d{5}", code):
+        return symbol, f"hk{code.zfill(5)}", "港股", "HKD"
+    return None
+
+
 def _scaled_number(value: object, divisor: float) -> Optional[float]:
-    raw = _to_float(value)
+    raw = to_float(value)
     if raw is None:
         return None
     return raw / divisor
@@ -738,41 +875,11 @@ def _scaled_number(value: object, divisor: float) -> Optional[float]:
 def _merge_quotes(target: dict[str, MarketQuote], quotes: list[MarketQuote]) -> None:
     for quote in quotes:
         target.setdefault(quote.symbol, quote)
-
-
-def _to_float(value: object) -> Optional[float]:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).strip().replace(",", "").replace("%", "")
-    if not text or text.upper() in {"N/A", "N/D", "NULL", "NONE", "-"}:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
 def _timestamp_to_iso(value: object) -> Optional[str]:
-    timestamp = _to_float(value)
+    timestamp = to_float(value)
     if not timestamp:
         return None
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _safe_error(exc: Exception) -> str:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, httpx.TimeoutException):
-        return "timeout"
-    return exc.__class__.__name__
-
-
 def _to_stooq_symbol(symbol: str) -> str:
     if "." in symbol:
         return symbol.lower()
@@ -796,3 +903,12 @@ def _join_market_time(date_value: object, time_value: object) -> Optional[str]:
     if time_text and time_text.upper() not in {"N/A", "N/D"}:
         return f"{date_text}T{time_text}"
     return date_text
+
+
+def _normalize_tencent_time(value: object) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{14}", text):
+        return f"{text[:4]}-{text[4:6]}-{text[6:8]}T{text[8:10]}:{text[10:12]}:{text[12:14]}"
+    return text.replace("/", "-")

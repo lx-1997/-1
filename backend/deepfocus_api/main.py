@@ -9,11 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
+import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from dotenv import load_dotenv
 
+from .agent_engines import DEFAULT_ENGINE_KEY, list_engines
 from .agent_runtime import (
     cancel_investment_task,
     create_investment_task,
@@ -27,6 +29,27 @@ from .agent_runtime import (
     task_counts,
 )
 from .agent_events import agent_task_event_stream
+from .auth import (
+    AuthMiddleware,
+    AuthUserOut,
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserExistsError,
+    UserListResponse,
+    authenticate,
+    auth_required,
+    count_users,
+    create_access_token,
+    create_user,
+    get_user_out_by_id,
+    init_auth,
+    is_valid_email,
+    list_users,
+    require_admin,
+    require_current_user,
+    self_register_enabled,
+)
 from .ai_supply_chain import fetch_ai_supply_chain_capacity_trends
 from .data_sources import (
     capture_agent_web_pages,
@@ -39,9 +62,12 @@ from .data_sources import (
     init_data_source_db,
     keyword_crawl_data_source,
     list_data_source_module_refs,
+    corpus_stats,
+    crawl_evidence_if_thin,
     list_data_items,
     list_data_sources,
     list_data_tags,
+    query_tokens_2gram,
     save_data_source_module_ref,
     store_upload_item,
     sync_data_source,
@@ -67,7 +93,9 @@ from .cn_earnings_skill import (
 from .customs_hs_detail import fetch_customs_hs_detail_snapshot, search_customs_hs_detail_products
 from .customs_trade import build_customs_trade_analysis_text, fetch_customs_trade_snapshot
 from .earnings_calendar import fetch_earnings_calendar
-from .llm import CloudResearchLLM, extract_citable_sources
+from .agent_tools import AgentTool, list_tools as list_agent_tool_specs, register_tool
+from .mcp_tools import discover_mcp_agent_tools
+from .llm import CloudResearchLLM, extract_citable_sources, tool_agent_to_orchestrator_response
 from .market_data import fetch_market_quotes, search_market_symbols
 from .market_layers import build_market_data_layer_status
 from .major_event_skill import (
@@ -84,11 +112,22 @@ from .mcp_hub import (
     list_mcp_capabilities,
     list_mcp_servers,
 )
-from .model_config import public_model_config, save_model_config
+from .model_config import public_model_config, save_model_config, configure_data_source_egress
 from .multi_market_decision import build_multi_market_decision
-from .tear_sheet import build_portfolio_review, build_tear_sheet
+from .tear_sheet import (
+    build_briefing,
+    build_macro_review,
+    build_portfolio_review,
+    build_tear_sheet,
+    build_watchlist_summary,
+)
 from .options_signal import fetch_options_signals
 from .official_news import fetch_official_news
+from .people_voices import (
+    FIGURES_BY_ID,
+    fetch_people_spotlight,
+    fetch_person_voices,
+)
 from .premarket_opportunity import build_premarket_opportunity_radar
 from .professional_research import (
     analyze_professional_report,
@@ -148,8 +187,31 @@ from .realtime_messages import (
     list_realtime_messages,
     publish_data_source_items,
     realtime_message_event_stream,
+    register_post_message_hook,
+)
+from .recall_subscriptions import (
+    create_recall_subscription,
+    delete_recall_subscription,
+    dispatch_recall,
+    init_recall_subscription_db,
+    list_deliveries,
+    list_recall_subscriptions,
+    mark_recall_click,
+    recall_metrics,
+    recent_deliveries,
+)
+from .share_snapshots import (
+    create_share_snapshot,
+    get_share_snapshot,
+    increment_share_views,
+    init_share_snapshot_db,
+    render_not_found_html,
+    render_share_page_html,
 )
 from .report_url_ingest import extract_report_url
+from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
+from .research_vision import analyze_pdf_vision
+from urllib.parse import urlparse
 from .research_workbench import (
     WORKBENCH_DIR,
     proxy_research_workbench,
@@ -164,7 +226,16 @@ from .shareholder_change_skill import (
 )
 from .schemas import (
     AgentBriefRequest,
+    AgentEngineInfo,
+    AgentEngineListResponse,
+    AgentToolInfo,
+    AgentToolListResponse,
     AgentRuntimeHealthResponse,
+    DataQuality,
+    ResearchReportItem,
+    ResearchReportSearchResponse,
+    ResearchVisionAnalyzeRequest,
+    ResearchVisionAnalysisResponse,
     CapabilityListResponse,
     CnEarningsDiagnosisRequest,
     CnEarningsDiagnosisResponse,
@@ -189,6 +260,7 @@ from .schemas import (
     DataSourceRecord,
     DataSourceSyncRequest,
     DataSourceSyncResponse,
+    DataSourceCorpusStats,
     DataSourceTagListResponse,
     DulusMemoryCreateRequest,
     DulusMemoryListResponse,
@@ -223,6 +295,9 @@ from .schemas import (
     McpToolCallResponse,
     NewsSummaryRequest,
     OfficialNewsResponse,
+    PeopleSpotlightResponse,
+    PersonDigestResponse,
+    PersonProfile,
     ModelConfigRequest,
     ModelConfigResponse,
     MultiMarketDecisionRequest,
@@ -249,11 +324,20 @@ from .schemas import (
     RagQueryRequest,
     RealtimeMessageCreateRequest,
     RealtimeMessageListResponse,
+    RecallDeliveryLogResponse,
+    RecallDeliveryResult,
+    RecallMetricsResponse,
+    RecallSubscriptionCreateRequest,
+    RecallSubscriptionListResponse,
+    RecallSubscriptionRecord,
+    ShareSnapshotCreateRequest,
+    ShareSnapshotRecord,
     RealtimeMessageRecord,
     ReportAnalysisRequest,
     SentimentRequest,
     SentimentResponse,
     attach_data_quality,
+    classify_data_quality,
     ShareholderChangeInterpretRequest,
     ShareholderChangeInterpretResponse,
     ShareholderChangeScanRequest,
@@ -263,6 +347,14 @@ from .schemas import (
     StockCheckRequest,
     StockCheckResponse,
     StockCheckStep,
+    BriefingResponse,
+    MarketQuote,
+    StockCompareItem,
+    StockCompareResponse,
+    StockScreenCriterion,
+    StockScreenMatch,
+    StockScreenResponse,
+    MacroReviewResponse,
     PortfolioReviewResponse,
     SystemReadinessCheck,
     TearSheetResponse,
@@ -331,10 +423,16 @@ def _allowed_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_data_source_egress()  # 数据源域名绕过出网代理（封锁环境下仍能直连取数）
+    init_auth()  # 建认证表（统一存储层）+ 按 env 预置管理员
     init_task_db()
     init_data_source_db()
     init_professional_research_db()
     init_realtime_message_db()
+    init_recall_subscription_db()
+    init_share_snapshot_db()
+    # 新信号落库广播后，扇出到离线召回订阅（邮件 / Web Push）。
+    register_post_message_hook(lambda message: dispatch_recall(message))
     init_mcp_db()
     init_risk_db()
     init_backtest_db()
@@ -352,6 +450,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# 先加鉴权中间件、后加 CORS，使 CORS 处于最外层——
+# 这样鉴权返回的 401/403 也会带上 CORS 头，浏览器能正确读到状态码而非报跨域。
+app.add_middleware(AuthMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -371,6 +473,43 @@ async def health() -> dict:
         "provider": llm.provider_name,
         "model": llm.model,
     }
+
+
+@app.post("/api/auth/register", response_model=TokenResponse)
+async def auth_register(payload: RegisterRequest) -> TokenResponse:
+    # 已有用户后是否允许自助注册由 env 控制；机构部署可关掉只让管理员开账号。
+    if not self_register_enabled() and count_users() > 0:
+        raise HTTPException(status_code=403, detail="自助注册已关闭，请联系管理员开通账号")
+    if not is_valid_email(payload.email):
+        raise HTTPException(status_code=422, detail="邮箱格式不正确")
+    try:
+        user = create_user(payload.email, payload.username, payload.password)
+    except UserExistsError:
+        raise HTTPException(status_code=409, detail="邮箱或用户名已存在")
+    return TokenResponse(access_token=create_access_token(user), user=user)
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+async def auth_login(payload: LoginRequest) -> TokenResponse:
+    user = authenticate(payload.username, payload.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return TokenResponse(access_token=create_access_token(user), user=user)
+
+
+@app.get("/api/auth/me", response_model=AuthUserOut)
+async def auth_me(request: Request) -> AuthUserOut:
+    claims = require_current_user(request)
+    user = get_user_out_by_id(str(claims.get("sub", "")))
+    if user is None:
+        raise HTTPException(status_code=401, detail="用户不存在或已停用")
+    return user
+
+
+@app.get("/api/auth/users", response_model=UserListResponse)
+async def auth_list_users(request: Request) -> UserListResponse:
+    require_admin(request)  # handler 级守卫：即便旁路态也只放行管理员
+    return UserListResponse(users=list_users())
 
 
 @app.get("/api/system/readiness", response_model=SystemReadinessResponse)
@@ -419,13 +558,20 @@ def _build_system_readiness_checks() -> list[SystemReadinessCheck]:
         or os.getenv("ALPHAVANTAGE_API_KEY")
         or os.getenv("ALPHA_VANTAGE_API_KEY")
     )
-    auth_required = os.getenv("DEEPFOCUS_AUTH_REQUIRED", "").lower() == "true"
+    auth_enforced = auth_required()
+    try:
+        registered_users = count_users()
+    except Exception:
+        registered_users = 0
+    from . import storage as core_storage
+
+    managed_database = core_storage.is_managed_database()
     persistent_db_paths = [
         os.getenv("DEEPFOCUS_AGENT_DB_PATH"),
         os.getenv("DEEPFOCUS_DATA_SOURCE_DB_PATH"),
         os.getenv("DEEPFOCUS_MCP_DB_PATH"),
     ]
-    using_explicit_storage = any(path for path in persistent_db_paths)
+    using_explicit_storage = managed_database or any(path for path in persistent_db_paths)
     high_risk_mcp_without_approval = [
         server.name for server in mcp_servers
         if server.risk_level == "high" and not server.approval_required
@@ -446,13 +592,19 @@ def _build_system_readiness_checks() -> list[SystemReadinessCheck]:
         SystemReadinessCheck(
             key="auth",
             name="认证与权限",
-            status="pass" if auth_required else "fail",
-            detail=(
-                "已声明启用真实认证/RBAC。"
-                if auth_required
-                else "当前 API 未声明启用真实认证、租户隔离和 RBAC，不能作为机构生产环境。"
+            status=(
+                "pass" if auth_enforced and registered_users > 0
+                else "warn" if auth_enforced
+                else "fail"
             ),
-            remediation="接入后端认证、租户隔离、RBAC 和审计日志后设置 DEEPFOCUS_AUTH_REQUIRED=true。",
+            detail=(
+                f"已启用 JWT 认证 + RBAC，已注册 {registered_users} 个账号。"
+                if auth_enforced and registered_users > 0
+                else "已启用强制认证，但尚无账号；请注册或预置管理员。"
+                if auth_enforced
+                else "当前 API 未启用强制认证（演示态）；JWT/RBAC 通道已就绪，置 DEEPFOCUS_AUTH_REQUIRED=true 即生效。"
+            ),
+            remediation="设置 DEEPFOCUS_AUTH_REQUIRED=true、DEEPFOCUS_JWT_SECRET，并预置管理员（DEEPFOCUS_ADMIN_EMAIL/PASSWORD）。",
         ),
         SystemReadinessCheck(
             key="agent_worker",
@@ -502,7 +654,9 @@ def _build_system_readiness_checks() -> list[SystemReadinessCheck]:
             name="持久化配置",
             status="pass" if using_explicit_storage else "warn",
             detail=(
-                "已显式配置核心 SQLite/存储路径。"
+                "已接入托管数据库（DEEPFOCUS_DATABASE_URL），认证子系统已运行其上。"
+                if managed_database
+                else "已显式配置核心 SQLite/存储路径。"
                 if using_explicit_storage
                 else "当前使用默认本地 SQLite 文件，适合单机演示，不适合多用户机构部署。"
             ),
@@ -612,7 +766,43 @@ async def earnings_calendar(
 
 @app.post("/api/decision/multi-market", response_model=MultiMarketDecisionResponse)
 async def multi_market_decision(request: MultiMarketDecisionRequest) -> MultiMarketDecisionResponse:
-    return attach_data_quality(build_multi_market_decision(request))
+    # 用真实准实时行情刷新候选的现价/涨跌幅，让规则评分跑在真数据上，
+    # 而非信任前端可能过期的快照或硬编码示例。A股/港股经东财/新浪可达，美股 best-effort。
+    enriched_count = 0
+    symbols = [s.symbol for s in (request.stocks or []) if s.symbol]
+    if symbols:
+        try:
+            quote_resp = await fetch_market_quotes(symbols)
+            qmap: dict[str, Any] = {}
+            for q in quote_resp.quotes:
+                sym = (q.symbol or "").upper()
+                qmap[sym] = q
+                qmap.setdefault(sym.split(".")[0], q)  # 容错：按去后缀的 base 也建一个键
+            updated = []
+            for s in request.stocks:
+                key = (s.symbol or "").upper()
+                q = qmap.get(key) or qmap.get(key.split(".")[0])
+                if q and q.price:
+                    updated.append(s.model_copy(update={
+                        "current_price": q.price,
+                        "change_percent": q.change_percent if q.change_percent is not None else s.change_percent,
+                    }))
+                    enriched_count += 1
+                else:
+                    updated.append(s)
+            request = request.model_copy(update={"stocks": updated})
+        except Exception:
+            pass
+
+    response = build_multi_market_decision(request)
+    reasons: list[str] = []
+    if enriched_count > 0:
+        response.provider = "multi-market-rule"
+        reasons.append(f"已用真实准实时行情刷新 {enriched_count}/{len(symbols)} 只候选的现价与涨跌幅，规则评分基于真数据。")
+    else:
+        reasons.append("未获取到候选的实时行情，评分基于传入快照或示例数据，请谨慎参考。")
+    reasons.append("模块就绪度、依赖与回测计划为能力规划（规划中），非已落地的真实回测结果。")
+    return attach_data_quality(response, reasons=reasons)
 
 
 @app.get("/api/agents/premarket-opportunities", response_model=PremarketOpportunityResponse)
@@ -620,56 +810,643 @@ async def premarket_opportunities() -> PremarketOpportunityResponse:
     return attach_data_quality(await build_premarket_opportunity_radar())
 
 
-@app.get("/api/stock/tear-sheet", response_model=TearSheetResponse)
-async def stock_tear_sheet(
+def _market_quote_from_google(g: dict) -> MarketQuote:
+    """把 Google Finance 抓取的真实行情 dict 转成 MarketQuote（provider=google-finance → degraded）。"""
+    return MarketQuote(
+        symbol=g["symbol"],
+        price=g["price"],
+        change=g.get("change"),
+        change_percent=g.get("change_percent"),
+        previous_close=g.get("previous_close"),
+        open_price=g.get("open"),
+        high=g.get("high"),
+        low=g.get("low"),
+        volume=g.get("volume"),
+        currency=g.get("currency", "USD"),
+        provider="google-finance",
+        provider_name="Google Finance",
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        is_realtime=False,
+        delay_note="Google Finance 网页行情，可能延迟约 15 分钟",
+    )
+
+
+def _market_quote_from_yahoo(g: dict) -> MarketQuote:
+    """把 Yahoo Finance 官方行情 dict 转成 MarketQuote（provider=yahoo-finance → live、官方实时）。"""
+    prev = g.get("previous_close")
+    price = g.get("price")
+    change = round(price - prev, 4) if (price and prev) else None
+    pct = round(change / prev * 100, 4) if (change is not None and prev) else None
+    return MarketQuote(
+        symbol=g["symbol"],
+        price=price,
+        change=change,
+        change_percent=pct,
+        previous_close=prev,
+        high=g.get("high"),
+        low=g.get("low"),
+        volume=g.get("volume"),
+        currency=g.get("currency", "USD"),
+        provider="yahoo-finance",
+        provider_name="Yahoo Finance",
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        is_realtime=True,
+        wk52_high=g.get("wk52_high"),
+        wk52_low=g.get("wk52_low"),
+    )
+
+
+async def _enhance_tear_sheet_narrative(ts):
+    """用 LLM 把确定性 7 维证据合成 2-3 句买方观点；mock/失败/超时回退模板（verdict/score 不变）。"""
+    try:
+        from .llm import CloudResearchLLM
+
+        llm = CloudResearchLLM()
+        if llm.provider == "mock":
+            return ts
+        narrative = await llm.synthesize_tear_sheet_narrative(ts)
+        if narrative:
+            ts.narrative = narrative
+            ts.narrative_provider = llm.provider
+    except Exception:
+        pass  # LLM 不可用 → 保留确定性模板叙述
+    return ts
+
+
+async def _enhance_review_narrative(obj, *, view, subject):
+    """组合/宏观速判：用 LLM 合成 narrative；mock/失败回退模板（verdict/score 不变）。"""
+    try:
+        from .llm import CloudResearchLLM
+
+        llm = CloudResearchLLM()
+        if llm.provider == "mock":
+            return obj
+        narrative = await llm.synthesize_review_narrative(
+            subject=subject,
+            verdict=obj.overall_verdict,
+            score=getattr(obj, "overall_score", getattr(obj, "risk_score", 0)),
+            confidence=obj.confidence,
+            dimensions=obj.dimensions,
+            view=view,
+        )
+        if narrative:
+            obj.narrative = narrative
+            obj.narrative_provider = llm.provider
+    except Exception:
+        pass
+    return obj
+
+
+async def _enhance_briefing_headline(briefing):
+    """投研晨报：用 LLM 把宏观×组合×自选股合成晨会纪要 headline；mock/失败回退模板。"""
+    try:
+        from .llm import CloudResearchLLM
+
+        llm = CloudResearchLLM()
+        if llm.provider == "mock":
+            return briefing
+        headline = await llm.synthesize_briefing_headline(
+            briefing.macro, briefing.portfolio, getattr(briefing, "watchlist", None)
+        )
+        if headline:
+            briefing.headline = headline
+            briefing.headline_provider = llm.provider
+    except Exception:
+        pass
+    return briefing
+
+
+async def _build_stock_tear_sheet_core(
     symbol: str,
     name: str = "",
     market_cap: Optional[float] = None,
+    market: str = "",
 ) -> TearSheetResponse:
-    """个股速判卡：聚合行情/财报/期权多源证据，由确定性引擎逐维度判定。
+    """聚合行情/财报/期权多源证据，由确定性引擎逐维度判定，返回未经 LLM 叙述增强的速判卡。
 
     每块数据缺失时诚实标 insufficient，整体可信度取各维度最差档（引擎已算，不经 attach 覆盖）。
+    端点会叠加 LLM 叙述；tool-use agent 的 get_stock_verdict 直接调用本函数（不触发 LLM，避免递归）。
     """
     sym = symbol.strip().upper()
     if not sym:
         raise HTTPException(status_code=400, detail="symbol 不能为空")
 
-    quote = None
+    import asyncio
+
+    from .eastmoney_data import fetch_eastmoney_earnings, fetch_eastmoney_index, fetch_fund_flow
+    from .github_data import (
+        fetch_sp500_constituent,
+        fetch_sp500_index_history,
+        fetch_us10y_history,
+    )
+    from .google_finance import fetch_google_finance_quote
+    from .nasdaq_data import fetch_nasdaq_earnings, fetch_nasdaq_options
+    from .consensus_source import fetch_analyst_consensus
+    from .valuation_source import fetch_valuation
+    from .yahoo_finance import fetch_yahoo_history, fetch_yahoo_quote
+
+    _mkt = (market or "").upper()
+    if not _mkt and sym.isdigit():
+        _mkt = "CN" if len(sym) == 6 else "HK"  # 6位数字→A股，其余纯数字→港股
+    _cn_secid = "1.000300" if _mkt == "CN" else ("100.HSI" if _mkt == "HK" else None)
+
+    async def _safe(coro, default):
+        try:
+            return await coro
+        except Exception:
+            return default
+
+    # 所有真实数据源并行抓取（串行约 10s → 并行约 2s），各源独立容错、互不阻塞。
+    (
+        gquote,
+        price_history,
+        nasdaq_eps,
+        nasdaq_opts,
+        eastmoney_fin,
+        sp500_idx,
+        rates_history,
+        constituent,
+        cn_idx,
+        valuation_data,
+        yquote,
+        consensus_data,
+        fund_flow_data,
+    ) = await asyncio.gather(
+        _safe(fetch_google_finance_quote(sym, market or None), None),
+        _safe(fetch_yahoo_history(sym, market or None), []),
+        _safe(fetch_nasdaq_earnings(sym), None),
+        _safe(fetch_nasdaq_options(sym), None),
+        _safe(fetch_eastmoney_earnings(sym, market), None),
+        _safe(fetch_sp500_index_history(), []),
+        _safe(fetch_us10y_history(), []),
+        _safe(fetch_sp500_constituent(sym), None),
+        _safe(fetch_eastmoney_index(_cn_secid), []) if _cn_secid else _safe(asyncio.sleep(0, result=[]), []),
+        _safe(fetch_valuation(sym, market), None),
+        _safe(fetch_yahoo_quote(sym, market or None), None),
+        _safe(fetch_analyst_consensus(sym, market or None), None),
+        _safe(fetch_fund_flow(sym, market or None), None),
+    )
+
+    # 行情优先 Yahoo 官方（live），限流/失败回退 Google Finance（degraded）。
+    quote = _market_quote_from_yahoo(yquote) if yquote else (_market_quote_from_google(gquote) if gquote else None)
     earnings_events: list = []
     options_signal = None
-    try:
-        quotes_resp = await fetch_market_quotes([sym])
-        quote = quotes_resp.quotes[0] if quotes_resp.quotes else None
-    except Exception:
-        quote = None
-    try:
-        earnings_resp = await fetch_earnings_calendar([sym], horizon="3month")
-        earnings_events = list(earnings_resp.events)
-    except Exception:
-        earnings_events = []
-    try:
-        options_resp = await fetch_options_signals([sym])
-        options_signal = options_resp.signals[0] if options_resp.signals else None
-    except Exception:
-        options_signal = None
+
+    # CN/HK：Yahoo 历史在本环境 403 → price_history 空，用东财个股日线兜底（价格趋势图转 live），
+    # 并用日线 min/max 补 52周区间（quote 缺失 52周时）。
+    if _mkt in ("CN", "HK") and not price_history:
+        from .eastmoney_data import _em_stock_secid, fetch_eastmoney_kline
+
+        _stk_secid = _em_stock_secid(sym, _mkt)
+        if _stk_secid:
+            price_history = await _safe(fetch_eastmoney_kline(_stk_secid), [])
+            if price_history and quote is not None and not quote.wk52_high:
+                _closes = [v for _, v in price_history]
+                if _closes:
+                    quote.wk52_high = max(_closes)
+                    quote.wk52_low = min(_closes)
+
+    # 市场环境维度按 market 选本土大盘：A股→沪深300、港股→恒生（东财），其余→标普500。
+    market_index_name = "标普500"
+    market_provider_tag = "github-sp500"
+    market_source = None
+    market_index_history = sp500_idx
+    if _mkt in ("CN", "HK") and cn_idx:
+        from .tear_sheet import _CN_INDEX_SRC
+
+        market_index_name = "沪深300" if _mkt == "CN" else "恒生指数"
+        market_provider_tag = "eastmoney"
+        market_source = _CN_INDEX_SRC
+        market_index_history = cn_idx
 
     return build_tear_sheet(
         symbol=sym,
-        name=name or sym,
-        market_cap=market_cap,
+        name=name or (constituent or {}).get("name") or sym,
+        market_cap=market_cap or (valuation_data or {}).get("market_cap") or (gquote.get("market_cap") if gquote else None),
         currency=(quote.currency if quote else "USD"),
         quote=quote,
         earnings_events=earnings_events,
         options_signal=options_signal,
+        market_index_history=market_index_history,
+        rates_history=rates_history,
+        constituent=constituent,
+        valuation=gquote,
+        valuation_data=valuation_data,
+        consensus_data=consensus_data,
+        fund_flow_data=fund_flow_data,
+        price_history=price_history,
+        nasdaq_eps=nasdaq_eps,
+        nasdaq_opts=nasdaq_opts,
+        eastmoney_fin=eastmoney_fin,
+        market_index_name=market_index_name,
+        market_source=market_source,
+        market_provider_tag=market_provider_tag,
     )
+
+
+@app.get("/api/stock/tear-sheet", response_model=TearSheetResponse)
+async def stock_tear_sheet(
+    symbol: str,
+    name: str = "",
+    market_cap: Optional[float] = None,
+    market: str = "",
+) -> TearSheetResponse:
+    """个股速判卡：聚合多源证据由确定性引擎逐维度判定，再叠加 LLM 买方叙述。"""
+    ts = await _build_stock_tear_sheet_core(symbol, name=name, market_cap=market_cap, market=market)
+    return await _enhance_tear_sheet_narrative(ts)
+
+
+async def _tool_get_stock_verdict(symbol: str, market: Optional[str] = None) -> Any:
+    """工具：返回确定性引擎的速判卡结论（不触发 LLM 叙述）。verdict/score/各维度信号均为 ground truth。"""
+    ts = await _build_stock_tear_sheet_core(symbol, market=market or "")
+    return {
+        "symbol": ts.symbol,
+        "name": ts.name,
+        "price": ts.price,
+        "change_percent": ts.change_percent,
+        "currency": ts.currency,
+        "overall_verdict": ts.overall_verdict,
+        "overall_score": ts.overall_score,
+        "confidence": ts.confidence,
+        "data_quality": ts.data_quality.model_dump() if ts.data_quality else None,
+        "dimensions": [
+            {
+                "label": dim.label,
+                "signal": dim.signal,
+                "score": dim.score,
+                "headline": dim.headline,
+                "confidence": dim.confidence,
+            }
+            for dim in ts.dimensions
+        ],
+    }
+
+
+register_tool(AgentTool(
+    name="get_stock_verdict",
+    description=(
+        "获取个股速判卡：确定性引擎逐维度判定的综合结论（看多/看空/中性）、评分、置信度与各维度证据信号。"
+        "这是平台核心结论（ground truth，非模型臆测），回答个股研判/是否值得买/综合看法类问题时应优先调用。美/A/港股通用。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "股票代码，如 AAPL、600519、00700"},
+            "market": {"type": "string", "enum": ["US", "CN", "HK"], "description": "市场；缺省按代码推断"},
+        },
+        "required": ["symbol"],
+    },
+    handler=_tool_get_stock_verdict,
+))
 
 
 @app.get("/api/portfolio/review", response_model=PortfolioReviewResponse)
 async def portfolio_review() -> PortfolioReviewResponse:
     """组合风险速判：基于本地持仓与风控摘要的买方视角一页纸（集中度/行业敞口/回撤/止损纪律）。"""
+    from .github_data import fetch_sp500_index_history, fetch_us10y_history
     from .risk_management import get_risk_summary
 
-    return build_portfolio_review(get_risk_summary())
+    sp500: list = []
+    rates: list = []
+    try:
+        sp500 = await fetch_sp500_index_history()
+        rates = await fetch_us10y_history()
+    except Exception:
+        sp500, rates = [], []
+
+    summary = get_risk_summary()
+    # 有持仓才拉实时价（空仓零开销）；用 Google Finance 准实时价刷新 current_price 后重算盈亏/回撤。
+    if summary.get("open_positions"):
+        try:
+            from .risk_management import apply_live_prices, fetch_live_prices_for_positions
+
+            price_map = await fetch_live_prices_for_positions(summary["open_positions"])
+            summary = apply_live_prices(summary, price_map)
+        except Exception:
+            pass
+    review = build_portfolio_review(summary, sp500_history=sp500, rates_history=rates)
+    return await _enhance_review_narrative(review, view="portfolio", subject="组合")
+
+
+@app.get("/api/macro/review", response_model=MacroReviewResponse)
+async def macro_review() -> MacroReviewResponse:
+    """宏观环境速判：市场/利率/通胀/避险，全部真实公开数据（github datasets）。"""
+    from .github_data import (
+        fetch_gold_history,
+        fetch_oil_history,
+        fetch_sp500_index_history,
+        fetch_us10y_history,
+    )
+
+    sp500: list = []
+    rates: list = []
+    oil: list = []
+    gold: list = []
+    try:
+        sp500 = await fetch_sp500_index_history()
+    except Exception:
+        sp500 = []
+    try:
+        rates = await fetch_us10y_history()
+    except Exception:
+        rates = []
+    try:
+        oil = await fetch_oil_history()
+    except Exception:
+        oil = []
+    try:
+        gold = await fetch_gold_history()
+    except Exception:
+        gold = []
+    review = build_macro_review(sp500_history=sp500, rates_history=rates, oil_history=oil, gold_history=gold)
+    return await _enhance_review_narrative(review, view="macro", subject="宏观环境")
+
+
+@app.get("/api/briefing/today", response_model=BriefingResponse)
+async def briefing_today(symbols: str = "") -> BriefingResponse:
+    """投研晨报：聚合宏观环境速判 + 组合风险速判，给买方晨会一页纸。
+
+    复用同一份 github 行情（sp500/rates 供宏观与组合背景共用），整轮只拉一次。
+    """
+    from .github_data import (
+        fetch_gold_history,
+        fetch_oil_history,
+        fetch_sp500_constituent,
+        fetch_sp500_index_history,
+        fetch_us10y_history,
+    )
+    from .risk_management import get_risk_summary
+
+    sp500: list = []
+    rates: list = []
+    oil: list = []
+    gold: list = []
+    try:
+        sp500 = await fetch_sp500_index_history()
+    except Exception:
+        sp500 = []
+    try:
+        rates = await fetch_us10y_history()
+    except Exception:
+        rates = []
+    try:
+        oil = await fetch_oil_history()
+    except Exception:
+        oil = []
+    try:
+        gold = await fetch_gold_history()
+    except Exception:
+        gold = []
+    macro = build_macro_review(sp500_history=sp500, rates_history=rates, oil_history=oil, gold_history=gold)
+    portfolio = build_portfolio_review(get_risk_summary(), sp500_history=sp500, rates_history=rates)
+    briefing = build_briefing(macro, portfolio)
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()][:8]
+    if syms:
+        symbol_sectors: dict = {}
+        for sym in syms:
+            try:
+                c = await fetch_sp500_constituent(sym)
+                symbol_sectors[sym] = (c or {}).get("sector")
+            except Exception:
+                symbol_sectors[sym] = None
+        briefing.watchlist = build_watchlist_summary(symbol_sectors, macro.overall_verdict)
+    return await _enhance_briefing_headline(briefing)
+
+
+@app.get("/api/stock/compare", response_model=StockCompareResponse)
+async def stock_compare(symbols: str = "", caps: str = "") -> StockCompareResponse:
+    """多标的横向对比：复用速判引擎做逐维度信号灯矩阵，共享同一份 github 市场/利率数据。
+
+    个股实时行情受限时（动量/期权/催化）相关维度诚实显示数据不足；
+    规模（market_cap）/行业（github 成分）/市场背景维度正常区分。
+    """
+    from .github_data import (
+        fetch_sp500_constituent,
+        fetch_sp500_index_history,
+        fetch_us10y_history,
+    )
+    from .google_finance import fetch_google_finance_quote
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()][:6]
+    cap_list = [c.strip() for c in caps.split(",")] if caps else []
+    if not syms:
+        return StockCompareResponse(generated_at=datetime.now(timezone.utc), items=[])
+
+    sp500: list = []
+    rates: list = []
+    try:
+        sp500 = await fetch_sp500_index_history()
+    except Exception:
+        sp500 = []
+    try:
+        rates = await fetch_us10y_history()
+    except Exception:
+        rates = []
+
+    from .eastmoney_data import fetch_eastmoney_earnings
+    from .nasdaq_data import fetch_nasdaq_earnings, fetch_nasdaq_options
+    from .valuation_source import fetch_valuation
+
+    async def _safe2(coro, default):
+        try:
+            return await coro
+        except Exception:
+            return default
+
+    async def _compare_one(i: int, sym: str) -> StockCompareItem:
+        cap = None
+        if i < len(cap_list) and cap_list[i]:
+            try:
+                cap = float(cap_list[i])
+            except ValueError:
+                cap = None
+        # 每标的多源并行抓取（含 valuation，让 scale/valuation 与单卡一致 live）；标的之间也并行。
+        constituent, g, valuation_data, neps, nopts, efin = await asyncio.gather(
+            _safe2(fetch_sp500_constituent(sym), None),
+            _safe2(fetch_google_finance_quote(sym), None),
+            _safe2(fetch_valuation(sym), None),
+            _safe2(fetch_nasdaq_earnings(sym), None),
+            _safe2(fetch_nasdaq_options(sym), None),
+            _safe2(fetch_eastmoney_earnings(sym), None),
+        )
+        quote = _market_quote_from_google(g) if g else None
+        gname = g.get("name") if g else None
+        eff_cap = cap or (valuation_data or {}).get("market_cap") or (g.get("market_cap") if g else None)
+        ts = build_tear_sheet(
+            symbol=sym,
+            name=gname or sym,
+            market_cap=eff_cap,
+            quote=quote,
+            market_index_history=sp500,
+            rates_history=rates,
+            constituent=constituent,
+            valuation=g,
+            valuation_data=valuation_data,
+            nasdaq_eps=neps,
+            nasdaq_opts=nopts,
+            eastmoney_fin=efin,
+        )
+        # 对比矩阵聚焦核心维度，个股深度维度（一致预期/资金面）不进 PK 列。
+        dims = [d for d in ts.dimensions if d.key not in ("consensus", "fund_flow")]
+        return StockCompareItem(
+            symbol=sym,
+            name=gname or sym,
+            overall_verdict=ts.overall_verdict,
+            overall_score=ts.overall_score,
+            sector=(constituent or {}).get("sector"),
+            market_cap=eff_cap,
+            dimensions=dims,
+            data_quality=ts.data_quality,
+        )
+
+    items = list(await asyncio.gather(*[_compare_one(i, sym) for i, sym in enumerate(syms)]))
+
+    levels = [it.data_quality.level for it in items]
+    worst = "mock" if "mock" in levels else ("degraded" if "degraded" in levels else "live")
+    overall_dq = next((it.data_quality for it in items if it.data_quality.level == worst), items[0].data_quality)
+    return StockCompareResponse(generated_at=datetime.now(timezone.utc), items=items, data_quality=overall_dq)
+
+
+_SCREEN_DEFAULT = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "TSLA", "META", "AVGO"]
+_SCREEN_DIM_LABELS = {
+    "momentum": "价格动量", "catalyst": "盈利质量", "options": "期权情绪",
+    "scale": "规模", "valuation": "估值", "consensus": "一致预期",
+    "fund_flow": "资金面", "market": "市场环境", "macro": "宏观利率",
+}
+
+
+@app.get("/api/stock/screen", response_model=StockScreenResponse)
+async def stock_screen(query: str, symbols: str = "") -> StockScreenResponse:
+    """自然语言选股：LLM 解析需求 → 对候选逐一跑速判引擎 → 按维度信号筛选并按命中数排序。
+
+    候选标的间 + 每标的多源 双层并行；verdict/维度信号仍由确定性引擎判定，LLM 只负责把
+    自然语言意图翻译成筛选条件（不参与个股判定）。
+    """
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="query 不能为空")
+    import asyncio
+
+    from .consensus_source import fetch_analyst_consensus
+    from .eastmoney_data import fetch_eastmoney_earnings, fetch_fund_flow
+    from .github_data import (
+        fetch_sp500_constituent,
+        fetch_sp500_index_history,
+        fetch_us10y_history,
+    )
+    from .google_finance import fetch_google_finance_quote
+    from .llm import CloudResearchLLM
+    from .nasdaq_data import fetch_nasdaq_earnings, fetch_nasdaq_options
+    from .valuation_source import fetch_valuation
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()][:10] or _SCREEN_DEFAULT
+
+    llm = CloudResearchLLM()
+    parsed = None
+    if llm.provider != "mock":
+        try:
+            parsed = await llm.parse_screen_query(q)
+        except Exception:
+            parsed = None
+    if not parsed or not parsed.get("criteria"):
+        return StockScreenResponse(
+            generated_at=datetime.now(timezone.utc),
+            query=q,
+            criteria_summary="未能解析筛选条件（请在设置配置 AI 模型，或换更明确的表述）",
+            provider="rule-template",
+        )
+    criteria = [
+        StockScreenCriterion(dim=c["dim"], want=c.get("want", "bullish"), label=_SCREEN_DIM_LABELS[c["dim"]])
+        for c in parsed["criteria"]
+        if isinstance(c, dict) and c.get("dim") in _SCREEN_DIM_LABELS and c.get("want") in ("bullish", "bearish", "neutral")
+    ]
+    if not criteria:
+        return StockScreenResponse(
+            generated_at=datetime.now(timezone.utc),
+            query=q,
+            criteria_summary=parsed.get("summary", ""),
+            provider=llm.provider,
+        )
+
+    async def _safe(coro, default):
+        try:
+            return await coro
+        except Exception:
+            return default
+
+    sp500 = await _safe(fetch_sp500_index_history(), [])
+    rates = await _safe(fetch_us10y_history(), [])
+
+    async def _screen_one(sym: str) -> StockScreenMatch:
+        constituent, g, valuation_data, neps, nopts, efin, cons, flow = await asyncio.gather(
+            _safe(fetch_sp500_constituent(sym), None),
+            _safe(fetch_google_finance_quote(sym), None),
+            _safe(fetch_valuation(sym), None),
+            _safe(fetch_nasdaq_earnings(sym), None),
+            _safe(fetch_nasdaq_options(sym), None),
+            _safe(fetch_eastmoney_earnings(sym), None),
+            _safe(fetch_analyst_consensus(sym), None),
+            _safe(fetch_fund_flow(sym), None),
+        )
+        quote = _market_quote_from_google(g) if g else None
+        gname = g.get("name") if g else None
+        eff_cap = (valuation_data or {}).get("market_cap") or (g.get("market_cap") if g else None)
+        ts = build_tear_sheet(
+            symbol=sym,
+            name=gname or sym,
+            market_cap=eff_cap,
+            quote=quote,
+            market_index_history=sp500,
+            rates_history=rates,
+            constituent=constituent,
+            valuation=g,
+            valuation_data=valuation_data,
+            consensus_data=cons,
+            fund_flow_data=flow,
+            nasdaq_eps=neps,
+            nasdaq_opts=nopts,
+            eastmoney_fin=efin,
+        )
+        dim_by_key = {d.key: d for d in ts.dimensions}
+        hit_labels: list = []
+        miss_labels: list = []
+        for c in criteria:
+            dim = dim_by_key.get(c.dim)
+            if c.dim == "scale":
+                # 规模维度 signal 恒中性，"大盘"按 headline 判定（超大盘/大盘）
+                ok = bool(dim and c.want == "bullish" and "大盘" in dim.headline)
+            else:
+                ok = bool(dim and dim.signal == c.want)
+            (hit_labels if ok else miss_labels).append(c.label)
+        return StockScreenMatch(
+            symbol=sym,
+            name=gname or sym,
+            overall_verdict=ts.overall_verdict,
+            overall_score=ts.overall_score,
+            matched_all=(len(hit_labels) == len(criteria)),
+            hit_count=len(hit_labels),
+            hit_labels=hit_labels,
+            miss_labels=miss_labels,
+            data_quality=ts.data_quality,
+        )
+
+    results = list(await asyncio.gather(*[_screen_one(s) for s in syms]))
+    results.sort(key=lambda m: (m.matched_all, m.hit_count, m.overall_score), reverse=True)
+    levels = [r.data_quality.level for r in results]
+    worst = "mock" if "mock" in levels else ("degraded" if "degraded" in levels else "live")
+    overall_dq = next(r.data_quality for r in results if r.data_quality.level == worst)
+
+    return StockScreenResponse(
+        generated_at=datetime.now(timezone.utc),
+        query=q,
+        criteria_summary=parsed.get("summary", ""),
+        criteria=criteria,
+        matches=results,
+        scanned=len(results),
+        provider=llm.provider,
+        data_quality=overall_dq,
+    )
 
 
 @app.get("/api/official-news/cctv", response_model=OfficialNewsResponse)
@@ -679,6 +1456,89 @@ async def official_cctv_news(
     refresh: bool = False,
 ) -> OfficialNewsResponse:
     return await fetch_official_news(source=source, limit=limit, refresh=refresh)
+
+
+@app.get("/api/people/spotlight", response_model=PeopleSpotlightResponse)
+async def people_spotlight(refresh: bool = False) -> PeopleSpotlightResponse:
+    """人物专题：焦点人物头像墙 + 各自近期发言 / 观点 / 来源。"""
+    return await fetch_people_spotlight(refresh=refresh)
+
+
+@app.get("/api/people/{figure_id}/digest", response_model=PersonDigestResponse)
+async def people_digest(figure_id: str, refresh: bool = False) -> PersonDigestResponse:
+    """单人物 AI 近期观点综述：把近期发言合成 2-3 句，方向不可编造，失败回退确定性模板。"""
+    if figure_id not in FIGURES_BY_ID:
+        allowed = " / ".join(FIGURES_BY_ID)
+        raise HTTPException(
+            status_code=404,
+            detail=f"未知焦点人物：{figure_id}，可选 {allowed}",
+        )
+    profile = await fetch_person_voices(figure_id, refresh=refresh)
+    digest, provider = await _synthesize_person_digest(profile)
+    quality = profile.data_quality
+    if profile.item_count and provider in {"template", "fallback"}:
+        # 有真实条目但只能用确定性模板综述时，标降级而非 live。
+        quality = classify_data_quality("template")
+    return PersonDigestResponse(
+        id=profile.id,
+        name=profile.name,
+        digest=digest,
+        digest_provider=provider,
+        item_count=profile.item_count,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        data_quality=quality,
+    )
+
+
+async def _synthesize_person_digest(profile: PersonProfile) -> tuple[str, str]:
+    """把人物近期发言合成一段中性观点综述：LLM 优先，mock/失败回退确定性模板。"""
+    headlines = [item.title for item in profile.items[:8] if item.title]
+    if not headlines:
+        return ("近期暂无可聚合的公开报道，请稍后刷新或查看下方原始条目。", "template")
+
+    fallback = _template_person_digest(profile, headlines)
+    llm = CloudResearchLLM()
+    if llm.provider == "mock":
+        return (fallback, "template")
+
+    bullets = "\n".join(f"- {title}" for title in headlines)
+    prompt = (
+        f"你是财经媒体编辑。下面是关于「{profile.name}（{profile.role}，{profile.org}）」"
+        f"近期的公开报道标题，请据此客观归纳其近期关注焦点与公开观点，供投研参考。\n\n"
+        f"近期报道：\n{bullets}\n\n"
+        "要求：用中文写 2-3 句综述，只能基于上面出现的事实归纳、不得编造数字或未提及的表态，"
+        "点出 1-2 个对市场可能的影响方向，不写免责声明、不超过 120 个中文字。"
+        '仅返回 JSON：{"digest": "..."}'
+    )
+    try:
+        data = await llm.complete_json(
+            prompt,
+            max_tokens=600,
+            timeout_seconds=14,
+            force_json_first=True,
+            retry_schema_hint="只需填充 digest 一个字段，2-3 句、不超过 120 字。",
+        )
+    except Exception:
+        return (fallback, "template")
+    digest = (data or {}).get("digest")
+    if isinstance(digest, str) and digest.strip():
+        return (digest.strip(), llm.provider_name)
+    return (fallback, "template")
+
+
+def _template_person_digest(profile: PersonProfile, headlines: list[str]) -> str:
+    """确定性兜底综述：从近期条目的主题标签 + 最新一条提炼，不依赖云端模型。"""
+    tag_counts: dict[str, int] = {}
+    for item in profile.items:
+        for tag in item.tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    top_tags = [tag for tag, _ in sorted(tag_counts.items(), key=lambda kv: kv[1], reverse=True)[:3]]
+    focus = "、".join(top_tags) if top_tags else "多条公开动态"
+    latest = headlines[0] if headlines else ""
+    return (
+        f"近{profile.item_count}条公开报道显示，{profile.name}近期焦点集中在{focus}。"
+        f"最新一条：{latest}。{profile.why_it_matters}"
+    )
 
 
 @app.get("/api/ai-supply-chain/capacity-trends")
@@ -896,6 +1756,12 @@ async def api_list_data_items(
 @app.get("/api/data-sources/items/tags", response_model=DataSourceTagListResponse)
 async def api_list_data_tags() -> DataSourceTagListResponse:
     return DataSourceTagListResponse(tags=list_data_tags())
+
+
+@app.get("/api/data-sources/corpus-stats", response_model=DataSourceCorpusStats)
+async def api_corpus_stats() -> DataSourceCorpusStats:
+    """证据语料的质量与覆盖聚合（全量扫描）——证据库「语料质量与覆盖」概览。"""
+    return corpus_stats()
 
 
 @app.get("/api/data-sources/items/{item_id}", response_model=DataSourceItemRecord)
@@ -1189,6 +2055,198 @@ async def api_run_professional_eval(
     return await run_professional_eval(request)
 
 
+_RESEARCH_INFO_CODE_RE = re.compile(r"[A-Za-z0-9]{1,64}")
+_RESEARCH_PDF_TIMEOUT = httpx.Timeout(20.0, connect=6.0)
+
+
+@app.get("/api/research/search", response_model=ResearchReportSearchResponse)
+async def api_research_search(
+    keyword: str,
+    market: Optional[str] = None,
+    page_size: int = 20,
+) -> ResearchReportSearchResponse:
+    """研报融合检索（东方财富直连侧）：关键词→标的→A股/港股研报列表，附直链 PDF。
+
+    美股无东财研报，返回空 + 警告，前端据此切到海外投行（知识星球）源。"""
+    kw = (keyword or "").strip()
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    if not kw:
+        return ResearchReportSearchResponse(
+            keyword=keyword, items=[], provider="none", fetched_at=fetched_at,
+            warnings=["请输入公司、代码或主题"],
+            data_quality=DataQuality(level="degraded", label="未检索", detail="缺少关键词"),
+        )
+
+    resolved = await search_market_symbols(kw, market=market)
+    candidate = resolved.candidates[0] if resolved.candidates else None
+    if not candidate:
+        # 东财仅覆盖 A股/港股；美股及海外标的（如特斯拉）由海外投行源承接。
+        return ResearchReportSearchResponse(
+            keyword=keyword, items=[], provider="none", fetched_at=fetched_at,
+            warnings=["东方财富(A股/港股)未匹配到该标的；海外/美股研报见下方「海外投行报告」结果"],
+            data_quality=DataQuality(
+                level="degraded", label="东财未命中",
+                detail="未在 A股/港股 匹配到该标的，可改用海外投行源或更精确的代码",
+                reasons=["eastmoney-no-match"],
+            ),
+        )
+
+    resolved_market = candidate.market
+    if resolved_market == "US":
+        return ResearchReportSearchResponse(
+            keyword=keyword, resolved_symbol=candidate.symbol, resolved_market=resolved_market,
+            items=[], provider="eastmoney", fetched_at=fetched_at,
+            warnings=[f"东方财富无{candidate.name}（美股）研报，请在海外投行报告源检索"],
+            data_quality=DataQuality(
+                level="degraded", label="东财无美股研报",
+                detail="美股研报请使用海外投行（知识星球）源", reasons=["eastmoney-no-us"],
+            ),
+        )
+
+    rows, query_warnings = await query_eastmoney_reports(
+        code=candidate.code, market=resolved_market, page_size=page_size,
+    )
+    items = [
+        ResearchReportItem(
+            id=row["info_code"],
+            title=row["title"],
+            org=row["org"],
+            date=row["date"],
+            symbol=candidate.symbol,
+            market=resolved_market,
+            rating=row.get("rating") or None,
+            stock_name=row.get("stock_name") or candidate.name,
+            pdf_url=row["pdf_url"],
+            preview_url=f"/api/research/pdf/{row['info_code']}",
+        )
+        for row in rows
+    ]
+
+    if items:
+        data_quality = DataQuality(
+            level="live", label="东方财富研报直连", detail=f"{candidate.name} · {len(items)} 篇",
+        )
+    else:
+        data_quality = DataQuality(
+            level="degraded", label="暂无研报", detail="该标的暂无东财研报", reasons=query_warnings,
+        )
+
+    return ResearchReportSearchResponse(
+        keyword=keyword,
+        resolved_symbol=candidate.symbol,
+        resolved_market=resolved_market,
+        items=items,
+        provider="eastmoney" if items else "none",
+        fetched_at=fetched_at,
+        warnings=query_warnings,
+        data_quality=data_quality,
+    )
+
+
+@app.get("/api/research/pdf/{info_code}")
+async def api_research_pdf(info_code: str) -> StreamingResponse:
+    """研报 PDF 在线预览代理（SSRF 安全：host 硬编码，仅放行 [A-Za-z0-9] 编号）。"""
+    code = (info_code or "").strip()
+    if not _RESEARCH_INFO_CODE_RE.fullmatch(code):
+        raise HTTPException(status_code=422, detail="非法的研报编号")
+
+    pdf_url = eastmoney_report_pdf_url(code)
+    client = httpx.AsyncClient(trust_env=False, timeout=_RESEARCH_PDF_TIMEOUT, follow_redirects=True)
+    upstream_request = client.build_request(
+        "GET", pdf_url,
+        headers={"Referer": "https://data.eastmoney.com/", "User-Agent": "Mozilla/5.0"},
+    )
+    try:
+        upstream = await client.send(upstream_request, stream=True)
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"研报 PDF 拉取失败：{exc}") from exc
+
+    if upstream.status_code != 200:
+        status = upstream.status_code
+        await upstream.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=404 if status == 404 else 502, detail=f"研报 PDF 不可用（HTTP {status}）")
+
+    async def body_iter() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        body_iter(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{code}.pdf"',
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+async def _resolve_research_pdf_bytes(request: ResearchVisionAnalyzeRequest) -> bytes:
+    """取研报 PDF 字节：优先本地抓取舱文件（海外投行），否则东财 PDF 直链。"""
+    if request.workbench_filename:
+        path = _safe_workbench_file_path(request.workbench_out, request.workbench_filename)
+        return path.read_bytes()
+
+    url = (request.pdf_url or "").strip()
+    if not url:
+        raise HTTPException(status_code=422, detail="缺少研报来源（workbench_filename 或 pdf_url）")
+    host = (urlparse(url).hostname or "").lower()
+    if host != "pdf.dfcfw.com":
+        raise HTTPException(status_code=400, detail="仅支持东方财富研报 PDF 直链或抓取舱文件的视觉解读")
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=_RESEARCH_PDF_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(
+                url, headers={"Referer": "https://data.eastmoney.com/", "User-Agent": "Mozilla/5.0"},
+            )
+            resp.raise_for_status()
+            return resp.content
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"研报 PDF 拉取失败：{exc}") from exc
+
+
+@app.post("/api/research/vision-analyze", response_model=ResearchVisionAnalysisResponse)
+async def api_research_vision_analyze(
+    request: ResearchVisionAnalyzeRequest,
+) -> ResearchVisionAnalysisResponse:
+    """图片型研报视觉解读：渲染前若干页→多模态模型读图出买方观点（无逐句溯源）。"""
+    pdf_bytes = await _resolve_research_pdf_bytes(request)
+    if not pdf_bytes:
+        raise HTTPException(status_code=422, detail="未能获取研报 PDF 内容")
+
+    title = (request.title or "研报").strip()
+    try:
+        result = await analyze_pdf_vision(
+            pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 统一转成 502，前端给友好提示
+        raise HTTPException(status_code=502, detail=f"视觉解读失败：{exc}") from exc
+
+    return ResearchVisionAnalysisResponse(
+        title=title,
+        symbol=request.symbol,
+        summary=result["summary"],
+        key_points=result["key_points"],
+        risks=result["risks"],
+        rating=result["rating"],
+        target_price=result["target_price"],
+        confidence=result["confidence"],
+        pages_analyzed=result["pages_analyzed"],
+        provider=result["provider"],
+        disclaimer=result["disclaimer"],
+        data_quality=DataQuality(
+            level="degraded", label="AI 视觉解读",
+            detail="基于研报页面图像的解读，非逐句溯源", reasons=["vision-no-citation"],
+        ),
+    )
+
+
 @app.post("/api/data-sources/agent-crawl", response_model=DataSourceSyncResponse)
 async def api_agent_crawl(request: DataSourceSyncRequest) -> DataSourceSyncResponse:
     source, items = await capture_agent_web_pages(request)
@@ -1249,6 +2307,69 @@ async def api_realtime_message_stream(request: Request) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/realtime/recall/subscriptions", response_model=RecallSubscriptionRecord)
+async def api_create_recall_subscription(request: RecallSubscriptionCreateRequest) -> RecallSubscriptionRecord:
+    return create_recall_subscription(request)
+
+
+@app.get("/api/realtime/recall/subscriptions", response_model=RecallSubscriptionListResponse)
+async def api_list_recall_subscriptions() -> RecallSubscriptionListResponse:
+    return RecallSubscriptionListResponse(subscriptions=list_recall_subscriptions(active_only=False))
+
+
+@app.delete("/api/realtime/recall/subscriptions/{subscription_id}")
+async def api_delete_recall_subscription(subscription_id: str) -> dict[str, bool]:
+    return {"deleted": delete_recall_subscription(subscription_id)}
+
+
+@app.get("/api/realtime/recall/deliveries", response_model=list[RecallDeliveryResult])
+async def api_recent_recall_deliveries() -> list[RecallDeliveryResult]:
+    return recent_deliveries()
+
+
+@app.get("/api/realtime/recall/delivery-log", response_model=RecallDeliveryLogResponse)
+async def api_recall_delivery_log(limit: int = 50) -> RecallDeliveryLogResponse:
+    return RecallDeliveryLogResponse(deliveries=list_deliveries(limit))
+
+
+@app.get("/api/realtime/recall/metrics", response_model=RecallMetricsResponse)
+async def api_recall_metrics() -> RecallMetricsResponse:
+    """召回闭环验真：送达 / 点击回流 / 回流率。"""
+    return recall_metrics()
+
+
+@app.get("/api/realtime/recall/click/{delivery_id}", include_in_schema=False)
+async def api_recall_click(delivery_id: str) -> RedirectResponse:
+    """召回点击回流追踪：记录点击并 302 跳回 App 深链（公开端点，用户从邮件/推送点回）。"""
+    target = mark_recall_click(delivery_id)
+    # 未知 delivery_id 也不报错——回流体验优先，兜底跳回 App 首页。
+    fallback = os.getenv("DEEPFOCUS_APP_BASE_URL", "http://localhost:3000").strip().rstrip("/") or "http://localhost:3000"
+    return RedirectResponse(url=target or fallback, status_code=302)
+
+
+@app.post("/api/share/snapshots", response_model=ShareSnapshotRecord)
+async def api_create_share_snapshot(request: ShareSnapshotCreateRequest) -> ShareSnapshotRecord:
+    return create_share_snapshot(request)
+
+
+@app.get("/api/share/snapshots/{snapshot_id}", response_model=ShareSnapshotRecord)
+async def api_get_share_snapshot(snapshot_id: str) -> ShareSnapshotRecord:
+    record = get_share_snapshot(snapshot_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="分享快照不存在")
+    return record
+
+
+@app.get("/s/{snapshot_id}", response_class=HTMLResponse)
+async def public_share_page(snapshot_id: str, request: Request) -> HTMLResponse:
+    """免登录、可被搜索引擎收录的只读结论页（服务端直出 HTML）。"""
+    record = get_share_snapshot(snapshot_id)
+    if record is None:
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    increment_share_views(snapshot_id)
+    return HTMLResponse(render_share_page_html(record, page_url=str(request.url)))
 
 
 @app.get("/api/mcp/servers", response_model=McpServerListResponse)
@@ -1797,6 +2918,44 @@ async def agent_runtime_health() -> AgentRuntimeHealthResponse:
     )
 
 
+@app.get("/api/agents/engines", response_model=AgentEngineListResponse)
+async def list_agent_engines() -> AgentEngineListResponse:
+    """自描述：注册表里有什么引擎，API 就返回什么。新增引擎自动出现，前端无需硬编码。"""
+    return AgentEngineListResponse(
+        default=DEFAULT_ENGINE_KEY,
+        engines=[
+            AgentEngineInfo(
+                key=spec.key,
+                label=spec.label,
+                description=spec.description,
+                stage_count=len(spec.stages),
+            )
+            for spec in list_engines()
+        ],
+    )
+
+
+@app.get("/api/agents/tools", response_model=AgentToolListResponse)
+async def list_agent_tools_endpoint() -> AgentToolListResponse:
+    """自描述：tool-use agent 能调用的工具清单（内部数据工具 + 已接入的外部 MCP 工具）+ 该路径是否启用。"""
+    tools = list(list_agent_tool_specs())
+    try:
+        tools = tools + await discover_mcp_agent_tools()  # best-effort：MCP 不可用不影响内部工具列示
+    except Exception:
+        pass
+    return AgentToolListResponse(
+        enabled=_tool_agent_enabled(),
+        tools=[
+            AgentToolInfo(
+                name=tool.name,
+                description=tool.description,
+                parameters=list((tool.parameters.get("properties") or {}).keys()),
+            )
+            for tool in tools
+        ],
+    )
+
+
 @app.get("/api/agents/tasks", response_model=InvestmentTaskListResponse)
 async def list_agent_tasks(limit: int = 50) -> InvestmentTaskListResponse:
     return InvestmentTaskListResponse(tasks=list_investment_tasks(limit=limit))
@@ -2135,22 +3294,31 @@ async def agent_brief(request: AgentBriefRequest) -> FinGptTaskResponse:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-def _chat_query_tokens(text: str) -> list[str]:
-    """把提问切成检索相关性词元：ASCII 词 + 中文 2-gram 滑窗（解决中文整段不匹配，
-    比共享的 `_query_tokens`（整段切）更细，仅用于 chat 检索结果的相关性重排）。"""
-    out: list[str] = []
-    for run in re.findall(r"[a-z0-9]{2,}|[一-鿿]+", (text or "").lower()):
-        if run.isascii() or len(run) <= 2:
-            out.append(run)
-        else:
-            out.extend(run[i:i + 2] for i in range(len(run) - 1))
-    seen: set[str] = set()
-    result: list[str] = []
-    for tok in out:
-        if tok not in seen:
-            seen.add(tok)
-            result.append(tok)
-    return result
+def _crawl_keyword_for_context(ctx: dict) -> Optional[str]:
+    """取一个适合搜索的关键词：优先聚焦标的的中文名（自选股里），否则用代码。"""
+    symbol = str(ctx.get("focused_symbol") or "").strip()
+    watchlist = ctx.get("watchlist")
+    if symbol and isinstance(watchlist, list):
+        for s in watchlist:
+            if isinstance(s, dict) and str(s.get("symbol", "")).upper() == symbol.upper():
+                name = str(s.get("name", "") or "").strip()
+                if name:
+                    return name
+    return symbol or None
+
+
+async def _acquire_fresh_evidence_if_thin(request: GeneralChatRequest) -> int:
+    """主动取数（agentic）：挂了证据库且本地强相关证据稀薄时，自动爬一轮补进证据库，
+    让 agent「自己去找数据」而非只报"缺"。委托共享 crawl_evidence_if_thin（三路径统一）。"""
+    ctx = request.context
+    if not isinstance(ctx, dict):
+        return 0
+    evidence = ctx.get("evidence_sources")
+    if not isinstance(evidence, dict) or not evidence.get("retrieve"):
+        return 0  # 仅在用户挂了证据库要求检索时才主动取数
+    symbol = str(ctx.get("focused_symbol") or "").strip() or None
+    keyword = _crawl_keyword_for_context(ctx) or ((request.message or "").strip()[:40] or None)
+    return await crawl_evidence_if_thin(symbol, keyword)
 
 
 def _augment_context_with_retrieval(request: GeneralChatRequest) -> None:
@@ -2195,7 +3363,7 @@ def _augment_context_with_retrieval(request: GeneralChatRequest) -> None:
         deduped.append(item)
     # 相关性重排：按提问 2-gram 词元命中标题+正文的次数排序（credibility 作次序），
     # 让最贴合本次提问的证据排前被引用；提问无重合时退化为原 credibility 序（list 已排好）。
-    q_tokens = _chat_query_tokens(message)
+    q_tokens = query_tokens_2gram(message)
     if q_tokens and len(deduped) > 1:
         def _relevance(it: Any) -> int:
             hay = f"{it.title or ''} {it.text_preview or ''}".lower()
@@ -2219,6 +3387,7 @@ def _augment_context_with_retrieval(request: GeneralChatRequest) -> None:
 @app.post("/api/agents/chat", response_model=GeneralChatResponse)
 async def general_chat(request: GeneralChatRequest) -> GeneralChatResponse:
     try:
+        await _acquire_fresh_evidence_if_thin(request)  # 主动取数：证据不足时自动爬一轮
         _augment_context_with_retrieval(request)
         return attach_data_quality(await llm.general_chat(request))
     except Exception as exc:
@@ -2230,6 +3399,12 @@ async def general_chat_stream(request: GeneralChatRequest) -> StreamingResponse:
     """SSE stream of assistant text deltas for the home chat (token-by-token)."""
 
     async def event_generator() -> AsyncIterator[str]:
+        # 主动取数（agentic）：证据不足时先去爬一轮最新资料；期间给前端一个状态提示。
+        ctx = request.context if isinstance(request.context, dict) else {}
+        ev = ctx.get("evidence_sources")
+        if isinstance(ev, dict) and ev.get("retrieve"):
+            yield f"data: {json.dumps({'status': '正在检索最新资料…'}, ensure_ascii=False)}\n\n"
+            await _acquire_fresh_evidence_if_thin(request)
         # 检索增强：按本次提问主动从证据库拉相关条目（RAG），再抽编号来源。
         _augment_context_with_retrieval(request)
         # 先回传本次可引用的编号来源（前端据此把 [n] 渲染成可点引用 + 来源列表）。
@@ -2586,6 +3761,16 @@ def _is_research_intent(message: str) -> bool:
     return any(kw in msg for kw in research_keywords)
 
 
+def _tool_agent_enabled() -> bool:
+    """AI 原生 tool-use agent 路径开关。
+
+    默认关：tool-agent 会改变研究类问答的取数方式（模型自主调工具），需先在目标 live 模型上
+    验证其 OpenAI 兼容端点支持 function-calling，再置 DEEPFOCUS_TOOL_AGENT=1 灰度开启。
+    关闭时端点行为与既有完全一致（红线：不破坏现有体验）。
+    """
+    return os.getenv("DEEPFOCUS_TOOL_AGENT", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @app.post("/api/agents/cross-module-research", response_model=CrossModuleResearchResponse)
 async def cross_module_research(request: CrossModuleResearchRequest) -> CrossModuleResearchResponse:
     if not request.symbol:
@@ -2647,6 +3832,23 @@ async def orchestrator_chat(request: OrchestratorChatRequest) -> OrchestratorCha
 
         stock_symbol = (request.stock.symbol or "").strip() if request.stock else ""
         if stock_symbol and _is_research_intent(request.message):
+            # ① AI 原生 tool-use agent：模型自主调工具按需取数（开关控制，默认关）。
+            #    返回 None（mock / 工具不被支持 / 任何失败）即落到 ② 既有预聚合路径。
+            if _tool_agent_enabled():
+                try:
+                    agent_result = await llm.run_tool_agent(
+                        question=request.message,
+                        context_hint=f"当前标的：{(request.stock.name or '') if request.stock else ''}（{stock_symbol}）",
+                    )
+                    if agent_result:
+                        mapped = tool_agent_to_orchestrator_response(
+                            agent_result, request, llm.provider_name, llm.model
+                        )
+                        if mapped:
+                            return attach_data_quality(mapped)
+                except Exception:
+                    pass
+            # ② 既有路径：服务端预聚合跨模块数据 → 注入 → 合成。
             try:
                 aggregated = await gather_all_for_stock(
                     stock_symbol,
