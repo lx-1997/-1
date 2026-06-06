@@ -1032,10 +1032,16 @@ class CloudResearchLLM:
                         "ok": bool(result.get("ok")),
                         "summary": _summarize_tool_result(result),
                     })
+                    tool_content = json.dumps(result, ensure_ascii=False)
+                    if len(tool_content) > 3500:
+                        # 按长度截断并显式标记，避免给模型一段被腰斩的非法 JSON。
+                        tool_content = tool_content[:3500] + "…(结果过长已截断)"
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps(result, ensure_ascii=False)[:3500],
+                        # name 对标准 OpenAI 非必需，但部分兼容网关（含 MiniMax）要求 tool role 带 name。
+                        "name": tc.function.name,
+                        "content": tool_content,
                     })
 
             # 用满轮次仍未收敛 → 去掉 tools 逼出一段最终结论。

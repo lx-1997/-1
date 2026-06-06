@@ -196,9 +196,9 @@ from .recall_subscriptions import (
     init_recall_subscription_db,
     list_deliveries,
     list_recall_subscriptions,
-    mark_recall_click,
     recall_metrics,
     recent_deliveries,
+    resolve_recall_click,
 )
 from .share_snapshots import (
     create_share_snapshot,
@@ -2343,10 +2343,7 @@ async def api_recall_metrics() -> RecallMetricsResponse:
 @app.get("/api/realtime/recall/click/{delivery_id}", include_in_schema=False)
 async def api_recall_click(delivery_id: str) -> RedirectResponse:
     """召回点击回流追踪：记录点击并 302 跳回 App 深链（公开端点，用户从邮件/推送点回）。"""
-    target = mark_recall_click(delivery_id)
-    # 未知 delivery_id 也不报错——回流体验优先，兜底跳回 App 首页。
-    fallback = os.getenv("DEEPFOCUS_APP_BASE_URL", "http://localhost:3000").strip().rstrip("/") or "http://localhost:3000"
-    return RedirectResponse(url=target or fallback, status_code=302)
+    return RedirectResponse(url=resolve_recall_click(delivery_id), status_code=302)
 
 
 @app.post("/api/share/snapshots", response_model=ShareSnapshotRecord)
@@ -3764,11 +3761,11 @@ def _is_research_intent(message: str) -> bool:
 def _tool_agent_enabled() -> bool:
     """AI 原生 tool-use agent 路径开关。
 
-    默认关：tool-agent 会改变研究类问答的取数方式（模型自主调工具），需先在目标 live 模型上
-    验证其 OpenAI 兼容端点支持 function-calling，再置 DEEPFOCUS_TOOL_AGENT=1 灰度开启。
-    关闭时端点行为与既有完全一致（红线：不破坏现有体验）。
+    已在 MiniMax-M3 上 live 验证 function-calling 可用（模型自主调工具取真实数据），故**默认开**；
+    如需回退到既有「预聚合/inline」行为，置 DEEPFOCUS_TOOL_AGENT=0/false/off 显式关闭。
+    无论开关，失败都会优雅回退既有路径（红线：不破坏现有体验）。
     """
-    return os.getenv("DEEPFOCUS_TOOL_AGENT", "").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("DEEPFOCUS_TOOL_AGENT", "").strip().lower() not in {"0", "false", "no", "off"}
 
 
 @app.post("/api/agents/cross-module-research", response_model=CrossModuleResearchResponse)
@@ -3831,24 +3828,29 @@ async def orchestrator_chat(request: OrchestratorChatRequest) -> OrchestratorCha
             return attach_data_quality(professional_reply)
 
         stock_symbol = (request.stock.symbol or "").strip() if request.stock else ""
-        if stock_symbol and _is_research_intent(request.message):
-            # ① AI 原生 tool-use agent：模型自主调工具按需取数（开关控制，默认关）。
-            #    返回 None（mock / 工具不被支持 / 任何失败）即落到 ② 既有预聚合路径。
-            if _tool_agent_enabled():
-                try:
-                    agent_result = await llm.run_tool_agent(
-                        question=request.message,
-                        context_hint=f"当前标的：{(request.stock.name or '') if request.stock else ''}（{stock_symbol}）",
+        research_intent = _is_research_intent(request.message)
+
+        # ① AI 原生 tool-use agent：研究意图即触发（stock 可选——模型自主选工具、自行取数）。
+        #    个股+研究意图的消息已在前端被路由去研究 Loop，故到这里的研究问题多为「无显式 ticker」，
+        #    正好交给 tool-agent 让模型自己决定调哪些工具。返回 None（未启用/工具不支持/失败）则落到既有路径。
+        if research_intent and _tool_agent_enabled():
+            try:
+                hint = (
+                    f"当前标的：{(request.stock.name or '') if request.stock else ''}（{stock_symbol}）"
+                    if stock_symbol else ""
+                )
+                agent_result = await llm.run_tool_agent(question=request.message, context_hint=hint)
+                if agent_result:
+                    mapped = tool_agent_to_orchestrator_response(
+                        agent_result, request, llm.provider_name, llm.model
                     )
-                    if agent_result:
-                        mapped = tool_agent_to_orchestrator_response(
-                            agent_result, request, llm.provider_name, llm.model
-                        )
-                        if mapped:
-                            return attach_data_quality(mapped)
-                except Exception:
-                    pass
-            # ② 既有路径：服务端预聚合跨模块数据 → 注入 → 合成。
+                    if mapped:
+                        return attach_data_quality(mapped)
+            except Exception:
+                pass
+
+        # ② 有 stock 的研究意图：服务端预聚合跨模块数据 → 注入 → 合成（既有路径）。
+        if stock_symbol and research_intent:
             try:
                 aggregated = await gather_all_for_stock(
                     stock_symbol,

@@ -125,6 +125,8 @@ def test_single_tool_call_then_answer(monkeypatch):
     assert "tool" in roles
     tool_msg = next(m for m in second_call_messages if m["role"] == "tool")
     assert tool_msg["tool_call_id"] == "c1"
+    # tool role 必须带 name（部分兼容网关含 MiniMax 严格要求），否则工具回灌会被 400 拒。
+    assert tool_msg["name"] == "get_market_quote"
     assert "195" in tool_msg["content"]
     # 第一次 create 带了 tools 参数（真的开启了 function-calling）。
     assert llm._test_client.chat.completions.calls[0].get("tools")
@@ -262,6 +264,18 @@ def test_mapper_builds_response_with_tool_trace():
     assert resp.reasoning_trace[0].status == "done"
     assert resp.reasoning_trace[1].status == "error"
     assert resp.reasoning_trace[-1].phase == "synthesis"
+
+
+def test_tool_agent_flag_default_on_and_opt_out(monkeypatch):
+    # 已 live 验证 MiniMax 支持 tools → 默认开；仅显式 0/false/off/no 才关。
+    monkeypatch.delenv("DEEPFOCUS_TOOL_AGENT", raising=False)
+    assert main_app._tool_agent_enabled() is True
+    for off in ("0", "false", "off", "no", "FALSE", "Off"):
+        monkeypatch.setenv("DEEPFOCUS_TOOL_AGENT", off)
+        assert main_app._tool_agent_enabled() is False, off
+    for on in ("1", "true", "on", "yes", "", "anything"):
+        monkeypatch.setenv("DEEPFOCUS_TOOL_AGENT", on)
+        assert main_app._tool_agent_enabled() is True, on
 
 
 def test_mapper_empty_answer_returns_none():
