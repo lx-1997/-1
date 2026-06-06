@@ -1155,6 +1155,103 @@ register_tool(AgentTool(
 ))
 
 
+_SYMBOL_MARKET_TOOL_PARAMS = {
+    "type": "object",
+    "properties": {
+        "symbol": {"type": "string", "description": "股票代码，如 AAPL、600519、00700"},
+        "market": {"type": "string", "enum": ["US", "CN", "HK"], "description": "市场；缺省按代码推断"},
+    },
+    "required": ["symbol"],
+}
+
+
+async def _tool_get_price_history(symbol: str, market: Optional[str] = None) -> Any:
+    """工具：近 ~6 个月价格走势摘要（首/末/高/低/区间涨跌幅）。"""
+    from .yahoo_finance import fetch_yahoo_history
+
+    series = await fetch_yahoo_history(symbol, market or None)
+    closes = [c for _, c in series] if series else []
+    if not closes:
+        return None
+    first, last = closes[0], closes[-1]
+    return {
+        "symbol": (symbol or "").strip().upper(),
+        "points": len(closes),
+        "period_start": series[0][0],
+        "period_end": series[-1][0],
+        "first": first,
+        "last": last,
+        "high": max(closes),
+        "low": min(closes),
+        "change_pct": round((last - first) / first * 100, 2) if first else None,
+        "note": "近 ~6 个月日线收盘摘要（Yahoo，本环境可能受限）。",
+    }
+
+
+async def _tool_get_macro_environment(symbol: str = "", market: Optional[str] = None) -> Any:
+    """工具：当前宏观环境快照——10年美债收益率 / WTI 原油 / 黄金 / 标普500 的最新值。"""
+    from .github_data import (
+        fetch_gold_history,
+        fetch_oil_history,
+        fetch_sp500_index_history,
+        fetch_us10y_history,
+    )
+
+    us10y, oil, gold, sp500 = await asyncio.gather(
+        fetch_us10y_history(),
+        fetch_oil_history(),
+        fetch_gold_history(),
+        fetch_sp500_index_history(),
+        return_exceptions=True,
+    )
+
+    def _last(series: Any) -> Any:
+        if isinstance(series, list) and series:
+            date, value = series[-1]
+            return {"date": date, "value": value}
+        return None
+
+    snap = {
+        "us10y_yield": _last(us10y),
+        "wti_oil": _last(oil),
+        "gold": _last(gold),
+        "sp500": _last(sp500),
+        "note": "宏观快照最新值（GitHub 公共数据源）；与个股无关，symbol 参数可忽略。",
+    }
+    return snap if any(snap[k] for k in ("us10y_yield", "wti_oil", "gold", "sp500")) else None
+
+
+async def _tool_get_options_signal(symbol: str, market: Optional[str] = None) -> Any:
+    """工具：期权情绪信号（Put/Call 等）。仅美股有覆盖。"""
+    from .nasdaq_data import fetch_nasdaq_options
+
+    return await fetch_nasdaq_options((symbol or "").strip().upper())
+
+
+register_tool(AgentTool(
+    name="get_price_history",
+    description="获取个股近 ~6 个月价格走势摘要（区间涨跌幅、最高/最低、起止价），用于回答「走势如何/这段涨跌多少/在高位还是低位」。",
+    parameters=_SYMBOL_MARKET_TOOL_PARAMS,
+    handler=_tool_get_price_history,
+))
+register_tool(AgentTool(
+    name="get_macro_environment",
+    description=(
+        "获取当前宏观环境快照：10年美债收益率、WTI原油、黄金、标普500 的最新值。"
+        "回答宏观/利率/油价/避险/大盘环境类问题时**必须优先调用本工具**（它直接给出这些权威数值），"
+        "不要改用个股行情工具去代理大盘指数。无需 symbol 参数。"
+    ),
+    parameters={"type": "object", "properties": {}},
+    handler=_tool_get_macro_environment,
+))
+register_tool(AgentTool(
+    name="get_options_signal",
+    description="获取个股期权情绪信号（Put/Call 等），用于判断市场对冲/投机情绪。仅美股有覆盖。",
+    parameters=_SYMBOL_MARKET_TOOL_PARAMS,
+    handler=_tool_get_options_signal,
+))
+
+
 @app.get("/api/portfolio/review", response_model=PortfolioReviewResponse)
 async def portfolio_review() -> PortfolioReviewResponse:
     """组合风险速判：基于本地持仓与风控摘要的买方视角一页纸（集中度/行业敞口/回撤/止损纪律）。"""
@@ -1183,37 +1280,45 @@ async def portfolio_review() -> PortfolioReviewResponse:
     return await _enhance_review_narrative(review, view="portfolio", subject="组合")
 
 
-@app.get("/api/macro/review", response_model=MacroReviewResponse)
-async def macro_review() -> MacroReviewResponse:
-    """宏观环境速判：市场/利率/通胀/避险，全部真实公开数据（github datasets）。"""
+async def _gather_macro_inputs() -> dict:
+    """宏观速判/晨报共用的真实数据输入：github 月度（市场/利率/油/金）+ 市场看板 live 风险三件套。
+
+    五路并发拉取，任一失败诚实降级为空（由速判侧标 insufficient），不互相阻断。
+    """
     from .github_data import (
         fetch_gold_history,
         fetch_oil_history,
         fetch_sp500_index_history,
         fetch_us10y_history,
     )
+    from .market_dashboard import get_macro_risk_indicators
 
-    sp500: list = []
-    rates: list = []
-    oil: list = []
-    gold: list = []
-    try:
-        sp500 = await fetch_sp500_index_history()
-    except Exception:
-        sp500 = []
-    try:
-        rates = await fetch_us10y_history()
-    except Exception:
-        rates = []
-    try:
-        oil = await fetch_oil_history()
-    except Exception:
-        oil = []
-    try:
-        gold = await fetch_gold_history()
-    except Exception:
-        gold = []
-    review = build_macro_review(sp500_history=sp500, rates_history=rates, oil_history=oil, gold_history=gold)
+    async def _safe(coro):
+        try:
+            return await coro
+        except Exception:
+            return None
+
+    sp500, rates, oil, gold, risk = await asyncio.gather(
+        _safe(fetch_sp500_index_history()),
+        _safe(fetch_us10y_history()),
+        _safe(fetch_oil_history()),
+        _safe(fetch_gold_history()),
+        _safe(get_macro_risk_indicators()),
+    )
+    return {
+        "sp500_history": sp500 or [],
+        "rates_history": rates or [],
+        "oil_history": oil or [],
+        "gold_history": gold or [],
+        "risk_indicators": risk or {},
+    }
+
+
+@app.get("/api/macro/review", response_model=MacroReviewResponse)
+async def macro_review() -> MacroReviewResponse:
+    """宏观环境速判：市场/波动率/利率/收益率曲线/信用利差/通胀/避险，全部真实公开数据。"""
+    review = build_macro_review(**await _gather_macro_inputs())
     return await _enhance_review_narrative(review, view="macro", subject="宏观环境")
 
 
@@ -1223,37 +1328,16 @@ async def briefing_today(symbols: str = "") -> BriefingResponse:
 
     复用同一份 github 行情（sp500/rates 供宏观与组合背景共用），整轮只拉一次。
     """
-    from .github_data import (
-        fetch_gold_history,
-        fetch_oil_history,
-        fetch_sp500_constituent,
-        fetch_sp500_index_history,
-        fetch_us10y_history,
-    )
+    from .github_data import fetch_sp500_constituent
     from .risk_management import get_risk_summary
 
-    sp500: list = []
-    rates: list = []
-    oil: list = []
-    gold: list = []
-    try:
-        sp500 = await fetch_sp500_index_history()
-    except Exception:
-        sp500 = []
-    try:
-        rates = await fetch_us10y_history()
-    except Exception:
-        rates = []
-    try:
-        oil = await fetch_oil_history()
-    except Exception:
-        oil = []
-    try:
-        gold = await fetch_gold_history()
-    except Exception:
-        gold = []
-    macro = build_macro_review(sp500_history=sp500, rates_history=rates, oil_history=oil, gold_history=gold)
-    portfolio = build_portfolio_review(get_risk_summary(), sp500_history=sp500, rates_history=rates)
+    inputs = await _gather_macro_inputs()
+    macro = build_macro_review(**inputs)
+    portfolio = build_portfolio_review(
+        get_risk_summary(),
+        sp500_history=inputs["sp500_history"],
+        rates_history=inputs["rates_history"],
+    )
     briefing = build_briefing(macro, portfolio)
 
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()][:8]
