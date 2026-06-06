@@ -173,6 +173,37 @@ def test_run_tool_agent_merges_and_dispatches_mcp_tools(monkeypatch):
     assert result["tool_trace"][0]["ok"] is True
 
 
+def test_run_tool_agent_emits_tool_progress(monkeypatch):
+    # 流式打磨：每次工具调用前后各发一个 tool_start / tool_result 事件（顺序正确）。
+    events: list[tuple[str, str]] = []
+
+    async def emit(etype, payload):
+        events.append((etype, payload.get("tool")))
+
+    script = [
+        _FakeResponse(_FakeMessage(tool_calls=[_FakeToolCall("c1", "get_market_quote", '{"symbol":"AAPL"}')])),
+        _FakeResponse(_FakeMessage(content="完成。", tool_calls=None)),
+    ]
+    execute = _recording_execute()
+    llm = _make_llm(monkeypatch, script=script, fake_execute=execute)
+
+    result = asyncio.run(llm.run_tool_agent(question="分析 AAPL", emit=emit))
+
+    assert result["answer"] == "完成。"
+    assert ("tool_start", "get_market_quote") in events
+    assert ("tool_result", "get_market_quote") in events
+    # start 必须在 result 之前。
+    assert events.index(("tool_start", "get_market_quote")) < events.index(("tool_result", "get_market_quote"))
+
+
+def test_run_tool_agent_no_emit_unchanged(monkeypatch):
+    # emit=None（默认）时行为与非流式完全一致。
+    script = [_FakeResponse(_FakeMessage(content="直接答。", tool_calls=None))]
+    llm = _make_llm(monkeypatch, script=script, fake_execute=_recording_execute())
+    result = asyncio.run(llm.run_tool_agent(question="在吗"))
+    assert result["answer"] == "直接答。" and result["tool_trace"] == []
+
+
 def test_no_tool_call_answers_directly(monkeypatch):
     script = [_FakeResponse(_FakeMessage(content="你好，我是投研助手。", tool_calls=None))]
     execute = _recording_execute()

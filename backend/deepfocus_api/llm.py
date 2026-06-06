@@ -954,12 +954,16 @@ class CloudResearchLLM:
         context_hint: str = "",
         max_rounds: int = 4,
         timeout_seconds: float = 30.0,
+        emit=None,
     ) -> "dict[str, Any] | None":
         """AI 原生 tool-use 闭环：模型自主选工具 → 服务端真实取数 → 结果回灌 → 再推理。
 
         返回 {"answer", "tool_trace", "rounds", "truncated"}；mock provider、工具不被支持、
         或任何失败 → 返回 None，调用方回退既有路径（红线：永不因 tool-agent 破坏现有体验）。
         verdict/信号仍由确定性引擎给出，模型只负责挑数据 + 解释，不编造结论。
+
+        emit：可选 async 回调 (event_type, payload)，在每次工具调用前后触发（tool_start / tool_result），
+        供流式端点把进度实时推给前端；为 None 时行为与非流式完全一致。
         """
         if self.provider == "mock":
             return None
@@ -1025,12 +1029,21 @@ class CloudResearchLLM:
                         args = json.loads(tc.function.arguments or "{}")
                     except (ValueError, TypeError):
                         args = {}
+                    if emit:
+                        await emit("tool_start", {"tool": tc.function.name, "args": args})
                     result = await execute_tool(tc.function.name, args, extra_tools=mcp_tools)
+                    summary = _summarize_tool_result(result)
+                    if emit:
+                        await emit("tool_result", {
+                            "tool": tc.function.name,
+                            "ok": bool(result.get("ok")),
+                            "summary": summary,
+                        })
                     trace.append({
                         "tool": tc.function.name,
                         "args": args,
                         "ok": bool(result.get("ok")),
-                        "summary": _summarize_tool_result(result),
+                        "summary": summary,
                     })
                     tool_content = json.dumps(result, ensure_ascii=False)
                     if len(tool_content) > 3500:

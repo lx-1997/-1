@@ -18,12 +18,14 @@ import {
   SendOutlined,
   UserOutlined,
   ClearOutlined,
+  ThunderboltOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons';
 import { useModuleContext, ModuleContextData } from '../contexts/ModuleContext';
-import { runOrchestratorChat } from '../services/agentService';
+import { runOrchestratorChat, streamToolResearch } from '../services/agentService';
 import AgentLoopStream from './AgentLoopStream';
-import type { LoopResearchEvent, OrchestratorReasoningStep } from '../services/agentService';
-import { shouldRunStockResearch } from '../utils/chatRouting';
+import type { LoopResearchEvent, OrchestratorReasoningStep, ToolStep } from '../services/agentService';
+import { shouldRunStockResearch, isResearchMessage } from '../utils/chatRouting';
 import Markdown from './common/Markdown';
 import ReasoningTrace from './common/ReasoningTrace';
 
@@ -64,6 +66,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [loopSymbol, setLoopSymbol] = useState<string | null>(null);
   const [loopQuestion, setLoopQuestion] = useState<string | null>(null);
+  const [streamingTools, setStreamingTools] = useState<ToolStep[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<any>(null);
 
@@ -96,23 +99,62 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
 
     setLoading(true);
 
-    try {
-      const history = messages.slice(-6).map(m => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      }));
+    const history = messages.slice(-6).map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
+    // Orchestrator 不收 context 字段，故把模块上下文折进 message，避免丢失上下文感知。
+    const contextSummary = buildContextSummary(currentContext);
+    // 当前模块的标的：研究类追问（消息里无显式 ticker，不会被路由去研究 Loop）时，让 tool-agent
+    // 知道该查哪只股票（如正看 AAPL 时问「估值贵吗」）。
+    const ctxSymbol =
+      typeof currentContext?.data?.symbol === 'string' ? (currentContext.data.symbol as string) : '';
+    const ctxName =
+      typeof currentContext?.data?.name === 'string' ? (currentContext.data.name as string) : '';
+    const messageWithCtx = contextSummary ? `【当前模块上下文】\n${contextSummary}\n\n${trimmed}` : trimmed;
 
-      // 走 Orchestrator（技能路由 + 跨模块聚合 + AI 原生 tool-use，能力升级且优雅回退）。
-      // 它不收 context 字段，故把模块上下文折进 message，避免丢失上下文感知。
-      const contextSummary = buildContextSummary(currentContext);
-      // 把当前模块的标的传给后端：研究类追问（消息里没显式 ticker，不会被路由去研究 Loop）
-      // 时，tool-agent 据此知道该查哪只股票（如正看 AAPL 时问「估值贵吗」）。
-      const ctxSymbol =
-        typeof currentContext?.data?.symbol === 'string' ? (currentContext.data.symbol as string) : '';
-      const ctxName =
-        typeof currentContext?.data?.name === 'string' ? (currentContext.data.name as string) : '';
+    // ① 有标的 + 研究意图 → 流式 tool-agent：实时显示模型在调哪些工具，打磨「等 15-30 秒」的体验。
+    //    onFallback/onError 时回退 ② 非流式 orchestrator（保留技能路由/聚合，不丢能力）。
+    if (ctxSymbol && isResearchMessage(trimmed)) {
+      setStreamingTools([]);
+      const streamed = await new Promise<boolean>((resolve) => {
+        streamToolResearch(
+          { message: messageWithCtx, symbol: ctxSymbol, name: ctxName },
+          {
+            onToolStart: (tool) => setStreamingTools(prev => [...prev, { tool }]),
+            onToolResult: (tool, ok, summary) =>
+              setStreamingTools(prev =>
+                prev.map(s => (s.tool === tool && s.ok === undefined ? { ...s, ok, summary } : s)),
+              ),
+            onFinal: (answer, toolTrace) => {
+              setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: answer,
+                reasoning_trace: toolTrace.map((t): OrchestratorReasoningStep => ({
+                  phase: 'tool',
+                  title: `调用 ${t.tool}`,
+                  detail: t.summary || '',
+                  status: t.ok ? 'done' : 'error',
+                })),
+              }]);
+              resolve(true);
+            },
+            onFallback: () => resolve(false),
+            onError: () => resolve(false),
+          },
+        );
+      });
+      setStreamingTools([]);
+      if (streamed) {
+        setLoading(false);
+        return;
+      }
+      // 未流式成功 → 落到下方非流式 orchestrator 兜底。
+    }
+
+    try {
       const resp = await runOrchestratorChat({
-        message: contextSummary ? `【当前模块上下文】\n${contextSummary}\n\n${trimmed}` : trimmed,
+        message: messageWithCtx,
         history,
         engine: 'deepfocus',
         mode: 'research',
@@ -175,6 +217,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
 
   const clearChat = useCallback(() => {
     setMessages([]);
+    setStreamingTools([]);
   }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -343,9 +386,34 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
               />
             )}
             {!loopSymbol && loading && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                <Avatar size={32} icon={<RobotOutlined />} style={{ backgroundColor: 'var(--positive)' }} />
-                <Spin size="small" />
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                <Avatar size={32} icon={<RobotOutlined />} style={{ backgroundColor: 'var(--positive)', flexShrink: 0 }} />
+                {streamingTools.length > 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 4 }}>
+                    <div style={{ marginBottom: 4 }}>
+                      <ThunderboltOutlined style={{ marginRight: 4 }} />正在调用工具研究…
+                    </div>
+                    {streamingTools.map((s, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 2 }}>
+                        <span style={{ flexShrink: 0 }}>
+                          {s.ok === undefined ? (
+                            <LoadingOutlined style={{ color: 'var(--info)' }} />
+                          ) : s.ok ? (
+                            <span style={{ color: 'var(--positive)' }}>✓</span>
+                          ) : (
+                            <span style={{ color: 'var(--negative)' }}>✕</span>
+                          )}
+                        </span>
+                        <span>
+                          {s.tool}
+                          {s.summary ? ` — ${s.summary}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Spin size="small" />
+                )}
               </div>
             )}
           </>

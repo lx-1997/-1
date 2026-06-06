@@ -95,6 +95,12 @@ from .customs_trade import build_customs_trade_analysis_text, fetch_customs_trad
 from .earnings_calendar import fetch_earnings_calendar
 from .agent_tools import AgentTool, list_tools as list_agent_tool_specs, register_tool
 from .mcp_tools import discover_mcp_agent_tools
+from .data_store import (
+    history as data_history,
+    init_data_store,
+    record as record_datapoint,
+    stats as data_stats,
+)
 from .llm import CloudResearchLLM, extract_citable_sources, tool_agent_to_orchestrator_response
 from .market_data import fetch_market_quotes, search_market_symbols
 from .market_layers import build_market_data_layer_status
@@ -125,6 +131,7 @@ from .options_signal import fetch_options_signals
 from .official_news import fetch_official_news
 from .people_voices import (
     FIGURES_BY_ID,
+    digest_cache_key,
     fetch_people_spotlight,
     fetch_person_voices,
 )
@@ -431,6 +438,7 @@ async def lifespan(app: FastAPI):
     init_realtime_message_db()
     init_recall_subscription_db()
     init_share_snapshot_db()
+    init_data_store()  # 持久化数据层：速判卡/行情写穿落库，历史积累 + 读缓存
     # 新信号落库广播后，扇出到离线召回订阅（邮件 / Web Push）。
     register_post_message_hook(lambda message: dispatch_recall(message))
     init_mcp_db()
@@ -1019,7 +1027,7 @@ async def _build_stock_tear_sheet_core(
         market_source = _CN_INDEX_SRC
         market_index_history = cn_idx
 
-    return build_tear_sheet(
+    ts = build_tear_sheet(
         symbol=sym,
         name=name or (constituent or {}).get("name") or sym,
         market_cap=market_cap or (valuation_data or {}).get("market_cap") or (gquote.get("market_cap") if gquote else None),
@@ -1042,6 +1050,20 @@ async def _build_stock_tear_sheet_core(
         market_source=market_source,
         market_provider_tag=market_provider_tag,
     )
+    # 写穿持久化数据层：每次构建速判卡记一条 verdict 数据点（历史积累；失败静默，不影响主流程）。
+    record_datapoint(
+        "verdict", sym,
+        {
+            "verdict": ts.overall_verdict,
+            "score": ts.overall_score,
+            "confidence": ts.confidence,
+            "price": ts.price,
+            "change_percent": ts.change_percent,
+            "currency": ts.currency,
+        },
+        market=_mkt,
+    )
+    return ts
 
 
 @app.get("/api/stock/tear-sheet", response_model=TearSheetResponse)
@@ -1097,6 +1119,39 @@ register_tool(AgentTool(
         "required": ["symbol"],
     },
     handler=_tool_get_stock_verdict,
+))
+
+
+async def _tool_get_verdict_history(symbol: str, market: Optional[str] = None) -> Any:
+    """工具：读取该标的速判卡结论随时间的历史（来自持久化数据层，随平台运行积累）。"""
+    sym = (symbol or "").strip().upper()
+    items = data_history("verdict", sym, limit=20)
+    return {
+        "symbol": sym,
+        "count": len(items),
+        "history": [
+            {"at": it.get("recorded_at"), **(it["payload"] if isinstance(it.get("payload"), dict) else {})}
+            for it in items
+        ],
+        "note": "速判卡结论历史（每次构建速判卡时积累）；为空表示该标的尚无历史快照。",
+    }
+
+
+register_tool(AgentTool(
+    name="get_verdict_history",
+    description=(
+        "获取个股速判卡结论（看多/看空/评分/价格）随时间的历史演变，用于回答「最近评级怎么变的/趋势如何/上次看法」。"
+        "数据由持久化层随平台运行积累，可能为空（首次查询某标的时）。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "股票代码，如 AAPL、600519、00700"},
+            "market": {"type": "string", "enum": ["US", "CN", "HK"], "description": "市场；缺省按代码推断"},
+        },
+        "required": ["symbol"],
+    },
+    handler=_tool_get_verdict_history,
 ))
 
 
@@ -1474,7 +1529,7 @@ async def people_digest(figure_id: str, refresh: bool = False) -> PersonDigestRe
             detail=f"未知焦点人物：{figure_id}，可选 {allowed}",
         )
     profile = await fetch_person_voices(figure_id, refresh=refresh)
-    digest, provider = await _synthesize_person_digest(profile)
+    digest, provider = await _synthesize_person_digest(profile, refresh=refresh)
     quality = profile.data_quality
     if profile.item_count and provider in {"template", "fallback"}:
         # 有真实条目但只能用确定性模板综述时，标降级而非 live。
@@ -1490,11 +1545,25 @@ async def people_digest(figure_id: str, refresh: bool = False) -> PersonDigestRe
     )
 
 
-async def _synthesize_person_digest(profile: PersonProfile) -> tuple[str, str]:
-    """把人物近期发言合成一段中性观点综述：LLM 优先，mock/失败回退确定性模板。"""
+_digest_cache: dict[str, tuple[str, str]] = {}
+_DIGEST_CACHE_MAX = 200
+
+
+async def _synthesize_person_digest(profile: PersonProfile, *, refresh: bool = False) -> tuple[str, str]:
+    """把人物近期发言合成一段中性观点综述：LLM 优先，mock/失败回退确定性模板。
+
+    成功的 AI 综述按「人物 + 标题哈希」缓存：同一批标题重复打开秒回、不再耗 token；
+    新发言→哈希变→自动重算。模板兜底不入缓存，保证 LLM 恢复后下次即用真综述。
+    """
     headlines = [item.title for item in profile.items[:8] if item.title]
     if not headlines:
         return ("近期暂无可聚合的公开报道，请稍后刷新或查看下方原始条目。", "template")
+
+    cache_key = digest_cache_key(profile)
+    if not refresh:
+        cached = _digest_cache.get(cache_key)
+        if cached:
+            return cached
 
     fallback = _template_person_digest(profile, headlines)
     llm = CloudResearchLLM()
@@ -1522,7 +1591,12 @@ async def _synthesize_person_digest(profile: PersonProfile) -> tuple[str, str]:
         return (fallback, "template")
     digest = (data or {}).get("digest")
     if isinstance(digest, str) and digest.strip():
-        return (digest.strip(), llm.provider_name)
+        result = (digest.strip(), llm.provider_name)
+        # 仅缓存真实 AI 综述（模板兜底不缓存，便于 LLM 恢复后自愈）。
+        _digest_cache[cache_key] = result
+        if len(_digest_cache) > _DIGEST_CACHE_MAX:
+            _digest_cache.pop(next(iter(_digest_cache)))
+        return result
     return (fallback, "template")
 
 
@@ -2902,6 +2976,21 @@ async def api_get_data_source(source_id: str) -> DataSourceRecord:
     return source
 
 
+@app.get("/api/data/stats")
+async def data_store_stats() -> dict:
+    """持久化数据层沉淀概览：每类数据点数 / 覆盖标的 / 最新时间（数据积累的观测性入口）。"""
+    return data_stats()
+
+
+@app.get("/api/data/history")
+async def data_store_history(symbol: str, kind: str = "verdict", limit: int = 200) -> dict:
+    """某标的某类数据的历史（新→旧）。kind 默认 verdict（速判卡结论随时间的演变）。"""
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol 不能为空")
+    return {"symbol": sym, "kind": kind, "items": data_history(kind, sym, limit=limit)}
+
+
 @app.get("/api/agents/health", response_model=AgentRuntimeHealthResponse)
 async def agent_runtime_health() -> AgentRuntimeHealthResponse:
     counts = task_counts()
@@ -3798,6 +3887,68 @@ async def research_loop_stream(
             if await request.is_disconnected():
                 break
             yield event
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+def _sse_frame(event_type: str, payload: dict) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/agents/tool-research/stream")
+async def tool_research_stream(request: Request, message: str = "", symbol: str = "", name: str = ""):
+    """流式 AI 原生 tool-use：边调工具边把进度（tool_start / tool_result）实时推给前端，最后 final/error/fallback。
+
+    打磨「研究类问题等 15-30 秒」的体验——让用户看到模型正在调哪些工具，而不是干等一个转圈。
+    tool-agent 无答案（未启用 / 不支持）→ 发 fallback，前端回退到非流式 orchestrator-chat。
+    """
+    if not message.strip():
+        raise HTTPException(status_code=400, detail="message 不能为空")
+
+    async def event_generator() -> AsyncIterator[str]:
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def emit(event_type: str, payload: dict) -> None:
+            await queue.put(_sse_frame(event_type, payload))
+
+        hint = f"当前标的：{name}（{symbol}）" if symbol.strip() else ""
+
+        async def run() -> None:
+            try:
+                result = await llm.run_tool_agent(question=message, context_hint=hint, emit=emit)
+                if result and (result.get("answer") or "").strip():
+                    await queue.put(_sse_frame("final", {
+                        "answer": result["answer"],
+                        "tool_trace": result.get("tool_trace", []),
+                        "rounds": result.get("rounds", 0),
+                    }))
+                else:
+                    await queue.put(_sse_frame("fallback", {"reason": "tool-agent 未返回结果"}))
+            except Exception as exc:
+                await queue.put(_sse_frame("error", {"message": str(exc)[:200]}))
+            finally:
+                await queue.put(None)  # 哨兵：通知生成器结束
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if await request.is_disconnected():
+                    break
+                yield item
+        finally:
+            task.cancel()
 
     return StreamingResponse(
         event_generator(),
