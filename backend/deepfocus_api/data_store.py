@@ -53,10 +53,18 @@ def init_data_store() -> None:
             "ON data_points(kind, symbol, recorded_ts DESC)"
         )
         conn.commit()
+    prune()  # 启动时修剪一次，给每个序列封顶（绝不抛）
+
+
+# 每个 (kind, symbol) 序列最多保留多少条；以及每多少次写入触发一次修剪（避免无界增长）。
+KEEP_PER_SERIES = 500
+_PRUNE_EVERY = 200
+_write_count = 0
 
 
 def record(kind: str, symbol: str, payload: Any, *, market: str = "") -> None:
     """写穿一条带时间戳的数据点（历史积累）。失败静默——持久化绝不能拖垮主流程。"""
+    global _write_count
     sym = (symbol or "").upper().strip()
     if not kind or not sym or payload is None:
         return
@@ -77,6 +85,10 @@ def record(kind: str, symbol: str, payload: Any, *, market: str = "") -> None:
             conn.commit()
     except Exception:
         return
+    # 周期性修剪，控制长跑进程下表的无界增长（修剪自身失败静默，不影响写入成功）。
+    _write_count += 1
+    if _write_count % _PRUNE_EVERY == 0:
+        prune()
 
 
 def latest(kind: str, symbol: str, *, max_age_seconds: Optional[float] = None) -> Optional[dict]:
@@ -144,3 +156,32 @@ def stats() -> dict[str, Any]:
             for r in rows
         ],
     }
+
+
+def prune(keep_per_series: Optional[int] = None) -> int:
+    """每个 (kind, symbol) 只保留最近 keep_per_series 条，删除更旧的。返回删除行数。失败 → 0。
+
+    keep_per_series 缺省时运行时读模块级 KEEP_PER_SERIES（避免默认参数定义期绑定，便于配置/测试）。
+    用窗口函数按时间倒序排名（需 SQLite ≥3.25），删掉排名超出保留数的行。绝不抛——修剪失败不影响主流程。
+    """
+    keep = KEEP_PER_SERIES if keep_per_series is None else keep_per_series
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM data_points
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY kind, symbol ORDER BY recorded_ts DESC
+                        ) AS rn
+                        FROM data_points
+                    ) WHERE rn > ?
+                )
+                """,
+                (max(1, int(keep)),),
+            )
+            conn.commit()
+            return cur.rowcount or 0
+    except Exception:
+        return 0

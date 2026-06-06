@@ -69,3 +69,35 @@ def test_missing_returns_none_and_empty(store):
     assert store.latest("verdict", "ZZZZ") is None
     assert store.history("verdict", "ZZZZ") == []
     assert store.stats() == {"total": 0, "kinds": []}
+
+
+def test_prune_keeps_latest_per_series(store):
+    for i in range(10):
+        store.record("verdict", "AAPL", {"i": i})
+        time.sleep(0.002)
+    deleted = store.prune(keep_per_series=3)
+    assert deleted == 7
+    items = store.history("verdict", "AAPL", limit=100)
+    assert [x["payload"]["i"] for x in items] == [9, 8, 7]  # 只留最近 3（新→旧）
+
+
+def test_prune_independent_per_kind_symbol(store):
+    for series in (("verdict", "AAPL"), ("verdict", "TSLA"), ("quote", "AAPL")):
+        for i in range(5):
+            store.record(series[0], series[1], {"i": i})
+            time.sleep(0.002)
+    store.prune(keep_per_series=2)
+    # 3 个 (kind,symbol) 序列各留 2 → 共 6，互不干扰。
+    assert store.stats()["total"] == 6
+    assert len(store.history("verdict", "AAPL")) == 2
+    assert len(store.history("quote", "AAPL")) == 2
+
+
+def test_record_triggers_periodic_prune(store, monkeypatch):
+    monkeypatch.setattr(store, "_PRUNE_EVERY", 5)
+    monkeypatch.setattr(store, "KEEP_PER_SERIES", 2)
+    monkeypatch.setattr(store, "_write_count", 0)
+    for i in range(5):  # 第 5 次写入触发 prune()（缺省 keep 运行时读 KEEP_PER_SERIES=2）
+        store.record("verdict", "AAPL", {"i": i})
+        time.sleep(0.002)
+    assert len(store.history("verdict", "AAPL")) == 2
