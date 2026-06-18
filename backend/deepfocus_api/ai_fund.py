@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from . import bull_playbook, data_store
+from . import ai_fund_evolve, bull_playbook, data_store
 from .ifind_api import cached_single_quote, enabled as ifind_enabled, normalize_a_code
 from .shared_utils import safe_float, utc_now_iso
 
@@ -20,6 +20,7 @@ _STAGE_CN = {"startup": "初创期", "growth": "成长期", "mature": "成熟期
              "decline": "衰退期", "transition": "过渡期", "unknown": "—"}
 _TT_STAGE_CN = {"advancing": "上升段", "topping": "见顶段", "declining": "下跌段",
                 "basing": "筑底段", "unknown": "—"}
+_MODEL_CN = {"multifactor": "多因子催化动量", "value": "内在价值·DCF/质量", "reversion": "均值回归·抄超跌"}
 
 """
 A股「AI 模拟盘」——一个有人设、讲章法、思路全公开的交易智能体「阿尔法」(演示位)。
@@ -82,6 +83,7 @@ class AgentConfig:
     tag: str = PERSONA_TAG
     emoji: str = "🤖"
     style: str = "balanced"            # 流派 key：balanced/aggressive/value/event/contrarian
+    model: str = "multifactor"         # 打分模型(真·不同算法)：multifactor / value(DCF·质量) / reversion(均值回归)
     blurb: str = "读本站快讯/研报当催化剂，趋势均衡、严谨择时"
     initial_capital: float = INITIAL_CAPITAL
     max_positions: int = MAX_POSITIONS
@@ -115,7 +117,7 @@ ROSTER: list[AgentConfig] = [
         weights={"消息面": 0.32, "技术面": 0.24, "趋势": 0.16, "资金面": 0.16,
                  "成长质量": 0.05, "基本面": 0.05, "情绪": 0.02}),
     AgentConfig(
-        fund_id="rock", name="磐石", emoji="🗿", style="value",
+        fund_id="rock", name="磐石", emoji="🗿", style="value", model="value",
         tag="DeepFocus AI 操盘手 · 只在便宜处下手、拿得住",
         blurb="稳健价值：估值有底线、重盈利质量、分散持有、拿得久",
         max_positions=8, buy_threshold=0.18, sell_threshold=-0.08, hard_stop=-0.07,
@@ -131,7 +133,7 @@ ROSTER: list[AgentConfig] = [
         weights={"消息面": 0.46, "技术面": 0.16, "趋势": 0.10, "资金面": 0.16,
                  "成长质量": 0.04, "基本面": 0.04, "情绪": 0.04}),
     AgentConfig(
-        fund_id="contra", name="磁极", emoji="🧲", style="contrarian",
+        fund_id="contra", name="磁极", emoji="🧲", style="contrarian", model="reversion",
         tag="DeepFocus AI 操盘手 · 别人恐惧我贪婪、抄超跌",
         blurb="逆向抄底：超跌 + 本站催化共振才反手、专挑被错杀",
         max_positions=6, buy_threshold=0.12, sell_threshold=-0.07, hard_stop=-0.09,
@@ -255,7 +257,7 @@ def init_ai_fund_db() -> None:
         _add_col(conn, "aif_thought", "recalled_refs", "TEXT")  # 本条独白召回了哪些记忆(给前端「想起…」chip)
         for col, decl in (("scanned_news", "INTEGER"), ("scanned_report", "INTEGER"),
                           ("scanned_article", "INTEGER"), ("scanned_date", "TEXT"), ("scanned_titles", "TEXT"),
-                          ("mem_decay_date", "TEXT")):
+                          ("mem_decay_date", "TEXT"), ("learned_weights", "TEXT"), ("coach_note", "TEXT")):
             _add_col(conn, "aif_state", col, decl)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_aif_trade_ts ON aif_trade(fund_id, ts DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_aif_thought_ts ON aif_thought(fund_id, ts DESC)")
@@ -487,7 +489,8 @@ async def _fetch_fundamentals(code: str) -> Optional[dict]:
         gb = s.get("good_business") or {}
         f = {"revenue_yoy": s.get("revenue_yoy"), "profit_yoy": s.get("profit_yoy"), "roe": s.get("roe"),
              "cashflow_type": cft.get("type"), "cashflow_score": cft.get("score"), "cashflow_desc": cft.get("desc"),
-             "good_business": gb.get("score"), "gross_margin": s.get("gross_margin"), "fcf": s.get("fcf")}
+             "good_business": gb.get("score"), "gross_margin": s.get("gross_margin"), "fcf": s.get("fcf"),
+             "eq_score": (s.get("earnings_quality") or {}).get("score")}
         _FUND_CACHE[code] = (_t.time(), f)
         return f
     return None
@@ -569,7 +572,8 @@ def _techstats(closes: list[float], last: float) -> dict:
 # 多维研判（含买点确认）
 # --------------------------------------------------------------------------- #
 
-def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: AgentConfig = MAIN_CFG) -> dict:
+def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: AgentConfig = MAIN_CFG,
+             learned_mult: Optional[dict] = None) -> dict:
     steps, scores = [], {}
     catalyst = ""; catalyst_ref = None; fresh = False; msg_dir = 0.0
     last = safe_float(q.get("latest")) or 0.0
@@ -712,11 +716,29 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
             steps.append({"icon": "🏆", "label": "成长质量",
                           "text": f"{_STAGE_CN.get(rs['stage'], '—')}：{roe_txt}{pf_txt}{cf_txt}{gb_txt}，{rs['note']}。"})
 
-    # 各流派按 cfg.weights 调权（消息面=数据驱动主信号）；缺数据的维度自动不计入归一化
-    weights = cfg.weights
+    # 各流派权重 = 基线 × 自学乘子(真·调教：从实盘盈亏微调，learn_weights 持续更新)；缺数据维度自动不计入归一化
+    weights = ai_fund_evolve.effective_weights(cfg.weights, learned_mult)
     tw = sum(weights.get(k, 0.0) for k in scores)
     score = sum(scores[k] * weights.get(k, 0.0) for k in scores) / tw if tw else 0.0
     score = max(-1.0, min(1.0, score))
+    # 真·不同算法：value(DCF/质量) / reversion(均值回归) 用根本不同的核心打分，催化作确认(磐石/磁极)
+    fu = (md or {}).get("fundamentals") or {}
+    if cfg.model == "value":
+        vs = ai_fund_evolve.value_score(
+            fcf=fu.get("fcf"), market_cap=safe_float(q.get("totalCapital")), pe=pe,
+            roe=fu.get("roe"), gross_margin=fu.get("gross_margin"),
+            earnings_quality=fu.get("eq_score"), profit_yoy=fu.get("profit_yoy"),
+            cashflow_type=fu.get("cashflow_type"), learned_mult=learned_mult)
+        if vs.get("score") is not None:
+            scores.update(vs["scores"])          # 估值/质量/成长 → 进 scores，可被学习回路归因
+            score = max(-1.0, min(1.0, 0.72 * vs["score"] + 0.28 * msg_dir))  # 内在价值为主、催化为辅
+            steps.append({"icon": "💎", "label": "内在价值", "text": "、".join(vs["reasons"][:3]) + "。"})
+    elif cfg.model == "reversion":
+        rs = ai_fund_evolve.reversion_score((md or {}).get("closes") or [], last, learned_mult)
+        if rs.get("score") is not None:
+            scores.update(rs["scores"])          # 超跌度/回撤空间/企稳
+            score = max(-1.0, min(1.0, 0.66 * rs["score"] + 0.34 * max(0.0, msg_dir)))  # 超跌为主、催化确认
+            steps.append({"icon": "🪃", "label": "均值回归", "text": "、".join(rs["reasons"][:3]) + "。"})
     # 买点确认（严谨闸门）：趋势在上 或 强新催化剂 或 书法买点(杯柄突破/利弗莫尔关键点)；不追涨停；资金不出逃
     strong_fresh = fresh and msg_dir > 0.3
     overbought = (chg is not None and chg > 8.5) and not cfg.chase_ok  # 激进派不惧追高
@@ -902,9 +924,28 @@ def _record_trade_memory(conn, symbol: str, name: str, pnl_pct: float, sell_reas
         pass
 
 
-def _upsert_thesis(conn, symbol: str, name: str, items: list[dict], score: float, fund_id: str = FUND_ID) -> None:
-    """对一只「本站持续点名」的票形成/强化一条观点(thesis)——这就是阿尔法逐步演化的认知。绝不抛出。
-    items=该股近期本站内容(快讯/文章/研报)。反复出现→权重/信心累加(笃定)；久未更新→随每日衰减淡忘。"""
+# 各流派认知口吻：同一只票，不同流派用各自的关注点 + 判断造句 → 5 份认知读着像 5 个人，而非都像阿尔法。
+# 三档对应 score：看多(>0.12) / 中性(±0.12) / 回避(<-0.12)，{src}=本站内容条数描述。
+_THESIS_VOICE: dict[str, tuple[str, str, str]] = {
+    "balanced":   ("本站{src}在追，我看多、等买点共振", "本站{src}在追，我中性观察、等买点", "本站{src}在追，我回避"),
+    "aggressive": ("本站{src}点火、催化够猛——盯突破、敢重锤", "本站{src}在追、势没起——盯着，一突破就上", "本站{src}虽在追但没冲劲——不碰、等放量"),
+    "value":      ("本站{src}点名、估值质量过关——便宜，值得拿", "本站{src}在追——先看估值与盈利质量再说", "本站{src}在追但太贵/质量存疑——避、等合理价"),
+    "event":      ("本站{src}刚响、催化新鲜——扑进去、快进快出", "本站{src}在追——等下一条快讯点火", "本站{src}已发酵过——过了、不追冷催化"),
+    "contrarian": ("本站{src}+超跌共振——被错杀了、反手抄", "本站{src}在追——盯着跌够没、被错杀没", "本站{src}在追但还没跌透——等更超跌再反手"),
+}
+
+
+def _thesis_title(style: str, name: str, src_txt: str, score: float) -> str:
+    bull, neutral, avoid = _THESIS_VOICE.get(style, _THESIS_VOICE["balanced"])
+    frame = bull if score > 0.12 else (avoid if score < -0.12 else neutral)
+    return f"{name}：{frame.format(src=src_txt)}"
+
+
+def _upsert_thesis(conn, symbol: str, name: str, items: list[dict], score: float,
+                   fund_id: str = FUND_ID, style: str = "balanced") -> None:
+    """对一只「本站持续点名」的票形成/强化一条观点(thesis)——这就是每个智能体逐步演化的认知。绝不抛出。
+    items=该股近期本站内容(快讯/文章/研报)；style=流派口吻，让认知按打法差异化措辞。
+    反复出现→权重/信心累加(笃定)；久未更新→随每日衰减淡忘。"""
     try:
         # 只用面向用户的 快讯/文章/研报 形成观点(排除内部「信号」dao-signal，与展示内容口径一致)
         fresh = [it for it in items if float(it.get("age_h", 999.0)) <= FRESH_HOURS and it.get("src") in ("快讯", "文章", "研报")]
@@ -916,9 +957,10 @@ def _upsert_thesis(conn, symbol: str, name: str, items: list[dict], score: float
         src_txt = "、".join(f"{k}{v}条" for k, v in sorted(by_src.items(), key=lambda x: -x[1])[:3])
         latest_h = min((float(it.get("age_h", 999.0)) for it in fresh), default=999.0)
         lean = "看多" if score > 0.12 else ("回避" if score < -0.12 else "中性观察")
-        title = f"{name}：本站{src_txt}在追，我{lean}"
+        title = _thesis_title(style, name, src_txt, score)
         detail = {"n": len(fresh), "src_breakdown": by_src, "latest_h": round(latest_h, 1),
-                  "score": round(score, 2), "top_titles": [it.get("title", "")[:30] for it in fresh[:3]]}
+                  "score": round(score, 2), "lean": lean, "style": style,
+                  "top_titles": [it.get("title", "")[:30] for it in fresh[:3]]}
         # 信心随催化剂条数与新鲜度上升
         conf = max(0.25, min(0.92, 0.3 + 0.08 * len(fresh) + (0.2 if latest_h <= 24 else 0.0) + abs(score) * 0.25))
         now = utc_now_iso()
@@ -1246,6 +1288,40 @@ def _maybe_debate(fund_id: str, trade_id: str, symbol: str, name: str, an: dict,
 
 
 # --------------------------------------------------------------------------- #
+# AI 教练自评（把确定性学到的权重漂移讲成第一人称自我复盘——数字真实、绝不臆造）
+# --------------------------------------------------------------------------- #
+
+def _coach_note(cfg: AgentConfig, drift: list[dict], stats: dict) -> Optional[str]:
+    """真·调教的「AI 原生」出口：用一句第一人称自评说清『我根据自己盈亏把哪维调高/调低了』。
+    主账户(muse)走 LLM 润色(grounded 在真实漂移数字上)，其余用模板。绝不抛出、绝不臆造数字。"""
+    if not drift:
+        return None
+    downs = [d for d in drift if d["pct"] < 0]
+    ups = [d for d in drift if d["pct"] > 0]
+    bits = []
+    if downs:
+        bits.append(f"调低「{downs[0]['dim']}」{downs[0]['pct']}%")
+    if ups:
+        bits.append(f"调高「{ups[0]['dim']}」+{ups[0]['pct']}%")
+    wr = f"，胜率 {stats['win_rate']:.0f}%" if stats.get("win_rate") is not None else ""
+    template = f"复盘自己的盈亏{wr}：我把打法{'、'.join(bits)}——{'少踩这维的坑' if downs else '多吃这维的肉'}。"
+    if not (cfg.muse and TONE):
+        return template
+    try:
+        from .compliance import neutralize_text
+        from .llm import CloudResearchLLM
+        drift_txt = "、".join(f"{d['dim']}{d['pct']:+d}%" for d in drift[:4])
+        prompt = (f"你是 A股交易智能体「{cfg.name}」。你刚根据自己的实盘盈亏，自动微调了各维度权重(真实数据)：{drift_txt}{wr}。"
+                  "用一句第一人称、口语、有锐度的话做『自我复盘』：说清为啥这么调、接下来打法怎么变；"
+                  "≤40字，别喊单、别编上面没有的数字。只输出 JSON：{\"note\":\"…\"}。")
+        data = asyncio.run(CloudResearchLLM().complete_json(prompt, max_tokens=200, timeout_seconds=20))
+        v = (data or {}).get("note") if isinstance(data, dict) else None
+        return neutralize_text(str(v)[:80]) if v else template
+    except Exception:  # noqa: BLE001
+        return template
+
+
+# --------------------------------------------------------------------------- #
 # 一轮决策
 # --------------------------------------------------------------------------- #
 
@@ -1293,6 +1369,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     with _connect() as conn:
         universe = _universe(conn, cfg)
         held_syms = [r["symbol"] for r in _positions(conn, fund_id)]
+        st0 = _state(conn, fund_id)
+        learned_mult = _loadj(st0["learned_weights"] if (st0 and "learned_weights" in st0.keys()) else None, {})  # 真·调教：自学权重乘子
     md = _market_data(list(universe.keys()), priority=held_syms)
     quotes, analyses = {}, {}
     scanned: dict[str, dict] = {}  # 本轮检索命中的本站近 24h 内容(按 id 去重)——情报吞吐量看点
@@ -1305,7 +1383,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             if it.get("id") and float(it.get("age_h", 999.0)) <= 24:
                 scanned.setdefault(it["id"], it)
         quotes[code] = q
-        analyses[code] = _analyze(name, q, items, md.get(code), cfg)
+        analyses[code] = _analyze(name, q, items, md.get(code), cfg, learned_mult)
     if not quotes:
         return {"ok": False, "reason": "no_quotes", "traded": [], "data_quality": get_snapshot(fund_id).get("data_quality")}
 
@@ -1487,12 +1565,26 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         for code in quotes:
             an = analyses.get(code, {})
             if an.get("catalyst_ref"):
-                _upsert_thesis(conn, code, universe.get(code, code), _our_content(universe.get(code, code)), an.get("score", 0.0), fund_id)
-        #   ② 每笔平仓即复盘 → 沉淀「成功模式/踩坑」教训
+                _upsert_thesis(conn, code, universe.get(code, code), _our_content(universe.get(code, code)), an.get("score", 0.0), fund_id, cfg.style)
+        #   ② 每笔平仓即复盘 → 沉淀「成功模式/踩坑」教训 + 真·调教：按盈亏归因微调自己的维度权重
+        learned_changed = False
         for d in decisions:
             if d.get("side") == "sell" and d.get("pnl") is not None:
                 rr = conn.execute("SELECT reason FROM aif_trade WHERE id=?", (d["tid"],)).fetchone()
                 _record_trade_memory(conn, d["symbol"], d["name"], d["pnl"], (rr["reason"] if rr else "") or "", fund_id)
+                # 取该股最近一笔买入时的维度打分 → 信用分配学习
+                b = conn.execute("SELECT scores FROM aif_trade WHERE fund_id=? AND symbol=? AND side='buy' ORDER BY ts DESC LIMIT 1",
+                                 (fund_id, d["symbol"])).fetchone()
+                buy_scores = _loadj(b["scores"], {}) if b else {}
+                if buy_scores:
+                    learned_mult = ai_fund_evolve.learn_weights(learned_mult, buy_scores, d.get("pnl"))
+                    learned_changed = True
+        if learned_changed:
+            conn.execute("UPDATE aif_state SET learned_weights=? WHERE fund_id=?",
+                         (json.dumps(learned_mult, ensure_ascii=False), fund_id))
+            _note = _coach_note(cfg, ai_fund_evolve.weights_drift(cfg.weights, learned_mult), _stats(conn, fund_id))
+            if _note:
+                conn.execute("UPDATE aif_state SET coach_note=? WHERE fund_id=?", (_note, fund_id))
 
         # 修剪观察流，防累积重复(同股反复观察)；脑内独白(musing)走独立保留，不被此 40 上限挤掉
         conn.execute("DELETE FROM aif_thought WHERE fund_id=? AND COALESCE(action,'watch')<>'musing' AND id NOT IN "
@@ -1902,6 +1994,10 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     return {
         "fund_id": fund_id, "started_at": st["started_at"], "started_nav": started_nav,
         "persona": {"name": cfg.name, "tag": cfg.tag, "emoji": cfg.emoji, "style": cfg.style, "blurb": cfg.blurb},
+        # 策略进化(真·调教 + 真·不同算法)：打分模型 + 自学权重漂移 + AI 教练自评
+        "strategy": {"model": cfg.model, "model_label": _MODEL_CN.get(cfg.model, cfg.model),
+                     "weight_drift": ai_fund_evolve.weights_drift(cfg.weights, _loadj(_k("learned_weights"), {})),
+                     "coach_note": _k("coach_note")},
         "mood": mood, "stats": stats,
         "nav": round(nav, 2), "nav_unit": round(nav / started_nav, 4) if started_nav else 1.0, "nav_pct": round(nav_pct, 2),
         "cash": round(cash, 2), "market_value": round(market_value, 2), "position_count": len(pos_out),

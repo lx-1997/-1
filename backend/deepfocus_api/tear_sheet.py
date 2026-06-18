@@ -32,8 +32,12 @@ from .schemas import (
 )
 
 _QUALITY_RANK = {"live": 0, "degraded": 1, "mock": 2}
-# 方向性维度决定多空 verdict；其余（催化/规模）是 context，不稀释方向判断。
-_DIRECTIONAL_KEYS = {"momentum", "options"}
+# 方向性维度共同决定多空 verdict：价格动量 + 期权情绪 + 估值 + 一致预期 + 资金面 + 宏观 + 市场环境——
+# 不再让动量/期权单边定调（堵「估值贵到 90 分位 / 评级 Sell / 宏观逆风却给买入」的外行破绽）。
+# 催化(事件临近)、规模(市值)仍作 context，不直接定多空。
+_DIRECTIONAL_KEYS = {"momentum", "options", "valuation", "consensus", "fund_flow", "macro", "market"}
+# 否决阈值：估值评分 ≤ 此值视为「贵到 52 周高位」（score=(50-pos)*1.2，pos≥85% → ≤ -42）。
+_VALUATION_VETO_SCORE = -40
 
 # 真实数据维度的可溯源出处（github 公开数据集，可点击查看原始数据）
 _SP500_SRC = CitedSource(label="标普500 月度指数", provider="github · datasets/s-and-p-500", url="https://github.com/datasets/s-and-p-500", quality="live")
@@ -440,11 +444,26 @@ def _dim_macro(rates_history: Optional[list]) -> TearSheetDimension:
     ), dates[-1])
 
 
-def _build_narrative(name: str, verdict: str, dims: list[TearSheetDimension]) -> str:
+def _fundamental_veto(by_key: dict) -> Optional[str]:
+    """基本面强烈看空时返回否决理由——买方纪律：动量再强也不追逻辑相悖的票，
+    用于把动量/期权驱动的「重点跟踪」封顶为「中性观察」。无否决则 None。"""
+    reasons = []
+    val = by_key.get("valuation")
+    con = by_key.get("consensus")
+    if val and val.signal == "bearish" and val.score <= _VALUATION_VETO_SCORE:
+        reasons.append("估值已处 52 周高位")
+    if con and con.signal == "bearish":
+        reasons.append("分析师一致预期看空")
+    return "、".join(reasons) or None
+
+
+def _build_narrative(name: str, verdict: str, dims: list[TearSheetDimension], veto: Optional[str] = None) -> str:
     active = [d for d in dims if d.signal != "insufficient"]
     if not active:
         return f"{name}：可用证据不足，暂无法形成速判，请补充实时行情/财报/期权数据后再看。"
-    parts = [f"{name} 综合速判：{verdict}。"]
+    head = (f"{name} 综合速判：{verdict}（价量偏强，但{veto}，按买方纪律不追价、降为中性观察）。"
+            if veto else f"{name} 综合速判：{verdict}。")
+    parts = [head]
     for d in active:
         parts.append(f"{d.label}——{d.headline}。")
     return " ".join(parts)
@@ -470,8 +489,8 @@ def _dim_valuation(
 ) -> TearSheetDimension:
     """估值 / 区间位置维度：P/E + P/B 优先 live 估值源（stockanalysis/东财），52周位置优先 Yahoo 官方（live）。
 
-    作 context（不在 _DIRECTIONAL_KEYS）：接近52周高提示回调风险、接近52周低提示价值区，配合 P/E
-    给买方"贵不贵、在区间什么位置"的快读。dq 取实际驱动判定的数据源最差档——PE live 但 52周来自
+    方向性维度（在 _DIRECTIONAL_KEYS 内，参与多空 verdict 并可触发否决）：接近52周高提示回调风险、
+    接近52周低提示价值区，配合 P/E 给买方"贵不贵、在区间什么位置"的判断。dq 取实际驱动判定的数据源最差档——PE live 但 52周来自
     google finance（degraded）时整卡仍 degraded，不虚标。
     """
     stats = stats or {}
@@ -695,6 +714,8 @@ def build_tear_sheet(
 
     directional = [d for d in dims if d.key in _DIRECTIONAL_KEYS and d.signal != "insufficient"]
     informative = [d for d in dims if d.signal != "insufficient"]
+    by_key = {d.key: d for d in informative}
+    veto_reason = None
     if directional:
         weight = sum(d.confidence for d in directional) or 1.0
         overall_score = int(round(sum(d.score * d.confidence for d in directional) / weight))
@@ -704,6 +725,11 @@ def build_tear_sheet(
             verdict = "谨慎回避"
         else:
             verdict = "中性观察"
+        # 否决项：基本面强烈看空时，动量/期权驱动的「重点跟踪」封顶为「中性观察」（不追价）
+        if verdict == "重点跟踪":
+            veto_reason = _fundamental_veto(by_key)
+            if veto_reason:
+                verdict = "中性观察"
     else:
         overall_score = 0
         verdict = "中性观察" if informative else "数据不足"
@@ -713,7 +739,7 @@ def build_tear_sheet(
         else 0.0
     )
 
-    final_narrative = narrative or _build_narrative(name or symbol, verdict, dims)
+    final_narrative = narrative or _build_narrative(name or symbol, verdict, dims, veto=veto_reason)
     if constituent and constituent.get("sector"):
         final_narrative = f"【标普500 成分 · {constituent['sector']}】 " + final_narrative
 

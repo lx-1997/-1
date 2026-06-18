@@ -25,10 +25,12 @@ _IFIND_GRADE: ContextVar[bool] = ContextVar("ifind_grade", default=False)
 import re as _re
 from datetime import datetime as _dt, timedelta as _td, timezone as _tz
 
+from . import bull_playbook, financial_statements
 from .consensus_source import fetch_analyst_consensus
 from .eastmoney_data import fetch_eastmoney_earnings, fetch_fund_flow
 from .market_data import fetch_market_quotes
 from .realtime_messages import list_realtime_messages
+from .shared_utils import safe_float
 from .valuation_source import fetch_valuation
 
 ToolHandler = Callable[..., Awaitable[Any]]
@@ -187,6 +189,125 @@ register_tool(AgentTool(
     description="获取卖方一致预期：目标价、较现价空间、评级共识。仅美股有覆盖。",
     parameters=_SYMBOL_MARKET_SCHEMA,
     handler=_tool_get_analyst_consensus,
+))
+
+
+_BULL_STAGE_CN = {"startup": "初创期", "growth": "成长期", "mature": "成熟期",
+                  "decline": "衰退期", "transition": "过渡期", "unknown": "—"}
+
+
+async def _tool_get_financial_statements(symbol: str, market: Optional[str] = None) -> Any:
+    """三张报表关键项 + 现金流八类型：经营/投资/筹资活动现金流量净额、capex、自由现金流、含金量、扣非、毛利率。
+    多源回退(iFinD 优先、东财兜底)。仅 A股覆盖。"""
+    s = await financial_statements.fetch_statements(symbol, market)
+    if not s:
+        return None
+    cf = s.get("cashflow_type") or {}
+    return {
+        "symbol": symbol, "report_date": s.get("report_date"), "source": s.get("provider"),
+        "cashflow": {"经营": s.get("ocf"), "投资": s.get("icf"), "筹资": s.get("fcf_financing"),
+                     "pattern": cf.get("pattern"), "type": cf.get("type"), "type_desc": cf.get("desc"),
+                     "life_stage": cf.get("life")},
+        "capex": s.get("capex"), "free_cash_flow": s.get("fcf"),
+        "revenue": s.get("revenue"), "net_income": s.get("net_income"),
+        "gross_margin": s.get("gross_margin"), "roe": s.get("roe"),
+        "accounts_receivable": s.get("accounts_receivable"), "advance_receipts": s.get("advance_receipts"),
+        "earnings_quality": s.get("earnings_quality"), "good_business": s.get("good_business"),
+    }
+
+
+async def _tool_assess_long_term_bull(symbol: str, market: Optional[str] = None) -> Any:
+    """《价值投资之长线牛股》方法论体检：ROE生命周期 + 投资对象五型 + 真实估值 + 现金流八类型/含金量 + 催化剂 → 牛股基因。
+    只用平台 ground-truth(三表/估值/本站内容，多源回退)，缺项诚实标注，绝不臆造数字。"""
+    fin = await fetch_eastmoney_earnings(symbol, market) or {}
+    val = await _tool_get_valuation(symbol, market) or {}
+    stmt = await financial_statements.fetch_statements(symbol, market) or {}
+    roe = safe_float(fin.get("roe")) if fin.get("roe") is not None else stmt.get("roe")
+    rev = safe_float(fin.get("revenue_yoy")) if fin.get("revenue_yoy") is not None else stmt.get("revenue_yoy")
+    pf = safe_float(fin.get("profit_yoy")) if fin.get("profit_yoy") is not None else stmt.get("profit_yoy")
+    pe = safe_float(val.get("pe_ratio")); pb = safe_float(val.get("pb_ratio")); peg = safe_float(val.get("peg"))
+
+    rs = bull_playbook.roe_stage(roe=roe, revenue_yoy=rev, profit_yoy=pf)              # 第4.7 ROE 生命周期
+    target = bull_playbook.infer_target_type(revenue_yoy=rev, profit_yoy=pf, roe=roe)  # 第5章 投资对象类型
+    # 现金流八类型 + 自由现金流 + 盈利质量含金量 + 好生意(全维，来自三表)——之前缺数据的'半成品'现已跑通
+    cft = stmt.get("cashflow_type") or {}
+    eq = stmt.get("earnings_quality") or {}
+    gb = stmt.get("good_business") or bull_playbook.good_business(roe=roe)             # 第1.6 一门好生意
+    # 催化剂：扫本站近期与该标的相关内容，按第2章业绩增长关键字分类
+    cat_titles: list[str] = []
+    try:
+        for m in list_realtime_messages(anyq=symbol, limit=20):
+            t = getattr(m, "title", "") or ""
+            if t:
+                cat_titles.append(t)
+    except Exception:  # noqa: BLE001
+        pass
+    cat = bull_playbook.catalyst_profile(cat_titles)
+    cat_strength = cat["top"]["strength"] if (cat.get("top") and cat["top"].get("dir", 0) > 0) else None
+    gene = bull_playbook.bull_gene_score(good_biz=gb.get("score"), catalyst_strength=cat_strength,
+                                         earnings_quality_score=eq.get("score"),
+                                         cashflow_score=cft.get("score"))             # 第3.7 牛股基因
+
+    # 真实估值评注(第4章：PE 高低看未来业绩，PB 受盈利干扰更小；PEG<1 偏低估)
+    vnotes = []
+    if pe is not None:
+        vnotes.append(f"PE {pe:.0f}（{'偏高·需未来高增长消化' if pe >= 45 else '中性' if pe >= 20 else '不贵'}）")
+    if pb is not None:
+        vnotes.append(f"PB {pb:.2f}")
+    if peg is not None:
+        vnotes.append(f"PEG {peg:.2f}（{'<1 成长性消化估值' if peg < 1 else '>1 估值已含成长'}）")
+
+    gaps = []
+    if roe is None and pf is None:
+        gaps.append("无财报数据（盈利质量/ROE 阶段无法判定）")
+    if pe is None and pb is None:
+        gaps.append("无估值数据")
+    if not stmt:
+        gaps.append("无三表数据（现金流八类型/含金量无法判定）")
+    if not cat_titles:
+        gaps.append("本站近期无相关催化剂")
+    gaps.append("护城河/进化力/净资产真实性等仍需人工研判，未量化")
+
+    return {
+        "symbol": symbol,
+        "roe_stage": {"stage": _BULL_STAGE_CN.get(rs.get("stage"), "—"),
+                      "fair_multiple": rs.get("fair_multiple"), "note": rs.get("note"),
+                      "roe": roe, "revenue_yoy": rev, "profit_yoy": pf},
+        "target_type": {"label": target.get("label"), "confidence": target.get("confidence"),
+                        "focus": target.get("focus"), "payoff": target.get("payoff"),
+                        "sizing": target.get("sizing"), "old_stage": target.get("old_stage"),
+                        "new_stage": target.get("new_stage")},
+        "cashflow": ({"type": cft.get("type"), "pattern": cft.get("pattern"), "risk": cft.get("risk"),
+                      "desc": cft.get("desc"), "life": cft.get("life"),
+                      "free_cash_flow": stmt.get("fcf"), "source": stmt.get("provider"),
+                      "report_date": stmt.get("report_date")} if stmt else None),
+        "earnings_quality": eq or None,
+        "good_business": gb,
+        "valuation": {"pe": pe, "pb": pb, "peg": peg, "notes": vnotes},
+        "catalysts": {"net_dir": cat.get("net_dir"), "bull_types": cat.get("bull_types"),
+                      "top": (cat["top"]["label"] if cat.get("top") else None), "count": cat.get("n")},
+        "bull_gene": gene,
+        "data_gaps": gaps,
+        "methodology": "《价值投资之长线牛股》：好生意三标准 + 业绩增长关键字 + 护城河/进化力 + ROE生命周期 + "
+                       "投资对象五型 + 现金流八类。本工具覆盖 ROE阶段/投资类型/估值/现金流八类型·含金量/催化剂。",
+        "disclaimer": "方法论演示，使用公开数据，不构成投资建议；历史/财务不代表未来收益。",
+    }
+
+
+register_tool(AgentTool(
+    name="get_financial_statements",
+    description="获取个股三张报表关键项 + 现金流八类型：经营/投资/筹资活动现金流量净额、capex、自由现金流、"
+                "利润含金量、扣非、毛利率、ROE。需要现金流结构/盈利质量/是否现金奶牛时用。多源回退(iFinD优先东财兜底)，仅 A股。",
+    parameters=_SYMBOL_MARKET_SCHEMA,
+    handler=_tool_get_financial_statements,
+))
+register_tool(AgentTool(
+    name="assess_long_term_bull",
+    description="用《价值投资之长线牛股》方法论给个股做长线体检：ROE 生命周期阶段 + 投资对象五型分类 + "
+                "真实估值(PE/PB/PEG) + 现金流八类型/利润含金量 + 本站催化剂分类 + 牛股基因综合分。"
+                "判断'是不是一只值得长持的牛股'时用；A股覆盖最全，缺数据会诚实标注 data_gaps。",
+    parameters=_SYMBOL_MARKET_SCHEMA,
+    handler=_tool_assess_long_term_bull,
 ))
 
 

@@ -151,6 +151,50 @@ def real_time_quote(codes, indicators: str = DEFAULT_INDICATORS) -> dict:
     return {"ok": True, "rows": rows, "skipped": skipped}
 
 
+def _request_basic(codes: str, indipara: list, token: str) -> dict:
+    r = httpx.post(f"{BASE}/api/v1/basic_data",
+                   headers={"Content-Type": "application/json", "access_token": token},
+                   json={"codes": codes, "indipara": indipara}, timeout=20, trust_env=False)
+    return r.json() or {}
+
+
+def basic_data(codes, indicators, params: Optional[list] = None) -> dict:
+    """A股基础/财务数据（THS_BasicData，如经营/投资/筹资现金流、扣非净利、毛利率、ROE）。
+    indicators=逗号分隔指标名串；params 为每指标参数（缺省取最新一期）。返回 {ok, rows:[{code, <ind>:value}]}。
+    ⚠️iFinD 指标 ID 因账号/版本而异——由 financial_statements 的 env 开关托管、在有 token 的服务器实测调优。"""
+    if not enabled():
+        return {"ok": False, "error": "iFinD 未配置（缺 refresh token）", "rows": []}
+    raw = codes if isinstance(codes, list) else [c for c in re.split(r"[,，\s]+", str(codes or "")) if c]
+    norm = [n for n in (normalize_a_code(c) for c in raw) if n]
+    if not norm:
+        return {"ok": False, "error": "无有效 A 股代码", "rows": []}
+    inds = [i for i in re.split(r"[,，\s]+", indicators) if i] if isinstance(indicators, str) else list(indicators)
+    indipara = [{"indicator": i, "indiparams": (params or [""])} for i in inds]
+    token = _access_token()
+    if not token:
+        return {"ok": False, "error": "iFinD 鉴权失败", "rows": []}
+    try:
+        data = _request_basic(",".join(norm), indipara, token)
+        if data.get("errorcode") and int(data.get("errorcode")) == -1010:  # token 失效→换一次重试
+            with _lock:
+                _access["token"] = ""
+            token = _access_token()
+            if token:
+                data = _request_basic(",".join(norm), indipara, token)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"请求异常：{exc}"[:160], "rows": []}
+    if int(data.get("errorcode", -1)) != 0:
+        return {"ok": False, "error": data.get("errmsg") or f"iFinD errorcode={data.get('errorcode')}", "rows": []}
+    rows = []
+    for t in data.get("tables") or []:
+        tbl = t.get("table") or {}
+        row = {"code": t.get("thscode")}
+        for k, v in tbl.items():
+            row[k] = (v[-1] if isinstance(v, list) and v else v)  # 取最新一期
+        rows.append(row)
+    return {"ok": True, "rows": rows}
+
+
 _QUOTE_CACHE: dict = {}        # code -> (ts, row)；单标的行情 TTL 缓存，护授权配额
 _QUOTE_CACHE_TTL = 300.0       # 5 分钟：基本面补强够新，又把 iFinD 调用压到极低频
 

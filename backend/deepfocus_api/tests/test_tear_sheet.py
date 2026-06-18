@@ -54,6 +54,42 @@ def test_bullish_full():
     assert "⚡" in dims["catalyst"].headline
 
 
+def test_fundamental_veto_helper():
+    from deepfocus_api.schemas import TearSheetDimension as D
+    from deepfocus_api.tear_sheet import _fundamental_veto
+
+    def d(key, signal, score):
+        return D(key=key, label=key, signal=signal, score=score, headline="h", confidence=0.5)
+
+    # 估值深度看空(≤-40) 触发；一致预期看空触发
+    assert _fundamental_veto({"valuation": d("valuation", "bearish", -50)})
+    assert _fundamental_veto({"consensus": d("consensus", "bearish", -30)})
+    # 估值仅轻微偏空(>-40) 不触发；看多不触发；空字典不触发
+    assert _fundamental_veto({"valuation": d("valuation", "bearish", -20)}) is None
+    assert _fundamental_veto({"valuation": d("valuation", "bullish", 40)}) is None
+    assert _fundamental_veto({}) is None
+
+
+def test_verdict_vetoed_when_expensive():
+    """价量+期权看多，但估值已贵到 52 周高位 → 看多被否决，不再是「重点跟踪」（堵追涨破绽）。"""
+    q = MarketQuote(
+        symbol="X", price=255.0, change_percent=3.0, previous_close=247.0, open_price=248.0,
+        high=256.0, low=250.0, volume=1_000_000, currency="USD", provider="eastmoney",
+        provider_name="eastmoney", fetched_at="2026-06-04T00:00:00Z", is_realtime=True,
+        wk52_high=260.0, wk52_low=100.0,  # 现价 255 → 52周位置 ~97% → 估值 bearish
+    )
+    ts = build_tear_sheet(
+        symbol="X", name="X", market_cap=8e11, currency="USD",
+        quote=q, options_signal=_options("marketdata", "偏多", "高"),
+    )
+    dims = {d.key: d for d in ts.dimensions}
+    assert dims["momentum"].signal == "bullish"
+    assert dims["options"].signal == "bullish"
+    assert dims["valuation"].signal == "bearish"
+    assert ts.overall_verdict != "重点跟踪"  # 被估值否决/拖累，不追价
+    assert "买方纪律" in ts.narrative or ts.overall_verdict == "中性观察"
+
+
 def test_bearish():
     ts = build_tear_sheet(
         symbol="X", name="X", market_cap=5e10,

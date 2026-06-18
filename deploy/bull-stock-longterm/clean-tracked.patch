@@ -1,0 +1,311 @@
+diff --git a/backend/deepfocus_api/agent_tools.py b/backend/deepfocus_api/agent_tools.py
+index 408b3fc..95a726c 100644
+--- a/backend/deepfocus_api/agent_tools.py
++++ b/backend/deepfocus_api/agent_tools.py
+@@ -25,10 +25,12 @@ _IFIND_GRADE: ContextVar[bool] = ContextVar("ifind_grade", default=False)
+ import re as _re
+ from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+ 
++from . import bull_playbook, financial_statements
+ from .consensus_source import fetch_analyst_consensus
+ from .eastmoney_data import fetch_eastmoney_earnings, fetch_fund_flow
+ from .market_data import fetch_market_quotes
+ from .realtime_messages import list_realtime_messages
++from .shared_utils import safe_float
+ from .valuation_source import fetch_valuation
+ 
+ ToolHandler = Callable[..., Awaitable[Any]]
+@@ -190,6 +192,125 @@ register_tool(AgentTool(
+ ))
+ 
+ 
++_BULL_STAGE_CN = {"startup": "初创期", "growth": "成长期", "mature": "成熟期",
++                  "decline": "衰退期", "transition": "过渡期", "unknown": "—"}
++
++
++async def _tool_get_financial_statements(symbol: str, market: Optional[str] = None) -> Any:
++    """三张报表关键项 + 现金流八类型：经营/投资/筹资活动现金流量净额、capex、自由现金流、含金量、扣非、毛利率。
++    多源回退(iFinD 优先、东财兜底)。仅 A股覆盖。"""
++    s = await financial_statements.fetch_statements(symbol, market)
++    if not s:
++        return None
++    cf = s.get("cashflow_type") or {}
++    return {
++        "symbol": symbol, "report_date": s.get("report_date"), "source": s.get("provider"),
++        "cashflow": {"经营": s.get("ocf"), "投资": s.get("icf"), "筹资": s.get("fcf_financing"),
++                     "pattern": cf.get("pattern"), "type": cf.get("type"), "type_desc": cf.get("desc"),
++                     "life_stage": cf.get("life")},
++        "capex": s.get("capex"), "free_cash_flow": s.get("fcf"),
++        "revenue": s.get("revenue"), "net_income": s.get("net_income"),
++        "gross_margin": s.get("gross_margin"), "roe": s.get("roe"),
++        "accounts_receivable": s.get("accounts_receivable"), "advance_receipts": s.get("advance_receipts"),
++        "earnings_quality": s.get("earnings_quality"), "good_business": s.get("good_business"),
++    }
++
++
++async def _tool_assess_long_term_bull(symbol: str, market: Optional[str] = None) -> Any:
++    """《价值投资之长线牛股》方法论体检：ROE生命周期 + 投资对象五型 + 真实估值 + 现金流八类型/含金量 + 催化剂 → 牛股基因。
++    只用平台 ground-truth(三表/估值/本站内容，多源回退)，缺项诚实标注，绝不臆造数字。"""
++    fin = await fetch_eastmoney_earnings(symbol, market) or {}
++    val = await _tool_get_valuation(symbol, market) or {}
++    stmt = await financial_statements.fetch_statements(symbol, market) or {}
++    roe = safe_float(fin.get("roe")) if fin.get("roe") is not None else stmt.get("roe")
++    rev = safe_float(fin.get("revenue_yoy")) if fin.get("revenue_yoy") is not None else stmt.get("revenue_yoy")
++    pf = safe_float(fin.get("profit_yoy")) if fin.get("profit_yoy") is not None else stmt.get("profit_yoy")
++    pe = safe_float(val.get("pe_ratio")); pb = safe_float(val.get("pb_ratio")); peg = safe_float(val.get("peg"))
++
++    rs = bull_playbook.roe_stage(roe=roe, revenue_yoy=rev, profit_yoy=pf)              # 第4.7 ROE 生命周期
++    target = bull_playbook.infer_target_type(revenue_yoy=rev, profit_yoy=pf, roe=roe)  # 第5章 投资对象类型
++    # 现金流八类型 + 自由现金流 + 盈利质量含金量 + 好生意(全维，来自三表)——之前缺数据的'半成品'现已跑通
++    cft = stmt.get("cashflow_type") or {}
++    eq = stmt.get("earnings_quality") or {}
++    gb = stmt.get("good_business") or bull_playbook.good_business(roe=roe)             # 第1.6 一门好生意
++    # 催化剂：扫本站近期与该标的相关内容，按第2章业绩增长关键字分类
++    cat_titles: list[str] = []
++    try:
++        for m in list_realtime_messages(anyq=symbol, limit=20):
++            t = getattr(m, "title", "") or ""
++            if t:
++                cat_titles.append(t)
++    except Exception:  # noqa: BLE001
++        pass
++    cat = bull_playbook.catalyst_profile(cat_titles)
++    cat_strength = cat["top"]["strength"] if (cat.get("top") and cat["top"].get("dir", 0) > 0) else None
++    gene = bull_playbook.bull_gene_score(good_biz=gb.get("score"), catalyst_strength=cat_strength,
++                                         earnings_quality_score=eq.get("score"),
++                                         cashflow_score=cft.get("score"))             # 第3.7 牛股基因
++
++    # 真实估值评注(第4章：PE 高低看未来业绩，PB 受盈利干扰更小；PEG<1 偏低估)
++    vnotes = []
++    if pe is not None:
++        vnotes.append(f"PE {pe:.0f}（{'偏高·需未来高增长消化' if pe >= 45 else '中性' if pe >= 20 else '不贵'}）")
++    if pb is not None:
++        vnotes.append(f"PB {pb:.2f}")
++    if peg is not None:
++        vnotes.append(f"PEG {peg:.2f}（{'<1 成长性消化估值' if peg < 1 else '>1 估值已含成长'}）")
++
++    gaps = []
++    if roe is None and pf is None:
++        gaps.append("无财报数据（盈利质量/ROE 阶段无法判定）")
++    if pe is None and pb is None:
++        gaps.append("无估值数据")
++    if not stmt:
++        gaps.append("无三表数据（现金流八类型/含金量无法判定）")
++    if not cat_titles:
++        gaps.append("本站近期无相关催化剂")
++    gaps.append("护城河/进化力/净资产真实性等仍需人工研判，未量化")
++
++    return {
++        "symbol": symbol,
++        "roe_stage": {"stage": _BULL_STAGE_CN.get(rs.get("stage"), "—"),
++                      "fair_multiple": rs.get("fair_multiple"), "note": rs.get("note"),
++                      "roe": roe, "revenue_yoy": rev, "profit_yoy": pf},
++        "target_type": {"label": target.get("label"), "confidence": target.get("confidence"),
++                        "focus": target.get("focus"), "payoff": target.get("payoff"),
++                        "sizing": target.get("sizing"), "old_stage": target.get("old_stage"),
++                        "new_stage": target.get("new_stage")},
++        "cashflow": ({"type": cft.get("type"), "pattern": cft.get("pattern"), "risk": cft.get("risk"),
++                      "desc": cft.get("desc"), "life": cft.get("life"),
++                      "free_cash_flow": stmt.get("fcf"), "source": stmt.get("provider"),
++                      "report_date": stmt.get("report_date")} if stmt else None),
++        "earnings_quality": eq or None,
++        "good_business": gb,
++        "valuation": {"pe": pe, "pb": pb, "peg": peg, "notes": vnotes},
++        "catalysts": {"net_dir": cat.get("net_dir"), "bull_types": cat.get("bull_types"),
++                      "top": (cat["top"]["label"] if cat.get("top") else None), "count": cat.get("n")},
++        "bull_gene": gene,
++        "data_gaps": gaps,
++        "methodology": "《价值投资之长线牛股》：好生意三标准 + 业绩增长关键字 + 护城河/进化力 + ROE生命周期 + "
++                       "投资对象五型 + 现金流八类。本工具覆盖 ROE阶段/投资类型/估值/现金流八类型·含金量/催化剂。",
++        "disclaimer": "方法论演示，使用公开数据，不构成投资建议；历史/财务不代表未来收益。",
++    }
++
++
++register_tool(AgentTool(
++    name="get_financial_statements",
++    description="获取个股三张报表关键项 + 现金流八类型：经营/投资/筹资活动现金流量净额、capex、自由现金流、"
++                "利润含金量、扣非、毛利率、ROE。需要现金流结构/盈利质量/是否现金奶牛时用。多源回退(iFinD优先东财兜底)，仅 A股。",
++    parameters=_SYMBOL_MARKET_SCHEMA,
++    handler=_tool_get_financial_statements,
++))
++register_tool(AgentTool(
++    name="assess_long_term_bull",
++    description="用《价值投资之长线牛股》方法论给个股做长线体检：ROE 生命周期阶段 + 投资对象五型分类 + "
++                "真实估值(PE/PB/PEG) + 现金流八类型/利润含金量 + 本站催化剂分类 + 牛股基因综合分。"
++                "判断'是不是一只值得长持的牛股'时用；A股覆盖最全，缺数据会诚实标注 data_gaps。",
++    parameters=_SYMBOL_MARKET_SCHEMA,
++    handler=_tool_assess_long_term_bull,
++))
++
++
+ async def _tool_search_our_content(query: str = "", days: int = 7, limit: int = 12) -> Any:
+     """检索/汇总「我们网站」近期发布的快讯/文章（关键词匹配标题或正文；**query 留空=按时间取近期最新全部**，适合「近期快讯总结」）。
+     文章附带我们已缓存的 AI 解读（命中预解读缓存即返回 ai_summary，不重算）。用于判断我们是否提前覆盖某主线/驱动，可多次换词深挖。"""
+diff --git a/backend/deepfocus_api/eastmoney_data.py b/backend/deepfocus_api/eastmoney_data.py
+index 9d919f5..1c92315 100644
+--- a/backend/deepfocus_api/eastmoney_data.py
++++ b/backend/deepfocus_api/eastmoney_data.py
+@@ -77,6 +77,12 @@ async def fetch_eastmoney_earnings(symbol: str, market: Optional[str] = None) ->
+                         "name": r0.get("SECURITY_NAME_ABBR"),
+                         "is_hk": False,
+                         "code": code,
++                        # —— 盈利质量增量字段(长线牛股方法论用)：每股经营现金流/扣非EPS/毛利率/净利/营收 ——
++                        "ocf_per_share": r0.get("MGJYXJJE"),     # 每股经营现金流 → 含金量 = ÷EPS
++                        "deduct_eps": r0.get("DEDUCT_BASIC_EPS"),  # 扣非每股收益 → 扣非占比 = ÷EPS
++                        "gross_margin": r0.get("XSMLL"),         # 销售毛利率 %
++                        "net_income": r0.get("PARENT_NETPROFIT"),  # 归母净利润
++                        "revenue": r0.get("TOTAL_OPERATE_INCOME"),  # 营业收入
+                     }
+     except Exception:
+         result = None
+@@ -85,6 +91,95 @@ async def fetch_eastmoney_earnings(symbol: str, market: Optional[str] = None) ->
+     return result
+ 
+ 
++def _a_secucode(code: str) -> str:
++    """6 位 A股代码 → 东财 SECUCODE（带交易所后缀）。6→.SH，4/8/9(北交所)→.BJ，其余→.SZ。"""
++    code = re.sub(r"\D", "", code or "")
++    if code[:1] == "6":
++        return f"{code}.SH"
++    if code[:1] in ("4", "8") or code[:2] == "92":
++        return f"{code}.BJ"
++    return f"{code}.SZ"
++
++
++async def fetch_eastmoney_cashflow(symbol: str, market: Optional[str] = None) -> Optional[dict]:
++    """A股现金流量表(经营/投资/筹资活动现金流量净额 + 购建长期资产 capex)。直连绕代理、缓存 6h。
++    给现金流八类型(第9.5)与自由现金流(第10章)用。失败/无数据→None(优雅降级)。"""
++    code = re.sub(r"\D", "", symbol or "")
++    if not code or len(code) != 6 or (market or "").upper() in ("HK", "US"):
++        return None
++    key = "cf:" + code
++    hit = _CACHE.get(key)
++    if hit and (time.time() - hit[0]) < _CACHE_TTL:
++        return hit[1]
++    result: Optional[dict] = None
++    try:
++        url = (
++            "https://datacenter.eastmoney.com/securities/api/data/v1/get"
++            "?reportName=RPT_F10_FINANCE_GCASHFLOW&columns=ALL&pageSize=1"
++            "&sortColumns=REPORT_DATE&sortTypes=-1"
++            f"&filter=(SECUCODE=%22{_a_secucode(code)}%22)"
++        )
++        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
++            r = await client.get(url, headers=_HEADERS)
++        if r.status_code == 200:
++            data = ((r.json().get("result") or {}).get("data")) or []
++            if data:
++                r0 = data[0]
++                result = {
++                    "report_date": (r0.get("REPORT_DATE") or "")[:10],
++                    "ocf": r0.get("NETCASH_OPERATE"),        # 经营活动现金流量净额
++                    "icf": r0.get("NETCASH_INVEST"),         # 投资活动现金流量净额
++                    "fcf_financing": r0.get("NETCASH_FINANCE"),  # 筹资活动现金流量净额
++                    "capex": r0.get("CONSTRUCT_LONG_ASSET"),  # 购建固定/无形/长期资产支付的现金
++                    "code": code,
++                }
++    except Exception:
++        result = None
++    _CACHE[key] = (time.time(), result)
++    return result
++
++
++async def fetch_eastmoney_balance(symbol: str, market: Optional[str] = None) -> Optional[dict]:
++    """A股资产负债表关键项：应收账款 / 预收(合同负债) / 存货 / 归母净资产。直连绕代理、缓存 6h。
++    给盈利质量(第4.3 还原应收预收)与好生意(第1.6 预收>应收=回款强)用。失败→None。"""
++    code = re.sub(r"\D", "", symbol or "")
++    if not code or len(code) != 6 or (market or "").upper() in ("HK", "US"):
++        return None
++    key = "bal:" + code
++    hit = _CACHE.get(key)
++    if hit and (time.time() - hit[0]) < _CACHE_TTL:
++        return hit[1]
++    result: Optional[dict] = None
++    try:
++        url = (
++            "https://datacenter.eastmoney.com/securities/api/data/v1/get"
++            "?reportName=RPT_F10_FINANCE_GBALANCE&columns=ALL&pageSize=1"
++            "&sortColumns=REPORT_DATE&sortTypes=-1"
++            f"&filter=(SECUCODE=%22{_a_secucode(code)}%22)"
++        )
++        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
++            r = await client.get(url, headers=_HEADERS)
++        if r.status_code == 200:
++            data = ((r.json().get("result") or {}).get("data")) or []
++            if data:
++                r0 = data[0]
++                # 预收：新准则记入「合同负债」，按多个候选键 best-effort 取第一个非空
++                adv = next((r0.get(k) for k in ("CONTRACT_LIAB", "CONTRACT_LIABILITIES", "ADVANCE_RECEIVABLES")
++                            if r0.get(k) is not None), None)
++                result = {
++                    "report_date": (r0.get("REPORT_DATE") or "")[:10],
++                    "accounts_receivable": r0.get("ACCOUNTS_RECE"),  # 应收账款
++                    "advance_receipts": adv,                          # 预收账款/合同负债
++                    "inventory": r0.get("INVENTORY"),                 # 存货
++                    "equity": r0.get("TOTAL_PARENT_EQUITY"),          # 归母净资产
++                    "code": code,
++                }
++    except Exception:
++        result = None
++    _CACHE[key] = (time.time(), result)
++    return result
++
++
+ async def fetch_eastmoney_index(secid: str, points: int = 140) -> list:
+     """东财大盘指数日线 [(date, close)]：沪深300=1.000300 / 上证=1.000001 / 恒生=100.HSI。
+     直连绕代理。缓存 6h。失败返回 []（优雅降级）。"""
+diff --git a/backend/deepfocus_api/ifind_api.py b/backend/deepfocus_api/ifind_api.py
+index 53baaef..4700c27 100644
+--- a/backend/deepfocus_api/ifind_api.py
++++ b/backend/deepfocus_api/ifind_api.py
+@@ -151,6 +151,50 @@ def real_time_quote(codes, indicators: str = DEFAULT_INDICATORS) -> dict:
+     return {"ok": True, "rows": rows, "skipped": skipped}
+ 
+ 
++def _request_basic(codes: str, indipara: list, token: str) -> dict:
++    r = httpx.post(f"{BASE}/api/v1/basic_data",
++                   headers={"Content-Type": "application/json", "access_token": token},
++                   json={"codes": codes, "indipara": indipara}, timeout=20, trust_env=False)
++    return r.json() or {}
++
++
++def basic_data(codes, indicators, params: Optional[list] = None) -> dict:
++    """A股基础/财务数据（THS_BasicData，如经营/投资/筹资现金流、扣非净利、毛利率、ROE）。
++    indicators=逗号分隔指标名串；params 为每指标参数（缺省取最新一期）。返回 {ok, rows:[{code, <ind>:value}]}。
++    ⚠️iFinD 指标 ID 因账号/版本而异——由 financial_statements 的 env 开关托管、在有 token 的服务器实测调优。"""
++    if not enabled():
++        return {"ok": False, "error": "iFinD 未配置（缺 refresh token）", "rows": []}
++    raw = codes if isinstance(codes, list) else [c for c in re.split(r"[,，\s]+", str(codes or "")) if c]
++    norm = [n for n in (normalize_a_code(c) for c in raw) if n]
++    if not norm:
++        return {"ok": False, "error": "无有效 A 股代码", "rows": []}
++    inds = [i for i in re.split(r"[,，\s]+", indicators) if i] if isinstance(indicators, str) else list(indicators)
++    indipara = [{"indicator": i, "indiparams": (params or [""])} for i in inds]
++    token = _access_token()
++    if not token:
++        return {"ok": False, "error": "iFinD 鉴权失败", "rows": []}
++    try:
++        data = _request_basic(",".join(norm), indipara, token)
++        if data.get("errorcode") and int(data.get("errorcode")) == -1010:  # token 失效→换一次重试
++            with _lock:
++                _access["token"] = ""
++            token = _access_token()
++            if token:
++                data = _request_basic(",".join(norm), indipara, token)
++    except Exception as exc:  # noqa: BLE001
++        return {"ok": False, "error": f"请求异常：{exc}"[:160], "rows": []}
++    if int(data.get("errorcode", -1)) != 0:
++        return {"ok": False, "error": data.get("errmsg") or f"iFinD errorcode={data.get('errorcode')}", "rows": []}
++    rows = []
++    for t in data.get("tables") or []:
++        tbl = t.get("table") or {}
++        row = {"code": t.get("thscode")}
++        for k, v in tbl.items():
++            row[k] = (v[-1] if isinstance(v, list) and v else v)  # 取最新一期
++        rows.append(row)
++    return {"ok": True, "rows": rows}
++
++
+ _QUOTE_CACHE: dict = {}        # code -> (ts, row)；单标的行情 TTL 缓存，护授权配额
+ _QUOTE_CACHE_TTL = 300.0       # 5 分钟：基本面补强够新，又把 iFinD 调用压到极低频
+ 

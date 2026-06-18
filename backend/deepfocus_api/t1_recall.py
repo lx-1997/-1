@@ -196,13 +196,18 @@ def run_t1_recall_once(limit: Optional[int] = None) -> dict:
     if not candidates:
         return summary
     config = _email_smtp_config()
+    if config is None:
+        # ⭐ SMTP 未配置：本轮整体跳过，但【绝不逐人落库】。
+        # t1_recall_sent 以 user_id 为主键、且 find_t1_candidates 排除已落库者，
+        # 一旦写入 skipped 即终生去重；而候选窗口只有注册后 24~72h——毒化一次就错过
+        # 这批人唯一的 T+1 召回。改为不落库直接返回：配好 SMTP 后他们仍在窗口内会自动续发。
+        summary["skipped"] = len(candidates)
+        summary["detail"].append(
+            f"SMTP 未配置，{len(candidates)} 名候选本轮跳过（不落库，配置 SMTP 后窗口内自动续发）"
+        )
+        return summary
     for u in candidates:
         email = (u.email or "").strip()
-        if config is None:
-            # 未配置 SMTP：记 skipped 占位防止反复进候选，配置好后可清表重发
-            _record_sent(u.id, email, "skipped", "SMTP 未配置")
-            summary["skipped"] += 1
-            continue
         subject, body = _build_email(u.username)
         try:
             mime = MIMEText(body, "plain", "utf-8")

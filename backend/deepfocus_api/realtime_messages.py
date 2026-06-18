@@ -40,10 +40,25 @@ def register_post_message_hook(hook: Callable[[RealtimeMessageRecord], None]) ->
 
 
 def _run_post_hooks(message: RealtimeMessageRecord) -> None:
+    """运行新消息后置钩子（如离线召回扇出）。
+
+    ⭐ 钩子里的召回投递是【同步阻塞 IO】(smtplib SMTP timeout=15 / httpx.post 微信桥 timeout=15)。
+    本函数被 create_realtime_message 在事件循环线程上调用（async handler / dao_bridge 摄入循环），
+    若内联执行，一条快讯命中 N 个订阅就会把单 worker 的事件循环串行卡住 ~15s×N，冻结所有并发
+    请求(SSE/行情/速判)。故：检测到运行中的事件循环时，把每个钩子 fire-and-forget 挪到 worker
+    线程（dispatch_recall 全程同步、无循环亲和性，线程内执行安全）；无运行循环时（同步调用方/
+    单测）内联执行，行为与原先完全一致。"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
     for hook in list(_post_hooks):
         try:
-            hook(message)
-        except Exception:  # 钩子失败绝不影响消息创建/广播主链路
+            if loop is not None:
+                loop.run_in_executor(None, hook, message)  # 挪出事件循环，绝不阻塞主链路
+            else:
+                hook(message)
+        except Exception:  # 调度/执行失败绝不影响消息创建/广播主链路
             pass
 
 

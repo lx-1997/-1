@@ -18,6 +18,7 @@ import TerminalAuthModal from './TerminalAuthModal';
 import TerminalOnboarding, { ONB_KEY } from './TerminalOnboarding';
 import TerminalHelp from './TerminalHelp';
 import TerminalReferral from './TerminalReferral';
+import TerminalAiFund from './TerminalAiFund';
 import TerminalWeixinBind from './TerminalWeixinBind';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
@@ -335,18 +336,6 @@ const classifyMarket = (r: ResearchWireItem): 'A' | 'HKUS' => {
 };
 
 // 顶部时钟 + 市场开/收盘标签：独立组件自带每秒刷新，避免整个终端每秒全量重渲染（性能关键）。
-const MarketClock: React.FC = React.memo(() => {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => { const t = window.setInterval(() => setNow(new Date()), 1000); return () => window.clearInterval(t); }, []);
-  const bjt = beijingParts(now);
-  return (
-    <>
-      {MARKETS.map(m => { const open = isMarketOpen(m.key, now); return <span key={m.key} className={`bbt-mkt ${open ? 'on' : 'off'}`}>{m.label} {open ? 'OPEN' : 'CLSD'}</span>; })}
-      <span className="bbt-clock">{bjt.dateStr} {bjt.clock} CST</span>
-    </>
-  );
-});
-MarketClock.displayName = 'MarketClock';
 
 // 资讯去重：新闻源常把同一条快讯/文章多次推送（不同 id/时间）→ 按标题(无标题用内容)归一去重。
 // 入参已按时间倒序，保留最先出现的=最新那条；标题内容皆空者不参与去重、原样保留。
@@ -432,6 +421,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [showOnb, setShowOnb] = useState(false);
   const [showHelp, setShowHelp] = useState(false);  // 产品说明书弹层
   const [showReferral, setShowReferral] = useState(false);  // 邀请得会员弹层
+  const [showAiFund, setShowAiFund] = useState(false);      // AI 模拟盘弹层
   const [showWeixinBind, setShowWeixinBind] = useState(false);  // 微信扫码绑定（扫码即问 DeepFocus）
   // 账号菜单可发现性：首次登录给一次性气泡指向头像，告知里面有会员/绑定/邀请等功能（看过即不再弹）
   const [showAcctHint, setShowAcctHint] = useState(false);
@@ -2460,10 +2450,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           ) : (
             <>
               <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); runNewsAi(m); }}>AI 解读</button>
-              {/* 自有后端托管的截图原文：原文按钮走站内图片查看器(适配宽度阅读)，不暴露后端域名为可点链接 */}
-              {m.url
-                ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
-                : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button> : null)}
+              {/* 研报：只给 AI 解读，绝不暴露源文件/原文（第三方版权 + 不开放原始文件）。文章原文仍走站内查看器。 */}
+              {m.topic === '研报'
+                ? null
+                : (m.url
+                  ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
+                  : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button> : null))}
             </>
           )}
         </span>
@@ -2583,21 +2575,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-cmd-right">
           {/* 今日早报按钮已按需求隐藏 */}
           <button className="bbt-theme-btn" onClick={() => { logAct('theme', theme === 'dark' ? 'light' : 'dark'); toggleTheme(); }} aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'} title={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}>
-            {theme === 'dark' ? '☀️' : '🌙'}
+            {theme === 'dark' ? '☀️ 浅色' : '🌙 深色'}
           </button>
           {ttsSupported && (
             <button className={'bbt-tts-btn' + (ttsOn ? ' on' : '')} onClick={toggleTts}
                     aria-label={ttsOn ? '快讯语音播报：开，点击关闭' : '快讯语音播报：关，点击开启'} aria-pressed={ttsOn}
                     title={ttsOn ? '快讯语音播报：开（点击关闭）' : '快讯语音播报：关（点击开启）'}>
-              {ttsOn ? '🔊' : '🔈'}
+              {ttsOn ? '🔊 播报' : '🔈 播报'}
             </button>
           )}
           <button className="bbt-review-entry" onClick={() => openReview()} title="A股每日收盘复盘 · DeepFocus 提前发现">📊 复盘</button>
+          <button className="bbt-review-entry bbt-aifund-entry" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }} title="AI 模拟盘：阿尔法直播操盘（K线/五维打分/操盘解说）· 点击进入独立页">🤖 AI 模拟盘</button>
           {IFIND_USERS.has((authUser || '').toLowerCase()) && (
-            <button className="bbt-review-entry" onClick={openIfind} title="同花顺 iFinD A股实时行情+基本面（专业数据）">📡 iFinD</button>
+            <button className="bbt-review-entry bbt-ifind-entry" onClick={openIfind} title="同花顺 iFinD A股实时行情+基本面（专业数据）">📡 iFinD</button>
           )}
           {IFIND_USERS.has((authUser || '').toLowerCase()) && (
-            <button className="bbt-review-entry" onClick={openAi} title="AI 投研问答：自动调行情/估值/iFinD + 检索我们的快讯/研报/复盘">🤖 AI 问答</button>
+            <button className="bbt-review-entry bbt-aiqa-entry" onClick={openAi} title="AI 投研问答：自动调行情/估值/iFinD + 检索我们的快讯/研报/复盘">🤖 AI 问答</button>
           )}
           {membership?.tier !== 'lifetime' && (() => {
             const isMember = membership?.tier === 'premium';   // 已是尊享会员 → 显示「续费」（可能提前续期），永久会员不显示
@@ -2614,9 +2607,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             );
           })()}
           <button className={'bbt-ref-entry' + (refOpened ? '' : ' attract')} onClick={() => { logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }} aria-label="邀请好友得会员" title="邀请好友 · 累计解锁会员卡，最高免费拿 ¥698 年卡">🎁 邀请得会员<span className="bbt-ref-entry-hot">免费拿年卡</span>{refAvail > 0 && <span className="bbt-ref-entry-badge">{refAvail}</span>}</button>
-          <button className="bbt-help-btn bbt-manual-btn" onClick={() => setShowHelp(true)} aria-label="产品说明书" title="产品说明书">📖</button>
-          <button className="bbt-help-btn" onClick={() => setShowOnb(true)} aria-label="新手引导" title="新手引导">❔</button>
-          <MarketClock />{/* 独立组件：时钟每秒刷新只重渲染自己，不再带动整个终端 */}
+          <button className="bbt-help-btn bbt-manual-btn" onClick={() => setShowHelp(true)} aria-label="产品说明书" title="产品说明书">📖 说明书</button>
+          <button className="bbt-help-btn" onClick={() => setShowOnb(true)} aria-label="新手引导" title="新手引导">❔ 引导</button>
           {authUser
             ? (() => {
                 const isLifetime = membership?.tier === 'lifetime';
@@ -2692,6 +2684,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <span className="bbt-support-banner-ico">💬</span>
           <span className="bbt-support-banner-text">管理员回复了你（<b>{supportUnread}</b> 条未读）· 点击查看</span>
           <button className="bbt-support-banner-btn" onClick={e => { e.stopPropagation(); openSupport(); }}>查看回复</button>
+        </div>
+      )}
+      {/* 首屏信任钩子（匿名访客）：把最尖锐的差异化卖点「我们提前发现」从复盘弹窗搬到门面 */}
+      {!authUser && trackRecord && trackRecord.hit_count > 0 && (
+        <div className="bbt-tr-hero" onClick={() => { logAct('tr_hero_cta', '首屏战绩'); openReview(); }} role="button" title="看今天的 A 股复盘 · DeepFocus 提前发现的资讯">
+          <span className="bbt-tr-hero-ico">📡</span>
+          <span className="bbt-tr-hero-text">
+            近 {trackRecord.days} 天，DeepFocus 用快讯/研报<b> 提前覆盖 {trackRecord.hit_count} 次</b>异动 · 平均提前 <b>{trackRecord.avg_lead_hours}h</b> — 关键消息比你的券商 App 早一步
+          </span>
+          <button className="bbt-tr-hero-btn" onClick={e => { e.stopPropagation(); logAct('tr_hero_cta', '首屏战绩按钮'); openReview(); }}>看今天的复盘 →</button>
         </div>
       )}
       {(!authUser || trialClaimable) && (
@@ -3225,6 +3227,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       {showOnb && <TerminalOnboarding onClose={() => setShowOnb(false)} />}
       {showHelp && <TerminalHelp onClose={() => setShowHelp(false)} onStartTour={() => { setShowHelp(false); setShowOnb(true); }} />}
       {showReferral && <TerminalReferral onClose={() => setShowReferral(false)} showToast={showToast} onChanged={refreshMembership} />}
+      {showAiFund && <TerminalAiFund onClose={() => setShowAiFund(false)} />}
       {showWeixinBind && <TerminalWeixinBind onClose={() => setShowWeixinBind(false)} showToast={showToast} onOpenConsole={authUser === 'lx199710' ? openWeixinConsole : undefined} />}
       {reviewOpen && (() => {
         const r = reviewData;
@@ -3277,11 +3280,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               {/* 🎯 「我们提前发现的」量化战绩：只计经 AI 验证的命中，可点开溯源 */}
               {trackRecord && trackRecord.hit_count > 0 && (
                 <div className="bbt-tr">
-                  <div className="bbt-tr-h">🎯 我们提前发现的 · 战绩<span className="bbt-tr-sub">近 {trackRecord.days} 天 · 仅计经 AI 验证的命中</span></div>
+                  <div className="bbt-tr-h">📡 我们提前发现的 · 资讯覆盖<span className="bbt-tr-sub">近 {trackRecord.days} 天 · 仅计经 AI 验证的覆盖样本</span></div>
                   <div className="bbt-tr-stats">
-                    <div className="bbt-tr-stat"><b>{trackRecord.hit_count}</b><span>次提前命中</span></div>
-                    <div className="bbt-tr-stat"><b>{trackRecord.avg_lead_hours}h</b><span>平均领先大盘</span></div>
-                    <div className="bbt-tr-stat"><b>{trackRecord.max_lead_hours}h</b><span>最早领先</span></div>
+                    <div className="bbt-tr-stat"><b>{trackRecord.hit_count}</b><span>条提前覆盖</span></div>
+                    <div className="bbt-tr-stat"><b>{trackRecord.avg_lead_hours}h</b><span>平均提前</span></div>
+                    <div className="bbt-tr-stat"><b>{trackRecord.max_lead_hours}h</b><span>最早提前</span></div>
                   </div>
                   {trackRecord.personal && trackRecord.personal.hit_count > 0 && (
                     <div className="bbt-tr-personal">⭐ 你的自选里，我们已为你提前覆盖 <b>{trackRecord.personal.hit_count}</b> 次</div>
@@ -3302,6 +3305,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       );
                     })}
                   </div>
+                  <div className="bbt-tr-disc">仅统计经验证的提前覆盖样本，存在选择偏差；领先时长不代表收益，历史表现不代表未来，不构成投资建议。</div>
                 </div>
               )}
               {reviewLoading && !r && <div className="bbt-empty">加载中…</div>}
@@ -3394,6 +3398,31 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       </div>
                     );
                   })}
+                </div>}
+
+                {/* 机构观点：今日异动个股近一个多月的东财券商研报覆盖（公开数据） */}
+                {(r.broker_views || []).length > 0 && <div className="bbt-review-card-sec">
+                  <div className="bbt-review-h">🏦 机构观点 <span className="bbt-review-edge-n">{(r.broker_views || []).length} 只异动股有研报覆盖</span></div>
+                  {(r.broker_views || []).slice(0, 6).map((v: any, k: number) => {
+                    const lt = v.latest || {};
+                    return (
+                      <div key={k} className="bbt-review-broker-item">
+                        <div className="bbt-review-broker-top">
+                          <span className={`bbt-review-edge-kind stk`}>个股</span>
+                          <span className="bbt-review-edge-name">{v.name}</span>
+                          {typeof v.pct === 'number' && <span className={pctCls(v.pct)}>{pctTxt(v.pct)}</span>}
+                          <span className="bbt-review-edge-ev">近一月 {v.count} 家覆盖</span>
+                          {(v.orgs || []).length > 0 && <span className="bbt-review-broker-orgs">{(v.orgs || []).slice(0, 3).join('·')}</span>}
+                        </div>
+                        {lt.title && <div className="bbt-review-broker-latest bbt-review-broker-latest--static">
+                          {lt.rating && <span className="bbt-review-broker-rating">{lt.rating}</span>}
+                          <span className="bbt-review-broker-title">{lt.org ? `${lt.org}：` : ''}{lt.title}</span>
+                          {lt.date && <span className="bbt-review-edge-sigwhen">{lt.date}</span>}
+                        </div>}
+                      </div>
+                    );
+                  })}
+                  <div className="bbt-review-srchint">机构研报来自公开券商研报库，仅供研究参考，不构成投资建议。</div>
                 </div>}
 
                 {/* 下一交易日关注 */}

@@ -107,6 +107,19 @@ def test_bull_playbook_dims_flow_through_tick(fund, monkeypatch):
     assert "大订单" in byd["catalyst"] and "上升段" in byd["buy_point"]
 
 
+def test_thesis_voice_differentiated_per_style():
+    """同一只票、同一方向，5 个流派的认知措辞各不相同(不再都像阿尔法)。"""
+    src = "文章3条"
+    bull = {st: ai_fund._thesis_title(st, "某股", src, 0.3)
+            for st in ("balanced", "aggressive", "value", "event", "contrarian")}
+    assert len(set(bull.values())) == 5, bull                 # 看多档 5 派全分化
+    assert "重锤" in bull["aggressive"] and "估值" in bull["value"]
+    assert "快进快出" in bull["event"] and "超跌" in bull["contrarian"]
+    # 回避档也按流派分化
+    avoid = {st: ai_fund._thesis_title(st, "某股", src, -0.3) for st in ("aggressive", "value", "contrarian")}
+    assert len(set(avoid.values())) == 3
+
+
 def test_snapshot_shape(fund, monkeypatch):
     _wire(monkeypatch, {"300750": {"latest": 200, "pe_ttm": 25, "pb": 4, "changeRatio": 3.0, "turnoverRatio": 4, "high": 202, "low": 196}})
     monkeypatch.setattr(ai_fund, "_our_content",

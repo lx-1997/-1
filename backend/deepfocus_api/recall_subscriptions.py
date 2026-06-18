@@ -35,13 +35,17 @@ from .schemas import (
 
 
 def _public_base_url() -> str:
-    """构建可追踪点击链接用的后端公开基址。"""
-    return os.getenv("DEEPFOCUS_PUBLIC_BASE_URL", "http://localhost:8300").strip().rstrip("/")
+    """构建可追踪点击链接用的后端公开基址。
+
+    ⚠️ 默认指向生产同源域名（对齐 seo_pages 既有约定），避免 env 未设时把 localhost
+    死链写进召回邮件/推送——召回是把人拉回来的资产，链接必须能落地。本地开发请显式设
+    DEEPFOCUS_PUBLIC_BASE_URL=http://localhost:8300 覆盖。"""
+    return os.getenv("DEEPFOCUS_PUBLIC_BASE_URL", "https://daocaijing.com").strip().rstrip("/")
 
 
 def _app_base_url() -> str:
-    """点击后回流的前端 App 基址（把人拉回应用而非外部源站）。"""
-    return os.getenv("DEEPFOCUS_APP_BASE_URL", "http://localhost:3000").strip().rstrip("/")
+    """点击后回流的前端 App 基址（把人拉回应用而非外部源站）。默认生产同源，理由同上。"""
+    return os.getenv("DEEPFOCUS_APP_BASE_URL", "https://daocaijing.com").strip().rstrip("/")
 
 
 def _deep_link(message: RealtimeMessageRecord) -> str:
@@ -404,7 +408,8 @@ def _deliver_wechat(
             f"{config['base']}/message/postText",
             headers={"X-GEWE-TOKEN": config["token"]},
             json={"appId": config["app_id"], "toWxid": target, "content": body},
-            timeout=15,
+            # 连接 5s / 整体 15s：桥被封号或进程挂掉时快速失败，不空等 15s（即便已挪到 worker 线程也更干净）
+            timeout=httpx.Timeout(15.0, connect=5.0),
             trust_env=False,  # 同机 localhost，绕开沙箱出网代理
         )
         data = resp.json() if resp.content else {}
@@ -488,7 +493,7 @@ def mark_recall_click(delivery_id: str) -> Optional[str]:
 
 def resolve_recall_click(delivery_id: str) -> str:
     """记录点击回流并返回最终跳转 URL；未知 id 兜底跳回 App 首页（回流体验优先）。"""
-    return mark_recall_click(delivery_id) or _app_base_url() or "http://localhost:3000"
+    return mark_recall_click(delivery_id) or _app_base_url() or "https://daocaijing.com"
 
 
 def list_deliveries(limit: int = 50) -> list[RecallDeliveryRecord]:

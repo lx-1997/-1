@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 from openai import AsyncOpenAI
 
 from .agent_tools import execute_tool, openai_tool_specs
+from .compliance import neutralize_text
 from .mcp_tools import discover_mcp_agent_tools
 from .model_config import load_model_config
 from .schemas import (
@@ -641,7 +642,7 @@ class CloudResearchLLM:
 
             cached = data_store.latest("narr", fp_key, max_age_seconds=7 * 86400)
             if isinstance(cached, str) and cached.strip():
-                return cached.strip()
+                return neutralize_text(cached.strip())  # 旧缓存也过一遍硬护栏
         except Exception:
             data_store = None  # 缓存不可用→照常走 LLM
         prompt = (
@@ -662,7 +663,7 @@ class CloudResearchLLM:
             return None
         narrative = (data or {}).get("narrative")
         if isinstance(narrative, str) and narrative.strip():
-            narrative = narrative.strip()
+            narrative = neutralize_text(narrative.strip())  # 落库+返回前过合规硬护栏（prompt 之外第二道）
             if data_store is not None:
                 try:
                     data_store.record("narr", fp_key, narrative)
@@ -709,7 +710,7 @@ class CloudResearchLLM:
             return None
         headline = (data or {}).get("headline")
         if isinstance(headline, str) and headline.strip():
-            return headline.strip()
+            return neutralize_text(headline.strip())  # 晨报一句话也过合规硬护栏
         return None
 
     async def parse_screen_query(self, query):
@@ -998,9 +999,14 @@ class CloudResearchLLM:
 
         tool_specs = openai_tool_specs(extra_tools=mcp_tools)
         system = (
-            "你是 DeepFocus 的资深投研分析师，具备工具调用能力。"
+            "你是 DeepFocus 的资深投研分析师，具备工具调用能力，秉持《价值投资之长线牛股》的研究框架："
+            "好生意三标准、业绩增长关键字(大订单/涨价/扩产/反转/库存/景气)、护城河与进化力、ROE 生命周期、"
+            "投资对象五型、现金流八类型——看长线先看生意质量与护城河，再叠加催化剂与趋势买点。"
             "当回答涉及具体标的的行情/财报/资金流/估值/卖方一致预期时，必须先调用相应工具取真实数据，"
-            "再据此作答，不得凭记忆编造数字。工具返回 ok=false 或 data=null 表示该源暂无数据，"
+            "再据此作答，不得凭记忆编造数字。"
+            "当问题涉及『是不是长线牛股 / 值不值得长期持有 / 护城河 / 成长质量 / 估值贵不贵』时，"
+            "调用 assess_long_term_bull 取该方法论体检（ROE 生命周期阶段+投资对象五型+真实估值+本站催化剂+牛股基因分），据此分析。"
+            "工具返回 ok=false 或 data=null 表示该源暂无数据，"
             "要如实说明而非杜撰。拿到足够数据后用简洁专业的中文给出有数据支撑的结论（不超过 220 字），"
             "若用户要求快讯/资讯总结：用 search_our_content（days=1、limit=40~60）取全近期，挑出影响市场的重要快讯（忽略琐碎，不论利好利空），"
             "按主题归类、每条参考 tone 标利好/利空，末尾给一句话主线；此类总结可适当超过 220 字。"

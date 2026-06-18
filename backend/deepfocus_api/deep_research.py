@@ -52,29 +52,12 @@ _JUDGE_TIMEOUT = 35.0
 _DIRECTIONS = ("看多", "中性偏多", "中性", "中性偏空", "看空")
 _DISCLAIMER = "本研判由 AI 多角色综合生成，仅供研究参考，不构成投资建议、收益承诺或自动交易指令。市场有风险。"
 
-# 合规中性化词表：键被视为子串替换（先长后短，避免「建议买入」被「买入」抢先替坏）。
-_NEUTRALIZE_MAP = [
-    ("强烈建议买入", "偏多关注"),
-    ("强烈推荐买入", "偏多关注"),
-    ("建议买入", "偏多关注"),
-    ("建议卖出", "偏空规避"),
-    ("建议清仓", "偏空规避"),
-    ("立即买入", "偏多关注"),
-    ("满仓", "偏多"),
-    ("加仓", "偏多"),
-    ("减仓", "偏空"),
-    ("清仓", "偏空规避"),
-    ("买入", "偏多"),
-    ("卖出", "偏空"),
-    ("必涨", "或有上行"),
-    ("必跌", "或有下行"),
-    ("稳赚", "存在机会"),
-    ("包赚", "存在机会"),
-    ("翻倍", "弹性较大"),
-    ("暴涨", "明显上行"),
-    ("暴跌", "明显下行"),
-    ("目标价", "观察价位"),
-]
+# 合规中性化护栏现统一收口到 compliance 模块（全链路共享单一可信源，速判卡/晨报/复盘/模拟盘同用）。
+from .compliance import (  # noqa: E402
+    NEUTRALIZE_MAP as _NEUTRALIZE_MAP,  # noqa: F401  保留旧名供本模块引用
+    neutralize_deep as _neutralize_deep,
+    neutralize_text as _neutralize_text,  # noqa: F401
+)
 
 
 # =========================================================================
@@ -265,25 +248,6 @@ def to_public(task: DeepTask) -> Dict[str, Any]:
 # =========================================================================
 # 合规后处理
 # =========================================================================
-def _neutralize_text(s: str) -> str:
-    out = s
-    for bad, good in _NEUTRALIZE_MAP:
-        if bad in out:
-            out = out.replace(bad, good)
-    return out
-
-
-def _neutralize_deep(value: Any) -> Any:
-    """递归对所有对用户可见的字符串做禁词中性化。"""
-    if isinstance(value, str):
-        return _neutralize_text(value)
-    if isinstance(value, list):
-        return [_neutralize_deep(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _neutralize_deep(v) for k, v in value.items()}
-    return value
-
-
 def _finalize_verdict(raw: Dict[str, Any], *, ifind_used: bool, gaps: List[str], degraded: List[str]) -> Dict[str, Any]:
     """裁判原始输出 → 合规化最终研判：方向枚举校验 + 全文中性化 + 强制免责 + 数据质量标注。"""
     verdict: Dict[str, Any] = dict(raw or {})

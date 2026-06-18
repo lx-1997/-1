@@ -39,8 +39,14 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
+          // 清掉历史 cache-first sw.js（陈旧内容元凶），但保留离线召回用的 push-sw.js。
           navigator.serviceWorker.getRegistrations()
-            .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+            .then((registrations) => Promise.all(registrations
+              .filter((registration) => {
+                var sw = registration.active || registration.waiting || registration.installing;
+                return !(sw && sw.scriptURL && sw.scriptURL.indexOf('push-sw.js') !== -1);
+              })
+              .map((registration) => registration.unregister())))
             .catch(() => undefined);
         });
       }

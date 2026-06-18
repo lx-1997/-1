@@ -129,7 +129,21 @@ def test_wire_endpoint_degraded_when_empty(monkeypatch, tmp_path):
     assert data["data_quality"]["label"] == "研报库未同步"
 
 
-def test_workbench_pdf_blocks_path_traversal():
+def test_research_file_download_gated_by_default(monkeypatch):
+    """默认未配 DEEPFOCUS_RESEARCH_FILE_DOWNLOAD → 原文文件下载端点一律 403（不开放原始文件，只给 AI 解读）。"""
+    monkeypatch.delenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", raising=False)
+    for call in (
+        lambda: main.api_research_workbench_pdf(filename="x.pdf"),
+        lambda: main.api_research_wire_file(file_id="abc"),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(call())
+        assert exc.value.status_code == 403
+
+
+def test_workbench_pdf_blocks_path_traversal(monkeypatch):
+    # 即便开启文件下载，路径穿越仍被 _safe_workbench_file_path 拦截。
+    monkeypatch.setenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", "1")
     with pytest.raises(HTTPException) as exc:
         asyncio.run(main.api_research_workbench_pdf(filename="../../../etc/passwd"))
     assert exc.value.status_code in (400, 404)

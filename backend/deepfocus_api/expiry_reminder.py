@@ -114,12 +114,14 @@ def run_expiry_reminder_once(limit: Optional[int] = None) -> dict:
     if not cands:
         return summary
     config = _email_smtp_config()
+    if config is None:
+        # SMTP 未配置：本轮整体跳过、不逐人落库（到期提醒按 expiry_day 去重、下周期会自愈，
+        # 但仍不写 skipped 行以免污染统计、并与 t1_recall 保持一致）。
+        summary["skipped"] = len(cands)
+        summary["detail"].append(f"SMTP 未配置，{len(cands)} 名候选本轮跳过（不落库）")
+        return summary
     for u in cands:
         day = u["expires_at"][:10]
-        if config is None:
-            _record(u["id"], day, u["email"], "skipped", "SMTP 未配置")
-            summary["skipped"] += 1
-            continue
         subject, bdy = _build_email(u["username"], int(u.get("days_left", 1)))
         try:
             mime = MIMEText(bdy, "plain", "utf-8")

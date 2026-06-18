@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { apiGet, apiPost } from '../services/apiClient';
 import type { RealtimeMessageRecord, RealtimeMessageSeverity } from '../services/eventService';
 
 /**
@@ -149,6 +150,110 @@ export function __resetRecallDedup(): void {
   notifiedIds.clear();
 }
 
+// ===== Web Push（离线召回）：关掉页面/浏览器也能把用户叫回来 =====
+// 页面内 Notification 只在标签页存活时有效；真正的离线召回靠 Service Worker + Web Push。
+// 这是免费用户唯一不依赖付费/微信的离线触达通道（两日留存 15% 的头号修复）。
+const PUSH_SW_URL = '/push-sw.js';
+const WEBPUSH_KEY_PATH = '/api/realtime/recall/webpush-key';
+const WEBPUSH_SUB_PATH = '/api/realtime/recall/subscriptions';
+
+export function webPushSupported(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    'Notification' in window
+  );
+}
+
+/** VAPID 公钥（base64url）→ pushManager.subscribe 需要的 Uint8Array。 */
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = window.atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) {
+    out[i] = raw.charCodeAt(i);
+  }
+  return out;
+}
+
+let _webPushConfig: { enabled: boolean; public_key: string } | null = null;
+
+/** 读后端 VAPID 公钥配置（未配置→enabled=false，前端据此隐藏离线推送 UI）。结果缓存。 */
+export async function getWebPushConfig(): Promise<{ enabled: boolean; public_key: string }> {
+  if (_webPushConfig) {
+    return _webPushConfig;
+  }
+  try {
+    const cfg = await apiGet<{ enabled: boolean; public_key: string }>(WEBPUSH_KEY_PATH);
+    _webPushConfig = cfg && typeof cfg === 'object' ? cfg : { enabled: false, public_key: '' };
+  } catch {
+    _webPushConfig = { enabled: false, public_key: '' };
+  }
+  return _webPushConfig;
+}
+
+/**
+ * 订阅 Web Push：注册 push-sw → 取 VAPID 公钥 → pushManager.subscribe → 上报后端订阅契约。
+ * 全程 best-effort：不支持/未配置/未授权/失败都安静返回 false，绝不抛错打断调用方。
+ */
+export async function subscribeWebPush(opts?: {
+  symbols?: string[];
+  severities?: RealtimeMessageSeverity[];
+  scope?: RecallScope;
+}): Promise<boolean> {
+  if (!webPushSupported() || getNotificationPermission() !== 'granted') {
+    return false;
+  }
+  try {
+    const cfg = await getWebPushConfig();
+    if (!cfg.enabled || !cfg.public_key) {
+      return false;
+    }
+    const reg = await navigator.serviceWorker.register(PUSH_SW_URL);
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(cfg.public_key),
+      });
+    }
+    const prefs = loadRecallPrefs();
+    await apiPost(WEBPUSH_SUB_PATH, {
+      channel: 'webpush',
+      address: JSON.stringify(sub),
+      symbols: opts?.symbols ?? [],
+      severities: opts?.severities ?? prefs.severities,
+      scope: opts?.scope ?? prefs.scope,
+      label: 'browser-webpush',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 当前浏览器是否已建立离线 Web Push 订阅。 */
+export async function getWebPushSubscribed(): Promise<boolean> {
+  if (!webPushSupported()) {
+    return false;
+  }
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for (const reg of regs) {
+      const sw = reg.active || reg.waiting || reg.installing;
+      if (sw && sw.scriptURL && sw.scriptURL.indexOf('push-sw.js') !== -1) {
+        return !!(await reg.pushManager.getSubscription());
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /** 召回设置面板用的小 hook：偏好状态 + 持久化 + 通知权限。 */
 export function useRecallPrefs() {
   const [prefs, setPrefsState] = useState<RecallPrefs>(loadRecallPrefs);
@@ -166,6 +271,10 @@ export function useRecallPrefs() {
     const perm = await requestBrowserPermission();
     setPermission(perm);
     setPrefsState(prev => ({ ...prev, browserEnabled: perm === 'granted' }));
+    if (perm === 'granted') {
+      // 同时订阅 Web Push → 关掉页面也能离线召回（best-effort，未配置/失败仅退回页面内通知）
+      void subscribeWebPush();
+    }
   }, []);
 
   const disableBrowser = useCallback(() => {

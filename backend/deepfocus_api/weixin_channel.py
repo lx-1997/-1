@@ -135,11 +135,11 @@ def _format_push(msgs: List[Any]) -> str:
 
 
 async def _send_retry(b: Dict[str, Any], to: str, ctx: str, text: str, client: Any = None,
-                      tries: int = _SEND_TRIES, lock: Any = None) -> bool:
-    """发一条文本，失败自动重试 + 退避，提升成功率。
-    重试覆盖：网络抖动/超时、临时 ret!=0（竞态/刚刷新）、短暂限流冷却。全部失败返回 False。
-    lock：per-bot 串行锁，确保同一 bot 的 iLink 调用不并发（根除并发抢 token 的竞态）。"""
-    async def _attempt() -> bool:
+                      tries: int = _SEND_TRIES, lock: Any = None) -> tuple[bool, Any]:
+    """发一条文本，失败自动重试 + 退避。返回 (是否成功, ret标记)。
+    ret标记：成功→None；被确定性拒绝→该 ret 值(int，如 -2 token失效)；多次无响应→字符串 "no-response"。
+    重试覆盖：网络抖动/超时（仅"没拿到响应"才重试）。lock：per-bot 串行锁，根除并发抢 token 的竞态。"""
+    async def _attempt() -> tuple[bool, Any]:
         last = ""
         for k in range(tries):
             try:
@@ -148,20 +148,25 @@ async def _send_retry(b: Dict[str, Any], to: str, ctx: str, text: str, client: A
                 # ⭐成功判定对齐 iLink/RDK：ret 缺省(None)或 0 都算成功——成功时常不带 ret，
                 # 之前把 None 当失败→重试→把同一条发了多次(重复发送 bug)。
                 if ret in (0, None):
-                    return True
+                    return True, None
                 # 拿到明确非0响应 = 服务端已确定性拒绝(如 -2 token失效)：不重试(重试也发不出、且避免"已送达又重发")。
                 logger.warning("[weixin] 推送被拒(ret=%s) %s，不重试", ret, (b.get("ilink_bot_id") or "")[:8])
-                return False
+                return False, ret
             except Exception as exc:  # noqa: BLE001  仅"没拿到响应"(网络/超时)才重试
                 last = (type(exc).__name__ + ":" + str(exc))[:80]
             if k < tries - 1:
                 await asyncio.sleep(_SEND_RETRY_BACKOFF * (k + 1))  # 退避 1.2s, 2.4s…
         logger.warning("[weixin] 推送重试 %d 次仍失败(无响应) %s: %s", tries, (b.get("ilink_bot_id") or "")[:8], last)
-        return False
+        return False, "no-response"
     if lock is not None:
         async with lock:
             return await _attempt()
     return await _attempt()
+
+
+# 发送被这些 ret 拒绝 = context_token 对发送已失效（getconfig 仍可能说"活"，但 sendmessage 权威）：清冷转 COLD，
+# 停止对死 token 每条快讯反复硬发（反垃圾风险），并诚实提示用户重发激活。
+_SEND_DEAD_RETS = {-2, -14}
 
 
 def _member_can_push(b: Dict[str, Any]) -> bool:
@@ -374,16 +379,22 @@ class WeixinChannelManager:
             for i, (b, to, ctx, text) in enumerate(jobs):
                 if not self._running:
                     break
-                ok = await _send_retry(b, to, ctx, text, client, lock=self._lock_for(b.get("ilink_bot_id") or ""))  # 重试+退避+串行锁
+                ok, ret = await _send_retry(b, to, ctx, text, client, lock=self._lock_for(b.get("ilink_bot_id") or ""))  # 重试+退避+串行锁
                 bid = b.get("ilink_bot_id") or ""
                 uname = b.get("username") or ""
                 if ok:
                     sent += 1
                     bind.log_push_event("push", "delivered", bid, uname, f"{len(text)}字")
-                else:
-                    # 重试仍失败【不清 token】——可能只是临时/冷却；token 死活由 keepalive getconfig 权威判定。
+                elif ret in _SEND_DEAD_RETS:
+                    # sendmessage 确定性拒绝(token 对发送已失效)——getconfig 说"活"是假象，以发送为准：清冷、止损、提示重发。
                     failed += 1
-                    bind.log_push_event("push", "failed", bid, uname, "重试仍失败（不清token，待保活权威判定）")
+                    bind.clear_context_token(bid)
+                    bind.log_push_event("push", "dead", bid, uname,
+                                        f"sendmessage ret={ret}=context_token 失效→清冷，待用户发消息重新激活")
+                else:
+                    # 无响应/未知 ret：不清 token（可能只是网络抖/临时冷却），记录待观察。
+                    failed += 1
+                    bind.log_push_event("push", "failed", bid, uname, f"发送失败(ret={ret})，暂不清token待观察")
                 if i != len(jobs) - 1:
                     await asyncio.sleep(gap)  # 错峰
         logger.info("[weixin] auto-push 批量完成：成功 %d 失败 %d（错峰间隔 %.2fs）", sent, failed, gap)
@@ -524,10 +535,13 @@ class WeixinChannelManager:
             if fresh_within_seconds is not None and not _within(b.get("context_token_at"), now, fresh_within_seconds):
                 skipped += 1
                 continue
-            if await _send_retry(b, to, ctx, text, lock=self._lock_for(b.get("ilink_bot_id") or "")):  # 重试+退避+串行锁
+            ok, ret = await _send_retry(b, to, ctx, text, lock=self._lock_for(b.get("ilink_bot_id") or ""))  # 重试+退避+串行锁
+            if ok:
                 delivered += 1
             else:
                 failed += 1
+                if ret in _SEND_DEAD_RETS:  # 手动推也遇 token 失效 → 清冷，与自动推一致
+                    bind.clear_context_token(b.get("ilink_bot_id") or "")
         return {"delivered": delivered, "skipped": skipped, "failed": failed}
 
 

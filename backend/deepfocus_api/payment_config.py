@@ -40,6 +40,9 @@ def _valid_qr_key(which: str) -> Optional[str]:
 _DEFAULT: dict[str, Any] = {
     "enabled": True,
     "note": "扫码支付对应金额，付款时请在备注里写上你的用户名。",
+    # 自助兑换码店铺 URL（如闲鱼/淘宝/知识星球，付款后自动发卡密 → 用户回购买弹层「兑换会员码」秒开通）。
+    # 空 = 不展示该入口；运营在看板填入后前端自动出现「想立刻开通？店铺自助秒发卡密 →」链接，无需改代码。
+    "storefront_url": "",
     # orig = 原价（锚定价，用于「限时特惠」划线展示）；price = 现售价
     "packages": [
         {"key": "month", "label": "月卡", "days": 30, "price": 40, "orig": 68},
@@ -56,7 +59,7 @@ def get_config() -> dict[str, Any]:
         if _CFG_PATH.exists():
             saved = json.loads(_CFG_PATH.read_text("utf-8"))
             if isinstance(saved, dict):
-                for k in ("enabled", "note", "packages"):
+                for k in ("enabled", "note", "packages", "storefront_url"):
                     if k in saved:
                         cfg[k] = saved[k]
     except Exception as exc:  # noqa: BLE001
@@ -81,11 +84,20 @@ def get_config() -> dict[str, Any]:
 
 def set_config(updates: dict[str, Any]) -> dict[str, Any]:
     cfg = get_config()
-    out = {"enabled": cfg["enabled"], "note": cfg["note"], "packages": cfg["packages"]}
+    out = {
+        "enabled": cfg["enabled"],
+        "note": cfg["note"],
+        "packages": cfg["packages"],
+        "storefront_url": cfg.get("storefront_url", ""),
+    }
     if "enabled" in updates:
         out["enabled"] = bool(updates["enabled"])
     if "note" in updates and isinstance(updates["note"], str):
         out["note"] = updates["note"][:300]
+    if "storefront_url" in updates and isinstance(updates["storefront_url"], str):
+        u = updates["storefront_url"].strip()[:300]
+        # 只接受 http(s) 链接或清空；非法值忽略（防止把脏串渲染成链接）
+        out["storefront_url"] = u if (u == "" or u.startswith("http://") or u.startswith("https://")) else out["storefront_url"]
     if "packages" in updates and isinstance(updates["packages"], list):
         clean = []
         for p in updates["packages"][:12]:

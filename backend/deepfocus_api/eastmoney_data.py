@@ -77,11 +77,106 @@ async def fetch_eastmoney_earnings(symbol: str, market: Optional[str] = None) ->
                         "name": r0.get("SECURITY_NAME_ABBR"),
                         "is_hk": False,
                         "code": code,
+                        # —— 盈利质量增量字段(长线牛股方法论用)：每股经营现金流/扣非EPS/毛利率/净利/营收 ——
+                        "ocf_per_share": r0.get("MGJYXJJE"),     # 每股经营现金流 → 含金量 = ÷EPS
+                        "deduct_eps": r0.get("DEDUCT_BASIC_EPS"),  # 扣非每股收益 → 扣非占比 = ÷EPS
+                        "gross_margin": r0.get("XSMLL"),         # 销售毛利率 %
+                        "net_income": r0.get("PARENT_NETPROFIT"),  # 归母净利润
+                        "revenue": r0.get("TOTAL_OPERATE_INCOME"),  # 营业收入
                     }
     except Exception:
         result = None
 
     _CACHE[cache_key] = (time.time(), result)
+    return result
+
+
+def _a_secucode(code: str) -> str:
+    """6 位 A股代码 → 东财 SECUCODE（带交易所后缀）。6→.SH，4/8/9(北交所)→.BJ，其余→.SZ。"""
+    code = re.sub(r"\D", "", code or "")
+    if code[:1] == "6":
+        return f"{code}.SH"
+    if code[:1] in ("4", "8") or code[:2] == "92":
+        return f"{code}.BJ"
+    return f"{code}.SZ"
+
+
+async def fetch_eastmoney_cashflow(symbol: str, market: Optional[str] = None) -> Optional[dict]:
+    """A股现金流量表(经营/投资/筹资活动现金流量净额 + 购建长期资产 capex)。直连绕代理、缓存 6h。
+    给现金流八类型(第9.5)与自由现金流(第10章)用。失败/无数据→None(优雅降级)。"""
+    code = re.sub(r"\D", "", symbol or "")
+    if not code or len(code) != 6 or (market or "").upper() in ("HK", "US"):
+        return None
+    key = "cf:" + code
+    hit = _CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _CACHE_TTL:
+        return hit[1]
+    result: Optional[dict] = None
+    try:
+        url = (
+            "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+            "?reportName=RPT_F10_FINANCE_GCASHFLOW&columns=ALL&pageSize=1"
+            "&sortColumns=REPORT_DATE&sortTypes=-1"
+            f"&filter=(SECUCODE=%22{_a_secucode(code)}%22)"
+        )
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            r = await client.get(url, headers=_HEADERS)
+        if r.status_code == 200:
+            data = ((r.json().get("result") or {}).get("data")) or []
+            if data:
+                r0 = data[0]
+                result = {
+                    "report_date": (r0.get("REPORT_DATE") or "")[:10],
+                    "ocf": r0.get("NETCASH_OPERATE"),        # 经营活动现金流量净额
+                    "icf": r0.get("NETCASH_INVEST"),         # 投资活动现金流量净额
+                    "fcf_financing": r0.get("NETCASH_FINANCE"),  # 筹资活动现金流量净额
+                    "capex": r0.get("CONSTRUCT_LONG_ASSET"),  # 购建固定/无形/长期资产支付的现金
+                    "code": code,
+                }
+    except Exception:
+        result = None
+    _CACHE[key] = (time.time(), result)
+    return result
+
+
+async def fetch_eastmoney_balance(symbol: str, market: Optional[str] = None) -> Optional[dict]:
+    """A股资产负债表关键项：应收账款 / 预收(合同负债) / 存货 / 归母净资产。直连绕代理、缓存 6h。
+    给盈利质量(第4.3 还原应收预收)与好生意(第1.6 预收>应收=回款强)用。失败→None。"""
+    code = re.sub(r"\D", "", symbol or "")
+    if not code or len(code) != 6 or (market or "").upper() in ("HK", "US"):
+        return None
+    key = "bal:" + code
+    hit = _CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _CACHE_TTL:
+        return hit[1]
+    result: Optional[dict] = None
+    try:
+        url = (
+            "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+            "?reportName=RPT_F10_FINANCE_GBALANCE&columns=ALL&pageSize=1"
+            "&sortColumns=REPORT_DATE&sortTypes=-1"
+            f"&filter=(SECUCODE=%22{_a_secucode(code)}%22)"
+        )
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            r = await client.get(url, headers=_HEADERS)
+        if r.status_code == 200:
+            data = ((r.json().get("result") or {}).get("data")) or []
+            if data:
+                r0 = data[0]
+                # 预收：新准则记入「合同负债」，按多个候选键 best-effort 取第一个非空
+                adv = next((r0.get(k) for k in ("CONTRACT_LIAB", "CONTRACT_LIABILITIES", "ADVANCE_RECEIVABLES")
+                            if r0.get(k) is not None), None)
+                result = {
+                    "report_date": (r0.get("REPORT_DATE") or "")[:10],
+                    "accounts_receivable": r0.get("ACCOUNTS_RECE"),  # 应收账款
+                    "advance_receipts": adv,                          # 预收账款/合同负债
+                    "inventory": r0.get("INVENTORY"),                 # 存货
+                    "equity": r0.get("TOTAL_PARENT_EQUITY"),          # 归母净资产
+                    "code": code,
+                }
+    except Exception:
+        result = None
+    _CACHE[key] = (time.time(), result)
     return result
 
 

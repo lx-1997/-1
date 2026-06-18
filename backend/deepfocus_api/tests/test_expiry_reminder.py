@@ -16,10 +16,28 @@ def _cand(uid, day_left=1):
             "expires_at": f"2026-06-1{day_left}T08:00:00+00:00", "source": "invite", "days_left": day_left}
 
 
+def _working_smtp(monkeypatch):
+    monkeypatch.setattr(expiry_reminder, "_email_smtp_config",
+                        lambda: {"sender": "s@x.com", "user": "u@x.com"})
+    monkeypatch.setattr(expiry_reminder, "_smtp_sendmail", lambda config, to, mime: None)
+
+
+def test_smtp_unset_does_not_poison(iso, monkeypatch):
+    """SMTP 未配置：本轮 skipped 但不落库，候选不被毒化（下轮仍可召回）。"""
+    monkeypatch.setattr(expiry_reminder, "users_expiring_within", lambda h=48: [_cand("a")])
+    r1 = expiry_reminder.run_expiry_reminder_once()  # 固件里 SMTP→None
+    assert r1["candidates"] == 1 and r1["skipped"] == 1
+    s = expiry_reminder.expiry_reminder_stats()
+    assert s["skipped"] == 0 and s["recent"] == []  # 没落库
+    r2 = expiry_reminder.run_expiry_reminder_once()
+    assert r2["candidates"] == 1  # 仍是候选
+
+
 def test_dedupe_per_expiry_cycle(iso, monkeypatch):
     monkeypatch.setattr(expiry_reminder, "users_expiring_within", lambda h=48: [_cand("a")])
+    _working_smtp(monkeypatch)
     r1 = expiry_reminder.run_expiry_reminder_once()
-    assert r1["candidates"] == 1 and r1["skipped"] == 1  # SMTP 未配置 → skipped 但已落库
+    assert r1["candidates"] == 1 and r1["sent"] == 1  # 真发出并落库
     r2 = expiry_reminder.run_expiry_reminder_once()
     assert r2["candidates"] == 0  # 同一到期日不再重复
 
@@ -40,6 +58,7 @@ def test_email_copy(iso):
 
 def test_stats(iso, monkeypatch):
     monkeypatch.setattr(expiry_reminder, "users_expiring_within", lambda h=48: [_cand("a"), _cand("b")])
+    _working_smtp(monkeypatch)
     expiry_reminder.run_expiry_reminder_once()
     s = expiry_reminder.expiry_reminder_stats()
-    assert s["skipped"] == 2 and len(s["recent"]) == 2
+    assert s["sent"] == 2 and len(s["recent"]) == 2

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -17,7 +18,9 @@ from typing import Any, Optional
 import httpx
 
 from . import data_store
+from . import ifind_api
 from .eastmoney_data import fetch_eastmoney_index
+from .eastmoney_reports import query_eastmoney_reports
 from .llm import CloudResearchLLM, _extract_json
 from .realtime_messages import list_realtime_messages
 
@@ -733,6 +736,143 @@ def _template_narrative(snap: dict) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# 数据深化（纯加性、绝不拖垮主流程；失败一律优雅降级为空）：
+#   ① 东财研报 broker_views：今日异动个股近一个多月的机构覆盖（评级/机构/家数）——【公开数据，可展示】；
+#   ② iFinD 基本面 ifind_fuel：异动龙头的估值/换手/市值【定性标签】——【授权数据，仅作内部燃料喂 LLM，
+#      绝不输出原始数值，符合 iFinD「只作内部燃料不转卖」的合规约定】。
+# --------------------------------------------------------------------------- #
+_REVIEW_BROKER_ON = os.getenv("DEEPFOCUS_REVIEW_BROKER", "1") not in ("0", "false", "False", "")
+_REVIEW_IFIND_ON = os.getenv("DEEPFOCUS_REVIEW_IFIND", "1") not in ("0", "false", "False", "")
+_BROKER_RECENT_DAYS = 45   # 只把「近一个多月」的研报算作对今日异动的机构覆盖（避免拿两年前旧研报硬蹭）
+
+
+def _mover_candidates(movers: Optional[dict], *, n_up: int = 6, n_down: int = 4) -> list[dict]:
+    """今日涨/跌幅榜里带 A 股代码的标的，去重，作研报/基本面深化的取数对象。"""
+    out: list[dict] = []
+    seen: set[str] = set()
+    if not movers:
+        return out
+    for s in (movers.get("gainers") or [])[:n_up] + (movers.get("losers") or [])[:n_down]:
+        code = str(s.get("code") or "").strip()
+        name = str(s.get("name") or "").strip()
+        if not code or not name or code in seen:
+            continue
+        seen.add(code)
+        out.append({"code": code, "name": name, "pct": s.get("pct")})
+    return out
+
+
+async def _broker_views(movers: Optional[dict], now: datetime, *, cap: int = 6) -> list[dict]:
+    """今日异动个股 × 东财研报库：取近一个多月的机构覆盖（评级/机构/家数/最新一篇）。公开数据，可展示。
+    失败/无近期研报 → 该股略过；整体异常 → 返回 []。"""
+    if not _REVIEW_BROKER_ON:
+        return []
+    cands = _mover_candidates(movers, n_up=6, n_down=4)
+    if not cands:
+        return []
+    cutoff = (now - timedelta(days=_BROKER_RECENT_DAYS)).strftime("%Y-%m-%d")
+    sem = asyncio.Semaphore(4)  # 温柔对待东财（reportapi 与行情 push2 非同源，但仍限并发）
+
+    async def _one(c: dict) -> Optional[dict]:
+        async with sem:
+            try:
+                rows, _warn = await query_eastmoney_reports(code=c["code"], page_size=10)
+            except Exception:
+                return None
+        recent = [r for r in (rows or []) if (r.get("date") or "") >= cutoff and r.get("title")]
+        if not recent:
+            return None
+        recent.sort(key=lambda r: r.get("date") or "", reverse=True)
+        orgs: list[str] = []
+        for r in recent:
+            o = (r.get("org") or "").strip()
+            if o and o not in orgs:
+                orgs.append(o)
+        latest = recent[0]
+        return {
+            "name": c["name"], "code": c["code"], "pct": c.get("pct"),
+            "direction": "up" if (c.get("pct") or 0) >= 0 else "down",
+            "count": len(recent), "orgs": orgs[:4],
+            "latest": {
+                "title": (latest.get("title") or "")[:60], "org": latest.get("org") or "",
+                "rating": latest.get("rating") or "", "date": latest.get("date") or "",
+                # ⚠️不下发研报原文链接：复盘只展示机构观点元数据（家数/评级/标题），不给原始文件入口。
+            },
+        }
+
+    try:
+        results = await asyncio.gather(*[_one(c) for c in cands], return_exceptions=True)
+    except Exception:
+        return []
+    views = [r for r in results if isinstance(r, dict)]
+    views.sort(key=lambda v: v.get("count") or 0, reverse=True)
+    return views[:cap]
+
+
+def _bucket_fundamental(row: Optional[dict]) -> str:
+    """把 iFinD 基本面行转成【定性标签】（绝不带原始数值）：估值 / 换手 / 市值规模。无可说 → 空串。"""
+    if not isinstance(row, dict):
+        return ""
+    labels: list[str] = []
+
+    def _f(key: str) -> Optional[float]:
+        try:
+            v = row.get(key)
+            return float(v) if v is not None and v != "" else None
+        except (TypeError, ValueError):
+            return None
+
+    pe = _f("pe_ttm")
+    if pe is not None:
+        if pe < 0:
+            labels.append("尚未盈利（PE 为负）")
+        elif pe >= 80:
+            labels.append("估值高企")
+        elif pe >= 35:
+            labels.append("估值偏高")
+        elif 0 < pe <= 15:
+            labels.append("估值偏低")
+    pb = _f("pb")
+    if pb is not None and pb < 1:
+        labels.append("已破净")
+    tr = _f("turnoverRatio")
+    if tr is not None:
+        if tr >= 15:
+            labels.append("换手率极高、博弈激烈")
+        elif tr >= 8:
+            labels.append("放量活跃")
+    cap = _f("totalCapital")  # 总市值（元）
+    if cap is not None:
+        if cap >= 1e12:
+            labels.append("万亿级权重股")
+        elif cap >= 2e11:
+            labels.append("千亿大盘股")
+        elif cap < 5e10:
+            labels.append("中小盘/题材属性")
+    return "、".join(dict.fromkeys(labels))  # 去重保序
+
+
+async def _ifind_fundamentals(movers: Optional[dict]) -> dict[str, str]:
+    """异动龙头的 iFinD 基本面【定性标签】（仅作内部燃料喂 LLM，不展示原始值）。
+    未配置 / 关闭 / 非 A 股 / 失败 → 该股略过。返回 {名称: 定性标签}。"""
+    if not _REVIEW_IFIND_ON or not ifind_api.enabled():
+        return {}
+    cands = _mover_candidates(movers, n_up=6, n_down=3)
+    if not cands:
+        return {}
+    out: dict[str, str] = {}
+    for c in cands:
+        try:
+            row = await asyncio.to_thread(ifind_api.cached_single_quote, c["code"])
+        except Exception:
+            row = None
+        label = _bucket_fundamental(row)
+        if label:
+            out[c["name"]] = label
+    return out
+
+
 def _gather_content_items(now: datetime, *, days: int = 2) -> list[dict]:
     """近 N 天本站快讯/文章/研报条目（含 id/topic/url，供前端做来源超链接）。"""
     since = (now - timedelta(days=days)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -792,7 +932,8 @@ def _digest_text(items: list[dict], now: datetime) -> str:
 
 
 async def _llm_narrative(snap: dict, now: Optional[datetime] = None, items: Optional[list[dict]] = None,
-                         feedback: Optional[list[str]] = None) -> Optional[dict]:
+                         feedback: Optional[list[str]] = None,
+                         ifind_fuel: Optional[dict] = None) -> Optional[dict]:
     """MiniMax 合成买方视角复盘叙述：通读近 2 天本站快讯/文章/研报，把今日涨跌【归因】到我们发过的具体内容。
     feedback：批评家/数字校验给出的问题清单 → 据此修订重写（Critic-Reviser 回路）。
     失败/未配置 → None（上层回退模板）。"""
@@ -819,6 +960,19 @@ async def _llm_narrative(snap: dict, now: Optional[datetime] = None, items: Opti
         reason_s = f"〔关联理由：{reason}〕" if reason else ""
         edge_lines += f"- [{tag}]{e.get('name','')} {pct_s}{lead_s}{reason_s}：{sl}\n"
     content_digest = _digest_text(items, now)
+    # 东财研报·机构观点（公开数据，可在正文点名机构/评级）
+    bviews = snap.get("broker_views") or []
+    broker_lines = ""
+    for v in bviews[:8]:
+        orgs = "、".join(v.get("orgs") or []) or "多家机构"
+        lt = v.get("latest") or {}
+        rating = (lt.get("rating") or "").strip()
+        rating_s = f"，最新{lt.get('org','')}给『{rating}』" if rating else (f"，最新覆盖机构{lt.get('org','')}" if lt.get("org") else "")
+        broker_lines += f"- {v.get('name')}：近一个多月 {v.get('count')} 家机构覆盖（{orgs}）{rating_s}\n"
+    # iFinD 基本面·定性标签（授权数据，仅供判断盘面性质，⛔严禁写出任何具体数值）
+    fuel_lines = ""
+    for nm, lab in (ifind_fuel or {}).items():
+        fuel_lines += f"- {nm}：{lab}\n"
     _fr = snap.get("fund_rank") or {}
     inflow_s = "、".join(f"{x['name']}{(x['flow'] or 0) / 1e8:+.1f}亿" for x in (_fr.get("inflow") or [])) or "—"
     outflow_s = "、".join(f"{x['name']}{(x['flow'] or 0) / 1e8:+.1f}亿" for x in (_fr.get("outflow") or [])) or "—"
@@ -836,7 +990,7 @@ async def _llm_narrative(snap: dict, now: Optional[datetime] = None, items: Opti
         "要专业、有信息量、有逻辑，同时表达通俗清晰——像一位资深分析师在跟朋友讲盘，"
         "客观、不吹票、不构成投资建议。\n\n"
         "【写作要求】\n"
-        "1. 专业但不堆黑话：可以正常使用专业概念（主力净流入、北向资金、量能、估值切换等），"
+        "1. 专业但不堆黑话：可以正常使用专业概念（主力净流入、量能、估值切换等），"
         "但讲到稍冷门或容易误解的概念时，顺带半句话点明含义即可；不要逐词科普、不要幼稚化、不要『小学生造句』式解释。\n"
         "2. 体现平台的信息价值——这是本复盘的灵魂：今天异动的板块/个股里，凡是DeepFocus近几天用【快讯/文章/研报】提前提到过的，"
         "就在行文中用【】把它的标题原样括进句子（例：『半导体走强，两天前DeepFocus的【中芯国际产能…】快讯就提示了这条线』）。"
@@ -856,7 +1010,8 @@ async def _llm_narrative(snap: dict, now: Optional[datetime] = None, items: Opti
         "   - 把某条资讯关联到某个涨跌时，方向必须一致：利好性资讯只能对应『上涨』的标的，利空性资讯只能对应『下跌』的标的；方向对不上就不要关联。\n"
         "   - 凡是『A 导致 B 涨/跌』这类因果，只有数据或资讯明确支持才写；否则改为客观并列陈述（如『X 走强，同时 Y 回落』），不要硬编谁导致谁。\n"
         "   - 下方『我们提前覆盖』清单已按方向一致性筛过；若某方向为空，就大方地不提我们的资讯，绝不要为凑『信息价值』硬找或写勉强的辩解（如『虽然当时方向相反但我们一直在跟踪』这类话一律不准出现）。\n"
-        "6. 数字纪律：资金、北向、量能、估值等只用下方给到的数据，没给到的具体数值不要编。\n\n"
+        "6. 数字纪律：资金、量能、估值等只用下方给到的数据，没给到的具体数值不要编；"
+        "⛔尤其不要提『北向资金/沪深股通』的任何具体数值或方向——交易所已停止披露该实时数据，本复盘不提供，严禁臆测。\n\n"
         "7. ⭐【以板块/主线为主、少谈个股】这是一份机构买方视角的市场复盘，重心是大盘基调、板块主线、资金切换、宏观/政策背景；"
         "个股最多顺带点 1-2 个最具代表性的领涨股佐证主线即可，不要罗列一堆个股名。\n\n"
         f"【今日基调·系统按真实数据判定（你的全部叙述必须与此一致，不得自相矛盾）】{snap.get('verdict', {}).get('tone', '')}（{snap.get('verdict', {}).get('basis', '')}）\n\n"
@@ -867,7 +1022,11 @@ async def _llm_narrative(snap: dict, now: Optional[datetime] = None, items: Opti
         f"【领涨板块】\n{top_lines}\n\n【领跌板块】\n{bot_lines}\n\n"
         f"【★今日异动中 我们提前覆盖过的板块/个股（含领先时长，请优先在 our_value 与正文里引用）】\n{edge_lines or '（今日暂无匹配）'}\n\n"
         f"【★本站近两日快讯/文章/研报清单（用于在行文中【】引用，标题须一字不差）】\n{content_digest or '（暂无）'}\n\n"
-        "只输出 JSON object，字段如下（每句尽量独立成意、便于分行展示；不要 Markdown、不要多余解释）：\n"
+        + (f"【机构观点·东财券商研报（公开数据，可在 sectors/our_value 段自然点出『近期X家机构覆盖/给予买入』，"
+           f"机构名与评级用下方给到的，⛔不要编造目标价或任何具体数字）】\n{broker_lines}\n" if broker_lines else "")
+        + (f"【部分异动个股·基本面定性参考（仅供你判断盘面性质，如放量博弈/估值已不便宜；"
+           f"⛔【最高优先级】严禁在正文写出任何 PE/换手率/市值的具体数值，只能定性表达，例如写『放量活跃、估值已不便宜』而不是任何数字）】\n{fuel_lines}\n" if fuel_lines else "")
+        + "只输出 JSON object，字段如下（每句尽量独立成意、便于分行展示；不要 Markdown、不要多余解释）：\n"
         "one_liner: 一句话总结今日盘面，≤40字，口语化；\n"
         "plain: 『导读』，用清晰通俗、但专业有料的话讲清今天盘面的核心逻辑与驱动（发生了什么、背后为什么），3-5句，"
         "点到为止、有洞察，不要幼稚化也不要逐词科普；\n"
@@ -889,7 +1048,8 @@ async def _llm_narrative(snap: dict, now: Optional[datetime] = None, items: Opti
     try:
         data = await CloudResearchLLM().complete_json(prompt, max_tokens=2600, timeout_seconds=90)
         if isinstance(data, dict) and (data.get("market") or data.get("one_liner") or data.get("plain")):
-            return {k: data.get(k, "") for k in ("one_liner", "plain", "market", "sectors", "funds", "our_value", "tomorrow")}
+            from .compliance import neutralize_deep
+            return neutralize_deep({k: data.get(k, "") for k in ("one_liner", "plain", "market", "sectors", "funds", "our_value", "tomorrow")})
     except Exception:
         return None
     return None
@@ -990,6 +1150,11 @@ def _allowed_numbers(snap: dict) -> set[float]:
     # 来源清单标题里的数字也算合法（AI 原样引用我们快讯/文章/研报里的数据，不是凭空捏造）
     for src in (snap.get("sources") or []):
         for m in re.findall(r"\d+(?:\.\d+)?", src.get("title", "") or ""):
+            _add(m)
+    # 机构观点：研报标题/家数里的数字也是真实公开数据（AI 引用机构研报，非编造）
+    for v in (snap.get("broker_views") or []):
+        _add(v.get("count"))
+        for m in re.findall(r"\d+(?:\.\d+)?", ((v.get("latest") or {}).get("title") or "")):
             _add(m)
     return nums
 
@@ -1112,6 +1277,9 @@ async def build_review(date_str: Optional[str] = None) -> dict:
         for _s in (_e.get("signals") or []):
             _s.pop("snippet", None)
     content_items = _gather_content_items(now)     # 本站近两日资讯条目（归因素材 + 来源超链接）
+    # 数据深化（纯加性，失败降级为空）：东财研报机构观点（公开·可展示）+ iFinD 基本面定性燃料（仅喂 LLM）
+    broker_views = await _broker_views(movers, now)
+    ifind_fuel = await _ifind_fundamentals(movers)
     snap = {
         "date": date_str,
         "session": session,
@@ -1123,12 +1291,13 @@ async def build_review(date_str: Optional[str] = None) -> dict:
         "our_edge": our_edge,
         "verdict": _market_verdict(indices, breadth),  # 确定性基调锚（LLM 不可篡改）
         "fund_rank": _fund_rank(sectors),              # 资金面：按板块主力净流入排（净流入/净流出 top）
+        "broker_views": broker_views,                  # 机构观点：异动股近一个多月东财研报覆盖（公开数据）
         # 来源（供前端把复盘里【标题】变成可点链接，点开看原文）
         "sources": [{k: it.get(k, "") for k in ("id", "topic", "title", "url", "created_at")} for it in content_items],
     }
     narrative = None
     for _ in range(3):  # LLM 偶发超时/空 → 重试，尽量拿到 AI 归因而非弱模板
-        narrative = await _llm_narrative(snap, now, content_items)
+        narrative = await _llm_narrative(snap, now, content_items, ifind_fuel=ifind_fuel)
         if narrative and narrative.get("market"):
             break
     # ⭐Critic–Reviser 对抗回路：批评家红队 + 确定性数字校验 → 有问题就带意见修订一次（降幻觉）
@@ -1141,7 +1310,7 @@ async def build_review(date_str: Optional[str] = None) -> dict:
             issues += _citation_violations(narrative, content_items)
             revised_flag = False
             if issues:
-                revised = await _llm_narrative(snap, now, content_items, feedback=issues)
+                revised = await _llm_narrative(snap, now, content_items, feedback=issues, ifind_fuel=ifind_fuel)
                 if (revised and revised.get("market")
                         and len(_number_violations(revised, snap)) <= len(numviol_before)
                         and not _citation_violations(revised, content_items)
