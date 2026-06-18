@@ -1,0 +1,16 @@
+# Caddy auto-provisions HTTPS for a real DOMAIN (Let's Encrypt).
+# For local testing set DOMAIN=localhost (Caddy issues a local cert).
+{$DOMAIN:localhost} {
+	encode zstd gzip
+
+	# API + health + research-workbench → backend
+	@backend path /api/* /health /research-workbench /research-workbench/*
+	handle @backend {
+		reverse_proxy backend:8300
+	}
+
+	# Everything else → frontend SPA
+	handle {
+		reverse_proxy frontend:80
+	}
+}

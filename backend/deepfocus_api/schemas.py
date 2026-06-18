@@ -200,10 +200,30 @@ class PortfolioReviewResponse(BaseModel):
 
 
 MacroVerdict = Literal["风险偏好", "中性", "避险", "数据不足"]
+RegimeAxis = Literal["扩张", "放缓", "中性", "升温", "回落"]
+
+
+class MacroRegime(BaseModel):
+    """投资时钟体制：增长×通胀二维定位 → 具名宏观体制 + 买方资产配置手册。
+
+    与 overall_verdict（风险偏好/避险）正交互补：verdict 答「现在敢不敢冒险」，
+    regime 答「现在处在周期哪一象限、该超配什么」。两轴均由确定性规则从维度信号合成。
+    """
+
+    name: str = "数据不足"  # 复苏(Goldilocks)/过热(Reflation)/滞胀(Stagflation)/衰退(Deflation)/过渡…
+    growth_axis: RegimeAxis = "中性"      # 扩张 / 放缓 / 中性
+    inflation_axis: RegimeAxis = "中性"   # 升温 / 回落 / 中性
+    growth_score: int = Field(default=0, ge=-100, le=100)
+    inflation_score: int = Field(default=0, ge=-100, le=100)
+    playbook: str = ""                    # 一句话操作主张
+    favored: list[str] = Field(default_factory=list)   # 超配资产/板块
+    avoided: list[str] = Field(default_factory=list)   # 低配/回避
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    evidence: list[str] = Field(default_factory=list)  # 驱动两轴判定的信号读数
 
 
 class MacroReviewResponse(BaseModel):
-    """宏观环境速判：市场/利率/通胀/避险四维度的机构级一页纸。"""
+    """宏观环境速判：多维度机构级一页纸 + 投资时钟体制定位。"""
 
     generated_at: datetime
     overall_verdict: MacroVerdict = "数据不足"
@@ -211,7 +231,10 @@ class MacroReviewResponse(BaseModel):
     confidence: float = Field(default=0.0, ge=0, le=1)
     narrative: str = ""
     narrative_provider: str = "rule-template"
+    regime: Optional[MacroRegime] = None
     dimensions: list[TearSheetDimension] = Field(default_factory=list)
+    china_dimensions: list[TearSheetDimension] = Field(default_factory=list)  # 中国宏观轴：沪深300/北向/人民币/中国10Y
+    china_read: str = ""  # 中国宏观一句话本土环境读
     sp500_series: list[dict] = Field(default_factory=list)
     us10y_series: list[dict] = Field(default_factory=list)
     disclaimer: str = "宏观环境速判基于公开市场数据的规则化判定，仅供研究参考，不构成投资建议。"
@@ -612,7 +635,7 @@ class RealtimeMessageListResponse(BaseModel):
     messages: list[RealtimeMessageRecord]
 
 
-RecallChannel = Literal["email", "webpush"]
+RecallChannel = Literal["email", "webpush", "wechat"]
 RecallScope = Literal["watchlist", "all"]
 RecallDeliveryStatus = Literal["sent", "skipped", "pending", "error"]
 
@@ -903,6 +926,11 @@ class MarketQuote(BaseModel):
     delay_note: str = ""
     wk52_high: Optional[float] = None
     wk52_low: Optional[float] = None
+    # 基本面（目前仅 iFinD 增强的 A股 quote 会填；其他 provider 恒 None，对老逻辑/前端无感）
+    pe_ttm: Optional[float] = None
+    pb: Optional[float] = None
+    total_capital: Optional[float] = None   # 总市值（元）
+    turnover_ratio: Optional[float] = None  # 换手率（%）
 
 
 MarketRegion = Literal["US", "HK", "CN", "OTHER"]
@@ -964,21 +992,65 @@ class ResearchReportSearchResponse(BaseModel):
     data_quality: DataQuality = Field(default_factory=DataQuality)
 
 
+class ResearchWireItem(BaseModel):
+    """终端「研报」面板的单条研报（海外投行报告）。"""
+
+    id: str
+    title: str
+    org: str = "海外投行"
+    date: str = ""
+    created_at: str = ""
+    filename: str
+    out: str = "downloads/海外投行报告"
+    size: int = 0
+    hashtag: str = ""
+    download_count: int = 0
+    preview_url: str = ""
+    file_id: Optional[str] = None
+    instruments: list[str] = Field(default_factory=list)  # 提及标的（A/美/港股+黄金原油白银比特币），收报时预提取
+    market: str = ""  # 主要市场 A/HK/US（模型判定，前端据此分 A股/港美股；空=未判定，前端回退标题启发式）
+
+
+class ResearchWireResponse(BaseModel):
+    items: list[ResearchWireItem] = Field(default_factory=list)
+    total: int = 0
+    source: str = "海外投行研报"
+    fetched_at: str = ""
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
 class ResearchVisionAnalyzeRequest(BaseModel):
     pdf_url: Optional[str] = None
     workbench_filename: Optional[str] = None
     workbench_out: str = "downloads/海外投行报告"
+    # 在线研报（仅 file_id，未落本地）：经同机工作台取 PDF 后解读
+    file_id: Optional[str] = None
+    filename: Optional[str] = None
     title: Optional[str] = None
     symbol: Optional[str] = None
     max_pages: int = 6
 
 
+class NewsAnalyzeRequest(BaseModel):
+    title: str = ""
+    content: str = ""
+    url: Optional[str] = None
+
+
 class ResearchVisionAnalysisResponse(BaseModel):
     title: str = ""
     symbol: Optional[str] = None
+    subject: str = ""                                   # 标的：研报研究的公司/股票
+    one_liner: str = ""                                 # 一句话结论
     summary: str = ""
-    key_points: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
+    core_logic: str = ""                                # 投资逻辑：核心驱动/因果链
+    takeaway: str = ""                                  # 一句话启示
+    bullish: list[str] = Field(default_factory=list)    # 利好/看涨
+    bearish: list[str] = Field(default_factory=list)    # 利空/风险
+    instruments: list[str] = Field(default_factory=list)  # 提及标的（A/美/港股+黄金原油白银比特币）
+    market: str = ""  # 主要市场 A/HK/US（模型判定）
+    key_points: list[str] = Field(default_factory=list)  # 兼容旧字段（=bullish）
+    risks: list[str] = Field(default_factory=list)       # 兼容旧字段（=bearish）
     rating: Optional[str] = None
     target_price: Optional[str] = None
     confidence: float = 0.5

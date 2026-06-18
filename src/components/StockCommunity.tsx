@@ -16,7 +16,8 @@ import {
   Modal,
   Rate,
   Input,
-  message
+  message,
+  Empty
 } from 'antd';
 import { 
   FireOutlined, 
@@ -25,6 +26,7 @@ import {
   DollarOutlined,
   EyeOutlined,
   LikeOutlined,
+  LikeFilled,
   ShareAltOutlined,
   CrownOutlined,
   ArrowLeftOutlined,
@@ -45,6 +47,7 @@ interface StockCommunityProps {
   stock: Stock;
   posts: Post[];
   comments: Comment[];
+  likedPostIds?: string[]; // 用户已点赞的帖子 ID 列表
   onBack: () => void;
   onCreatePost: (stock: Stock) => void;
   onPostClick: (post: Post) => void;
@@ -59,6 +62,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
   stock,
   posts,
   comments,
+  likedPostIds,
   onBack,
   onCreatePost,
   onPostClick,
@@ -68,6 +72,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
   onShare,
   onViewChange
 }) => {
+  const likedSet = new Set(likedPostIds ?? []);
   const [activeTab, setActiveTab] = useState('network');
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isPurchaseModalVisible, setIsPurchaseModalVisible] = useState(false);
@@ -130,9 +135,10 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
     }
   };
 
-  const renderPostList = (postList: Post[]) => (
+  const renderPostList = (postList: Post[], emptyText?: string) => (
     <List
       dataSource={postList}
+      locale={{ emptyText: <Empty description={emptyText || "暂无相关"} /> }}
       renderItem={(post) => (
         <List.Item
           style={{ cursor: 'pointer' }}
@@ -143,7 +149,8 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
             </Button>,
             <Button
               type="link"
-              icon={<LikeOutlined />}
+              icon={likedSet.has(post.id) ? <LikeFilled /> : <LikeOutlined />}
+              style={likedSet.has(post.id) ? { color: '#52c41a' } : undefined}
               onClick={(e) => {
                 e.stopPropagation();
                 onLike(post);
@@ -179,7 +186,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
           <List.Item.Meta
             avatar={
               <Badge
-                count={post.isPaid ? <DollarOutlined style={{ color: '#faad14' }} /> : 0}
+                count={post.isPaid ? <DollarOutlined style={{ color: 'var(--warning)' }} /> : 0}
                 offset={[-5, 5]}
               >
                 <Avatar 
@@ -243,8 +250,8 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
               <Avatar 
                 size={64}
                 style={{ 
-                  backgroundColor: stock.focusLevel === 'high' ? '#ff4d4f' : 
-                                 stock.focusLevel === 'medium' ? '#faad14' : '#52c41a',
+                  backgroundColor: stock.focusLevel === 'high' ? 'var(--negative)' : 
+                                 stock.focusLevel === 'medium' ? 'var(--warning)' : 'var(--positive)',
                   fontSize: '24px',
                   fontWeight: 'bold',
                   marginBottom: '12px'
@@ -270,7 +277,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   value={stock.currentPrice} 
                   prefix="$" 
                   precision={2}
-                  valueStyle={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f', fontSize: '16px' }}
+                  valueStyle={{ color: stock.changePercent >= 0 ? 'var(--positive)' : 'var(--negative)', fontSize: '16px' }}
                 />
               </Col>
               <Col xs={12}>
@@ -279,7 +286,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   value={Number(stock.changePercent.toFixed(2))} 
                   suffix="%" 
                   precision={2}
-                  valueStyle={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f', fontSize: '16px' }}
+                  valueStyle={{ color: stock.changePercent >= 0 ? 'var(--positive)' : 'var(--negative)', fontSize: '16px' }}
                   prefix={stock.changePercent >= 0 ? '+' : ''}
                 />
               </Col>
@@ -300,7 +307,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   title="深度报告"
                   value={stock.totalPaidPosts} 
                   suffix="篇"
-                  valueStyle={{ color: '#faad14', fontSize: '16px' }}
+                  valueStyle={{ color: 'var(--warning)', fontSize: '16px' }}
                 />
               </Col>
             </Row>
@@ -347,7 +354,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   资讯证据 ({newsPosts.length})
                 </span>
               ),
-              children: renderPostList(newsPosts)
+              children: renderPostList(newsPosts, "暂无相关资讯")
             },
             {
               key: 'analysis',
@@ -357,7 +364,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   研究观点 ({analysisPosts.length})
                 </span>
               ),
-              children: renderPostList(analysisPosts)
+              children: renderPostList(analysisPosts, "暂无相关分析")
             },
             {
               key: 'discussion',
@@ -367,7 +374,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   讨论记录 ({discussionPosts.length})
                 </span>
               ),
-              children: renderPostList(discussionPosts)
+              children: renderPostList(discussionPosts, "暂无相关讨论")
             },
             {
               key: 'data',
@@ -387,7 +394,7 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
                   深度报告 ({paidPosts.length})
                 </span>
               ),
-              children: renderPostList(paidPosts)
+              children: renderPostList(paidPosts, "暂无深度研报")
             }
           ]}
         />
@@ -409,13 +416,13 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
       >
         {selectedPost && (
           <div style={{ textAlign: 'center' }}>
-            <DollarOutlined style={{ fontSize: '48px', color: '#faad14', marginBottom: '16px' }} />
+            <DollarOutlined style={{ fontSize: '48px', color: 'var(--warning)', marginBottom: '16px' }} />
             <Title level={4}>开通确认</Title>
             <Paragraph>
               您即将开通 <Text strong>{selectedPost.title}</Text>
             </Paragraph>
             <Paragraph>
-              价格: <Text strong style={{ color: '#faad14', fontSize: '18px' }}>
+              价格: <Text strong style={{ color: 'var(--warning)', fontSize: '18px' }}>
                 ${selectedPost.price}
               </Text>
             </Paragraph>
@@ -463,4 +470,4 @@ const StockCommunity: React.FC<StockCommunityProps> = ({
   );
 };
 
-export default StockCommunity;
+export default React.memo(StockCommunity);

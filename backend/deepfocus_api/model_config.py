@@ -1,11 +1,93 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from .schemas import ModelConfigRequest, ModelConfigResponse
+
+
+# 本平台要直连的外部数据源父域名（行情/公告/舆情/海关/宏观等）。某些环境的出网代理会
+# 封锁这些域名（403），但直连其实可达——把它们加进 NO_PROXY，让数据获取绕代理直连。
+DATA_SOURCE_BYPASS_DOMAINS = (
+    ".eastmoney.com", "dfcfw.com", ".dfcfw.com",
+    ".sina.com.cn", "sinajs.cn", "hq.sinajs.cn",
+    ".qq.com", "gtimg.cn", "qt.gtimg.cn",
+    "xueqiu.com", ".xueqiu.com",
+    "weixin.sogou.com", ".sogou.com",
+    ".cninfo.com.cn", ".customs.gov.cn", ".un.org",
+    ".cctv.com", "stooq.com", ".stooq.com",
+    ".yahoo.com", "finnhub.io", ".nasdaq.com",
+    ".stlouisfed.org", ".tradier.com", ".cboe.com",
+    ".hkex.com", ".trendforce.com",
+    ".google.com", ".github.com", ".githubusercontent.com",
+)
+
+
+def _add_to_no_proxy(hosts) -> None:
+    additions = {h for h in hosts if h}
+    if not additions:
+        return
+    for var in ("NO_PROXY", "no_proxy"):
+        existing = {p.strip() for p in os.environ.get(var, "").split(",") if p.strip()}
+        merged = existing | additions
+        if merged != existing:
+            os.environ[var] = ",".join(sorted(merged))
+
+
+def configure_data_source_egress() -> None:
+    """让平台的外部数据源域名绕过出网代理（封锁云服务的环境下仍能直连取数）。
+    在后端启动时调用一次即可；正常无代理的环境里 NO_PROXY 不产生副作用。"""
+    _add_to_no_proxy(DATA_SOURCE_BYPASS_DOMAINS)
+
+
+_PROVIDER_DEFAULT_HOSTS = {
+    "minimax": {"api.minimaxi.com", ".minimaxi.com"},
+    "openai": {"api.openai.com", ".openai.com"},
+    "openai-compatible": {"api.openai.com", ".openai.com"},
+    "cloud": {"api.openai.com", ".openai.com"},
+}
+
+
+def _bypass_proxy_for_model_host(base_url: Optional[str], provider: Optional[str] = None) -> None:
+    """让模型 API 域名绕过出网代理。
+
+    某些运行环境（如沙箱）设了 HTTPS_PROXY，且该代理会封锁云模型域名（返回 403）；
+    而模型 API 直连其实可达。这里把模型域名加进 NO_PROXY，使「仅模型流量直连、其它流量
+    仍走代理」。在没有代理的正常环境里 NO_PROXY 不产生任何副作用。
+    """
+    host = None
+    if base_url:
+        try:
+            host = urlparse(base_url).hostname
+        except Exception:
+            host = None
+    if not host:
+        # base_url 为空（如 openai 官方未显式配 base_url）→ 用 provider 的官方域名兜底，
+        # 否则官方 API 在封锁环境里会被代理拦。
+        if provider:
+            _add_to_no_proxy(_PROVIDER_DEFAULT_HOSTS.get(provider.lower(), set()))
+        return
+    # IP 地址不提父域（父域对 IP 无意义）。
+    try:
+        ipaddress.ip_address(host)
+        _add_to_no_proxy({host})
+        return
+    except ValueError:
+        pass
+    # 取「直接父域」（去掉最左 label），覆盖同注册域的子域，但不会过宽到整个二级 TLD
+    # （如 api.x.co.uk → .x.co.uk 而非 .co.uk；api.minimaxi.com → .minimaxi.com）。
+    parts = host.split(".")
+    if len(parts) >= 3:
+        parent = "." + ".".join(parts[1:])
+    elif len(parts) == 2:
+        parent = "." + host
+    else:
+        parent = host
+    _add_to_no_proxy({host, parent})
 
 
 CONFIG_PATH = Path(
@@ -24,8 +106,8 @@ def _default_config() -> dict[str, Any]:
     ).lower()
 
     if provider == "minimax":
-        model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7")
-        base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
+        model = os.getenv("MINIMAX_MODEL", "MiniMax-M3")
+        base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/v1")
         api_key = os.getenv("MINIMAX_API_KEY")
     elif provider in {"openai", "openai-compatible", "cloud"}:
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -128,6 +210,8 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
 
     model = config.get("model") or _default_model_for(provider)
     base_url = config.get("base_url") or _default_base_url_for(provider)
+    # 确保模型 API 域名绕过出网代理（封锁云模型的环境下仍能直连）；base_url 为空时按 provider 兜底。
+    _bypass_proxy_for_model_host(base_url, provider)
     try:
         temperature = float(config.get("temperature", 0.2))
     except (TypeError, ValueError):
@@ -144,7 +228,7 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def _default_model_for(provider: str) -> str:
     if provider == "minimax":
-        return "MiniMax-M2.7"
+        return "MiniMax-M3"
     if provider in {"openai", "openai-compatible", "cloud"}:
         return "gpt-4o-mini"
     return "mock-research-analyst"
@@ -152,7 +236,7 @@ def _default_model_for(provider: str) -> str:
 
 def _default_base_url_for(provider: str) -> Optional[str]:
     if provider == "minimax":
-        return "https://api.minimax.io/v1"
+        return "https://api.minimaxi.com/v1"
     return None
 
 

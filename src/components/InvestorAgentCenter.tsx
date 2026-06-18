@@ -40,6 +40,8 @@ import {
   WarningOutlined
 } from '@ant-design/icons';
 import { AppState } from '../types';
+import CollapsibleSection from './CollapsibleSection';
+import ShareButton from './common/ShareButton';
 import {
   AgentEngine,
   AgentRuntimeHealth,
@@ -51,7 +53,14 @@ import {
   getAgentHealth,
   listAgentTasks,
   retryAgentTask
-} from '../services/agentTaskService';
+} from '../services/agentService';
+import {
+  coreAgentNameFromAgent,
+  coreFindingTitle,
+  resolveAgentPhase
+} from '../utils/agentProjection';
+import type { CoreAgentPhase } from '../utils/agentProjection';
+import './centers/researchAgent.css';
 
 const { Paragraph, Text, Title } = Typography;
 const { TextArea } = Input;
@@ -81,19 +90,19 @@ const engineMeta: Record<AgentEngine, { title: string; short: string; color: str
     title: 'DeepFocus Native',
     short: 'Native',
     color: 'cyan',
-    description: '使用本地证据层、FinGPT 能力和 DeepFocus 5 个核心 Agent 报告链路。'
+    description: '使用 4 个核心角色调度证据、分析、风控和输出层；FinGPT 与专题能力作为技能接入。'
   },
   tradingagents: {
     title: 'TradingAgents',
     short: 'TA',
     color: 'purple',
-    description: '底层调用 TauricResearch/TradingAgents，前台仍收敛为 5 个核心 Agent。'
+    description: '作为分析引擎接入，由 Analyst 汇总其 analyst/debate/trader 结果，前台不再展开为额外角色。'
   },
   financial_services: {
     title: 'Financial Services Playbook',
     short: 'FSI',
     color: 'geekblue',
-    description: '参考 financial-services cookbook，把财报复核、模型、Pitch、估值、KYC 和对账工作流挂到 DeepFocus 队列。'
+    description: '作为工作流模板接入，把财报复核、模型、Pitch、估值、KYC 和对账能力交给核心角色调度。'
   }
 };
 
@@ -140,10 +149,8 @@ const taskEngine = (task?: InvestmentTaskRecord | null): AgentEngine => (
   task?.engine || (task?.input?.engine as AgentEngine) || 'deepfocus'
 );
 
-type AgentPhaseKey = 'orchestrator' | 'evidence' | 'research' | 'risk' | 'report';
-
 const phaseDefinitions: Array<{
-  key: AgentPhaseKey;
+  key: CoreAgentPhase;
   title: string;
   goal: string;
   color: string;
@@ -165,8 +172,8 @@ const phaseDefinitions: Array<{
   },
   {
     key: 'research',
-    title: '研究判断',
-    goal: '基本面、新闻、情绪、技术面和情景假设交叉验证',
+    title: '分析融合',
+    goal: '融合基本面、新闻、情绪、技术面、TradingAgents 和专题技能',
     color: 'cyan',
     icon: <BarChartOutlined />
   },
@@ -179,69 +186,17 @@ const phaseDefinitions: Array<{
   },
   {
     key: 'report',
-    title: '报告输出',
-    goal: '形成观察、暂避、继续研究或候选机会',
+    title: '输出层',
+    goal: '把证据、判断和风控压缩成可复核报告',
     color: 'green',
     icon: <FundProjectionScreenOutlined />
   }
 ];
 
-const phaseByKey = phaseDefinitions.reduce<Record<AgentPhaseKey, typeof phaseDefinitions[number]>>((acc, phase) => {
+const phaseByKey = phaseDefinitions.reduce<Record<CoreAgentPhase, typeof phaseDefinitions[number]>>((acc, phase) => {
   acc[phase.key] = phase;
   return acc;
-}, {} as Record<AgentPhaseKey, typeof phaseDefinitions[number]>);
-
-const resolveAgentPhase = (agent?: string | null): AgentPhaseKey => {
-  const normalized = (agent || '').toLowerCase();
-  if (normalized.includes('orchestrator') || normalized.includes('taskcenter')) return 'orchestrator';
-  if (normalized.includes('datasource') || normalized.includes('evidence')) return 'evidence';
-	  if (
-	    normalized.includes('analyst') ||
-	    normalized.includes('researchagent') ||
-	    normalized.includes('fsiworkflow') ||
-	    normalized.includes('modelbuilder') ||
-	    normalized.includes('earnings') ||
-	    normalized.includes('valuation') ||
-	    normalized.includes('pitch') ||
-	    normalized.includes('sentiment') ||
-	    normalized.includes('scenario') ||
-	    normalized.includes('debate') ||
-    normalized.includes('researchdebate') ||
-    normalized.includes('trader') ||
-    normalized.includes('technical') ||
-    normalized.includes('fundamental')
-  ) {
-    return 'research';
-  }
-	  if (
-	    normalized.includes('risk') ||
-	    normalized.includes('control') ||
-	    normalized.includes('kyc') ||
-	    normalized.includes('reconciler') ||
-	    normalized.includes('reconciliation')
-	  ) return 'risk';
-  if (
-    normalized.includes('portfolio') ||
-    normalized.includes('report') ||
-    normalized.includes('resultmapper') ||
-    normalized.includes('modelrouter')
-  ) {
-    return 'report';
-  }
-  return 'orchestrator';
-};
-
-const coreAgentNameByPhase: Record<AgentPhaseKey, string> = {
-  orchestrator: 'OrchestratorAgent',
-  evidence: 'EvidenceAgent',
-  research: 'ResearchAgent',
-  risk: 'RiskAgent',
-  report: 'ReportAgent'
-};
-
-const coreAgentNameFromLog = (agent?: string | null): string => (
-  coreAgentNameByPhase[resolveAgentPhase(agent)]
-);
+}, {} as Record<CoreAgentPhase, typeof phaseDefinitions[number]>);
 
 const boundedPercent = (value: number): number => Math.max(0, Math.min(100, Math.round(value)));
 
@@ -269,48 +224,19 @@ const decisionReadinessScore = (task: InvestmentTaskRecord): number => {
 };
 
 const decisionGuidance = (result?: InvestmentTaskResult | null): string => {
-  if (!result) return '等待 Agent 完成证据、反证和风险纪律后再转化为投资动作。';
+  if (!result) return '等待核心链路完成证据、反证和风险纪律后再转化为投资动作。';
   if (result.decision === 'candidate') return '可进入候选机会池，但必须先按触发器和仓位纪律小步验证。';
   if (result.decision === 'watch') return '保持观察，等价格行为、公告或财报触发器确认后再考虑行动。';
   if (result.decision === 'avoid') return '暂时把资金保护放在第一位，直到关键风险被证伪或价格重新给出安全边际。';
   return '继续补证，优先解决资料缺口和反证问题，再判断是否值得投入资金。';
 };
 
-const findingTitleMap: Record<string, string> = {
-  orchestrator: 'OrchestratorAgent',
-  adapter: 'OrchestratorAgent',
-  setup: 'EvidenceAgent',
-  evidence: 'EvidenceAgent',
-  fundamentals: 'ResearchAgent',
-  sentiment: 'ResearchAgent',
-  technical: 'ResearchAgent',
-  scenario: 'ResearchAgent',
-  debate: 'ResearchAgent',
-  fsiworkflow: 'ResearchAgent',
-  modelbuilder: 'ResearchAgent',
-  earnings: 'ResearchAgent',
-  valuation: 'ResearchAgent',
-  pitch: 'ResearchAgent',
-  research: 'ResearchAgent',
-  control: 'RiskAgent',
-  kyc: 'RiskAgent',
-  reconciler: 'RiskAgent',
-  reconciliation: 'RiskAgent',
-  risk: 'RiskAgent',
-  model: 'ReportAgent',
-  report: 'ReportAgent'
-};
-
-const agentFindingTitle = (agent: string): string => (
-  findingTitleMap[agent.toLowerCase()] || agent
-);
-
 const coreFindingEntries = (
   findings: Record<string, string[]> = {}
 ): Array<[string, string[]]> => {
   const merged = new Map<string, string[]>();
   Object.entries(findings).forEach(([agent, items]) => {
-    const title = agentFindingTitle(agent);
+    const title = coreFindingTitle(agent);
     const existing = merged.get(title) || [];
     merged.set(title, [...existing, ...items]);
   });
@@ -405,7 +331,7 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
       const created = await createAgentTask(form);
       setSelectedTaskId(created.id);
       await loadData();
-      message.success('Agent Run 已进入队列');
+      message.success('投研任务已进入队列');
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '创建任务失败');
     } finally {
@@ -414,13 +340,21 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
   };
 
   const handleRetry = async (taskId: string) => {
-    await retryAgentTask(taskId);
-    await loadData();
+    try {
+      await retryAgentTask(taskId);
+      await loadData();
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '重试失败');
+    }
   };
 
   const handleCancel = async (taskId: string) => {
-    await cancelAgentTask(taskId);
-    await loadData();
+    try {
+      await cancelAgentTask(taskId);
+      await loadData();
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '取消失败');
+    }
   };
 
   return (
@@ -429,8 +363,8 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
         <div className="agent-command-title">
           <RobotOutlined />
           <div>
-            <Title level={3}>Agent 任务</Title>
-            <Text>从 Cockpit 进入的投研任务会在这里完成证据调度、反证拆解、风险复核和报告输出。</Text>
+            <Title level={3}>投研任务</Title>
+            <Text>前台收敛为 Orchestrator / Evidence / Analyst / Risk，报告生成作为输出层；底层引擎和专题模块都作为技能接入。</Text>
           </div>
         </div>
         <div className="agent-runtime-pills">
@@ -445,10 +379,12 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
 
       <section className="agent-ide-grid">
         <aside className="agent-workspace-panel">
-          <div className="agent-panel-head">
-            <span><PlayCircleOutlined /> 新建投研任务</span>
-            <Tag color={selectedEngine.color}>{selectedEngine.short}</Tag>
-          </div>
+          <CollapsibleSection
+            title={<><PlayCircleOutlined /> 新建投研任务</>}
+            extra={<Tag color={selectedEngine.color}>{selectedEngine.short}</Tag>}
+            defaultOpen={true}
+            level={2}
+          >
           <div className="agent-profit-protocol">
             <span><DollarOutlined /> 正期望</span>
             <span><FileSearchOutlined /> 可追溯</span>
@@ -531,6 +467,7 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
               启动投研任务
             </Button>
           </Space>
+          </CollapsibleSection>
 
           <div className="agent-queue-head">
             <span>任务队列</span>
@@ -569,7 +506,7 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
           {selectedTask ? (
             <AgentThread task={selectedTask} onRetry={handleRetry} onCancel={handleCancel} />
           ) : (
-            <Empty description="启动或选择一个 Agent Run" />
+            <Empty description="启动或选择一个投研任务" />
           )}
         </main>
 
@@ -610,6 +547,22 @@ const AgentThread: React.FC<{
           <Text type="secondary">{task.asset_name || task.symbol || '未指定标的'} · {task.task_type} · {new Date(task.created_at).toLocaleString()}</Text>
         </div>
         <Space>
+          {result && (
+            <ShareButton
+              modalTitle="分享投研任务结论"
+              target={() => ({
+                title: task.title,
+                summary: [
+                  decision ? `结论倾向：${decision.text} ｜ 置信度 ${Math.round((result.confidence || 0) * 100)}%` : '',
+                  result.investor_summary,
+                  result.plain_language_takeaway && result.plain_language_takeaway !== result.investor_summary
+                    ? result.plain_language_takeaway
+                    : '',
+                ].filter(Boolean).join('\n\n'),
+                byline: '由 DeepFocus 投研工作台 · 深度任务生成',
+              })}
+            />
+          )}
           {['failed', 'cancelled', 'completed'].includes(task.status) && (
             <Button onClick={() => onRetry(task.id)}>重跑</Button>
           )}
@@ -643,7 +596,7 @@ const AgentThread: React.FC<{
 
       <div className="agent-thread-log">
         <div className="agent-panel-head">
-          <span><ApiOutlined /> 可审计 Agent Trace</span>
+          <span><ApiOutlined /> 可审计执行 Trace</span>
           <Text type="secondary">{task.logs.length} 条事件</Text>
         </div>
         <Timeline
@@ -652,14 +605,14 @@ const AgentThread: React.FC<{
             return {
               color: phase.color,
               children: (
-              <Space direction="vertical" size={1}>
-                <Space wrap size={6}>
-                  <Text strong>{coreAgentNameFromLog(log.agent)}</Text>
-                  <Tag color={phase.color}>{phase.title}</Tag>
+                <Space direction="vertical" size={1}>
+                  <Space wrap size={6}>
+                    <Text strong>{coreAgentNameFromAgent(log.agent)}</Text>
+                    <Tag color={phase.color}>{phase.title}</Tag>
+                  </Space>
+                  <Text>{log.message}</Text>
+                  <Text type="secondary">{new Date(log.timestamp).toLocaleString()}</Text>
                 </Space>
-                <Text>{log.message}</Text>
-                <Text type="secondary">{new Date(log.timestamp).toLocaleString()}</Text>
-              </Space>
               )
             };
           })}
@@ -669,7 +622,7 @@ const AgentThread: React.FC<{
       {result ? (
         <div className="agent-findings-panel">
           <div className="agent-panel-head">
-            <span><AuditOutlined /> Agent Findings</span>
+            <span><AuditOutlined /> 融合结论</span>
             <Tag color={engine.color}>{result.engine_label || engine.title}</Tag>
           </div>
           <Steps
@@ -690,7 +643,7 @@ const AgentThread: React.FC<{
       ) : (
         <div className="agent-empty-state">
           <ClockCircleOutlined />
-          <Text>Agent 正在排队或执行，完成后这里会展示分析链路。</Text>
+          <Text>任务正在排队或执行，完成后这里会展示核心链路。</Text>
         </div>
       )}
     </Space>
@@ -726,8 +679,8 @@ const InvestmentDecisionRibbon: React.FC<{ task: InvestmentTaskRecord }> = ({ ta
         <span>赚钱前先确认依据，亏损路径必须可见。</span>
       </div>
       <div className="agent-decision-tile">
-        <Text type="secondary">当前 Agent</Text>
-        <strong>{coreAgentNameFromLog(task.assigned_agent || latestLog?.agent)}</strong>
+        <Text type="secondary">当前环节</Text>
+        <strong>{coreAgentNameFromAgent(task.assigned_agent || latestLog?.agent)}</strong>
         <span>{latestLog?.message || '等待调度。'}</span>
       </div>
     </div>
@@ -758,7 +711,7 @@ const AgentRunMap: React.FC<{ task: InvestmentTaskRecord }> = ({ task }) => {
   return (
     <div className="agent-run-map">
       <div className="agent-panel-head">
-        <span><LineChartOutlined /> 投资 Agent 运行图</span>
+        <span><LineChartOutlined /> 核心链路运行图</span>
         <Tag color={phaseByKey[activePhase].color}>{phaseByKey[activePhase].title}</Tag>
       </div>
       <Steps className="agent-stage-steps" size="small" items={phaseItems} />
@@ -773,11 +726,12 @@ const EvidencePanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }
     ? Math.round(evidence.reduce((sum, item) => sum + item.credibility_score, 0) / evidence.length * 100)
     : 0;
   return (
-    <Space direction="vertical" size={14} style={{ width: '100%' }}>
-      <div className="agent-panel-head">
-        <span><DatabaseOutlined /> Evidence</span>
-        <Tag>{evidence.length}</Tag>
-      </div>
+    <CollapsibleSection
+      title={<><DatabaseOutlined /> 证据层</>}
+      extra={<Tag>{evidence.length} 条</Tag>}
+      defaultOpen={true}
+      level={2}
+    >
       <div className="agent-evidence-scorecard">
         <span>
           <Text type="secondary">平均可信度</Text>
@@ -791,7 +745,7 @@ const EvidencePanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }
       <Descriptions column={1} size="small">
         <Descriptions.Item label="标的">{task?.asset_name || task?.symbol || '-'}</Descriptions.Item>
         <Descriptions.Item label="引擎">{task ? engineMeta[taskEngine(task)].title : '-'}</Descriptions.Item>
-        <Descriptions.Item label="资料策略">数据源中心 + 本地资料 + Agent 抓取</Descriptions.Item>
+        <Descriptions.Item label="资料策略">数据源中心 + 本地资料 + 网页抓取</Descriptions.Item>
       </Descriptions>
       {evidence.length > 0 ? (
         <List
@@ -805,7 +759,7 @@ const EvidencePanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }
                   <Tag>{item.source}</Tag>
                   <Tag color="gold">{Math.round(item.credibility_score * 100)}%</Tag>
                 </Space>
-                <Text>{item.takeaway || '该证据已进入 Agent 上下文。'}</Text>
+                <Text>{item.takeaway || '该证据已进入任务上下文。'}</Text>
                 {item.url && <Text type="secondary" copyable>{item.url}</Text>}
               </Space>
             </List.Item>
@@ -816,7 +770,7 @@ const EvidencePanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }
           type="warning"
           showIcon
           message="暂无可展示证据"
-          description="任务完成后会显示被 Agent 引用的研报、新闻、公告或本地资料。资料不足时，报告会明确提示缺口。"
+          description="任务完成后会显示被核心链路引用的研报、新闻、公告或本地资料。资料不足时，报告会明确提示缺口。"
         />
       )}
       <div className="agent-tool-strip">
@@ -824,7 +778,7 @@ const EvidencePanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }
         <span><DatabaseOutlined /> 数据源</span>
         <span><SafetyCertificateOutlined /> 风控</span>
       </div>
-    </Space>
+    </CollapsibleSection>
   );
 };
 
@@ -834,7 +788,7 @@ const ArtifactPanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }
     return (
       <div className="agent-artifact-empty">
         <FileSearchOutlined />
-        <Text>选择一个 Agent Run 后，报告、情景、风险和原始输出会出现在这里。</Text>
+        <Text>选择一个投研任务后，报告、情景、风险和原始输出会出现在这里。</Text>
       </div>
     );
   }
@@ -931,4 +885,4 @@ const ArtifactPanel: React.FC<{ task: InvestmentTaskRecord | null }> = ({ task }
   );
 };
 
-export default InvestorAgentCenter;
+export default React.memo(InvestorAgentCenter);

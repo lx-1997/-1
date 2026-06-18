@@ -44,6 +44,16 @@ export interface Stock {
   communityScore: number; // 社区活跃度评分
 }
 
+// 数据可信度标注（与后端 schemas.DataQuality 对齐）
+export type DataQualityLevel = 'live' | 'degraded' | 'mock';
+
+export interface DataQuality {
+  level: DataQualityLevel;
+  label: string;
+  detail: string;
+  reasons: string[];
+}
+
 // 内容相关类型
 export interface Post {
   id: string;
@@ -199,7 +209,7 @@ export interface ShippingAddress {
 }
 
 // 视图类型
-export type ViewType = 'home' | 'stocks' | 'a-share-market' | 'global-market' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders' | 'ai-research' | 'agent-center' | 'data-sources' | 'research-workbench' | 'realtime-messages' | 'mcp-center' | 'skills' | 'earnings-calendar' | 'cn-earnings' | 'shareholder-changes' | 'major-events' | 'multi-market-decision' | 'ai-supply-chain' | 'customs-trade' | 'options-signal';
+export type ViewType = 'home' | 'stocks' | 'a-share-market' | 'global-market' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders' | 'ai-research' | 'agent-center' | 'dulus-agent' | 'data-sources' | 'research-workbench' | 'realtime-messages' | 'cctv-news' | 'people-spotlight' | 'mcp-center' | 'skills' | 'earnings-calendar' | 'cn-earnings' | 'shareholder-changes' | 'major-events' | 'multi-market-decision' | 'premarket-opportunity' | 'ai-supply-chain' | 'customs-trade' | 'options-signal' | 'risk-dashboard' | 'position-monitor' | 'market-dashboard' | 'backtest-center' | 'stock-tear-sheet' | 'portfolio-review' | 'macro-review' | 'briefing' | 'stock-compare' | 'financial-terminal';
 
 // 应用状态
 export interface AppState {
@@ -212,6 +222,7 @@ export interface AppState {
   ratings: Rating[];
   payments: Payment[];
   purchasedPosts: string[]; // 用户已开通的研究记录 ID 列表
+  likedPosts: string[]; // 用户已点赞的帖子 ID 列表（用于点赞去重/取消点赞）
   isLoading: boolean;
   currentView: ViewType;
   platformBalance: number; // 平台总余额

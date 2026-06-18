@@ -1,0 +1,22 @@
+# ── Frontend: build the CRA app, serve static files with nginx ───────────────
+FROM node:20-bullseye AS build
+WORKDIR /app
+
+# Install deps first (better layer caching). --ignore-scripts skips the optional
+# research-workbench postinstall, which the web product does not need.
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --legacy-peer-deps
+
+COPY . .
+
+# API base URL is baked in at build time. Set to your public URL (same origin
+# works because Caddy proxies /api → backend).
+ARG REACT_APP_API_BASE_URL=
+ENV REACT_APP_API_BASE_URL=$REACT_APP_API_BASE_URL
+RUN NODE_OPTIONS=--max-old-space-size=4096 CI=false npm run build
+
+# ── Serve ────────────────────────────────────────────────────────────────────
+FROM nginx:alpine
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/build /usr/share/nginx/html
+EXPOSE 80

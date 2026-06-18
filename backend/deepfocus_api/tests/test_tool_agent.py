@@ -88,7 +88,7 @@ def _recording_execute(results=None):
     calls: list[tuple[str, dict]] = []
     default = {"ok": True, "data": {"price": 195.0, "change_percent": 1.2}}
 
-    async def fake(name, arguments, extra_tools=None):
+    async def fake(name, arguments, extra_tools=None, ifind_user=False):
         calls.append((name, dict(arguments or {})))
         return (results or {}).get(name, default)
 

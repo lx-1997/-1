@@ -1,23 +1,30 @@
 import React, { useEffect, useState } from 'react';
-import { Layout, Input, Button, Dropdown, Space, Avatar, Badge, Typography, message, Tooltip } from 'antd';
+import { Layout, Input, Button, Dropdown, Space, Avatar, Typography, message, Tooltip } from 'antd';
 import {
   SearchOutlined,
   BellOutlined,
   UserOutlined,
-  FireOutlined,
   MenuOutlined,
   DollarOutlined,
   LogoutOutlined,
   SettingOutlined,
   SyncOutlined,
   DatabaseOutlined,
-  RobotOutlined
+  ThunderboltOutlined,
+  SunOutlined,
+  MoonOutlined,
+  MoreOutlined,
+  RobotOutlined,
+  ShopOutlined,
+  ProfileOutlined
 } from '@ant-design/icons';
 import { AppState, Stock, ViewType } from '../types';
 import RechargeModal from './RechargeModal';
-import { formatQuoteSourceLine } from '../utils/marketData';
-import { SystemReadiness, getSystemReadiness } from '../services/systemHealthService';
+import { SystemReadiness, getSystemReadiness } from '../services/infrastructureService';
 import { countStocksBySegment } from '../utils/marketSegments';
+import { useTheme } from '../context/ThemeContext';
+import { useT } from '../i18n/useT';
+import './Header.css';
 
 const { Header: AntHeader } = Layout;
 const { Text } = Typography;
@@ -33,6 +40,9 @@ interface HeaderProps {
   onRefreshMarketData?: () => void;
   isMarketDataRefreshing?: boolean;
   isDemoSession?: boolean;
+  chatPanelOpen?: boolean;
+  onToggleChatPanel?: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -45,23 +55,19 @@ const Header: React.FC<HeaderProps> = ({
   onViewChange,
   onRefreshMarketData,
   isMarketDataRefreshing = false,
-  isDemoSession = false
+  isDemoSession = false,
+  chatPanelOpen,
+  onToggleChatPanel,
+  onOpenCommandPalette
 }) => {
+  const t = useT();
   const [searchValue, setSearchValue] = useState('');
   const [rechargeModalVisible, setRechargeModalVisible] = useState(false);
   const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
-  const quoteAnchor = appState.stocks.find(stock => stock.quoteProvider && stock.quoteProvider !== 'mock')
-    || appState.stocks[0];
+  const { theme, toggleTheme } = useTheme();
   const connectedQuoteCount = appState.stocks.filter(stock => stock.quoteProvider && stock.quoteProvider !== 'mock').length;
   const marketSegmentCounts = countStocksBySegment(appState.stocks);
   const readinessTone = readiness?.status === 'ready' ? 'ready' : readiness?.status === 'degraded' ? 'degraded' : 'not-ready';
-  const readinessTooltip = readiness
-    ? [
-        `系统就绪度 ${readiness.score}/100`,
-        readiness.blockers.length ? `阻塞：${readiness.blockers.join('、')}` : '',
-        readiness.warnings.length ? `提醒：${readiness.warnings.join('、')}` : ''
-      ].filter(Boolean).join('\n')
-    : '系统就绪度待检查';
 
   useEffect(() => {
     let mounted = true;
@@ -109,6 +115,32 @@ const Header: React.FC<HeaderProps> = ({
 
   const userMenuItems = [
     {
+      key: 'balance',
+      icon: <DollarOutlined />,
+      label: (
+        <span className="dfx-hd-balance">
+          <small>账户余额 · 点击充值</small>
+          <strong>${(appState.user?.balance ?? 0).toFixed(2)}</strong>
+        </span>
+      )
+    },
+    {
+      type: 'divider' as const
+    },
+    {
+      key: 'shop',
+      icon: <ShopOutlined />,
+      label: '研究商城'
+    },
+    {
+      key: 'orders',
+      icon: <ProfileOutlined />,
+      label: '我的订单'
+    },
+    {
+      type: 'divider' as const
+    },
+    {
       key: 'profile',
       icon: <UserOutlined />,
       label: '个人资料'
@@ -128,117 +160,133 @@ const Header: React.FC<HeaderProps> = ({
     }
   ];
 
+  const statusPanel = (
+    <div className="dfx-hd-status-panel">
+      <div className="dfx-hd-row">
+        <span className="dfx-hd-row-label"><DatabaseOutlined />观察标的</span>
+        <span className="dfx-hd-row-value">
+          {appState.stocks.length}
+          <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>
+            A股 {marketSegmentCounts.aShare} · 港美 {marketSegmentCounts.global}
+          </Text>
+        </span>
+      </div>
+      <div className="dfx-hd-row">
+        <span className="dfx-hd-row-label"><DatabaseOutlined />行情源</span>
+        <span className="dfx-hd-row-value">
+          {connectedQuoteCount > 0 ? `${connectedQuoteCount} 个已接入` : '样例数据'}
+          <Button
+            size="small"
+            type="text"
+            icon={<SyncOutlined spin={isMarketDataRefreshing} />}
+            onClick={onRefreshMarketData}
+            aria-label="刷新行情"
+            style={{ color: 'var(--text-muted)' }}
+          />
+        </span>
+      </div>
+      <div className="dfx-hd-row">
+        <span className="dfx-hd-row-label">
+          <span className={`dfx-hd-dot ${readinessTone}`} />系统就绪度
+        </span>
+        <span className="dfx-hd-row-value">{readiness ? `${readiness.score}/100` : '待检查'}</span>
+      </div>
+      {isDemoSession && (
+        <div className="dfx-hd-row">
+          <span className="dfx-hd-row-label">运行模式</span>
+          <span className="dfx-hd-row-value">演示会话</span>
+        </div>
+      )}
+      {readiness?.blockers?.length ? (
+        <div className="dfx-hd-note block">阻塞：{readiness.blockers.join('、')}</div>
+      ) : null}
+      {readiness?.warnings?.length ? (
+        <div className="dfx-hd-note warn">提醒：{readiness.warnings.join('、')}</div>
+      ) : null}
+    </div>
+  );
+
   return (
-    <AntHeader
-      className="terminal-header"
-    >
-      {/* 移动端菜单按钮 */}
+    <AntHeader className="terminal-header">
       {isMobile && (
         <Button
           type="text"
           icon={<MenuOutlined />}
           onClick={onMobileMenuToggle}
-          style={{ marginRight: '16px' }}
+          style={{ color: 'var(--text)', fontSize: 18 }}
         />
       )}
 
       <div className="terminal-brand">
         <span className="brand-mark">
-          <FireOutlined />
+          <ThunderboltOutlined />
         </span>
         <div className="brand-copy">
-          <span className="brand-title">深度焦点</span>
-          <span className="brand-subtitle">Agent Workspace</span>
+          <span className="brand-title">{t('app.title')}</span>
+          <span className="brand-subtitle">{t('app.subtitle')}</span>
         </div>
       </div>
 
-      {/* 搜索框 - 移动端隐藏 */}
       {!isMobile && (
         <div className="header-search">
-          <Input.Search
-            placeholder="搜索标的，加入 Agent 上下文"
+          <Input
+            placeholder={t('header.search')}
             value={searchValue}
             onChange={(e) => setSearchValue(e.target.value)}
-            onSearch={handleSearch}
-            enterButton={<SearchOutlined />}
-            style={{ width: '100%' }}
-            size="large"
+            onPressEnter={() => handleSearch(searchValue)}
+            prefix={<SearchOutlined style={{ color: 'var(--text-soft)' }} />}
+            allowClear
+            size="middle"
           />
         </div>
       )}
 
-      {/* 用户信息 - 移动端简化 */}
-      {!isMobile && (
-        <div className="header-status-cluster">
+      <Space className="header-actions" size={4}>
+        <Tooltip title={chatPanelOpen ? '关闭 AI 助手' : 'AI 助手'}>
           <Button
-            size="small"
+            type={chatPanelOpen ? 'primary' : 'text'}
             icon={<RobotOutlined />}
-            onClick={() => onViewChange?.('home')}
-            className="header-agent-button"
-          >
-            Agent
-          </Button>
-          <Tooltip title={`A股 ${marketSegmentCounts.aShare} · 港美 ${marketSegmentCounts.global}`}>
-            <span className="market-pill">
-              观察 <strong>{appState.stocks.length}</strong>
-            </span>
-          </Tooltip>
-          <Tooltip title={connectedQuoteCount > 0 ? `${connectedQuoteCount} 个外部行情源已接入` : '当前使用样例行情，可刷新或配置行情源'}>
-            <span className="market-pill">
-              <DatabaseOutlined />
-              <strong>{connectedQuoteCount > 0 ? `${connectedQuoteCount} 源` : '样例'}</strong>
-            </span>
-          </Tooltip>
-          <span className="market-pill">
-            证据 <strong>{appState.posts.length}</strong>
-          </span>
-          {isDemoSession && (
-            <span className="market-pill demo-mode-pill">
-              演示会话
-            </span>
-          )}
-          {readiness && (
-            <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{readinessTooltip}</span>}>
-              <span className={`market-pill readiness-pill ${readinessTone}`}>
-                就绪 <strong>{readiness.score}</strong>
-              </span>
-            </Tooltip>
-          )}
-          <Tooltip title={quoteAnchor ? formatQuoteSourceLine(quoteAnchor) : '行情待刷新'}>
-            <Button
-              size="small"
-              icon={<SyncOutlined spin={isMarketDataRefreshing} />}
-              loading={isMarketDataRefreshing}
-              onClick={onRefreshMarketData}
-              aria-label="刷新行情"
-            >
-              刷新
-            </Button>
-          </Tooltip>
-          <Button
-            type="primary"
-            size="small"
-            icon={<DollarOutlined />}
-            onClick={() => setRechargeModalVisible(true)}
-          >
-            额度
-          </Button>
-        </div>
-      )}
-
-      {/* 通知和用户菜单 */}
-      <Space className="header-actions" size={isMobile ? 'small' : 'small'}>
-        {/* 通知 */}
-        <Badge count={3} size="small">
-          <Button
-            type="text"
-            icon={<BellOutlined />}
-            size={isMobile ? 'middle' : 'large'}
-            style={{ color: '#666' }}
+            size="middle"
+            onClick={onToggleChatPanel}
+            aria-label="AI 助手"
+            style={{ color: chatPanelOpen ? undefined : 'var(--text-muted)' }}
           />
-        </Badge>
+        </Tooltip>
+        <Dropdown
+          placement="bottomRight"
+          trigger={['click']}
+          dropdownRender={() => (
+            <div
+              className="dfx-hd-more-pop"
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 12,
+                boxShadow: '0 10px 30px rgba(0, 0, 0, 0.22)',
+                padding: 10,
+                minWidth: 264,
+              }}
+            >
+              {statusPanel}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                {!isMobile && (
+                  <Button type="text" block icon={<SearchOutlined />} onClick={onOpenCommandPalette} style={{ justifyContent: 'flex-start', textAlign: 'left', color: 'var(--text-muted)' }}>
+                    命令面板 ⌘K
+                  </Button>
+                )}
+                <Button type="text" block icon={<BellOutlined />} onClick={() => onViewChange?.('realtime-messages')} style={{ justifyContent: 'flex-start', textAlign: 'left', color: 'var(--text-muted)' }}>
+                  信号流
+                </Button>
+                <Button type="text" block icon={theme === 'dark' ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ justifyContent: 'flex-start', textAlign: 'left', color: 'var(--text-muted)' }}>
+                  {theme === 'dark' ? '浅色模式' : '深色模式'}
+                </Button>
+              </div>
+            </div>
+          )}
+        >
+          <Button type="text" icon={<MoreOutlined />} size="middle" aria-label="更多" style={{ color: 'var(--text-muted)' }} />
+        </Dropdown>
 
-        {/* 用户菜单 */}
         <Dropdown
           menu={{
             items: userMenuItems,
@@ -247,13 +295,15 @@ const Header: React.FC<HeaderProps> = ({
                 onLogout();
                 return;
               }
-
-              if (key === 'profile') {
-                onViewChange?.('profile');
+              if (key === 'balance') {
+                setRechargeModalVisible(true);
                 return;
               }
-
-              if (key === 'settings') {
+              if (key === 'shop' || key === 'orders') {
+                onViewChange?.(key);
+                return;
+              }
+              if (key === 'profile' || key === 'settings') {
                 onViewChange?.('profile');
               }
             }
@@ -264,24 +314,25 @@ const Header: React.FC<HeaderProps> = ({
           <Button
             type="text"
             style={{
-              height: '40px',
+              height: 36,
               display: 'flex',
               alignItems: 'center',
-              gap: isMobile ? '4px' : '8px',
-              padding: isMobile ? '0 4px' : '0 8px'
+              gap: isMobile ? 4 : 8,
+              padding: isMobile ? '0 4px' : '0 8px',
+              color: 'var(--text)'
             }}
           >
             <Avatar
-              size="small"
+              size={28}
               src={appState.user?.avatar}
               icon={<UserOutlined />}
+              style={{ backgroundColor: 'var(--accent)' }}
             />
-            {!isMobile && <Text strong>{appState.user?.username}</Text>}
+            {!isMobile && <Text style={{ color: 'var(--text)', fontSize: 13 }}>{appState.user?.username}</Text>}
           </Button>
         </Dropdown>
       </Space>
 
-      {/* 充值模态框 */}
       <RechargeModal
         visible={rechargeModalVisible}
         onCancel={() => setRechargeModalVisible(false)}
@@ -295,4 +346,4 @@ const Header: React.FC<HeaderProps> = ({
   );
 };
 
-export default Header;
+export default React.memo(Header);

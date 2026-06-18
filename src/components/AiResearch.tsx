@@ -1,57 +1,73 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
-  Alert,
+  Avatar,
   Button,
-  Card,
-  Col,
   Empty,
   Input,
-  List,
-  Progress,
-  Row,
   Select,
   Space,
-  Statistic,
+  Spin,
   Tag,
   Typography,
   message
 } from 'antd';
 import {
-  ApiOutlined,
   BulbOutlined,
   ExperimentOutlined,
-  LineChartOutlined,
-  ReloadOutlined,
-  WarningOutlined
+  RobotOutlined,
+  SendOutlined,
+  UserOutlined,
+  WarningOutlined,
+  ApiOutlined,
+  LineChartOutlined
 } from '@ant-design/icons';
-import { AppState, Stock } from '../types';
-import { AiResearchReport, analyzeStock, checkAiApiHealth } from '../services/aiResearchService';
+import { AppState } from '../types';
+import { AiResearchReport, analyzeStock, checkAiApiHealth } from '../services/researchService';
+import DataQualityBanner from './common/DataQualityBanner';
+import { useT } from '../i18n/useT';
+import './AiResearch.css';
 
-const { Paragraph, Text, Title } = Typography;
+const { Text } = Typography;
 const { TextArea } = Input;
 
 interface AiResearchProps {
   appState: AppState;
 }
 
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  report?: AiResearchReport;
+}
+
 const sentimentMap = {
-  positive: { text: '偏积极', color: 'green' },
-  neutral: { text: '中性', color: 'blue' },
-  negative: { text: '偏谨慎', color: 'red' }
+  positive: { text: '偏积极', color: 'var(--positive)' },
+  neutral: { text: '中性', color: 'var(--info)' },
+  negative: { text: '偏谨慎', color: 'var(--negative)' }
 };
 
 const riskMap = {
-  low: { text: '低', color: '#52c41a' },
-  medium: { text: '中', color: '#faad14' },
-  high: { text: '高', color: '#ff4d4f' }
+  low: { text: '低', color: 'var(--positive)' },
+  medium: { text: '中', color: 'var(--warning)' },
+  high: { text: '高', color: 'var(--negative)' }
 };
 
+function generateId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 const AiResearch: React.FC<AiResearchProps> = ({ appState }) => {
+  const t = useT();
   const [selectedSymbol, setSelectedSymbol] = useState(appState.stocks[0]?.symbol);
   const [question, setQuestion] = useState('');
-  const [report, setReport] = useState<AiResearchReport | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [apiStatus, setApiStatus] = useState<{ status: string; provider: string; model: string } | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<any>(null);
 
   const selectedStock = useMemo(
     () => appState.stocks.find(stock => stock.symbol === selectedSymbol) || appState.stocks[0],
@@ -71,13 +87,39 @@ const AiResearch: React.FC<AiResearchProps> = ({ appState }) => {
       .catch(() => setApiStatus(null));
   }, []);
 
-  const handleAnalyze = async () => {
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  useEffect(() => {
+    if (selectedStock) {
+      setMessages([]);
+    }
+  }, [selectedSymbol]);
+
+  const handleSend = async () => {
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion && messages.length > 0) {
+      message.info('请输入您的问题');
+      return;
+    }
+
     if (!selectedStock) {
       message.warning('暂无可分析的股票');
       return;
     }
 
+    const userMsg: ChatMessage = {
+      id: generateId(),
+      role: 'user',
+      content: trimmedQuestion || `分析 ${selectedStock.name} (${selectedStock.symbol}) 的投资价值`,
+      timestamp: Date.now()
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    setQuestion('');
     setLoading(true);
+
     try {
       const data = await analyzeStock({
         stock: selectedStock,
@@ -90,210 +132,307 @@ const AiResearch: React.FC<AiResearchProps> = ({ appState }) => {
           qualityScore: post.qualityScore,
           publishTime: post.publishTime
         })),
-        question,
+        question: userMsg.content,
         locale: 'zh-CN'
       });
-      setReport(data);
-      message.success('AI投研报告已生成');
+
+      const assistantMsg: ChatMessage = {
+        id: generateId(),
+        role: 'assistant',
+        content: data.executive_summary,
+        timestamp: Date.now(),
+        report: data
+      };
+
+      setMessages(prev => [...prev, assistantMsg]);
     } catch (error: any) {
       const detail = error?.response?.data?.detail || '请确认后端 API 已启动并配置模型';
-      message.error(`生成失败：${detail}`);
+      const errorMsg: ChatMessage = {
+        id: generateId(),
+        role: 'system',
+        content: `${t('ai.failed')}：${detail}`,
+        timestamp: Date.now()
+      };
+      setMessages(prev => [...prev, errorMsg]);
     } finally {
       setLoading(false);
     }
   };
 
-  if (!selectedStock) {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const renderReportCard = (report: AiResearchReport) => {
+    const sentiment = sentimentMap[report.sentiment_label];
+    const risk = riskMap[report.risk_level];
+
     return (
-      <div style={{ padding: 16 }}>
-        <Empty description="暂无股票数据" />
+      <div className="ai-chat-report-card">
+        <DataQualityBanner quality={report.data_quality} />
+        <div className="ai-chat-report-stats">
+          <div className="ai-chat-stat">
+            <span className="ai-chat-stat-label">情绪判断</span>
+            <span className="ai-chat-stat-value" style={{ color: sentiment?.color }}>
+              {sentiment?.text} · {report.sentiment_score.toFixed(1)}
+            </span>
+          </div>
+          <div className="ai-chat-stat">
+            <span className="ai-chat-stat-label">风险等级</span>
+            <span className="ai-chat-stat-value" style={{ color: risk?.color }}>
+              {risk?.text}
+            </span>
+          </div>
+          <div className="ai-chat-stat">
+            <span className="ai-chat-stat-label">分析模型</span>
+            <span className="ai-chat-stat-value">{report.model}</span>
+          </div>
+        </div>
+
+        {report.catalysts.length > 0 && (
+          <div className="ai-chat-section">
+            <div className="ai-chat-section-title">
+              <BulbOutlined /> 催化因素
+            </div>
+            <ul className="ai-chat-list">
+              {report.catalysts.map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {report.risks.length > 0 && (
+          <div className="ai-chat-section">
+            <div className="ai-chat-section-title">
+              <WarningOutlined /> 主要风险
+            </div>
+            <ul className="ai-chat-list">
+              {report.risks.map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {report.watch_items.length > 0 && (
+          <div className="ai-chat-section">
+            <div className="ai-chat-section-title">
+              <ApiOutlined /> 观察清单
+            </div>
+            <ul className="ai-chat-list">
+              {report.watch_items.map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {report.suggested_questions.length > 0 && (
+          <div className="ai-chat-section">
+            <div className="ai-chat-section-title">
+              <ExperimentOutlined /> 追问方向
+            </div>
+            <div className="ai-chat-suggestions">
+              {report.suggested_questions.map((q, i) => (
+                <button
+                  key={i}
+                  className="ai-chat-suggestion-chip"
+                  onClick={() => {
+                    setQuestion(q);
+                    setTimeout(() => inputRef.current?.focus(), 100);
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="ai-chat-disclaimer">
+          {report.disclaimer}
+        </div>
       </div>
     );
-  }
+  };
 
-  const sentiment = report ? sentimentMap[report.sentiment_label] : null;
-  const risk = report ? riskMap[report.risk_level] : null;
+  const renderMessageContent = (msg: ChatMessage) => {
+    if (msg.role === 'system') {
+      return (
+        <div className="ai-chat-system-msg">
+          <WarningOutlined style={{ marginRight: 8 }} />
+          {msg.content}
+        </div>
+      );
+    }
+
+    if (msg.report) {
+      return (
+        <div>
+          <div className="ai-chat-bubble-text">{msg.content}</div>
+          {renderReportCard(msg.report)}
+        </div>
+      );
+    }
+
+    return <div className="ai-chat-bubble-text">{msg.content}</div>;
+  };
 
   return (
-    <div style={{ padding: 16 }}>
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={9}>
-          <Card
-            title={
-              <Space>
-                <ExperimentOutlined />
-                AI投研
-              </Space>
-            }
-            extra={
-              apiStatus ? (
-                <Tag color="green">{apiStatus.provider}</Tag>
-              ) : (
-                <Tag color="orange">API未连接</Tag>
-              )
-            }
-          >
-            <Space direction="vertical" size={16} style={{ width: '100%' }}>
-              <Select
-                value={selectedStock.symbol}
-                style={{ width: '100%' }}
-                onChange={setSelectedSymbol}
-                options={appState.stocks.map(stock => ({
-                  value: stock.symbol,
-                  label: `${stock.name} (${stock.symbol})`
-                }))}
-              />
-
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Statistic
-                    title="当前价格"
-                    prefix="$"
-                    value={selectedStock.currentPrice}
-                    precision={2}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Statistic
-                    title="涨跌幅"
-                    value={selectedStock.changePercent}
-                    precision={2}
-                    suffix="%"
-                    valueStyle={{ color: selectedStock.changePercent >= 0 ? '#cf1322' : '#389e0d' }}
-                  />
-                </Col>
-              </Row>
-
-              <div>
-                <Text type="secondary">关联内容</Text>
-                <List
-                  size="small"
-                  dataSource={relatedPosts}
-                  locale={{ emptyText: '暂无关联内容' }}
-                  renderItem={post => (
-                    <List.Item>
-                      <Text ellipsis>{post.title}</Text>
-                    </List.Item>
-                  )}
-                />
-              </div>
-
-              <TextArea
-                value={question}
-                onChange={event => setQuestion(event.target.value)}
-                rows={4}
-                placeholder="可选：输入你关心的问题，例如估值、风险事件、财报变化"
-              />
-
-              <Button
-                type="primary"
-                block
-                icon={loading ? <ReloadOutlined spin /> : <BulbOutlined />}
-                loading={loading}
-                onClick={handleAnalyze}
-              >
-                生成投研报告
-              </Button>
-            </Space>
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={15}>
-          {!report ? (
-            <Card>
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="选择股票后生成云模型投研报告"
-              />
-            </Card>
-          ) : (
-            <Space direction="vertical" size={16} style={{ width: '100%' }}>
-              <Card
-                title={
-                  <Space>
-                    <LineChartOutlined />
-                    {selectedStock.name} 投研摘要
-                  </Space>
-                }
-                extra={<Tag color="blue">{report.model}</Tag>}
-              >
-                <Paragraph style={{ fontSize: 16 }}>{report.executive_summary}</Paragraph>
-                <Row gutter={[16, 16]}>
-                  <Col xs={24} md={8}>
-                    <Statistic
-                      title="情绪"
-                      value={sentiment?.text}
-                      valueStyle={{ color: sentiment?.color }}
-                    />
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Statistic
-                      title="情绪分"
-                      value={report.sentiment_score}
-                      precision={2}
-                    />
-                    <Progress
-                      percent={Math.round((report.sentiment_score + 1) * 50)}
-                      showInfo={false}
-                      strokeColor={sentiment?.color}
-                    />
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Statistic
-                      title="风险等级"
-                      value={risk?.text}
-                      valueStyle={{ color: risk?.color }}
-                    />
-                  </Col>
-                </Row>
-              </Card>
-
-              <Row gutter={[16, 16]}>
-                <Col xs={24} md={12}>
-                  <Card title={<Space><BulbOutlined />催化因素</Space>}>
-                    <List
-                      dataSource={report.catalysts}
-                      renderItem={item => <List.Item>{item}</List.Item>}
-                    />
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card title={<Space><WarningOutlined />主要风险</Space>}>
-                    <List
-                      dataSource={report.risks}
-                      renderItem={item => <List.Item>{item}</List.Item>}
-                    />
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card title={<Space><ApiOutlined />观察清单</Space>}>
-                    <List
-                      dataSource={report.watch_items}
-                      renderItem={item => <List.Item>{item}</List.Item>}
-                    />
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card title={<Space><ExperimentOutlined />追问方向</Space>}>
-                    <List
-                      dataSource={report.suggested_questions}
-                      renderItem={item => <List.Item>{item}</List.Item>}
-                    />
-                  </Card>
-                </Col>
-              </Row>
-
-              <Alert
-                type="info"
-                showIcon
-                message={report.disclaimer}
-              />
-            </Space>
+    <div className="ai-chat-container">
+      <div className="ai-chat-header">
+        <div className="ai-chat-header-left">
+          <Select
+            value={selectedSymbol}
+            onChange={setSelectedSymbol}
+            options={appState.stocks.map(stock => ({
+              value: stock.symbol,
+              label: `${stock.name} (${stock.symbol})`
+            }))}
+            style={{ minWidth: 220 }}
+            size="middle"
+            bordered={false}
+            className="ai-chat-stock-select"
+          />
+          {selectedStock && (
+            <div className="ai-chat-price-info">
+              <span className="ai-chat-price">${selectedStock.currentPrice.toFixed(2)}</span>
+              <span className={selectedStock.changePercent >= 0 ? 'ai-chat-change-up' : 'ai-chat-change-down'}>
+                {selectedStock.changePercent >= 0 ? '+' : ''}{selectedStock.changePercent.toFixed(2)}%
+              </span>
+            </div>
           )}
-        </Col>
-      </Row>
+        </div>
+        <div className="ai-chat-header-right">
+          {apiStatus ? (
+            <Tag color="green" style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)' }}>
+              <LineChartOutlined /> {apiStatus.provider}
+            </Tag>
+          ) : (
+            <Tag color="orange" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)' }}>
+              {t('ai.apiDisconnected')}
+            </Tag>
+          )}
+        </div>
+      </div>
+
+      <div className="ai-chat-messages">
+        {messages.length === 0 ? (
+          <div className="ai-chat-empty">
+            <div className="ai-chat-empty-icon">
+              <RobotOutlined />
+            </div>
+            <div className="ai-chat-empty-title">{t('ai.title')}</div>
+            <div className="ai-chat-empty-desc">
+              {t('ai.desc')}
+            </div>
+            <div className="ai-chat-empty-hints">
+              <button
+                className="ai-chat-hint-chip"
+                onClick={() => {
+                  setQuestion('分析这只股票的核心竞争力和护城河');
+                  setTimeout(() => inputRef.current?.focus(), 100);
+                }}
+              >
+                {t('ai.hint1')}
+              </button>
+              <button
+                className="ai-chat-hint-chip"
+                onClick={() => {
+                  setQuestion('当前估值是否合理？有哪些风险需要关注？');
+                  setTimeout(() => inputRef.current?.focus(), 100);
+                }}
+              >
+                {t('ai.hint2')}
+              </button>
+              <button
+                className="ai-chat-hint-chip"
+                onClick={() => {
+                  setQuestion('近期的催化因素和潜在机会是什么？');
+                  setTimeout(() => inputRef.current?.focus(), 100);
+                }}
+              >
+                {t('ai.hint3')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          messages.map(msg => (
+            <div key={msg.id} className={`ai-chat-message ai-chat-message-${msg.role}`}>
+              <div className="ai-chat-message-inner">
+                {msg.role === 'assistant' && (
+                  <Avatar
+                    className="ai-chat-avatar"
+                    icon={<RobotOutlined />}
+                    style={{ backgroundColor: 'var(--accent)', flexShrink: 0 }}
+                  />
+                )}
+                <div className={`ai-chat-bubble ai-chat-bubble-${msg.role}`}>
+                  {renderMessageContent(msg)}
+                </div>
+                {msg.role === 'user' && (
+                  <Avatar
+                    className="ai-chat-avatar"
+                    icon={<UserOutlined />}
+                    style={{ backgroundColor: 'var(--info)', flexShrink: 0 }}
+                  />
+                )}
+              </div>
+            </div>
+          ))
+        )}
+
+        {loading && (
+          <div className="ai-chat-message ai-chat-message-assistant">
+            <div className="ai-chat-message-inner">
+              <Avatar
+                className="ai-chat-avatar"
+                icon={<RobotOutlined />}
+                style={{ backgroundColor: 'var(--accent)', flexShrink: 0 }}
+              />
+              <div className="ai-chat-bubble ai-chat-bubble-assistant ai-chat-bubble-loading">
+                <div className="ai-chat-typing">
+                  <span /><span /><span />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="ai-chat-input-area">
+        <div className="ai-chat-input-wrapper">
+          <TextArea
+            ref={inputRef}
+            value={question}
+            onChange={e => setQuestion(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={messages.length === 0 ? String(t('ai.placeholder')) : String(t('ai.continueAsk'))}
+            autoSize={{ minRows: 1, maxRows: 6 }}
+            disabled={loading}
+            className="ai-chat-input"
+          />
+          <Button
+            type="primary"
+            icon={<SendOutlined />}
+            onClick={handleSend}
+            loading={loading}
+            disabled={!question.trim() && messages.length > 0}
+            className="ai-chat-send-btn"
+          />
+        </div>
+        <div className="ai-chat-input-hint">
+          {t('ai.sendHint')}
+        </div>
+      </div>
     </div>
   );
 };
 
-export default AiResearch;
+export default React.memo(AiResearch);

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Image, Typography, Tag, Rate, Button, Input, Space, Select, Empty } from 'antd';
+import { Image, Typography, Tag, Rate, Button, Input, Space, Select, Empty, Spin, Alert } from 'antd';
 import { FileTextOutlined, SearchOutlined, FireOutlined } from '@ant-design/icons';
 import { Product } from '../types';
 
@@ -64,6 +64,16 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
         </div>
       )}
 
+      {showHeader && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="演示商城"
+          description="商品、购物车与订单为本地演示数据，保存在浏览器内，刷新或更换设备不会同步，支付为沙箱模拟、不会真实扣款。"
+        />
+      )}
+
       <div className="filter-bar">
         <Space wrap size={10} style={{ width: '100%', alignItems: 'center' }}>
           <Search
@@ -100,7 +110,9 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
       </div>
 
       {/* 资产列表 */}
-      {filteredProducts.length === 0 ? (
+      {products.length === 0 ? (
+        <Spin size="large" tip="加载产品中..." style={{ display: 'flex', justifyContent: 'center', padding: 80 }} />
+      ) : filteredProducts.length === 0 ? (
         <Empty description="暂无研究资产" />
       ) : (
         <div className="product-grid">
@@ -220,4 +232,4 @@ const Shop: React.FC<ShopProps> = ({ products, onProductClick, onAddToCart, show
   );
 };
 
-export default Shop;
+export default React.memo(Shop);

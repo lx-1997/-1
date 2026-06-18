@@ -1,0 +1,47 @@
+# DeepFocus web terminal — one-command VPS deploy.
+#   cp .env.example .env   # then edit DOMAIN / PUBLIC_URL / secrets
+#   docker compose up -d --build
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    env_file: .env
+    volumes:
+      - backend_data:/data        # persists runtime SQLite (accounts, caches)
+    expose:
+      - "8300"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+      args:
+        REACT_APP_API_BASE_URL: ${PUBLIC_URL}
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  caddy_data:
+  caddy_config:

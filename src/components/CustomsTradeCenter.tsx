@@ -51,10 +51,13 @@ import {
   analyzeCustomsTrade,
   fetchCustomsHsDetail,
   fetchCustomsTradeSnapshot
-} from '../services/customsTradeService';
-import type { FinGptTaskResponse } from '../services/aiResearchService';
+} from '../services/specializedService';
+import type { FinGptTaskResponse } from '../services/researchService';
+import CenterShell from './common/CenterShell';
+import ShareButton from './common/ShareButton';
+import './CustomsTradeCenter.css';
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Text } = Typography;
 
 interface CustomsTradeCenterProps {
   appState: AppState;
@@ -295,21 +298,20 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
   };
 
   return (
-    <div className="customs-trade-shell">
-      <div className="customs-trade-header">
-        <div>
-          <Space size={10} align="center">
-            <GlobalOutlined className="customs-trade-title-icon" />
-            <Title level={3}>中国海关进出口</Title>
-            <Tag color={!snapshot ? 'blue' : snapshot.source_status === 'live' ? 'green' : 'gold'}>
-              {!snapshot ? '加载中' : snapshot.source_status === 'live' ? '官方实时抓取' : '部分数据'}
-            </Tag>
-          </Space>
-          <Paragraph>
-            {snapshot?.month_label || '最新月份'} · 海关总署英文站 · 单位统一折算为 USD million
-          </Paragraph>
-        </div>
-        <Space wrap>
+    <CenterShell
+      className="customs-trade-shell"
+      icon={<GlobalOutlined className="customs-trade-title-icon" />}
+      title={(
+        <>
+          中国海关进出口{' '}
+          <Tag color={!snapshot ? 'blue' : snapshot.source_status === 'live' ? 'green' : 'gold'}>
+            {!snapshot ? '加载中' : snapshot.source_status === 'live' ? '官方实时抓取' : '部分数据'}
+          </Tag>
+        </>
+      )}
+      subtitle={`${snapshot?.month_label || '最新月份'} · 海关总署英文站 · 单位统一折算为 USD million`}
+      actions={(
+        <Space wrap className="customs-trade-actions">
           {snapshot?.total?.source_url && (
             <Button
               icon={<LinkOutlined />}
@@ -345,7 +347,8 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
             刷新
           </Button>
         </Space>
-      </div>
+      )}
+    >
 
       {error && (
         <Alert
@@ -388,6 +391,14 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
           title={<Space><RobotOutlined />投研Agent解读</Space>}
           extra={
             <Space wrap>
+              <ShareButton
+                modalTitle="分享海关贸易分析"
+                target={() => ({
+                  title: '中国海关进出口 AI 分析',
+                  summary: aiAnalysis.summary,
+                  byline: '由 DeepFocus 海关贸易分析生成',
+                })}
+              />
               <Tag color="blue">置信 {formatConfidence(aiAnalysis.confidence)}</Tag>
               <Text type="secondary">{aiAnalysis.provider} · {aiAnalysis.model}</Text>
             </Space>
@@ -489,7 +500,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
         className="customs-trade-detail"
         title="结构明细"
         extra={
-          <Space wrap>
+          <Space wrap className="customs-trade-detail-tools">
             {(detailTab === 'chapters' || detailTab === 'exports') && (
               <Input
                 allowClear
@@ -515,6 +526,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
             )}
             <Segmented
               size="small"
+              className="customs-trade-detail-tabs"
               value={detailTab}
               onChange={value => setDetailTab(value as DetailTab)}
               options={[
@@ -592,31 +604,34 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
               loading={hsDetailLoading}
               dataSource={hsDetail?.monthly_points || []}
               pagination={false}
-              scroll={{ x: 'max-content' }}
+              tableLayout="fixed"
+              scroll={{ x: 1240 }}
               columns={[
-                { title: '月份', dataIndex: 'month', sorter: (a, b) => compareText(a.month, b.month) },
-                { title: '贸易额', dataIndex: 'trade_value_usd', align: 'right', sorter: (a, b) => compareNumber(a.trade_value_usd, b.trade_value_usd), render: value => formatUsdRaw(value) },
-                { title: '出口金额', dataIndex: 'export_value_usd', align: 'right', sorter: (a, b) => compareNumber(a.export_value_usd, b.export_value_usd), render: value => formatUsdRaw(value) },
+                { title: '月份', dataIndex: 'month', width: 84, sorter: (a, b) => compareText(a.month, b.month) },
+                { title: '贸易额', dataIndex: 'trade_value_usd', width: 112, align: 'right', sorter: (a, b) => compareNumber(a.trade_value_usd, b.trade_value_usd), render: value => formatUsdRaw(value) },
+                { title: '出口金额', dataIndex: 'export_value_usd', width: 112, align: 'right', sorter: (a, b) => compareNumber(a.export_value_usd, b.export_value_usd), render: value => formatUsdRaw(value) },
                 {
                   title: '出口数量',
                   dataIndex: 'export_quantity',
+                  width: 132,
                   align: 'right',
                   sorter: (a, b) => compareNumber(a.export_quantity, b.export_quantity),
                   render: (value, row) => formatQuantityWithUnit(value, row.export_quantity_unit)
                 },
-                { title: '进口金额', dataIndex: 'import_value_usd', align: 'right', sorter: (a, b) => compareNumber(a.import_value_usd, b.import_value_usd), render: value => formatUsdRaw(value) },
+                { title: '进口金额', dataIndex: 'import_value_usd', width: 112, align: 'right', sorter: (a, b) => compareNumber(a.import_value_usd, b.import_value_usd), render: value => formatUsdRaw(value) },
                 {
                   title: '进口数量',
                   dataIndex: 'import_quantity',
+                  width: 132,
                   align: 'right',
                   sorter: (a, b) => compareNumber(a.import_quantity, b.import_quantity),
                   render: (value, row) => formatQuantityWithUnit(value, row.import_quantity_unit)
                 },
-                { title: '差额', dataIndex: 'balance_value_usd', align: 'right', sorter: (a, b) => compareNumber(a.balance_value_usd, b.balance_value_usd), render: value => formatUsdRaw(value, true) },
-                { title: '贸易环比', dataIndex: 'trade_mom_pct', align: 'right', sorter: (a, b) => compareNumber(a.trade_mom_pct, b.trade_mom_pct), render: formatPctTag },
-                { title: '出口环比', dataIndex: 'export_mom_pct', align: 'right', sorter: (a, b) => compareNumber(a.export_mom_pct, b.export_mom_pct), render: formatPctTag },
-                { title: '进口环比', dataIndex: 'import_mom_pct', align: 'right', sorter: (a, b) => compareNumber(a.import_mom_pct, b.import_mom_pct), render: formatPctTag },
-                { title: '出口单价', dataIndex: 'export_unit_value_usd', align: 'right', sorter: (a, b) => compareNumber(a.export_unit_value_usd, b.export_unit_value_usd), render: value => formatUnitValue(value) },
+                { title: '差额', dataIndex: 'balance_value_usd', width: 112, align: 'right', sorter: (a, b) => compareNumber(a.balance_value_usd, b.balance_value_usd), render: value => formatUsdRaw(value, true) },
+                { title: '贸易环比', dataIndex: 'trade_mom_pct', width: 96, align: 'right', sorter: (a, b) => compareNumber(a.trade_mom_pct, b.trade_mom_pct), render: formatPctTag },
+                { title: '出口环比', dataIndex: 'export_mom_pct', width: 96, align: 'right', sorter: (a, b) => compareNumber(a.export_mom_pct, b.export_mom_pct), render: formatPctTag },
+                { title: '进口环比', dataIndex: 'import_mom_pct', width: 96, align: 'right', sorter: (a, b) => compareNumber(a.import_mom_pct, b.import_mom_pct), render: formatPctTag },
+                { title: '出口单价', dataIndex: 'export_unit_value_usd', width: 104, align: 'right', sorter: (a, b) => compareNumber(a.export_unit_value_usd, b.export_unit_value_usd), render: value => formatUnitValue(value) },
                 { title: '进口单价', dataIndex: 'import_unit_value_usd', align: 'right', sorter: (a, b) => compareNumber(a.import_unit_value_usd, b.import_unit_value_usd), render: value => formatUnitValue(value) }
               ]}
             />
@@ -634,7 +649,8 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
             loading={loading && !snapshot}
             dataSource={filteredHsChapters}
             pagination={{ pageSize: 12, showSizeChanger: false }}
-            scroll={{ x: 'max-content' }}
+            tableLayout="fixed"
+            scroll={{ x: 1080 }}
             rowClassName={row => `customs-trade-clickable-row ${hsTrendKey(row) === selectedHsTrendKey ? 'customs-trade-selected-row' : ''}`}
             onRow={row => ({
               onClick: () => setSelectedHsTrendKey(hsTrendKey(row))
@@ -650,6 +666,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
 	              {
 	                title: '货物章',
 	                dataIndex: 'description',
+	                width: 220,
 	                sorter: (a, b) => compareText(displayHsName(a), displayHsName(b)),
 	                render: (value, row) => (
 	                  <Tooltip title={row.name}>
@@ -659,15 +676,15 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
 	                  </Tooltip>
 	                )
 	              },
-	              { title: '累计贸易', dataIndex: 'ytd_trade_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_trade_usd_mn, b.ytd_trade_usd_mn), render: value => formatUsd(value) },
-	              { title: '累计出口', dataIndex: 'ytd_export_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_export_usd_mn, b.ytd_export_usd_mn), render: value => formatUsd(value) },
-	              { title: '累计进口', dataIndex: 'ytd_import_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_import_usd_mn, b.ytd_import_usd_mn), render: value => formatUsd(value) },
-	              { title: '差额', dataIndex: 'ytd_balance_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_balance_usd_mn, b.ytd_balance_usd_mn), render: value => formatUsd(value, true) },
-	              { title: '贸易环比', dataIndex: 'mom_trade_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_trade_pct, b.mom_trade_pct), render: formatPctTag },
-	              { title: '出口环比', dataIndex: 'mom_export_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_export_pct, b.mom_export_pct), render: formatPctTag },
-	              { title: '进口环比', dataIndex: 'mom_import_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_import_pct, b.mom_import_pct), render: formatPctTag },
-	              { title: '出口同比', dataIndex: 'yoy_export_pct', align: 'right', sorter: (a, b) => compareNumber(a.yoy_export_pct, b.yoy_export_pct), render: formatPctTag },
-	              { title: '进口同比', dataIndex: 'yoy_import_pct', align: 'right', sorter: (a, b) => compareNumber(a.yoy_import_pct, b.yoy_import_pct), render: formatPctTag }
+	              { title: '累计贸易', dataIndex: 'ytd_trade_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_trade_usd_mn, b.ytd_trade_usd_mn), render: value => formatUsd(value) },
+	              { title: '累计出口', dataIndex: 'ytd_export_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_export_usd_mn, b.ytd_export_usd_mn), render: value => formatUsd(value) },
+	              { title: '累计进口', dataIndex: 'ytd_import_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_import_usd_mn, b.ytd_import_usd_mn), render: value => formatUsd(value) },
+	              { title: '差额', dataIndex: 'ytd_balance_usd_mn', width: 94, align: 'right', sorter: (a, b) => compareNumber(a.ytd_balance_usd_mn, b.ytd_balance_usd_mn), render: value => formatUsd(value, true) },
+	              { title: '贸易环比', dataIndex: 'mom_trade_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_trade_pct, b.mom_trade_pct), render: formatPctTag },
+	              { title: '出口环比', dataIndex: 'mom_export_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_export_pct, b.mom_export_pct), render: formatPctTag },
+	              { title: '进口环比', dataIndex: 'mom_import_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_import_pct, b.mom_import_pct), render: formatPctTag },
+	              { title: '出口同比', dataIndex: 'yoy_export_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.yoy_export_pct, b.yoy_export_pct), render: formatPctTag },
+	              { title: '进口同比', dataIndex: 'yoy_import_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.yoy_import_pct, b.yoy_import_pct), render: formatPctTag }
 	            ]}
 	          />
         )}
@@ -679,11 +696,13 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
             loading={loading && !snapshot}
             dataSource={snapshot?.partners || []}
             pagination={{ pageSize: 12, showSizeChanger: false }}
-            scroll={{ x: 'max-content' }}
+            tableLayout="fixed"
+            scroll={{ x: 960 }}
 	            columns={[
 	              {
 	                title: '伙伴/地区',
 	                dataIndex: 'name',
+	                width: 190,
 	                sorter: (a, b) => compareText(a.name_zh || a.name, b.name_zh || b.name),
 	                render: (value, row) => (
 	                  <Space size={6}>
@@ -694,14 +713,14 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
 	                  </Space>
 	                )
 	              },
-	              { title: '累计总额', dataIndex: 'ytd_total_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_total_usd_mn, b.ytd_total_usd_mn), render: value => formatUsd(value) },
-	              { title: '累计出口', dataIndex: 'ytd_export_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_export_usd_mn, b.ytd_export_usd_mn), render: value => formatUsd(value) },
-	              { title: '累计进口', dataIndex: 'ytd_import_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_import_usd_mn, b.ytd_import_usd_mn), render: value => formatUsd(value) },
-	              { title: '差额', dataIndex: 'ytd_balance_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_balance_usd_mn, b.ytd_balance_usd_mn), render: value => formatUsd(value, true) },
-	              { title: '总额环比', dataIndex: 'mom_total_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_total_pct, b.mom_total_pct), render: formatPctTag },
-	              { title: '出口环比', dataIndex: 'mom_export_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_export_pct, b.mom_export_pct), render: formatPctTag },
-	              { title: '进口环比', dataIndex: 'mom_import_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_import_pct, b.mom_import_pct), render: formatPctTag },
-	              { title: '总额同比', dataIndex: 'yoy_total_pct', align: 'right', sorter: (a, b) => compareNumber(a.yoy_total_pct, b.yoy_total_pct), render: formatPctTag }
+	              { title: '累计总额', dataIndex: 'ytd_total_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_total_usd_mn, b.ytd_total_usd_mn), render: value => formatUsd(value) },
+	              { title: '累计出口', dataIndex: 'ytd_export_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_export_usd_mn, b.ytd_export_usd_mn), render: value => formatUsd(value) },
+	              { title: '累计进口', dataIndex: 'ytd_import_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_import_usd_mn, b.ytd_import_usd_mn), render: value => formatUsd(value) },
+	              { title: '差额', dataIndex: 'ytd_balance_usd_mn', width: 94, align: 'right', sorter: (a, b) => compareNumber(a.ytd_balance_usd_mn, b.ytd_balance_usd_mn), render: value => formatUsd(value, true) },
+	              { title: '总额环比', dataIndex: 'mom_total_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_total_pct, b.mom_total_pct), render: formatPctTag },
+	              { title: '出口环比', dataIndex: 'mom_export_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_export_pct, b.mom_export_pct), render: formatPctTag },
+	              { title: '进口环比', dataIndex: 'mom_import_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_import_pct, b.mom_import_pct), render: formatPctTag },
+	              { title: '总额同比', dataIndex: 'yoy_total_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.yoy_total_pct, b.yoy_total_pct), render: formatPctTag }
 	            ]}
 	          />
         )}
@@ -713,7 +732,8 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
             loading={loading && !snapshot}
             dataSource={snapshot?.hs_sections || []}
             pagination={{ pageSize: 10, showSizeChanger: false }}
-            scroll={{ x: 'max-content' }}
+            tableLayout="fixed"
+            scroll={{ x: 980 }}
             rowClassName={row => `customs-trade-clickable-row ${hsTrendKey(row) === selectedHsTrendKey ? 'customs-trade-selected-row' : ''}`}
             onRow={row => ({
               onClick: () => setSelectedHsTrendKey(hsTrendKey(row))
@@ -722,6 +742,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
 	              {
 	                title: 'HS大类',
 	                dataIndex: 'name',
+	                width: 220,
 	                sorter: (a, b) => compareText(a.name_zh || cleanHsName(a.name), b.name_zh || cleanHsName(b.name)),
 	                render: (value, row) => (
 	                  <Tooltip title={value}>
@@ -731,14 +752,14 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
 	                  </Tooltip>
 	                )
 	              },
-	              { title: '累计贸易', dataIndex: 'ytd_trade_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_trade_usd_mn, b.ytd_trade_usd_mn), render: value => formatUsd(value) },
-	              { title: '累计出口', dataIndex: 'ytd_export_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_export_usd_mn, b.ytd_export_usd_mn), render: value => formatUsd(value) },
-	              { title: '累计进口', dataIndex: 'ytd_import_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_import_usd_mn, b.ytd_import_usd_mn), render: value => formatUsd(value) },
-	              { title: '贸易环比', dataIndex: 'mom_trade_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_trade_pct, b.mom_trade_pct), render: formatPctTag },
-	              { title: '出口环比', dataIndex: 'mom_export_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_export_pct, b.mom_export_pct), render: formatPctTag },
-	              { title: '进口环比', dataIndex: 'mom_import_pct', align: 'right', sorter: (a, b) => compareNumber(a.mom_import_pct, b.mom_import_pct), render: formatPctTag },
-	              { title: '出口同比', dataIndex: 'yoy_export_pct', align: 'right', sorter: (a, b) => compareNumber(a.yoy_export_pct, b.yoy_export_pct), render: formatPctTag },
-	              { title: '进口同比', dataIndex: 'yoy_import_pct', align: 'right', sorter: (a, b) => compareNumber(a.yoy_import_pct, b.yoy_import_pct), render: formatPctTag }
+	              { title: '累计贸易', dataIndex: 'ytd_trade_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_trade_usd_mn, b.ytd_trade_usd_mn), render: value => formatUsd(value) },
+	              { title: '累计出口', dataIndex: 'ytd_export_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_export_usd_mn, b.ytd_export_usd_mn), render: value => formatUsd(value) },
+	              { title: '累计进口', dataIndex: 'ytd_import_usd_mn', width: 100, align: 'right', sorter: (a, b) => compareNumber(a.ytd_import_usd_mn, b.ytd_import_usd_mn), render: value => formatUsd(value) },
+	              { title: '贸易环比', dataIndex: 'mom_trade_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_trade_pct, b.mom_trade_pct), render: formatPctTag },
+	              { title: '出口环比', dataIndex: 'mom_export_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_export_pct, b.mom_export_pct), render: formatPctTag },
+	              { title: '进口环比', dataIndex: 'mom_import_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.mom_import_pct, b.mom_import_pct), render: formatPctTag },
+	              { title: '出口同比', dataIndex: 'yoy_export_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.yoy_export_pct, b.yoy_export_pct), render: formatPctTag },
+	              { title: '进口同比', dataIndex: 'yoy_import_pct', width: 92, align: 'right', sorter: (a, b) => compareNumber(a.yoy_import_pct, b.yoy_import_pct), render: formatPctTag }
 	            ]}
 	          />
         )}
@@ -750,7 +771,8 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
             loading={loading && !snapshot}
             dataSource={filteredMajorExports}
 	            pagination={{ pageSize: 10, showSizeChanger: false }}
-            scroll={{ x: 'max-content' }}
+            tableLayout="fixed"
+            scroll={{ x: 960 }}
             rowClassName={row => `customs-trade-clickable-row ${commodityTrendKey(row) === selectedCommodityTrendKey ? 'customs-trade-selected-row' : ''}`}
             onRow={row => ({
               onClick: () => setSelectedCommodityTrendKey(commodityTrendKey(row))
@@ -766,6 +788,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
 	              {
 	                title: '商品',
 	                dataIndex: 'commodity',
+	                width: 230,
 	                sorter: (a, b) => compareText(a.commodity_zh || a.commodity, b.commodity_zh || b.commodity),
 	                render: (value, row) => (
 	                  <Tooltip title={row.commodity_zh ? value : undefined}>
@@ -773,14 +796,15 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
 	                  </Tooltip>
 	                )
 	              },
-	              { title: '累计金额', dataIndex: 'ytd_value_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.ytd_value_usd_mn, b.ytd_value_usd_mn), render: value => formatUsd(value) },
-	              { title: '当月金额', dataIndex: 'current_value_usd_mn', align: 'right', sorter: (a, b) => compareNumber(a.current_value_usd_mn, b.current_value_usd_mn), render: value => formatUsd(value) },
-	              { title: '金额环比', dataIndex: 'value_mom_pct', align: 'right', sorter: (a, b) => compareNumber(a.value_mom_pct, b.value_mom_pct), render: formatPctTag },
-	              { title: '数量环比', dataIndex: 'quantity_mom_pct', align: 'right', sorter: (a, b) => compareNumber(a.quantity_mom_pct, b.quantity_mom_pct), render: formatPctTag },
-	              { title: '金额同比', dataIndex: 'value_yoy_pct', align: 'right', sorter: (a, b) => compareNumber(a.value_yoy_pct, b.value_yoy_pct), render: formatPctTag },
+	              { title: '累计金额', dataIndex: 'ytd_value_usd_mn', width: 104, align: 'right', sorter: (a, b) => compareNumber(a.ytd_value_usd_mn, b.ytd_value_usd_mn), render: value => formatUsd(value) },
+	              { title: '当月金额', dataIndex: 'current_value_usd_mn', width: 104, align: 'right', sorter: (a, b) => compareNumber(a.current_value_usd_mn, b.current_value_usd_mn), render: value => formatUsd(value) },
+	              { title: '金额环比', dataIndex: 'value_mom_pct', width: 94, align: 'right', sorter: (a, b) => compareNumber(a.value_mom_pct, b.value_mom_pct), render: formatPctTag },
+	              { title: '数量环比', dataIndex: 'quantity_mom_pct', width: 94, align: 'right', sorter: (a, b) => compareNumber(a.quantity_mom_pct, b.quantity_mom_pct), render: formatPctTag },
+	              { title: '金额同比', dataIndex: 'value_yoy_pct', width: 94, align: 'right', sorter: (a, b) => compareNumber(a.value_yoy_pct, b.value_yoy_pct), render: formatPctTag },
 	              {
 	                title: '数量单位',
 	                dataIndex: 'quantity_unit',
+	                width: 96,
 	                sorter: (a, b) => compareText(a.quantity_unit, b.quantity_unit),
 	                render: value => value && value !== '-' ? value : '—'
 	              }
@@ -800,7 +824,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
           ))}
         </div>
       ) : null}
-    </div>
+    </CenterShell>
   );
 };
 
@@ -864,11 +888,13 @@ const HsDetailPartnerTable: React.FC<{
       loading={loading}
       dataSource={rows}
       pagination={false}
-      scroll={{ x: 'max-content' }}
+      tableLayout="fixed"
+      scroll={{ x: 620 }}
       columns={[
         {
           title: '国家/地区',
           dataIndex: 'partner',
+          width: 190,
           sorter: (a, b) => compareText(a.partner_zh || a.partner, b.partner_zh || b.partner),
           render: (value, row) => (
             <Tooltip title={row.partner_zh ? value : undefined}>
@@ -876,15 +902,16 @@ const HsDetailPartnerTable: React.FC<{
             </Tooltip>
           )
         },
-        { title: '金额', dataIndex: 'value_usd', align: 'right', sorter: (a, b) => compareNumber(a.value_usd, b.value_usd), render: value => formatUsdRaw(value) },
+        { title: '金额', dataIndex: 'value_usd', width: 120, align: 'right', sorter: (a, b) => compareNumber(a.value_usd, b.value_usd), render: value => formatUsdRaw(value) },
         {
           title: '数量',
           dataIndex: 'quantity',
+          width: 140,
           align: 'right',
           sorter: (a, b) => compareNumber(a.quantity, b.quantity),
           render: (value, row) => formatQuantityWithUnit(value, row.quantity_unit)
         },
-        { title: '单价', dataIndex: 'unit_value_usd', align: 'right', sorter: (a, b) => compareNumber(a.unit_value_usd, b.unit_value_usd), render: value => formatUnitValue(value) }
+        { title: '单价', dataIndex: 'unit_value_usd', width: 110, align: 'right', sorter: (a, b) => compareNumber(a.unit_value_usd, b.unit_value_usd), render: value => formatUnitValue(value) }
       ]}
     />
   </div>

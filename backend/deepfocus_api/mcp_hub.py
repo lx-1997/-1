@@ -11,6 +11,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import HTTPException, status
 
+from .shared_utils import utc_now_iso
 from .schemas import (
     McpCapabilityRecord,
     McpServerCreateRequest,
@@ -30,10 +31,6 @@ DB_PATH = Path(
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DEEPFOCUS_MCP_HTTP_TIMEOUT_SECONDS", "20"))
 MCP_PROTOCOL_VERSION = os.getenv("DEEPFOCUS_MCP_PROTOCOL_VERSION", "2025-06-18")
 SECRET_HEADER_HINTS = ("authorization", "api-key", "apikey", "x-api-key", "token", "secret", "cookie")
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def init_mcp_db() -> None:
@@ -102,7 +99,7 @@ def create_mcp_server(request: McpServerCreateRequest) -> McpServerRecord:
     if request.transport == "stdio" and not request.command:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="stdio MCP 需要配置 command。")
 
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     server_id = str(uuid.uuid4())
     config = {
         "url": request.url,
@@ -251,7 +248,7 @@ async def discover_mcp_server(server_id: str) -> tuple[McpServerRecord, list[Mcp
             )
 
         records = _replace_capabilities(server.id, tools=tools, resources=resources, prompts=prompts)
-        _update_server(server.id, status="connected", last_connected_at=now_iso(), last_error="；".join(warnings[:3]) or None)
+        _update_server(server.id, status="connected", last_connected_at=utc_now_iso(), last_error="；".join(warnings[:3]) or None)
         return get_mcp_server(server.id) or server, records, warnings
     except HTTPException:
         raise
@@ -300,7 +297,7 @@ async def call_mcp_tool(server_id: str, request: McpToolCallRequest) -> McpToolC
             name=tool_name,
         )
 
-    called_at = now_iso()
+    called_at = utc_now_iso()
     return McpToolCallResponse(
         server=get_mcp_server(server.id) or server,
         tool_name=tool_name,
@@ -318,7 +315,7 @@ def _replace_capabilities(
     resources: list[dict[str, Any]],
     prompts: list[dict[str, Any]],
 ) -> list[McpCapabilityRecord]:
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     rows: list[dict[str, Any]] = []
 
     for tool in tools:
@@ -540,7 +537,7 @@ def _update_server(
                 updated_at = ?
             WHERE id = ?
             """,
-            (status, last_connected_at, last_error, now_iso(), server_id),
+            (status, last_connected_at, last_error, utc_now_iso(), server_id),
         )
         conn.commit()
 

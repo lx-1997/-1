@@ -11,6 +11,9 @@ import {
   ThunderboltOutlined
 } from '@ant-design/icons';
 import { AppState, Stock } from '../types';
+import CenterShell from './common/CenterShell';
+import ShareButton from './common/ShareButton';
+import './centers/shareholderChange.css';
 import {
   MajorEventImpact,
   MajorEventRecord,
@@ -18,7 +21,7 @@ import {
   MajorEventStatus,
   MajorEventType,
   scanMajorEvents
-} from '../services/majorEventService';
+} from '../services/eventService';
 
 const { Text } = Typography;
 
@@ -305,13 +308,12 @@ const MajorEventCenter: React.FC<MajorEventCenterProps> = ({ appState, onStockSe
   };
 
   return (
-    <div className="shareholder-change-shell major-event-shell">
-      <div className="shareholder-change-header">
-        <div>
-          <div className="dashboard-eyebrow">A SHARE EVENT CENTER</div>
-          <h2 className="dashboard-title">重大事项预警</h2>
-          <div className="dashboard-subtitle">扫描 A 股控制权、重组、回购、处罚、诉讼、ST、质押冻结和交易异动公告。</div>
-        </div>
+    <CenterShell
+      className="major-event-shell"
+      eyebrow="A SHARE EVENT CENTER"
+      title="重大事项预警"
+      subtitle="扫描 A 股控制权、重组、回购、处罚、诉讼、ST、质押冻结和交易异动公告。"
+      actions={(
         <Space size={8} wrap>
           <Tag color="red">A 股</Tag>
           {result && <Tag color="cyan">{result.provider}</Tag>}
@@ -330,50 +332,48 @@ const MajorEventCenter: React.FC<MajorEventCenterProps> = ({ appState, onStockSe
             刷新
           </Button>
         </Space>
-      </div>
-
-      <div className="shareholder-change-scanbar">
-        <Select
-          mode="multiple"
-          allowClear
-          maxTagCount="responsive"
-          placeholder="全部重大事项"
-          value={eventTypes}
-          onChange={value => setEventTypes(value as MajorEventType[])}
-          style={{ minWidth: 260, flex: 1 }}
-          options={eventTypeOptions}
-        />
-        <Space size={8} wrap>
-          <Select
-            value={limit}
-            onChange={setLimit}
-            style={{ width: 112 }}
-            options={[
-              { label: '前 40 条', value: 40 },
-              { label: '前 80 条', value: 80 },
-              { label: '前 120 条', value: 120 },
-              { label: '前 200 条', value: 200 }
-            ]}
-          />
-          <Select
-            value={detailLimit}
-            onChange={setDetailLimit}
-            style={{ width: 132 }}
-            options={[
-              { label: '不解析 PDF', value: 0 },
-              { label: '解析 8 条', value: 8 },
-              { label: '解析 12 条', value: 12 },
-              { label: '解析 24 条', value: 24 },
-              { label: '解析 50 条', value: 50 }
-            ]}
-          />
-        </Space>
-      </div>
-
-      {error && (
-        <Alert className="shareholder-change-alert" type="warning" showIcon message={error} />
       )}
-
+      toolbar={(
+        <>
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            placeholder="全部重大事项"
+            value={eventTypes}
+            onChange={value => setEventTypes(value as MajorEventType[])}
+            style={{ minWidth: 260, flex: 1 }}
+            options={eventTypeOptions}
+          />
+          <Space size={8} wrap>
+            <Select
+              value={limit}
+              onChange={setLimit}
+              style={{ width: 112 }}
+              options={[
+                { label: '前 40 条', value: 40 },
+                { label: '前 80 条', value: 80 },
+                { label: '前 120 条', value: 120 },
+                { label: '前 200 条', value: 200 }
+              ]}
+            />
+            <Select
+              value={detailLimit}
+              onChange={setDetailLimit}
+              style={{ width: 132 }}
+              options={[
+                { label: '不解析 PDF', value: 0 },
+                { label: '解析 8 条', value: 8 },
+                { label: '解析 12 条', value: 12 },
+                { label: '解析 24 条', value: 24 },
+                { label: '解析 50 条', value: 50 }
+              ]}
+            />
+          </Space>
+        </>
+      )}
+      error={error}
+    >
       {result?.warnings.length ? (
         <Alert
           className="shareholder-change-alert"
@@ -599,6 +599,16 @@ const MajorEventCenter: React.FC<MajorEventCenterProps> = ({ appState, onStockSe
                 </div>
 
                 <div className="shareholder-change-actions">
+                  {selectedRecord.detail_summary && (
+                    <ShareButton
+                      modalTitle="分享重大事项"
+                      target={() => ({
+                        title: `${selectedRecord.name || selectedRecord.symbol} · ${selectedRecord.title}`,
+                        summary: selectedRecord.detail_summary || '',
+                        byline: '由 DeepFocus 重大事项预警生成',
+                      })}
+                    />
+                  )}
                   <Button icon={<LinkOutlined />} onClick={() => openAnnouncement(selectedRecord.url)}>
                     原文公告
                   </Button>
@@ -615,7 +625,7 @@ const MajorEventCenter: React.FC<MajorEventCenterProps> = ({ appState, onStockSe
           </aside>
         </div>
       </Spin>
-    </div>
+    </CenterShell>
   );
 };
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, Tabs, List, Tag, Typography, Space, Button, Avatar, Badge, Divider, Row, Col, Statistic } from 'antd';
+import { Card, Tabs, List, Tag, Typography, Space, Button, Avatar, Badge, Divider, Row, Col, Statistic, Empty, Spin } from 'antd';
 import { 
   FireOutlined, 
   StarOutlined, 
@@ -37,10 +37,10 @@ const StockDetail: React.FC<StockDetailProps> = ({
 
   const getPostTypeIcon = (type: string) => {
     switch (type) {
-      case 'news': return <FireOutlined style={{ color: '#ff4d4f' }} />;
-      case 'analysis': return <StarOutlined style={{ color: '#faad14' }} />;
-      case 'discussion': return <MessageOutlined style={{ color: '#1890ff' }} />;
-      case 'qa': return <CrownOutlined style={{ color: '#722ed1' }} />;
+      case 'news': return <FireOutlined style={{ color: 'var(--negative)' }} />;
+      case 'analysis': return <StarOutlined style={{ color: 'var(--warning)' }} />;
+      case 'discussion': return <MessageOutlined style={{ color: 'var(--info)' }} />;
+      case 'qa': return <CrownOutlined style={{ color: '#a855f7' }} />;
       default: return <StarOutlined />;
     }
   };
@@ -79,6 +79,10 @@ const StockDetail: React.FC<StockDetailProps> = ({
     }
   };
 
+  if (!stock) {
+    return <div style={{ padding: 40, textAlign: 'center' }}><Spin size="large" tip="加载中..." /></div>;
+  }
+
   const filteredPosts = posts.filter(post => post.stockSymbol === stock.symbol);
   const filteredComments = comments.filter(comment => 
     filteredPosts.some(post => post.id === comment.postId)
@@ -102,8 +106,8 @@ const StockDetail: React.FC<StockDetailProps> = ({
             <Avatar 
               size={80}
               style={{ 
-                backgroundColor: stock.focusLevel === 'high' ? '#ff4d4f' : 
-                               stock.focusLevel === 'medium' ? '#faad14' : '#52c41a',
+                backgroundColor: stock.focusLevel === 'high' ? 'var(--negative)' : 
+                               stock.focusLevel === 'medium' ? 'var(--warning)' : 'var(--positive)',
                 fontSize: '24px',
                 fontWeight: 'bold'
               }}
@@ -126,9 +130,9 @@ const StockDetail: React.FC<StockDetailProps> = ({
                   title="当前价格"
                   value={stock.currentPrice}
                   prefix="$"
-                  valueStyle={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f' }}
+                  valueStyle={{ color: stock.changePercent >= 0 ? 'var(--positive)' : 'var(--negative)' }}
                   suffix={
-                    <Text style={{ color: stock.changePercent >= 0 ? '#52c41a' : '#ff4d4f' }}>
+                    <Text style={{ color: stock.changePercent >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
                       {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent}%
                     </Text>
                   }
@@ -178,6 +182,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
 
             <List
               dataSource={filteredPosts}
+              locale={{ emptyText: <Empty description="暂无相关资讯" /> }}
               renderItem={(post) => (
                 <List.Item
                   actions={[
@@ -193,7 +198,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
                   <List.Item.Meta
                     avatar={
                       <Badge
-                        count={post.isPaid ? <DollarOutlined style={{ color: '#faad14' }} /> : 0}
+                        count={post.isPaid ? <DollarOutlined style={{ color: 'var(--warning)' }} /> : 0}
                         offset={[-5, 5]}
                       >
                         <Avatar 
@@ -275,6 +280,7 @@ const StockDetail: React.FC<StockDetailProps> = ({
               children: (
             <List
               dataSource={filteredComments}
+              locale={{ emptyText: <Empty description="暂无讨论内容" /> }}
               renderItem={(comment) => (
                 <List.Item>
                   <List.Item.Meta
@@ -319,4 +325,4 @@ const StockDetail: React.FC<StockDetailProps> = ({
   );
 };
 
-export default StockDetail;
+export default React.memo(StockDetail);

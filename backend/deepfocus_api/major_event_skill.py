@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .schemas import MajorEventRecord, MajorEventScanRequest, MajorEventScanResponse
+from .shared_utils import parse_date, clean_title, display_value, dedupe, safe_error
+
 
 
 CNINFO_QUERY_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
@@ -218,7 +220,7 @@ async def scan_major_events(request: MajorEventScanRequest) -> MajorEventScanRes
         detail_success_count=detail_success,
         summary=summary,
         records=limited_records,
-        warnings=_dedupe(warnings)[:8],
+        warnings=dedupe(warnings)[:8],
         coverage_note=_coverage_note(detail_attempted, detail_success),
     )
 
@@ -247,10 +249,10 @@ def format_major_event_skill_response(result: MajorEventScanResponse) -> str:
                     ),
                     f"   事项：{record.title}",
                     (
-                        f"   主体：{_display_value(record.subject)}；金额/比例："
-                        f"{_display_value(record.amount)} / {_display_value(record.share_ratio)}"
+                        f"   主体：{display_value(record.subject)}；金额/比例："
+                        f"{display_value(record.amount)} / {display_value(record.share_ratio)}"
                     ),
-                    f"   进展/期限：{_display_value(record.progress)} / {_display_value(record.deadline)}",
+                    f"   进展/期限：{display_value(record.progress)} / {display_value(record.deadline)}",
                     f"   原文：{record.url}",
                 ]
             )
@@ -304,7 +306,7 @@ async def _query_cninfo_keyword(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"{CNINFO_SOURCE_NAME} 查询“{keyword}”失败：{_safe_error(exc)}")
+            warnings.append(f"{CNINFO_SOURCE_NAME} 查询“{keyword}”失败：{safe_error(exc)}")
             break
 
         total = max(total, int(payload.get("totalAnnouncement") or payload.get("totalRecordNum") or 0))
@@ -319,11 +321,11 @@ async def _query_cninfo_keyword(
 
 
 def _record_from_cninfo_row(row: dict[str, Any]) -> Optional[MajorEventRecord]:
-    title = _clean_title(str(row.get("announcementTitle") or row.get("shortTitle") or ""))
+    title = clean_title(str(row.get("announcementTitle") or row.get("shortTitle") or ""))
     if not _is_major_event_title(title):
         return None
     symbol = str(row.get("secCode") or "").strip()
-    name = _clean_title(str(row.get("secName") or row.get("tileSecName") or ""))
+    name = clean_title(str(row.get("secName") or row.get("tileSecName") or ""))
     announcement_id = str(row.get("announcementId") or "").strip()
     announcement_date = _announcement_date(row.get("announcementTime"))
     adjunct_url = str(row.get("adjunctUrl") or "").strip()
@@ -332,7 +334,7 @@ def _record_from_cninfo_row(row: dict[str, Any]) -> Optional[MajorEventRecord]:
     status = _infer_status(title)
     risk_flags = _risk_flags_from_text(title, event_type)
     risk_level = _risk_level_from_flags(risk_flags, event_type, title)
-    tags = _dedupe([_event_type_label(event_type), *risk_flags, _status_label(status)])[:8]
+    tags = dedupe([_event_type_label(event_type), *risk_flags, _status_label(status)])[:8]
 
     return MajorEventRecord(
         symbol=symbol,
@@ -374,7 +376,7 @@ async def _enrich_records_with_pdf_details(
             detail = await _extract_pdf_detail(client, record)
         except Exception as exc:  # noqa: BLE001
             record.detail_source = "unavailable"
-            warnings.append(f"{record.symbol or record.name} PDF 明细解析失败：{_safe_error(exc)}")
+            warnings.append(f"{record.symbol or record.name} PDF 明细解析失败：{safe_error(exc)}")
             continue
         _apply_pdf_detail(record, detail)
         if record.detail_quality != "title_only":
@@ -412,7 +414,7 @@ def _extract_event_detail_from_text(text: str, record: MajorEventRecord) -> dict
     progress = _extract_progress(compact, record.event_type)
     deadline = _extract_deadline(compact)
     key_points = _extract_key_points(compact, record.event_type)
-    risk_flags = _dedupe([*record.risk_flags, *_risk_flags_from_text(compact, record.event_type)])[:8]
+    risk_flags = dedupe([*record.risk_flags, *_risk_flags_from_text(compact, record.event_type)])[:8]
     action_items = _action_items(record.event_type, risk_flags)
     evidence_excerpt = _extract_evidence_excerpt(compact, record.event_type)
     detail_summary = _build_detail_summary(
@@ -558,7 +560,7 @@ def _extract_key_points(text: str, event_type: str) -> list[str]:
             continue
         if any(keyword in sentence for keyword in [*event_keywords, *generic_keywords]):
             points.append(_trim_detail(sentence))
-    return _dedupe(points)[:5]
+    return dedupe(points)[:5]
 
 
 def _extract_evidence_excerpt(text: str, event_type: str) -> str:
@@ -668,7 +670,7 @@ def _risk_flags_from_text(text: str, event_type: str) -> list[str]:
     flags = [label for pattern, label in checks if re.search(pattern, text, re.I)]
     if event_type in {"restructuring", "control_change", "financing"} and "不确定性风险" not in flags:
         flags.append("不确定性风险")
-    return _dedupe(flags)
+    return dedupe(flags)
 
 
 def _risk_level_from_flags(flags: list[str], event_type: str, text: str) -> str:
@@ -714,7 +716,7 @@ def _action_items(event_type: str, flags: list[str]) -> list[str]:
         items.append("评估现金流、控制权稳定性和潜在负债")
     if event_type in {"buyback", "dividend", "equity_incentive"}:
         items.append("核对实施进度、资金来源和股份注销/授予条件")
-    return _dedupe(items or ["纳入自选事件流，等待后续公告确认"])
+    return dedupe(items or ["纳入自选事件流，等待后续公告确认"])
 
 
 def _build_summary(records: list[MajorEventRecord], start_at: date, end_at: date) -> str:
@@ -743,7 +745,7 @@ def _keywords_for_event_types(event_types: list[str]) -> list[str]:
         if not meta:
             continue
         keywords.extend(meta["keywords"])
-    return _dedupe(keywords)
+    return dedupe(keywords)
 
 
 def _event_types_from_text(text: str) -> list[str]:
@@ -759,7 +761,7 @@ def _event_types_from_text(text: str) -> list[str]:
         matched.append("st_delisting")
     if "处罚" in text and "regulatory_penalty" not in matched:
         matched.append("regulatory_penalty")
-    return _dedupe(matched)
+    return dedupe(matched)
 
 
 def _keywords_for_record_type(event_type: str) -> list[str]:
@@ -823,22 +825,11 @@ def _risk_rank(level: str) -> int:
 
 
 def _date_range(request: MajorEventScanRequest) -> tuple[date, date]:
-    end_at = _parse_date(request.end_date) or datetime.now(CN_TZ).date()
-    start_at = _parse_date(request.start_date) or (end_at - timedelta(days=request.days - 1))
+    end_at = parse_date(request.end_date) or datetime.now(CN_TZ).date()
+    start_at = parse_date(request.start_date) or (end_at - timedelta(days=request.days - 1))
     if start_at > end_at:
         start_at, end_at = end_at, start_at
     return start_at, end_at
-
-
-def _parse_date(value: Optional[str]) -> Optional[date]:
-    if not value:
-        return None
-    try:
-        return datetime.strptime(value[:10], "%Y-%m-%d").date()
-    except ValueError:
-        return None
-
-
 def _announcement_date(value: Any) -> str:
     if isinstance(value, (int, float)):
         timestamp = float(value)
@@ -849,20 +840,10 @@ def _announcement_date(value: Any) -> str:
         text = value.strip()
         if text.isdigit():
             return _announcement_date(int(text))
-        parsed = _parse_date(text)
+        parsed = parse_date(text)
         if parsed:
             return parsed.isoformat()
     return datetime.now(CN_TZ).date().isoformat()
-
-
-def _clean_title(value: str) -> str:
-    text = unescape(value)
-    text = re.sub(r"</?em>", "", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = text.replace("\u3000", " ").replace("&nbsp;", " ")
-    return re.sub(r"\s+", "", text).strip()
-
-
 def _compact_pdf_text(text: str) -> str:
     compact = (
         text.replace("\u3000", " ")
@@ -907,12 +888,6 @@ def _trim_excerpt(value: str, limit: int = 220) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[:limit]}..."
-
-
-def _display_value(value: str) -> str:
-    return value.strip() if value and value.strip() else "--"
-
-
 def _coverage_note(detail_attempted: int, detail_success: int) -> str:
     if detail_attempted:
         return (
@@ -920,20 +895,3 @@ def _coverage_note(detail_attempted: int, detail_success: int) -> str:
             f"{detail_success} 条抽取到结构化明细。空字段代表公告未披露或版式未识别，原文链接保留用于核验。"
         )
     return "来源为巨潮资讯网公告检索；当前仅使用公告索引和标题分类，原文链接保留用于核验。"
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        normalized = value.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        result.append(normalized)
-    return result
-
-
-def _safe_error(exc: Exception) -> str:
-    text = str(exc).strip() or exc.__class__.__name__
-    return text[:160]

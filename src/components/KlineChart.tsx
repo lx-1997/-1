@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Select, Space, Typography, Spin } from 'antd';
+import DataQualityBanner from './common/DataQualityBanner';
 import {
   ComposedChart,
   Line,
@@ -62,6 +63,14 @@ const KlineChart: React.FC<KlineChartProps> = ({ symbol }) => {
 
   return (
     <div>
+      <DataQualityBanner
+        quality={{
+          level: 'mock',
+          label: '示例 K 线',
+          detail: '当前为前端演示用的模拟行情（含随机技术指标），非真实价格，不能作为交易依据。',
+          reasons: [],
+        }}
+      />
       {/* 时间周期选择器 */}
       <div style={{ marginBottom: '16px', textAlign: 'right' }}>
         <Space>
@@ -113,8 +122,8 @@ const KlineChart: React.FC<KlineChartProps> = ({ symbol }) => {
               return date.toLocaleString('zh-CN');
             }}
             contentStyle={{
-              backgroundColor: '#fff',
-              border: '1px solid #d9d9d9',
+              backgroundColor: 'var(--surface)',
+              border: '1px solid var(--border)',
               borderRadius: '6px'
             }}
           />
@@ -178,11 +187,11 @@ const KlineChart: React.FC<KlineChartProps> = ({ symbol }) => {
       </ResponsiveContainer>
 
       {/* 技术指标 */}
-      <div style={{ marginTop: '16px', padding: '12px', background: '#fafafa', borderRadius: '6px' }}>
+      <div style={{ marginTop: '16px', padding: '12px', background: 'var(--surface-muted)', borderRadius: '6px' }}>
         <Text strong style={{ fontSize: '14px' }}>技术指标</Text>
         <div style={{ marginTop: '8px', display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
           <div>
-            <Text style={{ fontSize: '12px', color: '#666' }}>MA5: </Text>
+            <Text style={{ fontSize: '12px', color: 'var(--text-muted)' }}>MA5: </Text>
             <Text style={{ fontSize: '12px', fontWeight: 'bold' }}>
               ¥{data.length > 0 ? data[data.length - 1].close.toFixed(2) : '0.00'}
             </Text>

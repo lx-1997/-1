@@ -40,6 +40,7 @@ def _install_recording_stubs(monkeypatch, fills: dict[str, str]):
     monkeypatch.setattr(md, "_fetch_alpha_vantage_quotes", make("alpha_vantage", True))
     # eastmoney 在表里出现两次（cn 优先 + 全局兜底），同一函数据 symbols 区分。
     monkeypatch.setattr(md, "_fetch_eastmoney_quotes", make("eastmoney", False))
+    monkeypatch.setattr(md, "_fetch_eastmoney_us_quotes", make("eastmoney_us", False))
     monkeypatch.setattr(md, "_fetch_sina_quotes", make("sina", False))
     monkeypatch.setattr(md, "_fetch_tencent_quotes", make("tencent", False))
     monkeypatch.setattr(md, "_fetch_stooq_quotes", make("stooq", False))
@@ -50,7 +51,7 @@ def _install_recording_stubs(monkeypatch, fills: dict[str, str]):
 
 def test_registry_keys_unique_and_nonempty() -> None:
     keys = [p.key for p in md.QUOTE_PROVIDERS]
-    assert keys == ["finnhub", "alpha_vantage", "eastmoney_cn", "sina", "tencent", "stooq", "eastmoney_fallback"]
+    assert keys == ["finnhub", "alpha_vantage", "eastmoney_cn", "sina", "tencent", "eastmoney_us", "stooq", "eastmoney_fallback", "google_finance"]
     assert len(keys) == len(set(keys))
 
 
@@ -65,10 +66,17 @@ def test_key_gated_providers_marked() -> None:
 
 def test_china_providers_serve_only_cn_hk() -> None:
     by_key = {p.key: p for p in md.QUOTE_PROVIDERS}
-    for k in ("eastmoney_cn", "sina", "tencent"):
+    for k in ("eastmoney_cn", "tencent"):
         assert by_key[k].serves("600519.SH") is True
         assert by_key[k].serves("00700.HK") is True
         assert by_key[k].serves("AAPL") is False
+    # sina 经 gb_ 前缀也覆盖美股（主力快源）→ 三市场全服务
+    assert by_key["sina"].serves("600519.SH") is True
+    assert by_key["sina"].serves("00700.HK") is True
+    assert by_key["sina"].serves("AAPL") is True
+    # 东财美股源只服务美股
+    assert by_key["eastmoney_us"].serves("AAPL") is True
+    assert by_key["eastmoney_us"].serves("600519.SH") is False
     # 全局源服务一切。
     for k in ("finnhub", "alpha_vantage", "stooq", "eastmoney_fallback"):
         assert by_key[k].serves("AAPL") is True
@@ -92,8 +100,10 @@ def test_no_keys_us_symbol_falls_through_to_stooq(monkeypatch) -> None:
     # CN 符号被 eastmoney_cn 命中，且 eastmoney 只收到中国符号（AAPL 被 scope 过滤掉）。
     em_targets = [syms for key, syms in calls if key == "eastmoney"]
     assert em_targets and all("AAPL" not in t for t in em_targets)
-    # sina / tencent 此时无中国缺口 → scope 过滤后 targets 为空，根本不被调用。
-    assert "sina" not in called and "tencent" not in called
+    # sina 现在也覆盖美股 → 会尝试 AAPL（本测试它不补齐，继续往后落）；tencent 仍只服务 CN/HK 且无缺口 → 不被调用。
+    sina_targets = [syms for key, syms in calls if key == "sina"]
+    assert sina_targets == [["AAPL"]]
+    assert "tencent" not in called
     # AAPL 落到 stooq。
     assert ("stooq", ["AAPL"]) in calls
     assert {q.symbol for q in resp.quotes} == {"AAPL", "600519.SH"}
@@ -131,3 +141,25 @@ def test_unfilled_symbol_reaches_eastmoney_fallback(monkeypatch) -> None:
     assert any("ZZZZ" in t for t in em_targets)
     assert resp.quotes == []
     assert any("ZZZZ" in w for w in resp.warnings)
+
+
+# --- 东财 suggest 候选解析：科创板/创业板/北证不再被漏掉（回归） ---
+def test_candidate_parser_covers_star_chinext_bse() -> None:
+    from deepfocus_api.market_data import _candidate_from_eastmoney as parse
+
+    star = parse({"Code": "688206", "Name": "概伦电子", "Classify": "23",
+                  "SecurityTypeName": "科创板", "QuoteID": "1.688206"})
+    assert star and star.market == "CN" and star.symbol == "688206.SH"
+
+    chinext = parse({"Code": "300750", "Name": "宁德时代", "Classify": "AStock",
+                     "SecurityTypeName": "创业板", "QuoteID": "0.300750"})
+    assert chinext and chinext.market == "CN" and chinext.symbol == "300750.SZ"
+
+    bse = parse({"Code": "920185", "Name": "贝特瑞", "Classify": "23",
+                 "SecurityTypeName": "北证", "QuoteID": "0.920185"})
+    assert bse and bse.market == "CN" and bse.symbol == "920185.BJ"
+
+    # 主板仍正常
+    main = parse({"Code": "600519", "Name": "贵州茅台", "Classify": "AStock",
+                  "SecurityTypeName": "沪A", "QuoteID": "1.600519"})
+    assert main and main.symbol == "600519.SH"

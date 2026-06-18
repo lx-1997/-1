@@ -24,6 +24,14 @@ backend/.mcp_hub.sqlite3
 backend/.mcp_hub.sqlite3-*
 backend/.realtime_messages.sqlite3
 backend/.realtime_messages.sqlite3-*
+backend/.backtest_engine.sqlite3
+backend/.backtest_engine.sqlite3-*
+backend/.dulus_memory.sqlite3
+backend/.dulus_memory.sqlite3-*
+backend/.risk_management.sqlite3
+backend/.risk_management.sqlite3-*
+backend/.deepfocus_core.sqlite3
+backend/.deepfocus_core.sqlite3-*
 modules/tradingagents-runtime/.venv/
 modules/tradingagents-runtime/results/
 .env.development.local
@@ -45,6 +53,7 @@ logs
 *.log
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Runtime data
 pids
@@ -78,3 +87,34 @@ out/
 app/
 !android/app/
 !android/app/**
+
+# Temporary workspace output
+tmp/
+test-results/
+playwright-report/
+
+# Android 签名（私钥+密码，绝不入库；丢失将无法给老用户升级，请另行备份）
+android/keystore/
+android/keystore.properties
+
+# 运行时数据库 / 状态 / 密钥（生产运行态，绝不入库）
+backend/*.sqlite3
+backend/*.sqlite3-*
+backend/.payment_config.json
+backend/.dao_bridge_state.json
+
+# 构建产物
+*.apk
+
+# macOS（android/app/** 负向规则会绕过上面的 .DS_Store，需显式补回）
+android/app/.DS_Store
+
+# 回测产物 / 数据输出（724M，生成态不入库）
+artifacts/
+
+# 上游第三方源码 + 打包归档（vendored，不入库）
+upstream/
+
+# 编辑器 / AI 助手配置
+.cursor/
+.trae/

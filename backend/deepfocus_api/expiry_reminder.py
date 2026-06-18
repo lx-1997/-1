@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+import os
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from email.mime.text import MIMEText
+from typing import Optional
+
+from .auth import users_expiring_within
+from .recall_subscriptions import DB_PATH as RECALL_DB_PATH, _app_base_url, _email_smtp_config, _smtp_sendmail
+from .shared_utils import utc_now_iso
+
+"""
+会员到期转化召回：在免费会员（trial/invite/reward/checkin/admin）到期前 ~24-48h，
+发一封「即将到期 + 续费立享 + 一键购买」邮件，把最高意向的到期时刻转成付费。
+
+- 候选：会员将在 48h 内到期、留了邮箱、非付费来源（auth.users_expiring_within）。
+- 去重：每个「用户 + 到期日」只发一次（续费后再次临期是新周期，会再提醒）。
+- 复用召回邮件机器（SMTP 配置 / 发信），SMTP 未配置时优雅 skipped、绝不抛。
+- 每轮发送上限 DEEPFOCUS_EXPIRY_DAILY_LIMIT（默认 60，保护发信额度）。
+"""
+
+BJ_TZ = timezone(timedelta(hours=8))
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(RECALL_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init() -> None:
+    RECALL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS expiry_reminded (
+                user_id TEXT NOT NULL,
+                expiry_day TEXT NOT NULL,
+                email TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT,
+                sent_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, expiry_day)
+            )
+            """
+        )
+        conn.commit()
+
+
+def _already(user_id: str, expiry_day: str) -> bool:
+    _init()
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT 1 FROM expiry_reminded WHERE user_id = ? AND expiry_day = ?",
+            (user_id, expiry_day),
+        ).fetchone() is not None
+
+
+def _record(user_id: str, expiry_day: str, email: str, status: str, detail: str) -> None:
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO expiry_reminded (user_id, expiry_day, email, status, detail, sent_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (user_id, expiry_day, email, status, detail[:200], utc_now_iso()),
+            )
+            conn.commit()
+    except sqlite3.Error:
+        pass
+
+
+def _daily_limit() -> int:
+    try:
+        return int(os.getenv("DEEPFOCUS_EXPIRY_DAILY_LIMIT", "60"))
+    except ValueError:
+        return 60
+
+
+def _build_email(username: str, days_left: int) -> tuple[str, str]:
+    app = _app_base_url()
+    when = "今天" if days_left <= 0 else ("明天" if days_left == 1 else f"{days_left} 天后")
+    subject = f"【DeepFocus】你的会员{when}到期 · 续费立享全部功能"
+    body = (
+        f"{username}，您好：\n\n"
+        f"你的 DeepFocus 尊享会员将于{when}到期。到期后将无法继续使用：\n"
+        f"· AI 研报 / 快讯多模态解读（买方观点、评级、目标价）\n"
+        f"· 资讯原文与深度内容\n"
+        f"· 每个交易日 15:35 的 A股收盘复盘（含「我们提前发现的资讯」对照）\n\n"
+        f"现在续费即可无缝衔接、不中断：{app}\n\n"
+        f"（已是付费会员可忽略本提醒。）\n\n"
+        "—————————————————————\n"
+        "DeepFocus · 金融终端 daocaijing.com\n"
+        "本邮件由系统自动发送。内容仅供研究参考，不构成投资建议。\n"
+        "如不希望再收到此类邮件，回复「退订」即可。"
+    )
+    return subject, body
+
+
+def run_expiry_reminder_once(limit: Optional[int] = None) -> dict:
+    """执行一轮到期转化召回。返回 {candidates, sent, skipped, errors, deferred, detail[]}，绝不抛出。"""
+    summary: dict = {"candidates": 0, "sent": 0, "skipped": 0, "errors": 0, "deferred": 0, "detail": []}
+    try:
+        cands = [u for u in users_expiring_within(48) if not _already(u["id"], u["expires_at"][:10])]
+    except Exception as exc:  # noqa: BLE001
+        summary["detail"].append(f"候选筛选失败：{exc}"[:200])
+        return summary
+    summary["candidates"] = len(cands)
+    cap = _daily_limit() if limit is None else limit
+    if cap > 0 and len(cands) > cap:
+        summary["deferred"] = len(cands) - cap
+        summary["detail"].append(f"超出本轮上限 {cap}，{summary['deferred']} 人留待下轮")
+        cands = cands[:cap]
+    if not cands:
+        return summary
+    config = _email_smtp_config()
+    for u in cands:
+        day = u["expires_at"][:10]
+        if config is None:
+            _record(u["id"], day, u["email"], "skipped", "SMTP 未配置")
+            summary["skipped"] += 1
+            continue
+        subject, bdy = _build_email(u["username"], int(u.get("days_left", 1)))
+        try:
+            mime = MIMEText(bdy, "plain", "utf-8")
+            mime["Subject"] = subject
+            mime["From"] = config["sender"] or config["user"]
+            mime["To"] = u["email"]
+            _smtp_sendmail(config, [u["email"]], mime)
+            _record(u["id"], day, u["email"], "sent", subject)
+            summary["sent"] += 1
+        except Exception as exc:  # noqa: BLE001
+            _record(u["id"], day, u["email"], "error", str(exc))
+            summary["errors"] += 1
+    return summary
+
+
+def expiry_reminder_stats() -> dict:
+    _init()
+    out: dict = {"sent": 0, "skipped": 0, "error": 0, "recent": []}
+    try:
+        with _connect() as conn:
+            for r in conn.execute("SELECT status, COUNT(*) c FROM expiry_reminded GROUP BY status").fetchall():
+                if r["status"] in out:
+                    out[r["status"]] = int(r["c"])
+            out["recent"] = [
+                dict(r) for r in conn.execute(
+                    "SELECT email, status, detail, sent_at FROM expiry_reminded ORDER BY sent_at DESC LIMIT 20"
+                ).fetchall()
+            ]
+    except sqlite3.Error:
+        pass
+    return out

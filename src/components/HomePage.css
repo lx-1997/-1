@@ -1,0 +1,568 @@
+/* ============================================================================
+   HomePage —— ChatGPT / Claude Code 风格的统一入口
+   命名空间统一用 dfx-home-*，与全局 index.css 解耦，方便后续单独迭代。
+   ========================================================================== */
+
+.dfx-home {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--app-bg);
+  color: var(--text);
+}
+
+/* ---- 顶部细条：会话标题 / 新对话 ---- */
+.dfx-home-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  min-height: 52px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.dfx-home-topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.dfx-home-brandmark {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+}
+
+/* ---- 滚动主体 ---- */
+.dfx-home-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ===== 空状态（首屏）：居中、留白、单一焦点 ===== */
+.dfx-home-hero {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 24px 12vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.dfx-home-greeting {
+  text-align: center;
+  margin-bottom: 22px;
+}
+
+.dfx-home-greeting h1 {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+  color: var(--text);
+}
+
+.dfx-home-greeting p {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+/* ===== 输入框（Composer）—— 圆角、聚焦发光，整页第一焦点 ===== */
+.dfx-home-composer {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: 12px 12px 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dfx-home-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.dfx-home-composer textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.6;
+  max-height: 200px;
+  font-family: inherit;
+  /* 随内容自适应高度（现代浏览器）；不支持时回退到 rows 属性。 */
+  field-sizing: content;
+  overflow-y: auto;
+}
+
+.dfx-home-composer textarea::placeholder {
+  color: var(--text-soft);
+}
+
+.dfx-home-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.dfx-home-composer-hint {
+  margin-left: auto;
+  margin-right: 4px;
+  font-size: 12px;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 可插拔上下文挂载条 */
+.dfx-home-ctx {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.dfx-home-ctx-label {
+  font-size: 11px;
+  color: var(--text-soft);
+  margin-right: 2px;
+}
+.dfx-home-ctx-chip {
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-soft);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.dfx-home-ctx-chip:hover {
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+.dfx-home-ctx-chip.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dfx-home-ctx-chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 附件 chip */
+.dfx-home-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+}
+.dfx-home-attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dfx-home-attach-chip button {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.dfx-home-attach-chip button:hover {
+  color: var(--text);
+}
+
+/* 分析师 ⇄ 圆桌 模式切换 */
+.dfx-home-mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.dfx-home-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.dfx-home-mode-btn:hover {
+  color: var(--text-muted);
+}
+.dfx-home-mode-btn.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+}
+.dfx-home-mode-btn.active .anticon {
+  color: var(--accent);
+}
+
+.dfx-home-send {
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.dfx-home-send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.dfx-home-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dfx-home-send-stop {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+.dfx-home-send-stop:hover {
+  background: var(--surface-muted);
+}
+.dfx-home-stop-glyph {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+/* ===== 搜股直达速判 ===== */
+.dfx-home-quicksheet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 720px;
+  margin: 14px auto 0;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.dfx-home-quicksheet-icon {
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.dfx-home-quicksheet input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  padding: 6px 0;
+}
+
+.dfx-home-quicksheet button {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.dfx-home-quicksheet button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== 建议提示 chips ===== */
+.dfx-home-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.dfx-home-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dfx-home-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* ===== 快速进入：把三层导航压成一层可扫描的网格 ===== */
+.dfx-home-launcher {
+  margin-top: 40px;
+}
+
+.dfx-home-launcher-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  margin-bottom: 12px;
+  padding-left: 2px;
+}
+
+.dfx-home-launcher-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.dfx-home-section {
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.dfx-home-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.dfx-home-section-icon {
+  color: var(--accent);
+  font-size: 15px;
+}
+
+.dfx-home-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dfx-home-section-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dfx-home-view-pill {
+  border: 1px solid var(--border-soft);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  border-radius: 7px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dfx-home-view-pill:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* ===== 对话态：消息流 ===== */
+.dfx-home-thread {
+  flex: 1;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dfx-home-msg {
+  display: flex;
+  gap: 12px;
+}
+
+.dfx-home-msg-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 13px;
+}
+
+.dfx-home-msg.user .dfx-home-msg-avatar {
+  background: var(--info);
+}
+
+.dfx-home-msg.assistant .dfx-home-msg-avatar {
+  background: var(--accent);
+}
+
+.dfx-home-msg-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding-top: 4px;
+}
+
+.dfx-home-thinking {
+  color: var(--text-muted);
+}
+
+.dfx-home-error {
+  color: var(--text-muted);
+}
+
+/* 内联引用的来源列表 → 统一到共享组件 CitableSources（.dfx-citable*）。 */
+
+/* 机构级溯源：回答可见的信息集 */
+.dfx-home-grounding {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-soft);
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+.dfx-home-grounding::before {
+  content: '◆ ';
+  color: var(--accent);
+}
+
+.dfx-home-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dfx-home-retry:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dfx-home-retry .anticon {
+  color: var(--accent);
+}
+
+/* 助手消息底部操作行（分享等） */
+.dfx-home-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.dfx-home-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.dfx-home-share:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.dfx-home-share .anticon {
+  color: var(--accent);
+}
+
+/* 流式输出时的打字光标 */
+.dfx-home-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: dfxCaretBlink 1s steps(2, start) infinite;
+}
+
+@keyframes dfxCaretBlink {
+  to { visibility: hidden; }
+}
+
+/* ===== 底部固定 Composer（对话态） ===== */
+.dfx-home-dock {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px 24px 20px;
+}
+
+.dfx-home-dock .dfx-home-composer {
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 720px) {
+  .dfx-home-launcher-grid {
+    grid-template-columns: 1fr;
+  }
+  .dfx-home-hero {
+    padding-top: 5vh;
+  }
+}

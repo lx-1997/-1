@@ -9,6 +9,10 @@ from deepfocus_api.schemas import (
     InvestmentTaskRecord,
     OptionsSignal,
     OptionsSignalResponse,
+    ProfessionalCitation,
+    ProfessionalRagQueryResponse,
+    ProfessionalReportAnalysisResponse,
+    ProfessionalReportRecord,
 )
 
 
@@ -183,6 +187,101 @@ def test_external_research_filter_requires_target_relevance() -> None:
         "摘要：财报披露前提前分析业绩预期。特斯拉 TSLA 在华销量被一句带过。",
         payload,
     )
+
+
+def _professional_report(
+    report_id: str,
+    title: str,
+    *,
+    symbol: str | None = None,
+) -> ProfessionalReportRecord:
+    return ProfessionalReportRecord(
+        id=report_id,
+        source_item_id=None,
+        title=title,
+        symbol=symbol,
+        report_type="research",
+        period="2026Q1",
+        parser="pdf",
+        char_count=1000,
+        metadata={"filename": f"{title}.pdf"},
+        metrics_count=2,
+        chunks_count=5,
+        created_at="2026-05-01T00:00:00+00:00",
+        updated_at="2026-05-01T00:00:00+00:00",
+    )
+
+
+def test_professional_report_lookup_falls_back_to_asset_name(monkeypatch) -> None:
+    reports = [
+        _professional_report("r-other", "通用机器人产业链综述"),
+        _professional_report("r-tsla", "特斯拉 FSD 与 Robotaxi 深度研报"),
+    ]
+
+    def fake_list_professional_reports(*, symbol=None, limit=50):
+        if symbol:
+            return []
+        return reports[:limit]
+
+    monkeypatch.setattr(ar, "list_professional_reports", fake_list_professional_reports)
+
+    selected = ar._find_professional_reports_for_payload({"asset_name": "特斯拉"}, report_limit=2)
+
+    assert [report.id for report in selected] == ["r-tsla"]
+
+
+def test_professional_evidence_collects_name_matched_report(monkeypatch) -> None:
+    report = _professional_report("r-tsla", "Tesla 2026Q1 业绩点评", symbol="TSLA")
+    rag_symbols: list[str | None] = []
+
+    def fake_list_professional_reports(*, symbol=None, limit=50):
+        if symbol:
+            return []
+        return [report]
+
+    async def fake_analyze_professional_report(report_id, request):
+        return ProfessionalReportAnalysisResponse(
+            report=report,
+            summary="特斯拉收入增长，毛利率仍需跟踪。",
+            key_metrics=[],
+            quality_flags=[],
+            risks=["需求波动"],
+            follow_up_questions=[],
+            citations=[],
+            confidence=0.82,
+        )
+
+    async def fake_query_professional_rag(request):
+        rag_symbols.append(request.symbol)
+        return ProfessionalRagQueryResponse(
+            answer="引用显示 FSD 与车型周期是核心变量。",
+            citations=[
+                ProfessionalCitation(
+                    citation_id="C1",
+                    kind="chunk",
+                    source_id="chunk-1",
+                    report_id=report.id,
+                    report_title=report.title,
+                    title="管理层讨论",
+                    text="FSD take-rate and Robotaxi timeline remain key assumptions.",
+                    score=0.9,
+                )
+            ],
+            metrics=[],
+            confidence=0.8,
+        )
+
+    monkeypatch.setattr(ar, "list_professional_reports", fake_list_professional_reports)
+    monkeypatch.setattr(ar, "analyze_professional_report", fake_analyze_professional_report)
+    monkeypatch.setattr(ar, "query_professional_rag", fake_query_professional_rag)
+
+    evidence = asyncio.run(
+        ar._collect_professional_research_evidence({"asset_name": "特斯拉"}, report_limit=2)
+    )
+
+    assert {item["source_type"] for item in evidence} == {"professional_report_analysis", "professional_rag"}
+    assert all(item["symbol"] == "TSLA" for item in evidence)
+    assert rag_symbols == ["TSLA"]
 
 
 def test_options_symbol_scope_only_uses_us_tickers() -> None:

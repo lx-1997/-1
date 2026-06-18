@@ -1,0 +1,456 @@
+/*
+ * shareholderChange.css
+ * Shared `.shareholder-change-*` component-family styles.
+ * Extracted from src/index.css. Imported by THREE centers that reuse this UI:
+ *   - ShareholderChangeCenter.tsx
+ *   - CnEarningsCenter.tsx
+ *   - MajorEventCenter.tsx
+ *
+ * NOTE: This file loads AFTER index.css. Responsive overrides (the @media
+ * blocks below) are co-located with their base rules here so they continue
+ * to win the cascade. Mixed comma-groups that also target non-shareholder
+ * selectors (e.g. `.macro-dashboard-shell`, `.cn-earnings-diagnosis*`) remain
+ * in index.css and are intentionally NOT duplicated here.
+ */
+
+.shareholder-change-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.shareholder-change-toolbar > * {
+  min-width: 0;
+}
+
+.shareholder-change-toolbar .ant-input-search {
+  flex: 0 1 280px;
+  max-width: 100%;
+}
+
+.shareholder-change-alert {
+  margin-top: 12px;
+}
+
+.shareholder-change-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.shareholder-change-summary-grid .metric-tile {
+  min-height: 108px;
+  border-color: var(--border);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.025), transparent),
+    var(--surface);
+}
+
+.shareholder-change-layout {
+  display: grid;
+  grid-template-columns: minmax(500px, 1.12fr) minmax(360px, 0.88fr);
+  gap: 14px;
+  align-items: start;
+  margin-top: 14px;
+}
+
+.shareholder-change-list-panel,
+.shareholder-change-detail-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.shareholder-change-list-panel {
+  overflow: hidden;
+}
+
+.shareholder-change-detail-panel {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 88px);
+  overflow: auto;
+  padding: 16px;
+}
+
+.shareholder-change-list-head,
+.shareholder-change-row {
+  display: grid;
+  grid-template-columns: minmax(106px, 0.75fr) minmax(220px, 1.8fr) minmax(126px, 0.9fr) minmax(118px, 0.82fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.shareholder-change-list-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.shareholder-change-row {
+  width: 100%;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.shareholder-change-row:last-child {
+  border-bottom: 0;
+}
+
+.shareholder-change-row:hover {
+  background: var(--surface-muted);
+}
+
+.shareholder-change-row.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.shareholder-change-row > *,
+.shareholder-change-detail-head > *,
+.shareholder-change-issuer > * {
+  min-width: 0;
+}
+
+.shareholder-change-issuer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shareholder-change-rank {
+  flex: 0 0 auto;
+  min-width: 34px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.shareholder-change-symbol {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-name,
+.shareholder-change-meta {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-row-title {
+  display: -webkit-box;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.45;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.shareholder-change-event-meta,
+.shareholder-change-detail-date {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.shareholder-change-event-meta > span:not(.ant-tag) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-main-value {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-risk-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.shareholder-change-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.shareholder-change-detail-head h3 {
+  margin: 4px 0 2px;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-detail-date {
+  margin: 12px 0;
+}
+
+.shareholder-change-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.shareholder-change-metric-box {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.shareholder-change-metric-box--primary {
+  border-color: rgba(16, 163, 127, 0.35);
+  background: var(--accent-soft);
+}
+
+.shareholder-change-metric-box span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.shareholder-change-metric-box strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-detail-section {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.shareholder-change-box-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 9px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.shareholder-change-box-title .anticon {
+  color: var(--accent);
+}
+
+.shareholder-change-chip-grid,
+.shareholder-change-ai-follow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.shareholder-change-chip-grid span,
+.shareholder-change-ai-follow span {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-holding-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.shareholder-change-holding-strip > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.shareholder-change-holding-strip span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.shareholder-change-holding-strip strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-excerpt {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.shareholder-change-ai-brief--positive,
+.shareholder-change-ai-brief--bullish {
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+.shareholder-change-ai-brief--negative,
+.shareholder-change-ai-brief--bearish {
+  border-color: rgba(239, 68, 68, 0.28);
+}
+
+.shareholder-change-ai-head strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.shareholder-change-ai-brief p {
+  margin: 9px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.shareholder-change-ai-brief ul {
+  margin: 8px 0 0 18px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (max-width: 1180px) {
+  .shareholder-change-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .shareholder-change-detail-panel {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .shareholder-change-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shareholder-change-toolbar .ant-input-search,
+  .shareholder-change-toolbar .ant-space,
+  .shareholder-change-toolbar .ant-select {
+    width: 100% !important;
+  }
+
+  .shareholder-change-toolbar .ant-space {
+    display: flex;
+  }
+
+  .shareholder-change-toolbar .ant-space-item {
+    flex: 1 1 140px;
+  }
+
+  .shareholder-change-toolbar .ant-select {
+    min-width: 0 !important;
+  }
+
+  .shareholder-change-list-head {
+    display: none;
+  }
+
+  .shareholder-change-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .shareholder-change-risk-cell {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .shareholder-change-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}

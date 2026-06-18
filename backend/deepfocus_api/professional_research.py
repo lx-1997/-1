@@ -14,7 +14,9 @@ from fastapi import HTTPException, status
 
 from .data_sources import get_data_item
 from .llm import CloudResearchLLM
+from .shared_utils import utc_now_iso, to_float, dedupe
 from .schemas import (
+
     ProfessionalCitation,
     ProfessionalEvalCase,
     ProfessionalEvalCaseResult,
@@ -126,12 +128,6 @@ STOP_TOKENS = {
     "没有披",
     "披露了",
 }
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def init_professional_research_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
@@ -235,7 +231,7 @@ def ingest_professional_report_text(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="报告文本为空，无法入库。")
 
     report_id = str(uuid.uuid4())
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     inferred_period = period or _infer_period(cleaned) or _infer_period(title)
     normalized_symbol = symbol.strip().upper() if symbol else None
     record = {
@@ -503,7 +499,7 @@ async def run_professional_eval(request: ProfessionalEvalRunRequest) -> Professi
     answer_hits = sum(1 for result in results if result.answer_match)
     refusal_hits = sum(1 for result in results if result.refusal_ok)
     return ProfessionalEvalRunResponse(
-        generated_at=now_iso(),
+        generated_at=utc_now_iso(),
         total=total,
         passed=passed,
         pass_rate=round(passed / total, 4) if total else 0.0,
@@ -628,7 +624,7 @@ def _parse_value_for_definition(
         match = re.search(r"([-+]?\d[\d,]*(?:\.\d+)?)\s*(%|％|个百分点|pct)", section, re.I)
         if not match:
             return None
-        value = _to_float(match.group(1))
+        value = to_float(match.group(1))
         if value is None:
             return None
         unit = match.group(2)
@@ -646,7 +642,7 @@ def _parse_value_for_definition(
         else:
             raw_number = match.group(1)
             unit = match.group(2)
-        value = _to_float(raw_number)
+        value = to_float(raw_number)
         if value is None:
             return None
         if re.search(r"下降|减少|decrease", section, re.I) and value > 0:
@@ -657,7 +653,7 @@ def _parse_value_for_definition(
         match = re.search(r"([-+]?\d[\d,]*(?:\.\d+)?)\s*(元/股|元|rmb|usd)?", section, re.I)
         if not match:
             return None
-        value = _to_float(match.group(1))
+        value = to_float(match.group(1))
         if value is None:
             return None
         unit = match.group(2) or ""
@@ -666,7 +662,7 @@ def _parse_value_for_definition(
     match = _first_amount_match(section)
     if not match:
         return None
-    value = _to_float(match.group(1))
+    value = to_float(match.group(1))
     if value is None:
         return None
     unit = match.group(2).strip()
@@ -970,7 +966,7 @@ def _risk_findings(citations: list[ProfessionalCitation]) -> list[str]:
         sentence = _risk_sentence(citation.text)
         if sentence and any(term in sentence for term in RISK_TERMS):
             findings.append(f"{sentence} [{citation.citation_id}]")
-    return _dedupe(findings)[:6] or ["原文风险片段命中较少，建议补充年报风险章节、审计意见和电话会纪要。"]
+    return dedupe(findings)[:6] or ["原文风险片段命中较少，建议补充年报风险章节、审计意见和电话会纪要。"]
 
 
 def _follow_up_questions(metrics: list[ProfessionalMetricRecord], risks: list[str]) -> list[str]:
@@ -990,7 +986,7 @@ def _follow_up_questions(metrics: list[ProfessionalMetricRecord], risks: list[st
             "管理层指引和资本开支计划是否支持当前增长假设？",
         ]
     )
-    return _dedupe(questions)[:6]
+    return dedupe(questions)[:6]
 
 
 def _analysis_summary(
@@ -1271,15 +1267,6 @@ def _risk_sentence(text: str) -> str:
         return base
 
     return max(candidates, key=score)[:220]
-
-
-def _to_float(value: str) -> Optional[float]:
-    try:
-        return float(value.replace(",", ""))
-    except (TypeError, ValueError):
-        return None
-
-
 def _clean_text(text: Optional[str]) -> str:
     if not text:
         return ""
@@ -1288,20 +1275,6 @@ def _clean_text(text: Optional[str]) -> str:
 
 def _normalize_for_match(text: str) -> str:
     return re.sub(r"\s+", "", text or "").lower().replace("％", "%")
-
-
-def _dedupe(lines: list[str]) -> list[str]:
-    seen: set[str] = set()
-    output: list[str] = []
-    for line in lines:
-        key = _normalize_for_match(line)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        output.append(line)
-    return output
-
-
 def _row_to_report(row: dict[str, Any]) -> ProfessionalReportRecord:
     return ProfessionalReportRecord(
         id=row["id"],

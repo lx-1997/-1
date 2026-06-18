@@ -1,70 +1,20 @@
 import React, { Suspense, startTransition, useCallback, useEffect, useRef, useState } from 'react';
+import { throttle } from '../utils/debounce';
 import { Layout, Drawer, Spin } from 'antd';
 import { AppState, CartItem, Post, Product, Stock, ViewType } from '../types';
-import { MarketSymbolCandidate } from '../services/marketDataService';
+import { MarketSymbolCandidate } from '../services/marketService';
+import { MENU_TO_DEFAULT_VIEW, STOCK_CONTEXT_MENU_KEYS, VIEW_TO_WORKSPACE_MENU } from '../config/workspaces';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import CommandPalette from './CommandPalette';
 import MainContent, { preloadCoreWorkspaceModules, preloadMainContentModules } from './MainContent';
-import { getMarketSegmentForStock } from '../utils/marketSegments';
 
 const { Sider, Content } = Layout;
 
-const menuByView: Partial<Record<ViewType, string>> = {
-  cart: 'cart',
-  orders: 'orders',
-  'ai-research': 'ai-research',
-  'agent-center': 'agent-center',
-  skills: 'skills',
-  'data-sources': 'data-sources',
-  'research-workbench': 'research-workbench',
-  'realtime-messages': 'realtime-messages',
-  'mcp-center': 'mcp-center',
-  'earnings-calendar': 'earnings-calendar',
-  'cn-earnings': 'cn-earnings',
-  'shareholder-changes': 'shareholder-changes',
-  'major-events': 'major-events',
-  'multi-market-decision': 'multi-market-decision',
-  'options-signal': 'options-signal',
-  'ai-supply-chain': 'ai-supply-chain',
-  'customs-trade': 'customs-trade',
-  profile: 'profile',
-  home: 'home',
-  stocks: 'stocks',
-  'a-share-market': 'a-share-market',
-  'global-market': 'global-market',
-  shop: 'shop'
-};
-
-const viewByMenu: Partial<Record<string, ViewType>> = {
-  home: 'home',
-  stocks: 'stocks',
-  'a-share-market': 'a-share-market',
-  'global-market': 'global-market',
-  shop: 'shop',
-  profile: 'profile',
-  cart: 'cart',
-  orders: 'orders',
-  'ai-research': 'ai-research',
-  'agent-center': 'agent-center',
-  skills: 'skills',
-  'data-sources': 'data-sources',
-  'research-workbench': 'research-workbench',
-  'realtime-messages': 'realtime-messages',
-  'mcp-center': 'mcp-center',
-  'earnings-calendar': 'earnings-calendar',
-  'cn-earnings': 'cn-earnings',
-  'shareholder-changes': 'shareholder-changes',
-  'major-events': 'major-events',
-  'multi-market-decision': 'multi-market-decision',
-  'options-signal': 'options-signal',
-  'ai-supply-chain': 'ai-supply-chain',
-  'customs-trade': 'customs-trade'
-};
-
 const WorkspaceFallback: React.FC = () => (
   <div className="workspace-loading-state">
-    <Spin size="large" />
-    <span>正在加载工作台...</span>
+    <div className="skeleton-shimmer" style={{ width: 120, height: 6, marginBottom: 4 }} />
+    <div className="skeleton-shimmer" style={{ width: 200, height: 8 }} />
   </div>
 );
 
@@ -119,6 +69,8 @@ interface TradingLayoutProps {
   onRefreshMarketData: () => void;
   isMarketDataRefreshing: boolean;
   isDemoSession?: boolean;
+  chatPanelOpen?: boolean;
+  onToggleChatPanel?: () => void;
 }
 
 const TradingLayout: React.FC<TradingLayoutProps> = ({
@@ -150,30 +102,48 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
   onToggleStockSubscription,
   onRefreshMarketData,
   isMarketDataRefreshing,
-  isDemoSession = false
+  isDemoSession = false,
+  chatPanelOpen,
+  onToggleChatPanel
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [selectedMenu, setSelectedMenu] = useState('home');
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const preloadedMenusRef = useRef<Set<string>>(new Set());
+
+  // ⌘K / Ctrl+K 唤起命令面板（Codex / Claude Code 式键盘跳转）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen(value => !value);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // 检测屏幕尺寸
   useEffect(() => {
-    const checkIsMobile = () => {
+    const checkIsMobile = throttle(() => {
       setIsMobile(window.innerWidth < 768);
       if (window.innerWidth >= 768) {
         setMobileMenuVisible(false);
       }
-    };
+    }, 150);
 
     checkIsMobile();
     window.addEventListener('resize', checkIsMobile);
-    return () => window.removeEventListener('resize', checkIsMobile);
+    return () => {
+      window.removeEventListener('resize', checkIsMobile);
+      checkIsMobile.cancel?.();
+    };
   }, []);
 
   useEffect(() => {
-    const nextMenu = menuByView[appState.currentView];
+    const nextMenu = VIEW_TO_WORKSPACE_MENU[appState.currentView];
     if (nextMenu && nextMenu !== selectedMenu) {
       setSelectedMenu(nextMenu);
     }
@@ -194,7 +164,7 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
 
   useEffect(() => scheduleIdleWork(() => {
     void preloadCoreWorkspaceModules();
-  }), []);
+  }, 3200), []);
 
   const handleMenuSelect = (key: string) => {
     preloadMenu(key);
@@ -205,23 +175,23 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
     
     startTransition(() => {
       // 如果切换到非股票相关菜单，清除选中的股票
-      if (key !== 'home' && appState.selectedStock) {
+      if (!STOCK_CONTEXT_MENU_KEYS.includes(key) && appState.selectedStock) {
         onBackToStocks();
       }
 
-      onViewChange(viewByMenu[key] || 'home');
+      onViewChange(MENU_TO_DEFAULT_VIEW[key] || 'home');
     });
   };
 
   const handleHeaderViewChange = (view: ViewType) => {
     preloadMenu(view);
-    setSelectedMenu(menuByView[view] || 'home');
+    setSelectedMenu(VIEW_TO_WORKSPACE_MENU[view] || 'home');
     startTransition(() => onViewChange(view));
   };
 
   const handleStockShortcut = (stock: Stock) => {
     preloadMenu('stock-community');
-    setSelectedMenu(getMarketSegmentForStock(stock) === 'a-share' ? 'a-share-market' : 'global-market');
+    setSelectedMenu('stocks');
     if (isMobile) {
       setMobileMenuVisible(false);
     }
@@ -242,6 +212,9 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
         onRefreshMarketData={onRefreshMarketData}
         isMarketDataRefreshing={isMarketDataRefreshing}
         isDemoSession={isDemoSession}
+        chatPanelOpen={chatPanelOpen}
+        onToggleChatPanel={onToggleChatPanel}
+        onOpenCommandPalette={() => setPaletteOpen(true)}
       />
 
       <Layout>
@@ -289,7 +262,7 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
         <Content style={{ 
           background: 'var(--app-bg)',
           padding: 0,
-          minHeight: 'calc(100vh - 58px)',
+          minHeight: 'calc(100vh - 52px)',
           overflow: 'auto'
         }} className={`workspace-content workspace-content-${appState.currentView}`}>
           <Suspense fallback={<WorkspaceFallback />}>
@@ -332,8 +305,34 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
           </Suspense>
         </Content>
       </Layout>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onNavigate={handleHeaderViewChange}
+        onSelectStock={handleStockShortcut}
+        stocks={appState.stocks}
+      />
     </Layout>
   );
 };
 
-export default TradingLayout;
+const arePropsEqual = (prev: TradingLayoutProps, next: TradingLayoutProps): boolean => {
+  return (
+    prev.appState.currentView === next.appState.currentView &&
+    prev.appState.stocks === next.appState.stocks &&
+    prev.appState.user === next.appState.user &&
+    prev.appState.selectedStock === next.appState.selectedStock &&
+    prev.appState.selectedPost === next.appState.selectedPost &&
+    prev.appState.posts === next.appState.posts &&
+    prev.appState.cart === next.appState.cart &&
+    prev.appState.orders === next.appState.orders &&
+    prev.appState.isLoading === next.appState.isLoading &&
+    prev.appState.platformBalance === next.appState.platformBalance &&
+    prev.appState.selectedProduct === next.appState.selectedProduct &&
+    prev.isMarketDataRefreshing === next.isMarketDataRefreshing &&
+    prev.isDemoSession === next.isDemoSession
+  );
+};
+
+export default React.memo(TradingLayout, arePropsEqual);

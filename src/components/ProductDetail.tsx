@@ -13,7 +13,8 @@ import {
   InputNumber,
   message,
   Descriptions,
-  Tabs
+  Tabs,
+  Spin
 } from 'antd';
 import { 
   ArrowLeftOutlined,
@@ -117,8 +118,12 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
     onBuyNow(product, variantId, quantity);
   };
 
+  if (!product) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}><Spin size="large" tip="加载中..." /></div>;
+  }
+
   return (
-    <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
+    <div style={{ padding: '24px', background: 'var(--surface-muted)', minHeight: '100vh' }}>
       <Button 
         icon={<ArrowLeftOutlined />} 
         onClick={onBack}
@@ -136,7 +141,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
               <div style={{ 
                 width: '100%', 
                 aspectRatio: '1',
-                background: '#fafafa',
+                background: 'var(--surface-muted)',
                 borderRadius: '8px',
                 overflow: 'hidden',
                 marginBottom: '16px',
@@ -182,7 +187,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                           aspectRatio: '1',
                           borderRadius: '4px',
                           overflow: 'hidden',
-                          border: currentImageIndex === index ? '2px solid #1890ff' : '1px solid #d9d9d9',
+                          border: currentImageIndex === index ? '2px solid var(--info)' : '1px solid var(--border)',
                           cursor: 'pointer'
                         }}
                         onClick={() => setCurrentImageIndex(index)}
@@ -220,9 +225,9 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
               <Divider />
 
               {/* 价格 */}
-              <div style={{ marginBottom: '24px', padding: '16px', background: '#fff7e6', borderRadius: '8px' }}>
+              <div style={{ marginBottom: '24px', padding: '16px', background: 'rgba(245,158,11,0.08)', borderRadius: '8px' }}>
                 <Space align="baseline">
-                  <Text style={{ fontSize: '32px', color: '#ff4d4f', fontWeight: 'bold' }}>
+                  <Text style={{ fontSize: '32px', color: 'var(--negative)', fontWeight: 'bold' }}>
                     ¥{currentPrice.toFixed(2)}
                   </Text>
                   {hasDiscount && (
@@ -267,7 +272,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
                   ))}
                   
                   {selectedVariant && (
-                    <div style={{ marginTop: '16px', padding: '12px', background: '#f5f5f5', borderRadius: '4px' }}>
+                    <div style={{ marginTop: '16px', padding: '12px', background: 'var(--surface-muted)', borderRadius: '4px' }}>
                       <Text type="secondary">已选择：</Text>
                       <Text strong>
                         {Object.entries(selectedVariant.attributes)
@@ -343,7 +348,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
               key: 'detail',
               label: '资产详情',
               children: (
-                <div style={{ padding: '24px', background: '#fff' }}>
+                <div style={{ padding: '24px', background: 'var(--surface)' }}>
                   <Paragraph style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
                     {product.description}
                   </Paragraph>
@@ -362,7 +367,7 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
               key: 'specs',
               label: '交付参数',
               children: (
-                <div style={{ padding: '24px', background: '#fff' }}>
+                <div style={{ padding: '24px', background: 'var(--surface)' }}>
                   <Descriptions bordered column={2}>
                     <Descriptions.Item label="资产名称">{product.name}</Descriptions.Item>
                     <Descriptions.Item label="资产分类">{product.category}</Descriptions.Item>
@@ -381,4 +386,4 @@ const ProductDetail: React.FC<ProductDetailProps> = ({
   );
 };
 
-export default ProductDetail;
+export default React.memo(ProductDetail);

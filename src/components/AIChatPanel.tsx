@@ -181,12 +181,12 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
   const handleLoopComplete = useCallback((final: LoopResearchEvent) => {
     const rec = final.recommendation;
     const recLabels: Record<string, string> = {
-      strong_buy: '强烈买入', buy: '买入', hold: '持有', reduce: '减仓', sell: '卖出', strong_sell: '强烈卖出',
+      strong_buy: '强烈看好', buy: '看好', hold: '中性', reduce: '偏谨慎', sell: '看淡', strong_sell: '强烈看淡',
     };
-    const recLabel = recLabels[rec || ''] || '持有';
+    const recLabel = recLabels[rec || ''] || '中性';
     const lines: string[] = [];
 
-    lines.push(`**推荐评级：${recLabel}** | 置信度 ${Math.round((final.confidence || 0) * 100)}%`);
+    lines.push(`**分析评分：${recLabel}** | 置信度 ${Math.round((final.confidence || 0) * 100)}%`);
     if (final.executive_summary) {
       lines.push('');
       lines.push(final.executive_summary);

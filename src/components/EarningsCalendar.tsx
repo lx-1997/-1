@@ -14,8 +14,10 @@ import {
   ReloadOutlined,
   RiseOutlined
 } from '@ant-design/icons';
-import { AppState, Stock } from '../types';
-import { EarningsCalendarEvent, getEarningsCalendar } from '../services/earningsCalendarService';
+import { AppState, DataQuality, Stock } from '../types';
+import CenterShell from './common/CenterShell';
+import { EarningsCalendarEvent, getEarningsCalendar } from '../services/earningsService';
+import './EarningsCalendar.css';
 
 const { Text } = Typography;
 const LARGE_CAP_MARKET_CAP_FLOOR = 50_000_000_000;
@@ -340,6 +342,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ appState, onStockSe
   const [provider, setProvider] = useState('none');
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [dataQuality, setDataQuality] = useState<DataQuality | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSearchLoading, setIsSearchLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -360,6 +363,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ appState, onStockSe
       setProvider(response.provider);
       setFetchedAt(response.fetched_at);
       setWarnings(response.warnings);
+      setDataQuality(response.data_quality ?? null);
       setSelectedEventKey(prev => prev || (response.events[0] ? getEventKey(response.events[0]) : null));
     } catch (error) {
       console.warn('Earnings calendar refresh failed:', error);
@@ -469,20 +473,21 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ appState, onStockSe
   }, [filteredEvents]);
 
   return (
-    <div className="earnings-shell">
-      <div className="earnings-header">
-        <div>
-          <div className="dashboard-eyebrow">EARNINGS CALENDAR</div>
-          <h2 className="dashboard-title">财报日历</h2>
-          <div className="dashboard-subtitle">
-            默认展示 Nasdaq 财报日历中市值超过 {marketCapFloorLabel} 的公司；搜索时查全量日历。
-          </div>
+    <CenterShell
+      eyebrow="EARNINGS CALENDAR"
+      title="财报日历"
+      dataQuality={dataQuality}
+      subtitle={(
+        <>
+          默认展示 Nasdaq 财报日历中市值超过 {marketCapFloorLabel} 的公司；搜索时查全量日历。
           <div className="earnings-header-meta">
             <span><DatabaseOutlined />{getProviderLabel(provider)}</span>
             <span><ClockCircleOutlined />更新 {formatFetchedAt(fetchedAt)}</span>
             <span><CheckCircleOutlined />{isFullSearchMode ? `${filteredEvents.length} 条全量搜索结果` : `${syncedCount} 家 ${marketCapFloorLabel} 以上公司`}</span>
           </div>
-        </div>
+        </>
+      )}
+      actions={(
         <Space size={8} wrap>
           <Tag color={provider === 'watchlist_template' || provider === 'none' ? 'default' : 'cyan'}>
             {getProviderLabel(provider)}
@@ -502,7 +507,8 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ appState, onStockSe
             刷新
           </Button>
         </Space>
-      </div>
+      )}
+    >
 
       {activeWarnings.length > 0 && (
         <Alert
@@ -786,7 +792,7 @@ const EarningsCalendar: React.FC<EarningsCalendarProps> = ({ appState, onStockSe
           </aside>
         </div>
       </Spin>
-    </div>
+    </CenterShell>
   );
 };
 

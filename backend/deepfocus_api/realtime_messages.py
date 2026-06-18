@@ -7,10 +7,12 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
 from fastapi import Request
 
+from .shared_utils import utc_now_iso
+from .news_filter import block_reason, scrub
 from .schemas import (
     DataSourceItemRecord,
     RealtimeMessageCreateRequest,
@@ -25,12 +27,24 @@ DB_PATH = Path(
     )
 )
 
-MAX_MESSAGES = int(os.getenv("DEEPFOCUS_REALTIME_MAX_MESSAGES", "500"))
+MAX_MESSAGES = int(os.getenv("DEEPFOCUS_REALTIME_MAX_MESSAGES", "20000"))
 _subscribers: set[asyncio.Queue[RealtimeMessageRecord]] = set()
+# 新消息落库+广播后的同步钩子（如离线召回扇出）。解耦：本模块不依赖召回实现。
+_post_hooks: list[Callable[[RealtimeMessageRecord], None]] = []
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def register_post_message_hook(hook: Callable[[RealtimeMessageRecord], None]) -> None:
+    """注册一个「新消息后置钩子」。重复注册同一个 hook 不会叠加。"""
+    if hook not in _post_hooks:
+        _post_hooks.append(hook)
+
+
+def _run_post_hooks(message: RealtimeMessageRecord) -> None:
+    for hook in list(_post_hooks):
+        try:
+            hook(message)
+        except Exception:  # 钩子失败绝不影响消息创建/广播主链路
+            pass
 
 
 def init_realtime_message_db() -> None:
@@ -61,22 +75,31 @@ def init_realtime_message_db() -> None:
         conn.commit()
 
 
-def create_realtime_message(request: RealtimeMessageCreateRequest) -> RealtimeMessageRecord:
+def create_realtime_message(request: RealtimeMessageCreateRequest) -> Optional[RealtimeMessageRecord]:
+    # 内容过滤（两档）：①引流广告(竞品词+广告特征同现)直接拦下——不入库/不广播/不召回；
+    # ②正经内容夹带竞品域名(futoucaixin.cn)→抹掉域名/品牌后照常保留。
+    reason = block_reason(request.title or "", request.content or "")
+    if reason:
+        print(f"[news-filter] 拦截入库 {reason} | {(request.title or '')[:60]}")
+        return None
+    _t, _c, _u, _changed = scrub(request.title or "", request.content or "", request.url or "")
+    if _changed:
+        print(f"[news-filter] 抹竞品域名后保留 | {(_t or '')[:60]}")
     init_realtime_message_db()
-    timestamp = now_iso()
+    timestamp = utc_now_iso()
     message_id = str(uuid.uuid4())
     tags = _normalize_tags(request.tags)
     record = {
         "id": message_id,
-        "title": request.title.strip()[:240] or "实时消息",
-        "content": request.content.strip()[:8000],
+        "title": _t.strip()[:240] or "实时消息",
+        "content": _c.strip()[:8000],
         "source_id": _clean_optional(request.source_id),
         "source_name": _clean_optional(request.source_name),
         "source_type": _clean_optional(request.source_type),
         "symbol": _clean_optional(request.symbol.upper() if request.symbol else None),
         "topic": request.topic.strip()[:80] or "data-source",
         "severity": request.severity,
-        "url": _clean_optional(request.url),
+        "url": _clean_optional(_u),
         "tags_json": json.dumps(tags, ensure_ascii=False),
         "metadata_json": json.dumps(request.metadata or {}, ensure_ascii=False),
         "created_at": timestamp,
@@ -99,6 +122,43 @@ def create_realtime_message(request: RealtimeMessageCreateRequest) -> RealtimeMe
 
     message = _row_to_message(record)
     _broadcast_message(message)
+    _run_post_hooks(message)
+    return message
+
+
+def update_realtime_message_fields(
+    message_id: str,
+    *,
+    severity: Optional[str] = None,
+    metadata_patch: Optional[dict[str, Any]] = None,
+) -> Optional[RealtimeMessageRecord]:
+    """更新已发布消息的 severity / metadata 并重新广播同 id 消息（前端按 id 原地替换）。
+
+    用于「秒发 + 回填」模式：消息先按规则秒推，AI 情绪等慢结果出来后回填更新。
+    找不到该消息返回 None；不触发 post hooks（避免召回等副作用重复执行）。"""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM realtime_messages WHERE id = ?", (message_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        if severity:
+            record["severity"] = severity
+        if metadata_patch:
+            try:
+                merged = json.loads(record.get("metadata_json") or "{}")
+            except json.JSONDecodeError:
+                merged = {}
+            merged.update(metadata_patch)
+            record["metadata_json"] = json.dumps(merged, ensure_ascii=False)
+        conn.execute(
+            "UPDATE realtime_messages SET severity = :severity, metadata_json = :metadata_json WHERE id = :id",
+            {"severity": record["severity"], "metadata_json": record["metadata_json"], "id": message_id},
+        )
+        conn.commit()
+    message = _row_to_message(record)
+    _broadcast_message(message)
     return message
 
 
@@ -107,6 +167,10 @@ def list_realtime_messages(
     symbol: Optional[str] = None,
     topic: Optional[str] = None,
     severity: Optional[str] = None,
+    since: Optional[str] = None,
+    before: Optional[str] = None,
+    q: Optional[str] = None,
+    anyq: Optional[str] = None,
     limit: int = 80,
 ) -> list[RealtimeMessageRecord]:
     init_realtime_message_db()
@@ -121,6 +185,27 @@ def list_realtime_messages(
     if severity:
         clauses.append("severity = ?")
         values.append(severity.strip())
+    if q and q.strip():  # 关键词检索全量历史：空格分词，每词命中标题或正文（AND）
+        for term in q.strip().split()[:6]:
+            like = f"%{term}%"
+            clauses.append("(title LIKE ? OR content LIKE ?)")
+            values.extend([like, like])
+    if anyq and anyq.strip():  # 多别名检索：任一别名命中标题或正文即可（OR）——选股(几条)/自选 tab(全自选股别名)共用
+        # 上限放宽到 48：自选 tab 会把所有自选股别名一起发来；服务端做召回，客户端再精确收敛（综述按标题等）
+        aliases = [a.strip() for a in anyq.split(",") if a.strip()][:48]
+        if aliases:
+            ors = []
+            for a in aliases:
+                like = f"%{a}%"
+                ors.append("(title LIKE ? OR content LIKE ?)")
+                values.extend([like, like])
+            clauses.append("(" + " OR ".join(ors) + ")")
+    if since and since.strip():  # 增量：只取比本地更新的（轮询用，响应极小）
+        clauses.append("created_at > ?")
+        values.append(since.strip())
+    if before and before.strip():  # 翻页：只取比游标更旧的（向历史回翻）
+        clauses.append("created_at < ?")
+        values.append(before.strip())
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     values.append(max(1, min(limit, 200)))
     with _connect() as conn:
@@ -144,28 +229,28 @@ def publish_data_source_items(
 ) -> list[RealtimeMessageRecord]:
     messages: list[RealtimeMessageRecord] = []
     for item in items:
-        messages.append(
-            create_realtime_message(
-                RealtimeMessageCreateRequest(
-                    title=f"{item.source_name}：{item.title}",
-                    content=item.text_preview or item.text[:360],
-                    source_id=item.source_id,
-                    source_name=item.source_name,
-                    source_type=item.source_type,
-                    symbol=item.symbol,
-                    topic=topic,
-                    severity=severity,  # type: ignore[arg-type]
-                    url=item.url,
-                    tags=item.tags,
-                    metadata={
-                        "data_item_id": item.id,
-                        "credibility_score": item.credibility_score,
-                        "collected_at": item.collected_at,
-                        "source_type": item.source_type,
-                    },
-                )
+        msg = create_realtime_message(
+            RealtimeMessageCreateRequest(
+                title=f"{item.source_name}：{item.title}",
+                content=item.text_preview or item.text[:360],
+                source_id=item.source_id,
+                source_name=item.source_name,
+                source_type=item.source_type,
+                symbol=item.symbol,
+                topic=topic,
+                severity=severity,  # type: ignore[arg-type]
+                url=item.url,
+                tags=item.tags,
+                metadata={
+                    "data_item_id": item.id,
+                    "credibility_score": item.credibility_score,
+                    "collected_at": item.collected_at,
+                    "source_type": item.source_type,
+                },
             )
         )
+        if msg is not None:  # 命中内容过滤 → 跳过
+            messages.append(msg)
     return messages
 
 
@@ -173,14 +258,14 @@ async def realtime_message_event_stream(request: Request) -> AsyncIterator[str]:
     queue: asyncio.Queue[RealtimeMessageRecord] = asyncio.Queue(maxsize=100)
     _subscribers.add(queue)
     try:
-        yield _sse_event("connected", {"connected": True, "created_at": now_iso()})
+        yield _sse_event("connected", {"connected": True, "created_at": utc_now_iso()})
         while True:
             if await request.is_disconnected():
                 break
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=20)
             except asyncio.TimeoutError:
-                yield _sse_event("heartbeat", {"created_at": now_iso()})
+                yield _sse_event("heartbeat", {"created_at": utc_now_iso()})
                 continue
             yield _sse_event("realtime-message", message.model_dump(mode="json"))
     finally:
@@ -188,8 +273,14 @@ async def realtime_message_event_stream(request: Request) -> AsyncIterator[str]:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=8)
     conn.row_factory = sqlite3.Row
+    try:  # WAL：并发读写不互锁（实时流持续写入 + 多用户并发读）
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=8000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.Error:
+        pass
     return conn
 
 
@@ -202,6 +293,13 @@ def _broadcast_message(message: RealtimeMessageRecord) -> None:
             stale.append(queue)
     for queue in stale:
         _subscribers.discard(queue)
+    # 新快讯 → 立即唤醒微信推送循环（事件驱动，近实时；无渠道则静默）
+    if getattr(message, "topic", "") == "快讯":
+        try:
+            from . import weixin_channel
+            weixin_channel.notify_new_flash()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _sse_event(event: str, data: dict[str, Any]) -> str:

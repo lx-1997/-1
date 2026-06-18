@@ -16,7 +16,7 @@ import {
   EyeOutlined,
   ReloadOutlined
 } from '@ant-design/icons';
-import { Order } from '../types';
+import { Order, OrderItem } from '../types';
 import PaymentModal from './PaymentModal';
 
 const { Title, Text } = Typography;
@@ -71,6 +71,15 @@ const Orders: React.FC<OrdersProps> = ({
     return methodMap[method];
   };
 
+  const getEmptyText = () => {
+    switch (activeTab) {
+      case 'pending': return '暂无待支付订单';
+      case 'paid': return '暂无已支付订单';
+      case 'delivered': return '暂无已完成订单';
+      default: return '暂无资产订单';
+    }
+  };
+
   const filteredOrders = orders.filter(order => {
     if (activeTab === 'all') return true;
     if (activeTab === 'pending') return order.paymentStatus === 'pending';
@@ -97,7 +106,7 @@ const Orders: React.FC<OrdersProps> = ({
       title: '资产',
       key: 'items',
       width: '30%',
-      render: (_: any, record: Order) => (
+      render: (_unused: unknown, record: Order) => (
         <Space>
           {record.items[0]?.image && (
             <Image
@@ -123,8 +132,8 @@ const Orders: React.FC<OrdersProps> = ({
       title: '金额',
       key: 'amount',
       width: '10%',
-      render: (_: any, record: Order) => (
-        <Text strong style={{ color: '#ff4d4f' }}>
+      render: (_unused: unknown, record: Order) => (
+        <Text strong style={{ color: 'var(--negative)' }}>
           ¥{record.totalAmount.toFixed(2)}
         </Text>
       )
@@ -133,7 +142,7 @@ const Orders: React.FC<OrdersProps> = ({
       title: '支付方式',
       key: 'paymentMethod',
       width: '10%',
-      render: (_: any, record: Order) => (
+      render: (_unused: unknown, record: Order) => (
         <Text>{getPaymentMethodText(record.paymentMethod)}</Text>
       )
     },
@@ -141,19 +150,19 @@ const Orders: React.FC<OrdersProps> = ({
       title: '支付状态',
       key: 'paymentStatus',
       width: '10%',
-      render: (_: any, record: Order) => getPaymentStatusTag(record.paymentStatus)
+      render: (_unused: unknown, record: Order) => getPaymentStatusTag(record.paymentStatus)
     },
     {
       title: '订单状态',
       key: 'orderStatus',
       width: '10%',
-      render: (_: any, record: Order) => getOrderStatusTag(record.orderStatus)
+      render: (_unused: unknown, record: Order) => getOrderStatusTag(record.orderStatus)
     },
     {
       title: '下单时间',
       key: 'createdAt',
       width: '15%',
-      render: (_: any, record: Order) => (
+      render: (_unused: unknown, record: Order) => (
         <Text type="secondary">
           {new Date(record.createdAt).toLocaleString()}
         </Text>
@@ -163,7 +172,7 @@ const Orders: React.FC<OrdersProps> = ({
       title: '操作',
       key: 'action',
       width: '15%',
-      render: (_: any, record: Order) => (
+      render: (_unused: unknown, record: Order) => (
         <Space>
           <Button
             type="link"
@@ -209,14 +218,14 @@ const Orders: React.FC<OrdersProps> = ({
   ];
 
   return (
-    <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
+    <div style={{ padding: '24px', background: 'var(--surface-muted)', minHeight: '100vh' }}>
       <Title level={3} style={{ marginBottom: '24px' }}>我的资产订单</Title>
 
       <Card>
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
 
         {filteredOrders.length === 0 ? (
-          <Empty description="暂无资产订单" />
+          <Empty description={getEmptyText()} />
         ) : (
           <Table
             columns={columns}
@@ -255,7 +264,7 @@ const Orders: React.FC<OrdersProps> = ({
                 {getOrderStatusTag(selectedOrder.orderStatus)}
               </Descriptions.Item>
               <Descriptions.Item label="资产订单金额">
-                <Text strong style={{ color: '#ff4d4f', fontSize: '16px' }}>
+                <Text strong style={{ color: 'var(--negative)', fontSize: '16px' }}>
                   ¥{selectedOrder.totalAmount.toFixed(2)}
                 </Text>
               </Descriptions.Item>
@@ -274,7 +283,7 @@ const Orders: React.FC<OrdersProps> = ({
                 {
                   title: '资产',
                   key: 'product',
-                  render: (_: any, item: any) => (
+                  render: (_unused: unknown, item: OrderItem) => (
                     <Space>
                       {item.image && (
                         <Image src={item.image} width={50} height={50} />
@@ -300,7 +309,7 @@ const Orders: React.FC<OrdersProps> = ({
                 },
                 {
                   title: '小计',
-                  render: (_: any, item: any) => (
+                  render: (_unused: unknown, item: OrderItem) => (
                     <Text strong>¥{(item.price * item.quantity).toFixed(2)}</Text>
                   )
                 }
@@ -345,6 +354,6 @@ const Orders: React.FC<OrdersProps> = ({
   );
 };
 
-export default Orders;
+export default React.memo(Orders);
 
 

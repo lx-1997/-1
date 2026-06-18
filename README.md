@@ -120,32 +120,27 @@ npm run electron-pack
 
 ## 📁 项目结构
 
+更完整的阅读顺序和模块边界见 `docs/code-structure.md`。
+
 ```
 src/
-├── components/          # React组件
-│   ├── Dashboard.tsx   # 仪表盘
-│   ├── Market.tsx      # 行情页面
-│   ├── Trading.tsx     # 交易页面
-│   ├── Portfolio.tsx   # 投资组合
-│   ├── KlineChart.tsx  # K线图组件
-│   ├── Header.tsx      # 顶部导航
-│   ├── Sidebar.tsx     # 侧边栏
-│   ├── Login.tsx       # 登录页面
-│   ├── RefinedNews.tsx # 精炼信息流
-│   ├── ExpertClub.tsx  # 专家俱乐部
-│   └── ResearchToolkit.tsx # 研究工具箱
-├── types/              # TypeScript类型定义
-├── data/               # 模拟数据
-├── App.tsx             # 主应用组件
-└── index.tsx           # 应用入口
+├── components/          # React 页面、布局和复用组件
+├── components/home/     # 首页工作区拆分视图
+├── components/common/   # 通用展示组件
+├── components/agent/    # Agent 运行过程展示组件
+├── services/            # 前端 API 服务层，按业务域聚合
+├── state/               # App reducer 与初始化状态
+├── utils/               # 纯工具函数和前端数据转换
+├── types/               # TypeScript 共享类型
+├── data/                # 演示数据
+├── i18n/                # 多语言资源
+├── App.tsx              # 应用装配、路由和顶层事件
+└── index.tsx            # React 入口
 
-backend/
-├── deepfocus_api/      # 前台调用的轻量云模型 API
-├── finogrid/           # 合并自 FinGPT 的后台、账本、通道、MCP 与 Agent 模块
-└── requirements-cloud.txt
-
-modules/
-└── research-workbench/ # 知识星球研报下载、文件检索和 AI 对话工作台
+backend/deepfocus_api/   # FastAPI 前端 API、Agent、行情、投研、风控、回测
+backend/finogrid/        # Finogrid 子系统
+modules/research-workbench/
+                         # 独立研报工作台，由后端代理
 ```
 
 ## 🔑 演示账号
@@ -189,20 +184,20 @@ modules/
 ### 数据源中心
 - **服务器/API 数据源**: 注册自有服务器接口、行情 API、网页源，支持 `GET/POST`、headers、params、`{symbol}` / `{query}` 模板。
 - **本地资料入库**: 上传研报、财报、纪要、表格、PDF、Word、Excel，抽取文本后进入证据库。
-- **Agent 抓取资料**: 通过 URL 抓取网页或接口响应，保存来源、时间、可信度和关联标的。
+- **网页抓取资料**: 通过 URL 抓取网页或接口响应，保存来源、时间、可信度和关联标的。
 - **关键词抓取**: 支持按关键词抓取公众号公开搜索结果；雪球抓取会尝试公开页面/接口，也支持配置 `DEEPFOCUS_XUEQIU_COOKIE` / `XUEQIU_TOKEN` 使用自有登录态请求。每个来源都有认证方式、风险等级、健康分和降级来源；遇到登录、验证码或 WAF 会记录失败原因并按策略走公开来源降级。
 - **资料管理台**: 本地文件和远端资料统一展示，可按标的、来源、类型、关键词、tag 筛选。
 - **标签管理**: 每份资料都能编辑标题、关联标的、可信度和多个 tag，便于后续 Agent 检索。
-- **证据检索**: 按股票代码、关键词和 tag 检索资料，供多 Agent 自动引用。
+- **证据检索**: 按股票代码、关键词和 tag 检索资料，供核心链路自动引用。
 - **持久化**: 数据源和证据保存到 `backend/.data_sources.sqlite3`。
 
-多 Agent 任务对用户默认展示 5 个核心角色：`OrchestratorAgent`、`EvidenceAgent`、`ResearchAgent`、`RiskAgent`、`ReportAgent`。其中 `EvidenceAgent` 内部负责同步服务器/API/网页源并检索本地上传和抓取资料。报告中的结论会展示命中的证据来源；资料不足时会明确提示缺口。
+投研任务对用户默认展示 4 个核心角色：`Orchestrator`、`Evidence`、`Analyst`、`Risk`。`Report Builder` 只作为输出层，不再作为同级 Agent 暴露。`Evidence` 内部负责同步服务器/API/网页源并检索本地上传和抓取资料；`Analyst` 统一吸收 TradingAgents、Financial Services Playbook、专业财报 RAG 和专题技能结果。报告中的结论会展示命中的证据来源；资料不足时会明确提示缺口。
 
 ### 专业财报研究内核（最小专业版）
 - **财报解析复用现有上传链路**: `POST /api/pro-research/reports/upload` 会沿用文件抽取能力，同时把原文保存到数据源中心和专业财报库。
 - **结构化指标库**: 自动抽取营业收入、归母净利润、扣非净利润、毛利率、ROE、经营现金流、资本开支等核心字段，保存到 `backend/.professional_research.sqlite3`。
 - **引用型 RAG**: `POST /api/pro-research/rag/query` 先检索结构化指标和原文 chunk，回答必须带 `[M1]` / `[C1]` 引用；证据不足会明确拒答。
-- **财报分析 Agent**: `POST /api/pro-research/reports/{report_id}/analyze` 输出核心指标、利润质量红旗、风险片段、追问清单和证据引用。
+- **财报分析技能**: `POST /api/pro-research/reports/{report_id}/analyze` 输出核心指标、利润质量红旗、风险片段、追问清单和证据引用。
 - **评测集**: `POST /api/pro-research/evals/run` 可基于入库报告自动生成最小回归用例，检查答案命中、引用覆盖和拒答保护。
 
 这套内核先用轻量规则和 SQLite 保证可复现、可审计；配置真实模型后，摘要生成可以走云模型，但数字和引用仍由结构化库与证据库兜底。
@@ -229,13 +224,13 @@ pip install -r backend/requirements-quant-cn.txt
 - 默认数据源顺序为 `MarketData.app`、`Nasdaq Public Option Chain`、`Yahoo Finance public chain`。`MarketData.app` 建议配置 `MARKETDATA_APP_TOKEN` 或 `MARKETDATA_APP_API_KEY`；无 token 时只适合作为可用性兜底。
 - 期权模块明确标记免费源延迟和字段缺口；Nasdaq 兜底通常没有 IV/Greeks，不能替代实时订单流或券商合规行情。
 
-### 24h 多 Agent 投研任务中心
+### 24h 投研任务中心
 - **任务队列**: 投资研究、组合复盘、风险审查、观察名单监控任务统一进入队列。
 - **常驻 worker**: 后端启动后自动运行 worker，持续拉取 `pending` 任务。
-- **多 Agent 流水线**: 默认收敛为 OrchestratorAgent、EvidenceAgent、ResearchAgent、RiskAgent、ReportAgent 五段；情绪、情景、TradingAgents analyst/debate/trader 等底层角色作为内部执行细节，不作为同级 Agent 暴露。
-- **Financial Services Playbook**: 可选择参考 `anthropics/financial-services` 的工作流画像，把 market researcher、earnings reviewer、model builder、pitch agent、valuation reviewer、KYC screener、GL reconciler 等能力纳入 DeepFocus 队列与报告结构。
+- **核心链路**: 默认收敛为 Orchestrator、Evidence、Analyst、Risk 四段；报告生成是输出层。情绪、情景、TradingAgents analyst/debate/trader、FSI workflow 等底层角色作为技能/引擎细节，不作为同级 Agent 暴露。
+- **Financial Services Playbook**: 可选择参考 `anthropics/financial-services` 的工作流画像，把 market researcher、earnings reviewer、model builder、pitch agent、valuation reviewer、KYC screener、GL reconciler 等能力作为模板纳入 DeepFocus 队列与报告结构。
 - **状态持久化**: 任务、日志、结果保存到 `backend/.agent_tasks.sqlite3`，可重启后继续查看。
-- **长任务心跳**: TradingAgents 外部 runner 会定期刷新任务状态；运行完整多 Agent 分析时建议用 `npm run backend:long`，避免开发模式 reload 中断子进程。
+- **长任务心跳**: TradingAgents 外部 runner 会定期刷新任务状态；运行完整分析引擎时建议用 `npm run backend:long`，避免开发模式 reload 中断子进程。
 - **网页研究工具**: TradingAgents 的 news/social 分析师会注入 `deepfocus_web_search` 和 `deepfocus_read_url`，可在 Yahoo/Google RSS 限流或资料不足时主动搜索公开网页并读取可访问页面。
 - **投资者报告**: 输出投资者摘要、证据来源、情景推演、风险纪律、行动清单、反证清单。
 

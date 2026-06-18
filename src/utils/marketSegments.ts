@@ -1,5 +1,5 @@
 import type { Stock } from '../types';
-import type { MarketRegion } from '../services/marketDataService';
+import type { MarketRegion } from '../services/marketService';
 
 export type MarketSegmentKey = 'all' | 'a-share' | 'global';
 

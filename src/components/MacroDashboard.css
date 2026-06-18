@@ -1,0 +1,62 @@
+/* MacroDashboard component styles (.macro-dashboard-*) — extracted from src/index.css */
+
+.macro-dashboard-shell .ant-tabs {
+  min-width: 0;
+}
+
+.macro-dashboard-shell .ant-tabs-nav {
+  margin-bottom: 14px;
+}
+
+.macro-dashboard-content {
+  min-width: 0;
+}
+
+.macro-dashboard-analysis-card,
+.macro-dashboard-score-card,
+.macro-dashboard-indicator {
+  border-radius: var(--radius-sm) !important;
+  background: var(--surface);
+}
+
+.macro-dashboard-analysis-title {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.macro-dashboard-score-card .ant-row {
+  row-gap: 16px;
+}
+
+.macro-dashboard-scope-note {
+  margin-top: 6px;
+  max-width: 560px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.macro-dashboard-category {
+  margin-bottom: 24px;
+}
+
+.macro-dashboard-category-head {
+  min-width: 0;
+}
+
+.macro-dashboard-indicator {
+  height: 100%;
+  overflow: hidden;
+}
+
+.macro-dashboard-indicator .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 158px;
+}
+
+@media (max-width: 768px) {
+  .macro-dashboard-score-card .ant-row {
+    justify-content: flex-start !important;
+  }
+}

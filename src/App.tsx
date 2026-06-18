@@ -4,18 +4,24 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import TradingLayout from './components/TradingLayout';
 import Login from './components/Login';
 import AIChatPanel from './components/AIChatPanel';
+import SignalRecallListener from './components/SignalRecallListener';
+import AppUpdateChecker from './components/AppUpdateChecker';
 import { ModuleContextProvider } from './contexts/ModuleContext';
-import { CartItem, Comment, Post, Product, Stock, ViewType } from './types';
+import { CartItem, Comment, Post, Product, Stock, User, ViewType } from './types';
 import { getMarketQuotes, MarketSymbolCandidate } from './services/marketService';
+import * as authService from './services/authService';
+import { formatErrorMessage } from './services/apiClient';
 import { mockUser } from './data/mockData';
-import { appReducer, getInitialState, createDemoState, getProductVariant } from './state/appReducer';
+import { appReducer, getInitialState, createDemoState, createLoggedInState, getProductVariant } from './state/appReducer';
 import { applyMarketQuotesToStocks, candidateToStock, STOCK_POOL_STORAGE_KEY } from './utils/stockPool';
+import { saveCommunity } from './utils/communityPersistence';
+import { track, trackPageview } from './utils/analytics';
 
 const { Content } = Layout;
-const authBypassFlag = process.env.REACT_APP_AUTH_BYPASS?.toLowerCase();
-const demoLoginFlag = process.env.REACT_APP_DEMO_LOGIN?.toLowerCase();
-const AUTH_BYPASS_ENABLED = authBypassFlag === 'true' || (process.env.NODE_ENV === 'development' && authBypassFlag !== 'false');
-const DEMO_LOGIN_ENABLED = demoLoginFlag !== 'false';
+// 鉴权旁路仅在显式 REACT_APP_AUTH_BYPASS=true 时开启——移除"dev 环境默认免登录"，杜绝任何非显式绕过登录。
+const AUTH_BYPASS_ENABLED = process.env.REACT_APP_AUTH_BYPASS?.toLowerCase() === 'true';
+// 离线演示登录（含 admin/admin 兜底）默认关闭，仅显式 REACT_APP_DEMO_LOGIN=true 才启用，消除默认后门。
+const DEMO_LOGIN_ENABLED = process.env.REACT_APP_DEMO_LOGIN?.toLowerCase() === 'true';
 
 // 行情轮询会高频触发；仅在 dev 且告警内容变化时打印一次，避免控制台刷屏。
 let lastMarketWarningSignature = '';
@@ -42,6 +48,12 @@ const App: React.FC = () => {
     stocksRef.current = appState.stocks;
   }, [appState.stocks]);
 
+  // 全站行为采集：进站一次 pageview + 每次视图切换记一条 tab 流水（增长分析 DAU/留存的数据底座）
+  useEffect(() => { trackPageview(); }, []);
+  useEffect(() => {
+    if (appState.currentView) track('tab', appState.currentView);
+  }, [appState.currentView]);
+
   useEffect(() => {
     if (!appState.user || typeof window === 'undefined') {
       return;
@@ -49,6 +61,24 @@ const App: React.FC = () => {
 
     window.localStorage.setItem(STOCK_POOL_STORAGE_KEY, JSON.stringify(appState.stocks));
   }, [appState.stocks, appState.user]);
+
+  // 社区/商城 UGC 本地持久化：写操作（发帖/评论/点赞/评分/购买/下单/余额变动）后落盘，刷新不丢。
+  useEffect(() => {
+    if (!appState.user || typeof window === 'undefined') {
+      return;
+    }
+    saveCommunity(appState);
+  }, [
+    appState.user,
+    appState.posts,
+    appState.comments,
+    appState.ratings,
+    appState.payments,
+    appState.purchasedPosts,
+    appState.likedPosts,
+    appState.cart,
+    appState.orders,
+  ]);
 
   const refreshMarketQuotes = useCallback(async (
     stocksToRefresh: Stock[],
@@ -110,26 +140,55 @@ const App: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [appState.user, refreshMarketQuotes]);
 
+  // 演示账号在后端不可达/无该账号时的离线兜底（仅这两个账号、且演示开关开启时）。
+  const tryDemoFallback = (username: string, password: string): boolean => {
+    const isDemoCreds = (username === 'admin' && password === 'admin')
+      || (username === 'demo' && password === 'demo');
+    if (!DEMO_LOGIN_ENABLED || !isDemoCreds) {
+      return false;
+    }
+    const nextState = createDemoState();
+    dispatch({ type: 'LOGIN' });
+    message.success('已进入演示会话（未连接后端认证）');
+    void refreshMarketQuotes(nextState.stocks, { notify: true });
+    return true;
+  };
+
+  const enterAuthedSession = (user: User) => {
+    const nextState = createLoggedInState(user);
+    dispatch({ type: 'LOGIN_SUCCESS', payload: user });
+    message.success(`登录成功！欢迎，${user.username}`);
+    void refreshMarketQuotes(nextState.stocks, { notify: true });
+  };
+
   const handleLogin = async (username: string, password: string) => {
     dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const { user } = await authService.login(username, password);
+      enterAuthedSession(user);
+    } catch (error) {
+      if (tryDemoFallback(username, password)) {
+        return;
+      }
+      dispatch({ type: 'SET_LOADING', payload: false });
+      message.error(formatErrorMessage(error));
+    }
+  };
 
-    if (DEMO_LOGIN_ENABLED && ((username === 'admin' && password === 'admin') ||
-        (username === 'demo' && password === 'demo'))) {
-      setTimeout(() => {
-        const nextState = createDemoState();
-        dispatch({ type: 'LOGIN' });
-        message.success('登录成功！欢迎使用深度焦点个股投研智库');
-        void refreshMarketQuotes(nextState.stocks, { notify: true });
-      }, 1000);
-    } else {
-      setTimeout(() => {
-        dispatch({ type: 'SET_LOADING', payload: false });
-        message.error(DEMO_LOGIN_ENABLED ? '用户名或密码错误' : '演示登录已关闭，请接入真实认证服务');
-      }, 1000);
+  const handleRegister = async (email: string, username: string, password: string) => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const { user } = await authService.register(email, username, password);
+      enterAuthedSession(user);
+    } catch (error) {
+      dispatch({ type: 'SET_LOADING', payload: false });
+      message.error(formatErrorMessage(error));
     }
   };
 
   const handleLogout = () => {
+    authService.logout();  // 清理 JWT，避免残留令牌
+
     if (AUTH_BYPASS_ENABLED) {
       dispatch({ type: 'SET_APP_STATE', payload: createDemoState() });
       message.success('已重置演示会话');
@@ -141,8 +200,8 @@ const App: React.FC = () => {
   };
 
   // 选择股票
-  const handleStockSelect = useCallback((stock: Stock) => {
-    dispatch({ type: 'SELECT_STOCK', payload: stock });
+  const handleStockSelect = useCallback((stock: Stock, view?: ViewType) => {
+    dispatch({ type: 'SELECT_STOCK', payload: stock, view });
   }, []);
 
   const handleAddStock = async (candidate: MarketSymbolCandidate) => {
@@ -511,6 +570,7 @@ const App: React.FC = () => {
                 ) : (
                   <Login
                     onLogin={handleLogin}
+                    onRegister={handleRegister}
                     isLoading={appState.isLoading}
                     demoLoginEnabled={DEMO_LOGIN_ENABLED}
                   />
@@ -557,6 +617,7 @@ const App: React.FC = () => {
                 ) : (
                   <Login
                     onLogin={handleLogin}
+                    onRegister={handleRegister}
                     isLoading={appState.isLoading}
                     demoLoginEnabled={DEMO_LOGIN_ENABLED}
                   />
@@ -567,6 +628,8 @@ const App: React.FC = () => {
         </Content>
       </Layout>
       <AIChatPanel open={chatPanelOpen} onClose={() => setChatPanelOpen(false)} />
+      {appState.user && <SignalRecallListener stocks={appState.stocks} />}
+      <AppUpdateChecker />
     </ModuleContextProvider>
   );
 };

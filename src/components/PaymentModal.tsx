@@ -8,7 +8,8 @@ import {
   Descriptions,
   message,
   QRCode,
-  Spin
+  Spin,
+  Alert
 } from 'antd';
 import {
   WechatOutlined,
@@ -17,7 +18,7 @@ import {
   CheckCircleOutlined
 } from '@ant-design/icons';
 import { Order } from '../types';
-import { createPayment, pollPaymentStatus, PaymentStatus } from '../services/paymentService';
+import { createPayment, pollPaymentStatus, PaymentStatus } from '../services/specializedService';
 
 const { Title, Text } = Typography;
 
@@ -131,6 +132,15 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
       width={600}
     >
       <div style={{ padding: '24px 0' }}>
+        {/* 演示环境标注：当前未接入真实收单通道，扫码后会自动模拟支付成功，不会真实扣款 */}
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: '16px' }}
+          message="演示支付（沙箱环境）"
+          description="当前为功能演示，未接入真实微信/支付宝收单通道。点击支付后将在数秒内模拟“支付成功”，不会产生真实扣款，订单状态仅用于体验流程。"
+        />
+
         {/* 订单信息 */}
         <Descriptions bordered column={1} style={{ marginBottom: '24px' }}>
           <Descriptions.Item label="订单号">{order.id}</Descriptions.Item>
@@ -186,7 +196,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
 
         {/* 支付二维码预览 */}
         {isPaying && qrCode && (
-          <div style={{ textAlign: 'center', marginBottom: '24px', padding: '24px', background: '#f5f5f5', borderRadius: '8px' }}>
+          <div style={{ textAlign: 'center', marginBottom: '24px', padding: '24px', background: 'var(--surface-muted)', borderRadius: '8px' }}>
             {paymentStatus?.status === 'paid' ? (
               <div>
                 <CheckCircleOutlined style={{ fontSize: '64px', color: '#52c41a', marginBottom: '16px' }} />
@@ -199,7 +209,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
                 <Text type="secondary" style={{ display: 'block', marginBottom: '16px' }}>
                   请使用{selectedMethod === 'wechat' ? '微信' : '支付宝'}扫描二维码完成支付
                 </Text>
-                <div style={{ display: 'inline-block', padding: '16px', background: '#fff', borderRadius: '8px' }}>
+                <div style={{ display: 'inline-block', padding: '16px', background: 'var(--surface)', borderRadius: '8px' }}>
                   <QRCode
                     value={qrCode}
                     size={200}
@@ -253,7 +263,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
         </Space>
 
         {/* 支付说明 */}
-        <div style={{ marginTop: '24px', padding: '16px', background: '#fff7e6', borderRadius: '4px' }}>
+        <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(245,158,11,0.08)', borderRadius: '4px' }}>
           <Text type="secondary" style={{ fontSize: '12px' }}>
             <DollarOutlined /> 支付说明：<br />
             • 支付成功后，订单将自动更新为已支付状态<br />

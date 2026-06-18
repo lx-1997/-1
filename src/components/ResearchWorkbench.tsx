@@ -8,6 +8,7 @@ import {
   Input,
   Pagination,
   Progress,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -34,11 +35,18 @@ import {
   SendOutlined,
   ThunderboltOutlined,
   UploadOutlined,
-  WarningOutlined
+  WarningOutlined,
+  SearchOutlined,
+  DownloadOutlined,
+  RobotOutlined,
+  GlobalOutlined,
+  BankOutlined,
+  ReadOutlined
 } from '@ant-design/icons';
 import { AppState, ViewType } from '../types';
 import {
   analyzeProfessionalReport,
+  ingestProfessionalReportUrl,
   ingestWorkbenchReportFile,
   listProfessionalMetrics,
   listProfessionalReports,
@@ -55,13 +63,23 @@ import {
   uploadProfessionalReport,
   WorkbenchDownloadFile,
   WorkbenchDownloadsResponse
-} from '../services/proResearchService';
+} from '../services/researchService';
 import {
   ResearchWorkbenchJob,
   ResearchWorkbenchSearchItem,
   searchResearchWorkbenchReports,
-  startResearchWorkbenchDownload
-} from '../services/researchWorkbenchService';
+  startResearchWorkbenchDownload,
+  ResearchMarket,
+  ResearchReportItem,
+  ResearchVisionAnalysis,
+  searchResearchReports,
+  createWorkbenchPreview,
+  visionAnalyzeReport
+} from '../services/researchService';
+import type { DataQuality } from '../types';
+import './centers/researchAgent.css';
+import ShareButton from './common/ShareButton';
+import DataQualityBanner from './common/DataQualityBanner';
 
 const { Text, Title } = Typography;
 const { TextArea, Search } = Input;
@@ -255,6 +273,18 @@ const crawlItemKey = (item: ResearchWorkbenchSearchItem) => (
   item.fileId || item.topicId || item.name
 );
 
+// 海外投行报告多为图片型 PDF（投行 PPT 截图，无文字层），RAG 入库需要可抽取文本——
+// 把后端「报告文本为空」明确翻译给用户，区别于真正的失败（预览/下载仍可用）。
+const analyzeErrorMessage = (error: any, fallback: string) => {
+  const detail = String(error?.response?.data?.detail || error?.message || '');
+  return `AI 分析失败：${detail || fallback}`;
+};
+
+// 图片型 PDF（无文字层）入库时后端返回「报告文本为空」——据此自动改走视觉解读。
+const isEmptyTextError = (error: any) => (
+  /文本为空|无法入库/.test(String(error?.response?.data?.detail || error?.message || ''))
+);
+
 const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewChange }) => {
   const { message } = AntdApp.useApp();
   const selectedStock = appState.selectedStock;
@@ -271,6 +301,32 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     }
   }, [workbenchUrl]);
   const frameUrl = `${workbenchUrl}/`;
+  const apiOrigin = useMemo(() => workbenchUrl.replace(/\/research-workbench\/?$/, ''), [workbenchUrl]);
+
+  const [mode, setMode] = useState<'quick' | 'pro'>('quick');
+
+  // 快速研读（搜索 · 在线预览 · 一键AI分析）
+  const [quickKeyword, setQuickKeyword] = useState(selectedStock?.name || initialSymbol || '');
+  const [quickMarket, setQuickMarket] = useState<'auto' | ResearchMarket>('auto');
+  const [quickLoading, setQuickLoading] = useState(false);
+  const [overseaLoading, setOverseaLoading] = useState(false);
+  const [eastmoneyResults, setEastmoneyResults] = useState<ResearchReportItem[]>([]);
+  const [overseaResults, setOverseaResults] = useState<ResearchWorkbenchSearchItem[]>([]);
+  const [quickWarnings, setQuickWarnings] = useState<string[]>([]);
+  const [quickDq, setQuickDq] = useState<DataQuality | null>(null);
+  const [quickSearched, setQuickSearched] = useState(false);
+  const [selectedQuickKey, setSelectedQuickKey] = useState<string>('');
+  const [previewSrc, setPreviewSrc] = useState<string>('');
+  const [previewTitle, setPreviewTitle] = useState<string>('');
+  const [previewMeta, setPreviewMeta] = useState<string>('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string>('');
+  const [currentPdfUrl, setCurrentPdfUrl] = useState<string>('');
+  const [quickAnalysis, setQuickAnalysis] = useState<ProfessionalReportAnalysis | null>(null);
+  const [quickVision, setQuickVision] = useState<ResearchVisionAnalysis | null>(null);
+  const [quickAnalyzing, setQuickAnalyzing] = useState(false);
+  const [quickAnalyzeStep, setQuickAnalyzeStep] = useState<string>('');
+  const quickSearchSeq = useRef(0);
 
   const [status, setStatus] = useState<WorkbenchStatus | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
@@ -302,7 +358,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   const [ragResult, setRagResult] = useState<ProfessionalRagQueryResult | null>(null);
   const [evalResult, setEvalResult] = useState<ProfessionalEvalRunResult | null>(null);
   const [ragQuestion, setRagQuestion] = useState(defaultQuestions[0]);
-  const [aiBridgeDraft, setAiBridgeDraft] = useState('请基于当前研报、指标、引用和反证风险，生成一版可交给 Agent Run 的投研任务。');
+  const [aiBridgeDraft, setAiBridgeDraft] = useState('请基于当前研报、指标、引用和反证风险，生成一版可交给投研任务中心的执行 Brief。');
 
   const [loadingReports, setLoadingReports] = useState(false);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
@@ -310,6 +366,8 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   const [querying, setQuerying] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [urlDraft, setUrlDraft] = useState('');
+  const [ingestingUrl, setIngestingUrl] = useState(false);
 
   const visibleReports = useMemo(() => (
     reports.filter(isUsefulProfessionalReport)
@@ -395,7 +453,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     if (!analysis) return '生成投委会摘要';
     if (!ragResult?.citations.length) return '核验证据引用';
     if (!evalResult?.total) return '运行引用评测';
-    return '发送 Agent Run';
+    return '发送投研任务';
   }, [analysis, evalResult, pendingDownloads.length, ragResult, selectedReport, visibleReports.length]);
 
   const missionHint = useMemo(() => {
@@ -405,7 +463,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     if (!analysis) return '把当前报告压缩成摘要、风险和追问。';
     if (!ragResult?.citations.length) return '对最关键问题做引用问答，确认结论不是空转。';
     if (!evalResult?.total) return '跑一次引用评测，给投委会留出质量闸门。';
-    return '证据、引用和评测已经闭环，可以交给 Agent Run。';
+    return '证据、引用和评测已经闭环，可以交给投研任务中心。';
   }, [analysis, evalResult, pendingDownloads.length, ragResult, selectedReport, visibleReports.length]);
 
   const pipelineSteps = useMemo(() => ([
@@ -489,6 +547,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
       setDownloads((result.files || []).filter(isUsefulWorkbenchDownload));
       setDownloadSummary(result.summary || null);
     } catch (error) {
+      // 抓取舱服务未启动时静默降级——状态已通过 online / 服务未启动提示呈现，无需打扰。
       setDownloads([]);
       setDownloadSummary(null);
     } finally {
@@ -665,6 +724,34 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     }
   };
 
+  const ingestUrl = async (value = urlDraft) => {
+    const url = value.trim();
+    if (!url) {
+      message.info('粘贴研报 URL 后再入库');
+      return;
+    }
+    setIngestingUrl(true);
+    try {
+      const report = await ingestProfessionalReportUrl({
+        url,
+        symbol: symbolParamFromInput(activeSymbol || symbolDraft),
+        report_type: reportTypeFromName(url),
+        tags: ['URL入库']
+      });
+      message.success('URL 研报已入库并建立引用索引');
+      setReports(previous => [report, ...previous.filter(item => item.id !== report.id)]);
+      setSelectedReportId(report.id);
+      setActiveSymbol(report.symbol || activeSymbol);
+      setSymbolDraft(report.symbol || activeSymbol);
+      setUrlDraft('');
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || '请确认链接可公开访问，且是 PDF、HTML 或文本资料';
+      message.error(`URL 入库失败：${detail}`);
+    } finally {
+      setIngestingUrl(false);
+    }
+  };
+
   const ingestDownload = async (file: WorkbenchDownloadFile) => {
     setIngestingFile(file.name);
     try {
@@ -778,7 +865,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     writeAiDraft({
       prompt: `${prompt}${evidenceContext ? `\n\n${evidenceContext}` : ''}`,
       references,
-      skill: 'ProfessionalResearchAgent'
+      skill: 'ProfessionalResearch'
     });
     message.success('已发送到主 AI 对话');
     onViewChange('home');
@@ -821,8 +908,513 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     }
   };
 
+  // ===== 快速研读（搜索 · 在线预览 · 一键AI分析）=====
+
+  const selectedEastmoney = useMemo(() => (
+    selectedQuickKey.startsWith('em:')
+      ? eastmoneyResults.find(item => `em:${item.id}` === selectedQuickKey) || null
+      : null
+  ), [selectedQuickKey, eastmoneyResults]);
+
+  const selectedOversea = useMemo(() => (
+    selectedQuickKey.startsWith('ov:')
+      ? overseaResults.find(item => `ov:${crawlItemKey(item)}` === selectedQuickKey) || null
+      : null
+  ), [selectedQuickKey, overseaResults]);
+
+  const selectEastmoney = (item: ResearchReportItem) => {
+    setSelectedQuickKey(`em:${item.id}`);
+    setQuickAnalysis(null); setQuickVision(null);
+    setPreviewTitle(item.title);
+    setPreviewMeta([item.org, item.date, item.rating].filter(Boolean).join(' · '));
+    setCurrentPdfUrl(item.pdf_url);
+    setPreviewError('');
+    setPreviewLoading(false);
+    setPreviewSrc(`${apiOrigin}${item.preview_url}`);
+  };
+
+  const selectOversea = async (item: ResearchWorkbenchSearchItem) => {
+    const fileId = item.fileId || '';
+    setSelectedQuickKey(`ov:${crawlItemKey(item)}`);
+    setQuickAnalysis(null); setQuickVision(null);
+    setPreviewTitle(cleanReportTitle(item.name));
+    setPreviewMeta([item.hashtag, formatDate(item.createTime || item.topicCreateTime)].filter(Boolean).join(' · '));
+    setCurrentPdfUrl('');
+    setPreviewError('');
+    setPreviewSrc('');
+    if (!fileId) {
+      setPreviewError('该条目没有可在线预览的文件，请在专业模式按主题下载。');
+      return;
+    }
+    setPreviewLoading(true);
+    try {
+      const link = await createWorkbenchPreview({ fileId, name: item.name });
+      setPreviewSrc(`${workbenchUrl}${link.previewUrl}`);
+    } catch (error: any) {
+      setPreviewError(error?.message || '在线预览失败：请先在高级抓取舱登录知识星球');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const runQuickSearch = useCallback(async (kw?: string) => {
+    const keyword = (kw ?? quickKeyword).trim();
+    if (!keyword) {
+      message.info('输入公司、代码或主题，如 特斯拉、贵州茅台');
+      return;
+    }
+    const seq = quickSearchSeq.current + 1;
+    quickSearchSeq.current = seq;
+    setQuickLoading(true);
+    setQuickSearched(true);
+    setQuickAnalysis(null); setQuickVision(null);
+    setPreviewSrc('');
+    setPreviewError('');
+    setPreviewTitle('');
+    setPreviewMeta('');
+    setSelectedQuickKey('');
+    setEastmoneyResults([]);
+    setOverseaResults([]);
+    let hadEastmoney = false;
+    try {
+      const resp = await searchResearchReports(keyword, quickMarket).catch(() => null);
+      if (seq !== quickSearchSeq.current) return;
+      const items = resp?.items || [];
+      hadEastmoney = items.length > 0;
+      setEastmoneyResults(items);
+      setQuickWarnings(resp?.warnings || []);
+      setQuickDq(resp?.data_quality || null);
+      if (items.length) {
+        selectEastmoney(items[0]);
+      }
+    } finally {
+      if (seq === quickSearchSeq.current) setQuickLoading(false);
+    }
+    if (online !== false) {
+      setOverseaLoading(true);
+      searchResearchWorkbenchReports({
+        keyword,
+        tag: crawlTag,
+        out: WORKBENCH_DOWNLOAD_OUT,
+        searchPages: 30,
+        resultLimit: 0
+      }).then(result => {
+        if (seq !== quickSearchSeq.current) return;
+        const items = result.items || [];
+        setOverseaResults(items);
+        if (!hadEastmoney && items[0]) {
+          void selectOversea(items[0]);
+        }
+      }).catch(() => {
+        if (seq === quickSearchSeq.current) setOverseaResults([]);
+      }).finally(() => {
+        if (seq === quickSearchSeq.current) setOverseaLoading(false);
+      });
+    }
+  }, [quickKeyword, quickMarket, online, crawlTag, message]);
+
+  // 图片型研报（无文字层）走多模态视觉解读：渲染页面图像→视觉模型读图出观点（无逐句溯源）。
+  const runVisionFallback = async (payload: { pdf_url?: string; workbench_filename?: string; title?: string; symbol?: string }) => {
+    setQuickAnalyzeStep('图片型研报，改用 AI 视觉解读…');
+    try {
+      const vision = await visionAnalyzeReport({
+        ...payload,
+        workbench_out: WORKBENCH_DOWNLOAD_OUT,
+        max_pages: 6
+      });
+      setQuickVision(vision);
+      message.success('AI 视觉解读完成');
+    } catch (visionError: any) {
+      const detail = visionError?.response?.data?.detail || visionError?.message || '请稍后重试';
+      message.error(`视觉解读失败：${detail}`);
+    }
+  };
+
+  const analyzeOverseaSelected = async (item: ResearchWorkbenchSearchItem) => {
+    if (online === false) {
+      message.warning('海外投行抓取服务未启动，无法分析该来源');
+      return;
+    }
+    setQuickAnalyzing(true);
+    setQuickAnalysis(null); setQuickVision(null);
+    try {
+      setQuickAnalyzeStep('拉取研报中…');
+      await startResearchWorkbenchDownload([item], { tag: crawlTag, out: WORKBENCH_DOWNLOAD_OUT });
+      const target = cleanReportTitle(item.name);
+      let file: WorkbenchDownloadFile | undefined;
+      for (let attempt = 0; attempt < 12 && !file; attempt += 1) {
+        await new Promise(resolve => window.setTimeout(resolve, 2000));
+        const downloads = await listWorkbenchDownloads(WORKBENCH_DOWNLOAD_OUT).catch(() => null);
+        file = downloads?.files?.find(candidate => candidate.name === item.name || cleanReportTitle(candidate.name) === target);
+      }
+      if (!file) throw new Error('下载尚未完成，请稍后或在专业模式重试');
+      setQuickAnalyzeStep('入库与解析中…');
+      const report = await ingestWorkbenchReportFile({
+        filename: file.name,
+        out: WORKBENCH_DOWNLOAD_OUT,
+        title: target,
+        report_type: 'research',
+        tags: ['研报快速研读', '海外投行报告']
+      });
+      setQuickAnalyzeStep('AI 分析中…');
+      const result = await analyzeProfessionalReport(report.id, { use_cloud_model: true });
+      setQuickAnalysis(result);
+      setReports(previous => [report, ...previous.filter(existing => existing.id !== report.id)]);
+      setSelectedReportId(report.id);
+      message.success('AI 分析完成');
+    } catch (error: any) {
+      if (isEmptyTextError(error)) {
+        await runVisionFallback({ workbench_filename: item.name, title: cleanReportTitle(item.name) });
+      } else {
+        message.error(analyzeErrorMessage(error, '请稍后重试'));
+      }
+    } finally {
+      setQuickAnalyzing(false);
+      setQuickAnalyzeStep('');
+    }
+  };
+
+  const runQuickAnalyze = async () => {
+    if (selectedEastmoney) {
+      setQuickAnalyzing(true);
+      setQuickAnalysis(null); setQuickVision(null);
+      try {
+        setQuickAnalyzeStep('入库与解析中…');
+        const report = await ingestProfessionalReportUrl({
+          url: selectedEastmoney.pdf_url,
+          symbol: symbolParamFromInput(selectedEastmoney.symbol || ''),
+          report_type: 'research',
+          tags: ['研报快速研读', '东方财富']
+        });
+        setQuickAnalyzeStep('AI 分析中…');
+        const result = await analyzeProfessionalReport(report.id, {
+          focus: '请基于研报正文给出投资判断、关键证据、红旗与风险，以及需回原文核验的追问。',
+          use_cloud_model: true
+        });
+        setQuickAnalysis(result);
+        setReports(previous => [report, ...previous.filter(existing => existing.id !== report.id)]);
+        setSelectedReportId(report.id);
+        message.success('AI 分析完成');
+      } catch (error: any) {
+        if (isEmptyTextError(error)) {
+          await runVisionFallback({
+            pdf_url: selectedEastmoney.pdf_url,
+            title: selectedEastmoney.title,
+            symbol: selectedEastmoney.symbol || undefined
+          });
+        } else {
+          message.error(analyzeErrorMessage(error, '请确认链接可访问后重试'));
+        }
+      } finally {
+        setQuickAnalyzing(false);
+        setQuickAnalyzeStep('');
+      }
+      return;
+    }
+    if (selectedOversea) {
+      await analyzeOverseaSelected(selectedOversea);
+      return;
+    }
+    message.info('先选择一篇研报');
+  };
+
+  const downloadCurrent = () => {
+    if (currentPdfUrl) {
+      window.open(currentPdfUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (previewSrc) {
+      window.open(previewSrc, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    message.info('先选择一篇研报');
+  };
+
+  const didAutoQuickSearch = useRef(false);
+  useEffect(() => {
+    if (!didAutoQuickSearch.current && mode === 'quick' && quickKeyword.trim()) {
+      didAutoQuickSearch.current = true;
+      void runQuickSearch(quickKeyword);
+    }
+  }, [mode, quickKeyword, runQuickSearch]);
+
+  const renderQuickView = () => (
+    <div className="research-quick">
+      <div className="research-quick-topbar">
+        <div className="research-quick-brand">
+          <span className="research-desk-mark"><ReadOutlined /></span>
+          <div>
+            <Text className="dashboard-eyebrow">RESEARCH QUICK READ</Text>
+            <Title level={3}>研报快速研读</Title>
+          </div>
+        </div>
+        <div className="research-quick-searchbar">
+          <Input
+            size="large"
+            allowClear
+            prefix={<SearchOutlined />}
+            value={quickKeyword}
+            onChange={event => setQuickKeyword(event.target.value)}
+            onPressEnter={() => void runQuickSearch()}
+            placeholder="搜索公司 / 代码 / 主题，如 特斯拉、贵州茅台、宁德时代"
+          />
+          <Segmented
+            value={quickMarket}
+            onChange={value => setQuickMarket(value as 'auto' | ResearchMarket)}
+            options={[
+              { label: '自动', value: 'auto' },
+              { label: 'A股', value: 'CN' },
+              { label: '港股', value: 'HK' },
+              { label: '美股', value: 'US' }
+            ]}
+          />
+          <Button type="primary" size="large" icon={<SearchOutlined />} loading={quickLoading} onClick={() => void runQuickSearch()}>
+            搜索
+          </Button>
+          <Tooltip title="切换到投委会级专业模式（入库 / 引用核验 / 评测 / 抓取舱）">
+            <Button size="large" icon={<AuditOutlined />} onClick={() => setMode('pro')}>专业模式</Button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div className="research-quick-body">
+        <aside className="research-quick-results">
+          <DataQualityBanner quality={quickDq} />
+          {quickWarnings.length ? (
+            <Alert type="info" showIcon style={{ marginBottom: 10 }} message={quickWarnings[0]} />
+          ) : null}
+
+          <div className="research-quick-group-title">
+            <span><ThunderboltOutlined /> 东方财富直连</span>
+            <em>{quickLoading ? '…' : eastmoneyResults.length}</em>
+          </div>
+          {quickLoading ? (
+            <div className="research-desk-loading compact"><Spin /></div>
+          ) : eastmoneyResults.length ? (
+            eastmoneyResults.map(item => (
+              <button
+                key={`em:${item.id}`}
+                type="button"
+                className={`research-quick-row${selectedQuickKey === `em:${item.id}` ? ' is-active' : ''}`}
+                onClick={() => selectEastmoney(item)}
+              >
+                <span className="research-quick-row-title">{item.title}</span>
+                <span className="research-quick-row-meta">
+                  <Tag color="cyan"><BankOutlined /> {item.org || '机构'}</Tag>
+                  {item.rating ? <Tag color="green">{item.rating}</Tag> : null}
+                  <span>{item.date}</span>
+                </span>
+              </button>
+            ))
+          ) : quickSearched ? (
+            <div className="research-empty-inline research-empty-inline--compact">
+              <FileTextOutlined /><span>东财暂无该标的研报</span>
+            </div>
+          ) : null}
+
+          <div className="research-quick-group-title">
+            <span><GlobalOutlined /> 海外投行报告</span>
+            <em>{overseaLoading ? '…' : overseaResults.length}</em>
+          </div>
+          {overseaLoading ? (
+            <div className="research-desk-loading compact"><Spin /></div>
+          ) : overseaResults.length ? (
+            overseaResults.slice(0, 40).map(item => {
+              const key = `ov:${crawlItemKey(item)}`;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`research-quick-row${selectedQuickKey === key ? ' is-active' : ''}`}
+                  onClick={() => void selectOversea(item)}
+                >
+                  <span className="research-quick-row-title">{cleanReportTitle(item.name)}</span>
+                  <span className="research-quick-row-meta">
+                    <Tag color="purple"><GlobalOutlined /> 海外投行</Tag>
+                    {item.hashtag ? <Tag>{item.hashtag}</Tag> : null}
+                    <span>{formatDate(item.createTime || item.topicCreateTime)}</span>
+                  </span>
+                </button>
+              );
+            })
+          ) : quickSearched ? (
+            <div className="research-empty-inline research-empty-inline--compact">
+              <GlobalOutlined /><span>{online === false ? '海外投行抓取服务未启动' : '无匹配海外投行报告'}</span>
+            </div>
+          ) : null}
+
+          {!quickSearched ? (
+            <div className="research-empty-inline">
+              <SearchOutlined /><span>输入公司或代码，开始检索研报</span>
+            </div>
+          ) : null}
+        </aside>
+
+        <section className="research-quick-preview">
+          <div className="research-quick-preview-head">
+            <div className="research-quick-preview-meta">
+              <strong>{previewTitle || '在线预览'}</strong>
+              {previewMeta ? <small>{previewMeta}</small> : null}
+            </div>
+            <Button icon={<DownloadOutlined />} disabled={!currentPdfUrl && !previewSrc} onClick={downloadCurrent}>
+              下载原文
+            </Button>
+          </div>
+          <div className="research-quick-preview-frame">
+            {previewLoading ? (
+              <div className="research-quick-preview-empty"><Spin /><span>正在拉取在线预览…</span></div>
+            ) : previewError ? (
+              <div className="research-quick-preview-empty"><WarningOutlined /><span>{previewError}</span></div>
+            ) : previewSrc ? (
+              <iframe title="研报在线预览" src={previewSrc} />
+            ) : (
+              <div className="research-quick-preview-empty">
+                <ReadOutlined /><span>从左侧选择一篇研报，在此在线预览原文</span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <aside className="research-quick-ai">
+          <div className="research-quick-ai-head">
+            <div>
+              <Text className="dashboard-eyebrow">ONE-CLICK AI</Text>
+              <strong>一键 AI 分析</strong>
+            </div>
+            {quickVision ? (
+              <Tag color="purple">视觉解读 {(quickVision.confidence * 100).toFixed(0)}%</Tag>
+            ) : quickAnalysis ? (
+              <Tag color={quickAnalysis.confidence >= 0.7 ? 'green' : quickAnalysis.confidence >= 0.45 ? 'orange' : 'red'}>
+                置信度 {(quickAnalysis.confidence * 100).toFixed(0)}%
+              </Tag>
+            ) : null}
+          </div>
+          <Button
+            type="primary"
+            size="large"
+            block
+            icon={<RobotOutlined />}
+            loading={quickAnalyzing}
+            disabled={!selectedQuickKey}
+            onClick={() => void runQuickAnalyze()}
+          >
+            {quickAnalyzing ? (quickAnalyzeStep || '分析中…') : '一键 AI 分析'}
+          </Button>
+
+          {quickVision ? (
+            <div className="research-quick-ai-body">
+              <Tag color="purple" style={{ marginBottom: 2 }}>AI 视觉解读 · 读图生成 · 无逐句溯源</Tag>
+              <div className="research-analysis-brief">
+                <strong>{quickVision.summary || '已生成视觉解读'}</strong>
+                <div className="research-analysis-points">
+                  {quickVision.key_points.slice(0, 6).map((point, index) => (
+                    <span key={`${index}-${point}`}>{point}</span>
+                  ))}
+                </div>
+              </div>
+              <div className="research-metric-grid">
+                {quickVision.rating ? (
+                  <div className="research-metric-tile"><span>评级</span><strong>{quickVision.rating}</strong><small>视觉读取</small></div>
+                ) : null}
+                {quickVision.target_price ? (
+                  <div className="research-metric-tile"><span>目标价</span><strong>{quickVision.target_price}</strong><small>视觉读取</small></div>
+                ) : null}
+                <div className="research-metric-tile"><span>已读页数</span><strong>{quickVision.pages_analyzed}</strong><small>{quickVision.provider}</small></div>
+              </div>
+              {quickVision.risks.length ? (
+                <div className="research-flag-grid">
+                  <div>
+                    <span>风险</span>
+                    {quickVision.risks.slice(0, 4).map(risk => (
+                      <p key={risk}>{cleanUserFacingText(risk)}</p>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <Alert type="warning" showIcon style={{ marginTop: 4 }} message={quickVision.disclaimer} />
+              <Space wrap>
+                <ShareButton target={() => ({ title: previewTitle || '研报视觉解读', summary: quickVision.summary, byline: '由 DeepFocus 研报视觉解读生成' })} />
+                <Button
+                  icon={<SendOutlined />}
+                  onClick={() => {
+                    writeAiDraft({ prompt: `${previewTitle}（视觉解读）\n\n${quickVision.summary}`, references: [previewTitle].filter(Boolean), skill: 'ProfessionalResearch' });
+                    message.success('已发送到主 AI 对话');
+                    onViewChange('home');
+                  }}
+                >
+                  发送给 Agent
+                </Button>
+              </Space>
+            </div>
+          ) : quickAnalysis ? (
+            <div className="research-quick-ai-body">
+              <div className="research-analysis-brief">
+                <strong>{splitReadableLines(quickAnalysis.summary, 1)[0] || '已生成研报分析'}</strong>
+                <div className="research-analysis-points">
+                  {splitReadableLines(quickAnalysis.summary, 5).slice(1).map((point, index) => (
+                    <span key={`${index}-${point}`}>{point}</span>
+                  ))}
+                </div>
+              </div>
+              <div className="research-flag-grid">
+                <div>
+                  <span>红旗</span>
+                  {(quickAnalysis.quality_flags.length ? quickAnalysis.quality_flags : ['未发现明显解析红旗']).slice(0, 4).map(flag => (
+                    <p key={flag}>{cleanUserFacingText(flag)}</p>
+                  ))}
+                </div>
+                <div>
+                  <span>风险</span>
+                  {(quickAnalysis.risks.length ? quickAnalysis.risks : ['等待进一步分析']).slice(0, 4).map(risk => (
+                    <p key={risk}>{cleanUserFacingText(risk)}</p>
+                  ))}
+                </div>
+              </div>
+              {quickAnalysis.key_metrics.length ? (
+                <div className="research-metric-grid">
+                  {quickAnalysis.key_metrics.slice(0, 6).map(metric => (
+                    <div key={metric.id} className="research-metric-tile">
+                      <span>{metric.metric_label}</span>
+                      <strong>{metricDisplayValue(metric)}</strong>
+                      <small>{metric.period || ''}{metric.source_page ? ` · p.${metric.source_page}` : ''}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <Space wrap>
+                <ShareButton target={() => ({ title: previewTitle || '研报分析', summary: quickAnalysis.summary, byline: '由 DeepFocus 研报快速研读生成' })} />
+                <Button icon={<AuditOutlined />} onClick={() => setMode('pro')}>转专业模式深入</Button>
+                <Button
+                  icon={<SendOutlined />}
+                  onClick={() => {
+                    writeAiDraft({ prompt: `${previewTitle}\n\n${quickAnalysis.summary}`, references: [previewTitle].filter(Boolean), skill: 'ProfessionalResearch' });
+                    message.success('已发送到主 AI 对话');
+                    onViewChange('home');
+                  }}
+                >
+                  发送给 Agent
+                </Button>
+              </Space>
+            </div>
+          ) : (
+            <div className="research-quick-ai-empty">
+              <RobotOutlined />
+              <span>
+                {selectedQuickKey
+                  ? '点击「一键 AI 分析」，自动入库→解析→生成投资判断/风险/指标，无需手动下载。'
+                  : '先从左侧选择一篇研报'}
+              </span>
+            </div>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+
   return (
     <div className="research-desk-page">
+      {mode === 'quick' ? renderQuickView() : (
+      <>
       <div className="research-desk-topbar">
         <div className="research-desk-title">
           <span className="research-desk-mark">
@@ -853,6 +1445,16 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
               ...Object.entries(reportTypeLabels).map(([value, label]) => ({ value, label }))
             ]}
           />
+          <Search
+            className="research-url-search"
+            value={urlDraft}
+            onChange={event => setUrlDraft(event.target.value)}
+            onSearch={value => void ingestUrl(value)}
+            allowClear
+            loading={ingestingUrl}
+            placeholder="粘贴 PDF/HTML 研报 URL"
+            enterButton="URL入库"
+          />
           <Upload {...uploadProps}>
             <Button icon={<UploadOutlined />} loading={uploading}>入库文件</Button>
           </Upload>
@@ -864,6 +1466,9 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                 void loadDownloads();
               }}
             />
+          </Tooltip>
+          <Tooltip title="返回研报快速研读（搜索 · 在线预览 · 一键AI分析）">
+            <Button icon={<ReadOutlined />} onClick={() => setMode('quick')}>快速研读</Button>
           </Tooltip>
           <Button icon={<MessageOutlined />} onClick={() => onViewChange('home')}>
             Agent
@@ -933,8 +1538,17 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
             <div className="research-crawl-card">
               <div className="research-library-section-title">
                 <span>资料抓取</span>
-                <em>{latestCrawlStatus ? (jobStatusLabel[latestCrawlStatus] || latestCrawlStatus) : online ? '已连接' : '待连接'}</em>
+                <em>{latestCrawlStatus ? (jobStatusLabel[latestCrawlStatus] || latestCrawlStatus) : online === false ? '服务未启动' : online ? '已连接' : '待连接'}</em>
               </div>
+              {online === false && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                  message="抓取服务未启动"
+                  description="研报抓取依赖的工作台服务当前不可用，立即搜索 / 下载选中暂时停用。上传、索引、摘要、RAG 检索与评测不受影响，仍可正常使用。"
+                />
+              )}
               <div className="research-crawl-fields">
                 <Input
                   value={crawlKeyword}
@@ -964,13 +1578,13 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                   </div>
                 </div>
                 <div className="research-crawl-actions">
-                  <Button type="primary" icon={<FileSearchOutlined />} loading={searchingCrawl} onClick={() => void runCrawlSearch()}>
+                  <Button type="primary" icon={<FileSearchOutlined />} loading={searchingCrawl} disabled={online === false} onClick={() => void runCrawlSearch()}>
                     立即搜索
                   </Button>
                   <Button
                     icon={<DatabaseOutlined />}
                     loading={downloadingCrawl}
-                    disabled={!selectedCrawlItems.length}
+                    disabled={online === false || !selectedCrawlItems.length}
                     onClick={() => void downloadSelectedCrawlResults()}
                   >
                     下载选中
@@ -1153,6 +1767,9 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                           ))}
                         </div>
                       </div>
+                      <div style={{ marginTop: 8 }}>
+                        <ShareButton target={() => ({ title: selectedReport?.title || '研报复核', summary: analysis.summary, byline: '由 DeepFocus 投研工作台生成' })} />
+                      </div>
                       <div className="research-ic-thesis-row">
                         <div>
                           <span>Base Case</span>
@@ -1275,6 +1892,18 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                   </div>
                 ))}
                 {!pendingDownloads.length && (
+                  <Search
+                    className="research-url-search onboarding"
+                    value={urlDraft}
+                    onChange={event => setUrlDraft(event.target.value)}
+                    onSearch={value => void ingestUrl(value)}
+                    allowClear
+                    loading={ingestingUrl}
+                    placeholder="粘贴 PDF/HTML 研报 URL"
+                    enterButton="URL入库"
+                  />
+                )}
+                {!pendingDownloads.length && (
                   <Upload {...uploadProps}>
                     <Button type="primary" icon={<UploadOutlined />} loading={uploading}>上传研报入库</Button>
                   </Upload>
@@ -1330,6 +1959,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                 ) : ragResult ? (
                   <>
                     <p>{ragResult.answer}</p>
+                    <ShareButton target={() => ({ title: ragQuestion || '引用问答结论', summary: ragResult.answer, byline: '由 DeepFocus 投研工作台引用核验生成' })} />
                     {ragResult.missing.length > 0 && (
                       <Alert
                         type="warning"
@@ -1389,7 +2019,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                   autoSize={{ minRows: 3, maxRows: 6 }}
                 />
                 <Button type="primary" icon={<SendOutlined />} onClick={sendBridgeDraft}>
-                  转入 Agent Cockpit
+                  转入投研工作台
                 </Button>
               </div>
             </>
@@ -1397,7 +2027,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
             <div className="research-control-empty">
               <AuditOutlined />
               <strong>先让证据进入主账本</strong>
-              <span>引用问答、评测闸门和 Agent Run 都依赖已索引报告。抓取舱文件不会直接进入投委会摘要，必须先入库。</span>
+              <span>引用问答、评测闸门和投研任务都依赖已索引报告。抓取舱文件不会直接进入投委会摘要，必须先入库。</span>
               {pendingDownloads.length ? (
                 <Button type="primary" loading={Boolean(ingestingFile)} onClick={() => void ingestRecentDownloads()}>
                   入库最近 3 份
@@ -1496,6 +2126,8 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
             ) : null}
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

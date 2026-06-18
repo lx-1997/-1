@@ -106,9 +106,15 @@ async def gather_data_source_evidence(
     symbol: Optional[str] = None,
     query: Optional[str] = None,
     limit: int = 8,
+    acquire_keyword: Optional[str] = None,
 ) -> dict[str, Any]:
     try:
         items = list_data_items(symbol=symbol, query=query, limit=limit, sort="time_desc")
+        # 主动取数（agentic）：证据稀薄且给了关键词时，委托共享 crawl_evidence_if_thin 爬一轮再查。
+        if acquire_keyword:
+            from .data_sources import crawl_evidence_if_thin
+            if await crawl_evidence_if_thin(symbol, acquire_keyword):
+                items = list_data_items(symbol=symbol, query=query, limit=limit, sort="time_desc")
         evidence = []
         for item in items:
             # list_data_items 返回 DataSourceItemRecord(Pydantic)——按属性访问，不能 .get()。

@@ -41,9 +41,25 @@ FINNHUB_API_KEY=your_finnhub_key
 ALPHAVANTAGE_API_KEY=your_alpha_vantage_key
 ```
 
-Provider order is Finnhub, Alpha Vantage, then a no-key Stooq public snapshot
-fallback. If all providers fail, the UI keeps the local sample stock universe
-but labels it as sample data instead of presenting it as live market data.
+Provider order prioritizes China public sources for China/HK symbols
+(Eastmoney, Sina, Tencent, then Stooq fallback) and keeps Finnhub / Alpha
+Vantage as optional key-based sources for broader market coverage. If all
+providers fail, the UI keeps the local sample stock universe but labels it as
+sample data instead of presenting it as live market data.
+
+`GET /api/market/data-layers?symbol=600519.SH&keyword=贵州茅台` reports the
+three-layer integration health used by the data-source center: free public
+quotes, Tushare Pro structured A-share data, and Xueqiu/WeChat public sentiment.
+
+```env
+TUSHARE_TOKEN=optional_tushare_pro_token
+# or TUSHARE_PRO_TOKEN / TS_TOKEN
+```
+
+`GET /api/market/ashare/structured?symbol=600519.SH&limit=120` uses Tushare Pro
+when configured and returns a clear `unconfigured` status when no token is
+present, so the UI can show the A-share structured layer as waiting for setup
+instead of broken.
 
 `GET /api/options/signals?symbols=AAPL,NVDA&horizon_days=45&max_expirations=3`
 drives the Options Radar module. It aggregates free/delayed option-chain
@@ -123,7 +139,8 @@ For MiniMax:
 ```env
 DEEPFOCUS_LLM_PROVIDER=minimax
 MINIMAX_API_KEY=your_key
-MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_MODEL=MiniMax-M3
+MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 ```
 
 `DEEPFOCUS_LLM_PROVIDER=mock` keeps local development runnable without GPU or API

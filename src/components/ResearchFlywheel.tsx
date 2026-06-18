@@ -27,6 +27,7 @@ import {
   WarningOutlined
 } from '@ant-design/icons';
 import { Comment, Post, Stock, ViewType } from '../types';
+import './centers/researchAgent.css';
 
 const { Paragraph, Text } = Typography;
 const { TextArea } = Input;
@@ -284,9 +285,11 @@ const ResearchFlywheel: React.FC<ResearchFlywheelProps> = ({
     const paidDemand = posts.reduce((sum, post) => sum + post.paidViewers, 0);
     const contributorCount = new Set(posts.map(post => post.author.id)).size;
     const commentCount = comments.length;
-    const evidenceCoverage = Math.round(
-      profile.evidenceCoverage.reduce((sum, item) => sum + item.value, 0) / profile.evidenceCoverage.length
-    );
+    const evidenceCoverage = profile.evidenceCoverage.length
+      ? Math.round(
+          profile.evidenceCoverage.reduce((sum, item) => sum + item.value, 0) / profile.evidenceCoverage.length
+        )
+      : 0;
     const networkScore = Math.min(
       100,
       Math.round(
@@ -354,7 +357,7 @@ const ResearchFlywheel: React.FC<ResearchFlywheelProps> = ({
             贡献资料
           </Button>
           <Button icon={<ThunderboltOutlined />} onClick={() => onViewChange?.('agent-center')}>
-            多 Agent 复核
+            核心链路复核
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
             新建假设
@@ -560,4 +563,4 @@ const ResearchFlywheel: React.FC<ResearchFlywheelProps> = ({
   );
 };
 
-export default ResearchFlywheel;
+export default React.memo(ResearchFlywheel);

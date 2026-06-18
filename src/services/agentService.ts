@@ -445,6 +445,114 @@ export function runGeneralChatStream(
   };
 }
 
+// AI 原生 tool-use（非流式 JSON）：一次返回答案 + 用了哪些工具。走 apiClient(axios)——自动带 Authorization
+// (iFinD 灰度靠它识别 lx199710)、有同源回退，比 SSE 流式经 nginx 稳。这是终端 AI 问答采用的可靠通道。
+export interface ToolTraceItem { tool: string; ok?: boolean; summary?: string; args?: any; }
+export interface ToolResearchResult { ok: boolean; answer: string; tool_trace: ToolTraceItem[]; rounds?: number; reason?: string; error?: string; }
+export async function runToolResearch(message: string, symbol = '', name = ''): Promise<ToolResearchResult> {
+  const qs = new URLSearchParams({ message, symbol, name }).toString();
+  try {
+    return await apiPost<ToolResearchResult>(`/api/agents/tool-research?${qs}`, {});
+  } catch (e: any) {
+    return { ok: false, answer: '', tool_trace: [], error: e?.response?.data?.detail || e?.message || '请求失败' };
+  }
+}
+
+// 深度研判（多智能体辩论，灰度 lx199710）：POST 起任务返回 task_id → 每 2s 轮询进度/结果。
+// 纯轮询走 apiClient(axios，自动带 Authorization)，不用 SSE（生产 nginx HTTP/2 下流式 444）。
+export interface DeepStage {
+  key: string;
+  label: string;
+  status: 'wait' | 'working' | 'done' | 'error';
+  detail?: string;
+  output?: any;
+}
+export interface DeepVerdict {
+  direction: string;
+  confidence?: number | null;
+  thesis?: string;
+  core_evidence?: { point: string; evidence_ref: string }[];
+  key_risks?: { risk: string; severity: string }[];
+  watch_levels?: { support?: string; resistance?: string; note?: string };
+  debate_synthesis?: string;
+  disclaimer?: string;
+  data_quality?: { ifind_used: boolean; degraded_sources?: string[]; gaps?: string[] };
+}
+export interface DeepTask {
+  task_id: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  symbol: string;
+  name?: string;
+  market?: string;
+  progress?: number;
+  current_stage?: string;
+  ifind_used?: boolean;
+  stages: DeepStage[];
+  result?: DeepVerdict | null;
+  error?: string | null;
+}
+export async function startDeepResearch(symbol: string, name = '', market = 'CN', force = false): Promise<{ task_id: string; status: string; reused?: boolean }> {
+  const qs = new URLSearchParams({ symbol, name, market, ...(force ? { force: '1' } : {}) }).toString();
+  return apiPost(`/api/agents/deep-research?${qs}`, {});
+}
+export async function pollDeepResearch(taskId: string): Promise<DeepTask> {
+  return apiGet(`/api/agents/deep-research/${taskId}`);
+}
+
+// AI 原生 tool-use 流式研究：边调工具(行情/估值/iFinD/搜我们的资讯/复盘)边推进度，最后给答案。
+// 手动带 Authorization 头——iFinD 灰度按登录用户名识别(lx199710)。返回 cancel 函数。
+export interface ToolEvent { tool: string; ok?: boolean; summary?: string; }
+export function runToolResearchStream(
+  payload: { message: string; symbol?: string; name?: string },
+  handlers: {
+    onTool?: (e: ToolEvent, phase: 'start' | 'result') => void;
+    onFinal?: (answer: string, trace: ToolEvent[], rounds: number) => void;
+    onFallback?: (reason: string) => void;
+    onError?: (error: string) => void;
+    onDone?: () => void;
+  }
+): () => void {
+  const base = getApiBaseUrls()[0];
+  const token = (() => { try { return window.localStorage.getItem('auth_token') || ''; } catch { return ''; } })();
+  const qs = new URLSearchParams({ message: payload.message, symbol: payload.symbol || '', name: payload.name || '' }).toString();
+  const ctrl = new AbortController();
+  (async () => {
+    try {
+      const resp = await fetch(`${base}/api/agents/tool-research/stream?${qs}`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: ctrl.signal,
+      });
+      if (!resp.ok || !resp.body) { handlers.onError?.(`请求失败 (${resp.status})`); return; }
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      let evt = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) { evt = line.slice(7).trim(); continue; }
+          if (!line.startsWith('data: ')) continue;
+          let d: any; try { d = JSON.parse(line.slice(6)); } catch { continue; }
+          if (evt === 'tool_start') handlers.onTool?.({ tool: d.tool }, 'start');
+          else if (evt === 'tool_result') handlers.onTool?.({ tool: d.tool, ok: d.ok, summary: d.summary }, 'result');
+          else if (evt === 'final') handlers.onFinal?.(d.answer || '', d.tool_trace || [], d.rounds || 0);
+          else if (evt === 'fallback') handlers.onFallback?.(d.reason || '');
+          else if (evt === 'error') handlers.onError?.(d.message || '出错了');
+        }
+      }
+      handlers.onDone?.();
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') handlers.onError?.(err?.message || 'AI 服务连接失败');
+    }
+  })();
+  return () => ctrl.abort();
+}
+
 export async function getAgentTask(taskId: string): Promise<InvestmentTaskRecord> {
   return apiGet<InvestmentTaskRecord>(`/api/agents/tasks/${taskId}`);
 }

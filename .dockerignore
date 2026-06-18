@@ -1,0 +1,23 @@
+# keep the Docker build context small + fast
+node_modules
+build
+dist
+.git
+.venv
+backend/.venv
+backend/.pytest_cache
+backend/*.sqlite3
+backend/*.sqlite3-*
+backend/.env
+**/__pycache__
+ios
+android
+*.apk
+*.tar.gz
+*.pdf
+test-results
+playwright-report
+e2e
+tmp
+artifacts
+upstream

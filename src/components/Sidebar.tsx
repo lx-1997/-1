@@ -1,28 +1,29 @@
 import React from 'react';
-import { Menu, Typography, Space } from 'antd';
+import { useT } from '../i18n/useT';
 import {
   DashboardOutlined,
-  UserOutlined,
-  AuditOutlined,
-  FileTextOutlined,
-  ExperimentOutlined,
   RobotOutlined,
   DatabaseOutlined,
   FundProjectionScreenOutlined,
   ToolOutlined,
-  CalendarOutlined,
-  BarChartOutlined,
-  ThunderboltOutlined,
-  ApiOutlined,
-  FolderOpenOutlined,
-  GlobalOutlined,
   EyeOutlined,
-  PartitionOutlined
+  SafetyCertificateOutlined,
+  FormOutlined,
 } from '@ant-design/icons';
 import { AppState, Stock } from '../types';
+import { WORKSPACE_SECTIONS, WorkspaceGroup, WorkspaceId } from '../config/workspaces';
 import { countStocksBySegment } from '../utils/marketSegments';
+import './Sidebar.css';
 
-const { Text } = Typography;
+const workspaceIcons: Record<WorkspaceId, React.ReactNode> = {
+  research: <RobotOutlined />,
+  observe: <EyeOutlined />,
+  equity: <DashboardOutlined />,
+  evidence: <DatabaseOutlined />,
+  strategy: <FundProjectionScreenOutlined />,
+  risk: <SafetyCertificateOutlined />,
+  system: <ToolOutlined />,
+};
 
 interface SidebarProps {
   selectedMenu: string;
@@ -37,190 +38,91 @@ const Sidebar: React.FC<SidebarProps> = ({
   onMenuSelect,
   onMenuPreload,
   onStockSelect,
-  appState
+  appState,
 }) => {
+  const t = useT();
+  const [pinnedOpen, setPinnedOpen] = React.useState(true);
   const segmentStats = countStocksBySegment(appState.stocks);
-
-  const menuLabel = (key: string, label: string) => (
-    <span
-      onMouseEnter={() => onMenuPreload?.(key)}
-      onFocus={() => onMenuPreload?.(key)}
-    >
-      {label}
-    </span>
-  );
-
-  const menuItems = [
-    {
-      type: 'group' as const,
-      label: '工作流',
-      children: [
-        {
-          key: 'home',
-          icon: <DashboardOutlined />,
-          label: menuLabel('home', 'Agent Cockpit')
-        },
-        {
-          key: 'stocks',
-          icon: <EyeOutlined />,
-          label: menuLabel('stocks', `观察池 ${segmentStats.all}`)
-        },
-        {
-          key: 'research-workbench',
-          icon: <FolderOpenOutlined />,
-          label: menuLabel('research-workbench', '研报工作台')
-        },
-        {
-          key: 'data-sources',
-          icon: <DatabaseOutlined />,
-          label: menuLabel('data-sources', '证据库')
-        },
-        {
-          key: 'agent-center',
-          icon: <RobotOutlined />,
-          label: menuLabel('agent-center', 'Agent 任务')
-        }
-      ]
-    },
-    {
-      type: 'group' as const,
-      label: '决策',
-      children: [
-        {
-          key: 'multi-market-decision',
-          icon: <FundProjectionScreenOutlined />,
-          label: menuLabel('multi-market-decision', '策略与组合')
-        },
-        {
-          key: 'earnings-calendar',
-          icon: <CalendarOutlined />,
-          label: menuLabel('earnings-calendar', '事件日历')
-        },
-        {
-          key: 'options-signal',
-          icon: <BarChartOutlined />,
-          label: menuLabel('options-signal', '期权雷达')
-        },
-        {
-          key: 'realtime-messages',
-          icon: <ThunderboltOutlined />,
-          label: menuLabel('realtime-messages', '信号流')
-        }
-      ]
-    },
-    {
-      type: 'group' as const,
-      label: '专题',
-      children: [
-        {
-          key: 'ai-research',
-          icon: <ExperimentOutlined />,
-          label: menuLabel('ai-research', '单标的体检')
-        },
-        {
-          key: 'cn-earnings',
-          icon: <FileTextOutlined />,
-          label: menuLabel('cn-earnings', 'A股财报')
-        },
-        {
-          key: 'shareholder-changes',
-          icon: <AuditOutlined />,
-          label: menuLabel('shareholder-changes', '股东变动')
-        },
-        {
-          key: 'major-events',
-          icon: <ThunderboltOutlined />,
-          label: menuLabel('major-events', '重大事项')
-        },
-        {
-          key: 'ai-supply-chain',
-          icon: <PartitionOutlined />,
-          label: menuLabel('ai-supply-chain', 'AI 供应链')
-        },
-        {
-          key: 'customs-trade',
-          icon: <GlobalOutlined />,
-          label: menuLabel('customs-trade', '海关进出口')
-        }
-      ]
-    },
-    {
-      type: 'group' as const,
-      label: '系统',
-      children: [
-        {
-          key: 'mcp-center',
-          icon: <ApiOutlined />,
-          label: menuLabel('mcp-center', '工具连接')
-        },
-        {
-          key: 'skills',
-          icon: <ToolOutlined />,
-          label: menuLabel('skills', '技能编排')
-        },
-        {
-          key: 'profile',
-          icon: <UserOutlined />,
-          label: menuLabel('profile', '系统设置')
-        }
-      ]
-    }
-  ];
-
-  // 热门股票列表
   const hotStocks = appState.stocks.slice(0, 5);
 
+  const renderGroup = (group: WorkspaceGroup) => (
+    WORKSPACE_SECTIONS
+      .filter(section => section.group === group)
+      .map(section => {
+        const active = selectedMenu === section.menuKey;
+        const count = section.id === 'observe' ? segmentStats.all : undefined;
+        return (
+          <button
+            key={section.menuKey}
+            type="button"
+            className={`dfx-sidebar-item${active ? ' active' : ''}`}
+            title={t(section.sidebarLabelKey)}
+            onMouseEnter={() => onMenuPreload?.(section.menuKey)}
+            onFocus={() => onMenuPreload?.(section.menuKey)}
+            onClick={() => onMenuSelect(section.menuKey)}
+          >
+            <span className="dfx-sidebar-item-icon">{workspaceIcons[section.id]}</span>
+            <span className="dfx-sidebar-item-label">{t(section.sidebarLabelKey)}</span>
+            {count !== undefined && <span className="dfx-sidebar-item-count">{count}</span>}
+          </button>
+        );
+      })
+  );
+
   return (
-    <div className="workspace-sidebar">
-      {/* 主导航菜单 */}
-      <Menu
-        mode="inline"
-        selectedKeys={[selectedMenu]}
-        items={menuItems}
-        onClick={({ key }) => onMenuSelect(key)}
-      />
+    <div className="dfx-sidebar">
+      <button
+        type="button"
+        className="dfx-sidebar-new"
+        title={t('sidebar.research')}
+        onMouseEnter={() => onMenuPreload?.('home')}
+        onClick={() => onMenuSelect('home')}
+      >
+        <FormOutlined />
+        <span className="dfx-sidebar-new-label">新对话</span>
+      </button>
 
-      <div className="sidebar-divider" />
+      <nav className="dfx-sidebar-nav">
+        <div className="dfx-sidebar-group-label">{t('sidebar.workspace')}</div>
+        {renderGroup('workspace')}
+        <div className="dfx-sidebar-group-label">{t('sidebar.system')}</div>
+        {renderGroup('system')}
+      </nav>
 
-      {/* 热门股票 */}
-      <div className="sidebar-section">
-        <div className="sidebar-section-title">
-          <span>核心标的</span>
-          <span>Δ%</span>
-        </div>
-        <Space direction="vertical" size={2} style={{ width: '100%' }}>
-          {hotStocks.map(stock => (
-            <button
-              key={stock.symbol}
-              type="button"
-              className="hot-stock-row"
-              onMouseEnter={() => onMenuPreload?.('stock-community')}
-              onFocus={() => onMenuPreload?.('stock-community')}
-              onClick={() => onStockSelect(stock)}
-            >
-              <div>
-                <Text className="hot-stock-symbol">
-                  {stock.symbol}
-                </Text>
-                <Text className="hot-stock-name">
-                  {stock.name}
-                </Text>
-              </div>
-              <Text
-                className={stock.changePercent >= 0 ? 'quote-positive' : 'quote-negative'}
-                style={{ fontSize: 12, fontWeight: 700 }}
-              >
-                {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
-              </Text>
-            </button>
-          ))}
-          {hotStocks.length === 0 && (
-            <Text className="sidebar-empty-note">暂无跟踪标的</Text>
-          )}
-        </Space>
+      <div className="dfx-sidebar-pinned">
+        <button
+          type="button"
+          className="dfx-sidebar-group-label dfx-sidebar-pinned-toggle"
+          onClick={() => setPinnedOpen(v => !v)}
+          aria-expanded={pinnedOpen}
+        >
+          <span>{t('sidebar.coreStocks')}</span>
+          <span className={`dfx-sidebar-pinned-caret${pinnedOpen ? ' open' : ''}`}>›</span>
+        </button>
+        {pinnedOpen && hotStocks.map(stock => (
+          <button
+            key={stock.symbol}
+            type="button"
+            className="dfx-sidebar-stock"
+            onMouseEnter={() => onMenuPreload?.('stock-community')}
+            onFocus={() => onMenuPreload?.('stock-community')}
+            onClick={() => onStockSelect(stock)}
+          >
+            <span className="dfx-sidebar-stock-copy">
+              <span className="dfx-sidebar-stock-sym">{stock.symbol}</span>
+              <span className="dfx-sidebar-stock-name">{stock.name}</span>
+            </span>
+            <span className={`dfx-sidebar-stock-chg ${stock.changePercent >= 0 ? 'quote-positive' : 'quote-negative'}`}>
+              {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+            </span>
+          </button>
+        ))}
+        {pinnedOpen && hotStocks.length === 0 && (
+          <div className="dfx-sidebar-empty">{t('sidebar.noStocks')}</div>
+        )}
       </div>
     </div>
   );
 };
 
-export default Sidebar;
+export default React.memo(Sidebar);

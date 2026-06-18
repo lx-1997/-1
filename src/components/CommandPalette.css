@@ -1,0 +1,160 @@
+/* ============================================================================
+   CommandPalette —— ⌘K 命令面板（Codex / Claude Code 式键盘优先跳转）
+   ========================================================================== */
+
+.dfx-cmd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  animation: dfxCmdFade 0.12s ease;
+}
+
+@keyframes dfxCmdFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dfx-cmd-panel {
+  width: min(92vw, 600px);
+  max-height: 64vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-glass);
+  overflow: hidden;
+  animation: dfxCmdPop 0.14s var(--ease-out-expo, ease);
+}
+
+@keyframes dfxCmdPop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 搜索栏 */
+.dfx-cmd-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.dfx-cmd-search-icon {
+  color: var(--text-soft);
+  font-size: 16px;
+}
+
+.dfx-cmd-search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.dfx-cmd-search input::placeholder {
+  color: var(--text-soft);
+}
+
+.dfx-cmd-kbd,
+.dfx-cmd-foot kbd {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 6px;
+  line-height: 1.5;
+}
+
+/* 列表 */
+.dfx-cmd-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.dfx-cmd-group {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.dfx-cmd-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dfx-cmd-item.active {
+  background: var(--accent-soft);
+}
+
+.dfx-cmd-item-label {
+  font-size: 14px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.dfx-cmd-item-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dfx-cmd-item.active .dfx-cmd-item-detail {
+  color: var(--text-muted);
+}
+
+.dfx-cmd-item-enter {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.dfx-cmd-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+/* 底栏 */
+.dfx-cmd-foot {
+  display: flex;
+  gap: 16px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--surface-muted);
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
+.dfx-cmd-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

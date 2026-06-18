@@ -1,11 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
-  Button,
   Card,
   Checkbox,
   Col,
-  Empty,
   Progress,
   Row,
   Select,
@@ -23,11 +21,13 @@ import {
   DeploymentUnitOutlined,
   FundProjectionScreenOutlined,
   PartitionOutlined,
-  ReloadOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined
 } from '@ant-design/icons';
 import { AppState } from '../types';
+import DataCenter from './DataCenter';
+import ShareButton from './common/ShareButton';
+import './MultiMarketDecisionCenter.css';
 import {
   BacktestPlan,
   CandidateOpinion,
@@ -41,7 +41,7 @@ import {
   MarketStyleSignal,
   MultiMarketDecisionResponse,
   runMultiMarketDecision
-} from '../services/multiMarketDecisionService';
+} from '../services/specializedService';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -88,50 +88,37 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
   const [riskProfile, setRiskProfile] = useState<DecisionRiskProfile>('稳健');
   const [dataProfile, setDataProfile] = useState<DecisionDataProfile>('china_stable');
   const [minScore, setMinScore] = useState(58);
-  const [result, setResult] = useState<MultiMarketDecisionResponse | null>(null);
-  const [loading, setLoading] = useState(false);
 
   const selectedStocks = useMemo(() => {
     return appState.stocks.filter(stock => markets.includes((stock.market || 'US') as DecisionMarket));
   }, [appState.stocks, markets]);
 
-  const runDecision = async () => {
+  const fetchData = useCallback(async () => {
     if (markets.length === 0) {
       message.warning('至少选择一个市场');
-      return;
+      throw new Error('至少选择一个市场');
     }
-    setLoading(true);
-    try {
-      const data = await runMultiMarketDecision({
-        markets,
-        horizon,
-        mode,
-        risk_profile: riskProfile,
-        data_profile: dataProfile,
-        objective: '综合分析 A股、港股、美股市场风格、板块意见、个股候选、大涨前概率排序和回测验证优先级。',
-        stocks: selectedStocks,
-        min_score: minScore
-      });
-      setResult(data);
-      message.success('多市场决策快照已生成');
-    } catch (error: any) {
-      const detail = error?.response?.data?.detail || '请确认后端 API 已启动';
-      message.error(`生成失败：${detail}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void runDecision();
-  }, []);
+    const data = await runMultiMarketDecision({
+      markets,
+      horizon,
+      mode,
+      risk_profile: riskProfile,
+      data_profile: dataProfile,
+      objective: '综合分析 A股、港股、美股市场风格、板块意见、个股候选、大涨前概率排序和回测验证优先级。',
+      stocks: selectedStocks,
+      min_score: minScore
+    });
+    message.success('多市场决策快照已生成');
+    return data;
+  }, [horizon, markets, message, minScore, mode, riskProfile, selectedStocks, dataProfile]);
 
   const candidateColumns = [
     {
       title: '标的',
       key: 'symbol',
+      width: 168,
       render: (_: unknown, item: CandidateOpinion) => (
-        <Space direction="vertical" size={0}>
+        <Space className="multi-market-symbol-cell" direction="vertical" size={0}>
           <Text strong>{item.name}</Text>
           <Text type="secondary">{item.symbol} · {marketLabel[item.market]}</Text>
         </Space>
@@ -140,11 +127,13 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '板块',
       dataIndex: 'sector',
-      key: 'sector'
+      key: 'sector',
+      width: 112
     },
     {
       title: '动作',
       key: 'action',
+      width: 92,
       render: (_: unknown, item: CandidateOpinion) => (
         <Tag color={actionMeta[item.action].color}>{actionMeta[item.action].text}</Tag>
       )
@@ -153,6 +142,7 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
       title: '综合分',
       dataIndex: 'score',
       key: 'score',
+      width: 148,
       sorter: (a: CandidateOpinion, b: CandidateOpinion) => a.score - b.score,
       render: (score: number) => <Progress percent={score} size="small" />
     },
@@ -160,12 +150,15 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
       title: '大涨概率',
       dataIndex: 'surge_probability',
       key: 'surge_probability',
+      width: 104,
       sorter: (a: CandidateOpinion, b: CandidateOpinion) => a.surge_probability - b.surge_probability,
       render: (value: number) => <Text strong>{Math.round(value * 100)}%</Text>
     },
     {
       title: '证据',
       key: 'evidence',
+      width: 320,
+      className: 'multi-market-text-cell',
       render: (_: unknown, item: CandidateOpinion) => (
         <Space direction="vertical" size={2}>
           {item.evidence.slice(0, 3).map(line => <Text key={line}>{line}</Text>)}
@@ -175,6 +168,8 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '失效条件',
       key: 'invalidation',
+      width: 280,
+      className: 'multi-market-tag-cell',
       render: (_: unknown, item: CandidateOpinion) => (
         <Space wrap size={[4, 4]}>
           {item.invalidation.slice(0, 3).map(line => <Tag key={line}>{line}</Tag>)}
@@ -187,6 +182,7 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '模块',
       key: 'name',
+      width: 220,
       render: (_: unknown, item: DecisionModuleStatus) => (
         <Space direction="vertical" size={0}>
           <Text strong>{item.name}</Text>
@@ -197,6 +193,7 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '状态',
       key: 'status',
+      width: 92,
       render: (_: unknown, item: DecisionModuleStatus) => (
         <Tag color={statusMeta[item.status].color}>{statusMeta[item.status].text}</Tag>
       )
@@ -205,11 +202,13 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
       title: '就绪度',
       dataIndex: 'readiness',
       key: 'readiness',
+      width: 148,
       render: (readiness: number) => <Progress percent={readiness} size="small" />
     },
     {
       title: '研究/回测',
       key: 'engines',
+      width: 190,
       render: (_: unknown, item: DecisionModuleStatus) => (
         <Space direction="vertical" size={0}>
           <Text>{item.research_engine}</Text>
@@ -220,6 +219,8 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '数据源',
       key: 'data',
+      width: 260,
+      className: 'multi-market-tag-cell',
       render: (_: unknown, item: DecisionModuleStatus) => (
         <Space wrap>
           {item.data_sources.map(source => <Tag key={source}>{source}</Tag>)}
@@ -229,6 +230,8 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '待配置',
       key: 'blocked',
+      width: 260,
+      className: 'multi-market-text-cell',
       render: (_: unknown, item: DecisionModuleStatus) => (
         item.blocked_by.length ? (
           <Space direction="vertical" size={2}>
@@ -243,6 +246,7 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '依赖',
       key: 'name',
+      width: 210,
       render: (_: unknown, item: DecisionDependency) => (
         <Space direction="vertical" size={0}>
           <Text strong>{item.name}</Text>
@@ -253,6 +257,7 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '市场',
       key: 'markets',
+      width: 140,
       render: (_: unknown, item: DecisionDependency) => (
         <Space wrap>
           {item.markets.map(market => <Tag key={market}>{marketLabel[market]}</Tag>)}
@@ -262,6 +267,7 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '国内可跑',
       key: 'mainland',
+      width: 100,
       render: (_: unknown, item: DecisionDependency) => (
         <Tag color={item.mainland_ready ? 'green' : 'red'}>{item.mainland_ready ? '是' : '否'}</Tag>
       )
@@ -269,6 +275,8 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '安装/配置',
       key: 'install',
+      width: 260,
+      className: 'multi-market-text-cell',
       render: (_: unknown, item: DecisionDependency) => (
         <Space direction="vertical" size={0}>
           <Text code>{item.install_hint || '内置/手工配置'}</Text>
@@ -279,7 +287,9 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '说明',
       dataIndex: 'notes',
-      key: 'notes'
+      key: 'notes',
+      width: 280,
+      className: 'multi-market-text-cell'
     }
   ];
 
@@ -287,16 +297,20 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '市场',
       key: 'market',
+      width: 90,
       render: (_: unknown, item: BacktestPlan) => <Tag>{marketLabel[item.market]}</Tag>
     },
     {
       title: '引擎',
       dataIndex: 'engine',
-      key: 'engine'
+      key: 'engine',
+      width: 160
     },
     {
       title: '数据要求',
       key: 'data_requirements',
+      width: 270,
+      className: 'multi-market-tag-cell',
       render: (_: unknown, item: BacktestPlan) => (
         <Space wrap>
           {item.data_requirements.map(line => <Tag key={line}>{line}</Tag>)}
@@ -306,6 +320,8 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '交易规则',
       key: 'trading_rules',
+      width: 270,
+      className: 'multi-market-tag-cell',
       render: (_: unknown, item: BacktestPlan) => (
         <Space wrap>
           {item.trading_rules.map(line => <Tag key={line}>{line}</Tag>)}
@@ -315,29 +331,14 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
     {
       title: '下一步',
       dataIndex: 'next_step',
-      key: 'next_step'
+      key: 'next_step',
+      width: 280,
+      className: 'multi-market-text-cell'
     }
   ];
 
   return (
-    <div className="multi-market-page">
-      <div className="multi-market-toolbar">
-        <div>
-          <Title level={3}>多市场智能选股与回测中心</Title>
-          <Paragraph type="secondary">
-            A股、港股、美股分模块运行，统一输出市场风格、板块意见、个股候选和大涨前概率排序。
-          </Paragraph>
-        </div>
-        <Button
-          type="primary"
-          icon={<ReloadOutlined />}
-          loading={loading}
-          onClick={runDecision}
-        >
-          生成决策快照
-        </Button>
-      </div>
-
+    <>
       <Row gutter={[14, 14]} className="multi-market-controls">
         <Col xs={24} lg={8}>
           <Card>
@@ -410,150 +411,165 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
         </Col>
       </Row>
 
-      {result ? (
-        <>
-          <Row gutter={[14, 14]} className="multi-market-stats">
-            <Col xs={12} md={6}>
-              <Card>
-                <Statistic title="系统就绪度" value={result.readiness_score} suffix="/100" prefix={<CheckCircleOutlined />} />
-              </Card>
-            </Col>
-            <Col xs={12} md={6}>
-              <Card>
-                <Statistic title="候选标的" value={result.candidates.length} prefix={<ThunderboltOutlined />} />
-              </Card>
-            </Col>
-            <Col xs={12} md={6}>
-              <Card>
-                <Statistic title="市场模块" value={result.modules.length} prefix={<DeploymentUnitOutlined />} />
-              </Card>
-            </Col>
-            <Col xs={12} md={6}>
-              <Card>
-                <Statistic title="回测计划" value={result.backtest_plan.length} prefix={<FundProjectionScreenOutlined />} />
-              </Card>
-            </Col>
-          </Row>
-
-          <Alert
-            className="multi-market-summary"
-            type="info"
-            showIcon
-            message={result.summary}
-            description={result.disclaimer}
-          />
-
-          {result.warnings.length > 0 && (
-            <Alert
-              className="multi-market-summary"
-              type="warning"
-              showIcon
-              message={result.warnings.join('；')}
-            />
-          )}
-
-          <Row gutter={[14, 14]}>
-            {result.market_styles.map(style => (
-              <Col xs={24} lg={8} key={style.market}>
-                <Card
-                  title={
-                    <Space>
-                      <PartitionOutlined />
-                      <span>{marketLabel[style.market]}风格</span>
-                    </Space>
-                  }
-                  extra={<Tag color={regimeMeta[style.risk_regime].color}>{style.risk_regime}</Tag>}
-                >
-                  <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                    <Text strong>{style.label}</Text>
-                    <Progress percent={style.trend_score} size="small" />
-                    <Space wrap>
-                      {style.dominant_factors.map(factor => <Tag key={factor}>{factor}</Tag>)}
-                    </Space>
-                    <Paragraph type="secondary">{style.rationale}</Paragraph>
-                    <Space wrap>
-                      {style.sector_opinions.map(sector => (
-                        <Tag key={sector.name} color={sector.stance === '强势' ? 'green' : sector.stance === '回避' ? 'red' : 'blue'}>
-                          {sector.name} {sector.score}
-                        </Tag>
-                      ))}
-                    </Space>
-                  </Space>
+      <DataCenter
+        className="multi-market-page"
+        title="多市场智能选股与回测中心"
+        subtitle="A股、港股、美股分模块运行，统一输出市场风格、板块意见、个股候选和大涨前概率排序。"
+        fetchData={fetchData}
+        refreshLabel="生成决策快照"
+        emptyText="等待生成多市场决策快照"
+        renderContent={(data, refresh) => (
+          <>
+            <Row gutter={[14, 14]} className="multi-market-stats">
+              <Col xs={12} md={6}>
+                <Card>
+                  <Statistic title="系统就绪度" value={data.readiness_score} suffix="/100" prefix={<CheckCircleOutlined />} />
                 </Card>
               </Col>
-            ))}
-          </Row>
+              <Col xs={12} md={6}>
+                <Card>
+                  <Statistic title="候选标的" value={data.candidates.length} prefix={<ThunderboltOutlined />} />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card>
+                  <Statistic title="市场模块" value={data.modules.length} prefix={<DeploymentUnitOutlined />} />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card>
+                  <Statistic title="回测计划" value={data.backtest_plan.length} prefix={<FundProjectionScreenOutlined />} />
+                </Card>
+              </Col>
+            </Row>
 
-          <Card className="multi-market-actions" title={<Space><SafetyCertificateOutlined />组合动作</Space>}>
-            <Space direction="vertical" size={8}>
-              {result.portfolio_actions.map(action => <Text key={action}>{action}</Text>)}
-            </Space>
-          </Card>
+            <Alert
+              className="multi-market-summary"
+              type="info"
+              showIcon
+              message={data.summary}
+              description={data.disclaimer}
+            />
+            <div style={{ marginTop: 8 }}>
+              <ShareButton modalTitle="分享多市场决策" target={() => ({ title: '多市场决策', summary: data.summary, byline: '由 DeepFocus 多市场决策中心生成' })} />
+            </div>
 
-          <Tabs
-            className="multi-market-tabs"
-            items={[
-              {
-                key: 'candidates',
-                label: '候选与交易意见',
-                children: (
-                  <Table
-                    rowKey={item => `${item.market}-${item.symbol}`}
-                    columns={candidateColumns}
-                    dataSource={result.candidates}
-                    pagination={{ pageSize: 8 }}
-                    scroll={{ x: 1100 }}
-                  />
-                )
-              },
-              {
-                key: 'modules',
-                label: '市场模块',
-                children: (
-                  <Table
-                    rowKey="key"
-                    columns={moduleColumns}
-                    dataSource={result.modules}
-                    pagination={false}
-                    scroll={{ x: 1000 }}
-                  />
-                )
-              },
-              {
-                key: 'backtest',
-                label: '回测验证',
-                children: (
-                  <Table
-                    rowKey="market"
-                    columns={backtestColumns}
-                    dataSource={result.backtest_plan}
-                    pagination={false}
-                    scroll={{ x: 1000 }}
-                  />
-                )
-              },
-              {
-                key: 'dependencies',
-                label: '中国可跑依赖',
-                children: (
-                  <Table
-                    rowKey="name"
-                    columns={dependencyColumns}
-                    dataSource={result.dependencies}
-                    pagination={false}
-                    scroll={{ x: 1000 }}
-                  />
-                )
-              }
-            ]}
-          />
-        </>
-      ) : (
-        <Card>
-          <Empty description="等待生成多市场决策快照" />
-        </Card>
-      )}
-    </div>
+            {data.warnings.length > 0 && (
+              <Alert
+                className="multi-market-summary"
+                type="warning"
+                showIcon
+                message={data.warnings.join('；')}
+              />
+            )}
+
+            <Row gutter={[14, 14]}>
+              {data.market_styles.map(style => (
+                <Col xs={24} lg={8} key={style.market}>
+                  <Card
+                    title={
+                      <Space>
+                        <PartitionOutlined />
+                        <span>{marketLabel[style.market]}风格</span>
+                      </Space>
+                    }
+                    extra={<Tag color={regimeMeta[style.risk_regime].color}>{style.risk_regime}</Tag>}
+                  >
+                    <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                      <Text strong>{style.label}</Text>
+                      <Progress percent={style.trend_score} size="small" />
+                      <Space wrap>
+                        {style.dominant_factors.map(factor => <Tag key={factor}>{factor}</Tag>)}
+                      </Space>
+                      <Paragraph type="secondary">{style.rationale}</Paragraph>
+                      <Space wrap>
+                        {style.sector_opinions.map(sector => (
+                          <Tag key={sector.name} color={sector.stance === '强势' ? 'green' : sector.stance === '回避' ? 'red' : 'blue'}>
+                            {sector.name} {sector.score}
+                          </Tag>
+                        ))}
+                      </Space>
+                    </Space>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+
+            <Card className="multi-market-actions" title={<Space><SafetyCertificateOutlined />组合动作</Space>}>
+              <Space direction="vertical" size={8}>
+                {data.portfolio_actions.map(action => <Text key={action}>{action}</Text>)}
+              </Space>
+            </Card>
+
+            <Tabs
+              className="multi-market-tabs"
+              items={[
+                {
+                  key: 'candidates',
+                  label: '候选与交易意见',
+                  children: (
+                    <Table
+                      rowKey={item => `${item.market}-${item.symbol}`}
+                      size="small"
+                      tableLayout="fixed"
+                      columns={candidateColumns}
+                      dataSource={data.candidates}
+                      pagination={{ pageSize: 8 }}
+                      scroll={{ x: 1224 }}
+                    />
+                  )
+                },
+                {
+                  key: 'modules',
+                  label: '市场模块',
+                  children: (
+                    <Table
+                      rowKey="key"
+                      size="small"
+                      tableLayout="fixed"
+                      columns={moduleColumns}
+                      dataSource={data.modules}
+                      pagination={false}
+                      scroll={{ x: 1070 }}
+                    />
+                  )
+                },
+                {
+                  key: 'backtest',
+                  label: '回测验证',
+                  children: (
+                    <Table
+                      rowKey="market"
+                      size="small"
+                      tableLayout="fixed"
+                      columns={backtestColumns}
+                      dataSource={data.backtest_plan}
+                      pagination={false}
+                      scroll={{ x: 1080 }}
+                    />
+                  )
+                },
+                {
+                  key: 'dependencies',
+                  label: '中国可跑依赖',
+                  children: (
+                    <Table
+                      rowKey="name"
+                      size="small"
+                      tableLayout="fixed"
+                      columns={dependencyColumns}
+                      dataSource={data.dependencies}
+                      pagination={false}
+                      scroll={{ x: 990 }}
+                    />
+                  )
+                }
+              ]}
+            />
+          </>
+        )}
+      />
+    </>
   );
 };
 

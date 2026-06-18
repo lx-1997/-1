@@ -1,0 +1,285 @@
+/* CctvNewsCenter — co-located styles (.cctv-news-* namespace).
+ * Extracted from src/index.css. Loads after index.css, so media overrides
+ * for grid-template-columns / flex-direction / padding live here alongside
+ * their base rules to keep responsive layout intact. */
+
+.cctv-news-page {
+  min-width: 0;
+}
+
+.cctv-news-header-actions {
+  max-width: 100%;
+}
+
+.cctv-news-header-actions .ant-segmented {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.cctv-news-warning {
+  margin-bottom: 14px;
+}
+
+.cctv-news-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.cctv-news-kpi,
+.cctv-news-list-panel,
+.cctv-news-detail-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.cctv-news-kpi {
+  min-height: 96px;
+  padding: 14px;
+}
+
+.cctv-news-kpi .ant-statistic-title,
+.cctv-news-kpi .ant-statistic-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cctv-news-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.cctv-news-toolbar > .ant-input-search,
+.cctv-news-toolbar > .ant-space {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cctv-news-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(330px, 0.72fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.cctv-news-list-panel {
+  padding: 10px;
+}
+
+.cctv-news-list {
+  display: grid;
+  gap: 10px;
+}
+
+.cctv-news-row {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(76px, auto);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cctv-news-row:hover,
+.cctv-news-row.active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.cctv-news-row-main,
+.cctv-news-row-meta,
+.cctv-news-detail-head > div,
+.cctv-news-detail-panel .ant-typography {
+  min-width: 0;
+}
+
+.cctv-news-row-main .ant-typography,
+.cctv-news-row-summary,
+.cctv-news-detail-text,
+.cctv-news-notes,
+.cctv-news-detail-summary {
+  overflow-wrap: anywhere;
+}
+
+.cctv-news-row-summary {
+  margin: 5px 0 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.cctv-news-row-tags .ant-tag,
+.cctv-news-detail-tags .ant-tag {
+  max-width: 100%;
+  margin-inline-end: 0;
+  white-space: normal;
+}
+
+.cctv-news-row-meta {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.cctv-news-row-meta .ant-progress-text {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.cctv-news-detail-panel {
+  position: sticky;
+  top: 14px;
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 86px);
+  overflow: auto;
+  padding: 14px;
+}
+
+.cctv-news-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cctv-news-detail-head h4 {
+  margin: 4px 0 0;
+}
+
+.cctv-news-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cctv-news-detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cctv-news-detail-text {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  line-height: 1.7;
+}
+
+.cctv-news-notes {
+  display: grid;
+  gap: 8px;
+}
+
+.cctv-news-notes > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.cctv-news-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 1180px) {
+  .cctv-news-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cctv-news-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .cctv-news-detail-panel {
+    position: static;
+    max-height: none;
+  }
+
+  .cctv-news-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .cctv-news-page {
+    padding: 12px;
+  }
+
+  .cctv-news-toolbar,
+  .cctv-news-list-panel,
+  .cctv-news-detail-panel {
+    padding: 12px;
+  }
+
+  .cctv-news-toolbar > .ant-input-search,
+  .cctv-news-toolbar > .ant-space,
+  .cctv-news-toolbar .ant-btn {
+    width: 100% !important;
+  }
+
+  .cctv-news-toolbar > .ant-space {
+    display: flex;
+  }
+
+  .cctv-news-toolbar > .ant-space > .ant-space-item {
+    flex: 1 1 150px;
+  }
+
+  .cctv-news-header-actions,
+  .cctv-news-header-actions .ant-segmented {
+    width: 100%;
+  }
+
+  .cctv-news-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cctv-news-row-meta {
+    grid-template-columns: minmax(0, 1fr) auto;
+    justify-items: start;
+    align-items: center;
+  }
+
+  .cctv-news-detail-head,
+  .cctv-news-detail-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 480px) {
+  .cctv-news-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}

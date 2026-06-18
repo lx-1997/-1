@@ -32,6 +32,9 @@ import {
   ThunderboltOutlined
 } from '@ant-design/icons';
 import { AppState } from '../types';
+import CollapsibleSection from './CollapsibleSection';
+import DataQualityBanner from './common/DataQualityBanner';
+import ShareButton from './common/ShareButton';
 import {
   AiResearchReport,
   CapabilityListResponse,
@@ -52,8 +55,9 @@ import {
   runStockCheck,
   scoreSentiment,
   summarizeNews
-} from '../services/aiResearchService';
+} from '../services/researchService';
 import ModelSettingsPanel from './settings/ModelSettingsPanel';
+import './FinGptHub.css';
 
 const { Paragraph, Text, Title } = Typography;
 const { TextArea } = Input;
@@ -63,15 +67,15 @@ interface FinGptHubProps {
 }
 
 const sentimentMeta = {
-  positive: { text: '偏积极', color: 'green' },
-  neutral: { text: '中性', color: 'blue' },
-  negative: { text: '偏谨慎', color: 'red' }
+  positive: { text: '偏积极', color: '#3d9915' },
+  neutral: { text: '中性', color: '#1769aa' },
+  negative: { text: '偏谨慎', color: '#d42a2c' }
 };
 
 const riskMeta = {
-  low: { text: '低', color: '#52c41a' },
-  medium: { text: '中', color: '#faad14' },
-  high: { text: '高', color: '#ff4d4f' }
+  low: { text: '低', color: '#3d9915' },
+  medium: { text: '中', color: '#cc8a00' },
+  high: { text: '高', color: '#d42a2c' }
 };
 
 const agentOptions = [
@@ -260,7 +264,26 @@ const FinGptHub: React.FC<FinGptHubProps> = ({ appState }) => {
   });
 
   const stockResult = stockReport && (
-    <Card title={<Space><LineChartOutlined />{selectedStock?.name} 投研结果</Space>} extra={<Tag color="blue">{stockReport.model}</Tag>}>
+    <Card
+      title={<Space><LineChartOutlined />{selectedStock?.name} 投研结果</Space>}
+      extra={
+        <Space>
+          <ShareButton
+            target={() => ({
+              title: selectedStock ? `${selectedStock.name}（${selectedStock.symbol}）投研体检` : '个股投研体检',
+              summary: [
+                stockReport.executive_summary,
+                stockReport.catalysts?.length ? `催化：${stockReport.catalysts.slice(0, 2).join('；')}` : '',
+                stockReport.risks?.length ? `风险：${stockReport.risks.slice(0, 2).join('；')}` : '',
+              ].filter(Boolean).join('\n\n'),
+              byline: '由 DeepFocus 投研工作台 · 个股体检生成',
+            })}
+          />
+          <Tag color="blue">{stockReport.model}</Tag>
+        </Space>
+      }
+    >
+      <DataQualityBanner quality={stockReport.data_quality} />
       <Paragraph style={{ fontSize: 16 }}>{stockReport.executive_summary}</Paragraph>
       <Row gutter={[16, 16]}>
         <Col xs={24} md={8}>
@@ -284,6 +307,7 @@ const FinGptHub: React.FC<FinGptHubProps> = ({ appState }) => {
 
   const sentimentPanel = sentimentResult && (
     <Card title="情绪分析结果" extra={<Tag color={sentimentMeta[sentimentResult.label].color}>{sentimentMeta[sentimentResult.label].text}</Tag>}>
+      <DataQualityBanner quality={sentimentResult.data_quality} />
       <Statistic title="情绪分" value={sentimentResult.score} precision={2} />
       <Progress percent={Math.round((sentimentResult.score + 1) * 50)} showInfo={false} strokeColor={sentimentMeta[sentimentResult.label].color} />
       <Paragraph style={{ marginTop: 12 }}>{sentimentResult.rationale}</Paragraph>
@@ -317,14 +341,14 @@ const FinGptHub: React.FC<FinGptHubProps> = ({ appState }) => {
   );
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className="fingpt-hub-shell">
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Card>
           <Row gutter={[16, 16]} align="middle">
             <Col xs={24} md={14}>
               <Space direction="vertical" size={4}>
                 <Title level={3} style={{ margin: 0 }}>FinGPT 能力中心</Title>
-                <Text type="secondary">统一承载金融情绪、新闻蒸馏、RAG、预测、通道风险和 Agent 工作流。</Text>
+                <Text type="secondary">统一承载金融情绪、新闻蒸馏、RAG、预测、通道风险和投研工作流。</Text>
               </Space>
             </Col>
             <Col xs={24} md={10}>
@@ -655,8 +679,8 @@ const verdictColor: Record<StockCheckResponse['verdict'], string> = {
 };
 
 const checkStatusColor: Record<string, string> = {
-  completed: 'green',
-  failed: 'red',
+  completed: '#3d9915',
+  failed: '#d42a2c',
   skipped: 'default'
 };
 
@@ -705,17 +729,27 @@ const StockCheckPanel: React.FC<{ result: StockCheckResponse }> = ({ result }) =
       </Row>
 
       {result.stock_analysis && (
-        <Card title="个股投研摘要" extra={<Tag color={sentimentMeta[result.stock_analysis.sentiment_label].color}>{sentimentMeta[result.stock_analysis.sentiment_label].text}</Tag>}>
+        <CollapsibleSection
+          title={<><LineChartOutlined /> 个股投研摘要</>}
+          extra={<Tag color={sentimentMeta[result.stock_analysis.sentiment_label].color}>{sentimentMeta[result.stock_analysis.sentiment_label].text}</Tag>}
+          defaultOpen={true}
+          level={2}
+        >
           <Paragraph>{result.stock_analysis.executive_summary}</Paragraph>
           <Row gutter={[16, 16]}>
             <Col xs={24} md={8}><Statistic title="情绪分" value={result.stock_analysis.sentiment_score} precision={2} /></Col>
             <Col xs={24} md={8}><Statistic title="风险" value={riskMeta[result.stock_analysis.risk_level].text} valueStyle={{ color: riskMeta[result.stock_analysis.risk_level].color }} /></Col>
             <Col xs={24} md={8}><Statistic title="催化数量" value={result.stock_analysis.catalysts.length} /></Col>
           </Row>
-        </Card>
+        </CollapsibleSection>
       )}
 
-      <Card title="能力执行状态">
+      <CollapsibleSection
+        title={<><ThunderboltOutlined /> 能力执行状态</>}
+        extra={<Text type="secondary">{result.checks.filter(c => c.status === 'completed').length}/{result.checks.length}</Text>}
+        defaultOpen={false}
+        level={2}
+      >
         <Space wrap>
           {result.checks.map(item => (
             <Tag key={item.key} color={checkStatusColor[item.status]}>
@@ -726,7 +760,7 @@ const StockCheckPanel: React.FC<{ result: StockCheckResponse }> = ({ result }) =
         {result.warnings.length > 0 && (
           <Alert style={{ marginTop: 12 }} type="warning" showIcon message="部分能力未完成" description={result.warnings.join('；')} />
         )}
-      </Card>
+      </CollapsibleSection>
 
       {taskResults.length > 0 && (
         <Row gutter={[16, 16]}>
@@ -760,6 +794,7 @@ const ResultList: React.FC<{ title: string; items: string[] }> = ({ title, items
 
 const TaskResult: React.FC<{ result: FinGptTaskResponse }> = ({ result }) => (
   <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <DataQualityBanner quality={result.data_quality} />
     <Card title={result.title} extra={<Tag color="blue">{result.model}</Tag>}>
       <Paragraph style={{ fontSize: 16 }}>{result.summary}</Paragraph>
       <Statistic title="置信度" value={result.confidence * 100} precision={0} suffix="%" />

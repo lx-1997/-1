@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from statistics import mean
 
+from .shared_utils import clamp
 from .schemas import (
     BacktestPlan,
     CandidateOpinion,
@@ -255,7 +256,7 @@ def _style_signal(market: MarketRegion, stocks: list[StockSnapshot]) -> MarketSt
     changes = [stock.change_percent for stock in market_stocks if stock.change_percent is not None]
     avg_change = mean(changes) if changes else 0
     breadth = sum(1 for value in changes if value > 0) / len(changes) if changes else 0.5
-    trend_score = int(_clamp(50 + avg_change * 8 + (breadth - 0.5) * 24, 0, 100))
+    trend_score = int(clamp(50 + avg_change * 8 + (breadth - 0.5) * 24, 0, 100))
     risk_regime = "进攻" if trend_score >= 66 else "防守" if trend_score <= 42 else "均衡"
     label = _style_label(market, risk_regime, trend_score, market_stocks)
     sectors = _sector_opinions(market_stocks, market)
@@ -301,7 +302,7 @@ def _sector_opinions(stocks: list[StockSnapshot], market: MarketRegion) -> list[
     opinions: list[SectorOpinion] = []
     for sector, values in grouped.items():
         sector_avg = mean(values)
-        score = int(_clamp(55 + sector_avg * 8 + min(len(values), 4) * 2, 0, 100))
+        score = int(clamp(55 + sector_avg * 8 + min(len(values), 4) * 2, 0, 100))
         stance = "强势" if score >= 68 else "回避" if score <= 42 else "中性"
         opinions.append(
             SectorOpinion(
@@ -334,12 +335,12 @@ def _candidate_opinions(
         change = stock.change_percent or 0
         community = stock.community_score if stock.community_score is not None else 55
         focus_bonus = {"high": 8, "medium": 4, "low": 0}.get(str(stock.focus_level or "").lower(), 2)
-        momentum = _clamp(change, -8, 8) * 3
+        momentum = clamp(change, -8, 8) * 3
         style_bonus = (style.trend_score - 50) * 0.32
         sector_bonus = (sector_score - 50) * 0.28
-        score = int(round(_clamp(52 + momentum + style_bonus + sector_bonus + (community - 50) * 0.18 + focus_bonus - risk_penalty, 0, 100)))
+        score = int(round(clamp(52 + momentum + style_bonus + sector_bonus + (community - 50) * 0.18 + focus_bonus - risk_penalty, 0, 100)))
         action = "重点跟踪" if score >= 72 else "观察" if score >= 52 else "回避"
-        probability = round(_clamp(0.18 + (score - 50) * 0.006 + max(change, 0) * 0.012, 0.05, 0.78), 2)
+        probability = round(clamp(0.18 + (score - 50) * 0.006 + max(change, 0) * 0.012, 0.05, 0.78), 2)
         sector_name = stock.sector or MARKET_LABELS.get(market, "未分组")
         candidates.append(
             CandidateOpinion(
@@ -498,7 +499,7 @@ def _readiness_score(modules: list[DecisionModuleStatus], data_profile: str) -> 
         score = max(35, score - 12)
     if data_profile == "mixed":
         score = max(45, score - 5)
-    return int(_clamp(score, 0, 100))
+    return int(clamp(score, 0, 100))
 
 
 def _infer_market(symbol: str, explicit_market: str | None = None) -> str:
@@ -524,7 +525,3 @@ def _normalize_symbol(symbol: str, market: str) -> str:
     if market == "HK" and re.fullmatch(r"\d{1,5}", value):
         return f"{value.zfill(5)}.HK"
     return value
-
-
-def _clamp(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))

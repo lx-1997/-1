@@ -405,7 +405,7 @@ class TradingAgentsAdapter:
         if api_key:
             if provider == "minimax":
                 env.setdefault("MINIMAX_API_KEY", api_key)
-                env.setdefault("MINIMAX_MODEL", model or "MiniMax-M2.7")
+                env.setdefault("MINIMAX_MODEL", model or "MiniMax-M3")
                 if base_url:
                     env.setdefault("MINIMAX_BASE_URL", base_url)
             env["OPENAI_API_KEY"] = api_key
@@ -529,7 +529,7 @@ class TradingAgentsAdapter:
             "decision": decision,
             "confidence": confidence_value,
             "agent_findings": {
-                "orchestrator": ["任务已路由到 TradingAgents 底层引擎", "对用户仍展示为 DeepFocus 五个核心 Agent"],
+                "orchestrator": ["任务已路由到 TradingAgents 分析引擎", "对用户展示为 DeepFocus 四个核心角色 + 输出层"],
                 "evidence": ["需与 DeepFocus 本地研报、财报和新闻证据交叉验证", "模型输出和证据冲突时，以可追溯证据优先"],
                 "research": [
                     "TradingAgents fundamentals / sentiment / news / technical 分析已参与评估",
@@ -553,7 +553,7 @@ class TradingAgentsAdapter:
                 {
                     "case": "base",
                     "probability": 45,
-                    "thesis": "多 Agent 结论仍需 DeepFocus 证据层补强，当前以继续研究和观察为主。",
+                    "thesis": "分析引擎结论仍需 DeepFocus 证据层补强，当前以继续研究和观察为主。",
                     "triggers": ["补齐研报证据", "复核财报", "确认市场情绪"],
                 },
                 {

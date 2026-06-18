@@ -1,0 +1,40 @@
+/* DataSourceCenter component styles (.data-source-*) — extracted from src/index.css */
+
+.data-source-name-cell,
+.data-source-title-cell {
+  width: 100%;
+  min-width: 0;
+}
+
+.data-source-name-cell .ant-typography,
+.data-source-title-cell .ant-typography,
+.data-source-title-cell a {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.data-source-name-cell .ant-typography-secondary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.data-source-title-cell a {
+  display: inline-block;
+}
+
+.data-source-page .ant-table-cell {
+  vertical-align: top;
+}
+
+.data-source-page .ant-table-cell .ant-space {
+  min-width: 0;
+}
+
+.data-source-page .ant-table-expanded-row pre {
+  max-width: 100%;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}

@@ -41,6 +41,9 @@ def test_task_agent_events_preserve_log_progress() -> None:
     evidence_event = next(event for event in events if event.payload.get("raw_agent") == "EvidenceAgent")
     research_event = next(event for event in events if event.payload.get("raw_agent") == "ResearchAgent")
 
+    assert events[0].agent == "Analyst"
+    assert evidence_event.agent == "Evidence"
+    assert research_event.agent == "Analyst"
     assert evidence_event.progress == 18
     assert evidence_event.payload["log_progress"] == 18
     assert research_event.progress == 55

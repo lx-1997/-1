@@ -147,11 +147,16 @@ QUOTE_PROVIDERS: list[QuoteProvider] = [
     ),
     QuoteProvider(
         "sina", "新浪财经",
-        lambda c, s, k: _fetch_sina_quotes(c, s), serves=_is_cn_hk_symbol,
+        lambda c, s, k: _fetch_sina_quotes(c, s),  # sina 经 gb_ 前缀覆盖美股，主力快源
     ),
     QuoteProvider(
         "tencent", "腾讯财经",
         lambda c, s, k: _fetch_tencent_quotes(c, s), serves=_is_cn_hk_symbol,
+    ),
+    QuoteProvider(
+        "eastmoney_us", "东方财富(美股)",
+        lambda c, s, k: _fetch_eastmoney_us_quotes(c, s),
+        serves=lambda sym: _infer_market(sym) == "US",
     ),
     QuoteProvider(
         "stooq", "Stooq",
@@ -161,10 +166,65 @@ QUOTE_PROVIDERS: list[QuoteProvider] = [
         "eastmoney_fallback", "东方财富公共行情",
         lambda c, s, k: _fetch_eastmoney_quotes(c, s),
     ),
+    # 末位兜底：前面所有快源都拿不到的「冷门股」才走 Google（覆盖最广），单只 3.5s 封顶，不拖累正常行情
+    QuoteProvider(
+        "google_finance", "Google Finance",
+        lambda c, s, k: _fetch_google_quotes(s),
+    ),
 ]
 
 
-async def fetch_market_quotes(symbols: Iterable[str]) -> MarketQuoteListResponse:
+async def _fetch_google_quotes(symbols: list[str]) -> tuple[list[MarketQuote], list[str]]:
+    """Google Finance 行情：覆盖美/港/A 股(含冷门股)，比新浪 gb_ 美股更新。并发逐只取，6s 缓存防频繁抓取。"""
+    from .google_finance import fetch_google_finance_quote
+
+    async def _one(sym: str) -> Optional[MarketQuote]:
+        try:
+            data = await asyncio.wait_for(
+                fetch_google_finance_quote(sym, _infer_market(sym), max_age=6.0), timeout=3.5,
+            )
+            if not data or data.get("price") is None:
+                return None
+            return MarketQuote(
+                symbol=sym, price=float(data["price"]),
+                change=data.get("change"), change_percent=data.get("change_percent"),
+                previous_close=data.get("previous_close"),
+                open_price=data.get("open"), high=data.get("high"), low=data.get("low"),
+                volume=data.get("volume"), currency=data.get("currency") or "USD",
+                provider="google_finance", provider_name="Google Finance",
+                fetched_at=utc_now_iso(), is_realtime=False, delay_note="Google 行情(可能轻微延迟)",
+                wk52_high=data.get("wk52_high"), wk52_low=data.get("wk52_low"),
+            )
+        except Exception:  # noqa: BLE001 - 单只失败跳过，绝不阻断
+            return None
+
+    results = await asyncio.gather(*[_one(s) for s in symbols])
+    quotes = [q for q in results if q is not None]
+    return quotes, ([] if quotes else ["Google Finance 未返回可用行情。"])
+
+
+def _ifind_to_quote(row: dict, requested_symbol: str, fetched_at: str) -> Optional[MarketQuote]:
+    """iFinD A股实时行情 row → MarketQuote（用原请求 symbol 作 key，避免与归一后的 .SH 错配）。
+    带基本面四件套；latest 非正 → None（视为未命中，交回退链）。"""
+    latest = row.get("latest")
+    if not isinstance(latest, (int, float)) or latest <= 0:
+        return None
+    pct = row.get("changeRatio")
+    prev = round(latest / (1 + pct / 100), 4) if isinstance(pct, (int, float)) and pct != -100 else None
+    return MarketQuote(
+        symbol=requested_symbol, price=latest,
+        change=round(latest - prev, 4) if prev is not None else None,
+        change_percent=pct if isinstance(pct, (int, float)) else None,
+        previous_close=prev, open_price=row.get("open"), high=row.get("high"), low=row.get("low"),
+        volume=row.get("volume"), currency="CNY", provider="ifind", provider_name="同花顺 iFinD 实时",
+        market_time=row.get("time"), fetched_at=fetched_at, is_realtime=True,
+        delay_note="同花顺 iFinD A股交易所实时行情",
+        pe_ttm=row.get("pe_ttm"), pb=row.get("pb"),
+        total_capital=row.get("totalCapital"), turnover_ratio=row.get("turnoverRatio"),
+    )
+
+
+async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) -> MarketQuoteListResponse:
     requested_symbols = normalize_symbols(symbols)
     fetched_at = utc_now_iso()
     warnings: list[str] = []
@@ -178,9 +238,31 @@ async def fetch_market_quotes(symbols: Iterable[str]) -> MarketQuoteListResponse
             warnings=["No valid symbols were supplied."],
         )
 
+    # iFinD 灰度增强（仅白名单用户，默认 False=现网零变化）：先用同花顺补齐 A股实时+基本面，
+    # 命中的标的从 missing 剔除、跳过整条免费快照链；未命中/故障/非A股仍走原链。绝不抛、不拖累他人。
+    if ifind_user:
+        try:
+            from . import ifind_api
+            if ifind_api.enabled():
+                cn_map = {}  # iFinD 归一码 → 原请求 symbol
+                for s in requested_symbols:
+                    code = ifind_api.normalize_a_code(s)
+                    if code:
+                        cn_map[code] = s
+                if cn_map:
+                    res = await asyncio.wait_for(asyncio.to_thread(ifind_api.real_time_quote, list(cn_map.keys())), timeout=6.0)
+                    if res and res.get("ok"):
+                        for row in res.get("rows") or []:
+                            orig = cn_map.get(row.get("code"))
+                            q = _ifind_to_quote(row, orig, fetched_at) if orig else None
+                            if q:
+                                quote_by_symbol[orig] = q
+        except Exception:  # noqa: BLE001 —— iFinD 任何异常都退化为「完全走原链」
+            pass
+
     headers = {"User-Agent": "DeepFocus/0.1 market-data"}
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=headers) as client:
-        missing = requested_symbols
+        missing = [s for s in requested_symbols if s not in quote_by_symbol]  # iFinD 已命中的跳过原链
         for provider in QUOTE_PROVIDERS:
             if not missing:
                 break
@@ -394,6 +476,64 @@ async def _fetch_eastmoney_quotes(
     if not quotes:
         warnings.append("Eastmoney public quote returned no usable quotes.")
     return quotes, warnings
+
+
+async def _fetch_eastmoney_us_quotes(
+    client: httpx.AsyncClient,
+    symbols: list[str],
+) -> tuple[list[MarketQuote], list[str]]:
+    """美股行情：东财单股 stock/get 对美股会断连，改用列表接口 ulist.np（与 AkShare 同源）。
+    secid 前缀 105=NASDAQ / 106=NYSE / 107=AMEX，逐前缀补齐未命中的标的。"""
+    us = [s for s in symbols if _infer_market(s) == "US"]
+    if not us:
+        return [], []
+    warnings: list[str] = []
+    quotes: dict[str, MarketQuote] = {}
+    remaining = [s.strip().upper().replace(".US", "") for s in us]
+    # trust_env=False：东财直连绕过沙箱出网代理（代理会断连东财，与 DAO 桥接同坑）
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers={"User-Agent": "DeepFocus/0.1 market-data"}, trust_env=False) as direct:
+        for prefix in ("105", "106", "107"):
+            if not remaining:
+                break
+            secids = ",".join(f"{prefix}.{code}" for code in remaining)
+            try:
+                response = await direct.get(
+                    "https://push2.eastmoney.com/api/qt/ulist.np/get",
+                    params={"fltt": 2, "secids": secids, "fields": "f12,f14,f2,f3,f4,f5,f15,f16,f18"},
+                )
+                response.raise_for_status()
+                rows = (response.json().get("data") or {}).get("diff") or []
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"Eastmoney US quote failed ({prefix}): {safe_error(exc)}.")
+                rows = []
+            found: set[str] = set()
+            for row in rows:
+                code = str(row.get("f12") or "").upper()
+                price = to_float(row.get("f2"))
+                if not code or price is None or price <= 0:
+                    continue
+                quotes[code] = MarketQuote(
+                    symbol=code,
+                    price=price,
+                    change=to_float(row.get("f4")),
+                    change_percent=to_float(row.get("f3")),
+                    previous_close=to_float(row.get("f18")),
+                    high=to_float(row.get("f15")),
+                    low=to_float(row.get("f16")),
+                    volume=to_float(row.get("f5")),
+                    currency="USD",
+                    provider="eastmoney_us",
+                    provider_name="东方财富(美股)",
+                    market_time=None,
+                    fetched_at=utc_now_iso(),
+                    is_realtime=False,
+                    delay_note="美股免费公共行情快照（东财），稳定性依赖公开接口。",
+                )
+                found.add(code)
+            remaining = [code for code in remaining if code not in found]
+    if not quotes:
+        warnings.append("Eastmoney US public quote returned no usable quotes.")
+    return list(quotes.values()), warnings
 
 
 async def _fetch_sina_quotes(
@@ -721,9 +861,19 @@ def _candidate_from_eastmoney(row: dict[str, Any]) -> Optional[MarketSymbolCandi
     elif classify == "HK" or security_type_name == "港股":
         market = "HK"
         symbol = f"{code.zfill(5)}.HK"
-    elif classify == "AStock" or security_type_name in {"沪A", "深A", "北证"}:
+    elif (
+        classify == "AStock"
+        or security_type_name in {"沪A", "深A", "北证", "科创板", "创业板"}
+        # 兜底：任意 6 位数字代码 + 上交所(1.)/深交所(0.) QuoteID 前缀，
+        # 覆盖科创板(688)/创业板(300)/北证(8/4)及未来新板块，不再因板块名缺漏而丢票。
+        or (re.fullmatch(r"\d{6}", code) and (quote_id.startswith("1.") or quote_id.startswith("0.")))
+    ):
         market = "CN"
-        suffix = "SH" if quote_id.startswith("1.") else "BJ" if "北" in security_type_name else "SZ"
+        suffix = (
+            "SH" if quote_id.startswith("1.")
+            else "BJ" if ("北" in security_type_name or code.startswith(("8", "4", "920")))
+            else "SZ"
+        )
         symbol = f"{code}.{suffix}"
     else:
         return None

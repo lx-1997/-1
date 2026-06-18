@@ -1,0 +1,200 @@
+/* OptionsSignalCenter component styles (.options-*) — extracted from src/index.css */
+
+.options-signal-page {
+  min-height: calc(100vh - 52px);
+  padding: 18px;
+}
+
+.options-signal-toolbar,
+.options-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.options-signal-toolbar {
+  margin-bottom: 14px;
+}
+
+.options-signal-toolbar .ant-typography {
+  margin-bottom: 2px;
+}
+
+.options-control-row,
+.options-warning,
+.options-stat-row,
+.options-detail-card {
+  margin-bottom: 14px;
+}
+
+.options-signal-page .ant-card {
+  border-radius: 10px;
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.options-signal-page .ant-progress-line {
+  min-width: 110px;
+}
+
+.options-symbol-button {
+  width: 100%;
+  min-width: 128px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.options-symbol-button:hover .ant-typography:first-child {
+  color: var(--accent);
+}
+
+.options-active-row > td {
+  background: var(--accent-soft) !important;
+}
+
+.options-chart-shell {
+  width: 100%;
+  min-height: 260px;
+}
+
+.options-search-results {
+  display: grid;
+  gap: 8px;
+}
+
+.options-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.options-signal-tags {
+  margin-bottom: 12px;
+}
+
+.options-flow-callout {
+  margin: 12px 0 14px;
+  border-radius: 8px;
+}
+
+.options-tail-risk-panel {
+  margin: 12px 0 14px;
+  border-radius: 8px;
+}
+
+.options-forecast-panel {
+  margin: 12px 0 14px;
+  border-radius: 8px;
+}
+
+.options-tail-risk-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.options-tail-risk-content ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.options-tail-risk-content li + li {
+  margin-top: 4px;
+}
+
+.options-gamma-panel {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.options-gamma-panel > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.options-gamma-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.options-gamma-metrics .ant-statistic {
+  min-width: 0;
+}
+
+.options-gamma-metrics .ant-statistic-content {
+  font-size: 18px;
+}
+
+.options-ai-panel {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--accent-soft), var(--surface-muted));
+}
+
+.options-ai-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.options-ai-thesis.ant-typography {
+  margin-bottom: 0;
+  color: var(--text);
+}
+
+.options-ai-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.options-ai-grid > div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.options-ai-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+
+.options-ai-list li + li {
+  margin-top: 4px;
+}
+
+.options-ai-action {
+  border-radius: 8px;
+}
+
+.options-detail-tabs .ant-tabs-nav {
+  margin-bottom: 10px;
+}

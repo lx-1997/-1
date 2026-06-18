@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DEEPFOCUS · 华尔街分析师级 · 六维分析</title>
+<style>
+  :root{
+    --bg:#0a0e15; --panel:#131a28; --panel2:#0f1623; --line:#243044;
+    --amber:#ffb000; --cyan:#4fd0e6; --green:#2ec27e; --red:#ff5c6c; --purple:#a98bff;
+    --txt:#eef2f9; --dim:#93a4be; --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:radial-gradient(1100px 560px at 75% -12%,#15223a 0%,var(--bg) 60%); color:var(--txt);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{width:1400px; margin:0 auto; padding:22px 40px 20px;}
+  .top{display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); padding-bottom:12px;}
+  .brand{font-family:var(--mono); font-weight:800; font-size:17px; color:var(--amber);}
+  .brand b{color:var(--cyan);} .brand .role{color:var(--dim); font-weight:600; font-size:14px; margin-left:8px;}
+  .demo-tag{font-family:var(--mono); font-size:11px; color:var(--amber); border:1px solid #4a3a12; background:#1a160a; padding:4px 10px; border-radius:6px; letter-spacing:1px;}
+  .q{display:flex; align-items:center; gap:10px; margin:15px 0 6px;}
+  .q .av{width:28px;height:28px;border-radius:7px;background:#243049;display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .q .bub{background:#1c2740; border:1px solid #2c3a57; border-radius:9px; padding:9px 13px; font-size:15px; font-weight:600;}
+  .q .bub .t{color:var(--cyan); font-family:var(--mono); font-size:12px; margin-right:4px;}
+  .q .hint{margin-left:auto; font-size:12px; color:var(--dim);}
+  .q .hint b{color:var(--green);}
+  /* dimension rows */
+  .rows{margin-top:10px; display:flex; flex-direction:column; gap:8px;}
+  .dim{display:grid; grid-template-columns:200px 92px 1fr auto; align-items:center; gap:14px;
+    background:linear-gradient(90deg,var(--panel),var(--panel2)); border:1px solid var(--line); border-radius:10px; padding:11px 15px; border-left:4px solid var(--line);}
+  .dim.g{border-left-color:var(--green);} .dim.y{border-left-color:var(--amber);} .dim.r{border-left-color:var(--red);}
+  .dim .name{font-size:16px; font-weight:800;} .dim .name .ic{margin-right:7px;}
+  .dim .name small{display:block; font-family:var(--mono); font-size:10px; color:var(--dim); font-weight:600; letter-spacing:1px; margin-top:1px;}
+  .sig{display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800;}
+  .sig .dot{width:11px;height:11px;border-radius:50%;}
+  .g .sig .dot{background:var(--green); box-shadow:0 0 8px var(--green);} .g .sig{color:var(--green);}
+  .y .sig .dot{background:var(--amber); box-shadow:0 0 8px var(--amber);} .y .sig{color:var(--amber);}
+  .r .sig .dot{background:var(--red); box-shadow:0 0 8px var(--red);} .r .sig{color:var(--red);}
+  .find{font-size:14px; line-height:1.45; color:#dde6f2;} .find b{color:var(--amber);}
+  .srcs{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; max-width:300px;}
+  .tag{font-family:var(--mono); font-size:11px; color:var(--dim); border:1px solid #2a3548; background:#101826; padding:3px 8px; border-radius:6px; white-space:nowrap;}
+  .tag.own{color:var(--amber); border-color:#4a3a12; background:#191307;}
+  /* synthesis */
+  .syn{margin-top:12px; display:flex; align-items:center; gap:16px; background:linear-gradient(90deg,#1a1407,#15110a); border:1px solid #4a3a12; border-radius:11px; padding:14px 18px;}
+  .syn .lab{font-family:var(--mono); font-size:11px; color:var(--amber); letter-spacing:1px;}
+  .syn .verdict{font-size:18px; font-weight:900;} .syn .verdict .a{color:var(--amber);}
+  .syn .mid{font-size:14px; color:var(--dim);} .syn .mid b{color:var(--green);}
+  .syn .val{margin-left:auto; text-align:right;}
+  .syn .val .k{font-size:11px; color:var(--dim);} .syn .val .v{font-size:19px; font-weight:900; color:var(--amber);}
+  .syn .val .cf{font-size:12px; color:var(--dim); margin-top:1px;} .syn .val .cf b{color:var(--amber);}
+  .foot{display:flex; justify-content:space-between; margin-top:13px; font-size:11.5px; color:var(--dim); font-family:var(--mono);}
+  .foot .own{color:var(--amber);}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">DEEPFOCUS<b>.</b> AI 投研助手 <span class="role">· 像华尔街分析师一样，六个维度交叉验证</span></div>
+      <div class="demo-tag">能力演示 · LIVE DEMO</div>
+    </div>
+
+    <div class="q">
+      <div class="av">🧑</div>
+      <div class="bub"><span class="t">提问 ›</span> 中国建材(3323.HK)：给我一份专业的全维度分析。</div>
+      <div class="hint">AI 跨 <b>6 个维度</b> 取数 · 每个维度给信号灯 + 证据 + 来源</div>
+    </div>
+
+    <div class="rows">
+      <div class="dim r">
+        <div class="name"><span class="ic">📊</span>基本面<small>FUNDAMENTALS</small></div>
+        <div class="sig"><span class="dot"></span>底部 · 转折在即</div>
+        <div class="find">FY25 营收 1778 亿、归母 <b>−37.5 亿（亏损见底）</b>；水泥拖累、新材料+工程增长，2026 有望扭亏。</div>
+        <div class="srcs"><span class="tag">港交所财报</span><span class="tag">券商预期</span></div>
+      </div>
+
+      <div class="dim y">
+        <div class="name"><span class="ic">📈</span>技术面<small>TECHNICAL</small></div>
+        <div class="sig"><span class="dot"></span>筑底 · 待突破</div>
+        <div class="find">现价 <b>HK$4.99</b>，一年 −31% 后低位筑底；5 月反弹至 5.84 后回踩，<b>放量站上均线</b>才确认反转。</div>
+        <div class="srcs"><span class="tag">K线/价格走势</span><span class="tag">52周区间</span></div>
+      </div>
+
+      <div class="dim y">
+        <div class="name"><span class="ic">💰</span>资金面<small>FUND FLOW</small></div>
+        <div class="sig"><span class="dot"></span>回暖</div>
+        <div class="find">南向资金近月<b>净流入</b>、主力承接；期权 Put/Call 情绪中性偏多，未见恐慌出逃。</div>
+        <div class="srcs"><span class="tag">东财资金流</span><span class="tag">南向持股</span><span class="tag">期权情绪</span></div>
+      </div>
+
+      <div class="dim g">
+        <div class="name"><span class="ic">🏭</span>行业面<small>INDUSTRY</small></div>
+        <div class="sig"><span class="dot"></span>向上</div>
+        <div class="find">水泥<b>"反内卷"供给侧提价</b> + 新材料（玻纤/电子布）高景气；行业拐点信号增强。</div>
+        <div class="srcs"><span class="tag own">🔒 海外投行研报</span><span class="tag">供应链周期</span></div>
+      </div>
+
+      <div class="dim g">
+        <div class="name"><span class="ic">⚖️</span>估值面<small>VALUATION</small></div>
+        <div class="sig"><span class="dot"></span>低估</div>
+        <div class="find">PB <b>0.38×</b> 破净，处行业<b>后 5% 分位</b>；股息支撑 + 安全垫厚，下行有限。</div>
+        <div class="srcs"><span class="tag">估值分位</span><span class="tag">同业对比</span></div>
+      </div>
+
+      <div class="dim y">
+        <div class="name"><span class="ic">👔</span>管理层/治理<small>GOVERNANCE</small></div>
+        <div class="sig"><span class="dot"></span>稳健 · 关注</div>
+        <div class="find">央企<b>中国建材集团</b>控股背书、整合主线清晰；跟踪股东增减持与重大事项，暂无治理红灯。</div>
+        <div class="srcs"><span class="tag">股东增减持</span><span class="tag">重大事项</span><span class="tag own">🔒 DAO 快讯</span></div>
+      </div>
+    </div>
+
+    <div class="syn">
+      <span class="lab">综合结论</span>
+      <span class="verdict">🟡 <span class="a">困境反转</span></span>
+      <span class="mid">6 维中 <b>4 维边际改善</b>（行业/估值向上，基本面/资金面/技术面筑底回暖）</span>
+      <span class="val">
+        <div class="k">合理市值</div>
+        <div class="v">HK$550~650 亿</div>
+        <div class="cf">≈ HK$6.2~7.3/股 · 置信度 <b>中</b></div>
+      </span>
+    </div>
+
+    <div class="foot">
+      <span>DEEPFOCUS / DAO 财经 —— 六维交叉分析（基本面·技术面·资金面·行业·估值·治理）· 融合<span class="own">独家信息源</span></span>
+      <span>示例数据用于演示，不构成投资建议</span>
+    </div>
+  </div>
+</body>
+</html>

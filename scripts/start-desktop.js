@@ -9,7 +9,7 @@ const http = require('http');
 const path = require('path');
 
 const rootDir = path.join(__dirname, '..');
-const host = process.env.HOST || '127.0.0.1';
+const host = process.env.HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 3000);
 const rendererUrl = process.env.ELECTRON_RENDERER_URL || `http://${host}:${port}`;
 const apiBaseUrl = (process.env.REACT_APP_API_BASE_URL || 'http://127.0.0.1:8300').replace(/\/$/, '');

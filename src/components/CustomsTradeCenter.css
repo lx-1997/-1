@@ -1,0 +1,269 @@
+/* CustomsTradeCenter styles, extracted from src/index.css.
+   Namespace: .customs-trade-*
+   Loaded after index.css so the @media overrides below co-locate with their base rules.
+   Shared groups (mixing .customs-trade-shell with .data-center-page / .ant-* chrome /
+   other components' media overrides) remain in index.css. */
+
+.customs-trade-ai-card,
+.customs-trade-detail,
+.customs-trade-trend-card,
+.customs-trade-sources {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.customs-trade-title-icon {
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.customs-trade-alert,
+.customs-trade-kpis,
+.customs-trade-ai-card,
+.customs-trade-grid {
+  margin-bottom: 14px;
+}
+
+.customs-trade-actions {
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.customs-trade-actions .ant-btn {
+  min-width: 92px;
+}
+
+.customs-trade-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.customs-trade-grid > .ant-card,
+.customs-trade-trend-card,
+.customs-trade-detail {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.customs-trade-grid .ant-card-body,
+.customs-trade-trend-card .ant-card-body {
+  min-width: 0;
+}
+
+.customs-trade-search {
+  width: 240px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.customs-trade-ai-card .ant-card-body {
+  display: grid;
+  gap: 12px;
+}
+
+.customs-trade-ai-summary {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.customs-trade-ai-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.customs-trade-ai-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+
+.customs-trade-ai-list li + li {
+  margin-top: 4px;
+}
+
+.customs-trade-ai-note {
+  margin: 0;
+}
+
+.customs-trade-metric {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.customs-trade-metric > div {
+  min-width: 0;
+}
+
+.customs-trade-metric > span {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.customs-trade-metric strong,
+.customs-trade-metric small {
+  display: block;
+}
+
+.customs-trade-metric strong {
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 19px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.customs-trade-metric small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.customs-trade-detail .ant-card-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.customs-trade-detail .ant-card-extra {
+  flex: 1 1 520px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.customs-trade-detail-tools {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.customs-trade-detail-tools .ant-space-item {
+  min-width: 0;
+}
+
+.customs-trade-detail-tabs,
+.customs-trade-detail .ant-segmented {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.customs-trade-detail .ant-table-wrapper {
+  overflow: hidden;
+}
+
+.customs-trade-detail .ant-table {
+  table-layout: fixed;
+}
+
+.customs-trade-detail .ant-table-cell {
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.customs-trade-detail .ant-table-cell .ant-tag {
+  margin-inline-end: 0;
+}
+
+.customs-trade-hs-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.customs-trade-hs-detail-head {
+  display: grid;
+  gap: 8px;
+}
+
+.customs-trade-hs-candidates {
+  max-width: 100%;
+}
+
+.customs-trade-hs-candidates .ant-btn,
+.customs-trade-hs-detail-head .ant-btn {
+  max-width: 100%;
+  height: auto;
+  min-height: 24px;
+  white-space: normal;
+  text-align: left;
+}
+
+.customs-trade-partner-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.customs-trade-hs-partner-panel {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.customs-trade-commodity-name,
+.customs-trade-hs-name {
+  display: block;
+  max-width: 300px;
+}
+
+.customs-trade-sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.customs-trade-sources a {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+  color: var(--text);
+}
+
+.customs-trade-sources span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customs-trade-sources small {
+  grid-column: 2;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .customs-trade-detail-tools {
+    justify-content: flex-start;
+  }
+
+  .customs-trade-actions .ant-space-item,
+  .customs-trade-detail-tools .ant-space-item {
+    flex: 1 1 150px;
+  }
+
+  .customs-trade-actions .ant-btn {
+    width: 100%;
+  }
+
+  .customs-trade-detail .ant-card-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .customs-trade-detail .ant-card-extra {
+    flex-basis: auto;
+  }
+}

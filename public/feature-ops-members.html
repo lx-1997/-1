@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DEEPFOCUS 运营看板 · 会员模块</title>
+<style>
+  :root{
+    --bg:#0a0e15; --panel:#131a28; --panel2:#0f1623; --line:#243044;
+    --amber:#ffb000; --cyan:#4fd0e6; --green:#2ec27e; --red:#ff5c6c; --dim:#93a4be;
+    --txt:#eef2f9; --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:radial-gradient(1100px 560px at 80% -12%,#15223a 0%,var(--bg) 60%); color:var(--txt);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{width:1400px; margin:0 auto; padding:20px 36px 18px;}
+  .top{display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); padding-bottom:11px;}
+  .brand{font-family:var(--mono); font-weight:800; font-size:16px; color:var(--amber);}
+  .brand b{color:var(--cyan);} .brand .role{color:var(--dim); font-weight:600; font-size:13px; margin-left:8px;}
+  .top .meta{font-family:var(--mono); font-size:12px; color:var(--dim);}
+  /* KPI */
+  .kpis{display:grid; grid-template-columns:repeat(6,1fr); gap:11px; margin-top:14px;}
+  .kpi{background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line); border-radius:10px; padding:11px 13px;}
+  .kpi .k{font-size:12px; color:var(--dim);}
+  .kpi .v{font-size:25px; font-weight:900; margin-top:3px; letter-spacing:.5px;}
+  .kpi .d{font-size:11px; margin-top:3px; font-family:var(--mono);}
+  .kpi .up{color:var(--green);} .kpi .down{color:var(--red);} .kpi .warn{color:var(--amber);}
+  .kpi.alert{border-color:#4a3a12; background:linear-gradient(180deg,#1a1407,#15110a);} .kpi.alert .v{color:var(--amber);}
+  /* main grid */
+  .cols{display:grid; grid-template-columns:1fr 340px; gap:14px; margin-top:14px;}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line); border-radius:11px; padding:13px 15px;}
+  .card .h{font-size:14px; font-weight:800; margin-bottom:9px; display:flex; align-items:center; gap:8px;}
+  .card .h .tag{font-family:var(--mono); font-size:11px; color:var(--dim); font-weight:600; margin-left:auto;}
+  /* member table */
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th{text-align:left; color:var(--dim); font-weight:600; font-size:11px; font-family:var(--mono); letter-spacing:.5px; padding:0 8px 7px; border-bottom:1px solid var(--line);}
+  td{padding:8px; border-bottom:1px solid #1a2335;}
+  tr:last-child td{border-bottom:none;}
+  .mname{font-weight:700;} .mphone{font-family:var(--mono); font-size:12px; color:var(--cyan); margin-left:8px;}
+  .lvl{font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px;}
+  .lvl.q{color:var(--amber); background:#1a1407; border:1px solid #4a3a12;}
+  .lvl.p{color:var(--cyan); background:#0d1a20; border:1px solid #1f3a44;}
+  .lvl.f{color:var(--dim); background:#141a26; border:1px solid #2a3548;}
+  .exp{font-family:var(--mono); font-size:12px;}
+  .rem{font-size:12px; font-weight:800; padding:2px 8px; border-radius:6px; white-space:nowrap;}
+  .rem.r{color:var(--red); background:#1d1012; border:1px solid #4a1f26;}
+  .rem.y{color:var(--amber); background:#1a1407; border:1px solid #4a3a12;}
+  .rem.g{color:var(--green); background:#0f1a13; border:1px solid #1f5138;}
+  .ops{font-family:var(--mono); font-weight:800; color:var(--txt);}
+  .ops small{color:var(--dim); font-weight:400;}
+  .act{font-size:12px; color:var(--dim);} .act .on{color:var(--green); font-weight:700;}
+  .doton{display:inline-block; width:7px;height:7px;border-radius:50%;background:var(--green); box-shadow:0 0 6px var(--green); margin-right:5px;}
+  /* side: alerts + chart */
+  .alertrow{display:flex; align-items:center; gap:9px; padding:7px 0; border-bottom:1px dashed #1e2c40; font-size:13px;}
+  .alertrow:last-of-type{border-bottom:none;}
+  .alertrow .ph{font-family:var(--mono); font-size:12px; color:var(--cyan);}
+  .alertrow .rem{margin-left:auto;}
+  .btn{display:block; width:100%; margin-top:10px; text-align:center; background:linear-gradient(90deg,#ffb000,#e08e00); color:#1a1206; font-weight:800; font-size:13px; padding:9px; border-radius:8px; border:none; cursor:pointer;}
+  .chart{display:flex; align-items:flex-end; gap:9px; height:92px; margin-top:6px; padding-top:6px;}
+  .bar{flex:1; background:linear-gradient(180deg,var(--cyan),#1f6b78); border-radius:4px 4px 0 0; position:relative;}
+  .bar span{position:absolute; top:-16px; left:0; right:0; text-align:center; font-size:10px; color:var(--dim); font-family:var(--mono);}
+  .bar.today{background:linear-gradient(180deg,var(--amber),#9c6b00);}
+  .xlab{display:flex; gap:9px; margin-top:5px;} .xlab div{flex:1; text-align:center; font-size:10px; color:var(--dim); font-family:var(--mono);}
+  .foot{display:flex; justify-content:space-between; margin-top:13px; font-size:11.5px; color:var(--dim); font-family:var(--mono);}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">DEEPFOCUS<b>.</b> 运营看板 <span class="role">· 会员模块 / Member Operations</span></div>
+      <div class="meta">数据截至 2026-06-09 19:20 · 自动每 5 分钟刷新</div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="k">会员总数</div><div class="v">1,284</div><div class="d up">↑ 本月 +36</div></div>
+      <div class="kpi"><div class="k">今日活跃</div><div class="v">312</div><div class="d up">24% · ↑ 5%</div></div>
+      <div class="kpi"><div class="k">7 日活跃</div><div class="v">689</div><div class="d up">54%</div></div>
+      <div class="kpi alert"><div class="k">⏳ 30 天内到期</div><div class="v">57</div><div class="d warn">含 7 天内 12 人</div></div>
+      <div class="kpi"><div class="k">日均操作数</div><div class="v">5,420</div><div class="d up">↑ 8% 周环比</div></div>
+      <div class="kpi"><div class="k">本月续费率</div><div class="v">78%</div><div class="d down">↓ 3%</div></div>
+    </div>
+
+    <div class="cols">
+      <!-- member table -->
+      <div class="card">
+        <div class="h">👥 会员明细<span class="tag">按到期时间排序 · 显示 9 / 1,284</span></div>
+        <table>
+          <thead><tr><th>会员 / 手机号</th><th>等级</th><th>到期日</th><th>剩余</th><th>今日操作</th><th>7 日操作</th><th>最近活跃</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mname">赵敏</span><span class="mphone">135 2891 3321</span></td><td><span class="lvl p">Pro</span></td><td class="exp">2026-06-09</td><td><span class="rem r">今天到期</span></td><td class="ops">0</td><td class="ops">12</td><td class="act">3 天前</td></tr>
+            <tr><td><span class="mname">黄磊</span><span class="mphone">158 6620 4477</span></td><td><span class="lvl f">免费试用</span></td><td class="exp">2026-06-10</td><td><span class="rem r">1 天</span></td><td class="ops">3</td><td class="ops">9</td><td class="act">昨天</td></tr>
+            <tr><td><span class="mname">周杰</span><span class="mphone">136 7045 7788</span></td><td><span class="lvl f">免费试用</span></td><td class="exp">2026-06-11</td><td><span class="rem r">2 天</span></td><td class="ops">8</td><td class="ops">25</td><td class="act">昨天</td></tr>
+            <tr><td><span class="doton"></span><span class="mname">王凯</span><span class="mphone">138 0019 1234</span></td><td><span class="lvl q">旗舰</span></td><td class="exp">2026-06-14</td><td><span class="rem r">5 天</span></td><td class="ops">42</td><td class="ops">310</td><td class="act"><span class="on">2 分钟前</span></td></tr>
+            <tr><td><span class="doton"></span><span class="mname">刘洋</span><span class="mphone">159 3372 6543</span></td><td><span class="lvl q">旗舰</span></td><td class="exp">2026-06-30</td><td><span class="rem y">21 天</span></td><td class="ops">27</td><td class="ops">180</td><td class="act"><span class="on">12 分钟前</span></td></tr>
+            <tr><td><span class="mname">李娜</span><span class="mphone">139 8810 5678</span></td><td><span class="lvl p">Pro</span></td><td class="exp">2026-07-02</td><td><span class="rem y">23 天</span></td><td class="ops">18</td><td class="ops">96</td><td class="act">1 小时前</td></tr>
+            <tr><td><span class="mname">孙丽</span><span class="mphone">186 5543 1199</span></td><td><span class="lvl p">Pro</span></td><td class="exp">2026-08-08</td><td><span class="rem g">60 天</span></td><td class="ops">12</td><td class="ops">70</td><td class="act">2 小时前</td></tr>
+            <tr><td><span class="mname">陈强</span><span class="mphone">188 2207 2210</span></td><td><span class="lvl p">Pro</span></td><td class="exp">2026-09-15</td><td><span class="rem g">98 天</span></td><td class="ops">5</td><td class="ops">40</td><td class="act">今天</td></tr>
+            <tr><td><span class="doton"></span><span class="mname">张伟</span><span class="mphone">137 6654 0090</span></td><td><span class="lvl q">旗舰</span></td><td class="exp">2027-01-20</td><td><span class="rem g">225 天</span></td><td class="ops">31</td><td class="ops">220</td><td class="act"><span class="on">刚刚</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- side -->
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="card">
+          <div class="h">🔔 续费预警 <span class="tag">7 天内到期 · 12 人</span></div>
+          <div class="alertrow"><span class="mname">赵敏</span><span class="ph">135 2891 3321</span><span class="rem r">今天到期</span></div>
+          <div class="alertrow"><span class="mname">黄磊</span><span class="ph">158 6620 4477</span><span class="rem r">1 天</span></div>
+          <div class="alertrow"><span class="mname">周杰</span><span class="ph">136 7045 7788</span><span class="rem r">2 天</span></div>
+          <div class="alertrow"><span class="mname">王凯</span><span class="ph">138 0019 1234</span><span class="rem r">5 天</span></div>
+          <button class="btn">一键发送续费提醒 →</button>
+        </div>
+        <div class="card">
+          <div class="h">📊 近 7 日操作量</div>
+          <div class="chart">
+            <div class="bar" style="height:52%"><span>4.1k</span></div>
+            <div class="bar" style="height:60%"><span>4.6k</span></div>
+            <div class="bar" style="height:48%"><span>3.8k</span></div>
+            <div class="bar" style="height:71%"><span>5.1k</span></div>
+            <div class="bar" style="height:66%"><span>4.9k</span></div>
+            <div class="bar" style="height:58%"><span>4.4k</span></div>
+            <div class="bar today" style="height:78%"><span>5.4k</span></div>
+          </div>
+          <div class="xlab"><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div><div>一</div><div>今</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span>DEEPFOCUS 运营看板 · 会员模块 —— 会员名单 / 完整联系方式 / 到期倒计时 / 日操作量 / 续费预警</span>
+      <span>示例数据 · 仅限内部运营使用</span>
+    </div>
+  </div>
+</body>
+</html>

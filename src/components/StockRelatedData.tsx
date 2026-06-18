@@ -19,7 +19,7 @@ import {
   ReloadOutlined,
   SafetyCertificateOutlined
 } from '@ant-design/icons';
-import { DataSourceCategory, DataSourceItemRecord, DataSourceType, listDataItems } from '../services/dataSourceService';
+import { DataSourceCategory, DataSourceItemRecord, DataSourceType, listDataItems } from '../services/infrastructureService';
 import { Stock, ViewType } from '../types';
 
 const { Paragraph, Text } = Typography;
@@ -36,7 +36,7 @@ const sourceTypeOptions: Array<{ value: DataSourceType | 'all'; label: string }>
   { value: 'market_api', label: '行情 API' },
   { value: 'upload', label: '本地上传' },
   { value: 'web_page', label: '网页源' },
-  { value: 'agent_crawl', label: 'Agent 抓取' },
+  { value: 'agent_crawl', label: '网页抓取' },
   { value: 'manual', label: '手工资料' }
 ];
 
@@ -45,7 +45,7 @@ const sourceTypeMeta: Record<DataSourceType, { label: string; color: string }> =
   market_api: { label: '行情 API', color: 'purple' },
   upload: { label: '本地上传', color: 'green' },
   web_page: { label: '网页源', color: 'cyan' },
-  agent_crawl: { label: 'Agent 抓取', color: 'orange' },
+  agent_crawl: { label: '网页抓取', color: 'orange' },
   manual: { label: '手工资料', color: 'default' }
 };
 
@@ -120,7 +120,7 @@ const StockRelatedData: React.FC<StockRelatedDataProps> = ({ stock, onViewChange
           <div className="dashboard-eyebrow">LINKED DATA</div>
           <h3 className="stock-data-title">{stock.name} 关联资料库</h3>
           <Text type="secondary">
-            按标的代码 {stock.symbol} 从数据源中心读取资料，可用于 RAG 检索、多 Agent 证据审查和投研报告生成。
+            按标的代码 {stock.symbol} 从数据源中心读取资料，可用于 RAG 检索、核心链路证据审查和投研报告生成。
           </Text>
         </div>
         <Space wrap>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Card, 
+  Empty,
   List, 
   Tag, 
   Typography, 
@@ -123,6 +124,9 @@ const ExpertClub: React.FC<ExpertClubProps> = ({ posts }) => {
         </Row>
 
         {/* 帖子列表 */}
+        {filteredPosts.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无专家讨论" />
+        ) : (
         <List
           dataSource={filteredPosts}
           renderItem={(post) => (
@@ -186,9 +190,11 @@ const ExpertClub: React.FC<ExpertClubProps> = ({ posts }) => {
             </List.Item>
           )}
         />
+        )}
       </Card>
     </div>
   );
 };
 
-export default ExpertClub;
+const ExpertClubMemo = React.memo(ExpertClub);
+export default ExpertClubMemo;

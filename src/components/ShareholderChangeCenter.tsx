@@ -23,7 +23,10 @@ import {
   ShareholderChangeInterpretResponse,
   interpretShareholderChange,
   scanShareholderChanges
-} from '../services/shareholderChangeService';
+} from '../services/eventService';
+import CenterShell from './common/CenterShell';
+import ShareButton from './common/ShareButton';
+import './centers/shareholderChange.css';
 
 const { Text } = Typography;
 
@@ -866,13 +869,12 @@ const ShareholderChangeCenter: React.FC<ShareholderChangeCenterProps> = ({ appSt
   };
 
   return (
-    <div className="shareholder-change-shell">
-      <div className="shareholder-change-header">
-        <div>
-          <div className="dashboard-eyebrow">{activeMarket.eyebrow}</div>
-          <h2 className="dashboard-title">股东增减持</h2>
-          <div className="dashboard-subtitle">{activeMarket.subtitle}</div>
-        </div>
+    <CenterShell
+      eyebrow={activeMarket.eyebrow}
+      title="股东增减持"
+      subtitle={activeMarket.subtitle}
+      error={error}
+      actions={(
         <Space size={8} wrap>
           <Segmented
             value={market}
@@ -908,9 +910,8 @@ const ShareholderChangeCenter: React.FC<ShareholderChangeCenterProps> = ({ appSt
             刷新
           </Button>
         </Space>
-      </div>
-
-      <div className="shareholder-change-scanbar">
+      )}
+      toolbar={(
         <Space size={8} wrap>
           <Select
             value={limit}
@@ -942,12 +943,8 @@ const ShareholderChangeCenter: React.FC<ShareholderChangeCenterProps> = ({ appSt
             </Tag>
           )}
         </Space>
-      </div>
-
-      {error && (
-        <Alert className="shareholder-change-alert" type="warning" showIcon message={error} />
       )}
-
+    >
       {result?.warnings.length ? (
         <Alert
           className="shareholder-change-alert"
@@ -1180,6 +1177,14 @@ const ShareholderChangeCenter: React.FC<ShareholderChangeCenterProps> = ({ appSt
                       </Tag>
                     </div>
                     <p>{selectedAiModelInterpretation.summary}</p>
+                    <ShareButton
+                      modalTitle="分享股东变动解读"
+                      target={() => ({
+                        title: `${selectedDisplayName} · AI解读`,
+                        summary: selectedAiModelInterpretation.verdict ? `${selectedAiModelInterpretation.verdict}。${selectedAiModelInterpretation.summary}` : selectedAiModelInterpretation.summary,
+                        byline: '由 DeepFocus 股东变动解读生成',
+                      })}
+                    />
                     {selectedAiModelInterpretation.points.length > 0 && (
                       <ul>
                         {selectedAiModelInterpretation.points.map(point => <li key={point}>{point}</li>)}
@@ -1268,7 +1273,7 @@ const ShareholderChangeCenter: React.FC<ShareholderChangeCenterProps> = ({ appSt
           </aside>
         </div>
       </Spin>
-    </div>
+    </CenterShell>
   );
 };
 

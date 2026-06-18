@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DEEPFOCUS · AI 投研助手 — 能力演示(动效）</title>
+<style>
+  :root{
+    --bg:#0a0e15; --panel:#131a28; --panel2:#0f1623; --line:#243044;
+    --amber:#ffb000; --cyan:#4fd0e6; --green:#2ec27e; --red:#ff5c6c; --purple:#a98bff;
+    --txt:#eef2f9; --dim:#93a4be; --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:radial-gradient(1100px 560px at 75% -12%,#15223a 0%,var(--bg) 60%); color:var(--txt);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{width:1400px; margin:0 auto; padding:22px 40px 20px;}
+  .top{display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); padding-bottom:12px;}
+  .brand{font-family:var(--mono); font-weight:800; font-size:17px; color:var(--amber);}
+  .brand b{color:var(--cyan);} .brand .role{color:var(--dim); font-weight:600; font-size:14px; margin-left:8px;}
+  .demo-tag{font-family:var(--mono); font-size:11px; color:var(--amber); border:1px solid #4a3a12; background:#1a160a; padding:4px 10px; border-radius:6px; letter-spacing:1px;}
+  .cols{display:grid; grid-template-columns:1.46fr 1fr; gap:20px; margin-top:16px;}
+  /* reveal animation */
+  [data-seq]{opacity:0; transform:translateY(10px); transition:opacity .55s ease, transform .55s ease;}
+  [data-seq].show{opacity:1; transform:none;}
+  /* chat */
+  .uask{display:flex; gap:10px; align-items:flex-start;}
+  .av{width:30px; height:30px; border-radius:7px; flex:0 0 30px; display:flex; align-items:center; justify-content:center; font-size:15px;}
+  .av.u{background:#243049;}
+  .ubub{background:#1c2740; border:1px solid #2c3a57; border-radius:10px; padding:11px 14px; font-size:16px; font-weight:600;}
+  .ubub .t{color:var(--cyan); font-family:var(--mono); font-size:13px;}
+  .trace{margin:13px 0 0 40px; background:linear-gradient(180deg,#10182a,#0d1320); border:1px solid #243a52; border-left:3px solid var(--cyan); border-radius:10px; padding:11px 14px;}
+  .trace .h{font-size:13px; color:var(--cyan); font-weight:800; display:flex; align-items:center; gap:8px;}
+  .trace .h .pulse{width:8px;height:8px;border-radius:50%;background:var(--green); box-shadow:0 0 0 3px rgba(46,194,126,.18); animation:bl 1s infinite;}
+  @keyframes bl{50%{opacity:.3}}
+  .band{font-size:11px; font-family:var(--mono); letter-spacing:1px; margin:9px 0 3px; color:var(--dim);}
+  .band.own{color:var(--amber);}
+  .step{display:flex; align-items:center; gap:10px; padding:5px 0; font-size:13.5px;}
+  .step .ck{color:var(--green); font-weight:900;}
+  .step .nm{color:var(--dim); width:128px; flex:0 0 128px;}
+  .step .rs{font-family:var(--mono); color:#dbe6f5;} .step .rs b{color:var(--amber);} .step .rs .neg{color:var(--red);}
+  .step.own{background:#171206; border:1px solid #3e3110; border-radius:7px; padding:6px 9px; margin:3px 0;}
+  .step.own .nm{color:var(--amber); font-weight:700;} .step.own .rs b{color:#ffd479;}
+  .step.own .ck{color:var(--amber);}
+  .lock{font-size:12px;}
+  .ans{margin:12px 0 0 40px; background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line); border-top:3px solid var(--amber); border-radius:10px; padding:13px 16px;}
+  .sig{display:flex; align-items:center; gap:10px; font-size:16px; font-weight:800; margin-bottom:9px;}
+  .sig .dot{width:13px;height:13px;border-radius:50%;background:var(--amber); box-shadow:0 0 10px var(--amber);}
+  .sig .cf{margin-left:auto; font-size:12px; color:var(--dim); font-weight:600;} .sig .cf b{color:var(--amber);}
+  .fc{display:flex; gap:10px; margin-bottom:9px;}
+  .fcx{flex:1; background:#0e1726; border:1px solid #223149; border-radius:8px; padding:8px 11px;}
+  .fcx .k{font-size:11px; color:var(--dim);} .fcx .v{font-size:15px; font-weight:800; color:var(--green); margin-top:2px;}
+  .fcx.val .v{color:var(--amber);}
+  .row{font-size:13.5px; line-height:1.55; margin:6px 0;} .row .lb{color:var(--dim); font-family:var(--mono); font-size:12px; margin-right:6px;}
+  .src{font-family:var(--mono); font-size:12px; color:var(--cyan);}
+  .src.own{color:var(--amber);}
+  /* right panel */
+  .panel{background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line); border-radius:12px; padding:15px 16px; height:100%;}
+  .panel .ph{font-size:16px; font-weight:800; margin-bottom:3px;}
+  .panel .psub{font-size:12.5px; color:var(--dim); margin-bottom:12px;}
+  .vs{border-radius:10px; padding:11px 13px; margin-bottom:10px;}
+  .vs.bad{background:#180f12; border:1px solid #4a1f26;} .vs.good{background:#101a12; border:1px solid #1f5138;}
+  .vs .vt{font-size:13px; font-weight:800; display:flex; gap:7px; margin-bottom:5px;}
+  .vs.bad .vt{color:var(--red);} .vs.good .vt{color:var(--green);}
+  .vs .vd{font-size:13px; line-height:1.5; color:#d7e0ee;} .vs.bad .vd{color:#c6a8ad;}
+  .moat{background:#191307; border:1px solid #4a3a12; border-radius:10px; padding:11px 13px; margin-bottom:10px;}
+  .moat .mt{font-size:13px; font-weight:800; color:var(--amber); margin-bottom:6px;}
+  .moat .mi{font-size:13px; line-height:1.5; color:#ecd9a8; display:flex; gap:8px; margin-top:5px;}
+  .moat .mi .i{color:var(--amber); font-weight:900;}
+  .feat{display:flex; gap:9px; font-size:13px; line-height:1.4; margin-top:8px;} .feat .i{color:var(--green); font-weight:900; flex:0 0 14px;} .feat b{color:var(--amber);}
+  .kicker{margin-top:11px; padding-top:10px; border-top:1px dashed #2c3850; font-size:13.5px; text-align:center; font-weight:800;}
+  .kicker .a{color:var(--amber);} .kicker .c{color:var(--cyan);}
+  .foot{display:flex; justify-content:space-between; margin-top:14px; font-size:11.5px; color:var(--dim); font-family:var(--mono);}
+  .replay{cursor:pointer; color:var(--cyan); border:1px solid #1f3a44; background:#0d1a20; padding:3px 9px; border-radius:6px; font-size:11px;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">DEEPFOCUS<b>.</b> AI 投研助手 <span class="role">· 会自己查数据的投资分析 Agent</span></div>
+      <div><span class="replay" onclick="play()">↻ 重播</span> <span class="demo-tag">能力演示 · LIVE DEMO</span></div>
+    </div>
+
+    <div class="cols">
+      <!-- LEFT -->
+      <div>
+        <div class="uask" data-seq="0">
+          <div class="av u">🧑</div>
+          <div class="ubub"><span class="t">提问 ›</span> 中国建材(3323.HK)：预测 2026、2027 净利润，再给个合理市值。</div>
+        </div>
+
+        <div class="trace" data-seq="1">
+          <div class="h"><span class="pulse"></span>🧠 AI 正在取数 —— 同时接入「公开数据 + 我们自己的信息源」</div>
+
+          <div class="band" data-seq="2">📡 公开市场数据 · 实时</div>
+          <div class="step" data-seq="2"><span class="ck">✓</span><span class="nm">实时行情</span><span class="rs">现价 <b>HK$4.99</b> · 市值 <b>443 亿</b></span></div>
+          <div class="step" data-seq="3"><span class="ck">✓</span><span class="nm">历史财报</span><span class="rs">FY25 营收 1778 亿 · 归母 <span class="neg">−37.5 亿</span></span></div>
+          <div class="step" data-seq="4"><span class="ck">✓</span><span class="nm">券商一致预期</span><span class="rs">10 家 · 目标价 <b>HK$6.65</b></span></div>
+
+          <div class="band own" data-seq="5">🔒 DEEPFOCUS 独家信息源 · 公开 AI 拿不到</div>
+          <div class="step own" data-seq="5"><span class="ck">★</span><span class="nm"><span class="lock">🔒</span> 海外投行研报库</span><span class="rs">命中 <b>高盛 / 摩根士丹利《中国水泥》</b> 2 篇 · AI 自动读图提炼</span></div>
+          <div class="step own" data-seq="6"><span class="ck">★</span><span class="nm"><span class="lock">📨</span> DAO 自有快讯流</span><span class="rs">今日命中「中国建材·水泥反内卷提价」快讯 <b>5 条</b></span></div>
+        </div>
+
+        <div class="ans" data-seq="7">
+          <div class="sig"><span class="dot"></span>结论：困境反转，估值尚未充分定价<span class="cf">置信度 <b>中</b></span></div>
+          <div class="fc">
+            <div class="fcx"><div class="k">2026E 归母净利</div><div class="v">扭亏 · +10~20 亿</div></div>
+            <div class="fcx"><div class="k">2027E 归母净利</div><div class="v">修复 · +35~50 亿</div></div>
+            <div class="fcx val"><div class="k">合理市值</div><div class="v">HK$550~650 亿</div></div>
+          </div>
+          <div class="row"><span class="lb">逻辑</span>FY25 已是亏损底；<b style="color:var(--amber)">海外投行研报</b>下调幅度收窄 + <b style="color:var(--amber)">自有快讯</b>确认水泥提价，叠加破净 0.38×，对应 ≈ HK$6.2~7.3/股，较 HK$4.99 低估。</div>
+          <div class="row"><span class="lb">来源</span><span class="src own">① 内部研报库·高盛/摩根 ↗</span>　<span class="src own">② DAO 实时快讯 ↗</span>　<span class="src">③ 港交所财报 ↗</span>　<span class="src">④ 实时行情 ↗</span></div>
+        </div>
+      </div>
+
+      <!-- RIGHT -->
+      <div class="panel" data-seq="0">
+        <div class="ph">凭什么比"套壳 ChatGPT"强？</div>
+        <div class="psub">同一个问题，差距在"它能拿到什么数据"</div>
+
+        <div class="vs bad">
+          <div class="vt">✕ 普通 ChatGPT / DeepSeek</div>
+          <div class="vd">只有训练截止日前的<b style="color:var(--red)">公开记忆</b>；拿不到券商研报、拿不到实时快讯，更没有海外投行报告——只能<b style="color:var(--red)">编</b>。</div>
+        </div>
+
+        <div class="moat">
+          <div class="mt">🔒 DEEPFOCUS 独家信息源（护城河）</div>
+          <div class="mi"><span class="i">①</span><div><b style="color:var(--amber)">海外投行研报库</b>：高盛/摩根士丹利/瑞银等直连，连<b style="color:var(--amber)">图片版研报</b>都能读懂提炼。</div></div>
+          <div class="mi"><span class="i">②</span><div><b style="color:var(--amber)">DAO 自有实时快讯系统</b>：自建财经推送，分钟级，A股/港股/美股全覆盖。</div></div>
+        </div>
+
+        <div class="feat"><span class="i">✓</span><div><b>公开数据 + 独家源</b> 一起喂给 AI，再推理。</div></div>
+        <div class="feat"><span class="i">✓</span><div><b>数字不靠 AI 编</b>：关键数据确定性取数（ground truth）。</div></div>
+        <div class="feat"><span class="i">✓</span><div><b>每条可点溯源</b>，信号灯 + 置信度。</div></div>
+
+        <div class="kicker">别人是<span class="c">通用 AI</span>，我们是<span class="a">喂了独家投研数据的 AI</span></div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span>DEEPFOCUS / DAO 财经 —— AI 投研助手能力演示（动效）· 客户介绍用</span>
+      <span>示例数据用于演示，不构成投资建议</span>
+    </div>
+  </div>
+
+<script>
+  var seqEls = Array.prototype.slice.call(document.querySelectorAll('[data-seq]'))
+    .sort(function(a,b){ return (+a.dataset.seq) - (+b.dataset.seq); });
+  var maxSeq = Math.max.apply(null, seqEls.map(function(e){ return +e.dataset.seq; }));
+  var timers = [];
+  function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
+  function reveal(){
+    seqEls.forEach(function(el){
+      timers.push(setTimeout(function(){ el.classList.add('show'); }, 300 + (+el.dataset.seq) * 720));
+    });
+  }
+  function showAll(){ seqEls.forEach(function(el){ el.classList.add('show'); }); }
+  function play(){
+    clearTimers(); seqEls.forEach(function(el){ el.classList.remove('show'); });
+    reveal();
+    var total = 300 + maxSeq * 720 + 600;
+    timers.push(setTimeout(function(){ // hold, then loop
+      timers.push(setTimeout(play, 4200));
+    }, total));
+  }
+  window.dfxMaxSeq = maxSeq;
+  window.dfxReveal = function(k){ seqEls.forEach(function(el){ el.classList.toggle('show', (+el.dataset.seq) <= k); }); };
+  var qs = location.search;
+  if (/[?&]static=1/.test(qs)) showAll();
+  else if (/[?&]manual=1/.test(qs)) { clearTimers(); window.dfxReveal(-1); }
+  else play();
+</script>
+</body>
+</html>

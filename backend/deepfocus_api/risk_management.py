@@ -803,3 +803,56 @@ def get_pnl_summary() -> dict[str, Any]:
         "worst_trade": min(records, key=lambda r: r.get("realized_pnl", 0)) if records else None,
         "avg_holding_days": round(sum(holding_days) / len(holding_days), 1) if holding_days else 0,
     }
+
+
+async def fetch_live_prices_for_positions(positions: list[dict[str, Any]]) -> dict[str, float]:
+    """并行用 Google Finance 拉持仓实时价 → {symbol_upper: price}。不抛、不写库（纯读）。"""
+    import asyncio
+
+    from . import google_finance
+
+    targets: list[tuple[str, str]] = []
+    seen: set = set()
+    for p in positions:
+        if p.get("status") != "open":
+            continue
+        try:
+            if float(p.get("quantity") or 0) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        key = (str(p.get("symbol", "")).upper(), (p.get("market") or "").upper())
+        if key[0] and key not in seen:
+            seen.add(key)
+            targets.append(key)
+    if not targets:
+        return {}
+    results = await asyncio.gather(
+        *(google_finance.fetch_google_finance_quote(sym, mkt or None) for sym, mkt in targets),
+        return_exceptions=True,
+    )
+    price_map: dict[str, float] = {}
+    for (sym, _), res in zip(targets, results):
+        if isinstance(res, dict):
+            px = res.get("price")
+            if px and px > 0:
+                price_map[sym] = float(px)
+    return price_map
+
+
+def apply_live_prices(summary: dict[str, Any], price_map: dict[str, float]) -> dict[str, Any]:
+    """把实时价覆盖到 open_positions[*].current_price 并重算 portfolio metrics。纯函数，可单测。"""
+    if not price_map:
+        return summary
+    open_positions = summary.get("open_positions") or []
+    hit = 0
+    for p in open_positions:
+        px = price_map.get(str(p.get("symbol", "")).upper())
+        if px:
+            p["current_price"] = px
+            hit += 1
+    if hit:
+        summary["portfolio"] = calculate_portfolio_metrics(open_positions)
+        summary["price_source"] = "google-finance"
+        summary["priced_count"] = hit
+    return summary

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .shared_utils import safe_int, safe_error
+
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -52,7 +54,7 @@ async def query_eastmoney_announcements(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001 - caller surfaces this as a data-provider warning
-            warnings.append(f"{EASTMONEY_SOURCE_NAME} 查询失败：{_safe_error(exc)}")
+            warnings.append(f"{EASTMONEY_SOURCE_NAME} 查询失败：{safe_error(exc)}")
             break
 
         data = payload.get("data") if isinstance(payload, dict) else None
@@ -60,7 +62,7 @@ async def query_eastmoney_announcements(
             warnings.append(f"{EASTMONEY_SOURCE_NAME} 返回格式异常")
             break
 
-        total = max(total, _safe_int(data.get("total_hits")))
+        total = max(total, safe_int(data.get("total_hits")) or 0)
         page_rows = data.get("list") or []
         if not isinstance(page_rows, list) or not page_rows:
             break
@@ -145,19 +147,3 @@ def _notice_time_ms(value: str) -> int:
         except ValueError:
             continue
     return int(datetime.now().timestamp() * 1000)
-
-
-def _safe_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _safe_error(exc: Exception) -> str:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, httpx.TimeoutException):
-        return "timeout"
-    text = str(exc).strip()
-    return text[:160] or exc.__class__.__name__

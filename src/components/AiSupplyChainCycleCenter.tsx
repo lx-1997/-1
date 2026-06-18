@@ -43,7 +43,9 @@ import {
   DeliveryTrendPoint,
   PricingTrendPoint,
   fetchAiSupplyChainCapacityTrends
-} from '../services/aiSupplyChainService';
+} from '../services/specializedService';
+import CenterShell from './common/CenterShell';
+import './AiSupplyChainCycleCenter.css';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -883,6 +885,7 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
     {
       title: '环节',
       key: 'node',
+      width: 280,
       render: (_: unknown, node: SupplyNode) => (
         <button type="button" className="ai-chain-table-node" onClick={() => setSelectedId(node.id)}>
           <strong>{node.title}</strong>
@@ -925,6 +928,7 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
     {
       title: '环节',
       key: 'segment',
+      width: 280,
       render: (_: unknown, metric: CapacityUtilizationMetric) => (
         <Space direction="vertical" size={0}>
           <Text strong>{metric.segment}</Text>
@@ -959,25 +963,24 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
   ];
 
   return (
-    <div className="ai-supply-chain-shell">
-      <div className="ai-supply-chain-header">
-        <div>
-          <Space size={8} align="center">
-            <PartitionOutlined className="ai-supply-chain-title-icon" />
-            <Title level={3}>AI 产业链交付周期地图</Title>
-          </Space>
-          <Paragraph className="section-description">
-            用交付周期、瓶颈分和上下游依赖关系，追踪AI算力链从芯片到数据中心上线的供需约束。
-          </Paragraph>
-        </div>
-        <Space wrap>
+    <CenterShell
+      className="ai-supply-chain-shell"
+      icon={<PartitionOutlined className="ai-supply-chain-title-icon" />}
+      title="AI 产业链交付周期地图"
+      subtitle={
+        <Paragraph className="section-description">
+          用交付周期、瓶颈分和上下游依赖关系，追踪AI算力链从芯片到数据中心上线的供需约束。
+        </Paragraph>
+      }
+      actions={
+        <Space wrap className="ai-supply-chain-header-tags">
           <Tag color="red">最长瓶颈: 变压器 60-120周</Tag>
           <Tag color="purple">封装瓶颈: CoWoS 6-12个月</Tag>
           <Tag color="green">硬数据节点: {hardDataCount}/{supplyNodes.length}</Tag>
           <Tag color="blue">验证日: 2026-05-18</Tag>
         </Space>
-      </div>
-
+      }
+    >
       <Alert
         className="ai-supply-chain-alert"
         type="info"
@@ -997,7 +1000,7 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
               官方统计给大盘基线，公司披露和产业调研给AI链局部瓶颈；两者分层进入 Agent 证据。
             </Paragraph>
           </div>
-          <Space wrap>
+          <Space wrap className="ai-capacity-controls">
             <Tag color="green">官方基线 {officialBaseline}%</Tag>
             <Tag color="red">AI链代理压力 {latestAiProxyPressure}%</Tag>
             <Tag color="gold">直接口径 {officialCapacityMetrics.length} 项</Tag>
@@ -1008,6 +1011,7 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
             {liveTrends?.pricing_observed_through && <Tag color="magenta">报价至 {liveTrends.pricing_observed_through}</Tag>}
             <Segmented
               size="small"
+              className="ai-capacity-horizon-tabs"
               value={trendHorizon}
               onChange={value => setTrendHorizon(value as AiSupplyChainHorizon)}
               options={[
@@ -1103,7 +1107,7 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
             title={`${trendTitlePrefix}利用率趋势`}
             extra={<Tag color={electronicsTrendDelta >= 0 ? 'green' : 'red'}>电子 {electronicsTrendDelta >= 0 ? '+' : ''}{electronicsTrendDelta}pct</Tag>}
           >
-            <ResponsiveContainer width="100%" height={230}>
+            <ResponsiveContainer width="100%" height={260}>
               <LineChart data={capacityTrend} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="week" interval={xAxisInterval} tick={{ fontSize: 11 }} />
@@ -1226,6 +1230,8 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
             size="small"
             rowKey="id"
             pagination={false}
+            tableLayout="fixed"
+            scroll={{ x: 760 }}
             columns={capacityColumns}
             dataSource={capacityMetrics}
           />
@@ -1257,6 +1263,7 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
 
       <div className="ai-supply-chain-toolbar">
         <Segmented
+          className="ai-supply-chain-layer-tabs"
           value={layerFilter}
           onChange={value => setLayerFilter(value as SupplyLayer | 'all')}
           options={[
@@ -1351,6 +1358,8 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
               size="small"
               rowKey="id"
               pagination={false}
+              tableLayout="fixed"
+              scroll={{ x: 760 }}
               columns={tableColumns}
               dataSource={filteredNodes}
             />
@@ -1454,7 +1463,7 @@ const AiSupplyChainCycleCenter: React.FC<AiSupplyChainCycleCenterProps> = ({ app
           </Card>
         </aside>
       </div>
-    </div>
+    </CenterShell>
   );
 };
 

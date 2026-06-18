@@ -12,6 +12,10 @@ import {
   SafetyCertificateOutlined
 } from '@ant-design/icons';
 import { AppState, Stock } from '../types';
+import CenterShell from './common/CenterShell';
+import ShareButton from './common/ShareButton';
+import './centers/shareholderChange.css';
+import './CnEarningsCenter.css';
 import {
   CnEarningsDiagnosisResponse,
   CnEarningsDiagnosisSignal,
@@ -22,7 +26,7 @@ import {
   diagnoseCnEarnings,
   enrichCnEarningsRecordDetail,
   scanCnEarnings
-} from '../services/cnEarningsService';
+} from '../services/earningsService';
 
 const { Text } = Typography;
 
@@ -432,13 +436,13 @@ const CnEarningsCenter: React.FC<CnEarningsCenterProps> = ({ appState, onStockSe
   }, []);
 
   return (
-    <div className="shareholder-change-shell cn-earnings-shell">
-      <div className="shareholder-change-header">
-        <div>
-          <div className="dashboard-eyebrow">A SHARE EARNINGS</div>
-          <h2 className="dashboard-title">A股财报</h2>
-          <div className="dashboard-subtitle">扫描 A 股年报、季报、业绩预告和快报，抽取核心财务指标并保留原文核验。</div>
-        </div>
+    <CenterShell
+      className="cn-earnings-shell"
+      eyebrow="A SHARE EARNINGS"
+      title="A股财报"
+      subtitle="扫描 A 股年报、季报、业绩预告和快报，抽取核心财务指标并保留原文核验。"
+      error={error}
+      actions={(
         <Space size={8} wrap>
           <Tag color="red">A 股</Tag>
           {result && <Tag color="cyan">{result.provider}</Tag>}
@@ -457,39 +461,37 @@ const CnEarningsCenter: React.FC<CnEarningsCenterProps> = ({ appState, onStockSe
             刷新
           </Button>
         </Space>
-      </div>
-
-      <div className="shareholder-change-scanbar">
-        <Space size={8} wrap>
-          <Select
-            value={limit}
-            onChange={setLimit}
-            style={{ width: 112 }}
-            options={[
-              { label: '前 40 条', value: 40 },
-              { label: '前 80 条', value: 80 },
-              { label: '前 120 条', value: 120 },
-              { label: '前 200 条', value: 200 }
-            ]}
-          />
-          <Select
-            value={detailLimit}
-            onChange={setDetailLimit}
-            style={{ width: 132 }}
-            options={[
-              { label: '不解析 PDF', value: 0 },
-              { label: '解析 8 条', value: 8 },
-              { label: '解析 12 条', value: 12 },
-              { label: '解析 24 条', value: 24 }
-            ]}
-          />
-        </Space>
-        <Text type="secondary">数据源：巨潮资讯网公告检索</Text>
-      </div>
-
-      {error && (
-        <Alert className="shareholder-change-alert" type="warning" showIcon message={error} />
       )}
+      toolbar={(
+        <>
+          <Space size={8} wrap>
+            <Select
+              value={limit}
+              onChange={setLimit}
+              style={{ width: 112 }}
+              options={[
+                { label: '前 40 条', value: 40 },
+                { label: '前 80 条', value: 80 },
+                { label: '前 120 条', value: 120 },
+                { label: '前 200 条', value: 200 }
+              ]}
+            />
+            <Select
+              value={detailLimit}
+              onChange={setDetailLimit}
+              style={{ width: 132 }}
+              options={[
+                { label: '不解析 PDF', value: 0 },
+                { label: '解析 8 条', value: 8 },
+                { label: '解析 12 条', value: 12 },
+                { label: '解析 24 条', value: 24 }
+              ]}
+            />
+          </Space>
+          <Text type="secondary">数据源：巨潮资讯网公告检索</Text>
+        </>
+      )}
+    >
 
       {result?.warnings.length ? (
         <Alert
@@ -773,6 +775,16 @@ const CnEarningsCenter: React.FC<CnEarningsCenterProps> = ({ appState, onStockSe
                                 {financialQualityMeta[selectedDiagnosis.financial_quality].label}
                               </Tag>
                             </Space>
+                            <div style={{ marginTop: 8 }}>
+                              <ShareButton
+                                modalTitle="分享财报诊断"
+                                target={() => ({
+                                  title: `${selectedRecord.name} 财报诊断`,
+                                  summary: selectedDiagnosis.verdict ? `${selectedDiagnosis.verdict}。${selectedDiagnosis.summary}` : selectedDiagnosis.summary,
+                                  byline: '由 DeepFocus 财报诊断生成',
+                                })}
+                              />
+                            </div>
                           </div>
                         </div>
 
@@ -848,7 +860,7 @@ const CnEarningsCenter: React.FC<CnEarningsCenterProps> = ({ appState, onStockSe
           </aside>
         </div>
       </Spin>
-    </div>
+    </CenterShell>
   );
 };
 

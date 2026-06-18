@@ -1,0 +1,22 @@
+/* PositionMonitor component styles.
+ * Extracted from src/index.css (namespace: .position-monitor-*).
+ * Loaded after index.css; shared data-center AntD-chrome groups and
+ * the mixed .multi-market-tag-cell/.position-monitor-tag-cell rule remain in index.css.
+ */
+
+.position-monitor-page > .ant-spin-nested-loading {
+  display: block;
+}
+
+.position-monitor-page .ant-table-cell {
+  white-space: nowrap;
+}
+
+.position-monitor-table .ant-table-cell {
+  vertical-align: middle;
+}
+
+.position-monitor-actions .ant-btn {
+  width: 28px;
+  padding-inline: 0;
+}

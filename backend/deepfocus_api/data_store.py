@@ -13,10 +13,19 @@ import json
 import os
 import sqlite3
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Optional
 
 from .shared_utils import utc_now_iso
+
+# ⭐ 持久化抑制开关（深度研判用）。深度研判全程以 iFinD 灰度数据取证、产出机构级结论，
+# 这些 iFinD 衍生结论绝不可落任何共享持久化面（data_points 被零鉴权 /api/data/history
+# 与公开 SEO 页读取）。run_deep_research 进场 set(True)、finally reset，期间本进程上下文
+# 内的所有 record() 写入静默跳过——纵深防御：即便取证 agent 误调 get_stock_verdict
+# 也不会把 iFinD 衍生 verdict 写进公开缓存。ContextVar 天然按 asyncio 任务隔离，
+# 不影响其它并发请求的正常落库。
+DEEP_NO_PERSIST: ContextVar[bool] = ContextVar("deep_no_persist", default=False)
 
 DB_PATH = Path(
     os.getenv(
@@ -65,6 +74,9 @@ _write_count = 0
 def record(kind: str, symbol: str, payload: Any, *, market: str = "") -> None:
     """写穿一条带时间戳的数据点（历史积累）。失败静默——持久化绝不能拖垮主流程。"""
     global _write_count
+    # ⭐ 深度研判进行中：抑制本上下文的一切落库（防 iFinD 衍生结论泄漏到公开历史/SEO）。
+    if DEEP_NO_PERSIST.get():
+        return
     sym = (symbol or "").upper().strip()
     if not kind or not sym or payload is None:
         return
@@ -136,6 +148,44 @@ def history(kind: str, symbol: str, *, limit: int = 200) -> list[dict]:
         except (ValueError, TypeError):
             continue
     return out
+
+
+def hot_symbols(
+    kind: str = "verdict",
+    *,
+    market: Optional[str] = None,
+    days: float = 14.0,
+    limit: int = 20,
+    exclude: Optional[str] = None,
+) -> list[dict]:
+    """近期被记录最多的标的（关注热度榜）：按 (kind) 在时间窗内的记录条数排序。
+
+    这是站内推荐/「大家也在看」的数据基础——用户研判越多的标的排得越靠前，
+    用户量越大榜单越准（数据网络效应的起点）。失败 → []。
+    """
+    since = time.time() - max(0.0, float(days)) * 86400.0
+    sql = (
+        "SELECT symbol, market, COUNT(*) AS n, MAX(recorded_ts) AS ts "
+        "FROM data_points WHERE kind=? AND recorded_ts>=?"
+    )
+    params: list[Any] = [kind, since]
+    if market:
+        sql += " AND market=?"
+        params.append(market.upper())
+    if exclude:
+        sql += " AND symbol<>?"
+        params.append(exclude.upper().strip())
+    sql += " GROUP BY symbol ORDER BY n DESC, ts DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 200)))
+    try:
+        with _connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+    except Exception:
+        return []
+    return [
+        {"symbol": r["symbol"], "market": r["market"], "count": int(r["n"])}
+        for r in rows
+    ]
 
 
 def stats() -> dict[str, Any]:

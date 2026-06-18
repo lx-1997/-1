@@ -1,0 +1,83 @@
+/* MultiMarketDecisionCenter component styles.
+ * Extracted from src/index.css (namespace: .multi-market-*).
+ * Loaded after index.css; shared data-center AntD-chrome groups and
+ * the mixed .multi-market-tag-cell/.position-monitor-tag-cell rule remain in index.css.
+ */
+
+.multi-market-page {
+  min-height: calc(100vh - 52px);
+  padding: 18px;
+}
+
+.multi-market-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.multi-market-toolbar .ant-typography {
+  margin-bottom: 2px;
+}
+
+.multi-market-controls,
+.multi-market-stats,
+.multi-market-summary,
+.multi-market-actions,
+.multi-market-tabs {
+  margin-bottom: 14px;
+}
+
+.multi-market-page .ant-card {
+  border-radius: 10px;
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.multi-market-page .ant-table-wrapper {
+  background: var(--surface);
+  border-radius: 10px;
+}
+
+.multi-market-page .ant-tabs-nav {
+  margin-bottom: 10px;
+}
+
+.multi-market-page .ant-progress-line {
+  min-width: 110px;
+}
+
+.multi-market-page {
+  overflow-x: hidden;
+}
+
+.multi-market-page .ant-tabs-nav-wrap {
+  overflow: auto hidden;
+}
+
+.multi-market-page .ant-tabs-content-holder {
+  min-width: 0;
+}
+
+.multi-market-page .ant-table-cell {
+  vertical-align: top;
+}
+
+.multi-market-page .ant-table-cell:not(.multi-market-text-cell):not(.multi-market-tag-cell) {
+  white-space: nowrap;
+}
+
+.multi-market-symbol-cell,
+.multi-market-text-cell .ant-space,
+.multi-market-tag-cell .ant-space {
+  min-width: 0;
+}
+
+.multi-market-text-cell,
+.multi-market-text-cell .ant-typography,
+.multi-market-text-cell code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

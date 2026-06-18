@@ -1,0 +1,933 @@
+/* PeopleSpotlightCenter — 人物专题（.people-* 命名空间）。
+ * 复用全局设计令牌（--surface / --border / --text-muted / --radius-sm），
+ * 沿用其它中心的暗色观感。 */
+
+.people-spotlight-page {
+  min-width: 0;
+}
+
+/* ---- 通用：头像 ---- */
+.people-avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  flex: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.people-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+  display: block;
+}
+
+.people-avatar-glyph {
+  line-height: 1;
+}
+
+.people-avatar-monogram {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.people-quality-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 6%, transparent);
+}
+
+/* 跟踪星标 */
+.people-track-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: 6px;
+  transition: color 0.14s ease, background 0.14s ease;
+}
+
+.people-track-btn:hover {
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+}
+
+.people-track-btn.tracked {
+  color: #f59e0b;
+}
+
+.people-track-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.people-track-card {
+  align-self: flex-start;
+  flex: none;
+  margin-left: auto;
+}
+
+.people-track-detail {
+  border: 1px solid var(--border);
+}
+
+.people-track-detail.tracked {
+  border-color: color-mix(in srgb, #f59e0b 45%, var(--border));
+  background: color-mix(in srgb, #f59e0b 10%, var(--surface));
+}
+
+.people-tag {
+  margin-inline-end: 0;
+}
+
+/* ---- 今日热点 ---- */
+.people-heat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.people-heat-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.people-heat-label .anticon {
+  color: #d4380d;
+}
+
+.people-heat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  transition: all 0.14s ease;
+}
+
+.people-heat-chip b {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.people-heat-chip:hover {
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 45%, var(--border));
+}
+
+.people-heat-chip.active {
+  color: #fff;
+  border-color: var(--accent, #2563eb);
+  background: var(--accent, #2563eb);
+}
+
+.people-heat-chip.active b {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ---- 人物墙 ---- */
+.people-wall-alert {
+  margin-bottom: 14px;
+}
+
+.people-wall-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.people-wall-search {
+  max-width: 360px;
+}
+
+.people-wall-count {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 关注管理面板 */
+.people-watch-panel {
+  width: 300px;
+  max-width: 80vw;
+}
+
+.people-watch-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.people-watch-all {
+  cursor: pointer;
+  color: var(--accent, #2563eb);
+  font-weight: 600;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.people-watch-all:disabled {
+  cursor: default;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.people-watch-head-actions {
+  display: inline-flex;
+  gap: 12px;
+}
+
+.people-watch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.people-watch-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.people-watch-item.drag-over {
+  background: color-mix(in srgb, var(--accent, #2563eb) 14%, transparent);
+  box-shadow: inset 0 2px 0 var(--accent, #2563eb);
+}
+
+.people-watch-item.dragging {
+  opacity: 0.5;
+}
+
+.people-watch-handle {
+  color: var(--text-muted);
+  cursor: grab;
+  font-size: 13px;
+}
+
+.people-watch-name {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 今日跨人物要闻 ---- */
+.people-topnews {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #d4380d 24%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, #d4380d 5%, var(--surface));
+}
+
+.people-topnews-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.people-topnews-head .anticon {
+  color: #d4380d;
+}
+
+.people-topnews-sub {
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.people-topnews-track {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.people-topnews-card {
+  flex: none;
+  width: 246px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, #d4380d);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.people-topnews-who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12.5px;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.people-topnews-who:hover .people-topnews-who-name {
+  color: var(--accent, #d4380d);
+}
+
+.people-topnews-who-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.people-topnews-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 36px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.people-topnews-title:hover {
+  color: var(--accent, #d4380d);
+}
+
+.people-topnews-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.people-topnews-meta {
+  min-width: 0;
+  font-size: 11px;
+}
+
+.people-topnews-push {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+
+.people-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(192px, 1fr));
+  gap: 10px;
+}
+
+.people-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color 0.16s ease, transform 0.16s ease, background 0.16s ease;
+}
+
+.people-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent, #2563eb) 7%, var(--surface));
+}
+
+.people-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.people-card-id {
+  min-width: 0;
+}
+
+.people-card-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.people-card-role {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.people-card-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.people-card-topics .ant-tag {
+  font-size: 11px;
+  line-height: 17px;
+  padding-inline: 5px;
+}
+
+.people-card-headline {
+  min-height: 40px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  border-left: 3px solid var(--accent, #2563eb);
+}
+
+.people-card-headline-empty {
+  border-left-color: var(--border);
+}
+
+.people-card-headline-text {
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.people-card-headline-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.people-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  font-size: 11.5px;
+}
+
+.people-card-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.people-card-push {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  transition: all 0.14s ease;
+}
+
+.people-card-push:hover:not(:disabled) {
+  color: var(--accent, #2563eb);
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 50%, var(--border));
+}
+
+.people-card-push:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.people-card-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.people-card-today {
+  padding: 0 6px;
+  border-radius: 6px;
+  font-weight: 600;
+  color: #16a34a;
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+}
+
+.people-card-cta {
+  color: var(--accent, #2563eb);
+  font-weight: 600;
+}
+
+/* ---- 人物详情 ---- */
+.people-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.people-back:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 42%, var(--border));
+}
+
+.people-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)) 0%, var(--surface) 60%);
+}
+
+.people-detail-id {
+  flex: 1;
+  min-width: 0;
+}
+
+.people-detail-name {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 2px !important;
+  flex-wrap: wrap;
+}
+
+.people-detail-en {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.people-detail-topics {
+  margin-top: 8px;
+}
+
+.people-detail-head-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex: none;
+}
+
+.people-detail-quality {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.people-detail-bio {
+  margin: 14px 0 0 !important;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.people-why {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.people-why .anticon {
+  margin-top: 3px;
+  color: var(--accent, #2563eb);
+}
+
+.people-digest {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, #7c3aed 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, #7c3aed 6%, var(--surface));
+}
+
+.people-digest-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.people-digest-head .anticon {
+  color: #a855f7;
+}
+
+.people-digest-badge {
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+}
+
+.people-digest-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-muted);
+}
+
+.people-digest-text {
+  margin: 10px 0 6px !important;
+  line-height: 1.75;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.people-digest-note {
+  font-size: 11px;
+}
+
+/* Agent 深读面板 */
+.people-agent {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, #2563eb 26%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, #2563eb 5%, var(--surface));
+}
+
+.people-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.people-agent-head .anticon {
+  color: #2563eb;
+}
+
+.people-agent-ctrl {
+  margin-left: auto;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.people-agent-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #fff;
+  background: #2563eb;
+  border: none;
+  border-radius: 8px;
+  transition: opacity 0.14s ease;
+}
+
+.people-agent-cta:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.people-agent-cta:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.people-agent-thinking {
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--text-muted);
+}
+
+.people-agent-error {
+  margin-top: 10px;
+  color: var(--text-muted);
+}
+
+.people-agent .dfx-md {
+  margin-top: 10px;
+}
+
+.people-voice-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  margin-bottom: 10px;
+}
+
+.people-voice-head h5 {
+  margin: 0 !important;
+}
+
+.people-detail-alert {
+  margin-bottom: 12px;
+}
+
+/* 看点过滤 chips */
+.people-voice-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.people-filter-chip {
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  transition: all 0.14s ease;
+}
+
+.people-filter-chip:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 42%, var(--border));
+}
+
+.people-filter-chip.active {
+  color: #fff;
+  border-color: var(--accent, #2563eb);
+  background: var(--accent, #2563eb);
+}
+
+.people-voice-list {
+  display: grid;
+  gap: 10px;
+}
+
+.people-voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: inherit;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.people-voice-row:hover {
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent, #2563eb) 8%, var(--surface));
+}
+
+.people-voice-main {
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  display: block;
+}
+
+.people-voice-title {
+  display: block;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.people-voice-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.people-voice-source {
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent, #2563eb) 70%, var(--text));
+}
+
+.people-voice-dot {
+  opacity: 0.5;
+}
+
+.people-voice-rel {
+  padding: 0 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent);
+}
+
+.people-voice-heat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-weight: 600;
+  color: #d4380d;
+  background: color-mix(in srgb, #d4380d 14%, transparent);
+}
+
+.people-voice-tags {
+  display: inline-flex;
+}
+
+.people-voice-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.people-voice-push {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  transition: all 0.14s ease;
+}
+
+.people-voice-push:hover:not(:disabled) {
+  color: var(--accent, #2563eb);
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 50%, var(--border));
+}
+
+.people-voice-push:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* 已推送态：绿色勾，不再可点（去重） */
+.people-voice-push.pushed,
+.people-card-push.pushed {
+  color: #16a34a;
+  border-color: color-mix(in srgb, #16a34a 45%, var(--border));
+  background: color-mix(in srgb, #16a34a 10%, var(--surface));
+  opacity: 1;
+}
+
+.people-voice-open {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--accent, #2563eb);
+}
+
+.people-credit {
+  display: block;
+  margin-top: 14px;
+  font-size: 11px;
+  text-align: right;
+  opacity: 0.7;
+}
+
+@media (max-width: 768px) {
+  .people-spotlight-page {
+    padding: 12px;
+  }
+
+  .people-wall {
+    grid-template-columns: 1fr;
+  }
+
+  .people-detail-head {
+    flex-wrap: wrap;
+  }
+
+  .people-voice-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .people-voice-actions {
+    align-self: flex-end;
+  }
+
+  .people-wall-search {
+    max-width: 100%;
+    width: 100%;
+  }
+}

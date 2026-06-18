@@ -16,6 +16,11 @@ import httpx
 from fastapi import HTTPException, status
 
 from .schemas import (
+    CorpusCredibilityBands,
+    CorpusFreshness,
+    CorpusSourceQuality,
+    CorpusSymbolCoverage,
+    DataSourceCorpusStats,
     DataSourceCreateRequest,
     DataSourceItemRecord,
     DataSourceItemUpdateRequest,
@@ -423,6 +428,61 @@ async def capture_agent_web_pages(request: DataSourceSyncRequest) -> tuple[DataS
     return get_data_source(source.id) or source, items
 
 
+# 主动取数（agentic）爬取冷却：同关键词 N 秒内不重爬，避免把免费源打到反爬/风控。
+_EVIDENCE_CRAWL_COOLDOWN: dict[str, float] = {}
+
+
+async def crawl_evidence_if_thin(
+    symbol: Optional[str],
+    keyword: Optional[str],
+    *,
+    cooldown_secs: float = 600.0,
+    limit: int = 6,
+    timeout: float = 16.0,
+) -> int:
+    """主动取数（agentic）的统一入口——本地强相关证据稀薄时，按关键词爬一轮最新资料补进证据库。
+
+    供分析师快答 / 深研 / 圆桌三条路径共用（消除重复）。
+    - 强相关 = symbol 字段精确命中（避免英文 ticker 被 title/text LIKE 片段误匹配成"已足够"）；
+      无 symbol 时按 keyword query 计数。
+    - 有界：限量 + 超时 + 同关键词冷却；反爬/超时优雅降级（catch 后返回 0，不阻断主流程）。
+    返回新增条数。
+    """
+    kw = (keyword or "").strip()
+    if not kw:
+        return 0
+    try:
+        if symbol:
+            local = list_data_items(symbol=symbol, limit=10, sort="time_desc")
+            strong = sum(1 for it in local if (it.symbol or "").upper() == symbol.upper())
+        else:
+            strong = len(list_data_items(query=kw[:60], limit=4, sort="time_desc"))
+    except Exception:
+        strong = 0
+    if strong >= 3:
+        return 0  # 本地强相关证据已足够，不必外爬
+    try:
+        now = asyncio.get_running_loop().time()
+    except RuntimeError:
+        now = 0.0
+    if now and now - _EVIDENCE_CRAWL_COOLDOWN.get(kw, 0.0) < cooldown_secs:
+        return 0  # 冷却期内，不重爬
+    if now:
+        _EVIDENCE_CRAWL_COOLDOWN[kw] = now
+    try:
+        crawl_req = DataSourceKeywordCrawlRequest(
+            provider="wechat_public", keyword=kw[:40], symbol=symbol, limit=limit
+        )
+        _source, items, _warnings, _meta = await asyncio.wait_for(
+            keyword_crawl_data_source(crawl_req), timeout=timeout
+        )
+        return len(items or [])
+    except asyncio.TimeoutError:
+        return 0  # 爬取超时 → 用现有证据继续
+    except Exception:
+        return 0  # 反爬/失败 → 用现有证据继续
+
+
 async def keyword_crawl_data_source(
     request: DataSourceKeywordCrawlRequest,
 ) -> tuple[DataSourceRecord, list[DataSourceItemRecord], list[str], dict[str, Any]]:
@@ -728,6 +788,87 @@ def list_data_tags() -> list[DataSourceTagRecord]:
         DataSourceTagRecord(tag=tag, count=count)
         for tag, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
+
+
+def _parse_iso_ts(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def corpus_stats() -> DataSourceCorpusStats:
+    """全量扫描证据语料，聚合质量与覆盖：可信度分档（与 grounding 一致的 0.75/0.5）、
+    标的覆盖、来源质量、新鲜度。证据库「精品」概览用——让用户看清驱动 Agent 引用的语料健康度。"""
+    init_data_source_db()
+    with _connect() as conn:
+        total_row = conn.execute(
+            "SELECT COUNT(*) AS c, AVG(credibility_score) AS avg FROM data_items"
+        ).fetchone()
+        bands_row = conn.execute(
+            "SELECT "
+            "SUM(CASE WHEN credibility_score >= 0.75 THEN 1 ELSE 0 END) AS high, "
+            "SUM(CASE WHEN credibility_score >= 0.5 AND credibility_score < 0.75 THEN 1 ELSE 0 END) AS mid, "
+            "SUM(CASE WHEN credibility_score < 0.5 THEN 1 ELSE 0 END) AS low "
+            "FROM data_items"
+        ).fetchone()
+        sym_rows = conn.execute(
+            "SELECT symbol, COUNT(*) AS c, AVG(credibility_score) AS avg FROM data_items "
+            "WHERE symbol IS NOT NULL AND TRIM(symbol) != '' "
+            "GROUP BY symbol ORDER BY c DESC, symbol LIMIT 12"
+        ).fetchall()
+        src_rows = conn.execute(
+            "SELECT source_name, COUNT(*) AS c, AVG(credibility_score) AS avg FROM data_items "
+            "GROUP BY source_name ORDER BY c DESC, source_name LIMIT 10"
+        ).fetchall()
+        date_rows = conn.execute("SELECT collected_at, created_at FROM data_items").fetchall()
+
+    now = datetime.now(timezone.utc)
+    fresh = {"last_24h": 0, "last_7d": 0, "last_30d": 0, "older": 0}
+    for row in date_rows:
+        ts = _parse_iso_ts(row["collected_at"] or row["created_at"])
+        if ts is None:
+            fresh["older"] += 1
+            continue
+        age = (now - ts).total_seconds()
+        if age < 86400:
+            fresh["last_24h"] += 1
+        elif age < 7 * 86400:
+            fresh["last_7d"] += 1
+        elif age < 30 * 86400:
+            fresh["last_30d"] += 1
+        else:
+            fresh["older"] += 1
+
+    return DataSourceCorpusStats(
+        total=int(total_row["c"] or 0),
+        avg_credibility=round(float(total_row["avg"] or 0.0), 3),
+        credibility_bands=CorpusCredibilityBands(
+            high=int(bands_row["high"] or 0),
+            mid=int(bands_row["mid"] or 0),
+            low=int(bands_row["low"] or 0),
+        ),
+        symbol_coverage=[
+            CorpusSymbolCoverage(
+                symbol=str(r["symbol"]),
+                count=int(r["c"]),
+                avg_credibility=round(float(r["avg"] or 0.0), 3),
+            )
+            for r in sym_rows
+        ],
+        source_quality=[
+            CorpusSourceQuality(
+                source_name=str(r["source_name"] or "未知来源"),
+                count=int(r["c"]),
+                avg_credibility=round(float(r["avg"] or 0.0), 3),
+            )
+            for r in src_rows
+        ],
+        freshness=CorpusFreshness(**fresh),
+    )
 
 
 async def collect_task_evidence(payload: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
@@ -1829,6 +1970,24 @@ def _query_tokens(query: str) -> list[str]:
         if token not in seen:
             seen.add(token)
             result.append(token)
+    return result
+
+
+def query_tokens_2gram(text: str) -> list[str]:
+    """\u66f4\u7ec6\u7684\u67e5\u8be2\u8bcd\u5143\uff1aASCII \u8bcd + \u4e2d\u6587 2-gram \u6ed1\u7a97\u3002\u6bd4 `_query_tokens`\uff08\u6574\u6bb5\u5207\uff09\u66f4\u5229\u4e8e\u4e2d\u6587
+    \u76f8\u5173\u6027\u5339\u914d\u2014\u2014\u7528\u4e8e\u68c0\u7d22\u7ed3\u679c\u76f8\u5bf9\u63d0\u95ee\u7684\u76f8\u5173\u6027\u91cd\u6392\uff08chat / \u5706\u684c\u5171\u7528\uff0c\u53bb\u91cd\u590d\uff09\u3002"""
+    out: list[str] = []
+    for run in re.findall(r"[a-z0-9]{2,}|[\u4e00-\u9fff]+", (text or "").lower()):
+        if run.isascii() or len(run) <= 2:
+            out.append(run)
+        else:
+            out.extend(run[i:i + 2] for i in range(len(run) - 1))
+    seen: set[str] = set()
+    result: list[str] = []
+    for tok in out:
+        if tok not in seen:
+            seen.add(tok)
+            result.append(tok)
     return result
 
 

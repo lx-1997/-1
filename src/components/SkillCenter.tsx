@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   App as AntdApp,
   Button,
   Descriptions,
@@ -91,7 +92,7 @@ const skillDefinitions: SkillDefinition[] = [
     name: '市场情绪扫描',
     category: 'research',
     description: '汇总新闻、社区讨论和研报摘要，给出标的短期情绪、分歧点和需要核验的催化因素。',
-    agents: ['市场情绪 Agent', '投研分析 Agent'],
+    agents: ['Analyst', 'Evidence'],
     inputs: ['stock.symbol', 'news_items[]', 'community_posts[]', 'time_window'],
     outputs: ['sentiment_label', 'sentiment_score', 'key_drivers[]', 'watch_items[]'],
     dependencies: ['FinGPT 情绪能力', '数据源中心', '社区内容'],
@@ -108,7 +109,7 @@ const skillDefinitions: SkillDefinition[] = [
     name: '财报与公告拆解',
     category: 'research',
     description: '解析财报、公告和上传文件，抽取营收、利润、现金流、指引变化和管理层风险表述。',
-    agents: ['财报解读 Agent', '证据审查 Agent'],
+    agents: ['Analyst', 'Evidence'],
     inputs: ['document_text', 'stock_profile', 'period'],
     outputs: ['financial_highlights[]', 'guidance_changes[]', 'risk_terms[]', 'investor_takeaway'],
     dependencies: ['文件解析', 'RAG 检索', 'FinGPT 报告分析'],
@@ -125,7 +126,7 @@ const skillDefinitions: SkillDefinition[] = [
     name: 'A股财报扫描',
     category: 'data',
     description: '扫描 A 股年报、季报、业绩预告和业绩快报公告，抽取营业收入、净利润、EPS、ROE、现金流和风险提示。',
-    agents: ['OrchestratorAgent', 'EvidenceAgent', '财报解读 Agent'],
+    agents: ['Orchestrator', 'Evidence', 'Analyst'],
     inputs: ['market', 'window', 'report_types[]', 'limit'],
     outputs: ['earnings_records[]', 'financial_metrics[]', 'risk_flags[]', 'source_links[]'],
     dependencies: ['巨潮资讯网公告检索', 'PDF 正文解析', 'Agent 语义路由'],
@@ -142,7 +143,7 @@ const skillDefinitions: SkillDefinition[] = [
     name: '证据检索 RAG',
     category: 'data',
     description: '从数据源中心检索与任务相关的资料，返回证据来源、可信度、标签和可引用摘要。',
-    agents: ['资料检索 Agent', '审计治理 Agent'],
+    agents: ['Evidence', 'Risk'],
     inputs: ['question', 'tags[]', 'source_scope[]'],
     outputs: ['evidence[]', 'source_scores[]', 'missing_evidence[]'],
     dependencies: ['数据源中心', '本地资料库', '网页抓取结果'],
@@ -159,7 +160,7 @@ const skillDefinitions: SkillDefinition[] = [
     name: '股东增减持扫描',
     category: 'data',
     description: '扫描 A 股公告中的股东、董监高、控股股东增持/减持计划、进展和结果，输出可追溯公告列表和风险分层。',
-    agents: ['OrchestratorAgent', 'EvidenceAgent', 'RiskAgent'],
+    agents: ['Orchestrator', 'Evidence', 'Risk'],
     inputs: ['market', 'window', 'direction', 'limit'],
     outputs: ['change_records[]', 'risk_buckets[]', 'source_links[]', 'coverage_note'],
     dependencies: ['巨潮资讯网公告检索', 'Skill Executor', 'Agent 语义路由'],
@@ -175,8 +176,8 @@ const skillDefinitions: SkillDefinition[] = [
     id: 'risk-discipline-check',
     name: '风险纪律审查',
     category: 'risk',
-    description: '对 Agent 输出做二次审查，检查过度自信、缺少反证、仓位建议越界和高风险措辞。',
-    agents: ['风控 Agent', '审计治理 Agent'],
+    description: '对投研输出做二次审查，检查过度自信、缺少反证、仓位建议越界和高风险措辞。',
+    agents: ['Risk', 'Evidence'],
     inputs: ['agent_report', 'investor_profile', 'risk_limits'],
     outputs: ['risk_flags[]', 'required_disclaimers[]', 'approval_required'],
     dependencies: ['风险规则库', '投资者画像'],
@@ -193,7 +194,7 @@ const skillDefinitions: SkillDefinition[] = [
     name: '情景矩阵生成',
     category: 'research',
     description: '把核心假设拆成乐观、中性、悲观情景，生成触发条件、概率和跟踪指标。',
-    agents: ['策略 Agent', '投研分析 Agent'],
+    agents: ['Analyst', 'Risk'],
     inputs: ['thesis', 'evidence[]', 'horizon'],
     outputs: ['scenarios[]', 'triggers[]', 'disconfirming_evidence[]'],
     dependencies: ['证据检索 RAG', 'FinGPT 预测能力'],
@@ -210,11 +211,11 @@ const skillDefinitions: SkillDefinition[] = [
     name: '观察名单监控',
     category: 'monitor',
     description: '定时扫描关注池标的，发现价格、情绪、新闻和资料更新异常时生成预警任务。',
-    agents: ['监控 Agent', '市场情绪 Agent'],
+    agents: ['Orchestrator', 'Analyst'],
     inputs: ['watchlist[]', 'rules[]', 'schedule'],
     outputs: ['alerts[]', 'triggered_tasks[]'],
     dependencies: ['关注池', '数据源中心', '市场行情'],
-    permissions: ['读取关注池', '创建 Agent 任务'],
+    permissions: ['读取关注池', '创建投研任务'],
     maturity: 'beta',
     risk: 'medium',
     latency: '定时任务',
@@ -227,7 +228,7 @@ const skillDefinitions: SkillDefinition[] = [
     name: '组合复盘',
     category: 'workflow',
     description: '把持仓、关注池和近期事件组合成复盘任务，输出风险暴露、拥挤交易和下一步核验清单。',
-    agents: ['组合复盘 Agent', '风控 Agent', '策略 Agent'],
+    agents: ['Analyst', 'Risk'],
     inputs: ['portfolio[]', 'watchlist[]', 'events[]'],
     outputs: ['exposures[]', 'risk_controls[]', 'action_plan[]'],
     dependencies: ['风险纪律审查', '情景矩阵生成'],
@@ -241,13 +242,13 @@ const skillDefinitions: SkillDefinition[] = [
   },
   {
     id: 'agent-brief-router',
-    name: 'Agent Brief 路由',
+    name: '任务 Brief 路由',
     category: 'workflow',
-    description: '根据用户问题自动选择 Agent、技能序列和数据源范围，生成可执行的任务 Brief。',
-    agents: ['任务路由 Agent', '协调 Agent'],
+    description: '根据用户问题自动选择核心角色、技能序列和数据源范围，生成可执行的任务 Brief。',
+    agents: ['Orchestrator', 'Evidence'],
     inputs: ['user_objective', 'asset_context', 'available_skills[]'],
     outputs: ['assigned_agents[]', 'skill_plan[]', 'task_brief'],
-    dependencies: ['技能注册表', '数据源中心', 'Agent 任务中心'],
+    dependencies: ['技能注册表', '数据源中心', '投研任务中心'],
     permissions: ['读取技能配置', '创建任务草稿'],
     maturity: 'beta',
     risk: 'medium',
@@ -276,15 +277,32 @@ const orchestrationTemplates: SkillTemplate[] = [
   }
 ];
 
+const ENABLED_SKILLS_STORAGE_KEY = 'deepfocus.skillCenter.enabledIds';
+
+const defaultEnabledIds = (): string[] =>
+  skillDefinitions.filter(skill => skill.maturity !== 'draft').map(skill => skill.id);
+
+const loadEnabledIds = (): string[] => {
+  try {
+    const raw = localStorage.getItem(ENABLED_SKILLS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const known = new Set(skillDefinitions.map(s => s.id));
+        return parsed.filter((id): id is string => typeof id === 'string' && known.has(id));
+      }
+    }
+  } catch {
+    /* localStorage 不可用或解析失败时回退默认值 */
+  }
+  return defaultEnabledIds();
+};
+
 const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
   const { message } = AntdApp.useApp();
   const [activeCategory, setActiveCategory] = useState<SkillCategory>('all');
   const [keyword, setKeyword] = useState('');
-  const [enabledIds, setEnabledIds] = useState<string[]>(
-    skillDefinitions
-      .filter(skill => skill.maturity !== 'draft')
-      .map(skill => skill.id)
-  );
+  const [enabledIds, setEnabledIds] = useState<string[]>(loadEnabledIds);
   const [selectedSkillId, setSelectedSkillId] = useState(skillDefinitions[0].id);
 
   const filteredSkills = useMemo(() => {
@@ -305,10 +323,17 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
   const highRiskCount = skillDefinitions.filter(skill => skill.risk === 'high').length;
 
   const toggleSkill = (skillId: string, enabled: boolean) => {
-    setEnabledIds(prev => enabled
-      ? Array.from(new Set([...prev, skillId]))
-      : prev.filter(id => id !== skillId)
-    );
+    setEnabledIds(prev => {
+      const next = enabled
+        ? Array.from(new Set([...prev, skillId]))
+        : prev.filter(id => id !== skillId);
+      try {
+        localStorage.setItem(ENABLED_SKILLS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* 持久化失败不阻断交互 */
+      }
+      return next;
+    });
   };
 
   const handleCopyInvocation = async () => {
@@ -325,9 +350,9 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
       <div className="skill-hero">
         <div>
           <div className="dashboard-eyebrow">SKILL REGISTRY</div>
-          <h2 className="dashboard-title">Agent 技能库</h2>
+          <h2 className="dashboard-title">技能库</h2>
           <div className="dashboard-subtitle">
-            把 Agent 能力拆成可治理、可编排、可复用的技能单元，明确输入输出、权限边界和风险等级。
+            把底层能力拆成可治理、可编排、可复用的技能单元，由少数核心角色统一调度。
           </div>
         </div>
         <Space wrap>
@@ -335,6 +360,14 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
           <Tag color="green"><CheckCircleOutlined /> {enabledCount} 个已启用</Tag>
         </Space>
       </div>
+
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="技能注册表为治理示意"
+        description="调用次数、成功率与延迟为示例指标，用于展示技能编排与治理界面；技能开关已本地保存。其中『A股财报扫描』『股东增减持扫描』及重大事件扫描已有可执行后端，可分别在 财报中心 / 股东变动中心 / 重大事件中心 实际运行并获得可溯源结果。"
+      />
 
       <div className="skill-overview-grid">
         <div className="metric-tile">
@@ -345,7 +378,7 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
         <div className="metric-tile">
           <div className="metric-label"><CheckCircleOutlined /> 生产可用</div>
           <div className="metric-value">{productionCount}</div>
-          <div className="metric-note">可直接进入多 Agent 编排</div>
+          <div className="metric-note">可直接进入核心链路编排</div>
         </div>
         <div className="metric-tile">
           <div className="metric-label"><SafetyCertificateOutlined /> 高风险技能</div>
@@ -377,7 +410,7 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
         />
         <Search
           allowClear
-          placeholder="搜索技能、Agent 或能力描述"
+          placeholder="搜索技能、核心角色或能力描述"
           value={keyword}
           onChange={event => setKeyword(event.target.value)}
           style={{ width: 320 }}
@@ -417,7 +450,7 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
                 <Space size={6} wrap>
                   <Tag color={maturityMeta[skill.maturity].color}>{maturityMeta[skill.maturity].label}</Tag>
                   <Tag color={riskMeta[skill.risk].color}>{riskMeta[skill.risk].label}</Tag>
-                  <Tag>{skill.agents.length} Agents</Tag>
+                  <Tag>{skill.agents.length} Roles</Tag>
                 </Space>
               </article>
             );
@@ -455,7 +488,7 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
             </div>
 
             <Descriptions size="small" bordered column={1} className="skill-descriptions">
-              <Descriptions.Item label="适用 Agent">
+              <Descriptions.Item label="适用角色">
                 <Space wrap>{selectedSkill.agents.map(agent => <Tag key={agent} color="blue">{agent}</Tag>)}</Space>
               </Descriptions.Item>
               <Descriptions.Item label="依赖能力">
@@ -494,7 +527,7 @@ const SkillCenter: React.FC<SkillCenterProps> = ({ appState }) => {
             <BranchesOutlined />
             <span>技能编排模板</span>
           </div>
-          <Text type="secondary">用于多 Agent 任务自动拆解</Text>
+          <Text type="secondary">用于投研任务自动拆解</Text>
         </div>
         <div className="skill-template-grid">
           {orchestrationTemplates.map(template => (

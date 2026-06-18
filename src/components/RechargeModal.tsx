@@ -143,7 +143,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({
         <Divider />
 
         {/* 充值说明 */}
-        <div style={{ background: '#f6ffed', padding: '12px', borderRadius: '6px' }}>
+        <div style={{ background: 'rgba(16,185,129,0.08)', padding: '12px', borderRadius: '6px' }}>
           <Text type="secondary" style={{ fontSize: '12px' }}>
             • 充值金额将立即到账<br/>
             • 余额可用于开通研究资产和深度报告<br/>

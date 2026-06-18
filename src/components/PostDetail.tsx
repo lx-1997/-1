@@ -24,6 +24,7 @@ import {
   EyeOutlined,
   DollarOutlined,
   LikeOutlined,
+  LikeFilled,
   ShareAltOutlined,
   CrownOutlined,
   ArrowLeftOutlined,
@@ -40,6 +41,7 @@ interface PostDetailProps {
   currentUser: User;
   comments: CommentType[];
   purchasedPosts: string[]; // 用户已开通的研究记录 ID 列表
+  likedPostIds?: string[]; // 用户已点赞的帖子 ID 列表
   onBack: () => void;
   onPurchase: (postId: string, amount: number) => void;
   onRate: (postId: string, rating: number, feedback: string) => void;
@@ -48,18 +50,20 @@ interface PostDetailProps {
   onAddComment?: (postId: string, content: string) => void;
 }
 
-const PostDetail: React.FC<PostDetailProps> = ({ 
-  post, 
-  currentUser, 
+const PostDetail: React.FC<PostDetailProps> = ({
+  post,
+  currentUser,
   comments,
   purchasedPosts,
-  onBack, 
-  onPurchase, 
-  onRate, 
+  likedPostIds,
+  onBack,
+  onPurchase,
+  onRate,
   onLike,
   onShare,
   onAddComment
 }) => {
+  const liked = (likedPostIds ?? []).includes(post.id);
   const [isPurchaseModalVisible, setIsPurchaseModalVisible] = useState(false);
   const [isRatingModalVisible, setIsRatingModalVisible] = useState(false);
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
@@ -175,7 +179,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
         </Paragraph>
         
         {post.isPaid && hasPurchased && (
-          <Card style={{ marginTop: 16, background: '#f6ffed', borderColor: '#b7eb8f' }}>
+          <Card style={{ marginTop: 16, background: 'rgba(16,185,129,0.08)', borderColor: 'rgba(16,185,129,0.2)' }}>
             <Space>
               <DollarOutlined style={{ color: '#52c41a' }} />
               <Text strong>您已开通这份深度报告</Text>
@@ -250,16 +254,16 @@ const PostDetail: React.FC<PostDetailProps> = ({
           ))}
         </Space>
 
-        <Paragraph style={{ fontSize: '16px', color: '#666' }}>
+        <Paragraph style={{ fontSize: '16px', color: 'var(--text-muted)' }}>
           {post.summary}
         </Paragraph>
 
         <Row gutter={16} style={{ marginTop: 16 }}>
           <Col span={6}>
-            <div style={{ textAlign: 'center', padding: '16px', border: '1px solid #d9d9d9', borderRadius: '6px' }}>
-              <EyeOutlined style={{ fontSize: '24px', color: '#666', marginBottom: '8px' }} />
-              <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#666' }}>{post.views}</div>
-              <div style={{ fontSize: '14px', color: '#999' }}>浏览量</div>
+            <div style={{ textAlign: 'center', padding: '16px', border: '1px solid var(--border)', borderRadius: '6px' }}>
+              <EyeOutlined style={{ fontSize: '24px', color: 'var(--text-muted)', marginBottom: '8px' }} />
+              <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--text-muted)' }}>{post.views}</div>
+              <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>浏览量</div>
             </div>
           </Col>
           <Col span={6}>
@@ -269,7 +273,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
                 width: '100%',
                 height: '80px',
                 border: '2px solid #52c41a',
-                backgroundColor: '#f6ffed',
+                backgroundColor: 'rgba(16,185,129,0.08)',
                 borderRadius: '6px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -281,9 +285,11 @@ const PostDetail: React.FC<PostDetailProps> = ({
                 onLike(post.id);
               }}
             >
-              <LikeOutlined style={{ fontSize: '24px', color: '#52c41a', marginBottom: '8px' }} />
+              {liked
+                ? <LikeFilled style={{ fontSize: '24px', color: '#52c41a', marginBottom: '8px' }} />
+                : <LikeOutlined style={{ fontSize: '24px', color: '#52c41a', marginBottom: '8px' }} />}
               <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#52c41a' }}>{post.likes}</div>
-              <div style={{ fontSize: '14px', color: '#52c41a' }}>点赞</div>
+              <div style={{ fontSize: '14px', color: '#52c41a' }}>{liked ? '已赞' : '点赞'}</div>
             </Button>
           </Col>
           <Col span={6}>
@@ -293,7 +299,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
                 width: '100%',
                 height: '80px',
                 border: '2px solid #1890ff',
-                backgroundColor: '#f0f9ff',
+                backgroundColor: 'rgba(59,130,246,0.08)',
                 borderRadius: '6px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -315,7 +321,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
                 width: '100%',
                 height: '80px',
                 border: '2px solid #faad14',
-                backgroundColor: '#fffbe6',
+                backgroundColor: 'rgba(245,158,11,0.08)',
                 borderRadius: '6px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -338,19 +344,19 @@ const PostDetail: React.FC<PostDetailProps> = ({
         {/* 操作按钮 */}
         <div style={{ marginTop: 16, textAlign: 'center' }}>
           <Space size="middle" wrap>
-            <Button 
-              type="primary" 
-              icon={<LikeOutlined />}
+            <Button
+              type={liked ? 'default' : 'primary'}
+              icon={liked ? <LikeFilled /> : <LikeOutlined />}
               onClick={() => {
                 onLike(post.id);
               }}
-              style={{ 
+              style={{
                 cursor: 'pointer',
                 pointerEvents: 'auto',
                 zIndex: 1000
               }}
             >
-              点赞 ({post.likes})
+              {liked ? '已赞' : '点赞'} ({post.likes})
             </Button>
             <Button 
               icon={<ShareAltOutlined />}
@@ -494,7 +500,7 @@ const PostDetail: React.FC<PostDetailProps> = ({
             )}
           />
         ) : (
-          <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
             <MessageOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
             <div>暂无讨论记录</div>
           </div>

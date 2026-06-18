@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -631,6 +632,18 @@ class CloudResearchLLM:
             f"证据：{'、'.join(d.evidence)}"
             for d in active
         )
+        # 内容指纹缓存：叙述 100% 由下列确定性输入决定，输入不变→输出可安全复用，
+        # 输入一变(verdict/维度/证据)→指纹变→自动重算。省 token 且零陈旧风险。
+        fp_src = "".join([view, str(subject), str(verdict), str(score), str(confidence), dims_text])
+        fp_key = f"{view}:{hashlib.md5(fp_src.encode('utf-8')).hexdigest()}"
+        try:
+            from . import data_store
+
+            cached = data_store.latest("narr", fp_key, max_age_seconds=7 * 86400)
+            if isinstance(cached, str) and cached.strip():
+                return cached.strip()
+        except Exception:
+            data_store = None  # 缓存不可用→照常走 LLM
         prompt = (
             f"你是{role}。下面是「{subject}」由确定性引擎算出的多维证据与结论。"
             "结论由引擎判定、不可推翻，你只负责把证据合成一段速判，不得改变方向或编造数据。\n\n"
@@ -649,7 +662,13 @@ class CloudResearchLLM:
             return None
         narrative = (data or {}).get("narrative")
         if isinstance(narrative, str) and narrative.strip():
-            return narrative.strip()
+            narrative = narrative.strip()
+            if data_store is not None:
+                try:
+                    data_store.record("narr", fp_key, narrative)
+                except Exception:
+                    pass
+            return narrative
         return None
 
     async def synthesize_tear_sheet_narrative(self, ts):
@@ -955,6 +974,7 @@ class CloudResearchLLM:
         max_rounds: int = 4,
         timeout_seconds: float = 30.0,
         emit=None,
+        ifind_user: bool = False,
     ) -> "dict[str, Any] | None":
         """AI 原生 tool-use 闭环：模型自主选工具 → 服务端真实取数 → 结果回灌 → 再推理。
 
@@ -982,6 +1002,8 @@ class CloudResearchLLM:
             "当回答涉及具体标的的行情/财报/资金流/估值/卖方一致预期时，必须先调用相应工具取真实数据，"
             "再据此作答，不得凭记忆编造数字。工具返回 ok=false 或 data=null 表示该源暂无数据，"
             "要如实说明而非杜撰。拿到足够数据后用简洁专业的中文给出有数据支撑的结论（不超过 220 字），"
+            "若用户要求快讯/资讯总结：用 search_our_content（days=1、limit=40~60）取全近期，挑出影响市场的重要快讯（忽略琐碎，不论利好利空），"
+            "按主题归类、每条参考 tone 标利好/利空，末尾给一句话主线；此类总结可适当超过 220 字。"
             "不做收益承诺。"
         )
         user = question if not context_hint else f"{context_hint}\n\n{question}"
@@ -1030,7 +1052,7 @@ class CloudResearchLLM:
                     except (ValueError, TypeError):
                         args = {}
                     await _safe_emit(emit, "tool_start", {"tool": tc.function.name, "args": args})
-                    result = await execute_tool(tc.function.name, args, extra_tools=mcp_tools)
+                    result = await execute_tool(tc.function.name, args, extra_tools=mcp_tools, ifind_user=ifind_user)
                     summary = _summarize_tool_result(result)
                     await _safe_emit(emit, "tool_result", {
                         "tool": tc.function.name,
@@ -1343,14 +1365,33 @@ class CloudResearchLLM:
             }
 
 
+def _repair_json(s: str) -> str:
+    """轻量修复 LLM 常见的 JSON 毛病：去代码围栏、取最外层对象、删尾逗号、转义裸换行。"""
+    s = s.strip()
+    s = re.sub(r"^```(?:json)?\s*", "", s)
+    s = re.sub(r"\s*```$", "", s)
+    m = re.search(r"\{.*\}", s, flags=re.S)
+    if m:
+        s = m.group(0)
+    s = re.sub(r",\s*([}\]])", r"\1", s)            # 删除 } ] 前的尾逗号
+    s = re.sub(r"}\s*\n\s*{", "},{", s)             # 相邻对象漏逗号
+    s = re.sub(r'"\s*\n\s*"', '","', s)             # 数组里相邻字符串漏逗号
+    return s
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if not match:
-            raise ValueError(f"Model did not return JSON: {text[:240]}")
-        return json.loads(match.group(0))
+        pass
+    repaired = _repair_json(text)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError as exc:
+        if not re.search(r"\{.*\}", text, flags=re.S):
+            raise ValueError(f"Model did not return JSON: {text[:240]}") from exc
+        # 仍失败 → 抛 ValueError，交由上层重试（complete_json/vision 都会重试）
+        raise ValueError(f"JSON 解析失败：{exc}") from exc
 
 
 def _has_meaningful_json(data: dict[str, Any]) -> bool:

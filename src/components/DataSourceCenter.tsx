@@ -63,8 +63,15 @@ import {
   syncDataSource,
   updateDataItem,
   uploadDataFile
-} from '../services/dataSourceService';
+} from '../services/infrastructureService';
+import {
+  getMarketDataLayers,
+  MarketDataLayerStatus,
+  MarketDataLayerStatusResponse
+} from '../services/marketService';
 import { AppState } from '../types';
+import CorpusOverview from './CorpusOverview';
+import './DataSourceCenter.css';
 
 const { Paragraph, Text, Title } = Typography;
 const { TextArea } = Input;
@@ -78,7 +85,7 @@ const typeMeta: Record<DataSourceType, { text: string; color: string }> = {
   market_api: { text: '行情 API', color: 'purple' },
   upload: { text: '本地上传', color: 'green' },
   web_page: { text: '网页源', color: 'cyan' },
-  agent_crawl: { text: 'Agent 抓取', color: 'orange' },
+  agent_crawl: { text: '网页抓取', color: 'orange' },
   manual: { text: '手工资料', color: 'default' }
 };
 
@@ -100,7 +107,7 @@ const moduleMeta: Record<DataSourceModule, string> = {
   ai_research: 'AI 研究',
   ai_supply_chain: 'AI 供应链',
   realtime_messages: '实时消息',
-  agent_center: 'Agent 中心',
+  agent_center: '投研任务',
   data_source_center: '数据源中心',
   custom: '自定义模块'
 };
@@ -161,6 +168,14 @@ const riskLabel: Record<string, { text: string; color: string }> = {
   high: { text: '高风险', color: 'red' }
 };
 
+const layerStatusMeta: Record<string, { text: string; color: string }> = {
+  ready: { text: '已打通', color: 'green' },
+  partial: { text: '部分可用', color: 'gold' },
+  fallback: { text: '降级可用', color: 'orange' },
+  unconfigured: { text: '待配置', color: 'default' },
+  error: { text: '异常', color: 'red' }
+};
+
 const defaultForm: DataSourceCreate = {
   name: '',
   category: 'research',
@@ -195,12 +210,17 @@ const defaultRefForm = {
 
 const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
   const defaultStock = appState.stocks[0];
+  const defaultAshareStock = appState.stocks.find(stock =>
+    stock.market === 'CN' || /\.(SH|SZ|BJ)$/i.test(stock.symbol)
+  );
   const [sources, setSources] = useState<DataSourceRecord[]>([]);
   const [items, setItems] = useState<DataSourceItemRecord[]>([]);
   const [tags, setTags] = useState<DataSourceTagRecord[]>([]);
   const [selectedItem, setSelectedItem] = useState<DataSourceItemRecord | null>(null);
   const [editingItem, setEditingItem] = useState<DataSourceItemRecord | null>(null);
   const [loading, setLoading] = useState(false);
+  const [layerStatus, setLayerStatus] = useState<MarketDataLayerStatusResponse | null>(null);
+  const [layerLoading, setLayerLoading] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [savingItem, setSavingItem] = useState(false);
   const [interpretingItem, setInterpretingItem] = useState<DataSourceItemRecord | null>(null);
@@ -304,8 +324,23 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
     }
   };
 
+  const loadLayerStatus = async () => {
+    setLayerLoading(true);
+    try {
+      const selectedAshareSymbol = /\.(SH|SZ|BJ)$/i.test(symbolFilter) ? symbolFilter : '';
+      const symbol = selectedAshareSymbol || defaultAshareStock?.symbol || '600519.SH';
+      const keyword = queryFilter || defaultAshareStock?.name || defaultStock?.name || defaultStock?.symbol || '贵州茅台';
+      setLayerStatus(await getMarketDataLayers(symbol, keyword));
+    } catch (error: any) {
+      message.warning(error?.response?.data?.detail || '三层数据接入状态暂不可用');
+    } finally {
+      setLayerLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    loadLayerStatus();
   }, []);
 
   const parseJsonObject = (value: string, label: string): Record<string, any> => {
@@ -360,9 +395,13 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
   };
 
   const handleDelete = async (source: DataSourceRecord) => {
-    await deleteDataSource(source.id);
-    await loadData();
-    message.success('数据源已删除');
+    try {
+      await deleteDataSource(source.id);
+      await loadData();
+      message.success('数据源已删除');
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '删除数据源失败');
+    }
   };
 
   const handleSaveRef = async () => {
@@ -387,9 +426,13 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
   };
 
   const handleDeleteRef = async (refId: string) => {
-    await deleteDataSourceModuleRef(refId);
-    await loadData();
-    message.success('模块引用已删除');
+    try {
+      await deleteDataSourceModuleRef(refId);
+      await loadData();
+      message.success('模块引用已删除');
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '删除模块引用失败');
+    }
   };
 
   const handleUpload = async (file: File) => {
@@ -508,12 +551,16 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
   };
 
   const handleDeleteItem = async (item: DataSourceItemRecord) => {
-    await deleteDataItem(item.id);
-    if (selectedItem?.id === item.id) {
-      setSelectedItem(null);
+    try {
+      await deleteDataItem(item.id);
+      if (selectedItem?.id === item.id) {
+        setSelectedItem(null);
+      }
+      await loadData();
+      message.success('资料已删除');
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '删除资料失败');
     }
-    await loadData();
-    message.success('资料已删除');
   };
 
   const generateInterpretation = async (item?: DataSourceItemRecord) => {
@@ -622,23 +669,91 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
     label: `${item.tag} (${item.count})`
   }));
 
+  const renderLayerStatus = (layer: MarketDataLayerStatus) => {
+    const meta = layerStatusMeta[layer.status] || { text: layer.status, color: 'default' };
+    return (
+      <Col xs={24} lg={8} key={layer.key}>
+        <div
+          className="data-source-layer-tile"
+          style={{
+            minHeight: 148,
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 14,
+            background: 'var(--surface-muted)'
+          }}
+        >
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <Space style={{ justifyContent: 'space-between', width: '100%' }} align="start">
+              <Text strong>{layer.name}</Text>
+              <Tag color={meta.color}>{meta.text}</Tag>
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>{layer.coverage}</Text>
+            <Text style={{ fontSize: 13 }}>{layer.detail}</Text>
+            <Space wrap size={[4, 4]}>
+              {layer.providers.map(provider => (
+                <Tag key={provider}>{provider}</Tag>
+              ))}
+            </Space>
+            {layer.remediation && (
+              <Text type="secondary" style={{ fontSize: 12 }}>{layer.remediation}</Text>
+            )}
+            {typeof layer.latency_ms === 'number' && (
+              <Text type="secondary" style={{ fontSize: 12 }}>探测耗时 {Math.round(layer.latency_ms)}ms</Text>
+            )}
+          </Space>
+        </div>
+      </Col>
+    );
+  };
+
   return (
-    <div style={{ padding: 16 }}>
+    <div className="data-source-page">
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Card>
           <Row gutter={[16, 16]} align="middle">
             <Col xs={24} lg={12}>
               <Title level={3} style={{ margin: 0 }}>工具链：数据与证据</Title>
-              <Text type="secondary">统一管理本地文件、远端资料、网页抓取和 Agent 可引用的证据标签</Text>
+              <Text type="secondary">统一管理本地文件、远端资料、网页抓取和核心链路可引用的证据标签</Text>
             </Col>
             <Col xs={24} lg={12}>
               <Row gutter={12}>
-                <Col span={6}><Statistic title="活跃源" value={stats.active} /></Col>
-                <Col span={6}><Statistic title="分类" value={stats.categories} /></Col>
-                <Col span={6}><Statistic title="资料条目" value={stats.stored} /></Col>
-                <Col span={6}><Statistic title="模块引用" value={stats.refs} /></Col>
+                <Col xs={12} sm={6}><Statistic title="活跃源" value={stats.active} /></Col>
+                <Col xs={12} sm={6}><Statistic title="分类" value={stats.categories} /></Col>
+                <Col xs={12} sm={6}><Statistic title="资料条目" value={stats.stored} /></Col>
+                <Col xs={12} sm={6}><Statistic title="模块引用" value={stats.refs} /></Col>
               </Row>
             </Col>
+          </Row>
+        </Card>
+
+        <CorpusOverview
+          watchlistSymbols={appState.stocks.map(s => s.symbol)}
+          onSelectSymbol={(symbol) => {
+            setSymbolFilter(symbol);
+            void loadData({ symbol });
+          }}
+        />
+
+        <Card
+          title={<Space><BarChartOutlined />三层数据接入</Space>}
+          extra={
+            <Button size="small" icon={<ReloadOutlined />} loading={layerLoading} onClick={loadLayerStatus}>
+              刷新状态
+            </Button>
+          }
+        >
+          <Row gutter={[12, 12]}>
+            {(layerStatus?.layers || []).map(renderLayerStatus)}
+            {!layerStatus && (
+              <Col span={24}>
+                <Alert
+                  type="info"
+                  showIcon
+                  message="正在检测东方财富/新浪/腾讯行情、Tushare Pro 结构化数据和雪球/公众号舆情层。"
+                />
+              </Col>
+            )}
           </Row>
         </Card>
 
@@ -764,17 +879,20 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                     保存模块引用
                   </Button>
                   {moduleRefRows.length > 0 && (
-                    <Table
-                      size="small"
-                      rowKey="id"
-                      dataSource={moduleRefRows}
-                      pagination={false}
-                      columns={[
-                        {
-                          title: '模块',
-                          dataIndex: 'module',
-                          render: value => moduleMeta[value as DataSourceModule] || value
-                        },
+	                    <Table
+	                      size="small"
+	                      rowKey="id"
+	                      dataSource={moduleRefRows}
+	                      pagination={false}
+	                      tableLayout="fixed"
+	                      scroll={{ x: 540 }}
+	                      columns={[
+	                        {
+	                          title: '模块',
+	                          dataIndex: 'module',
+	                          width: 130,
+	                          render: value => moduleMeta[value as DataSourceModule] || value
+	                        },
                         {
                           title: '角色',
                           dataIndex: 'role',
@@ -785,11 +903,12 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                             </Tag>
                           )
                         },
-                        {
-                          title: '源',
-                          dataIndex: 'source_name',
-                          ellipsis: true
-                        },
+	                        {
+	                          title: '源',
+	                          dataIndex: 'source_name',
+	                          width: 190,
+	                          ellipsis: true
+	                        },
                         {
                           title: '',
                           width: 42,
@@ -828,7 +947,7 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                 </Space>
               </Card>
 
-              <Card title={<Space><LinkOutlined />Agent 抓取网页</Space>}>
+              <Card title={<Space><LinkOutlined />网页抓取</Space>}>
                 <Space direction="vertical" size={10} style={{ width: '100%' }}>
                   <Input value={crawlUrl} onChange={event => setCrawlUrl(event.target.value)} placeholder="网页 URL" />
                   <Input
@@ -960,14 +1079,15 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                 <Table
                   size="small"
                   rowKey="id"
-                  dataSource={sources}
-                  pagination={{ pageSize: 6 }}
-                  scroll={{ x: 900 }}
-                  columns={[
-                    {
-                      title: '名称',
-                      dataIndex: 'name',
-                      width: 250,
+	                  dataSource={sources}
+	                  pagination={{ pageSize: 6 }}
+	                  tableLayout="fixed"
+	                  scroll={{ x: 820 }}
+	                  columns={[
+	                    {
+	                      title: '名称',
+	                      dataIndex: 'name',
+	                      width: 260,
                       render: (value, record) => (
                         <Space className="data-source-name-cell" direction="vertical" size={0}>
                           <Text strong>{value}</Text>
@@ -976,9 +1096,9 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                       )
                     },
                     {
-                      title: '分类',
-                      dataIndex: 'category',
-                      width: 110,
+	                      title: '分类',
+	                      dataIndex: 'category',
+	                      width: 100,
                       render: value => (
                         <Tag color={categoryMeta[value as DataSourceCategory]?.color}>
                           {categoryMeta[value as DataSourceCategory]?.text || value}
@@ -986,30 +1106,30 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                       )
                     },
                     {
-                      title: '类型',
-                      dataIndex: 'source_type',
-                      width: 110,
+	                      title: '类型',
+	                      dataIndex: 'source_type',
+	                      width: 100,
                       render: value => <Tag color={typeMeta[value as DataSourceType]?.color}>{typeMeta[value as DataSourceType]?.text || value}</Tag>
                     },
                     {
-                      title: '状态',
-                      dataIndex: 'status',
-                      width: 90,
+	                      title: '状态',
+	                      dataIndex: 'status',
+	                      width: 78,
                       render: value => <Tag color={value === 'active' ? 'green' : value === 'error' ? 'red' : 'default'}>{value}</Tag>
                     },
                     {
-                      title: '条目',
-                      dataIndex: 'items_count',
-                      width: 80
-                    },
-                    {
-                      title: '引用',
-                      width: 90,
-                      render: (_, record) => record.module_refs?.length || 0
-                    },
-                    {
-                      title: '同步',
-                      width: 150,
+	                      title: '条目',
+	                      dataIndex: 'items_count',
+	                      width: 64
+	                    },
+	                    {
+	                      title: '引用',
+	                      width: 64,
+	                      render: (_, record) => record.module_refs?.length || 0
+	                    },
+	                    {
+	                      title: '同步',
+	                      width: 130,
                       render: (_, record) => (
                         <Space>
                           <Button size="small" icon={<SyncOutlined />} loading={syncingId === record.id} onClick={() => handleSync(record)}>
@@ -1171,14 +1291,15 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                     <Table
                       size="small"
                       rowKey="id"
-                      dataSource={items}
-                      pagination={{ pageSize: 8 }}
-                      scroll={{ x: 980 }}
-                      columns={[
-                        {
-                          title: '资料',
-                          dataIndex: 'title',
-                          width: 420,
+	                      dataSource={items}
+	                      pagination={{ pageSize: 8 }}
+	                      tableLayout="fixed"
+	                      scroll={{ x: 860 }}
+	                      columns={[
+	                        {
+	                          title: '资料',
+	                          dataIndex: 'title',
+	                          width: 360,
                           render: (value, record) => (
                             <Space className="data-source-title-cell" direction="vertical" size={2}>
                               {record.url ? (
@@ -1204,9 +1325,9 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                           )
                         },
                         {
-                          title: '来源',
-                          dataIndex: 'source_name',
-                          width: 150,
+	                          title: '来源',
+	                          dataIndex: 'source_name',
+	                          width: 150,
                           render: (value, record) => (
                             <Space direction="vertical" size={0}>
                               <Text>{value}</Text>
@@ -1215,14 +1336,14 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                           )
                         },
                         {
-                          title: '可信度',
-                          dataIndex: 'credibility_score',
-                          width: 90,
+	                          title: '可信度',
+	                          dataIndex: 'credibility_score',
+	                          width: 78,
                           render: value => <Tag color="gold">{Math.round(value * 100)}%</Tag>
                         },
                         {
-                          title: '管理',
-                          width: 270,
+	                          title: '管理',
+	                          width: 272,
                           render: (_, record) => (
                             <Space wrap size={4}>
                               <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedItem(record)}>查看</Button>
@@ -1296,7 +1417,7 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                 </Paragraph>
               </Card>
             )}
-            <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 480, overflow: 'auto', background: '#fafafa', padding: 12 }}>
+            <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 480, overflow: 'auto', background: 'var(--surface-muted)', padding: 12 }}>
               {selectedItem.text}
             </pre>
           </Space>

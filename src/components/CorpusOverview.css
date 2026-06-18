@@ -1,0 +1,212 @@
+/* ============================================================================
+   CorpusOverview —— 证据库「语料质量与覆盖」精品概览
+   ========================================================================== */
+
+.dfx-corpus-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* 头部：总量 + 平均可信度 + 说明 */
+.dfx-corpus-headline {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.dfx-corpus-stat {
+  text-align: center;
+}
+.dfx-corpus-stat-num {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+}
+.dfx-corpus-stat-label {
+  font-size: 12px;
+  color: var(--text-soft);
+  margin-top: 2px;
+}
+.dfx-corpus-hint {
+  flex: 1;
+  min-width: 200px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  padding-left: 16px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.dfx-corpus-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* 可信度分布堆叠条 */
+.dfx-corpus-bandbar {
+  display: flex;
+  height: 24px;
+  border-radius: 6px;
+  overflow: hidden;
+  gap: 2px;
+}
+.dfx-corpus-band {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  min-width: 22px;
+}
+.dfx-corpus-band.high { background: var(--positive); }
+.dfx-corpus-band.mid { background: #d97706; }
+.dfx-corpus-band.low { background: var(--text-soft); }
+
+.dfx-corpus-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.dfx-corpus-legend i.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 5px;
+}
+.dfx-corpus-legend i.dot.high { background: var(--positive); }
+.dfx-corpus-legend i.dot.mid { background: #d97706; }
+.dfx-corpus-legend i.dot.low { background: var(--text-soft); }
+
+/* 横条行（标的覆盖 / 来源质量） */
+.dfx-corpus-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.dfx-corpus-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dfx-corpus-row.clickable {
+  cursor: pointer;
+  padding: 3px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  transition: background 0.12s ease;
+}
+.dfx-corpus-row.clickable:hover {
+  background: var(--surface-muted);
+}
+.dfx-corpus-row.clickable:hover .dfx-corpus-row-key {
+  color: var(--accent);
+}
+.dfx-corpus-row-key {
+  flex-shrink: 0;
+  width: 64px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dfx-corpus-row-key.wide {
+  width: 140px;
+  font-weight: 500;
+}
+.dfx-corpus-row-key.watch {
+  color: var(--accent);
+}
+.dfx-corpus-row-bar {
+  flex: 1;
+  min-width: 0;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+.dfx-corpus-row-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 60%, transparent), var(--accent));
+  min-width: 3px;
+}
+.dfx-corpus-row-count {
+  flex-shrink: 0;
+  width: 38px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 可信度徽标（与全站一致的 tier 配色） */
+.dfx-corpus-cred {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.dfx-corpus-cred.high {
+  color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
+  border-color: color-mix(in srgb, var(--positive) 30%, transparent);
+}
+.dfx-corpus-cred.mid {
+  color: #d97706;
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  border-color: color-mix(in srgb, #d97706 30%, transparent);
+}
+.dfx-corpus-cred.low {
+  color: var(--text-soft);
+  background: var(--surface-muted);
+  border-color: var(--border-soft);
+}
+
+.dfx-corpus-foot,
+.dfx-corpus-section .dfx-corpus-foot {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
+/* 新鲜度 4 格 */
+.dfx-corpus-fresh {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.dfx-corpus-fresh-cell {
+  text-align: center;
+  padding: 10px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+.dfx-corpus-fresh-num {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+.dfx-corpus-fresh-label {
+  font-size: 11px;
+  color: var(--text-soft);
+  margin-top: 2px;
+}
+
+@media (max-width: 640px) {
+  .dfx-corpus-fresh { grid-template-columns: repeat(2, 1fr); }
+  .dfx-corpus-row-key.wide { width: 96px; }
+}

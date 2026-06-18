@@ -72,6 +72,10 @@ export const getQuoteDelayNote = (stock?: Stock | null): string => {
     return '新浪财经免费公共行情快照，覆盖 A 股、港股和部分美股；稳定性依赖公开接口可用性。';
   }
 
+  if (stock.quoteProvider === 'tencent') {
+    return '腾讯免费公共行情快照，覆盖 A 股和港股；稳定性依赖公开接口可用性。';
+  }
+
   if (stock.quoteProvider === 'alpha_vantage') {
     return 'Alpha Vantage 免费额度返回最新可用报价，不保证交易所实时。';
   }

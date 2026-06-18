@@ -17,7 +17,15 @@ import {
   AgentRunEvent,
   AgentRunEventType,
   InvestmentTaskRecord
-} from '../../services/agentTaskService';
+} from '../../services/agentService';
+import {
+  coreAgentNameFromAgent,
+  coreAgentPhaseLabel,
+  coreAgentPhaseTitle,
+  resolveAgentPhase
+} from '../../utils/agentProjection';
+import type { CoreAgentPhase } from '../../utils/agentProjection';
+import '../centers/researchAgent.css';
 
 const { Text } = Typography;
 
@@ -48,11 +56,7 @@ export interface AgentChatBlock {
 }
 
 const phaseLabel: Record<string, string> = {
-  orchestrator: '编排',
-  evidence: '证据',
-  research: '研判',
-  risk: '风控',
-  report: '报告',
+  ...coreAgentPhaseLabel,
   progress: '进度'
 };
 
@@ -68,46 +72,6 @@ const decisionLabel: Record<string, string> = {
   watch: '观察',
   research_more: '继续研究',
   candidate: '候选机会'
-};
-
-const phaseFromAgent = (agent?: string | null): string => {
-  const text = (agent || '').toLowerCase();
-  if (text.includes('evidence') || text.includes('datasource')) return 'evidence';
-  if (
-    text.includes('analyst') ||
-    text.includes('research') ||
-    text.includes('sentiment') ||
-    text.includes('scenario') ||
-    text.includes('debate') ||
-    text.includes('trader') ||
-    text.includes('fsiworkflow') ||
-    text.includes('modelbuilder') ||
-    text.includes('earnings') ||
-    text.includes('valuation') ||
-    text.includes('pitch')
-  ) return 'research';
-  if (
-    text.includes('risk') ||
-    text.includes('control') ||
-    text.includes('kyc') ||
-    text.includes('reconciler') ||
-    text.includes('reconciliation')
-  ) return 'risk';
-  if (text.includes('portfolio') || text.includes('report') || text.includes('resultmapper') || text.includes('modelrouter')) {
-    return 'report';
-  }
-  return 'orchestrator';
-};
-
-const coreAgentName = (agent?: string | null): string => {
-  const phase = phaseFromAgent(agent);
-  return {
-    orchestrator: 'OrchestratorAgent',
-    evidence: 'EvidenceAgent',
-    research: 'ResearchAgent',
-    risk: 'RiskAgent',
-    report: 'ReportAgent'
-  }[phase] || 'OrchestratorAgent';
 };
 
 const projectionFromType = (type: AgentRunEventType): AgentBlockProjection => (
@@ -133,22 +97,18 @@ const eventTypeFromLog = (log: AgentLogEntry, index: number, total: number): Age
   return 'reasoning_delta';
 };
 
-const titleForPhase = (phase: string): string => ({
-  orchestrator: '任务编排',
-  evidence: '证据检索',
-  research: '投资研判',
-  risk: '风险复核',
-  report: '报告生成'
-}[phase] || 'Agent 事件');
+const titleForPhase = (phase: string): string => (
+  coreAgentPhaseTitle[phase as CoreAgentPhase] || '执行事件'
+);
 
 const stateTitle = (task: InvestmentTaskRecord): string => ({
   pending: '任务排队中',
-  running: 'Agent Run 执行中',
+  running: '投研任务执行中',
   waiting_approval: '等待投资者确认',
-  completed: 'Agent Run 已完成',
-  failed: 'Agent Run 失败',
-  cancelled: 'Agent Run 已取消'
-}[task.status] || 'Agent Run 状态');
+  completed: '投研任务已完成',
+  failed: '投研任务失败',
+  cancelled: '投研任务已取消'
+}[task.status] || '投研任务状态');
 
 const taskStatusForBlock = (task: InvestmentTaskRecord): AgentBlockStatus => {
   if (task.status === 'failed' || task.status === 'cancelled') return 'error';
@@ -185,13 +145,13 @@ export const mergeAgentBlock = (
 };
 
 export const blocksFromInvestmentTask = (task: InvestmentTaskRecord): AgentChatBlock[] => {
-  const statePhase = phaseFromAgent(task.assigned_agent);
+  const statePhase = resolveAgentPhase(task.assigned_agent);
   const blocks: AgentChatBlock[] = [{
     id: `${task.id}:state:${task.status}:${task.progress}`,
     type: 'run_state',
     projection: 'run_state',
     phase: statePhase,
-    agent: coreAgentName(task.assigned_agent),
+    agent: coreAgentNameFromAgent(task.assigned_agent),
     title: stateTitle(task),
     detail: `${task.title} · ${task.progress}%`,
     progress: task.progress,
@@ -204,13 +164,13 @@ export const blocksFromInvestmentTask = (task: InvestmentTaskRecord): AgentChatB
   recentLogs.forEach((log, index) => {
     const originalIndex = task.logs.length - recentLogs.length + index;
     const type = eventTypeFromLog(log, originalIndex, task.logs.length);
-    const phase = phaseFromAgent(log.agent);
+    const phase = resolveAgentPhase(log.agent);
     blocks.push({
       id: `${task.id}:log:${originalIndex}:${type}`,
       type,
       projection: projectionFromType(type),
       phase,
-      agent: coreAgentName(log.agent),
+      agent: coreAgentNameFromAgent(log.agent),
       title: titleForPhase(phase),
       detail: log.message,
       progress: log.progress ?? (originalIndex === task.logs.length - 1 ? task.progress : null),
@@ -226,7 +186,7 @@ export const blocksFromInvestmentTask = (task: InvestmentTaskRecord): AgentChatB
       type: 'artifact_update',
       projection: 'artifact',
       phase: 'report',
-      agent: 'ReportAgent',
+      agent: 'Report Builder',
       title: '投资决策报告',
       detail: task.result.plain_language_takeaway || task.result.investor_summary || '报告已生成。',
       progress: 100,
@@ -349,7 +309,7 @@ export const AgentRunBlocks: React.FC<{
   return (
     <div className={`agent-run-blocks ${open ? 'open' : 'collapsed'} ${compact ? 'compact' : 'full'}`}>
       <div className="agent-run-blocks-head">
-        <span>Agent 执行流</span>
+        <span>核心链路执行流</span>
         <Space size={6}>
           <Text type="secondary">{completed ? '已完成' : `${blocks.length} 个事件`}</Text>
           <Button size="small" type="text" onClick={() => setManualOpen(value => !(value ?? !compact))}>
@@ -360,7 +320,7 @@ export const AgentRunBlocks: React.FC<{
       {!open && (
         <div className="agent-run-block-summary">
           <Text type="secondary">
-            {latest ? `${latest.agent} · ${latest.title}${progress != null ? ` · ${progress}%` : ''}` : '等待 Agent 事件'}
+            {latest ? `${latest.agent} · ${latest.title}${progress != null ? ` · ${progress}%` : ''}` : '等待执行事件'}
           </Text>
         </div>
       )}

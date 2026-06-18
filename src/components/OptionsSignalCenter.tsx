@@ -29,7 +29,8 @@ import {
   RobotOutlined,
   SafetyCertificateOutlined,
   SearchOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import {
   Bar,
@@ -41,19 +42,25 @@ import {
   YAxis
 } from 'recharts';
 import { AppState } from '../types';
-import { MarketSymbolCandidate, searchMarketSymbols } from '../services/marketDataService';
+import DataCenter from './DataCenter';
+import ShareButton from './common/ShareButton';
+import { MarketSymbolCandidate, searchMarketSymbols } from '../services/marketService';
 import {
   analyzeOptionsTrend,
   OptionsAiAnalysisResponse,
   getOptionsSignals,
   OptionsExpirationSignal,
+  OptionsForecastLabel,
+  OptionsGammaStrike,
   OptionsKeyStrike,
   OptionsSignal,
   OptionsSignalResponse,
   OptionsSourceStatus,
+  OptionsTailEventRiskLevel,
   OptionsTrendLabel,
   OptionsUnusualFlow
-} from '../services/optionsSignalService';
+} from '../services/marketService';
+import './OptionsSignalCenter.css';
 
 const { Paragraph, Text, Title } = Typography;
 const { Search } = Input;
@@ -89,6 +96,42 @@ const severityColor: Record<OptionsUnusualFlow['severity'], string> = {
   高: 'red',
   中: 'orange',
   低: 'blue'
+};
+
+const tailRiskColor: Record<OptionsTailEventRiskLevel, string> = {
+  绿灯: 'green',
+  黄灯: 'gold',
+  橙灯: 'orange',
+  红灯: 'red'
+};
+
+const tailRiskAlertType: Record<OptionsTailEventRiskLevel, 'success' | 'info' | 'warning' | 'error'> = {
+  绿灯: 'success',
+  黄灯: 'info',
+  橙灯: 'warning',
+  红灯: 'error'
+};
+
+const forecastColor: Record<OptionsForecastLabel, string> = {
+  强看涨: 'green',
+  看涨: 'green',
+  震荡偏强: 'cyan',
+  震荡: 'blue',
+  震荡偏弱: 'orange',
+  看跌: 'red',
+  高风险回避: 'red',
+  不可判定: 'default'
+};
+
+const forecastAlertType: Record<OptionsForecastLabel, 'success' | 'info' | 'warning' | 'error'> = {
+  强看涨: 'success',
+  看涨: 'success',
+  震荡偏强: 'info',
+  震荡: 'info',
+  震荡偏弱: 'warning',
+  看跌: 'warning',
+  高风险回避: 'error',
+  不可判定: 'info'
 };
 
 const trendColor: Record<OptionsTrendLabel, string> = {
@@ -135,6 +178,14 @@ const formatMoney = (value?: number | null): string => {
   return `$${moneyFormat.format(value)}`;
 };
 
+const formatSignedMoney = (value?: number | null): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '--';
+  }
+  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}$${moneyFormat.format(Math.abs(value))}`;
+};
+
 const formatRatio = (value?: number | null): string => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return '--';
@@ -164,6 +215,25 @@ const formatDate = (date: string): string => {
   return parsed.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
 };
 
+const cleanSignalSummary = (summary: string): string => (
+  summary
+    .replace(/当前为免费\/降级数据源，Greeks 与 GEX 暂不可用；配置 MarketData\.app 或 Tradier 后自动升级。?/g, '')
+    .replace(/Nasdaq 免费快照缺少 IV\/Greeks，不能计算真实波动率曲面和 Gamma Exposure。?/g, '')
+    .trim()
+);
+
+const hasGammaExposure = (status: OptionsSignal['gamma_exposure_status']): boolean => status !== 'unavailable';
+
+const gammaStatusDescription = (status: OptionsSignal['gamma_exposure_status']): string => {
+  if (status === 'available') {
+    return '按授权数据源 Gamma × OI 估算，Call 记正、Put 记负，单位为每 1% 标的涨跌的美元敞口。';
+  }
+  if (status === 'estimated') {
+    return '免费源估算：用期权价格反推 IV/Gamma 后计算 GEX，适合作为观察线索，需用 MarketData.app 或 Tradier 复核。';
+  }
+  return '当前数据源缺少可用期权价格或 Gamma，配置 MarketData.app 或 Tradier 后可启用真实 GEX。';
+};
+
 const uniqueSymbols = (symbols: string[]): string[] => (
   Array.from(new Set(symbols.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))).slice(0, 12)
 );
@@ -187,7 +257,6 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
   const [maxExpirations, setMaxExpirations] = useState(3);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(defaultSymbols[0] || null);
   const [result, setResult] = useState<OptionsSignalResponse | null>(null);
-  const [loading, setLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<OptionsAiAnalysisResponse | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -197,43 +266,27 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
   }, [defaultSymbols]);
 
   const symbols = useMemo(() => {
-    if (symbolMode === 'watchlist') {
-      return defaultSymbols;
-    }
-    if (symbolMode === 'search') {
-      return searchSymbols;
-    }
+    if (symbolMode === 'watchlist') return defaultSymbols;
+    if (symbolMode === 'search') return searchSymbols;
     return uniqueSymbols(customSymbols.split(/[,\s，、]+/));
   }, [customSymbols, defaultSymbols, searchSymbols, symbolMode]);
 
-  const loadSignals = useCallback(async (overrideSymbols?: string[]) => {
+  const fetchSignals = useCallback(async (overrideSymbols?: string[]) => {
     const targetSymbols = overrideSymbols || symbols;
     if (targetSymbols.length === 0) {
-      message.warning('请输入至少一个美股或 ETF 代码');
-      return;
+      throw new Error('请输入至少一个美股或 ETF 代码');
     }
-    setLoading(true);
-    try {
-      const data = await getOptionsSignals(targetSymbols, horizonDays, maxExpirations);
-      setResult(data);
-      setAiAnalysis(null);
-      setSelectedSymbol(prev => (
-        prev && data.signals.some(signal => signal.symbol === prev)
-          ? prev
-          : data.signals[0]?.symbol || null
-      ));
-      message.success(`期权快照已更新：${data.signals.length} 个标的`);
-    } catch (error: any) {
-      const detail = error?.response?.data?.detail || '请确认后端 API 已启动';
-      message.error(`期权模块加载失败：${detail}`);
-    } finally {
-      setLoading(false);
-    }
+    const data = await getOptionsSignals(targetSymbols, horizonDays, maxExpirations);
+    setResult(data);
+    setAiAnalysis(null);
+    setSelectedSymbol(prev => (
+      prev && data.signals.some(signal => signal.symbol === prev)
+        ? prev
+        : data.signals[0]?.symbol || null
+    ));
+    message.success(`期权快照已更新：${data.signals.length} 个标的`);
+    return data;
   }, [horizonDays, maxExpirations, message, symbols]);
-
-  useEffect(() => {
-    void loadSignals();
-  }, []);
 
   const handleSymbolSearch = async (value = searchText) => {
     const keyword = value.trim();
@@ -253,7 +306,7 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
         const nextSymbols = uniqueSymbols([directSymbol, ...searchSymbols]);
         setSearchSymbols(nextSymbols);
         setSelectedSymbol(directSymbol);
-        void loadSignals(nextSymbols);
+        void fetchSignals(nextSymbols);
         message.info(`未命中搜索结果，已按代码 ${directSymbol} 尝试显示`);
       }
       if (response.warnings.length > 0) {
@@ -272,7 +325,7 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
     setSearchSymbols(nextSymbols);
     setSelectedSymbol(candidate.symbol);
     setSearchText(candidate.symbol);
-    void loadSignals(nextSymbols);
+    void fetchSignals(nextSymbols);
   };
 
   const handleRemoveSearchSymbol = (symbol: string) => {
@@ -283,7 +336,7 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
     }
     if (symbolMode === 'search') {
       if (nextSymbols.length > 0) {
-        void loadSignals(nextSymbols);
+        void fetchSignals(nextSymbols);
       } else {
         setResult(null);
         setAiAnalysis(null);
@@ -329,8 +382,11 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
       total: signals.length,
       bullish: signals.filter(signal => signal.direction === '偏多').length,
       bearish: signals.filter(signal => signal.direction === '偏空').length,
+      forecastBullish: signals.filter(signal => ['强看涨', '看涨', '震荡偏强'].includes(signal.forecast_label)).length,
+      forecastAvoid: signals.filter(signal => signal.forecast_label === '高风险回避').length,
       unusualCount: signals.reduce((sum, signal) => sum + (signal.unusual_flow_count || 0), 0),
       unusualPremium: signals.reduce((sum, signal) => sum + (signal.unusual_premium_notional || 0), 0),
+      tailRiskCount: signals.filter(signal => ['橙灯', '红灯'].includes(signal.tail_event_risk_level)).length,
       averageQuality: signals.length
         ? Math.round(signals.reduce((sum, signal) => sum + signal.data_quality, 0) / signals.length)
         : 0
@@ -374,11 +430,55 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
       )
     },
     {
+      title: '左尾预警',
+      key: 'tail_event_risk',
+      sorter: (a: OptionsSignal, b: OptionsSignal) => a.tail_event_risk_score - b.tail_event_risk_score,
+      render: (_: unknown, item: OptionsSignal) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={tailRiskColor[item.tail_event_risk_level]}>{item.tail_event_risk_level}</Tag>
+          <Progress
+            percent={item.tail_event_risk_score}
+            size="small"
+            status={item.tail_event_risk_level === '红灯' ? 'exception' : 'normal'}
+          />
+        </Space>
+      )
+    },
+    {
+      title: '走势预判',
+      key: 'forecast',
+      sorter: (a: OptionsSignal, b: OptionsSignal) => a.forecast_score - b.forecast_score,
+      render: (_: unknown, item: OptionsSignal) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={forecastColor[item.forecast_label]}>{item.forecast_label}</Tag>
+          <Progress
+            percent={item.forecast_score}
+            size="small"
+            status={item.forecast_label === '高风险回避' || item.forecast_label === '看跌' ? 'exception' : 'normal'}
+          />
+          <Text type="secondary">{item.forecast_confidence}置信</Text>
+        </Space>
+      )
+    },
+    {
       title: '方向分',
       dataIndex: 'score',
       key: 'score',
       sorter: (a: OptionsSignal, b: OptionsSignal) => a.score - b.score,
       render: (score: number) => <Progress percent={score} size="small" />
+    },
+    {
+      title: 'Gamma',
+      key: 'gamma',
+      sorter: (a: OptionsSignal, b: OptionsSignal) => a.net_gamma_exposure - b.net_gamma_exposure,
+      render: (_: unknown, item: OptionsSignal) => (
+        <Space direction="vertical" size={0}>
+          <Text>{hasGammaExposure(item.gamma_exposure_status) ? formatSignedMoney(item.net_gamma_exposure) : '--'}</Text>
+          <Text type="secondary">
+            {item.gamma_exposure_status === 'estimated' ? '估算 ' : ''}墙 {formatPrice(item.gamma_wall)}
+          </Text>
+        </Space>
+      )
     },
     {
       title: '异常大单',
@@ -581,26 +681,57 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
     }
   ];
 
-  return (
-    <div className="options-signal-page">
-      <div className="options-signal-toolbar">
-        <div>
-          <Title level={3}>期权雷达</Title>
-          <Paragraph type="secondary">
-            用期权链快照跟踪异常大单候选、Put/Call、关键 OI 墙、Max Pain、跨式预期波动和 IV 偏斜。
-          </Paragraph>
-        </div>
-        <Button
-          type="primary"
-          icon={<ReloadOutlined />}
-          loading={loading}
-          onClick={() => void loadSignals()}
-        >
-          刷新快照
-        </Button>
-      </div>
+  const gammaColumns = [
+    {
+      title: '行权价',
+      key: 'strike',
+      render: (_: unknown, item: OptionsGammaStrike) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{formatPrice(item.strike)}</Text>
+          <Text type="secondary">{formatPercent(item.distance_pct)}</Text>
+        </Space>
+      )
+    },
+    {
+      title: '净 GEX / 1%',
+      key: 'net',
+      sorter: (a: OptionsGammaStrike, b: OptionsGammaStrike) => a.net_gamma_exposure - b.net_gamma_exposure,
+      render: (_: unknown, item: OptionsGammaStrike) => (
+        <Text type={item.net_gamma_exposure < 0 ? 'danger' : undefined}>
+          {formatSignedMoney(item.net_gamma_exposure)}
+        </Text>
+      )
+    },
+    {
+      title: 'Call GEX',
+      key: 'call',
+      render: (_: unknown, item: OptionsGammaStrike) => <Text>{formatMoney(item.call_gamma_exposure)}</Text>
+    },
+    {
+      title: 'Put GEX',
+      key: 'put',
+      render: (_: unknown, item: OptionsGammaStrike) => <Text type="danger">{formatSignedMoney(item.put_gamma_exposure)}</Text>
+    },
+    {
+      title: '总 OI',
+      key: 'oi',
+      render: (_: unknown, item: OptionsGammaStrike) => <Text>{formatNumber(item.total_open_interest)}</Text>
+    }
+  ];
 
-      <Row gutter={[14, 14]} className="options-control-row">
+  return (
+    <DataCenter
+      className="options-signal-page"
+      title="期权雷达"
+      subtitle="用期权链快照跟踪异常大单候选、Put/Call、关键 OI 墙、Max Pain、跨式预期波动和 IV 偏斜。"
+      fetchData={fetchSignals}
+      refreshLabel="刷新快照"
+      emptyText="等待生成期权信号"
+      extra={null}
+      renderContent={(_data, refresh) => {
+        return (
+          <>
+            <Row gutter={[14, 14]} className="options-control-row">
         <Col xs={24} lg={9}>
           <Card>
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
@@ -747,8 +878,26 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
             </Col>
             <Col xs={12} md={6}>
               <Card>
+                <Statistic title="预判偏多" value={summaryStats.forecastBullish} suffix="个" prefix={<LineChartOutlined />} />
+                <Text type="secondary">1-5日概率线索</Text>
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card>
+                <Statistic title="高风险回避" value={summaryStats.forecastAvoid} suffix="个" prefix={<WarningOutlined />} />
+                <Text type="secondary">先防波动</Text>
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card>
                 <Statistic title="异常大单" value={summaryStats.unusualCount} suffix="条" prefix={<ThunderboltOutlined />} />
                 <Text type="secondary">权利金 {formatMoney(summaryStats.unusualPremium)}</Text>
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card>
+                <Statistic title="左尾橙红灯" value={summaryStats.tailRiskCount} suffix="个" prefix={<WarningOutlined />} />
+                <Text type="secondary">重大坏消息押注</Text>
               </Card>
             </Col>
             <Col xs={12} md={6}>
@@ -766,7 +915,7 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
                   columns={signalColumns}
                   dataSource={result.signals}
                   pagination={false}
-                  scroll={{ x: 980 }}
+                  scroll={{ x: 1380 }}
                   rowClassName={record => record.symbol === activeSignal?.symbol ? 'options-active-row' : ''}
                 />
               </Card>
@@ -798,6 +947,12 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
                 <Space wrap>
                   <Title level={4}>{activeSignal.symbol}</Title>
                   <Tag color={directionColor[activeSignal.direction]}>{activeSignal.direction}</Tag>
+                  <Tag color={forecastColor[activeSignal.forecast_label]}>
+                    预判{activeSignal.forecast_label} · {activeSignal.forecast_score}/100
+                  </Tag>
+                  <Tag color={tailRiskColor[activeSignal.tail_event_risk_level]}>
+                    左尾{activeSignal.tail_event_risk_level} · {activeSignal.tail_event_risk_score}/100
+                  </Tag>
                   <Tag>{activeSignal.provider_name}</Tag>
                   <Tag color={activeSignal.source_status === 'partial' ? 'orange' : 'blue'}>{activeSignal.source_status}</Tag>
                 </Space>
@@ -805,6 +960,10 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
                   <Text>现价 {formatPrice(activeSignal.underlying_price)}</Text>
                   <Text>Max Pain {formatPrice(activeSignal.max_pain)}</Text>
                   <Text>Pin {activeSignal.pin_risk_score}/100</Text>
+                  <Text>
+                    净GEX {hasGammaExposure(activeSignal.gamma_exposure_status) ? formatSignedMoney(activeSignal.net_gamma_exposure) : '--'}
+                    {activeSignal.gamma_exposure_status === 'estimated' ? '（估算）' : ''}
+                  </Text>
                   <Button
                     type="primary"
                     icon={<RobotOutlined />}
@@ -815,10 +974,77 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
                   </Button>
                 </Space>
               </div>
-              <Paragraph>{activeSignal.summary}</Paragraph>
+              <Paragraph>{cleanSignalSummary(activeSignal.summary)}</Paragraph>
               <Space wrap className="options-signal-tags">
                 {activeSignal.signals.slice(0, 8).map(line => <Tag key={line}>{line}</Tag>)}
               </Space>
+              <Alert
+                className="options-forecast-panel"
+                type={forecastAlertType[activeSignal.forecast_label]}
+                showIcon
+                message={activeSignal.forecast_summary}
+                description={(
+                  <div className="options-tail-risk-content">
+                    <div>
+                      <Text strong>预判依据</Text>
+                      <ul>
+                        {(activeSignal.forecast_reasons || []).slice(0, 6).map(reason => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <Text strong>动作与失效条件</Text>
+                      <ul>
+                        {(activeSignal.forecast_actions || []).slice(0, 3).map(action => (
+                          <li key={action}>{action}</li>
+                        ))}
+                        {(activeSignal.forecast_invalidations || []).slice(0, 2).map(item => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              />
+              <Alert
+                className="options-tail-risk-panel"
+                type={tailRiskAlertType[activeSignal.tail_event_risk_level]}
+                showIcon
+                message={activeSignal.tail_event_risk_summary}
+                description={(
+                  <div className="options-tail-risk-content">
+                    <div>
+                      <Text strong>为什么报警</Text>
+                      <ul>
+                        {(activeSignal.tail_event_risk_reasons || []).slice(0, 5).map(reason => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <Text strong>建议动作</Text>
+                      <ul>
+                        {(activeSignal.tail_event_risk_actions || []).slice(0, 4).map(action => (
+                          <li key={action}>{action}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              />
+              <div className="options-gamma-panel">
+                <div>
+                  <Text strong>Gamma Exposure</Text>
+                  <Text type="secondary">{gammaStatusDescription(activeSignal.gamma_exposure_status)}</Text>
+                </div>
+                <div className="options-gamma-metrics">
+                  <Statistic title={activeSignal.gamma_exposure_status === 'estimated' ? '估算净 GEX / 1%' : '净 GEX / 1%'} value={hasGammaExposure(activeSignal.gamma_exposure_status) ? formatSignedMoney(activeSignal.net_gamma_exposure) : '--'} />
+                  <Statistic title="Call GEX" value={hasGammaExposure(activeSignal.gamma_exposure_status) ? formatMoney(activeSignal.call_gamma_exposure) : '--'} />
+                  <Statistic title="Put GEX" value={hasGammaExposure(activeSignal.gamma_exposure_status) ? formatSignedMoney(activeSignal.put_gamma_exposure) : '--'} />
+                  <Statistic title="Gamma Wall" value={formatPrice(activeSignal.gamma_wall)} />
+                </div>
+              </div>
               {visibleAiAnalysis && (
                 <div className="options-ai-panel">
                   <div className="options-ai-head">
@@ -828,6 +1054,14 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
                       <Tag color={trendColor[visibleAiAnalysis.trend_label]}>{visibleAiAnalysis.trend_label}</Tag>
                       <Tag>方向分 {visibleAiAnalysis.trend_score}/100</Tag>
                       <Tag>置信 {formatConfidence(visibleAiAnalysis.confidence)}</Tag>
+                      <ShareButton
+                        modalTitle="分享AI走势研判"
+                        target={() => ({
+                          title: `${activeSignal?.symbol || ''} AI走势研判`.trim(),
+                          summary: visibleAiAnalysis.thesis,
+                          byline: '由 DeepFocus 期权异动雷达生成',
+                        })}
+                      />
                     </Space>
                     <Text type="secondary">
                       {visibleAiAnalysis.provider} · {visibleAiAnalysis.model} · {visibleAiAnalysis.time_horizon}
@@ -924,6 +1158,21 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
                     )
                   },
                   {
+                    key: 'gamma',
+                    label: 'Gamma Exposure',
+                    children: hasGammaExposure(activeSignal.gamma_exposure_status) && activeSignal.gamma_strikes.length > 0 ? (
+                      <Table
+                        rowKey={item => `gamma-${item.strike}`}
+                        columns={gammaColumns}
+                        dataSource={activeSignal.gamma_strikes}
+                        pagination={false}
+                        scroll={{ x: 760 }}
+                      />
+                    ) : (
+                      <Empty description="当前数据源缺少可用 Gamma，暂不能计算 GEX" />
+                    )
+                  },
+                  {
                     key: 'risk',
                     label: '风险与限制',
                     children: (
@@ -958,12 +1207,11 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
             </Card>
           ) : null}
         </>
-      ) : (
-        <Card>
-          <Empty description="等待生成期权信号" />
-        </Card>
-      )}
-    </div>
+      ) : null}
+          </>
+        );
+      }}
+    />
   );
 };
 

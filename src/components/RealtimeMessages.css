@@ -1,0 +1,100 @@
+/* RealtimeMessages component styles.
+ * Extracted from src/index.css (namespaces: .realtime-message-*, .realtime-feed-*).
+ * Loaded after index.css. Rules whose selector lists mix these namespaces with
+ * .earnings-*, .realtime-control-panel, .realtime-kpi-*, .realtime-layout,
+ * .realtime-heading-icon, or .realtime-panel-title remain in index.css.
+ * The @media (max-width: 480px) override for .realtime-message-item is co-located
+ * here so its base rule and responsive override stay together.
+ */
+
+.realtime-feed-panel {
+  padding: 12px;
+}
+
+/* 信号召回设置：左侧每一项「标签 + 控件」一行对齐 */
+.realtime-recall-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.realtime-recall-row > span:first-child {
+  color: var(--text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.realtime-feed-toolbar {
+  margin-bottom: 12px;
+}
+
+.realtime-feed-toolbar .ant-select {
+  min-width: 0;
+}
+
+.realtime-feed-panel .ant-list {
+  min-width: 0;
+}
+
+.realtime-message-item.ant-list-item {
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.realtime-message-item.severity-info {
+  border-left-color: var(--info);
+}
+
+.realtime-message-item.severity-success {
+  border-left-color: var(--positive);
+}
+
+.realtime-message-item.severity-warning {
+  border-left-color: var(--warning);
+}
+
+.realtime-message-item.severity-critical {
+  border-left-color: var(--negative);
+}
+
+.realtime-message-main {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.realtime-message-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.realtime-message-head > .ant-typography {
+  flex: 0 0 auto;
+}
+
+.realtime-message-head .ant-tag,
+.realtime-message-meta .ant-tag {
+  margin-inline-end: 0;
+}
+
+.realtime-message-content {
+  margin: 0 !important;
+  color: var(--text-muted);
+}
+
+.realtime-message-meta .ant-space {
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .realtime-message-item.ant-list-item {
+    padding: 10px;
+  }
+}

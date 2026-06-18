@@ -1,0 +1,128 @@
+/* ============================================================================
+   Header —— 顶栏精简：状态信息收进单一指示器，账户操作收进头像下拉
+   命名空间 dfx-hd-*，与 index.css 解耦
+   ========================================================================== */
+
+/* 单一系统状态指示器（替代原来 4 个并排 pill） */
+.dfx-hd-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.dfx-hd-status-trigger:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.dfx-hd-status-trigger strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.dfx-hd-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-soft);
+}
+.dfx-hd-dot.ready { background: var(--positive); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15); }
+.dfx-hd-dot.degraded { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
+.dfx-hd-dot.not-ready { background: var(--negative); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15); }
+
+/* 状态 Popover 内容 */
+.dfx-hd-status-panel {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dfx-hd-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 4px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.dfx-hd-row:last-child { border-bottom: none; }
+
+.dfx-hd-row-label {
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dfx-hd-row-value {
+  color: var(--text);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dfx-hd-note {
+  font-size: 12px;
+  color: var(--text-soft);
+  padding: 6px 4px 0;
+  line-height: 1.5;
+}
+
+.dfx-hd-note.warn { color: #f59e0b; }
+.dfx-hd-note.block { color: var(--negative); }
+
+/* ⌘K 命令面板入口 */
+.dfx-hd-cmdk {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.dfx-hd-cmdk:hover {
+  border-color: var(--accent);
+  color: var(--text-muted);
+}
+.dfx-hd-cmdk-keys {
+  display: inline-flex;
+  gap: 2px;
+}
+.dfx-hd-cmdk-keys kbd {
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* 下拉里的余额行 */
+.dfx-hd-balance {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.dfx-hd-balance small { color: var(--text-soft); font-size: 11px; }
+.dfx-hd-balance strong { color: var(--text); font-size: 14px; }

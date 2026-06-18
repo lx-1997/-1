@@ -1,0 +1,78 @@
+/* ============================================================================
+   CenterShell —— 各「中心」页统一骨架的布局样式
+   视觉沿用 index.css 里的 dashboard-eyebrow/title/subtitle，这里只补布局类。
+   ========================================================================== */
+
+.center-shell {
+  min-height: calc(100vh - 52px);
+  max-width: var(--workspace-max);
+  margin: 0 auto;
+  padding: 18px;
+  color: var(--text);
+}
+
+.center-shell-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.center-shell-heading {
+  min-width: 0;
+}
+
+.center-shell-title-icon {
+  margin-right: 8px;
+  color: var(--accent);
+}
+
+.center-shell-actions {
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.center-shell-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.center-shell-alert {
+  margin-top: 12px;
+}
+
+.center-shell-body {
+  margin-top: 12px;
+}
+
+.center-shell-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 0;
+}
+
+@media (max-width: 768px) {
+  .center-shell {
+    padding: 12px;
+  }
+  .center-shell-header {
+    flex-direction: column;
+  }
+  .center-shell-actions {
+    justify-content: flex-start;
+  }
+}

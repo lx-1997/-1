@@ -233,7 +233,7 @@ const CreatePost: React.FC<CreatePostProps> = ({ stock, onSave, onCancel }) => {
 
           <Divider />
 
-          <div style={{ textAlign: 'center', color: '#666' }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
             <Text>
               {isPaid ? (
                 <>

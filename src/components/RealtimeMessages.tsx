@@ -10,6 +10,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Tag,
   Tooltip,
   Typography,
@@ -29,6 +30,8 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { AppState } from '../types';
+import CenterShell from './common/CenterShell';
+import './RealtimeMessages.css';
 import {
   RealtimeMessageRecord,
   RealtimeMessageSeverity,
@@ -37,10 +40,17 @@ import {
   getRealtimePushUrl,
   getRealtimeStreamUrl,
   listRealtimeMessages,
-  pushRealtimeMessage
-} from '../services/realtimeMessageService';
+  pushRealtimeMessage,
+  createRecallSubscription,
+  listRecallSubscriptions,
+  deleteRecallSubscription,
+  getRecallMetrics,
+  RecallSubscriptionRecord,
+  RecallMetrics
+} from '../services/eventService';
+import { useRecallPrefs, fireTestRecall, RecallScope } from '../utils/signalRecall';
 
-const { Text, Title, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
 interface RealtimeMessagesProps {
@@ -68,6 +78,8 @@ const topicLabel: Record<string, string> = {
   'data-source-crawl': '网页抓取',
   'data-source-keyword': '关键词抓取',
   'external-push': '外部推送',
+  'official-news': '权威新闻',
+  'people-voice': '人物跟踪',
   'data-source': '数据源'
 };
 
@@ -95,6 +107,68 @@ const RealtimeMessages: React.FC<RealtimeMessagesProps> = ({ appState }) => {
   });
 
   const pushEndpoint = useMemo(() => getRealtimePushUrl(), []);
+  const recall = useRecallPrefs();
+  const [recallEmail, setRecallEmail] = useState('');
+  const [subscribing, setSubscribing] = useState(false);
+  const [emailSubscriptions, setEmailSubscriptions] = useState<RecallSubscriptionRecord[]>([]);
+  const [recallMetrics, setRecallMetrics] = useState<RecallMetrics | null>(null);
+
+  const loadEmailSubscriptions = useCallback(async () => {
+    try {
+      const subs = await listRecallSubscriptions();
+      setEmailSubscriptions(subs.filter(sub => sub.channel === 'email'));
+    } catch {
+      // 后端未就绪时静默：浏览器通知召回不依赖它
+    }
+  }, []);
+
+  const loadRecallMetrics = useCallback(async () => {
+    try {
+      setRecallMetrics(await getRecallMetrics());
+    } catch {
+      // 后端未就绪时静默
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadEmailSubscriptions();
+    void loadRecallMetrics();
+  }, [loadEmailSubscriptions, loadRecallMetrics]);
+
+  const handleSubscribeEmail = useCallback(async () => {
+    const email = recallEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      message.warning('请输入有效邮箱');
+      return;
+    }
+    setSubscribing(true);
+    try {
+      const watchlist = appState.stocks.map(stock => stock.symbol).filter(Boolean);
+      await createRecallSubscription({
+        channel: 'email',
+        address: email,
+        symbols: recall.prefs.scope === 'watchlist' ? watchlist : [],
+        severities: recall.prefs.severities,
+        scope: recall.prefs.scope
+      });
+      setRecallEmail('');
+      message.success('已订阅邮件召回（实际发信需后端配置 SMTP）');
+      await loadEmailSubscriptions();
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '订阅失败');
+    } finally {
+      setSubscribing(false);
+    }
+  }, [recallEmail, appState.stocks, recall.prefs.scope, recall.prefs.severities, loadEmailSubscriptions]);
+
+  const handleUnsubscribeEmail = useCallback(async (id: string) => {
+    try {
+      await deleteRecallSubscription(id);
+      await loadEmailSubscriptions();
+    } catch {
+      message.error('取消订阅失败');
+    }
+  }, [loadEmailSubscriptions]);
 
   const mergeIncomingMessage = useCallback((incoming: RealtimeMessageRecord) => {
     setMessages(prev => [
@@ -209,17 +283,11 @@ const RealtimeMessages: React.FC<RealtimeMessagesProps> = ({ appState }) => {
   };
 
   return (
-    <div className="realtime-message-shell">
-      <div className="page-heading-band">
-        <div>
-          <Space align="center" size={10}>
-            <span className="realtime-heading-icon"><ThunderboltOutlined /></span>
-            <Title level={3} style={{ margin: 0 }}>实时消息</Title>
-          </Space>
-          <Text type="secondary">
-            数据源同步、上传、抓取和外部推送会进入同一条消息流
-          </Text>
-        </div>
+    <CenterShell
+      icon={<ThunderboltOutlined />}
+      title="实时消息"
+      subtitle="数据源同步、上传、抓取和外部推送会进入同一条消息流"
+      actions={(
         <Space wrap>
           <Badge status={statusMeta[streamStatus].badge} text={statusMeta[streamStatus].text} />
           <Button icon={<ReloadOutlined />} onClick={() => { void loadMessages(); connectStream(); }}>
@@ -229,8 +297,8 @@ const RealtimeMessages: React.FC<RealtimeMessagesProps> = ({ appState }) => {
             断开
           </Button>
         </Space>
-      </div>
-
+      )}
+    >
       <div className="realtime-kpi-grid">
         <div className="realtime-kpi-tile">
           <Statistic title="消息总数" value={messages.length} prefix={<BellOutlined />} />
@@ -246,7 +314,7 @@ const RealtimeMessages: React.FC<RealtimeMessagesProps> = ({ appState }) => {
         </div>
       </div>
 
-      <Row gutter={[14, 14]}>
+      <Row className="realtime-layout" gutter={[14, 14]}>
         <Col xs={24} xl={7}>
           <Space direction="vertical" size={14} style={{ width: '100%' }}>
             <div className="realtime-control-panel">
@@ -263,6 +331,115 @@ const RealtimeMessages: React.FC<RealtimeMessagesProps> = ({ appState }) => {
                 <Button type="primary" block icon={<CheckCircleOutlined />} onClick={connectStream}>
                   连接监听
                 </Button>
+              </Space>
+            </div>
+
+            <div className="realtime-control-panel">
+              <div className="realtime-panel-title">
+                <BellOutlined />
+                <span>信号召回</span>
+              </div>
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                <div className="realtime-recall-row">
+                  <span>浏览器通知</span>
+                  <Switch
+                    checked={recall.prefs.browserEnabled}
+                    onChange={on => (on ? void recall.enableBrowser() : recall.disableBrowser())}
+                  />
+                </div>
+                {recall.permission === 'denied' && (
+                  <Text type="warning" style={{ fontSize: 12 }}>
+                    浏览器已拒绝通知权限，请在站点设置里手动开启。
+                  </Text>
+                )}
+                {recall.permission === 'unsupported' && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>当前环境不支持桌面通知。</Text>
+                )}
+                <div className="realtime-recall-row">
+                  <span>触发级别</span>
+                  <Select
+                    mode="multiple"
+                    value={recall.prefs.severities}
+                    onChange={value => recall.setPrefs({ severities: value as RealtimeMessageSeverity[] })}
+                    options={Object.entries(severityMeta).map(([value, meta]) => ({ value, label: meta.label }))}
+                    placeholder="级别"
+                    style={{ flex: 1, minWidth: 140 }}
+                  />
+                </div>
+                <div className="realtime-recall-row">
+                  <span>范围</span>
+                  <Select
+                    value={recall.prefs.scope}
+                    onChange={value => recall.setPrefs({ scope: value as RecallScope })}
+                    options={[
+                      { value: 'watchlist', label: '仅自选股' },
+                      { value: 'all', label: '全部信号' }
+                    ]}
+                    style={{ minWidth: 140 }}
+                  />
+                </div>
+                <div className="realtime-recall-row">
+                  <span>仅离开时提醒</span>
+                  <Switch
+                    checked={recall.prefs.onlyWhenHidden}
+                    onChange={on => recall.setPrefs({ onlyWhenHidden: on })}
+                  />
+                </div>
+                <Button
+                  block
+                  icon={<BellOutlined />}
+                  onClick={() => {
+                    if (!fireTestRecall()) {
+                      message.info('请先开启浏览器通知并授予权限');
+                    }
+                  }}
+                >
+                  测试召回
+                </Button>
+                <div className="realtime-recall-row">
+                  <span>邮件召回</span>
+                  <Space.Compact style={{ flex: 1 }}>
+                    <Input
+                      value={recallEmail}
+                      onChange={event => setRecallEmail(event.target.value)}
+                      onPressEnter={() => void handleSubscribeEmail()}
+                      placeholder="you@example.com"
+                      type="email"
+                    />
+                    <Button type="primary" loading={subscribing} onClick={() => void handleSubscribeEmail()}>
+                      订阅
+                    </Button>
+                  </Space.Compact>
+                </div>
+                {emailSubscriptions.length > 0 && (
+                  <Space wrap size={6}>
+                    {emailSubscriptions.map(sub => (
+                      <Tag
+                        key={sub.id}
+                        closable
+                        onClose={event => {
+                          event.preventDefault();
+                          void handleUnsubscribeEmail(sub.id);
+                        }}
+                      >
+                        {sub.address}
+                      </Tag>
+                    ))}
+                  </Space>
+                )}
+                {recallMetrics && (recallMetrics.delivered > 0 || recallMetrics.skipped > 0 || recallMetrics.error > 0) && (
+                  <div className="realtime-recall-row" style={{ fontSize: 12 }}>
+                    <span>回流度量</span>
+                    <Text type="secondary" style={{ flex: 1, textAlign: 'right' }}>
+                      送达 {recallMetrics.delivered} · 点击 {recallMetrics.clicked} · 回流率{' '}
+                      {(recallMetrics.click_through_rate * 100).toFixed(0)}%
+                      {recallMetrics.skipped > 0 ? ` · 跳过 ${recallMetrics.skipped}` : ''}
+                    </Text>
+                  </div>
+                )}
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  浏览器通知=在线召回；邮件=离线召回（实际发信需后端配置 SMTP，未配置则记为已跳过）。点击邮件/推送链接可被记为回流。
+                </Text>
               </Space>
             </div>
 
@@ -406,7 +583,7 @@ const RealtimeMessages: React.FC<RealtimeMessagesProps> = ({ appState }) => {
           </div>
         </Col>
       </Row>
-    </div>
+    </CenterShell>
   );
 };
 

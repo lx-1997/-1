@@ -1,0 +1,218 @@
+/* ============================================================================
+   Sidebar —— ChatGPT / Claude Code 式侧边栏（自定义 nav，替代 Antd Menu）
+   命名空间 dfx-sidebar-*。折叠态用 .ant-layout-sider-collapsed 祖先选择器驱动。
+   ========================================================================== */
+
+/* Antd Sider 外壳 */
+.workspace-sider,
+.workspace-sider .ant-layout-sider-children {
+  height: calc(100vh - 52px);
+  min-height: calc(100vh - 52px);
+  background: var(--surface-strong);
+  overflow: hidden;
+  contain: layout style;
+}
+.workspace-sider.ant-layout-sider {
+  background: var(--surface-strong);
+}
+.ant-drawer .ant-drawer-content,
+.ant-drawer .ant-drawer-body {
+  background: var(--surface-strong);
+}
+
+.dfx-sidebar {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px;
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+/* ---- 顶部「新对话」按钮（= 进入工作台/首页） ---- */
+.dfx-sidebar-new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dfx-sidebar-new:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dfx-sidebar-new .anticon {
+  color: var(--accent);
+  font-size: 15px;
+}
+
+/* ---- 导航 ---- */
+.dfx-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.dfx-sidebar-group-label {
+  padding: 14px 12px 5px;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  font-weight: 500;
+}
+.dfx-sidebar-nav > .dfx-sidebar-group-label:first-child {
+  padding-top: 6px;
+}
+
+.dfx-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.dfx-sidebar-item:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+.dfx-sidebar-item.active {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.dfx-sidebar-item.active .dfx-sidebar-item-icon {
+  color: var(--accent);
+}
+
+.dfx-sidebar-item-icon {
+  flex-shrink: 0;
+  width: 18px;
+  font-size: 15px;
+  display: grid;
+  place-items: center;
+  color: var(--text-soft);
+}
+.dfx-sidebar-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dfx-sidebar-item-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
+/* ---- 置顶：核心标的 ---- */
+.dfx-sidebar-pinned {
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.dfx-sidebar-pinned-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+.dfx-sidebar-pinned-toggle:hover {
+  color: var(--text-muted);
+}
+.dfx-sidebar-pinned-caret {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-soft);
+  transition: transform 0.15s ease;
+}
+.dfx-sidebar-pinned-caret.open {
+  transform: rotate(90deg);
+}
+
+.dfx-sidebar-stock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.dfx-sidebar-stock:hover {
+  background: var(--surface-muted);
+}
+.dfx-sidebar-stock-copy {
+  min-width: 0;
+  overflow: hidden;
+}
+.dfx-sidebar-stock-sym {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.dfx-sidebar-stock-name {
+  font-size: 11px;
+  color: var(--text-soft);
+  margin-left: 6px;
+}
+.dfx-sidebar-stock-chg {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 500;
+  opacity: 0.82;
+}
+.dfx-sidebar-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+/* ---- 折叠态：仅图标 ---- */
+.ant-layout-sider-collapsed .dfx-sidebar {
+  padding: 8px 6px;
+}
+.ant-layout-sider-collapsed .dfx-sidebar-item-label,
+.ant-layout-sider-collapsed .dfx-sidebar-item-count,
+.ant-layout-sider-collapsed .dfx-sidebar-group-label,
+.ant-layout-sider-collapsed .dfx-sidebar-new-label,
+.ant-layout-sider-collapsed .dfx-sidebar-pinned {
+  display: none;
+}
+.ant-layout-sider-collapsed .dfx-sidebar-item,
+.ant-layout-sider-collapsed .dfx-sidebar-new {
+  justify-content: center;
+  gap: 0;
+  padding-left: 0;
+  padding-right: 0;
+}

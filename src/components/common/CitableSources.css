@@ -1,0 +1,83 @@
+/* ============================================================================
+   CitableSources —— 统一的「可溯源来源」列表（chat / 深研 / 圆桌共用）
+   ========================================================================== */
+
+.dfx-citables {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dfx-citables-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.dfx-citable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  text-decoration: none;
+}
+.dfx-citable:hover .dfx-citable-title {
+  text-decoration: underline;
+}
+
+.dfx-citable-n {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dfx-citable-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dfx-citable-from {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
+.dfx-citable-cred {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.dfx-citable-cred.high {
+  color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
+  border-color: color-mix(in srgb, var(--positive) 30%, transparent);
+}
+.dfx-citable-cred.mid {
+  color: #d97706;
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  border-color: color-mix(in srgb, #d97706 30%, transparent);
+}
+.dfx-citable-cred.low {
+  color: var(--text-soft);
+  background: var(--surface-muted);
+  border-color: var(--border-soft);
+}

@@ -33,6 +33,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { AppState } from '../types';
+import CenterShell from './common/CenterShell';
 import {
   McpCapabilityRecord,
   McpCapabilityType,
@@ -47,9 +48,9 @@ import {
   discoverMcpServer,
   listMcpCapabilities,
   listMcpServers
-} from '../services/mcpService';
+} from '../services/infrastructureService';
 
-const { Text, Title, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
 interface McpCenterProps {
@@ -308,12 +309,16 @@ const McpCenter: React.FC<McpCenterProps> = ({ appState }) => {
   };
 
   const handleDelete = async (server: McpServerRecord) => {
-    await deleteMcpServer(server.id);
-    if (selectedServerId === server.id) {
-      setSelectedServerId(undefined);
+    try {
+      await deleteMcpServer(server.id);
+      if (selectedServerId === server.id) {
+        setSelectedServerId(undefined);
+      }
+      await loadData();
+      message.success('MCP server 已删除');
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '删除失败');
     }
-    await loadData();
-    message.success('MCP server 已删除');
   };
 
   const handleServerSelect = async (serverId: string) => {
@@ -412,22 +417,18 @@ const McpCenter: React.FC<McpCenterProps> = ({ appState }) => {
   ];
 
   return (
-    <div className="mcp-center-shell">
-      <div className="page-heading-band">
-        <div>
-          <Space align="center" size={10}>
-            <span className="mcp-heading-icon"><ApiOutlined /></span>
-            <Title level={3} style={{ margin: 0 }}>工具链：MCP 工具</Title>
-          </Space>
-          <Text type="secondary">Agent 工具、投研数据和交易能力的统一协议层</Text>
-        </div>
+    <CenterShell
+      title="工具链：MCP 工具"
+      subtitle="Agent 工具、投研数据和交易能力的统一协议层"
+      icon={<span className="mcp-heading-icon"><ApiOutlined /></span>}
+      actions={(
         <Space wrap>
           <Tag color="blue">Streamable HTTP</Tag>
           <Tag color="gold">stdio 配置</Tag>
           <Tag color="red">人工审批</Tag>
         </Space>
-      </div>
-
+      )}
+    >
       <div className="mcp-kpi-grid">
         <div className="mcp-kpi-tile"><Statistic title="Server" value={stats.servers} prefix={<CloudServerOutlined />} /></div>
         <div className="mcp-kpi-tile"><Statistic title="已连接" value={stats.connected} prefix={<CheckCircleOutlined />} /></div>
@@ -656,7 +657,7 @@ const McpCenter: React.FC<McpCenterProps> = ({ appState }) => {
           </Space>
         </Col>
       </Row>
-    </div>
+    </CenterShell>
   );
 };
 

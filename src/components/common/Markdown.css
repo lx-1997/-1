@@ -1,0 +1,152 @@
+/* ============================================================================
+   Markdown —— 聊天富文本渲染样式（紧凑、贴合暗色主题）
+   ========================================================================== */
+
+.dfx-md {
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: normal;
+}
+
+.dfx-md > *:first-child { margin-top: 0; }
+.dfx-md > *:last-child { margin-bottom: 0; }
+
+.dfx-md p {
+  margin: 0 0 10px;
+}
+
+.dfx-md h3,
+.dfx-md h4,
+.dfx-md h5,
+.dfx-md h6 {
+  margin: 16px 0 8px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text);
+}
+.dfx-md h3 { font-size: 17px; }
+.dfx-md h4 { font-size: 15.5px; }
+.dfx-md h5,
+.dfx-md h6 { font-size: 14.5px; }
+
+.dfx-md ul,
+.dfx-md ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+.dfx-md li {
+  margin: 3px 0;
+}
+.dfx-md li::marker {
+  color: var(--text-soft);
+}
+
+.dfx-md strong {
+  font-weight: 650;
+  color: var(--text);
+}
+.dfx-md em {
+  font-style: italic;
+}
+
+.dfx-md a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.dfx-md a:hover {
+  text-decoration: underline;
+}
+
+.dfx-md-cite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  margin: 0 1px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: super;
+  cursor: pointer;
+}
+.dfx-md-cite:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.dfx-md-code-inline {
+  font-family: 'SF Mono', ui-monospace, Menlo, Monaco, 'Cascadia Code', monospace;
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+}
+
+.dfx-md-code-block {
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong-2);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+.dfx-md-code-block code {
+  font-family: 'SF Mono', ui-monospace, Menlo, Monaco, 'Cascadia Code', monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre;
+}
+
+.dfx-md blockquote {
+  margin: 0 0 10px;
+  padding: 4px 14px;
+  border-left: 3px solid var(--border);
+  color: var(--text-muted);
+}
+
+.dfx-md hr {
+  margin: 14px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.dfx-md-table-wrap {
+  margin: 0 0 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.dfx-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.dfx-md-table th,
+.dfx-md-table td {
+  padding: 7px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+  border-right: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.dfx-md-table th:last-child,
+.dfx-md-table td:last-child {
+  border-right: none;
+}
+.dfx-md-table tr:last-child td {
+  border-bottom: none;
+}
+.dfx-md-table th {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-weight: 600;
+}

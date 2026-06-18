@@ -84,7 +84,7 @@ const Cart: React.FC<CartProps> = ({
       title: '资产信息',
       key: 'product',
       width: '40%',
-      render: (_: any, record: CartItem) => (
+      render: (_unused: unknown, record: CartItem) => (
         <Space>
           <img
             src={record.product.images[0] || 'https://via.placeholder.com/80'}
@@ -111,7 +111,7 @@ const Cart: React.FC<CartProps> = ({
       title: '单价',
       key: 'price',
       width: '15%',
-      render: (_: any, record: CartItem) => (
+      render: (_unused: unknown, record: CartItem) => (
         <Text>{formatPrice(record.variant.price)}</Text>
       )
     },
@@ -119,7 +119,7 @@ const Cart: React.FC<CartProps> = ({
       title: '数量',
       key: 'quantity',
       width: '20%',
-      render: (_: any, record: CartItem) => (
+      render: (_unused: unknown, record: CartItem) => (
         <InputNumber
           min={1}
           max={record.variant.stock}
@@ -136,8 +136,8 @@ const Cart: React.FC<CartProps> = ({
       title: '小计',
       key: 'subtotal',
       width: '15%',
-      render: (_: any, record: CartItem) => (
-        <Text strong style={{ color: '#ff4d4f' }}>
+      render: (_unused: unknown, record: CartItem) => (
+        <Text strong style={{ color: 'var(--negative)' }}>
           {formatPrice(record.variant.price * record.quantity)}
         </Text>
       )
@@ -146,7 +146,7 @@ const Cart: React.FC<CartProps> = ({
       title: '操作',
       key: 'action',
       width: '10%',
-      render: (_: any, record: CartItem) => (
+      render: (_unused: unknown, record: CartItem) => (
         <Button
           type="link"
           danger
@@ -164,7 +164,7 @@ const Cart: React.FC<CartProps> = ({
 
   if (cartItems.length === 0) {
     return (
-      <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
+      <div style={{ padding: '24px', background: 'var(--surface-muted)', minHeight: '100vh' }}>
         <Button
           icon={<ArrowLeftOutlined />}
           onClick={onBack}
@@ -174,7 +174,7 @@ const Cart: React.FC<CartProps> = ({
         </Button>
         <Card>
           <Empty
-            description="资产单是空的"
+            description="资产单为空，去逛逛吧"
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           >
             <Button type="primary" onClick={onBack}>
@@ -187,7 +187,7 @@ const Cart: React.FC<CartProps> = ({
   }
 
   return (
-    <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
+    <div style={{ padding: '24px', background: 'var(--surface-muted)', minHeight: '100vh' }}>
       <Button
         icon={<ArrowLeftOutlined />}
         onClick={onBack}
@@ -231,7 +231,7 @@ const Cart: React.FC<CartProps> = ({
                 <Table.Summary.Cell index={0} colSpan={4}>
                   <div style={{ textAlign: 'right', paddingRight: '16px' }}>
                     <Text>已选择 {selectedItems.length} 项资产，合计：</Text>
-                    <Text strong style={{ fontSize: '20px', color: '#ff4d4f', marginLeft: '8px' }}>
+                    <Text strong style={{ fontSize: '20px', color: 'var(--negative)', marginLeft: '8px' }}>
                       {formatTotalPrice(totalAmount)}
                     </Text>
                   </div>
@@ -259,9 +259,9 @@ const Cart: React.FC<CartProps> = ({
         style={{
           position: 'sticky',
           bottom: 0,
-          background: '#fff',
+          background: 'var(--surface)',
           padding: '16px',
-          borderTop: '1px solid #f0f0f0',
+          borderTop: '1px solid var(--border)',
           boxShadow: '0 -2px 8px rgba(0,0,0,0.1)',
           display: 'none' // 可以通过媒体查询在移动端显示
         }}
@@ -270,7 +270,7 @@ const Cart: React.FC<CartProps> = ({
           <Col flex="auto">
             <div>
               <Text type="secondary">合计：</Text>
-              <Text strong style={{ fontSize: '18px', color: '#ff4d4f', marginLeft: '8px' }}>
+              <Text strong style={{ fontSize: '18px', color: 'var(--negative)', marginLeft: '8px' }}>
                 {formatTotalPrice(totalAmount)}
               </Text>
             </div>
@@ -292,4 +292,4 @@ const Cart: React.FC<CartProps> = ({
   );
 };
 
-export default Cart;
+export default React.memo(Cart);

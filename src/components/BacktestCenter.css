@@ -1,0 +1,60 @@
+/* ============================================================================
+   BacktestCenter —— 组件专属样式（从 index.css 抽出，co-located 模块化试点）
+   注：原 .backtest-page 外层类已随 CenterShell 接入而废弃（外壳由 .center-shell
+   提供等价留白），故不在此保留；仅保留 body 中实际渲染的组件类。
+   ========================================================================== */
+
+.backtest-running-card {
+  margin-bottom: 14px;
+  border-color: color-mix(in srgb, var(--info) 32%, var(--border)) !important;
+  background: color-mix(in srgb, var(--info) 8%, var(--surface)) !important;
+}
+
+.backtest-run-result {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.backtest-table-shell {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.backtest-table-shell .ant-table-wrapper {
+  border-radius: 0;
+}
+
+.backtest-table-shell .ant-table {
+  background: var(--surface);
+}
+
+.backtest-table-shell .ant-table-container {
+  min-width: 0;
+}
+
+.backtest-table-shell .ant-table-content {
+  overflow: auto !important;
+}
+
+.backtest-table-shell .ant-table-thead > tr > th,
+.backtest-table-shell .ant-table-tbody > tr > td {
+  white-space: nowrap;
+}
+
+.backtest-table-shell .ant-table-cell {
+  vertical-align: middle;
+}
+
+.backtest-status-cell {
+  min-width: 86px;
+}
+
+.backtest-table-shell .ant-pagination {
+  margin: 12px 12px !important;
+}

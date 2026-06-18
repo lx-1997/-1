@@ -1,10 +1,15 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { App as AntdApp, ConfigProvider } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
-import App from './App';
+import FinancialTerminal from './components/FinancialTerminal';
+import ErrorBoundary from './components/ErrorBoundary';
+import { ThemeProvider } from './context/ThemeContext';
 import './index.css';
+
+// 终端独占模式：构建时 REACT_APP_TERMINAL_ONLY=true，公开免登录，整页仅渲染金融终端。
+const TERMINAL_ONLY = process.env.REACT_APP_TERMINAL_ONLY === 'true';
+// 完整版外壳（antd + i18n + 整站 App）代码分割：终端版永不加载它 → antd/i18n 不进终端主包，首屏更快。
+const AppShell = React.lazy(() => import('./AppShell'));
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
@@ -13,48 +18,19 @@ const root = ReactDOM.createRoot(
 root.render(
   <React.StrictMode>
     <BrowserRouter>
-      <ConfigProvider
-        locale={zhCN}
-        theme={{
-          token: {
-            colorPrimary: '#167c80',
-            colorSuccess: '#12805c',
-            colorWarning: '#b7791f',
-            colorError: '#c43e3e',
-            colorInfo: '#2f6f9f',
-            colorText: '#172026',
-            colorTextSecondary: '#64727d',
-            colorBorder: '#d9e1e7',
-            colorBgLayout: '#eef2f5',
-            colorBgContainer: '#ffffff',
-            borderRadius: 6,
-            fontSize: 13,
-            controlHeight: 34
-          },
-          components: {
-            Button: {
-              borderRadius: 5,
-              controlHeight: 32
-            },
-            Card: {
-              borderRadiusLG: 6,
-              paddingLG: 16
-            },
-            Menu: {
-              itemBorderRadius: 4,
-              itemHeight: 38
-            },
-            Tabs: {
-              horizontalMargin: '0 18px 0 0',
-              titleFontSize: 14
-            }
-          }
-        }}
-      >
-        <AntdApp>
-          <App />
-        </AntdApp>
-      </ConfigProvider>
+      <ThemeProvider>
+        <ErrorBoundary>
+          {TERMINAL_ONLY ? (
+            <div className="terminal-only-root">
+              <FinancialTerminal />
+            </div>
+          ) : (
+            <React.Suspense fallback={null}>
+              <AppShell />
+            </React.Suspense>
+          )}
+        </ErrorBoundary>
+      </ThemeProvider>
     </BrowserRouter>
   </React.StrictMode>
 );

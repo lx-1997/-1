@@ -1,0 +1,47 @@
+/* FinGptHub component styles (.fingpt-hub-*) — extracted from src/index.css */
+
+.fingpt-hub-shell .ant-tabs {
+  overflow: hidden;
+}
+
+.fingpt-hub-shell .ant-tabs-nav {
+  margin-bottom: 12px;
+}
+
+.fingpt-hub-shell .ant-tabs-nav-wrap {
+  overflow: visible;
+}
+
+.fingpt-hub-shell .ant-tabs-nav-list {
+  flex-wrap: wrap;
+  min-width: 0;
+  row-gap: 8px;
+}
+
+.fingpt-hub-shell .ant-tabs-tab {
+  min-height: 36px;
+  margin: 0 4px 0 0 !important;
+}
+
+.fingpt-hub-shell .ant-tabs-tab-btn {
+  white-space: nowrap;
+}
+
+.fingpt-hub-shell .ant-progress-line {
+  min-width: 100px;
+}
+
+.fingpt-hub-shell .ant-list-item {
+  align-items: flex-start;
+  padding-inline: 0;
+}
+
+@media (max-width: 768px) {
+  .fingpt-hub-shell .ant-tabs-nav-list {
+    min-width: 0;
+  }
+
+  .fingpt-hub-shell .ant-tabs-tab {
+    padding-inline: 10px;
+  }
+}

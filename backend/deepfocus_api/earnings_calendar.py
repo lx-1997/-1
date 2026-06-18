@@ -12,6 +12,8 @@ import httpx
 
 from .market_data import normalize_symbols
 from .schemas import EarningsCalendarEvent, EarningsCalendarResponse
+from .shared_utils import to_float, safe_error, utc_now_iso
+
 
 
 REQUEST_TIMEOUT = httpx.Timeout(10.0, connect=4.0)
@@ -69,7 +71,7 @@ async def fetch_earnings_calendar(
 ) -> EarningsCalendarResponse:
     requested_symbols = normalize_symbols(symbols)
     selected_horizon = horizon if horizon in SUPPORTED_HORIZONS else "3month"
-    fetched_at = _utc_now()
+    fetched_at = utc_now_iso()
     warnings: list[str] = []
     market_cap_floor = min_market_cap if min_market_cap and min_market_cap > 0 else None
     cache_key = (tuple(requested_symbols), selected_horizon, market_cap_floor, include_all)
@@ -186,14 +188,14 @@ async def _fetch_nasdaq_public_events(
                 response.raise_for_status()
                 payload = response.json()
             except Exception as exc:  # noqa: BLE001
-                failed_days.append(f"{day.isoformat()}:{_safe_error(exc)}")
+                failed_days.append(f"{day.isoformat()}:{safe_error(exc)}")
                 return
 
         rows = (payload.get("data") or {}).get("rows") or []
         data_as_of = _clean_text((payload.get("data") or {}).get("asOf"))
         for row in rows:
             symbol = str(row.get("symbol") or "").strip().upper()
-            market_cap = _to_float(row.get("marketCap"))
+            market_cap = to_float(row.get("marketCap"))
             if target_symbols and symbol not in target_symbols:
                 continue
             if all_large_cap_mode and (market_cap is None or market_cap < market_cap_floor):
@@ -207,11 +209,11 @@ async def _fetch_nasdaq_public_events(
                 name=row.get("name") or str(context["name"]),
                 report_date=day.isoformat(),
                 fiscal_date_ending=_clean_text(row.get("fiscalQuarterEnding")),
-                eps_estimate=_to_float(row.get("epsForecast")),
+                eps_estimate=to_float(row.get("epsForecast")),
                 market_cap=market_cap,
                 analyst_count=_to_int(row.get("noOfEsts")),
                 last_year_report_date=_parse_us_date(row.get("lastYearRptDt")),
-                last_year_eps=_to_float(row.get("lastYearEPS")),
+                last_year_eps=to_float(row.get("lastYearEPS")),
                 currency="USD",
                 time_of_day=_clean_text(row.get("time")),
                 provider="nasdaq_public",
@@ -303,7 +305,7 @@ async def _fetch_nasdaq_public_estimates(
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Nasdaq public forecast failed for {symbol}: {_safe_error(exc)}.")
+            warnings.append(f"Nasdaq public forecast failed for {symbol}: {safe_error(exc)}.")
             return None
 
         rows = ((payload.get("data") or {}).get("quarterlyForecast") or {}).get("rows") or []
@@ -317,9 +319,9 @@ async def _fetch_nasdaq_public_estimates(
             name=str(context["name"]),
             report_date=None,
             fiscal_date_ending=_clean_text(row.get("fiscalEnd")),
-            eps_estimate=_to_float(row.get("consensusEPSForecast")),
-            eps_high_estimate=_to_float(row.get("highEPSForecast")),
-            eps_low_estimate=_to_float(row.get("lowEPSForecast")),
+            eps_estimate=to_float(row.get("consensusEPSForecast")),
+            eps_high_estimate=to_float(row.get("highEPSForecast")),
+            eps_low_estimate=to_float(row.get("lowEPSForecast")),
             analyst_count=_to_int(row.get("noOfEstimates")),
             revision_up_count=_to_int(row.get("up")),
             revision_down_count=_to_int(row.get("down")),
@@ -365,7 +367,7 @@ async def _fetch_alpha_vantage_events(
             )
             response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Alpha Vantage failed for {symbol}: {_safe_error(exc)}.")
+            warnings.append(f"Alpha Vantage failed for {symbol}: {safe_error(exc)}.")
             return []
 
         text = response.text.strip()
@@ -386,7 +388,7 @@ async def _fetch_alpha_vantage_events(
                     name=row.get("name") or str(context["name"]),
                     report_date=_clean_text(row.get("reportDate")),
                     fiscal_date_ending=_clean_text(row.get("fiscalDateEnding")),
-                    eps_estimate=_to_float(row.get("estimate")),
+                    eps_estimate=to_float(row.get("estimate")),
                     currency=row.get("currency") or "USD",
                     time_of_day=_clean_text(row.get("timeOfTheDay")),
                     provider="alpha_vantage",
@@ -473,26 +475,8 @@ def _nasdaq_calendar_confidence(row: dict[str, object]) -> str:
     if time_of_day and time_of_day != "time-not-supplied":
         return "confirmed"
     return "estimated"
-
-
-def _to_float(value: object) -> Optional[float]:
-    if value is None:
-        return None
-    text = str(value).strip().replace(",", "").replace("$", "").replace("%", "")
-    is_negative = text.startswith("(") and text.endswith(")")
-    if is_negative:
-        text = text[1:-1]
-    if not text or text in {"-", "None", "null", "N/A", "n/a"}:
-        return None
-    try:
-        number = float(text)
-        return -number if is_negative else number
-    except ValueError:
-        return None
-
-
 def _to_int(value: object) -> Optional[int]:
-    number = _to_float(value)
+    number = to_float(value)
     if number is None:
         return None
     return int(number)
@@ -542,15 +526,3 @@ def _format_usd_compact(value: Optional[float]) -> str:
     if value >= 1_000_000:
         return f"${value / 1_000_000:.0f}M"
     return f"${value:,.0f}"
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _safe_error(exc: Exception) -> str:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, httpx.TimeoutException):
-        return "timeout"
-    return exc.__class__.__name__

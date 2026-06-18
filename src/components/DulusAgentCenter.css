@@ -1,0 +1,144 @@
+/* DulusAgentCenter component styles.
+   Extracted from src/index.css. Loads AFTER index.css.
+   Shell rules where .dulus-agent-shell shares comma-groups with other page
+   shells, and the .dulus-command-bar groups that mix with agent/research
+   namespaces, remain in index.css. */
+
+.dulus-command-bar,
+.dulus-panel,
+.dulus-provider-tile,
+.dulus-synthesis,
+.dulus-turn,
+.dulus-trace-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.dulus-command-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+}
+
+.dulus-command-bar > .ant-space:first-child {
+  flex: 1 1 auto;
+}
+
+.dulus-heading-icon,
+.dulus-stance {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.dulus-heading-icon {
+  width: 34px;
+  height: 34px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 18px;
+}
+
+.dulus-command-bar h3 {
+  color: var(--text);
+}
+
+.dulus-alert,
+.dulus-kpi-grid,
+.dulus-layout {
+  margin-bottom: 14px;
+}
+
+.dulus-panel {
+  min-width: 0;
+  padding: 14px;
+}
+
+.dulus-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.dulus-panel-head > .ant-space {
+  min-width: 0;
+}
+
+.dulus-mini-panel {
+  min-height: 210px;
+}
+
+.dulus-provider-tile,
+.dulus-turn,
+.dulus-trace-panel,
+.dulus-synthesis {
+  min-width: 0;
+  padding: 12px;
+  background: var(--surface-muted);
+}
+
+.dulus-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.dulus-checkbox-grid .ant-checkbox-wrapper {
+  min-width: 0;
+  margin-inline-start: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
+}
+
+.dulus-checkbox-grid .ant-checkbox + span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dulus-output-panel {
+  overflow: hidden;
+}
+
+.dulus-stance {
+  width: 28px;
+  height: 28px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.dulus-turn-content {
+  margin: 10px 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.dulus-turn .ant-list-item,
+.dulus-trace-panel .ant-list-item {
+  padding-inline: 0;
+  color: var(--text-muted);
+}
+
+.dulus-timeline {
+  margin-top: 12px;
+}
+
+.dulus-timeline .ant-timeline-item-content {
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .dulus-command-bar > .ant-space:last-child {
+    justify-content: flex-start;
+  }
+}

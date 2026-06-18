@@ -26,7 +26,7 @@ import {
   TrophyOutlined
 } from '@ant-design/icons';
 import { Stock } from '../types';
-import { MarketRegion, MarketSymbolCandidate, searchMarketSymbols } from '../services/marketDataService';
+import { MarketRegion, MarketSymbolCandidate, searchMarketSymbols } from '../services/marketService';
 import { formatQuoteSourceLine, formatQuoteTimestamp } from '../utils/marketData';
 import { MarketSegmentKey, marketSegments, stockBelongsToSegment } from '../utils/marketSegments';
 
@@ -487,4 +487,4 @@ const StockList: React.FC<StockListProps> = ({
   );
 };
 
-export default StockList;
+export default React.memo(StockList);

@@ -1,10 +1,17 @@
 import React from 'react';
 import { AppState, CartItem, Post, Product, Stock, ViewType } from '../types';
-import { MarketSymbolCandidate } from '../services/marketDataService';
-import { lazyWithPreload } from '../utils/lazyWithPreload';
+import { MarketSymbolCandidate } from '../services/marketService';
+import { getWorkspaceSectionForView, MENU_TO_DEFAULT_VIEW } from '../config/workspaces';
+import { lazyWithPreload, PreloadableComponent } from '../utils/lazyWithPreload';
+import { MarketSegmentKey } from '../utils/marketSegments';
 
 const StockList = lazyWithPreload(() => import('./StockList'));
 const StockDetail = lazyWithPreload(() => import('./StockDetail'));
+const StockTearSheet = lazyWithPreload(() => import('./StockTearSheet'));
+const PortfolioReview = lazyWithPreload(() => import('./PortfolioReview'));
+const MacroReview = lazyWithPreload(() => import('./MacroReview'));
+const Briefing = lazyWithPreload(() => import('./Briefing'));
+const StockCompare = lazyWithPreload(() => import('./StockCompare'));
 const StockCommunity = lazyWithPreload(() => import('./StockCommunity'));
 const CreatePost = lazyWithPreload(() => import('./CreatePost'));
 const PostDetail = lazyWithPreload(() => import('./PostDetail'));
@@ -13,12 +20,17 @@ const PlatformBalance = lazyWithPreload(() => import('./PlatformBalance'));
 const ProductDetail = lazyWithPreload(() => import('./ProductDetail'));
 const Cart = lazyWithPreload(() => import('./Cart'));
 const Orders = lazyWithPreload(() => import('./Orders'));
+const Shop = lazyWithPreload(() => import('./Shop'));
 const HomePage = lazyWithPreload(() => import('./HomePage'));
 const FinGptHub = lazyWithPreload(() => import('./FinGptHub'));
 const InvestorAgentCenter = lazyWithPreload(() => import('./InvestorAgentCenter'));
+const DulusAgentCenter = lazyWithPreload(() => import('./DulusAgentCenter'));
 const DataSourceCenter = lazyWithPreload(() => import('./DataSourceCenter'));
 const ResearchWorkbench = lazyWithPreload(() => import('./ResearchWorkbench'));
 const RealtimeMessages = lazyWithPreload(() => import('./RealtimeMessages'));
+const FinancialTerminal = lazyWithPreload(() => import('./FinancialTerminal'));
+const CctvNewsCenter = lazyWithPreload(() => import('./CctvNewsCenter'));
+const PeopleSpotlightCenter = lazyWithPreload(() => import('./PeopleSpotlightCenter'));
 const McpCenter = lazyWithPreload(() => import('./McpCenter'));
 const SkillCenter = lazyWithPreload(() => import('./SkillCenter'));
 const EarningsCalendar = lazyWithPreload(() => import('./EarningsCalendar'));
@@ -30,56 +42,14 @@ const MultiMarketDecisionCenter = lazyWithPreload(() => import('./MultiMarketDec
 const AiSupplyChainCycleCenter = lazyWithPreload(() => import('./AiSupplyChainCycleCenter'));
 const CustomsTradeCenter = lazyWithPreload(() => import('./CustomsTradeCenter'));
 const OptionsSignalCenter = lazyWithPreload(() => import('./OptionsSignalCenter'));
+const BacktestCenter = lazyWithPreload(() => import('./BacktestCenter'));
+const PremarketOpportunityCenter = lazyWithPreload(() => import('./PremarketOpportunityCenter'));
+const RiskDashboard = lazyWithPreload(() => import('./RiskDashboard'));
+const PositionMonitor = lazyWithPreload(() => import('./PositionMonitor'));
+const MacroDashboard = lazyWithPreload(() => import('./MacroDashboard'));
 
-const modulePreloaders: Record<string, Array<() => Promise<unknown>>> = {
-  home: [HomePage.preload, StockList.preload],
-  stocks: [HomePage.preload, StockList.preload, StockCommunity.preload, StockDetail.preload],
-  'a-share-market': [HomePage.preload, StockList.preload, StockCommunity.preload, StockDetail.preload],
-  'global-market': [HomePage.preload, StockList.preload, StockCommunity.preload, StockDetail.preload],
-  shop: [HomePage.preload, ProductDetail.preload, Cart.preload, Orders.preload],
-  profile: [ProfileSettings.preload],
-  cart: [Cart.preload, Orders.preload],
-  orders: [Orders.preload],
-  'ai-research': [FinGptHub.preload],
-  'agent-center': [InvestorAgentCenter.preload],
-  skills: [SkillCenter.preload],
-  'data-sources': [DataSourceCenter.preload],
-  'research-workbench': [ResearchWorkbench.preload],
-  'realtime-messages': [RealtimeMessages.preload],
-  'mcp-center': [McpCenter.preload],
-  'earnings-calendar': [EarningsCalendar.preload],
-  'cn-earnings': [CnEarningsCenter.preload],
-  'shareholder-changes': [ShareholderChangeCenter.preload],
-  'major-events': [MajorEventCenter.preload],
-  'multi-market-decision': [MultiMarketDecisionCenter.preload],
-  'options-signal': [OptionsSignalCenter.preload],
-  'ai-supply-chain': [AiSupplyChainCycleCenter.preload],
-  'customs-trade': [CustomsTradeCenter.preload],
-  'stock-community': [StockCommunity.preload, PostDetail.preload, CreatePost.preload],
-  'stock-detail': [StockDetail.preload, StockCommunity.preload],
-  'create-post': [CreatePost.preload],
-  'post-detail': [PostDetail.preload],
-  'product-detail': [ProductDetail.preload]
-};
-
-const idlePreloadOrder = [
-  'home',
-  'stocks',
-  'a-share-market',
-  'global-market',
-  'agent-center',
-  'earnings-calendar',
-  'ai-supply-chain',
-  'customs-trade',
-  'options-signal',
-  'ai-research',
-  'data-sources',
-  'realtime-messages',
-  'mcp-center',
-  'skills',
-  'shop',
-  'profile'
-];
+// 空闲时优先预热的核心工作区（按 view key）。
+const IDLE_PRELOAD_VIEWS: ViewType[] = ['stocks', 'ai-research'];
 
 const runPreloaders = async (preloaders: Array<() => Promise<unknown>>, concurrency = 4) => {
   const uniquePreloaders = Array.from(new Set(preloaders));
@@ -98,18 +68,6 @@ const runPreloaders = async (preloaders: Array<() => Promise<unknown>>, concurre
     }
   }));
 };
-
-export function preloadMainContentModules(key: string): Promise<void> {
-  const preloaders = modulePreloaders[key] || [];
-  return runPreloaders(preloaders);
-}
-
-export function preloadCoreWorkspaceModules(): Promise<void> {
-  const preloaders = idlePreloadOrder.reduce<Array<() => Promise<unknown>>>((acc, key) => (
-    acc.concat(modulePreloaders[key] || [])
-  ), []);
-  return runPreloaders(preloaders, 3);
-}
 
 interface MainContentProps {
   selectedMenu: string;
@@ -143,306 +101,449 @@ interface MainContentProps {
   isMarketDataRefreshing: boolean;
 }
 
-const MainContent: React.FC<MainContentProps> = ({
-  selectedMenu,
-  appState,
-  onStockSelect,
-  onBackToStocks,
-  onPostClick,
-  onCreatePost,
-  onPurchase,
-  onRate,
-  onLike,
-  onShare,
-  onAddComment,
-  onViewChange,
-  onSavePost,
-  isMobile = false,
-  onProductClick,
-  onAddToCart,
-  onUpdateCartQuantity,
-  onRemoveFromCart,
-  onCheckout,
-  onOrderPay,
-  onOrderCancel,
-  onOrderRefund,
-  onBuyNow,
-  onAddStock,
-  onRemoveStock,
-  onToggleStockSubscription,
-  onRefreshMarketData,
-  isMarketDataRefreshing
-}) => {
-  // 优先处理特殊视图（这些视图优先级最高，直接返回，不进入菜单逻辑）
+const renderFallbackHomePage = (props: MainContentProps): React.ReactElement => (
+  <HomePage
+    appState={props.appState}
+    onStockSelect={props.onStockSelect}
+    onProductClick={props.onProductClick}
+    onAddToCart={props.onAddToCart}
+    onViewChange={props.onViewChange}
+    onAddStock={props.onAddStock}
+    onRemoveStock={props.onRemoveStock}
+    onToggleStockSubscription={props.onToggleStockSubscription}
+    onRefreshMarketData={props.onRefreshMarketData}
+    isMarketDataRefreshing={props.isMarketDataRefreshing}
+  />
+);
 
-  // 资产详情视图
-  if (appState.currentView === 'product-detail' && appState.selectedProduct) {
-    return (
-      <ProductDetail
-        product={appState.selectedProduct}
-        onBack={() => onViewChange('shop')}
-        onAddToCart={onAddToCart}
-        onBuyNow={onBuyNow}
-      />
-    );
+const SEGMENT_TO_VIEW: Record<MarketSegmentKey, ViewType> = {
+  all: 'stocks',
+  'a-share': 'a-share-market',
+  global: 'global-market',
+};
+
+const renderStockList = (
+  props: MainContentProps,
+  segment: MarketSegmentKey = 'all'
+): React.ReactElement => (
+  <StockList
+    stocks={props.appState.stocks}
+    onStockSelect={props.onStockSelect}
+    onAddStock={props.onAddStock}
+    onRemoveStock={props.onRemoveStock}
+    onToggleSubscription={props.onToggleStockSubscription}
+    onRefreshMarketData={props.onRefreshMarketData}
+    isMarketDataRefreshing={props.isMarketDataRefreshing}
+    marketSegment={segment}
+    onMarketSegmentChange={(next) => props.onViewChange(SEGMENT_TO_VIEW[next])}
+  />
+);
+
+type ViewConfig = {
+  /** 该视图的主组件，用于按需预热（hover/聚焦时提前加载 chunk）。 */
+  component: PreloadableComponent<React.ComponentType<any>>;
+  /** 打开本视图时顺带预热的相邻组件（如打开列表时预热详情页）。 */
+  also?: Array<PreloadableComponent<React.ComponentType<any>>>;
+  condition?: (props: MainContentProps) => boolean;
+  render: (props: MainContentProps) => React.ReactElement;
+};
+
+const renderWorkspaceSection = (props: MainContentProps, content: React.ReactElement): React.ReactElement => {
+  // 首页是统一入口，自带工作区导航网格，无需再套一层工作区 Tab 条。
+  if (props.appState.currentView === 'home') {
+    return content;
   }
 
-  // 资产单视图
-  if (appState.currentView === 'cart') {
-    return (
-      <Cart
-        cartItems={appState.cart}
-        onUpdateQuantity={onUpdateCartQuantity}
-        onRemoveItem={onRemoveFromCart}
-        onCheckout={onCheckout}
-        onBack={() => onViewChange('shop')}
-      />
-    );
-  }
-
-  // 订单视图
-  if (appState.currentView === 'orders') {
-    return (
-      <Orders
-        orders={appState.orders}
-        onPay={onOrderPay}
-        onCancel={onOrderCancel}
-        onRefund={onOrderRefund}
-      />
-    );
-  }
-
-  if (appState.currentView === 'ai-research') {
-    return <FinGptHub appState={appState} />;
-  }
-
-  if (appState.currentView === 'agent-center') {
-    return <InvestorAgentCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'skills') {
-    return <SkillCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'data-sources') {
-    return <DataSourceCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'research-workbench') {
-    return <ResearchWorkbench appState={appState} onViewChange={onViewChange} />;
-  }
-
-  if (appState.currentView === 'realtime-messages') {
-    return <RealtimeMessages appState={appState} />;
-  }
-
-  if (appState.currentView === 'mcp-center') {
-    return <McpCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'earnings-calendar') {
-    return <EarningsCalendar appState={appState} onStockSelect={onStockSelect} />;
-  }
-
-  if (appState.currentView === 'cn-earnings') {
-    return <CnEarningsCenter appState={appState} onStockSelect={onStockSelect} />;
-  }
-
-  if (appState.currentView === 'shareholder-changes') {
-    return <ShareholderChangeCenter appState={appState} onStockSelect={onStockSelect} />;
-  }
-
-  if (appState.currentView === 'major-events') {
-    return <MajorEventCenter appState={appState} onStockSelect={onStockSelect} />;
-  }
-
-  if (appState.currentView === 'multi-market-decision') {
-    return <MultiMarketDecisionCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'ai-supply-chain') {
-    return <AiSupplyChainCycleCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'customs-trade') {
-    return <CustomsTradeCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'options-signal') {
-    return <OptionsSignalCenter appState={appState} />;
-  }
-
-  if (appState.currentView === 'profile') {
-    return <ProfileSettings appState={appState} />;
-  }
-
-  // 创建帖子视图
-  if (appState.currentView === 'create-post') {
-    if (!appState.selectedStock) {
-      return (
-        <StockList
-          stocks={appState.stocks}
-          onStockSelect={onStockSelect}
-          onAddStock={onAddStock}
-          onRemoveStock={onRemoveStock}
-          onToggleSubscription={onToggleStockSubscription}
-          onRefreshMarketData={onRefreshMarketData}
-          isMarketDataRefreshing={isMarketDataRefreshing}
-        />
-      );
-    }
-
-    return (
-      <CreatePost
-        stock={appState.selectedStock}
-        onSave={onSavePost}
-        onCancel={() => {
-          if (appState.selectedStock) {
-            onViewChange('stock-community');
-          } else {
-            onViewChange('stocks');
-          }
-        }}
-      />
-    );
-  }
-
-  // 帖子详情视图
-  if (appState.currentView === 'post-detail' && appState.selectedPost) {
-    return (
-      <PostDetail
-        post={appState.selectedPost}
-        currentUser={appState.user!}
-        comments={appState.comments}
-        purchasedPosts={appState.purchasedPosts}
-        onBack={() => {
-          if (appState.selectedStock) {
-            onViewChange('stock-community');
-          } else {
-            onViewChange('stocks');
-          }
-        }}
-        onPurchase={onPurchase}
-        onRate={onRate}
-        onLike={onLike}
-        onShare={onShare}
-        onAddComment={onAddComment}
-      />
-    );
-  }
-
-  // 股票详情视图
-  if (appState.currentView === 'stock-detail' && appState.selectedStock) {
-    return (
-      <StockDetail
-        stock={appState.selectedStock}
-        posts={appState.posts}
-        comments={appState.comments}
-        onBack={onBackToStocks}
-        onCreatePost={onCreatePost}
-        onPostClick={onPostClick}
-      />
-    );
-  }
-  
-  // 股票社区视图
-  if (appState.currentView === 'stock-community' && appState.selectedStock) {
-    return (
-      <StockCommunity
-        stock={appState.selectedStock}
-        posts={appState.posts}
-        comments={appState.comments}
-        onBack={onBackToStocks}
-        onCreatePost={(stock) => {
-          onStockSelect(stock);
-          onCreatePost();
-        }}
-        onPostClick={onPostClick}
-        onPurchase={(post) => onPurchase(post.id, post.price)}
-        onRate={(post, rating) => onRate(post.id, rating, '')}
-        onLike={(post) => onLike(post.id)}
-        onShare={(post) => onShare(post.id)}
-        onViewChange={onViewChange}
-      />
-    );
-  }
-
-  switch (selectedMenu) {
-    case 'profile':
-      return <ProfileSettings appState={appState} />;
-    
-    case 'recharge-history':
-      return (
-        <RechargeHistory
-          rechargeHistory={appState.rechargeHistory}
-          platformBalance={appState.platformBalance}
-        />
-      );
-    
-    case 'platform-balance':
-      return (
-        <PlatformBalance
-          platformBalance={appState.platformBalance}
-          totalRecharged={appState.rechargeHistory
-            .filter(record => record.status === 'success')
-            .reduce((sum, record) => sum + record.amount, 0)}
-          totalSpent={appState.payments
-            .filter(payment => payment.status === 'completed')
-            .reduce((sum, payment) => sum + payment.amount, 0)}
-          activeUsers={appState.rechargeHistory
-            .filter(record => record.status === 'success')
-            .map(record => record.userId)
-            .filter((value, index, self) => self.indexOf(value) === index).length}
-          totalPosts={appState.posts.length}
-          paidPosts={appState.posts.filter(post => post.isPaid).length}
-        />
-      );
-  }
-
-  // 首页视图 - 整合仪表盘、个股专区、商城
-  if (
-    appState.currentView === 'home' ||
-    appState.currentView === 'stocks' ||
-    appState.currentView === 'a-share-market' ||
-    appState.currentView === 'global-market' ||
-    appState.currentView === 'shop' ||
-    selectedMenu === 'dashboard' ||
-    selectedMenu === 'stocks' ||
-    selectedMenu === 'a-share-market' ||
-    selectedMenu === 'global-market' ||
-    selectedMenu === 'shop' ||
-    selectedMenu === 'home'
-  ) {
-    return (
-      <HomePage
-        appState={appState}
-        onStockSelect={onStockSelect}
-        onProductClick={onProductClick}
-        onAddToCart={onAddToCart}
-        onViewChange={onViewChange}
-        onAddStock={onAddStock}
-        onRemoveStock={onRemoveStock}
-        onToggleStockSubscription={onToggleStockSubscription}
-        onRefreshMarketData={onRefreshMarketData}
-        isMarketDataRefreshing={isMarketDataRefreshing}
-      />
-    );
+  const section = getWorkspaceSectionForView(props.appState.currentView);
+  if (!section || section.views.length <= 1) {
+    return content;
   }
 
   return (
-    <HomePage
-      appState={appState}
-      onStockSelect={onStockSelect}
-      onProductClick={onProductClick}
-      onAddToCart={onAddToCart}
-      onViewChange={onViewChange}
-      onAddStock={onAddStock}
-      onRemoveStock={onRemoveStock}
-      onToggleStockSubscription={onToggleStockSubscription}
-      onRefreshMarketData={onRefreshMarketData}
-      isMarketDataRefreshing={isMarketDataRefreshing}
-    />
+    <div className="workspace-section-frame">
+      <div className="workspace-section-tabs" role="tablist" aria-label={`${section.title}工作区`}>
+        {section.views.map(item => (
+          <button
+            key={item.view}
+            type="button"
+            className={`workspace-section-tab${props.appState.currentView === item.view ? ' active' : ''}`}
+            onMouseEnter={() => void preloadMainContentModules(item.view)}
+            onFocus={() => void preloadMainContentModules(item.view)}
+            onClick={() => props.onViewChange(item.view)}
+          >
+            <strong>{item.label}</strong>
+          </button>
+        ))}
+      </div>
+      <div className="workspace-section-body">
+        {content}
+      </div>
+    </div>
   );
 };
 
-export default MainContent;
+const VIEW_RENDER_CONFIG: Record<ViewType, ViewConfig> = {
+  'product-detail': {
+    component: ProductDetail,
+    condition: (props) => !!props.appState.selectedProduct,
+    render: (props) => (
+      <ProductDetail
+        product={props.appState.selectedProduct!}
+        onBack={() => props.onViewChange('shop')}
+        onAddToCart={props.onAddToCart}
+        onBuyNow={props.onBuyNow}
+      />
+    ),
+  },
+  'cart': {
+    component: Cart,
+    render: (props) => (
+      <Cart
+        cartItems={props.appState.cart}
+        onUpdateQuantity={props.onUpdateCartQuantity}
+        onRemoveItem={props.onRemoveFromCart}
+        onCheckout={props.onCheckout}
+        onBack={() => props.onViewChange('shop')}
+      />
+    ),
+  },
+  'orders': {
+    component: Orders,
+    render: (props) => (
+      <Orders
+        orders={props.appState.orders}
+        onPay={props.onOrderPay}
+        onCancel={props.onOrderCancel}
+        onRefund={props.onOrderRefund}
+      />
+    ),
+  },
+  'ai-research': {
+    component: FinGptHub,
+    render: (props) => (
+      <div className="view-enter" key="ai-research">
+        <FinGptHub appState={props.appState} />
+      </div>
+    ),
+  },
+  'agent-center': {
+    component: InvestorAgentCenter,
+    render: (props) => <InvestorAgentCenter appState={props.appState} />,
+  },
+  'dulus-agent': {
+    component: DulusAgentCenter,
+    render: (props) => <DulusAgentCenter appState={props.appState} />,
+  },
+  'skills': {
+    component: SkillCenter,
+    render: (props) => <SkillCenter appState={props.appState} />,
+  },
+  'data-sources': {
+    component: DataSourceCenter,
+    render: (props) => <DataSourceCenter appState={props.appState} />,
+  },
+  'research-workbench': {
+    component: ResearchWorkbench,
+    render: (props) => <ResearchWorkbench appState={props.appState} onViewChange={props.onViewChange} />,
+  },
+  'realtime-messages': {
+    component: RealtimeMessages,
+    render: (props) => <RealtimeMessages appState={props.appState} />,
+  },
+  'financial-terminal': {
+    component: FinancialTerminal,
+    render: (props) => <FinancialTerminal appState={props.appState} />,
+  },
+  'cctv-news': {
+    component: CctvNewsCenter,
+    render: (props) => <CctvNewsCenter appState={props.appState} />,
+  },
+  'people-spotlight': {
+    component: PeopleSpotlightCenter,
+    render: () => <PeopleSpotlightCenter />,
+  },
+  'mcp-center': {
+    component: McpCenter,
+    render: (props) => <McpCenter appState={props.appState} />,
+  },
+  'earnings-calendar': {
+    component: EarningsCalendar,
+    render: (props) => <EarningsCalendar appState={props.appState} onStockSelect={props.onStockSelect} />,
+  },
+  'cn-earnings': {
+    component: CnEarningsCenter,
+    render: (props) => <CnEarningsCenter appState={props.appState} onStockSelect={props.onStockSelect} />,
+  },
+  'shareholder-changes': {
+    component: ShareholderChangeCenter,
+    render: (props) => <ShareholderChangeCenter appState={props.appState} onStockSelect={props.onStockSelect} />,
+  },
+  'major-events': {
+    component: MajorEventCenter,
+    render: (props) => <MajorEventCenter appState={props.appState} onStockSelect={props.onStockSelect} />,
+  },
+  'multi-market-decision': {
+    component: MultiMarketDecisionCenter,
+    render: (props) => <MultiMarketDecisionCenter appState={props.appState} />,
+  },
+  'premarket-opportunity': {
+    component: PremarketOpportunityCenter,
+    render: (props) => <PremarketOpportunityCenter appState={props.appState} />,
+  },
+  'ai-supply-chain': {
+    component: AiSupplyChainCycleCenter,
+    render: (props) => <AiSupplyChainCycleCenter appState={props.appState} />,
+  },
+  'customs-trade': {
+    component: CustomsTradeCenter,
+    render: (props) => <CustomsTradeCenter appState={props.appState} />,
+  },
+  'options-signal': {
+    component: OptionsSignalCenter,
+    render: (props) => <OptionsSignalCenter appState={props.appState} />,
+  },
+  'backtest-center': {
+    component: BacktestCenter,
+    render: () => <BacktestCenter />,
+  },
+  'risk-dashboard': {
+    component: RiskDashboard,
+    also: [PositionMonitor, MacroDashboard],
+    render: () => <RiskDashboard />,
+  },
+  'position-monitor': {
+    component: PositionMonitor,
+    render: () => <PositionMonitor />,
+  },
+  'market-dashboard': {
+    component: MacroDashboard,
+    render: () => <MacroDashboard />,
+  },
+  'profile': {
+    component: ProfileSettings,
+    render: (props) => <ProfileSettings appState={props.appState} />,
+  },
+  'create-post': {
+    component: CreatePost,
+    render: (props) => {
+      if (!props.appState.selectedStock) {
+        return renderStockList(props);
+      }
+      return (
+        <CreatePost
+          stock={props.appState.selectedStock}
+          onSave={props.onSavePost}
+          onCancel={() => {
+            if (props.appState.selectedStock) {
+              props.onViewChange('stock-community');
+            } else {
+              props.onViewChange('stocks');
+            }
+          }}
+        />
+      );
+    },
+  },
+  'post-detail': {
+    component: PostDetail,
+    condition: (props) => !!props.appState.selectedPost,
+    render: (props) => (
+      <PostDetail
+        post={props.appState.selectedPost!}
+        currentUser={props.appState.user!}
+        comments={props.appState.comments}
+        purchasedPosts={props.appState.purchasedPosts}
+        likedPostIds={props.appState.likedPosts}
+        onBack={() => {
+          if (props.appState.selectedStock) {
+            props.onViewChange('stock-community');
+          } else {
+            props.onViewChange('stocks');
+          }
+        }}
+        onPurchase={props.onPurchase}
+        onRate={props.onRate}
+        onLike={props.onLike}
+        onShare={props.onShare}
+        onAddComment={props.onAddComment}
+      />
+    ),
+  },
+  'portfolio-review': {
+    component: PortfolioReview,
+    render: () => <PortfolioReview />,
+  },
+  'macro-review': {
+    component: MacroReview,
+    render: () => <MacroReview />,
+  },
+  'briefing': {
+    component: Briefing,
+    render: (props) => (
+      <Briefing
+        onViewChange={props.onViewChange}
+        symbols={(props.appState.stocks || []).slice(0, 8).map((s) => s.symbol)}
+      />
+    ),
+  },
+  'stock-compare': {
+    component: StockCompare,
+    render: (props) => (
+      <StockCompare
+        symbols={(props.appState.stocks || []).slice(0, 6).map((s) => s.symbol)}
+        caps={(props.appState.stocks || []).slice(0, 6).map((s) => s.marketCap)}
+      />
+    ),
+  },
+  'stock-tear-sheet': {
+    component: StockTearSheet,
+    also: [StockDetail],
+    condition: (props) => !!props.appState.selectedStock,
+    render: (props) => (
+      <StockTearSheet
+        stock={props.appState.selectedStock!}
+        onBack={props.onBackToStocks}
+        onViewChange={props.onViewChange}
+      />
+    ),
+  },
+  'stock-detail': {
+    component: StockDetail,
+    also: [StockCommunity],
+    condition: (props) => !!props.appState.selectedStock,
+    render: (props) => (
+      <StockDetail
+        stock={props.appState.selectedStock!}
+        posts={props.appState.posts}
+        comments={props.appState.comments}
+        onBack={props.onBackToStocks}
+        onCreatePost={props.onCreatePost}
+        onPostClick={props.onPostClick}
+      />
+    ),
+  },
+  'stock-community': {
+    component: StockCommunity,
+    also: [PostDetail, CreatePost],
+    condition: (props) => !!props.appState.selectedStock,
+    render: (props) => (
+      <StockCommunity
+        stock={props.appState.selectedStock!}
+        posts={props.appState.posts}
+        comments={props.appState.comments}
+        likedPostIds={props.appState.likedPosts}
+        onBack={props.onBackToStocks}
+        onCreatePost={(stock) => {
+          props.onStockSelect(stock);
+          props.onCreatePost();
+        }}
+        onPostClick={props.onPostClick}
+        onPurchase={(post) => props.onPurchase(post.id, post.price)}
+        onRate={(post, rating) => props.onRate(post.id, rating, '')}
+        onLike={(post) => props.onLike(post.id)}
+        onShare={(post) => props.onShare(post.id)}
+        onViewChange={props.onViewChange}
+      />
+    ),
+  },
+  'home': {
+    component: HomePage,
+    render: renderFallbackHomePage,
+  },
+  'stocks': {
+    component: StockList,
+    render: (props) => renderStockList(props, 'all'),
+  },
+  'a-share-market': {
+    component: StockList,
+    render: (props) => renderStockList(props, 'a-share'),
+  },
+  'global-market': {
+    component: StockList,
+    render: (props) => renderStockList(props, 'global'),
+  },
+  'shop': {
+    component: Shop,
+    render: (props) => (
+      <Shop
+        products={props.appState.products}
+        onProductClick={props.onProductClick}
+        onAddToCart={props.onAddToCart}
+      />
+    ),
+  },
+};
+
+// ---- 预加载：全部从上面的单一注册表派生，新增视图无需再单独维护预加载表 ----
+
+/** 把任意 key（view 或工作区 menuKey）解析成已注册的 view。 */
+function resolveView(key: string): ViewType | undefined {
+  if (key in VIEW_RENDER_CONFIG) {
+    return key as ViewType;
+  }
+  return MENU_TO_DEFAULT_VIEW[key];
+}
+
+function preloadersForView(view: ViewType): Array<() => Promise<unknown>> {
+  const config = VIEW_RENDER_CONFIG[view];
+  if (!config) {
+    return [];
+  }
+  return [config.component, ...(config.also ?? [])].map(component => component.preload);
+}
+
+export function preloadMainContentModules(key: string): Promise<void> {
+  const view = resolveView(key);
+  return runPreloaders(view ? preloadersForView(view) : []);
+}
+
+export function preloadCoreWorkspaceModules(): Promise<void> {
+  const preloaders = IDLE_PRELOAD_VIEWS.flatMap(preloadersForView);
+  return runPreloaders(preloaders, 2);
+}
+
+const MainContent: React.FC<MainContentProps> = (props) => {
+  const { selectedMenu, appState } = props;
+
+  const config = VIEW_RENDER_CONFIG[appState.currentView];
+  if (config && (!config.condition || config.condition(props))) {
+    return renderWorkspaceSection(props, config.render(props));
+  }
+
+  if (selectedMenu === 'profile') {
+    return renderWorkspaceSection(props, <ProfileSettings appState={appState} />);
+  }
+
+  if (selectedMenu === 'recharge-history') {
+    return renderWorkspaceSection(props, (
+      <RechargeHistory
+        rechargeHistory={appState.rechargeHistory}
+        platformBalance={appState.platformBalance}
+      />
+    ));
+  }
+
+  if (selectedMenu === 'platform-balance') {
+    return renderWorkspaceSection(props, (
+      <PlatformBalance
+        platformBalance={appState.platformBalance}
+        totalRecharged={appState.rechargeHistory
+          .filter(record => record.status === 'success')
+          .reduce((sum, record) => sum + record.amount, 0)}
+        totalSpent={appState.payments
+          .filter(payment => payment.status === 'completed')
+          .reduce((sum, payment) => sum + payment.amount, 0)}
+        activeUsers={appState.rechargeHistory
+          .filter(record => record.status === 'success')
+          .map(record => record.userId)
+          .filter((value, index, self) => self.indexOf(value) === index).length}
+        totalPosts={appState.posts.length}
+        paidPosts={appState.posts.filter(post => post.isPaid).length}
+      />
+    ));
+  }
+
+  return renderWorkspaceSection(props, renderFallbackHomePage(props));
+};
+
+export default React.memo(MainContent);

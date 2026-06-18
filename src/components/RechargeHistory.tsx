@@ -43,7 +43,7 @@ const RechargeHistory: React.FC<RechargeHistoryProps> = ({
           wechatpay: { text: '微信支付', color: '#27d100' },
           bankcard: { text: '银行卡', color: '#faad14' }
         };
-        const methodInfo = methodMap[method] || { text: method, color: '#666' };
+        const methodInfo = methodMap[method] || { text: method, color: 'var(--text-muted)' };
         return <Tag color={methodInfo.color}>{methodInfo.text}</Tag>;
       },
     },

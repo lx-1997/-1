@@ -13,6 +13,20 @@ from .schemas import AgentLogEntry, AgentRunEvent, InvestmentTaskRecord
 
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+PHASE_DISPLAY_NAMES = {
+    "orchestrator": "Orchestrator",
+    "evidence": "Evidence",
+    "research": "Analyst",
+    "risk": "Risk",
+    "report": "Report Builder",
+}
+PHASE_TITLES = {
+    "orchestrator": "任务编排",
+    "evidence": "证据检索",
+    "research": "投资研判",
+    "risk": "风险复核",
+    "report": "报告生成",
+}
 
 
 def task_agent_events(task: InvestmentTaskRecord) -> list[AgentRunEvent]:
@@ -73,7 +87,7 @@ def task_agent_events(task: InvestmentTaskRecord) -> list[AgentRunEvent]:
                 type="artifact_update",
                 surface="block",
                 phase="report",
-                agent="ReportAgent",
+                agent=PHASE_DISPLAY_NAMES["report"],
                 title="投资决策报告",
                 message=str(task.result.get("plain_language_takeaway") or task.result.get("investor_summary") or ""),
                 progress=100 if task.status == "completed" else task.progress,
@@ -96,8 +110,8 @@ def task_agent_events(task: InvestmentTaskRecord) -> list[AgentRunEvent]:
                 type="run_complete",
                 surface="control",
                 phase="report",
-                agent="ReportAgent",
-                title="Agent Run 完成",
+                agent=PHASE_DISPLAY_NAMES["report"],
+                title="核心链路完成",
                 message="投研报告已生成，等待投资者复核。",
                 progress=100,
                 created_at=task.completed_at or task.updated_at,
@@ -113,7 +127,7 @@ def task_agent_events(task: InvestmentTaskRecord) -> list[AgentRunEvent]:
                 surface="block",
                 phase=_phase_from_agent(task.assigned_agent),
                 agent=_core_agent_name(task.assigned_agent),
-                title="Agent Run 异常" if task.status == "failed" else "Agent Run 已取消",
+                title="核心链路异常" if task.status == "failed" else "核心链路已取消",
                 message=task.error or _latest_log_message(task) or "任务没有返回可用结果。",
                 progress=task.progress,
                 created_at=task.completed_at or task.updated_at,
@@ -186,7 +200,7 @@ def _surface_for_event(event_type: str) -> str:
 
 def _phase_from_agent(agent: str | None) -> str:
     text = (agent or "").lower()
-    if "evidence" in text or "datasource" in text:
+    if any(token in text for token in ("evidence", "datasource", "setup")):
         return "evidence"
     if any(
         token in text
@@ -202,6 +216,10 @@ def _phase_from_agent(agent: str | None) -> str:
             "earnings",
             "valuation",
             "pitch",
+            "technical",
+            "fundamental",
+            "market",
+            "news",
         )
     ):
         return "research"
@@ -214,35 +232,23 @@ def _phase_from_agent(agent: str | None) -> str:
 
 def _core_agent_name(agent: str | None) -> str:
     phase = _phase_from_agent(agent)
-    return {
-        "orchestrator": "OrchestratorAgent",
-        "evidence": "EvidenceAgent",
-        "research": "ResearchAgent",
-        "risk": "RiskAgent",
-        "report": "ReportAgent",
-    }[phase]
+    return PHASE_DISPLAY_NAMES[phase]
 
 
 def _title_for_log(log: AgentLogEntry) -> str:
     phase = _phase_from_agent(log.agent)
-    return {
-        "orchestrator": "任务编排",
-        "evidence": "证据检索",
-        "research": "投资研究",
-        "risk": "风险复核",
-        "report": "报告生成",
-    }[phase]
+    return PHASE_TITLES[phase]
 
 
 def _state_title(task: InvestmentTaskRecord) -> str:
     return {
         "pending": "任务排队中",
-        "running": "Agent Run 执行中",
+        "running": "投研任务执行中",
         "waiting_approval": "等待投资者确认",
-        "completed": "Agent Run 已完成",
-        "failed": "Agent Run 失败",
-        "cancelled": "Agent Run 已取消",
-    }.get(task.status, "Agent Run 状态")
+        "completed": "投研任务已完成",
+        "failed": "投研任务失败",
+        "cancelled": "投研任务已取消",
+    }.get(task.status, "投研任务状态")
 
 
 def _latest_log_message(task: InvestmentTaskRecord) -> str:

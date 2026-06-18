@@ -90,7 +90,9 @@ async def proxy_research_workbench(request: Request, path: str) -> Union[Streami
         if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
     }
     body = await request.body()
-    client = httpx.AsyncClient(timeout=None, follow_redirects=False)
+    # 本地子服务（127.0.0.1:3927）必须直连，绝不能走外网代理——某些环境 NO_PROXY 解析异常
+    # 会把 localhost 也代理掉，导致整段挂起。trust_env=False 强制直连。
+    client = httpx.AsyncClient(timeout=None, follow_redirects=False, trust_env=False)
     upstream_request = client.build_request(
         request.method,
         upstream_url,
@@ -191,7 +193,7 @@ async def _wait_until_healthy() -> None:
 
 async def _is_workbench_healthy(timeout: float = 0.8) -> bool:
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             response = await client.get(f"{WORKBENCH_UPSTREAM}/api/status")
         return response.status_code == 200
     except httpx.HTTPError:
