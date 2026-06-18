@@ -77,6 +77,7 @@ from . import support_store
 from . import membership_codes
 from . import payment_config
 from . import ashare_review
+from . import ai_fund
 from . import engagement
 from . import track_record
 from .ai_supply_chain import fetch_ai_supply_chain_capacity_trends
@@ -1280,6 +1281,9 @@ async def lifespan(app: FastAPI):
     growth_analyst_task = asyncio.create_task(run_growth_analyst())
     from .checkin import init_checkin_db
     init_checkin_db()  # 连续看复盘签到表
+    ai_fund.init_ai_fund_db()  # A股 AI 模拟盘（虚拟基金）账户表
+    # AI 模拟盘交易员：A股交易时段内每 30min 跑一轮多因子决策（自动模拟买卖），展示给大家看
+    ai_fund_task = asyncio.create_task(run_ai_fund_trader())
     from .partner_api import init_partner_db
     init_partner_db()  # 合作方/开发者 API（自有内容对外）
     # T+1 召回：每日 10:30 给「注册 24~72h 未回访且留邮箱」的新用户发带当日复盘内容的召回邮件
@@ -1293,7 +1297,8 @@ async def lifespan(app: FastAPI):
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
     _bg_tasks = (dao_bridge_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, cache_pruner_task,
-                 ashare_review_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task)
+                 ashare_review_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
+                 ai_fund_task)
     for _task in _bg_tasks:
         _task.cancel()
     try:
@@ -4208,7 +4213,12 @@ async def api_research_workbench_pdf(
     """内联返回抓取舱内的研报原文（终端研报面板预览）。
 
     路径穿越由 _safe_workbench_file_path 防护；Content-Disposition 用 ASCII 文件名，
-    避免中文研报名破坏响应头编码。"""
+    避免中文研报名破坏响应头编码。
+
+    ⚠️原文文件下载默认关闭（DEEPFOCUS_RESEARCH_FILE_DOWNLOAD!=1 → 403）：第三方研报版权 +
+    不对用户开放任何原始文件，只提供 AI 解读（服务端读文件，不经此端点）。"""
+    if os.getenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", "0") != "1":
+        raise HTTPException(status_code=403, detail="研报原文下载未开放，请使用 AI 解读")
     path = _safe_workbench_file_path(out, filename)
     media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
     metrics_incr_research(filename, filename)  # 研报下载/打开计数（本地原文）
@@ -4245,7 +4255,12 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
 async def api_research_wire_file(file_id: str, name: str = "") -> Response:
     """在线预览研报原文：经同机 Node 工作台解析在线下载链并流式返回。
 
-    用于终端研报面板「在线」模式下点开原文（本地未下载也能读）。"""
+    用于终端研报面板「在线」模式下点开原文（本地未下载也能读）。
+
+    ⚠️原文文件下载默认关闭（DEEPFOCUS_RESEARCH_FILE_DOWNLOAD!=1 → 403）：不对用户开放原始文件，
+    只提供 AI 解读（vision-analyze 经 _fetch_research_online_pdf 服务端读取，不经此端点）。"""
+    if os.getenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", "0") != "1":
+        raise HTTPException(status_code=403, detail="研报原文下载未开放，请使用 AI 解读")
     safe_name = (name or f"{file_id}.pdf").strip()
     ext = safe_name[safe_name.rfind("."):].lower() if "." in safe_name else ".pdf"
     try:
@@ -4785,6 +4800,89 @@ async def run_ashare_review() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"[ashare-review] 异常：{type(exc).__name__}")
             await asyncio.sleep(300)
+
+
+async def run_ai_fund_trader() -> None:
+    """AI 模拟盘交易员：A股交易时段（北京时间周一~五 09:35–15:05）内每 30min 跑一轮多因子决策。
+
+    启动 1 分钟后先补跑一轮（让面板随时有净值快照）；iFinD 未配置时 run_tick 自动空转、不臆造价格。"""
+    await asyncio.sleep(60)
+    roster = getattr(ai_fund, "ROSTER", None) or [None]   # 兼容：引擎未参数化时 [None] → 单账户
+    print(f"[ai-fund] 启动：A股交易时段每 30min 跑 {len(roster)} 个智能体赛马（虚拟资金，不接券商）")
+
+    async def _run_all(trade: bool) -> int:
+        """对名单内每个智能体顺序跑一轮（数据缓存共享，首个预热后其余几乎零外网）。单个异常不拖垮全场。"""
+        traded = 0
+        for cfg in roster:
+            try:
+                out = await (asyncio.to_thread(ai_fund.run_tick, trade, cfg) if cfg is not None
+                             else asyncio.to_thread(ai_fund.run_tick, trade))
+                if out.get("ok"):
+                    traded += len(out.get("traded") or [])
+            except Exception as exc:  # noqa: BLE001
+                fid = getattr(cfg, "fund_id", "main")
+                print(f"[ai-fund] {fid} 异常：{type(exc).__name__}")
+        return traded
+
+    try:
+        traded = await _run_all(True)  # 启动补跑（run_tick 内部按时段自动决定是否真交易）
+        print(f"[ai-fund] 启动补跑：{len(roster)} 个智能体，本轮成交 {traded} 笔")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ai-fund] 启动补跑失败：{type(exc).__name__}")
+    while True:
+        try:
+            now = datetime.now(ai_fund.BJ_TZ)
+            in_session = (
+                now.weekday() < 5
+                and ((now.hour == 9 and now.minute >= 30) or (10 <= now.hour < 15) or (now.hour == 15 and now.minute == 0))
+            )
+            # 盘中 trade=True 激进交易；盘后/周末 trade=False 只刷研判+产出「观察」旁白+盯市，让面板 24h 有动静。
+            traded = await _run_all(in_session)
+            if traded:
+                print(f"[ai-fund] {now:%H:%M} 全场成交 {traded} 笔")
+            await asyncio.sleep(300 if in_session else 1200)  # 盘中 5min 活跃 / 盘后 20min 观察
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ai-fund] 异常：{type(exc).__name__}")
+            await asyncio.sleep(300)
+
+
+def _aifund_snapshot(strategy: str) -> dict[str, Any]:
+    """调 get_snapshot；兼容引擎是否已按策略参数化(多策略竞技场过渡期)：支持则传 strategy，否则回退主账户。"""
+    try:
+        return ai_fund.get_snapshot(strategy) if strategy else ai_fund.get_snapshot()
+    except TypeError:
+        return ai_fund.get_snapshot()  # 引擎尚未参数化 → 主账户
+
+
+@app.get("/api/ai-fund/snapshot")
+async def api_ai_fund_snapshot(request: Request, strategy: str = "") -> dict[str, Any]:
+    """AI 模拟盘当前全貌（公开展示）：净值/收益、持仓盯市、近期交易理由、净值曲线、可信度。
+    ?strategy=<fund_id> 取竞技场中某个选手的详情（缺省=主账户阿尔法，向后兼容）。
+
+    展示型只读接口，免登录可看（与复盘/快讯等公开内容一致，降获客摩擦）。"""
+    return await asyncio.to_thread(_aifund_snapshot, strategy)
+
+
+@app.get("/api/ai-fund/arena")
+async def api_ai_fund_arena(request: Request) -> dict[str, Any]:
+    """AI 策略竞技场排行榜（公开展示）：阿尔法 vs 价值/趋势/事件/逆向各派 + 沪深300 基准，
+    各选手累计收益/净值火花线/当前观点/排名。引擎 get_arena() 就绪后即生效；未就绪则降级提示（前端可回退主账户）。"""
+    def _arena() -> dict[str, Any]:
+        fn = getattr(ai_fund, "get_arena", None)
+        if callable(fn):
+            return fn()
+        return {"ready": False, "strategies": [], "benchmark": None,
+                "detail": "竞技场引擎正在接入中"}
+    return await asyncio.to_thread(_arena)
+
+
+@app.post("/api/ai-fund/tick")
+async def api_ai_fund_tick(request: Request, payload: Optional[dict] = None) -> dict[str, Any]:
+    """手动触发一轮模拟盘决策（管理员/运维，需 metrics 令牌）：用于种子/调试。"""
+    _require_metrics_token(request, str((payload or {}).get("token") or ""))
+    return await asyncio.to_thread(ai_fund.run_tick)
 
 
 @app.get("/api/qr")
@@ -5897,6 +5995,14 @@ async def api_delete_recall_subscription(subscription_id: str) -> dict[str, bool
     return {"deleted": delete_recall_subscription(subscription_id)}
 
 
+@app.get("/api/realtime/recall/webpush-key")
+async def api_recall_webpush_key() -> dict[str, Any]:
+    """前端订阅 Web Push 需要的 VAPID 公钥（公开、非敏感）。未配置→enabled=false，前端隐藏离线推送 UI。
+    服务端须同时配 DEEPFOCUS_VAPID_PUBLIC_KEY（此处暴露）+ DEEPFOCUS_VAPID_PRIVATE_KEY/SUBJECT（推送时用）。"""
+    pub = os.getenv("DEEPFOCUS_VAPID_PUBLIC_KEY", "").strip()
+    return {"enabled": bool(pub), "public_key": pub}
+
+
 # ===== 微信 iLink 渠道：扫码绑定到当前登录账号（多租户「扫码即问」）=====
 _WEIXIN_MGR = None  # WeixinChannelManager；DEEPFOCUS_WEIXIN_CHANNEL=1 时由 lifespan 启动
 
@@ -6114,6 +6220,21 @@ async def weixin_push_console(request: Request, token: str = "") -> HTMLResponse
         for m in msgs
     ) or '<div class=mut>暂无快讯</div>'
 
+    # ③ 投递日志：自动推/保活的每次结果，让"断联"有据可查（服务端快照，刷新更新）
+    _events = weixin_bind.recent_push_events(80)
+    _sty = {"delivered": "#3fae6b", "failed": "#e0574f", "skipped": "#e0a23c", "dead": "#c2554f", "recovered": "#3fae6b"}
+    _cnt: dict[str, int] = {}
+    for _e in _events:
+        _cnt[_e.get("status") or "?"] = _cnt.get(_e.get("status") or "?", 0) + 1
+    log_summary = (" · ".join(f'{k}:{v}' for k, v in _cnt.items())) or "暂无记录（重启后还没有推送/保活事件）"
+    log_rows = "".join(
+        f'<div class=lrow><span class=tm>{_t(_e.get("ts"))}</span>'
+        f'<span class=tag style="color:{_sty.get(_e.get("status") or "", "#9aa6ba")}">{_html.escape(_e.get("status") or "")}</span>'
+        f'<span class=mut>{_html.escape(_e.get("username") or _e.get("bot_id") or "")}</span>'
+        f'<span class=det>{_html.escape((_e.get("detail") or "")[:60])}</span></div>'
+        for _e in _events
+    ) or '<div class=mut>暂无投递记录。有新快讯命中订阅、或保活判定失效时会出现在这里。</div>'
+
     page = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>微信推送台</title><style>
 body{font-family:-apple-system,system-ui,sans-serif;max-width:760px;margin:0 auto;padding:16px;background:#0e1320;color:#d7dde8}
 h2{font-size:17px}h3{font-size:14px;color:#9aa6ba;margin:18px 0 8px}
@@ -6123,6 +6244,8 @@ input[type=number]{width:52px}input[type=text],.syms{width:100%;box-sizing:borde
 .who{font-size:14px;margin-bottom:8px}.opt{display:block;padding:4px 0;font-size:13px;cursor:pointer}.warn{color:#e0a23c;font-size:12px}
 .row{display:flex;gap:8px;align-items:center;padding:7px 4px;border-bottom:1px solid #1c2333;font-size:13px}
 .tm{color:#7f8aa3;font-variant-numeric:tabular-nums;flex:none;width:84px}.mut{color:#7f8aa3}
+.lrow{display:flex;gap:8px;align-items:baseline;padding:5px 4px;border-bottom:1px solid #1c2333;font-size:12px}
+.tag{flex:none;width:72px;font-weight:600}.det{color:#9aa6ba;flex:1;min-width:0}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
 #res{padding:10px;margin-top:10px;border-radius:8px;background:#13351f;border:1px solid #1f5b34;white-space:pre-wrap;font-size:12px;display:none}#res.err{background:#3a1414;border-color:#5b1f1f}
 details{margin-top:18px}summary{cursor:pointer;color:#9aa6ba;font-size:14px}
@@ -6135,6 +6258,9 @@ details{margin-top:18px}summary{cursor:pointer;color:#9aa6ba;font-size:14px}
 <div class=bar><button onclick=pushSel()>推送选中</button><button class=sec onclick=pushLatest()>推送最新 <input id=n type=number value=5 min=1 max=10> 条</button><button class=sec onclick="document.querySelectorAll('#list input[type=checkbox]').forEach(c=>c.checked=false)">清空</button></div>
 <div id=list>__ROWS__</div>
 </details>
+<h3>③ 投递日志 <button class=sec style="padding:4px 10px;font-size:12px" onclick="location.reload()">刷新</button></h3>
+<div class=mut style="font-size:12px;margin-bottom:6px">最近 80 条 · __LOGSUM__</div>
+<div id=log>__LOG__</div>
 <script>
 var TK=__TOKEN__;
 function show(ok,t){var r=document.getElementById('res');r.style.display='block';r.className=ok?'':'err';r.textContent=t;r.scrollIntoView({block:'nearest'})}
@@ -6151,7 +6277,9 @@ async function call(p){show(true,'推送中…');try{var r=await fetch('/api/wei
 function pushSel(){var ids=[].slice.call(document.querySelectorAll('#list input[type=checkbox]:checked')).map(function(c){return c.value});if(!ids.length)return show(false,'未选中任何快讯');call({ids:ids})}
 function pushLatest(){call({latest:parseInt(document.getElementById('n').value||'5')})}
 </script>"""
-    page = page.replace("__CARDS__", cards).replace("__ROWS__", rows).replace("__TOKEN__", json.dumps(token))
+    page = (page.replace("__CARDS__", cards).replace("__ROWS__", rows)
+            .replace("__LOG__", log_rows).replace("__LOGSUM__", _html.escape(log_summary))
+            .replace("__TOKEN__", json.dumps(token)))
     return HTMLResponse(page)
 
 

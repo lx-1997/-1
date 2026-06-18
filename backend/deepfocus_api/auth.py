@@ -971,6 +971,8 @@ PUBLIC_EXACT = frozenset(
         "/api/headlines",           # AI 今日头条（免费引流位）
         "/api/news/reactions",      # 资讯聚合情绪（看多/看空计数）：匿名也可看，handler 内 mine 仅登录可见
         "/api/track-record",        # 「我们提前发现的」平台战绩：公开引流（登录附个人战绩）
+        "/api/ai-fund/snapshot",    # AI 模拟盘快照：公开展示位（净值/持仓/决策日志），/api/ai-fund/tick 仍受管理员保护
+        "/api/ai-fund/arena",       # AI 策略竞技场排行榜：公开展示位（各派收益/排名/观点 + 沪深300）
         "/api/research/wire",        # 海外投行研报「列表」（标题/来源/日期），原文(wire-file)仍须登录
         # AI 解读(研报/资讯)：放行到端点，由 _check_ai_quota 精细把关——**非会员/匿名绝不触发新生成（省 token）**，
         # 仅当结果已缓存才放行、每天免费 1 次（匿名按 IP），未缓存/超额 → 403(匿名引导登录)/402(非会员引导开通)。
@@ -1001,6 +1003,7 @@ PUBLIC_EXACT = frozenset(
         "/api/recall/t1/stats",     # T+1 召回效果（handler 自校验 metrics token）
         "/api/recall/expiry/run",   # 到期转化召回手动触发（handler 自校验 metrics token）
         "/api/recall/expiry/stats", # 到期转化召回效果（handler 自校验 metrics token）
+        "/api/realtime/recall/webpush-key",  # Web Push VAPID 公钥（公开、非敏感，前端订阅离线召回前读取）
         # 微信推送台：独立 HTML 页(?token=)+ 推送接口，handler 自校验 metrics token；与看板同款，故放行 JWT 网关。
         "/api/weixin/console",
         "/api/weixin/push-news",

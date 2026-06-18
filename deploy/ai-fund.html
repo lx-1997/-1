@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>阿尔法 · A股 AI 模拟盘(虚拟资金) · DeepFocus</title>
+<meta name="description" content="DeepFocus AI 操盘手「阿尔法」实时演示：读站内快讯/文章/研报当催化剂，结合 K 线·主力资金·估值严谨择时，每笔决策公开依据，净值与沪深300走势对照。虚拟资金·模拟交易，不构成投资建议。" />
+<meta property="og:title" content="阿尔法 · DeepFocus AI 模拟盘(虚拟资金)" />
+<meta property="og:description" content="读 DeepFocus 站内快讯/研报当催化剂的 AI 操盘手，公开演示 A股研判逻辑，净值与沪深300走势对照。虚拟资金·模拟交易·不构成投资建议。" />
+<style>
+  :root{--bg:#eef0fb;--card:#fff;--ink:#1b1f33;--ink2:#6b7088;--ink3:#9aa0b8;--line:#edeef6;
+    --purple:#7c3aed;--magenta:#ec4899;--cyan:#06b6d4;--amber:#f59e0b;
+    --up:#16c784;--down:#f6465d;--upbg:rgba(22,199,132,.12);--downbg:rgba(246,70,93,.12);
+    --grad:linear-gradient(135deg,#7c3aed,#a855f7 45%,#ec4899);}
+  *{box-sizing:border-box}html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  .app{max-width:none;margin:0 auto;height:100dvh;display:flex;flex-direction:column;padding:11px 22px 7px;gap:9px}
+  .up{color:var(--up)}.down{color:var(--down)}.num{font-variant-numeric:tabular-nums}.mute{color:var(--ink2)}
+  .empty{color:var(--ink3);font-size:13px;text-align:center;padding:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 8px 26px rgba(76,52,140,.07)}
+  .sec-h{font-size:13px;font-weight:800;margin:0 0 10px;color:var(--ink);display:flex;align-items:center;gap:7px}
+  .sec-h small{font-weight:500;color:var(--ink3);font-size:10.5px}
+
+  .top{flex:0 0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 18px;border-radius:20px;background:var(--grad);box-shadow:0 10px 30px rgba(124,58,237,.28);color:#fff;position:relative;overflow:hidden}
+  .top::after{content:"";position:absolute;right:-40px;top:-60px;width:220px;height:220px;background:radial-gradient(circle,rgba(255,255,255,.18),transparent 70%);pointer-events:none}
+  .top.flash::before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.5),transparent 70%);transform:translateX(-100%);animation:sweep 1s ease}
+  @keyframes sweep{to{transform:translateX(100%)}}
+  .ava{font-size:26px;width:52px;height:52px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.16);border:1.5px solid rgba(255,255,255,.4);border-radius:16px;position:relative}
+  .ava.shake{animation:shake .5s}@keyframes shake{0%,100%{transform:none}25%{transform:rotate(-9deg)}75%{transform:rotate(9deg)}}
+  .ava .dot{position:absolute;right:-2px;bottom:-2px;width:12px;height:12px;border-radius:50%;background:#3dffa2;border:2px solid #8b3ddf;box-shadow:0 0 0 0 rgba(61,255,162,.7);animation:pulse var(--beat,1.8s) infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(61,255,162,.6)}70%{box-shadow:0 0 0 10px rgba(61,255,162,0)}100%{box-shadow:0 0 0 0 rgba(61,255,162,0)}}
+  .who .nm{font-size:21px;font-weight:900;letter-spacing:.5px}.who .nm .lv{font-size:10px;font-weight:800;margin-left:8px;background:rgba(255,255,255,.22);padding:2px 8px;border-radius:8px;vertical-align:middle}
+  .who .tg{font-size:11.5px;opacity:.85}
+  .mood{font-size:12.5px;font-weight:700;padding:5px 13px;border-radius:13px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);white-space:nowrap}
+  .topright{margin-left:auto;display:flex;align-items:center;gap:9px}
+  .bdg{font-size:11px;font-weight:700;padding:3px 10px;border-radius:11px;background:rgba(255,255,255,.2);white-space:nowrap}
+  .share{font-size:12.5px;font-weight:700;padding:7px 15px;border-radius:13px;background:#fff;color:var(--purple);border:none;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.12)}
+  /* DeepFocus 本站快讯（侧边栏精简列表） */
+  .wirebox{margin-top:14px;border-top:1px dashed var(--line);padding-top:11px}
+  .wirebox .wh{font-size:12px;font-weight:800;color:var(--ink);display:flex;align-items:center;gap:6px;margin-bottom:6px}
+  .wirebox .wh .more{margin-left:auto;font-size:10.5px;color:var(--purple);font-weight:800;text-decoration:none}
+  .wli{display:flex;gap:7px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f4f5fb;font-size:12px;line-height:1.45}
+  .wli:last-child{border-bottom:none}
+  .wli .s{flex:0 0 auto;font-size:9.5px;font-weight:800;color:var(--cyan);background:rgba(6,182,212,.1);padding:1px 6px;border-radius:6px;margin-top:1px}
+  .wli .wt{color:var(--ink2);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  /* 脑内独白（7×24「沉淀思考」） */
+  .ev.muse .eav{background:linear-gradient(135deg,#7c3aed,#06b6d4);font-size:14px}
+  .ev.muse .bub{background:linear-gradient(135deg,#faf7ff,#f0fbff);border-color:#e7e0fb;border-radius:14px}
+  .muse-ph{font-size:10.5px;font-weight:800;color:var(--purple);background:rgba(124,58,237,.1);padding:1px 8px;border-radius:7px}
+  .muse-tx{font-size:12.5px;line-height:1.65;color:var(--ink);margin-top:5px;font-weight:500}
+  .muse-refs{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .muse-refs .r{font-size:10.5px;color:var(--ink2);background:#f4f5fb;border-radius:7px;padding:2px 8px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .muse-refs .r b{color:var(--cyan);font-weight:800}.muse-refs .r:hover{background:#ebe7fb}
+  .musecard{padding:15px 16px;border-radius:16px;background:linear-gradient(135deg,#faf7ff,#f0fbff);border:1px solid #e7e0fb}
+  .musecard .mh{font-size:12.5px;font-weight:800;color:var(--purple);display:flex;align-items:center;gap:7px}
+  .musecard .mh .pulse{width:8px;height:8px;border-radius:50%;background:#7c3aed;animation:pulse 1.8s infinite}
+  .musecard .mt{font-size:15px;line-height:1.75;margin-top:11px;font-weight:500;color:var(--ink)}
+  .musecard .mline{font-size:11px;color:var(--ink3);margin-top:11px;line-height:1.5}
+  /* 阿尔法的认知/记忆（持续学习进化） */
+  .membox{margin-top:14px;border-top:1px dashed var(--line);padding-top:11px}
+  .membox .mh2{font-size:12px;font-weight:800;color:var(--ink);display:flex;align-items:center;gap:6px;margin-bottom:7px;flex-wrap:wrap}
+  .membox .mh2 small{font-weight:600;color:var(--ink3);font-size:10px;flex-basis:100%}
+  .mem{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f4f5fb;cursor:pointer}
+  .mem:last-child{border-bottom:none}.mem:hover{background:#faf8ff}
+  .mem .mty{flex:0 0 auto;font-size:13px;line-height:1}
+  .mem .mmid{flex:1;min-width:0}.mem .mtt{font-size:11.5px;color:var(--ink);font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mem .mcb{height:4px;border-radius:2px;background:#eef0f7;overflow:hidden;margin-top:4px}.mem .mcb i{display:block;height:100%;background:var(--grad);transition:width .7s cubic-bezier(.2,.8,.3,1)}
+  .mem .mcf{flex:0 0 auto;font-size:10.5px;font-weight:800;color:var(--purple);font-variant-numeric:tabular-nums}
+  .mempop-list{margin:7px 0 3px;display:flex;flex-direction:column;gap:3px}
+  .mempop-it{font-size:11.5px;color:var(--ink);line-height:1.45}
+  .mempop-meta{font-size:10px;color:var(--ink3);margin-top:5px}
+  .muse-recall{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .rcl{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;color:var(--amber);background:rgba(245,158,11,.12);border-radius:7px;padding:2px 8px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .hero{flex:0 0 auto;display:flex;gap:12px;flex-wrap:wrap;align-items:stretch}
+  .heroL{flex:1;min-width:240px;padding:14px 19px;display:flex;flex-direction:column;justify-content:center}
+  .heroL .lbl{font-size:12px;color:var(--ink2);font-weight:600}
+  .heroL .ret{font-size:42px;font-weight:900;line-height:1;letter-spacing:-1px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .heroL .ret.dn{background:linear-gradient(135deg,#f6465d,#ff8a3d);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .heroL .sub{font-size:12.5px;color:var(--ink2);margin-top:6px}.heroL .sub b{color:var(--ink)}
+  .heroR{flex:1.7;min-width:320px;padding:12px 15px;display:flex;flex-direction:column;position:relative}
+  .alpha-badge{position:absolute;right:14px;top:12px;font-size:12.5px;font-weight:800;padding:5px 12px;border-radius:13px;color:#fff;background:var(--grad);box-shadow:0 5px 14px rgba(124,58,237,.3);z-index:2}
+  .alpha-badge.dn{background:#9aa0b8;box-shadow:none}.alpha-badge.wait{background:#cdd2e6;color:#5b6178;box-shadow:none}
+  .riskline{margin-top:9px;gap:8px 12px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--ink2);line-height:1.5}
+  .riskline b{color:var(--ink);font-weight:800}.riskline i{color:var(--ink3);font-style:normal;margin:0 1px}
+  .riskline .acc{color:var(--ink3)}
+  .navchart{flex:1;position:relative;min-height:104px}
+  .navbub{position:absolute;right:0;transform:translateY(-50%);display:flex;align-items:center;gap:5px;color:#fff;font-size:12px;font-weight:800;padding:3px 9px 3px 4px;border-radius:14px;white-space:nowrap;z-index:2}
+  .navbub.me{background:var(--grad);box-shadow:0 4px 12px rgba(124,58,237,.35)}.navbub.bench{background:#9aa0b8;font-weight:700;font-size:11px}
+  .navbub .a{width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-size:11px}
+
+  .kpis{flex:0 0 auto;display:flex;gap:10px;flex-wrap:wrap}
+  .kpi{flex:1;min-width:116px;padding:10px 14px;display:flex;flex-direction:column;gap:3px}
+  .kpi .l{font-size:11px;color:var(--ink2);font-weight:600}.kpi .v{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}.kpi .x{font-size:10px;color:var(--ink3)}
+  .kpi.accent{background:linear-gradient(135deg,#faf5ff,#fdf2f8);border-color:#f0e6fb}
+
+  .say{flex:0 0 auto;display:flex;gap:11px;align-items:center;padding:9px 15px;border-radius:14px;background:linear-gradient(135deg,#faf5ff,#fef2fb);border:1px solid #f0e6fb}
+  .say .sa{font-size:20px;width:34px;height:34px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;background:var(--grad);border-radius:11px}
+  .say .t{font-size:13px;line-height:1.5;font-weight:500;flex:1;min-width:0}
+  .scan{font-size:11px;font-weight:700;color:var(--cyan);background:rgba(6,182,212,.1);padding:4px 10px;border-radius:11px;white-space:nowrap}
+
+  .tabs{display:none;gap:7px;flex:0 0 auto}
+  .tab{flex:1;text-align:center;font-size:13px;font-weight:700;padding:9px 4px;border-radius:13px;border:1px solid var(--line);background:var(--card);color:var(--ink2);cursor:pointer}
+  .tab.on{color:#fff;background:var(--grad);border-color:transparent;box-shadow:0 5px 16px rgba(124,58,237,.3)}
+
+  .grid{flex:1 1 auto;display:grid;grid-template-columns:360px minmax(0,1fr) 440px;gap:14px;min-height:0}
+  .col{padding:13px 15px;overflow-y:auto;min-height:0;display:flex;flex-direction:column}
+  .col::-webkit-scrollbar{width:7px}.col::-webkit-scrollbar-thumb{background:#dcdfee;border-radius:4px}
+
+  .sortbtn{margin-left:auto;font-size:10.5px;color:var(--purple);background:none;border:none;cursor:pointer;font-weight:700}
+  .hold{display:flex;align-items:center;gap:10px;padding:10px 11px;border-radius:14px;margin-bottom:8px;cursor:pointer;border:1px solid var(--line);transition:.15s;background:#fcfcff}
+  .hold:hover{box-shadow:0 6px 18px rgba(76,52,140,.1);transform:translateY(-1px)}
+  .hold.on{border-color:var(--purple);background:linear-gradient(135deg,#faf5ff,#fdf2f8)}
+  .hold .rk{width:22px;height:22px;flex:0 0 auto;border-radius:8px;background:var(--grad);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .hold .mid{flex:1;min-width:0}.hold .nm{font-weight:800;font-size:13.5px}.hold .cd{font-size:10.5px;color:var(--ink3)}
+  .hold .meta{font-size:10.5px;color:var(--ink3);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}.hold .temp{color:var(--cyan);font-weight:700}
+  .hold .wb{height:5px;border-radius:3px;background:#eef0f7;overflow:hidden;margin-top:4px}.hold .wb i{display:block;height:100%;background:var(--grad);width:0;transition:width .7s cubic-bezier(.2,.8,.3,1)}
+  .hold .rt{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+  .pill{font-size:13px;font-weight:800;padding:3px 9px;border-radius:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pill.up{color:var(--up);background:var(--upbg)}.pill.dn{color:var(--down);background:var(--downbg)}
+  .fp{font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
+  .sumrow{margin-top:6px;padding:9px 11px;border-radius:12px;background:#f7f8fc;font-size:12px;font-weight:700;display:flex;justify-content:space-between}
+
+  .chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}
+  .chip{font-size:12px;font-weight:700;padding:5px 12px;border-radius:12px;border:1px solid var(--line);background:#fcfcff;color:var(--ink2);cursor:pointer;white-space:nowrap}
+  .chip.on{color:#fff;background:var(--grad);border-color:transparent}.chip .pn{margin-left:5px;font-size:11px;opacity:.95}
+  .kmeta{display:flex;align-items:baseline;gap:9px;margin-bottom:8px;flex-wrap:wrap}.kmeta .nm{font-weight:900;font-size:19px}.kmeta .cd{color:var(--ink3);font-size:11px}
+  .kmeta .px{font-size:24px;font-weight:900;margin-left:auto;font-variant-numeric:tabular-nums}.kmeta .cg{font-size:15px;font-weight:800}
+  .kwrap{flex:1;display:flex;flex-direction:column;min-height:0}
+  .chart{position:relative;flex:1;min-height:300px}
+  .kovl{position:absolute;inset:0;pointer-events:none}.kovl>*{position:absolute}
+  .kmark{transform:translate(-50%,-50%);font-size:15px;pointer-events:auto;cursor:default;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+  .kmark.buy{color:var(--up)}.kmark.sell{color:var(--down)}
+  .kevt{transform:translateX(-50%);pointer-events:auto;cursor:pointer;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;border:1.5px solid;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+  .kevt:hover{transform:translateX(-50%) scale(1.2)}.kevt.fresh{animation:epulse 1.6s infinite}
+  @keyframes epulse{0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  .kevt.news{color:var(--cyan);border-color:var(--cyan)}.kevt.report{color:var(--purple);border-color:var(--purple)}.kevt.article{color:var(--amber);border-color:var(--amber)}.kevt.signal{color:var(--up);border-color:var(--up)}
+  .kevt .pole{position:absolute;top:16px;left:50%;width:1.5px;height:7px;background:currentColor;opacity:.45}
+  .kevt.trig{width:20px;height:20px;font-size:11px;box-shadow:0 0 0 2px #fff,0 0 0 4px var(--purple);z-index:3}
+  .kcross{position:absolute;top:0;bottom:14px;width:1px;background:rgba(124,58,237,.5);display:none;pointer-events:none}
+  .ktip{position:absolute;background:#1b1f33;color:#fff;font-size:10.5px;padding:6px 9px;border-radius:8px;display:none;pointer-events:none;white-space:nowrap;line-height:1.55;z-index:5;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+  .ktip b{font-weight:700}
+  .klegend{font-size:10px;color:var(--ink3);margin-top:5px}.klegend i{display:inline-block;width:11px;height:2px;vertical-align:middle;margin-right:2px}.klegend .m5{background:var(--amber)}.klegend .m20{background:var(--purple)}
+  .evtpop{position:fixed;z-index:999;max-width:300px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 13px;box-shadow:0 16px 40px rgba(76,52,140,.22);display:none;font-size:12.5px;color:var(--ink)}
+  .evtpop .src{font-size:10.5px;color:var(--ink3);font-weight:700}.evtpop .ti{margin:5px 0;line-height:1.45}.evtpop a{color:var(--purple);text-decoration:none;font-weight:700;font-size:11.5px}
+
+  /* 解盘对话 */
+  .ev{display:flex;gap:9px;margin-bottom:12px;cursor:pointer;animation:rise .4s ease both}@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+  .ev .eav{width:32px;height:32px;flex:0 0 auto;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff}
+  .ev.buy .eav{background:linear-gradient(135deg,#16c784,#0ea5e9)}.ev.sell .eav{background:linear-gradient(135deg,#f6465d,#fb7185)}.ev.watch .eav{background:#e6e9f5;color:#9aa0b8;font-size:13px;width:26px;height:26px}
+  .bub{flex:1;min-width:0;background:#f7f8fc;border:1px solid var(--line);border-radius:4px 14px 14px 14px;padding:9px 12px;transition:.15s}
+  .ev.watch{margin-bottom:8px}.ev.watch .bub{background:transparent;border-style:dashed;padding:7px 11px}.ev.watch .who2{color:var(--ink2)}.ev.watch .ev-foot{display:none}.ev.watch.open .ev-foot{display:flex}
+  .ev:hover .bub{border-color:#dcd2f5;box-shadow:0 4px 14px rgba(76,52,140,.08)}
+  .ev-h{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .who2{font-weight:800;font-size:12.5px}.tg2{font-size:10.5px;font-weight:800;padding:1px 8px;border-radius:7px}
+  .tg2.buy{color:var(--up);background:var(--upbg)}.tg2.sell{color:var(--down);background:var(--downbg)}.tg2.watch{color:var(--cyan);background:rgba(6,182,212,.12)}
+  .ev-nm{font-weight:700;font-size:12.5px}.ev-cd{color:var(--ink3);font-size:10.5px}
+  .ev-foot{display:flex;align-items:center;gap:8px;margin-top:5px;font-size:10.5px;color:var(--ink3)}
+  .ev-exp{margin-left:auto;color:var(--purple);font-weight:700}.ev.open .ev-exp .ar{display:inline-block;transform:rotate(90deg)}
+  .narr{font-size:13px;line-height:1.55;font-weight:500;margin-top:4px}.teaser{font-size:12.5px;color:var(--ink2);line-height:1.5;margin-top:4px}
+  .causal{display:flex;align-items:stretch;margin:8px 0;border-radius:10px;overflow:hidden;border:1px solid #e7d9fb;font-size:11px}
+  .causal .cstep{flex:1;padding:6px 8px;background:#faf7ff;display:flex;flex-direction:column;gap:1px;min-width:0}
+  .causal .cstep:nth-child(2){background:#f3edff}.causal .cstep:nth-child(3){background:linear-gradient(135deg,#f0fff8,#eafaf2)}
+  .causal .ct{font-size:9.5px;color:var(--ink3);font-weight:700}.causal .cv{font-size:11px;font-weight:700;line-height:1.3;overflow:hidden;text-overflow:ellipsis}
+  .cchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.cc{font-size:11px;border-radius:8px;padding:4px 9px;font-weight:600;cursor:pointer}
+  .cc.cat{color:var(--cyan);background:rgba(6,182,212,.1)}.cc.lead{color:var(--purple);background:rgba(124,58,237,.1);font-weight:800}.cc.bp{color:var(--magenta);background:rgba(236,72,153,.1)}
+  .scores{display:grid;grid-template-columns:1fr;gap:5px;margin:8px 0 2px}
+  .scleg{font-size:9.5px;color:var(--ink3);display:flex;justify-content:space-between;margin-bottom:2px}
+  .sc{display:flex;align-items:center;gap:6px;font-size:11px}.sc .k{color:var(--ink2);width:36px;flex:0 0 auto;font-weight:600}
+  .sc .tr{flex:1;height:6px;background:#eef0f7;border-radius:3px;position:relative;overflow:hidden}.sc .mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#cfd4e6}
+  .sc .fl{position:absolute;top:0;bottom:0}.sc .v{width:48px;text-align:right;font-variant-numeric:tabular-nums;flex:0 0 auto;font-weight:700}
+  .composite{font-size:11px;font-weight:800;margin-top:6px;color:var(--purple)}
+  .think{display:flex;flex-direction:column;gap:3px;border-top:1px dashed var(--line);padding-top:7px;margin-top:7px}
+  .step{font-size:11.5px;color:var(--ink2);display:flex;gap:6px}.step b{color:var(--ink);font-weight:700;flex:0 0 auto}
+
+  .foot{flex:0 0 auto;font-size:10px;color:var(--ink3);text-align:center;padding:2px}.foot a{color:var(--purple);text-decoration:none;font-weight:600}
+  #ticker{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:1000;font-size:13px;font-weight:800;color:#fff;padding:9px 18px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:none;max-width:90vw}
+  #ticker.show{display:block;animation:tin .5s ease, tout .5s ease 3s forwards}
+  #ticker.buy{background:linear-gradient(135deg,#16c784,#0ea5e9)}#ticker.sell{background:linear-gradient(135deg,#f6465d,#fb7185)}
+  @keyframes tin{from{opacity:0;transform:translate(-50%,-16px)}to{opacity:1;transform:translate(-50%,0)}}@keyframes tout{to{opacity:0;transform:translate(-50%,-16px)}}
+  .conf{position:fixed;inset:0;pointer-events:none;z-index:999;overflow:hidden}.cp{position:absolute;top:-12px;width:9px;height:14px;border-radius:2px;animation:fall linear forwards}
+  @keyframes fall{to{transform:translateY(105vh) rotate(540deg);opacity:.4}}
+  @media(prefers-reduced-motion:reduce){.cp,#ticker.show{animation:none}}
+  #poster{position:fixed;inset:0;z-index:1100;background:rgba(20,16,40,.72);display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:18px}
+  #poster img{max-width:min(360px,86vw);max-height:74vh;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  #poster .pb{display:flex;gap:10px}#poster .pb button{font-size:13px;font-weight:700;padding:9px 18px;border-radius:12px;border:none;cursor:pointer}
+  #poster .pb .dl{background:var(--grad);color:#fff}#poster .pb .cl{background:rgba(255,255,255,.2);color:#fff}#poster .ph{color:#fff;font-size:13px;opacity:.85}
+
+  @media(max-width:1023px){
+    .app{height:auto;min-height:100dvh;padding:9px 10px 14px}.tabs{display:flex;position:sticky;top:0;z-index:50;background:var(--bg);padding:4px 0}
+    .grid{grid-template-columns:1fr}.col{display:none;overflow:visible;min-height:0}
+    .grid[data-tab="left"] .c-left,.grid[data-tab="center"] .c-center,.grid[data-tab="right"] .c-right{display:flex}
+    .chart{min-height:320px}.heroL .ret{font-size:34px}.hero{flex-direction:column}.alpha-badge{top:10px}
+  }
+  @media(max-width:560px){.who .nm{font-size:18px}.top{padding:11px 14px}.heroL .ret{font-size:30px}.kpi{min-width:45%}}
+
+  /* ===== 多策略竞技场（排行榜主视图） ===== */
+  .arena{max-width:none;margin:0 auto;padding:14px 22px 10px;display:flex;flex-direction:column;gap:13px;min-height:100dvh}
+  .arena-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 20px;border-radius:20px;background:var(--grad);color:#fff;box-shadow:0 10px 30px rgba(124,58,237,.28);position:relative;overflow:hidden}
+  .arena-top::after{content:"";position:absolute;right:-40px;top:-60px;width:220px;height:220px;background:radial-gradient(circle,rgba(255,255,255,.18),transparent 70%)}
+  .arena-top .at-ttl{font-size:21px;font-weight:900;letter-spacing:.5px}
+  .arena-top .at-sub{font-size:12px;opacity:.9;margin-top:2px}
+  .arena-top .at-status{font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;background:rgba(0,0,0,.16);vertical-align:middle;margin-left:6px}
+  .arena-top .at-right{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .arena-top .at-banner{font-size:13.5px;font-weight:800;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.34);border-radius:13px;padding:7px 14px;white-space:nowrap}
+  .arena-top .at-bench{text-align:right;font-size:12px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.32);border-radius:13px;padding:6px 13px;white-space:nowrap}
+  .arena-top .at-bench b{font-size:15px;font-weight:800;display:block}
+  .lbrank.medal{background:none;font-size:20px;width:auto}
+  .lbgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:13px}
+  .lbcard{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 8px 26px rgba(76,52,140,.07);padding:14px 16px;cursor:pointer;position:relative;transition:.16s;display:flex;flex-direction:column;gap:7px;overflow:hidden}
+  .lbcard:hover{transform:translateY(-2px);box-shadow:0 14px 34px rgba(76,52,140,.14)}
+  .lbcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--c,#7c3aed)}
+  .lbcard.rank1{border-color:#f4c84a;box-shadow:0 10px 30px rgba(245,158,11,.18)}
+  .lbcard.rank1::after{content:"👑";position:absolute;right:12px;top:10px;font-size:18px}
+  .lbhead{display:flex;align-items:center;gap:9px}
+  .lbrank{width:26px;height:26px;flex:0 0 auto;border-radius:9px;background:#eef0f7;color:var(--ink2);font-size:13px;font-weight:900;display:flex;align-items:center;justify-content:center}
+  .lbcard.rank1 .lbrank{background:linear-gradient(135deg,#f59e0b,#f4c84a);color:#fff}
+  .lbava{font-size:22px;width:40px;height:40px;flex:0 0 auto;border-radius:12px;display:flex;align-items:center;justify-content:center;background:var(--cbg,rgba(124,58,237,.1))}
+  .lbwho{flex:1;min-width:0}.lbnm{font-size:15px;font-weight:900;display:flex;align-items:center;gap:6px}
+  .lbnm .lbsty{font-size:10px;font-weight:800;color:var(--c,#7c3aed);background:var(--cbg,rgba(124,58,237,.1));padding:1px 7px;border-radius:7px}
+  .lbtag{font-size:10.5px;color:var(--ink3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lbmood{font-size:16px;flex:0 0 auto}
+  .lbret{font-size:30px;font-weight:900;line-height:1;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+  .lbret small{font-size:11px;font-weight:700;color:var(--ink3);margin-left:7px;letter-spacing:0}
+  .lbspark{height:46px;position:relative}
+  .lbsay{font-size:12px;color:var(--ink2);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:34px}
+  .lbmeta{display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px;color:var(--ink3);font-weight:700}
+  .lbmeta b{color:var(--ink)}.lbmeta .a-up{color:var(--up)}.lbmeta .a-dn{color:var(--down)}
+  .lbtop{font-size:11px;font-weight:700;color:var(--cyan);background:rgba(6,182,212,.08);border-radius:9px;padding:5px 9px;align-self:flex-start;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lbcta{font-size:11px;color:var(--purple);font-weight:800;margin-left:auto}
+  .arena-foot{font-size:10px;color:var(--ink3);text-align:center;padding:4px}.arena-foot a{color:var(--purple);text-decoration:none;font-weight:600}
+  .backbar{display:none}
+  .app.detail .backbar{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:800;padding:7px 13px;border-radius:13px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);color:#fff;cursor:pointer;white-space:nowrap}
+  .stswitch{display:flex;gap:6px;flex-wrap:wrap}
+  .stchip{font-size:11.5px;font-weight:700;padding:5px 11px;border-radius:12px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;white-space:nowrap}
+  .stchip.on{background:#fff;color:var(--purple);border-color:#fff}
+  @media(max-width:1023px){.arena{padding:9px 10px 14px}.lbgrid{grid-template-columns:1fr}.lbret{font-size:26px}
+    .arena-top{flex-direction:column;align-items:stretch;gap:9px;padding:12px 14px}
+    .arena-top .at-ttl{font-size:17px}.arena-top .at-sub{font-size:11px}
+    .arena-top .at-right{margin-left:0;width:100%;justify-content:flex-start}
+    .arena-top .at-banner{white-space:normal;font-size:12.5px;flex:1}.arena-top .at-bench{white-space:normal}
+    /* 详情页顶栏：选手切换 chip 收进独占一行、横向可滑，避免在窄屏堆成几行把顶栏撑到 300px+ */
+    .app.detail .top{padding:10px 12px;gap:8px}
+    .stswitch{flex-basis:100%;order:10;overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px;-webkit-overflow-scrolling:touch}
+    .stswitch::-webkit-scrollbar{display:none}.stswitch .stchip{flex:0 0 auto}}
+</style>
+</head>
+<body>
+<div class="arena" id="arenaView"></div>
+<div class="app" id="appView" style="display:none">
+  <div class="top" id="top">
+    <button class="backbar" id="backArena">← 竞技场</button>
+    <div class="ava" id="ava">🤖<span class="dot" id="dot"></span></div>
+    <div class="who"><div class="nm" id="pname">阿尔法<span class="lv" id="rank">● 模拟盘</span></div><div class="tg" id="ptag">DeepFocus AI 操盘手</div></div>
+    <span class="mood" id="mood">—</span>
+    <div class="topright"><span class="stswitch" id="stswitch"></span><span id="bdg" class="bdg">…</span><button class="share" id="share">📸 战绩海报</button></div>
+  </div>
+  <div class="hero">
+    <div class="heroL card"><div class="lbl">累计收益率</div><div class="ret" id="ret">—</div><div class="sub" id="herosub">单位净值 <b class="num" id="navnum">—</b></div></div>
+    <div class="heroR card"><span class="alpha-badge wait" id="alpha">基准对齐中</span>
+      <div class="sec-h">📈 阿尔法 vs 沪深300 <small id="navfrom"></small></div><div class="navchart" id="navchart"></div>
+      <div class="riskline" id="riskline" style="display:none"></div></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi card"><span class="l">总资产</span><span class="v num" id="k_nav">—</span></div>
+    <div class="kpi card"><span class="l">累计盈亏</span><span class="v num" id="k_pnl">—</span></div>
+    <div class="kpi card"><span class="l">胜率 / 连胜</span><span class="v" id="k_wr">—</span></div>
+    <div class="kpi card accent"><span class="l">📡 本站信息驱动</span><span class="v" id="k_info">—</span><span class="x" id="k_info_x"></span></div>
+  </div>
+  <div class="say"><span class="sa">🤖</span><span class="t" id="commentary">加载中…</span><span class="scan" id="scan"></span></div>
+  <div class="tabs" id="tabs"></div>
+  <div class="grid" id="grid" data-tab="center">
+    <div class="col card c-left" id="colLeft"></div>
+    <div class="col card c-center" id="colCenter"></div>
+    <div class="col card c-right" id="colRight"></div>
+  </div>
+  <div class="foot">催化剂来自 DeepFocus 站内快讯 / 文章 / 研报 · 模拟交易不构成投资建议 · <a href="https://daocaijing.com?ch=aifund">登录终端解锁同款快讯/研报/速判卡 →</a></div>
+</div>
+<div class="evtpop" id="evtpop"></div>
+<div id="ticker"></div>
+<div id="poster"><div class="ph">长按或下载保存分享 ↓</div><img id="posterImg" alt="战绩海报"/><div class="pb"><button class="dl" id="posterDl">下载图片</button><button class="cl" id="posterCl">关闭</button></div></div>
+<canvas id="pcanvas" width="750" height="1334" style="display:none"></canvas>
+<script>
+const fmtMoney=v=>'¥'+Math.round(v).toLocaleString('zh-CN');
+const fmtPct=v=>(v==null)?'—':(v>0?'+':'')+Number(v).toFixed(2)+'%';
+const fmtVol=v=>v>=1e8?(v/1e8).toFixed(1)+'亿':v>=1e4?(v/1e4).toFixed(0)+'万':Math.round(v);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cl=v=>v>=0?'up':'down';
+const tt=iso=>{if(!iso)return'—';try{return new Date(iso).toLocaleString('zh-CN',{hour12:false}).slice(5);}catch(e){return'—';}};
+const TAGS={buy:'买入',sell:'卖出',watch:'观察'},EAV={buy:'▲',sell:'▼',watch:'👁'};
+const EVT_CLS={'快讯':'news','研报':'report','文章':'article','信号':'signal'},EVT_EM={'快讯':'⚡','研报':'📑','文章':'📰','信号':'📈'};
+const QRW='dfw_2vQ9_k7Rm';
+let S={data:null,tab:'center',sel:null,open:null,sort:'mv',lastTradeTs:null,mode:'arena',fund:'main',arena:null};
+const STY_CN={balanced:'消息面派',aggressive:'激进派',value:'价值派',event:'事件派',contrarian:'逆向派'};
+const isMobile=()=>window.innerWidth<1024;
+function countUp(el,to,fmt,from){if(from==null||Math.abs(to-from)<1e-9){el.textContent=fmt(to);return;}const t0=performance.now();
+  (function step(t){const k=Math.min(1,(t-t0)/650),e=1-Math.pow(1-k,3);el.textContent=fmt(from+(to-from)*e);if(k<1)requestAnimationFrame(step);})(performance.now());}
+function bjNow(){const n=new Date();return new Date(n.getTime()+(n.getTimezoneOffset()+480)*60000);}
+function liveState(d){const b=bjNow(),wd=b.getDay(),hm=b.getHours()*60+b.getMinutes();
+  // 优先用后端权威的交易日/时段(含 A股节假日日历)；老快照缺字段时回退按星期+时间推算
+  const tradingDay=(d.is_trading_day!==undefined)?d.is_trading_day:(wd>=1&&wd<=5);
+  const sess=(d.in_session!==undefined)?d.in_session:(wd>=1&&wd<=5&&((hm>=570&&hm<=690)||(hm>=780&&hm<=900)));
+  if(d.data_quality.level!=='live')return{bdg:'○ 等待行情',beat:'2.6s'};
+  if(!tradingDay)return{bdg:'🎏 休市·下个交易日 09:30 继续',beat:'2.9s'};
+  if(sess)return{bdg:'● 实时撮合中',beat:'1.3s'};
+  return{bdg:'🌙 已收盘·盘后复盘思考中',beat:'2.8s'};}
+function rankOf(st){const n=(st&&st.win_streak)||0;return n>=8?'👑 屠榜中':n>=5?'🚀 火力全开':n>=3?'🔥 '+n+'连胜':'蓄势中';}
+function gradeTxt(v){const a=Math.abs(v);return a<0.3?'中性':(v>0?(a>=0.6?'强多':'偏多'):(a>=0.6?'强空':'偏空'));}
+
+function navLine(h,bench){
+  const box=document.getElementById('navchart');
+  if(!h||h.length<2){const d=S.data||{};box.innerHTML='<div class="empty" style="padding:22px;line-height:1.7">🚀 阿尔法第 '+(d.days_running||1)+' 天发车<br><span style="font-size:11px">已扫读 '+((d.scan&&(d.scan.news+d.scan.report+d.scan.article))||0)+' 条站内情报 · 出手 '+(d.decisions_total||0)+' 次 · 净值曲线开盘后累积</span></div>';return;}
+  const W=560,H=120,P=8,allv=h.map(x=>x.value).concat((bench||[]).map(x=>x.value));
+  const mn=Math.min(...allv),mx=Math.max(...allv),sp=(mx-mn)||1,n=h.length;
+  const X=(i,m)=>P+(W-2*P)*(m===1?.5:i/(m-1)),Y=z=>H-P-(H-2*P)*(z-mn)/sp;
+  const path=arr=>arr.map((z,i)=>(i?'L':'M')+X(i,arr.length).toFixed(1)+' '+Y(z).toFixed(1)).join(' ');
+  const me=h.map(x=>x.value);
+  const ar='M'+X(0,n).toFixed(1)+' '+(H-P)+' '+me.map((z,i)=>'L'+X(i,n).toFixed(1)+' '+Y(z).toFixed(1)).join(' ')+' L'+X(n-1,n).toFixed(1)+' '+(H-P)+' Z';
+  let svg='<svg style="width:100%;height:100%;display:block" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none"><defs><linearGradient id="ng" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#ec4899"/></linearGradient><linearGradient id="nf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ec4899" stop-opacity=".18"/><stop offset="100%" stop-color="#ec4899" stop-opacity="0"/></linearGradient></defs>';
+  svg+='<path d="'+ar+'" fill="url(#nf)"/>';
+  if(bench&&bench.length>1)svg+='<path d="'+path(bench.map(x=>x.value))+'" fill="none" stroke="#9aa0b8" stroke-width="1.6" stroke-dasharray="5 4"/>';
+  svg+='<path d="'+path(me)+'" fill="none" stroke="url(#ng)" stroke-width="2.6" stroke-linejoin="round"/></svg>';
+  let bub='<div class="navbub me" style="top:'+(Y(me[n-1])/H*100).toFixed(1)+'%"><span class="a">🤖</span>'+fmtPct((me[n-1]-1)*100)+'</div>';
+  if(bench&&bench.length>1)bub+='<div class="navbub bench" style="top:'+(Y(bench[bench.length-1].value)/H*100).toFixed(1)+'%">沪深300 '+fmtPct((bench[bench.length-1].value-1)*100)+'</div>';
+  box.innerHTML=svg+bub;
+}
+
+/* ===== K线：实像素渲染(不拉伸) + 量 + MA5/20 + 坐标 + 十字光标 ===== */
+function drawK(box,p){
+  const full=(p.kline||[]);
+  const w=Math.round(box.clientWidth||0),h=Math.round(box.clientHeight||0);
+  if(full.length<3||w<60||h<80){box.innerHTML='<div class="empty">日线数据加载中…</div>';return;}
+  // 显示窗口聚焦「有本站内容的时段」：最早相关催化剂靠左(留3根上下文)，无则近24根；MA 仍用全量历史算保证准确
+  const fdmap={};full.forEach((k,i)=>fdmap[k.d]=i);const lastFD=full[full.length-1].d;
+  const fIdx=dt=>{if(fdmap[dt]!=null)return fdmap[dt];if(dt>=lastFD)return full.length-1;let r=-1;for(let i=0;i<full.length;i++){if(full[i].d<=dt)r=i;else break;}return r;};
+  const _ei=(p.events||[]).map(e=>fIdx(e.date)).filter(i=>i>=0);
+  // 窗口贴着催化剂：从最早事件往前留 2 根开始，让快讯/研报铺满整张图(不强行留空白左半)；无事件则近 22 根
+  let start=_ei.length?Math.max(0,Math.min(..._ei)-2):Math.max(0,full.length-22);
+  start=Math.min(start,Math.max(0,full.length-8));  // 至少留 ~8 根供均线/上下文
+  const kl=full.slice(start),csF=full.map(k=>k.c);
+  const P=6,axisH=14,volH=Math.round(h*0.20),gp=5;
+  const pTop=6,pBot=h-axisH-volH-gp,vTop=h-axisH-volH,vBot=h-axisH;
+  let mn=Math.min(...kl.map(k=>k.l)),mx=Math.max(...kl.map(k=>k.h));const pad=(mx-mn)*.06||1;mn-=pad;mx+=pad;
+  const n=kl.length,gw=(w-2*P)/n,bw=Math.max(3,Math.min(30,gw*.6));
+  const X=i=>P+gw*i+gw/2,Y=v=>pBot-(pBot-pTop)*(v-mn)/(mx-mn);
+  const vmax=Math.max(...kl.map(k=>k.v||0))||1,VY=v=>vBot-(vBot-vTop)*(v/vmax);
+  const cs=kl.map(k=>k.c),ma=(per,i)=>{const gi=start+i;if(gi<per-1)return null;let s=0;for(let j=gi-per+1;j<=gi;j++)s+=csF[j];return s/per;};
+  let g='';
+  for(let i=0;i<=3;i++){const v=mn+(mx-mn)*i/3,y=Y(v);g+='<line x1="0" x2="'+w+'" y1="'+y.toFixed(1)+'" y2="'+y.toFixed(1)+'" stroke="#eef0f7"/>';g+='<text x="'+(w-2)+'" y="'+(y-2).toFixed(1)+'" text-anchor="end" font-size="9" fill="#9aa0b8">'+v.toFixed(2)+'</text>';}
+  kl.forEach((k,i)=>{const x=X(i),up=k.c>=k.o,c=up?'#16c784':'#f6465d',yo=Y(k.o),yc=Y(k.c),top=Math.min(yo,yc),bh=Math.max(1.2,Math.abs(yc-yo));
+    g+='<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+Y(k.h).toFixed(1)+'" y2="'+Y(k.l).toFixed(1)+'" stroke="'+c+'"/>';
+    g+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx=".4" fill="'+c+'"/>';
+    const vy=VY(k.v||0);g+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+vy.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(.6,vBot-vy).toFixed(1)+'" fill="'+c+'" opacity=".45"/>';});
+  const mline=(per,col)=>{const pts=cs.map((_,i)=>{const m=ma(per,i);return m==null?null:X(i).toFixed(1)+','+Y(m).toFixed(1);}).filter(Boolean).join(' ');return pts?'<polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="1.4" opacity=".92"/>':'';};
+  g+=mline(5,'#f59e0b')+mline(20,'#7c3aed');
+  const last=cs[n-1],yl=Y(last);g+='<line x1="0" x2="'+w+'" y1="'+yl.toFixed(1)+'" y2="'+yl.toFixed(1)+'" stroke="#f59e0b" stroke-dasharray="3 3" opacity=".55"/>';
+  const stp=Math.max(1,Math.floor(n/4));for(let i=0;i<n;i+=stp){g+='<text x="'+X(i).toFixed(1)+'" y="'+(h-3)+'" text-anchor="middle" font-size="9" fill="#9aa0b8">'+kl[i].d.slice(5)+'</text>';}
+  const dmap={};kl.forEach((k,i)=>dmap[k.d]=i);const lastD=kl[n-1].d,firstD=kl[0].d;
+  // 事件日期→最近的≤该日的交易日蜡烛(非交易日发的就落到前一个交易日)，让快讯/研报铺在对应日期
+  const idxOf=dt=>{if(dmap[dt]!=null)return dmap[dt];if(dt>=lastD)return n-1;if(dt<firstD)return -1;let r=-1;for(let i=0;i<n;i++){if(kl[i].d<=dt)r=i;else break;}return r;};
+  // 催化剂连线：本站快讯/研报(顶部旗) ↓ 阿尔法买入(▲) —— 把"信息→交易"画在 K 线上
+  const evDates=new Set((p.events||[]).map(e=>e.date));
+  (p.marks||[]).forEach(m=>{if(m.side==='buy'&&evDates.has(m.date)){const i=idxOf(m.date);if(i<0)return;const x=X(i).toFixed(1);g+='<line x1="'+x+'" x2="'+x+'" y1="20" y2="'+Y(m.price).toFixed(1)+'" stroke="#7c3aed" stroke-width="1.2" stroke-dasharray="2 3" opacity=".6"/>';}});
+  let ovl='<span style="right:3px;top:'+(yl-7).toFixed(1)+'px;position:absolute;font-size:9.5px;font-weight:800;color:#fff;background:#f59e0b;padding:1px 4px;border-radius:4px">'+last.toFixed(2)+'</span>';
+  (p.marks||[]).forEach(m=>{const i=idxOf(m.date);if(i<0)return;const buy=m.side==='buy';
+    ovl+='<span class="kmark '+(buy?'buy':'sell')+'" style="left:'+X(i).toFixed(1)+'px;top:'+Y(m.price).toFixed(1)+'px" title="'+(buy?'买入':'卖出')+' ¥'+m.price+' · '+m.date+'">'+(buy?'▲':'▼')+'</span>';});
+  const stack={};(p.events||[]).forEach(ev=>{const i=idxOf(ev.date);if(i<0)return;const px=X(i),k=Math.round(px);stack[k]=stack[k]||0;const top=4+stack[k]*18;stack[k]++;const fr=ev.age_h!=null&&ev.age_h<=24?' fresh':'';
+    const trig=evDates.has(ev.date)&&(p.marks||[]).some(m=>m.side==='buy'&&m.date===ev.date)?' trig':'';
+    ovl+='<span class="kevt '+(EVT_CLS[ev.src]||'news')+fr+trig+'" style="left:'+px.toFixed(1)+'px;top:'+top+'px" data-evt="'+encodeURIComponent(JSON.stringify(ev))+'" title="'+esc(ev.src)+'·'+esc(ev.date)+(trig?' · 触发了阿尔法买入':'')+'">'+(EVT_EM[ev.src]||'•')+'<span class="pole"></span></span>';});
+  box.innerHTML='<svg style="position:absolute;inset:0" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">'+g+'</svg><div class="kovl">'+ovl+'</div><div class="kcross"></div><div class="ktip"></div>';
+  // 十字光标
+  const cross=box.querySelector('.kcross'),tip=box.querySelector('.ktip');
+  box.onmousemove=ev=>{const r=box.getBoundingClientRect(),mxx=ev.clientX-r.left;let i=Math.round((mxx-P)/gw-.5);i=Math.max(0,Math.min(n-1,i));const k=kl[i];
+    cross.style.display='block';cross.style.left=X(i).toFixed(1)+'px';tip.style.display='block';
+    const up=k.c>=k.o;tip.innerHTML=k.d+'<br>开'+k.o+' 收<b class="'+(up?'up':'down')+'" style="color:'+(up?'#3dffa2':'#ff9aa2')+'">'+k.c+'</b><br>高'+k.h+' 低'+k.l+'<br>量 '+fmtVol(k.v||0);
+    let tx=X(i)+8;if(tx+120>w)tx=X(i)-120;tip.style.left=Math.max(2,tx).toFixed(1)+'px';tip.style.top='6px';};
+  box.onmouseleave=()=>{cross.style.display='none';tip.style.display='none';};
+}
+let _kro;
+function drawCenterChart(tries){tries=tries||0;const d=S.data;if(!d)return;const pos=d.positions||[];if(!pos.length)return;
+  const box=document.getElementById('kchart');if(!box)return;
+  if((box.clientWidth||0)<60){if(tries<14)setTimeout(()=>drawCenterChart(tries+1),180);return;}  // 等布局给到宽度再画
+  let sel=S.sel&&pos.find(p=>p.symbol===S.sel)?S.sel:(d.featured_symbol||pos[0].symbol);
+  drawK(box,pos.find(x=>x.symbol===sel)||pos[0]);
+  // 容器尺寸变化(布局完成/窗口缩放/切 tab 显隐)即按真实宽度重画——保证蜡烛与旗/标记对齐
+  if(window.ResizeObserver){if(_kro)_kro.disconnect();_kro=new ResizeObserver(()=>{clearTimeout(_kro._t);_kro._t=setTimeout(()=>{const b=document.getElementById('kchart');if(b&&b.clientWidth>=60){let s=S.sel&&pos.find(p=>p.symbol===S.sel)?S.sel:(S.data.featured_symbol||(S.data.positions[0]||{}).symbol);const pp=(S.data.positions||[]).find(x=>x.symbol===s);if(pp)drawK(b,pp);}},140);});_kro.observe(box);}}
+
+function scoreBars(sc){const o=['消息面','技术面','资金面','基本面','情绪'],ks=o.filter(k=>sc&&sc[k]!=null);if(!ks.length)return'';
+  return'<div class="scores"><div class="scleg"><span>← 利空</span><span>中性</span><span>利多 →</span></div>'+ks.map(k=>{const v=sc[k],pos=v>=0,wd=Math.min(50,Math.abs(v)*50),c=pos?'#16c784':'#f6465d',st=pos?'left:50%;width:'+wd+'%;background:'+c:'right:50%;width:'+wd+'%;background:'+c;
+    return'<div class="sc"><span class="k">'+k+'</span><span class="tr"><span class="mid"></span><span class="fl" style="'+st+'"></span></span><span class="v '+(pos?'up':'down')+'">'+(v>0?'+':'')+v.toFixed(2)+' '+gradeTxt(v)+'</span></div>';}).join('')+'</div>';}
+function evFull(f){
+  let causal='';const cr=f.buy_ref||f.catalyst_ref;
+  if(f.side==='sell'&&cr&&f.pnl_pct!=null)
+    causal='<div class="causal"><div class="cstep"><span class="ct">🕒 本站发布</span><span class="cv">【'+esc(cr.src)+'】'+esc((cr.title||'').slice(0,16))+'</span></div><div class="cstep"><span class="ct">🤖 '+(cr.lead_h!=null?('领先'+cr.lead_h+'h后'):'')+'买入</span><span class="cv">'+(f.hold_days!=null?('持有'+f.hold_days+'天'):'建仓')+'</span></div><div class="cstep"><span class="ct">💰 落袋</span><span class="cv '+cl(f.pnl_pct)+'">'+fmtPct(f.pnl_pct)+'</span></div></div>';
+  const lead=(cr&&cr.lead_h!=null)?'<span class="cc lead" '+(cr.url?'data-url="'+esc(cr.url)+'"':'data-evt="'+encodeURIComponent(JSON.stringify({src:cr.src,title:cr.title,date:cr.date||'',url:cr.url||''}))+'"')+'>⏱ 本站较成交领先 '+cr.lead_h+' 小时发现</span>':'';
+  const chips=[f.catalyst?'<span class="cc cat">📰 '+esc(f.catalyst)+'</span>':'',lead,(f.buy_point&&f.side==='buy')?'<span class="cc bp">🎯 '+esc(f.buy_point)+'</span>':''].filter(Boolean).join('');
+  const steps=(f.thinking||[]).map(s=>'<div class="step"><b>'+esc(s.icon||'')+' '+esc(s.label||'')+'</b><span>'+esc(s.text||'')+'</span></div>').join('');
+  const comp=(f.composite!=null)?'<div class="composite">五维加权综合 = '+Number(f.composite).toFixed(2)+'（出手阈值 0.14）</div>':'';
+  const conf=(f.confidence!=null)?'<div class="step"><b>🎚 信心</b><span>'+Math.round(f.confidence*100)+'%</span></div>':'';
+  return causal+(chips?'<div class="cchips">'+chips+'</div>':'')+scoreBars(f.scores)+comp+(steps?'<div class="think">'+steps+conf+'</div>':'');
+}
+function buildLeft(d){
+  let pos=(d.positions||[]).slice();
+  let html;
+  if(!pos.length){html='<div class="sec-h">💼 持仓</div><div class="empty">空仓待机 · 等待买点</div>';}
+  else{
+    if(S.sort==='fp')pos.sort((a,b)=>(b.float_pnl||0)-(a.float_pnl||0));
+    const tot=pos.reduce((s,p)=>s+(p.float_pnl||0),0);
+    html='<div class="sec-h">💼 持仓榜 <small>'+d.position_count+'/'+d.max_positions+' · 点看 K 线</small><button class="sortbtn" data-sort="'+(S.sort==='fp'?'mv':'fp')+'">切'+(S.sort==='fp'?'按市值':'按浮盈')+'</button></div>';
+    html+=pos.map((p,i)=>{const temp=p.info_fresh?'<span class="temp">📡'+p.info_fresh+'·最新'+(p.info_latest_h<1?'刚':Math.round(p.info_latest_h)+'h')+'</span>':'';
+      return'<div class="hold'+(p.symbol===S.sel?' on':'')+'" data-sym="'+p.symbol+'"><span class="rk">'+(S.sort==='fp'&&i===0?'🏆':i+1)+'</span><span class="mid"><span class="nm">'+esc(p.name)+'</span> <span class="cd">'+esc(p.symbol)+'</span><div class="wb"><i data-w="'+Math.round(p.weight*100)+'"></i></div><div class="meta">仓位 '+(p.weight*100).toFixed(1)+'%'+temp+'</div></span><span class="rt"><span class="pill '+cl(p.pnl_pct)+'">'+fmtPct(p.pnl_pct)+'</span><span class="fp '+cl(p.float_pnl)+'">浮盈 '+(p.float_pnl>=0?'+':'')+fmtMoney(p.float_pnl)+'</span></span></div>';}).join('');
+    html+='<div class="sumrow"><span>'+pos.length+' 只合计浮盈</span><span class="'+cl(tot)+'">'+(tot>=0?'+':'')+fmtMoney(tot)+'</span></div>';
+  }
+  return html+memoryPanel(d)+wireSidebar(d.wire);  // 认知/记忆 + 本站快讯侧边栏
+}
+function museRefHtml(refs){return(refs||[]).map(r=>'<span class="r" data-url="'+esc(r.url||'')+'" data-title="'+esc(r.title)+'" data-src="'+esc(r.src)+'"><b>'+esc(r.src)+'</b> '+esc((r.title||'').slice(0,30))+'</span>').join('');}
+function buildCenter(d){
+  const pos=d.positions||[];
+  if(!pos.length){
+    const m=(d.musings||[])[0];
+    if(m){const refs=museRefHtml(m.refs);
+      return'<div class="sec-h">💭 阿尔法此刻在想 <small>空仓 · 7×24 盘前/盘后持续沉淀思考</small></div>'+
+        '<div class="musecard"><div class="mh"><span class="pulse"></span>'+esc(m.phase||'脑内独白')+' · '+tt(m.ts)+'</div><div class="mt">'+esc(m.text)+'</div>'+
+        recallChips(m.recalled)+
+        (refs?'<div class="muse-refs" style="margin-top:11px">'+refs+'</div>':'')+
+        '<div class="mline">阿尔法空仓待机，正读本站快讯/文章/研报等一个看得懂的买点 — 它从不停工、持续学习，思考全程公开。</div></div>';}
+    return'<div class="empty">空仓待机 · 暂无持仓 K 线<br><span style="font-size:11px">阿尔法在等本站快讯/研报点火一个看得懂的买点</span></div>';
+  }
+  let sel=S.sel&&pos.find(p=>p.symbol===S.sel)?S.sel:(d.featured_symbol||pos[0].symbol);
+  const p=pos.find(x=>x.symbol===sel)||pos[0];
+  const chips=pos.map(x=>'<button class="chip'+(x.symbol===sel?' on':'')+'" data-sym="'+x.symbol+'">'+esc(x.name)+'<span class="pn '+cl(x.pnl_pct)+'">'+fmtPct(x.pnl_pct)+'</span></button>').join('');
+  const dec=(d.feed||[]).find(f=>f.symbol===p.symbol&&f.kind==='trade');
+  return'<div class="chips">'+chips+'</div><div class="kmeta"><span class="nm">'+esc(p.name)+'</span><span class="cd">'+esc(p.symbol)+'</span><span class="px num">'+p.current_price+'</span><span class="cg '+cl(p.pnl_pct)+'">'+fmtPct(p.pnl_pct)+'</span></div>'+
+    '<div class="kwrap"><div class="chart" id="kchart"></div><div class="klegend"><i class="m5"></i>MA5 <i class="m20"></i>MA20 · <span class="up">▲买</span> <span class="down">▼卖</span> · 旗=本站快讯/研报(点看·发光为24h内新) · 悬停看当日量价</div></div>'+
+    (dec&&dec.narrative?'<div class="say" style="margin-top:9px"><span class="sa">🤖</span><span class="t">'+esc(dec.narrative)+'</span></div>':'');
+}
+function feedItem(f,id){const op=S.open===id;
+  return'<div class="ev '+f.side+(op?' open':'')+'" data-feed="'+id+'"><div class="eav">'+(EAV[f.side]||'•')+'</div><div class="bub"><div class="ev-h"><span class="who2">阿尔法</span><span class="tg2 '+f.side+'">'+TAGS[f.side]+'</span><span class="ev-nm">'+esc(f.name)+'</span><span class="ev-cd">'+esc(f.symbol)+'</span>'+(f.pnl_pct!=null?'<span class="pill '+cl(f.pnl_pct)+'" style="padding:0 6px;font-size:11px">'+fmtPct(f.pnl_pct)+'</span>':'')+'</div>'+
+    (f.narrative?'<div class="'+(f.kind==='trade'?'narr':'teaser')+'">'+esc(f.narrative)+'</div>':(f.catalyst?'<div class="teaser">📰 '+esc(f.catalyst)+'</div>':''))+
+    (op?evFull(f):'')+
+    '<div class="ev-foot"><span>'+(f.kind==='trade'?f.qty+'股 @ '+f.price+' · ':'')+tt(f.ts)+'</span><span class="ev-exp">'+(op?'收起 <span class="ar">▾</span>':'查看依据 <span class="ar">›</span>')+'</span></div></div></div>';}
+function museItem(m){const refs=museRefHtml(m.refs);
+  return'<div class="ev muse"><div class="eav">💭</div><div class="bub"><div class="ev-h"><span class="who2">阿尔法</span><span class="muse-ph">'+esc(m.phase||'脑内独白')+'</span></div><div class="muse-tx">'+esc(m.text)+'</div>'+recallChips(m.recalled)+(refs?'<div class="muse-refs">'+refs+'</div>':'')+'<div class="ev-foot"><span>'+tt(m.ts)+'</span></div></div></div>';}
+function buildRight(d){
+  const items=[];
+  (d.feed||[]).forEach((f,i)=>items.push({ts:f.ts||'',html:feedItem(f,'f'+i)}));     // 交易 + 观察
+  (d.musings||[]).forEach(m=>items.push({ts:m.ts||'',html:museItem(m)}));             // 7×24 脑内独白
+  items.sort((a,b)=>b.ts.localeCompare(a.ts));
+  const body=items.length?items.slice(0,46).map(x=>x.html).join(''):'<div class="empty">阿尔法待机中，扫描本站快讯/研报…</div>';
+  return'<div class="sec-h">🎙️ 阿尔法直播 <small>盘中交易决策 + 7×24 盘后/盘前脑内独白 · 每笔都引本站快讯/研报</small></div>'+body;
+}
+function fillCols(){const d=S.data;
+  document.getElementById('colLeft').innerHTML=buildLeft(d);
+  document.getElementById('colCenter').innerHTML=buildCenter(d);
+  document.getElementById('colRight').innerHTML=buildRight(d);
+  requestAnimationFrame(()=>{document.querySelectorAll('.wb i,.sc .fl,.mem .mcb i').forEach(x=>{if(x.dataset.w!=null)x.style.width=x.dataset.w+'%';});});
+  requestAnimationFrame(()=>requestAnimationFrame(()=>drawCenterChart()));  // 双 rAF 确保布局完成后再画
+  setTimeout(()=>drawCenterChart(),120);  // 兜底
+}
+function ticker(f){const t=document.getElementById('ticker');t.className='show '+f.side;
+  t.textContent=(f.side==='buy'?'🟢 阿尔法买入 ':'🔴 阿尔法卖出 ')+f.name+' ¥'+f.price+(f.catalyst?(' · '+f.catalyst.slice(0,18)):'');
+  document.getElementById('ava').classList.add('shake');document.getElementById('top').classList.add('flash');
+  setTimeout(()=>{document.getElementById('ava').classList.remove('shake');document.getElementById('top').classList.remove('flash');t.className='';},3600);}
+function confetti(){if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;const w=document.createElement('div');w.className='conf';const cs=['#16c784','#7c3aed','#ec4899','#f59e0b','#06b6d4'],n=isMobile()?16:30;
+  for(let i=0;i<n;i++){const p=document.createElement('div');p.className='cp';p.style.left=Math.random()*100+'vw';p.style.background=cs[i%cs.length];p.style.animationDuration=(1.2+Math.random())+'s';p.style.animationDelay=(Math.random()*.3)+'s';w.appendChild(p);}
+  document.body.appendChild(w);setTimeout(()=>w.remove(),2400);}
+
+const MEM_IC={trade_win:'✅',trade_loss:'❌',thesis:'📌'};
+function recallChips(recalled){if(!recalled||!recalled.length)return'';
+  return'<div class="muse-recall">'+recalled.slice(0,3).map(r=>'<span class="rcl">💡想起 '+(MEM_IC[r.mem_type]||'')+esc((r.title||'').slice(0,20))+'</span>').join('')+'</div>';}
+function memoryPanel(d){const mem=d.memory||[],ms=d.memory_stats||{};
+  const stat='学到 '+(ms.total||0)+' 条 · 观点'+(ms.theses||0)+' · 复盘'+((ms.wins||0)+(ms.losses||0))+' · 平均信度'+Math.round((ms.avg_confidence||0)*100)+'%';
+  if(!mem.length)return'<div class="membox"><div class="mh2">🧠 阿尔法的认知 <small>边交易边学、持续进化</small></div><div class="empty" style="padding:12px 4px;text-align:left;font-size:11.5px">还在攒认知 — 每笔复盘、每条研报都会沉淀成他的长期记忆。</div></div>';
+  const rows=mem.slice(0,8).map((m,i)=>{const conf=Math.round((m.confidence||0)*100),seen=(m.seen_count||1);
+    return'<div class="mem" data-mi="'+i+'" title="'+esc(m.title)+(seen>1?(' · 印证'+seen+'次'):'')+' · 点开看依据"><span class="mty">'+(MEM_IC[m.mem_type]||'•')+'</span><span class="mmid"><span class="mtt">'+esc(m.title)+'</span><div class="mcb"><i data-w="'+conf+'"></i></div></span><span class="mcf">'+conf+'%</span></div>';}).join('');
+  return'<div class="membox"><div class="mh2">🧠 阿尔法的认知 <small>'+esc(stat)+'</small></div>'+rows+'</div>';}
+function wireSidebar(wire){if(!wire||!wire.length)return'';
+  const items=wire.slice(0,6).map(w=>'<div class="wli"><span class="s">'+(EVT_EM[w.src]||'•')+w.src+'</span><span class="wt">'+esc(w.title)+'</span></div>').join('');
+  return'<div class="wirebox"><div class="wh">📡 本站快讯/文章/研报<a class="more" href="https://daocaijing.com?ch=aifund_wire" target="_top">看全部 →</a></div>'+items+'</div>';}
+function render(d){if(!d)return;const prev=S.data;S.data=d;const up=(d.nav_pct||0)>=0;
+  document.getElementById('ptag').textContent=d.persona?.tag||'';document.getElementById('rank').textContent=rankOf(d.stats);
+  if(d.persona){const pn=document.getElementById('pname');if(pn&&pn.firstChild)pn.firstChild.nodeValue=(d.persona.name||'阿尔法')+' ';  // 详情头部随选手切换(原硬编码"阿尔法")
+    if(d.persona.emoji){const av=document.getElementById('ava');if(av&&av.firstChild&&av.firstChild.nodeType===3)av.firstChild.nodeValue=d.persona.emoji;}}
+  if(d.mood)document.getElementById('mood').textContent=d.mood.emoji+' '+d.mood.label;
+  const ls=liveState(d);document.getElementById('dot').style.setProperty('--beat',ls.beat);document.getElementById('bdg').textContent=ls.bdg;
+  const ret=document.getElementById('ret');ret.className='ret'+(up?'':' dn');countUp(ret,d.nav_pct,fmtPct,prev?prev.nav_pct:null);
+  document.getElementById('herosub').innerHTML='单位净值 <b class="num">'+Number(d.nav_unit).toFixed(4)+'</b> · 运行第 '+(d.days_running||1)+' 天 · 出手 '+(d.decisions_total||0)+' 次';
+  document.getElementById('navfrom').textContent='自 '+(d.started_at||'').slice(0,10);
+  const ab=document.getElementById('alpha');
+  if(d.alpha_pct==null||!(d.benchmark&&d.benchmark.length>1)){ab.className='alpha-badge wait';ab.textContent='🏁 发车·基准对齐中';}
+  else if(d.alpha_pct>=0){ab.className='alpha-badge';ab.textContent='相对沪深300 +'+d.alpha_pct.toFixed(2)+'%';}
+  else{ab.className='alpha-badge dn';ab.textContent='相对沪深300 '+d.alpha_pct.toFixed(2)+'%';}
+  const rk=d.risk||{},dc=d.discipline||{},rl=document.getElementById('riskline');
+  if(rl){
+    const days=d.days_running||1,tn=dc.trades||0;        // 出手克制：拼的是出手质量，不是交易频次
+    const dp=['出手 <b>'+tn+'</b> 次/'+days+'天'+(tn?'（日均 '+(tn/days).toFixed(1)+'）':'')];
+    dp.push((dc.catalyst_pct!=null?'数据驱动 <b>'+dc.catalyst_pct+'%</b>':'<b>100%</b> 本站催化剂触发'));
+    const ps=[];
+    if(rk.max_drawdown_pct!=null){
+      ps.push('最大回撤 <b>-'+Number(rk.max_drawdown_pct).toFixed(1)+'%</b>');
+      if(rk.sharpe!=null)ps.push('夏普 <b>'+Number(rk.sharpe).toFixed(2)+'</b>');
+      if(rk.beta!=null)ps.push('β <b>'+Number(rk.beta).toFixed(2)+'</b>');
+      if(!rk.sufficient)ps.push('<span class="acc">比率待 '+(rk.sample_days||0)+'/5日</span>');
+    }else{ps.push('<span class="acc">回撤/夏普积累中（'+(rk.sample_days||0)+'/5 日）</span>');}
+    rl.title='操盘信条：拼的不是交易频次，是出手质量与回撤控制 —— 每笔买入都需本站快讯/文章/研报点火、站上 20 日线才出手，严格止损让利润奔跑。';
+    rl.innerHTML='<span class="acc">⚖️ 纪律</span>'+dp.join('<i>·</i>')+'<i style="opacity:.45;margin:0 4px">｜</i><span class="acc">📊 风控</span>'+ps.join('<i>·</i>');
+    rl.style.display='flex';
+  }
+  document.getElementById('commentary').textContent=d.commentary||'盯盘中…';
+  const s=d.stats||{},pnl=d.nav-d.started_nav;
+  countUp(document.getElementById('k_nav'),d.nav,fmtMoney,prev?prev.nav:null);
+  const kp=document.getElementById('k_pnl');kp.className='v num '+(pnl>=0?'up':'down');kp.textContent=(pnl>=0?'+':'')+fmtMoney(pnl);
+  document.getElementById('k_wr').textContent=(s.win_rate!=null?s.win_rate+'%':'持有中')+' / '+(s.win_streak||0)+'连';
+  const inf=s.info_driven;
+  if(inf&&inf.count){document.getElementById('k_info').textContent=(inf.trade_pct>=80?'🔥 ':'')+inf.trade_pct+'%';document.getElementById('k_info_x').textContent=inf.count+' 笔由 DeepFocus 快讯/研报点火'+(inf.pnl_pct!=null?(' · 贡献'+inf.pnl_pct+'%收益'):'');}
+  else{document.getElementById('k_info').textContent='待平仓统计';document.getElementById('k_info_x').textContent='每笔买入均由本站情报触发';}
+  const sc=d.scan||{};document.getElementById('scan').textContent='📡 扫读 快讯'+(sc.news||0)+'·研报'+(sc.report||0)+'·文章'+(sc.article||0);
+  document.getElementById('tabs').innerHTML=[['left','💼 持仓'],['center','📊 行情'],['right','🎙️ 解盘']].map(t=>'<div class="tab'+(S.tab===t[0]?' on':'')+'" data-tab="'+t[0]+'">'+t[1]+'</div>').join('');
+  document.getElementById('grid').dataset.tab=S.tab;
+  navLine(d.history,d.benchmark);fillCols();
+  const top=(d.feed||[]).find(f=>f.kind==='trade');
+  if(top&&prev&&top.ts!==S.lastTradeTs){ticker(top);if(top.side==='sell'&&top.pnl_pct>0)confetti();}
+  if(top)S.lastTradeTs=top.ts;
+}
+function showEvtPop(el,ev){const p=document.getElementById('evtpop');
+  const link=ev.url?'<a href="'+esc(ev.url)+'" target="_blank" rel="noopener">查看原文 ↗</a>':'<a href="https://daocaijing.com?ch=aifund" target="_blank" rel="noopener">去终端看实时 ↗</a>';
+  p.innerHTML='<div class="src">'+(EVT_EM[ev.src]||'•')+' '+esc(ev.src)+' · '+esc(ev.date||'')+'</div><div class="ti">'+esc(ev.title)+'</div>'+link;
+  const r=el.getBoundingClientRect();p.style.display='block';const pw=p.offsetWidth,ph=p.offsetHeight;
+  let x=r.left+r.width/2-pw/2;x=Math.max(8,Math.min(x,innerWidth-pw-8));let y=r.bottom+8;if(y+ph>innerHeight-8)y=r.top-ph-8;
+  p.style.left=x+'px';p.style.top=Math.max(8,y)+'px';}
+function showMemPop(el){
+  const mm=((S.data&&S.data.memory)||[])[+el.dataset.mi]||{},det=mm.detail||{};
+  const tts=(det.top_titles||[]).filter(Boolean);
+  const body=tts.length
+    ?'<div class="mempop-list">'+tts.map(t=>'<div class="mempop-it">📌 '+esc(t)+'</div>').join('')+'</div>'
+    :'<div class="mempop-it" style="color:#9aa0b8">这是阿尔法的交易复盘判断，依据随行情持续更新。</div>';
+  const meta=det.latest_h!=null?'<div class="mempop-meta">本站最新相关内容约 '+Math.round(det.latest_h)+'h 前 · 共 '+(det.n||tts.length)+' 条在追</div>':'';
+  const p=document.getElementById('evtpop');
+  p.innerHTML='<div class="src">🧠 这条认知在追的本站内容</div><div class="ti">'+esc(mm.title||'')+'</div>'+body+meta+'<a href="https://daocaijing.com?ch=aifund_cog" target="_top">去终端看这些快讯/研报 →</a>';
+  const r=el.getBoundingClientRect();p.style.display='block';const pw=p.offsetWidth,ph=p.offsetHeight;
+  let x=r.left+r.width/2-pw/2;x=Math.max(8,Math.min(x,innerWidth-pw-8));let y=r.bottom+8;if(y+ph>innerHeight-8)y=r.top-ph-8;
+  p.style.left=x+'px';p.style.top=Math.max(8,y)+'px';}
+async function sharePoster(){
+  const d=S.data;if(!d)return;const c=document.getElementById('pcanvas'),x=c.getContext('2d'),W=750,H=1334;x.clearRect(0,0,W,H);
+  const g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,'#7c3aed');g.addColorStop(.5,'#a855f7');g.addColorStop(1,'#ec4899');x.fillStyle=g;x.fillRect(0,0,W,H);
+  x.fillStyle='rgba(255,255,255,.97)';x.beginPath();x.roundRect(40,150,W-80,H-300,32);x.fill();
+  x.textAlign='center';x.fillStyle='#fff';x.font='800 40px sans-serif';x.fillText('🤖 '+(d.persona?.name||'阿尔法'),W/2,98);
+  x.fillStyle='rgba(255,255,255,.9)';x.font='600 20px sans-serif';x.fillText('DeepFocus AI 模拟盘 · 虚拟资金·模拟交易',W/2,128);
+  const up=(d.nav_pct||0)>=0;x.fillStyle='#6b7088';x.font='600 24px sans-serif';x.fillText('累计收益率',W/2,250);
+  x.fillStyle=up?'#16c784':'#f6465d';x.font='900 110px sans-serif';x.fillText(fmtPct(d.nav_pct),W/2,360);
+  if(d.alpha_pct!=null&&d.benchmark&&d.benchmark.length>1){x.fillStyle=d.alpha_pct>=0?'#7c3aed':'#9aa0b8';x.font='800 30px sans-serif';x.fillText('相对沪深300 '+(d.alpha_pct>=0?'+':'')+d.alpha_pct.toFixed(2)+'%',W/2,420);}
+  const s=d.stats||{};x.fillStyle='#1b1f33';x.font='700 28px sans-serif';x.fillText('胜率 '+(s.win_rate!=null?s.win_rate+'%':'—')+'   连胜 '+(s.win_streak||0)+'   总资产 '+fmtMoney(d.nav),W/2,500);
+  const h=d.history||[];if(h.length>1){const x0=90,y0=560,ww=W-180,hh=180,v=h.map(p=>p.value),mn=Math.min(...v),mx=Math.max(...v),sp=(mx-mn)||1;x.strokeStyle='#ec4899';x.lineWidth=4;x.beginPath();v.forEach((z,i)=>{const px=x0+ww*i/(v.length-1),py=y0+hh-hh*(z-mn)/sp;i?x.lineTo(px,py):x.moveTo(px,py);});x.stroke();}else{x.fillStyle='#9aa0b8';x.font='600 22px sans-serif';x.fillText('🚀 第 '+(d.days_running||1)+' 天 · 净值曲线累积中',W/2,650);}
+  x.fillStyle='#6b7088';x.font='600 22px sans-serif';x.textAlign='left';const cm='阿尔法说：'+(d.commentary||''),words=cm.match(/.{1,22}/g)||[];words.slice(0,3).forEach((ln,i)=>x.fillText(ln,70,820+i*34));
+  try{const r=await fetch('/api/qr?w='+QRW+'&data='+encodeURIComponent('https://daocaijing.com/ai-fund?ch=poster'),{headers:{'Accept':'application/json'}});
+    if(r.ok){const q=await r.json(),mtx=q.matrix||[],sz=q.size||mtx.length,cell=170/sz,qx=W/2-85,qy=980;x.fillStyle='#fff';x.fillRect(qx-8,qy-8,186,186);x.fillStyle='#1b1f33';
+      for(let i=0;i<sz;i++)for(let j=0;j<sz;j++)if(mtx[i]&&mtx[i][j])x.fillRect(qx+j*cell,qy+i*cell,Math.ceil(cell),Math.ceil(cell));}}catch(e){}
+  x.textAlign='center';x.fillStyle='#6b7088';x.font='600 20px sans-serif';x.fillText('扫码看阿尔法实时操盘 daocaijing.com/ai-fund',W/2,1190);
+  x.fillStyle='#6b7088';x.font='700 19px sans-serif';x.fillText('虚拟资金·模拟交易 · 不构成投资建议 · 历史不代表未来',W/2,1230);
+  const url=c.toDataURL('image/png');document.getElementById('posterImg').src=url;document.getElementById('poster').style.display='flex';
+  document.getElementById('posterDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download='阿尔法战绩.png';a.click();};
+}
+document.addEventListener('click',e=>{
+  const ke=e.target.closest('.kevt');if(ke){try{showEvtPop(ke,JSON.parse(decodeURIComponent(ke.dataset.evt)));}catch(x){}return;}
+  const lead=e.target.closest('.cc[data-evt],.cc[data-url]');if(lead){if(lead.dataset.url){window.open(lead.dataset.url,'_blank');}else{try{showEvtPop(lead,JSON.parse(decodeURIComponent(lead.dataset.evt)));}catch(x){}}return;}
+  const mr=e.target.closest('.muse-refs .r');if(mr){if(mr.dataset.url){window.open(mr.dataset.url,'_blank');}else{showEvtPop(mr,{src:mr.dataset.src,title:mr.dataset.title,date:'',url:''});}return;}
+  const mem=e.target.closest('.mem');if(mem){showMemPop(mem);return;}
+  if(!e.target.closest('#evtpop'))document.getElementById('evtpop').style.display='none';
+  if(e.target.closest('#share')){sharePoster();return;}
+  if(e.target.id==='posterCl'||e.target.id==='poster'){document.getElementById('poster').style.display='none';return;}
+  const sb=e.target.closest('.sortbtn');if(sb){S.sort=sb.dataset.sort;document.getElementById('colLeft').innerHTML=buildLeft(S.data);requestAnimationFrame(()=>document.querySelectorAll('.wb i').forEach(x=>x.style.width=(x.dataset.w||0)+'%'));return;}
+  const tab=e.target.closest('.tab');if(tab){S.tab=tab.dataset.tab;document.getElementById('grid').dataset.tab=S.tab;document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.tab===S.tab));requestAnimationFrame(drawCenterChart);return;}
+  const sym=e.target.closest('[data-sym]');if(sym){S.sel=sym.dataset.sym;if(isMobile())S.tab='center';render(S.data);return;}
+  const fe=e.target.closest('.ev[data-feed]');if(fe){S.open=S.open===fe.dataset.feed?null:fe.dataset.feed;document.getElementById('colRight').innerHTML=buildRight(S.data);requestAnimationFrame(()=>document.querySelectorAll('.sc .fl').forEach(x=>{if(x.dataset.w!=null)x.style.width=x.dataset.w+'%';}));return;}
+});
+let rz;window.addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(drawCenterChart,160);});
+
+/* ===== 多策略竞技场 ===== */
+function spark(hist,bench,color){
+  const h=(hist||[]).map(x=>x.value),b=(bench||[]).map(x=>x.value);
+  if(h.length<2){ // 未开赛/数据少：画一条 1.0 基准虚线 + 「蓄势」，比"累积中"文字更像活的
+    return '<svg viewBox="0 0 300 46" preserveAspectRatio="none" style="width:100%;height:100%;display:block">'+
+      '<line x1="3" y1="23" x2="297" y2="23" stroke="'+color+'" stroke-width="1.6" stroke-dasharray="5 4" opacity=".55"/>'+
+      '<text x="150" y="18" text-anchor="middle" font-size="9" fill="#9aa0b8">蓄势 · 开盘开赛</text></svg>';}
+  const W=300,H=46,P=3,all=h.concat(b),mn=Math.min(...all),mx=Math.max(...all),sp=(mx-mn)||1;
+  const X=(i,n)=>P+(W-2*P)*(n<2?.5:i/(n-1)),Y=v=>H-P-(H-2*P)*(v-mn)/sp;
+  const path=a=>a.map((v,i)=>(i?'L':'M')+X(i,a.length).toFixed(1)+' '+Y(v).toFixed(1)).join(' ');
+  let s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" style="width:100%;height:100%;display:block">';
+  if(b.length>1)s+='<path d="'+path(b)+'" fill="none" stroke="#c2c7da" stroke-width="1.4" stroke-dasharray="4 3"/>';
+  s+='<path d="'+path(h)+'" fill="none" stroke="'+color+'" stroke-width="2.2" stroke-linejoin="round"/></svg>';
+  return s;
+}
+const SIDE_CN={buy:'买入',sell:'卖出',watch:'观察'};
+function arenaSay(s){
+  const la=s.last_action;
+  if(la&&la.name){const pnl=(la.pnl_pct!=null)?(' '+fmtPct(la.pnl_pct)):'';
+    return (la.side==='buy'?'🟢 ':la.side==='sell'?'🔴 ':'👁 ')+'最近'+(SIDE_CN[la.side]||'操作')+' '+esc(la.name)+pnl;}
+  return ((s.mood&&s.mood.emoji)||'😎')+' '+((s.mood&&s.mood.label)||'盯盘找机会')+'，等本站催化点火。';
+}
+const MEDAL={1:'🥇',2:'🥈',3:'🥉'};
+function lbcard(s,bench,racing){
+  const up=(s.nav_pct||0)>=0,c=s.color||'#7c3aed';
+  const la=s.last_action,chip=(la&&la.name)?('<div class="lbtop">'+(la.side==='buy'?'🟢 买入 ':la.side==='sell'?'🔴 卖出 ':'👁 ')+esc(la.name)+((la.pnl_pct!=null)?(' '+fmtPct(la.pnl_pct)):'')+'</div>'):'';
+  const a=s.alpha_pct,al=(a==null)?'':'α<span class="'+(a>=0?'a-up':'a-dn')+'"> '+(a>=0?'+':'')+Number(a).toFixed(1)+'%</span>';
+  // 未开赛时收益都是 0%，让「章法」当主角；开赛后才以最近动作/收益为主
+  const say=racing?arenaSay(s):('▸ '+esc(s.blurb||s.tag||''));
+  const rankHtml=MEDAL[s.rank]?('<span class="lbrank medal">'+MEDAL[s.rank]+'</span>'):('<span class="lbrank">'+(s.rank||'-')+'</span>');
+  return '<div class="lbcard'+(s.rank===1&&racing?' rank1':'')+'" data-fund="'+esc(s.fund_id)+'" style="--c:'+c+';--cbg:'+c+'1a">'+
+    '<div class="lbhead">'+rankHtml+'<span class="lbava" style="background:'+c+'1a">'+(s.emoji||'🤖')+'</span>'+
+    '<span class="lbwho"><span class="lbnm">'+esc(s.name)+'<span class="lbsty">'+esc(STY_CN[s.style]||s.style||'')+'</span></span><span class="lbtag">'+esc(s.tag||s.blurb||'')+'</span></span>'+
+    '<span class="lbmood">'+((s.mood&&s.mood.emoji)||'')+'</span></div>'+
+    '<div class="lbret '+(up?'up':'down')+'">'+fmtPct(s.nav_pct)+'<small>单位净值 '+Number(s.nav_unit||1).toFixed(3)+'</small></div>'+
+    '<div class="lbspark">'+spark(s.history,bench&&bench.history,c)+'</div>'+
+    '<div class="lbsay">'+say+'</div>'+
+    '<div class="lbmeta"><span>持仓 <b>'+(s.position_count||0)+'/'+(s.max_positions||6)+'</b></span><span>胜率 <b>'+(s.win_rate!=null?s.win_rate+'%':'—')+'</b></span><span>平仓 <b>'+(s.closed||0)+'</b></span>'+(al?'<span>'+al+'</span>':'')+'<span class="lbcta">看 TA 操盘 →</span></div>'+
+    chip+'</div>';
+}
+function renderArena(d){
+  const el=document.getElementById('arenaView');
+  const sts=(d&&d.strategies)||[],bench=d&&d.benchmark;
+  if(!sts.length){el.innerHTML='<div class="arena-top"><div><div class="at-ttl">🏆 DeepFocus AI 策略竞技场</div><div class="at-sub">竞技场正在接入中…</div></div></div><div class="empty">稍后再来看各派 PK</div>';return;}
+  // 是否已开赛：任一选手有收益/持仓/平仓即视为开赛；否则蓄势态(收益都 0)
+  const racing=sts.some(s=>Math.abs(s.nav_pct||0)>0.009||(s.position_count||0)>0||(s.closed||0)>0);
+  const status=d.in_session?'● 实时赛马中':(d.is_trading_day?(d.phase_label||'盘前/盘后'):(d.phase_label||'休市'));
+  const champ=sts.find(s=>s.fund_id===d.champion)||sts[0];
+  let banner;
+  if(racing){const sp=(d.spread!=null)?(' · 冠亚差 '+Number(d.spread).toFixed(1)+'%'):'';
+    banner='👑 '+(champ.emoji||'')+champ.name+' 领跑 '+fmtPct(champ.nav_pct)+sp;}
+  else banner='🏁 '+sts.length+' 位选手蓄势待发 · '+(d.in_session?'盘中见真章':'开盘见真章');
+  const bb=bench?('<div class="at-bench">基准 '+esc(bench.name||'沪深300')+'<b>'+fmtPct(bench.nav_pct)+'</b></div>'):'';
+  const head='<div class="arena-top"><div><div class="at-ttl">🏆 DeepFocus AI 策略竞技场 <span class="at-status">'+esc(status)+'</span></div>'+
+    '<div class="at-sub">'+sts.length+' 位 AI 操盘手同场竞技 · 各派只买本站快讯/文章/研报点过名的票 · 推理全公开</div></div>'+
+    '<div class="at-right"><div class="at-banner">'+esc(banner)+'</div>'+bb+'</div></div>';
+  const cards='<div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div>';
+  const foot='<div class="arena-foot">虚拟资金·模拟交易 · 不构成投资建议 · 历史不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">登录终端解锁同款快讯/研报/速判卡 →</a></div>';
+  el.innerHTML=head+cards+foot;
+}
+function showStSwitch(){
+  const sts=(S.arena&&S.arena.strategies)||[];const el=document.getElementById('stswitch');if(!el)return;
+  el.innerHTML=sts.map(s=>'<span class="stchip'+(s.fund_id===S.fund?' on':'')+'" data-fund="'+esc(s.fund_id)+'">'+(s.emoji||'')+esc(s.name)+'</span>').join('');
+}
+function setMode(m){
+  S.mode=m;
+  document.getElementById('arenaView').style.display=m==='arena'?'flex':'none';
+  document.getElementById('appView').style.display=m==='detail'?'flex':'none';
+  document.getElementById('appView').classList.toggle('detail',m==='detail');
+}
+async function loadArena(){
+  try{const r=await fetch('/api/ai-fund/arena?w='+QRW,{headers:{'Accept':'application/json'}});if(!r.ok)throw 0;
+    const d=await r.json();
+    if(d&&d.ready===false){ // 引擎竞技场未就绪 → 回退单账户主视图
+      if(S.mode==='arena'){S.fund='main';setMode('detail');await load();}
+      return;}
+    S.arena=d;if(S.mode==='arena')renderArena(d);showStSwitch();
+  }catch(e){ // 竞技场端点不存在/报错 → 回退单账户主视图，保证页面始终可用
+    if(!S.arena&&S.mode==='arena'){S.fund='main';setMode('detail');await load();}
+  }
+}
+function openDetail(fund){S.fund=fund;S.sel=null;S.open=null;S.data=null;setMode('detail');showStSwitch();load();}
+function backToArena(){setMode('arena');loadArena();}
+async function load(){try{const r=await fetch('/api/ai-fund/snapshot?strategy='+encodeURIComponent(S.fund)+'&w='+QRW,{headers:{'Accept':'application/json'}});if(!r.ok)throw 0;render(await r.json());showStSwitch();}
+  catch(e){if(!S.data)document.getElementById('colCenter').innerHTML='<div class="empty">数据加载失败，正在自动重试…</div>';}}
+function poll(){if(S.mode==='arena')loadArena();else load();}
+// 竞技场卡片 / 切换器 / 返回
+document.addEventListener('click',e=>{
+  const lc=e.target.closest('.lbcard[data-fund]');if(lc){openDetail(lc.dataset.fund);return;}
+  const sc=e.target.closest('.stchip[data-fund]');if(sc){if(sc.dataset.fund!==S.fund)openDetail(sc.dataset.fund);return;}
+  if(e.target.closest('#backArena')){backToArena();return;}
+});
+loadArena();setInterval(poll,30000);
+</script>
+</body>
+</html>
