@@ -8009,6 +8009,7 @@ async def _route_orchestrator_chat(
     _ifind: bool,
     tool_timeout: float = 30.0,
     force_research: bool = False,
+    skip_professional: bool = False,
 ) -> OrchestratorChatResponse:
     """orchestrator-chat 路由内核（HTTP 端点与微信「扫码即问」共用，避免重复造轮子）：
     依次试技能(股东/财报/重大事件/专业研报) → 研究意图则跑 tool-agent → 有 ticker 则跨模块注入 → 兜底。
@@ -8024,9 +8025,12 @@ async def _route_orchestrator_chat(
     major_event_reply = await _maybe_major_event_skill_chat(request)
     if major_event_reply:
         return attach_data_quality(major_event_reply)
-    professional_reply = await _maybe_professional_research_chat(request)
-    if professional_reply:
-        return attach_data_quality(professional_reply)
+    # 专业研报技能=「上传 PDF/入库报告」的 IC 工作台,微信用户无法上传→对微信是死路;
+    # skip_professional=True 时跳过它,让"总结最近研报"落到 get_recent_research(读网站研报wire/缓存)。
+    if not skip_professional:
+        professional_reply = await _maybe_professional_research_chat(request)
+        if professional_reply:
+            return attach_data_quality(professional_reply)
 
     stock_symbol = (request.stock.symbol or "").strip() if request.stock else ""
     research_intent = force_research or _is_research_intent(request.message)
@@ -8086,6 +8090,7 @@ def make_weixin_orchestrator_agent_fn():
                 _ifind=False,
                 tool_timeout=_wx_timeout,
                 force_research=True,
+                skip_professional=True,  # 微信无法上传PDF→跳过IC工作台技能,研报问落到 get_recent_research 读网站缓存
             )
         except Exception:
             return None

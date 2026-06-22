@@ -185,14 +185,16 @@ def test_weixin_orchestrator_agent_fn(monkeypatch):
 
     captured: dict = {}
 
-    async def fake_route(request, _ifind, tool_timeout=30.0, force_research=False):
-        captured.update(msg=request.message, ifind=_ifind, timeout=tool_timeout, force=force_research)
+    async def fake_route(request, _ifind, tool_timeout=30.0, force_research=False, skip_professional=False):
+        captured.update(msg=request.message, ifind=_ifind, timeout=tool_timeout,
+                        force=force_research, skip=skip_professional)
         return _Resp()
 
     monkeypatch.setattr(main, "_route_orchestrator_chat", fake_route)
     out = asyncio.run(main.make_weixin_orchestrator_agent_fn()("茅台怎么样", ""))
     assert out == "路由后的答案"                       # 取 content 并 strip
     assert captured["force"] is True                   # 微信强制研究路径(避免漏判意图)
+    assert captured["skip"] is True                    # 微信跳过"上传PDF入库"专业研报技能(否则抢截研报问)
     assert captured["timeout"] >= 60                   # tool-agent 超时已放宽
     assert captured["ifind"] is False
     assert captured["msg"] == "茅台怎么样"
