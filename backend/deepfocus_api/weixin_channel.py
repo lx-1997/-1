@@ -543,6 +543,7 @@ class WeixinChannelManager:
         if fp:
             cached = data_store.latest("wx_qa", fp, max_age_seconds=_QA_CACHE_TTL)
             if isinstance(cached, dict) and (cached.get("answer") or "").strip():
+                metrics_store.incr("wxqa:cache_hit")  # 观测:缓存命中(0 token)
                 await _reply(compliance.neutralize_text(cached["answer"].strip()))
                 return
 
@@ -555,6 +556,7 @@ class WeixinChannelManager:
 
         # ⑥ 现算：计次 → 调 agent（耗 token）→ 合规中性化 → 回 → 写缓存供后续复用
         metrics_store.incr(qkey)
+        metrics_store.incr("wxqa:fresh")  # 观测:现算次数(配 wxqa:cache_hit 看命中率)
         hint = ""
         if self._context_hint_fn:
             try:

@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -475,4 +476,160 @@ register_tool(AgentTool(
         },
     },
     handler=_tool_get_recent_research,
+))
+
+
+# ============ 平台自有数据打通：AI 模拟盘 / 热度榜 / 焦点人物 ============
+# 都是平台已上线、成熟的差异化数据，此前 agent 够不到。包成工具让模型自主调用。
+# 纪律：handler 层做精简投影（只回关键字段、控 token），失败收敛成 None/优雅降级。
+
+async def _tool_get_ai_fund_snapshot(strategy: str = "") -> Any:
+    """DeepFocus『AI 模拟盘』某流派智能体的战绩卡（持仓/收益/超额/操盘观点）。读本地 SQLite，确定性数据，非建议。"""
+    from . import ai_fund
+    fid = (strategy or "").strip() or ai_fund.FUND_ID
+    snap = await asyncio.to_thread(ai_fund.get_snapshot, fid)
+    if not snap:
+        return None
+    persona = snap.get("persona") or {}
+    strat = snap.get("strategy") or {}
+    stats = snap.get("stats") or {}
+    positions = [
+        {"name": p.get("name"), "symbol": p.get("symbol"), "pnl_pct": p.get("pnl_pct"),
+         "weight": p.get("weight"), "float_pnl": p.get("float_pnl")}
+        for p in (snap.get("positions") or [])[:10]
+    ]
+    recent = [
+        {"side": t.get("side"), "name": t.get("name"), "price": t.get("price"),
+         "pnl_pct": t.get("pnl_pct"), "catalyst": t.get("catalyst"), "ts": t.get("ts")}
+        for t in (snap.get("trades") or [])[:6]
+    ]
+    return {
+        "fund": persona.get("name"), "style": persona.get("style"), "tag": persona.get("tag"),
+        "strategy_model": strat.get("model_label"), "market_stance": strat.get("market_stance"),
+        "nav_pct": snap.get("nav_pct"), "alpha_pct": snap.get("alpha_pct"),
+        "benchmark_name": snap.get("benchmark_name"), "win_rate": stats.get("win_rate"),
+        "cash": snap.get("cash"), "position_count": snap.get("position_count"),
+        "max_positions": snap.get("max_positions"), "days_running": snap.get("days_running"),
+        "mood": snap.get("mood"), "commentary": snap.get("commentary"),
+        "positions": positions, "recent_trades": recent,
+        "data_quality": (snap.get("data_quality") or {}).get("label"),
+        "disclaimer": "AI 模拟盘为投研演示，虚拟资金、不接券商、不构成投资建议。",
+    }
+
+
+async def _tool_get_ai_fund_arena() -> Any:
+    """DeepFocus『AI 模拟盘』五流派竞技场排行（均衡/激进/价值/事件/逆向 × 沪深300基准）。读本地 SQLite，非建议。"""
+    from . import ai_fund
+    arena = await asyncio.to_thread(ai_fund.get_arena)
+    if not arena:
+        return None
+    strategies = [
+        {"rank": s.get("rank"), "name": s.get("name"), "style": s.get("style"),
+         "nav_pct": s.get("nav_pct"), "alpha_pct": s.get("alpha_pct"), "win_rate": s.get("win_rate"),
+         "max_drawdown_pct": s.get("max_drawdown_pct"), "position_count": s.get("position_count"),
+         "model": s.get("model_label"), "last_action": s.get("last_action")}
+        for s in (arena.get("strategies") or [])
+    ]
+    return {
+        "champion": arena.get("champion"), "spread": arena.get("spread"),
+        "benchmark": arena.get("benchmark"),
+        "consensus": arena.get("consensus"), "divergence": arena.get("divergence"),
+        "strategies": strategies,
+        "disclaimer": arena.get("disclaimer"),
+    }
+
+
+async def _tool_get_hot_stocks(kind: str = "verdict", days: int = 14, limit: int = 10) -> Any:
+    """近期站内被研判/关注最多的标的（『大家也在看』热度榜，按站内研判次数排序，非涨幅榜、非建议）。"""
+    from . import data_store
+    rows = await asyncio.to_thread(
+        data_store.hot_symbols, (kind or "verdict"),
+        days=float(days or 14), limit=max(1, min(int(limit or 10), 20)),
+    )
+    return {"kind": kind or "verdict", "window_days": int(days or 14), "hot": rows}
+
+
+async def _tool_get_people_spotlight(name: str = "") -> Any:
+    """焦点人物（特朗普/黄仁勋/马斯克/奥特曼等）近期发言与观点。name 留空=全部人物概览，带名=单人下钻。Google News 取数、带溯源链接。"""
+    from . import people_voices
+    nm = (name or "").strip()
+    if nm:
+        low = nm.lower()
+        fig = next((f for f in people_voices.FIGURES
+                    if low in (f.get("name") or "").lower()
+                    or low in (f.get("en_name") or "").lower()
+                    or low == (f.get("id") or "")), None)
+        if not fig:
+            return {"error": f"未收录该人物：{nm}", "available": [f["name"] for f in people_voices.FIGURES]}
+        prof = await people_voices.fetch_person_voices(fig["id"])
+        voices = [
+            {"title": it.title, "summary": (it.summary or "")[:120],
+             "source": it.source_name, "date": it.reported_date or it.published_at, "url": it.url}
+            for it in (prof.items or [])[:8]
+        ]
+        return {"person": prof.name, "role": prof.role, "org": prof.org, "topics": prof.topics,
+                "latest_date": prof.latest_date, "digest": prof.digest or None, "voices": voices}
+    resp = await people_voices.fetch_people_spotlight()
+    people = [
+        {"name": f.name, "role": f.role, "latest_date": f.latest_date,
+         "top": (f.items[0].title if f.items else None), "item_count": f.item_count}
+        for f in (resp.figures or [])
+    ]
+    return {"as_of": resp.generated_at, "people": people}
+
+
+register_tool(AgentTool(
+    name="get_ai_fund_snapshot",
+    description=(
+        "查看 DeepFocus『AI 模拟盘』某流派智能体的当前持仓、累计收益、超额(alpha)、操盘风格与最新动作。"
+        "用户问『AI 模拟盘现在持什么仓/赚不赚钱/阿尔法怎么操作/某流派表现』时用。"
+        "strategy 可选：main(阿尔法·均衡)/mammoth(猛犸·激进)/rock(磐石·价值)/falcon(游隼·事件)/contra(磁极·逆向)，缺省=主账户 main。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "strategy": {"type": "string", "enum": ["main", "mammoth", "rock", "falcon", "contra"],
+                         "description": "流派 fund_id，缺省 main(阿尔法)"},
+        },
+    },
+    handler=_tool_get_ai_fund_snapshot,
+))
+register_tool(AgentTool(
+    name="get_ai_fund_arena",
+    description=(
+        "查看 DeepFocus『AI 模拟盘』五流派竞技场排行榜（均衡/激进/价值/事件/逆向同场赛马，含冠军、收益差、"
+        "各自超额沪深300、胜率、最大回撤、最新动作）。用户问『哪个流派最强/AI 模拟盘排行/竞技场战况』时用。"
+    ),
+    parameters={"type": "object", "properties": {}},
+    handler=_tool_get_ai_fund_arena,
+))
+register_tool(AgentTool(
+    name="get_hot_stocks",
+    description=(
+        "查看近期站内被研判/关注最多的标的（『大家也在看』热度榜，按站内研判次数排序，非涨幅榜）。"
+        "用户问『最近大家都在看哪些票/近期热门标的』时用。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "description": "热度口径，缺省 verdict(研判)"},
+            "days": {"type": "integer", "description": "回溯天数，缺省 14"},
+            "limit": {"type": "integer", "description": "返回条数，缺省 10（上限 20）"},
+        },
+    },
+    handler=_tool_get_hot_stocks,
+))
+register_tool(AgentTool(
+    name="get_people_spotlight",
+    description=(
+        "查看焦点人物（特朗普/黄仁勋/马斯克/奥特曼/苏姿丰/纳德拉/木头姐/扎克伯格等）近期发言与观点（带新闻溯源）。"
+        "用户问『最近XX(人物)怎么说/对某事的看法』时用；name 留空=全部人物概览，带人名(中/英)=单人近期发言。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "人物中文名或英文名；留空=全部人物概览"},
+        },
+    },
+    handler=_tool_get_people_spotlight,
 ))
