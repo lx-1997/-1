@@ -215,6 +215,43 @@ def _qa_fingerprint(question: str) -> str:
     return hashlib.md5(q.encode("utf-8")).hexdigest() if q else ""
 
 
+# 大盘/复盘类高频问:命中且"今日复盘已生成"→直出我们已算好的复盘(0 LLM、秒回、用自有差异化内容);
+# 否则落到实时 agent(防盘前/周末返回隔夜数据)。短问 + 不含代码,避免误伤夹个股的长问。
+_MARKET_Q_KEYS = ("大盘", "复盘", "盘面", "收盘", "今日行情", "今天行情", "今天股市", "今日股市", "晨报", "今天行情如何")
+
+
+def _is_market_overview_q(question: str) -> bool:
+    s = (question or "").strip()
+    if not s or len(s) > 14 or any(c.isdigit() for c in s):  # 太长或含代码→可能夹个股,不直出
+        return False
+    return any(k in s for k in _MARKET_Q_KEYS)
+
+
+def _market_overview_reply() -> Optional[str]:
+    """今日复盘已生成 → 渲染成微信答案(0 LLM);未生成/非当日 → None(让实时 agent 接管,防隔夜数据)。"""
+    try:
+        from . import ashare_review
+        rv = ashare_review.latest_review()
+        if not rv or rv.get("date") != ashare_review.cn_today_str():
+            return None
+        nar = rv.get("narrative") or {}
+        lines = [f"📊 {rv.get('session_label') or '大盘复盘'}（{rv.get('date')}）"]
+        if (nar.get("one_liner") or "").strip():
+            lines.append(nar["one_liner"].strip()[:160])
+        for label, key in (("大盘", "market"), ("板块", "sectors"), ("资金", "funds")):
+            v = (nar.get(key) or "").strip()
+            if v:
+                lines.append(f"· {label}：{v[:140]}")
+        edges = [(e.get("title") or e.get("name") or "").strip()
+                 for e in (rv.get("our_edge") or [])[:5]
+                 if isinstance(e, dict) and (e.get("title") or e.get("name"))]
+        if edges:
+            lines.append("🔎 我们提前发现：" + "；".join(edges))
+        return "\n".join(lines)
+    except Exception:  # noqa: BLE001  复盘读取失败 → None 落到实时 agent
+        return None
+
+
 def make_agent_fn(llm: Any) -> AgentFn:
     """把 CloudResearchLLM.run_tool_agent 适配成 AgentFn（返回 answer 文本或 None）。"""
     async def _agent(question: str, hint: str) -> Optional[str]:
@@ -541,6 +578,14 @@ class WeixinChannelManager:
         if q_norm in _HELP_TRIGGERS:
             await _reply(_HELP_REPLY)
             return
+
+        # ③.5 大盘/复盘高频问:今日复盘已生成→直出已算结论(0 token、秒回、用自有复盘);未生成→落到实时 agent
+        if _is_market_overview_q(question):
+            ov = _market_overview_reply()
+            if ov:
+                metrics_store.incr("wxqa:overview_hit")  # 观测:大盘直出命中(0 token)
+                await _reply(_clean(ov))
+                return
 
         # ④ 答案缓存跨用户复用：命中即秒回，0 token、不计次（同一问题跨用户安全共享，见 _qa_fingerprint）
         fp = _qa_fingerprint(question)
