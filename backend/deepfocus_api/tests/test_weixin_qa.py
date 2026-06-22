@@ -62,6 +62,15 @@ def _mgr(answer: str = "对该标的的研究观点……", calls: list | None =
 
 # ---------- 指纹归一化 ----------
 
+def test_split_for_wechat_chunks_long_answer():
+    assert wc._split_for_wechat("短答案") == ["短答案"]          # 短答案单段
+    text = "\n".join([f"行{i}：" + "数据" * 30 for i in range(8)])  # 8 行长文本
+    chunks = wc._split_for_wechat(text, limit=120)
+    assert len(chunks) >= 2 and all(len(c) <= 120 for c in chunks)  # 切成多段、每段≤上限
+    assert "".join(chunks).replace("\n", "") == text.replace("\n", "")  # 内容不丢
+    assert len(wc._split_for_wechat("字" * 500, limit=100)) == 5  # 无标点超长串也硬切兜底(防漏切)
+
+
 def test_fingerprint_normalizes_whitespace_and_punct():
     # 仅"首尾空白 + 尾部标点 + 大小写"的差异应归一到同一指纹（内部空格按单空格保留，不强删）
     a = wc._qa_fingerprint("今天大盘怎么样？")

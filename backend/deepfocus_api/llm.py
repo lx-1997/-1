@@ -1009,7 +1009,9 @@ class CloudResearchLLM:
             "工具返回 ok=false 或 data=null 表示该源暂无数据，"
             "要如实说明而非杜撰。拿到足够数据后用简洁专业的中文给出有数据支撑的结论（不超过 220 字），"
             "若用户要求快讯/资讯总结：用 search_our_content（days=1、limit=40~60）取全近期，挑出影响市场的重要快讯（忽略琐碎，不论利好利空），"
-            "按主题归类、每条参考 tone 标利好/利空，末尾给一句话主线；此类总结可适当超过 220 字。"
+            "按主题归类、每条给『标题 + 2-3 句关键内容(具体数字/核心逻辑/对市场影响)』、参考 tone 标利好/利空，不要只列一句话标题；"
+            "研报总结同理用 get_recent_research，把每篇 ai_summary 展开成 2-3 句要点；末尾给一句话主线。"
+            "此类总结要给足细节、篇幅可到 700~900 字，不要因『简洁』牺牲信息量。"
             "不做收益承诺。"
             "若问题缺少判定标的的关键信息(例如只说『这只股/某股票/它』却无法确定是哪一只)，"
             "先用一句话反问用户补充具体名称或代码，不要臆测一只来分析。"
@@ -1036,7 +1038,7 @@ class CloudResearchLLM:
                         messages=messages,
                         tools=tool_specs,
                         tool_choice="auto",
-                        max_tokens=1200,
+                        max_tokens=2800,
                     ),
                     timeout=timeout_seconds,
                 )
@@ -1099,7 +1101,7 @@ class CloudResearchLLM:
                 self._client().chat.completions.create(
                     model=self.model,
                     messages=messages + [{"role": "user", "content": "请基于以上已获取的数据直接给出最终结论。"}],
-                    max_tokens=1000,
+                    max_tokens=2800,
                 ),
                 timeout=timeout_seconds,
             )
@@ -2090,7 +2092,7 @@ def tool_agent_to_orchestrator_response(
         agent=ORCHESTRATOR_ROLE,
         engine=request.engine,
         title="DeepFocus 投研 Agent",
-        content=answer[:700],
+        content=answer[:2000],  # 放宽(原700会把详细总结切半截);微信侧由 _split_for_wechat 分段发
         chips=[],
         suggested_actions=[],
         reasoning_trace=steps,

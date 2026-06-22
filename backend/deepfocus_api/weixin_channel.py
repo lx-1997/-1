@@ -215,6 +215,42 @@ def _qa_fingerprint(question: str) -> str:
     return hashlib.md5(q.encode("utf-8")).hexdigest() if q else ""
 
 
+# 微信单条消息有长度上限(实测约 450 字会被截尾),长答案按行/句切成多段连发,根治"结尾被切断"。
+_WX_MSG_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_MSG_LIMIT", "380") or 380)
+_REPLY_CHUNK_GAP = 0.6  # 相邻分段消息间隔(秒),错峰、保顺序
+
+
+def _split_for_wechat(text: str, limit: int = 0) -> list[str]:
+    """长答案切成 ≤limit 的多段:先按段落(\\n)→句末标点→无标点超长串硬切,再贪心合并。短答案原样单段。"""
+    limit = limit or _WX_MSG_LIMIT
+    s = (text or "").strip()
+    if len(s) <= limit:
+        return [s] if s else []
+    pieces: list[str] = []
+    for para in s.split("\n"):
+        if len(para) <= limit:
+            pieces.append(para)
+            continue
+        for seg in re.split(r"(?<=[。；;!！?？])", para):  # 超长段落→按句末标点切
+            if not seg:
+                continue
+            while len(seg) > limit:  # 无标点的超长片→硬切兜底(防漏切仍被微信截)
+                pieces.append(seg[:limit]); seg = seg[limit:]
+            if seg:
+                pieces.append(seg)
+    chunks: list[str] = []
+    cur = ""
+    for part in pieces:
+        add = ("\n" + part) if cur else part
+        if cur and len(cur) + len(add) > limit:
+            chunks.append(cur); cur = part
+        else:
+            cur += add
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 # 大盘/复盘类高频问:命中且"今日复盘已生成"→直出我们已算好的复盘(0 LLM、秒回、用自有差异化内容);
 # 否则落到实时 agent(防盘前/周末返回隔夜数据)。短问 + 不含代码,避免误伤夹个股的长问。
 _MARKET_Q_KEYS = ("大盘", "复盘", "盘面", "收盘", "今日行情", "今天行情", "今天股市", "今日股市", "晨报", "今天行情如何")
@@ -560,9 +596,13 @@ class WeixinChannelManager:
             return privacy_guard.scrub_internal_text(compliance.neutralize_text(text))
 
         async def _reply(text: str) -> None:
+            chunks = _split_for_wechat(text) or [text]
             try:
                 async with self._lock_for(bot_id):  # 与推送/保活串行，不抢同一 token
-                    await ilink.send_text(b["token"], b["base_url"], to_user, ctx, text)
+                    for i, ck in enumerate(chunks):
+                        await ilink.send_text(b["token"], b["base_url"], to_user, ctx, ck)
+                        if i != len(chunks) - 1:
+                            await asyncio.sleep(_REPLY_CHUNK_GAP)  # 分段连发,保顺序+错峰
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[weixin] reply err %s: %s", bot_id[:8], exc)
 
