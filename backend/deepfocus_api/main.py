@@ -3995,14 +3995,19 @@ _MKT_US_STRONG = (
     "博通", "broadcom", "美光", "micron", "高通", "qualcomm", "qcom", "英特尔", "intel", "amd", "台积电", "tsmc", "tsm",
     "阿斯麦", "asml", "甲骨文", "oracle", "palantir", "美超微", "supermicro", "arm", "marvell", "戴尔", "dell",
     "snowflake", "snow", "datadog", "coinbase", "lrcx", "amat", "goldman", "morgan",
+    "nasdaq", "s&p", "s&p500", "dow jones",
 )
 _MKT_HK_STRONG = (
-    "港股", "恒生", "恒指", "港交所", "h股", ".hk",
-    "腾讯", "阿里巴巴", "美团", "小米集团", "快手", "中芯国际", "友邦", "汇丰", "理想汽车", "蔚来", "小鹏", "康方",
+    "港股", "恒生", "恒指", "港交所", "h股", ".hk", "港元", "港币", "hk$", "恒生科技", "国企指数", "中国互联网",
+    "腾讯", "tencent", "阿里巴巴", "alibaba", "美团", "小米集团", "快手", "中芯国际", "友邦", "汇丰", "理想汽车", "蔚来", "小鹏", "康方",
+    "泡泡玛特", "popmart", "pop mart", "美图", "建滔", "华润万象", "名创优品", "miniso", "农夫山泉", "海底捞",
+    "安踏", "李宁", "周大福", "网易", "netease", "百度", "baidu", "携程", "trip.com",
 )
 # 「弱」信号：宏观背景词，本身不决定研报市场（如某 A 股策略报告借「美联储加息」做背景）
 _MKT_US_WEAK = ("美国", "美联储", "fomc", "美债", "美国国债", "降息", "加息", "非农", "华尔街", "美元指数")
 _MKT_HK_WEAK = ("香港", "中概", "海外中资")
+# 明确「境外其它市场」：日本/欧洲/印度等地缘宏观或市场 → 归「港美/海外」桶（用 US 返回值落到港美股标签页）
+_MKT_OVERSEAS = ("日本", "日经", "nikkei", "欧洲", "欧元", "欧央行", "ecb", "德国", "英国", "法国", "印度", "越南", "韩国")
 _MKT_A_KW = (
     "a股", "沪深", "沪市", "深市", "上证", "深证", "科创", "创业板", "北交所", "北证", "两市", "龙虎榜",
     "涨停", "游资", "打板", "北向", "北上资金", "主力净", "沪指", "深成指", "涨停板", "炸板", "连板",
@@ -4069,15 +4074,18 @@ def _market_for(file_id: Any, title: str = "", cached: Any = None) -> str:
         return "US" if us >= hk else "HK"
     # 2) 代码无定论 → 文本强/弱信号
     us_s, hk_s = _kw_hit(text, _MKT_US_STRONG), _kw_hit(text, _MKT_HK_STRONG)
+    ovs = _kw_hit(text, _MKT_OVERSEAS)   # 日本/欧洲/印度… 明确境外 → 归海外（用 US 桶=港美股标签页）
+    us_like = us_s or ovs
     us_w, hk_w = _kw_hit(text, _MKT_US_WEAK), _kw_hit(text, _MKT_HK_WEAK)
-    a_kw = _kw_hit(text, _MKT_A_KW)
-    strong = us_s or hk_s
+    # 「A 股」常被排版成带空格（"A 股"）→ 去空格再判，避免漏判
+    a_kw = _kw_hit(text, _MKT_A_KW) or ("a股" in text.replace(" ", "").replace("　", ""))
+    strong = us_like or hk_s
     if strong and not a_kw:
-        return "US" if us_s and not hk_s else ("HK" if hk_s and not us_s else "US")
+        return "HK" if (hk_s and not us_like) else "US"
     if a_kw and not strong:
         return "A"                       # 仅弱海外背景 + 明确A信号 → A股（如「美联储加息下的A股」）
     if strong:                           # 强海外 + 也有A信号：强信号优先海外
-        return "US" if us_s else "HK"
+        return "US" if us_like else "HK"
     if a_kw:
         return "A"
     if us_w or hk_w:                      # 只有弱海外信号、无A（如「美国经济」）→ 海外
