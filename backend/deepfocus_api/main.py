@@ -1239,8 +1239,8 @@ async def lifespan(app: FastAPI):
     # 微信 iLink 渠道（扫码即问 + 准推送）——灰色地基/有封号风险，默认关；DEEPFOCUS_WEIXIN_CHANNEL=1 显式开
     global _WEIXIN_MGR
     if os.getenv("DEEPFOCUS_WEIXIN_CHANNEL", "0") == "1":
-        from .weixin_channel import WeixinChannelManager, make_agent_fn
-        _WEIXIN_MGR = WeixinChannelManager(agent_fn=make_agent_fn(llm))
+        from .weixin_channel import WeixinChannelManager
+        _WEIXIN_MGR = WeixinChannelManager(agent_fn=make_weixin_orchestrator_agent_fn())
         _WEIXIN_MGR.start()
         print("[weixin] iLink 渠道已启动（多租户扫码即问）")
     init_share_snapshot_db()
@@ -8004,64 +8004,102 @@ async def deep_research_poll(request: Request, task_id: str) -> dict[str, Any]:
     return dr.to_public(task)
 
 
+async def _route_orchestrator_chat(
+    request: OrchestratorChatRequest,
+    _ifind: bool,
+    tool_timeout: float = 30.0,
+    force_research: bool = False,
+) -> OrchestratorChatResponse:
+    """orchestrator-chat 路由内核（HTTP 端点与微信「扫码即问」共用，避免重复造轮子）：
+    依次试技能(股东/财报/重大事件/专业研报) → 研究意图则跑 tool-agent → 有 ticker 则跨模块注入 → 兜底。
+    - tool_timeout：tool-agent 每轮 LLM 超时；微信个股问答多轮取数需更长(传 60)，HTTP 端点用默认 30。
+    - force_research：微信场景几乎全是投研提问，强制走研究路径(确保调工具取真数)，避免「值得关注吗」这类
+      不含意图关键词的问句漏判 _is_research_intent → 落到不取数的朴素 orchestrator。"""
+    shareholder_change_reply = await _maybe_shareholder_change_skill_chat(request)
+    if shareholder_change_reply:
+        return attach_data_quality(shareholder_change_reply)
+    cn_earnings_reply = await _maybe_cn_earnings_skill_chat(request)
+    if cn_earnings_reply:
+        return attach_data_quality(cn_earnings_reply)
+    major_event_reply = await _maybe_major_event_skill_chat(request)
+    if major_event_reply:
+        return attach_data_quality(major_event_reply)
+    professional_reply = await _maybe_professional_research_chat(request)
+    if professional_reply:
+        return attach_data_quality(professional_reply)
+
+    stock_symbol = (request.stock.symbol or "").strip() if request.stock else ""
+    research_intent = force_research or _is_research_intent(request.message)
+
+    # ① AI 原生 tool-use agent：研究意图即触发（stock 可选——模型自主选工具、自行取数）。
+    #    个股+研究意图的消息已在前端被路由去研究 Loop，故到这里的研究问题多为「无显式 ticker」，
+    #    正好交给 tool-agent 让模型自己决定调哪些工具。返回 None（未启用/工具不支持/失败）则落到既有路径。
+    if research_intent and _tool_agent_enabled():
+        try:
+            hint = (
+                f"当前标的：{(request.stock.name or '') if request.stock else ''}（{stock_symbol}）"
+                if stock_symbol else ""
+            )
+            agent_result = await llm.run_tool_agent(
+                question=request.message, context_hint=hint, ifind_user=_ifind, timeout_seconds=tool_timeout
+            )
+            if agent_result:
+                mapped = tool_agent_to_orchestrator_response(
+                    agent_result, request, llm.provider_name, llm.model
+                )
+                if mapped:
+                    return attach_data_quality(mapped)
+        except Exception:
+            pass
+
+    # ② 有 stock 的研究意图：服务端预聚合跨模块数据 → 注入 → 合成（既有路径）。
+    if stock_symbol and research_intent:
+        try:
+            aggregated = await gather_all_for_stock(
+                stock_symbol,
+                include_macro=request.include_macro,
+                include_risk=request.include_risk,
+                include_evidence=request.include_evidence,
+                include_metrics=request.include_metrics,
+                include_supply_chain=request.include_supply_chain,
+                include_trade=request.include_trade,
+            )
+            injection = build_injection_block(aggregated)
+            return attach_data_quality(await llm.orchestrator_chat_with_context(request, injection))
+        except Exception:
+            pass
+
+    return attach_data_quality(await llm.orchestrator_chat(request))
+
+
+def make_weixin_orchestrator_agent_fn():
+    """微信「扫码即问」改用 orchestrator 路由(复用技能 + 智能路由)，而非裸 run_tool_agent。
+    单轮无历史；强制研究路径 + tool-agent 超时放宽(env DEEPFOCUS_WEIXIN_QA_TIMEOUT，默认60)；取 content 作答。
+    cache/每日配额/合规中性化仍由 weixin_channel._handle_batch 包在外层，此处只负责产出答案文本。"""
+    _wx_timeout = float(os.getenv("DEEPFOCUS_WEIXIN_QA_TIMEOUT", "60") or 60)
+
+    async def _agent(question: str, hint: str):
+        message = f"{hint}\n\n{question}" if hint else question
+        try:
+            resp = await _route_orchestrator_chat(
+                OrchestratorChatRequest(message=message),
+                _ifind=False,
+                tool_timeout=_wx_timeout,
+                force_research=True,
+            )
+        except Exception:
+            return None
+        return (getattr(resp, "content", "") or "").strip() or None
+
+    return _agent
+
+
 @app.post("/api/agents/orchestrator-chat", response_model=OrchestratorChatResponse)
 async def orchestrator_chat(request: OrchestratorChatRequest, http_request: Request) -> OrchestratorChatResponse:
     # http_request 由 FastAPI 注入（不改 body schema）——仅用于 iFinD 灰度判定。
     _ifind = ifind_enhance_enabled(http_request)
     try:
-        shareholder_change_reply = await _maybe_shareholder_change_skill_chat(request)
-        if shareholder_change_reply:
-            return attach_data_quality(shareholder_change_reply)
-        cn_earnings_reply = await _maybe_cn_earnings_skill_chat(request)
-        if cn_earnings_reply:
-            return attach_data_quality(cn_earnings_reply)
-        major_event_reply = await _maybe_major_event_skill_chat(request)
-        if major_event_reply:
-            return attach_data_quality(major_event_reply)
-        professional_reply = await _maybe_professional_research_chat(request)
-        if professional_reply:
-            return attach_data_quality(professional_reply)
-
-        stock_symbol = (request.stock.symbol or "").strip() if request.stock else ""
-        research_intent = _is_research_intent(request.message)
-
-        # ① AI 原生 tool-use agent：研究意图即触发（stock 可选——模型自主选工具、自行取数）。
-        #    个股+研究意图的消息已在前端被路由去研究 Loop，故到这里的研究问题多为「无显式 ticker」，
-        #    正好交给 tool-agent 让模型自己决定调哪些工具。返回 None（未启用/工具不支持/失败）则落到既有路径。
-        if research_intent and _tool_agent_enabled():
-            try:
-                hint = (
-                    f"当前标的：{(request.stock.name or '') if request.stock else ''}（{stock_symbol}）"
-                    if stock_symbol else ""
-                )
-                agent_result = await llm.run_tool_agent(question=request.message, context_hint=hint, ifind_user=_ifind)
-                if agent_result:
-                    mapped = tool_agent_to_orchestrator_response(
-                        agent_result, request, llm.provider_name, llm.model
-                    )
-                    if mapped:
-                        return attach_data_quality(mapped)
-            except Exception:
-                pass
-
-        # ② 有 stock 的研究意图：服务端预聚合跨模块数据 → 注入 → 合成（既有路径）。
-        if stock_symbol and research_intent:
-            try:
-                aggregated = await gather_all_for_stock(
-                    stock_symbol,
-                    include_macro=request.include_macro,
-                    include_risk=request.include_risk,
-                    include_evidence=request.include_evidence,
-                    include_metrics=request.include_metrics,
-                    include_supply_chain=request.include_supply_chain,
-                    include_trade=request.include_trade,
-                )
-                injection = build_injection_block(aggregated)
-                return attach_data_quality(await llm.orchestrator_chat_with_context(request, injection))
-            except Exception:
-                pass
-
-        return attach_data_quality(await llm.orchestrator_chat(request))
+        return await _route_orchestrator_chat(request, _ifind)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

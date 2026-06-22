@@ -175,6 +175,29 @@ def test_make_agent_fn_passes_long_timeout():
     assert captured["timeout"] == wc._QA_AGENT_TIMEOUT and wc._QA_AGENT_TIMEOUT >= 60
 
 
+# ---------- 微信 orchestrator 适配器：强制研究路径 + 放宽超时 + 取 content ----------
+
+def test_weixin_orchestrator_agent_fn(monkeypatch):
+    from deepfocus_api import main
+
+    class _Resp:  # 仿 OrchestratorChatResponse，只需 content
+        content = "  路由后的答案  "
+
+    captured: dict = {}
+
+    async def fake_route(request, _ifind, tool_timeout=30.0, force_research=False):
+        captured.update(msg=request.message, ifind=_ifind, timeout=tool_timeout, force=force_research)
+        return _Resp()
+
+    monkeypatch.setattr(main, "_route_orchestrator_chat", fake_route)
+    out = asyncio.run(main.make_weixin_orchestrator_agent_fn()("茅台怎么样", ""))
+    assert out == "路由后的答案"                       # 取 content 并 strip
+    assert captured["force"] is True                   # 微信强制研究路径(避免漏判意图)
+    assert captured["timeout"] >= 60                   # tool-agent 超时已放宽
+    assert captured["ifind"] is False
+    assert captured["msg"] == "茅台怎么样"
+
+
 # ---------- agent 空答：回兜底、不写缓存（但已计次，保护成本） ----------
 
 def test_empty_answer_falls_back_and_not_cached(env):
