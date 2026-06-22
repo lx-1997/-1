@@ -579,6 +579,15 @@ class WeixinChannelManager:
             await _reply(_HELP_REPLY)
             return
 
+        # 收集真实提问到运营看板(/api/metrics/dashboard「操作流水」:谁/何时/问了什么),失败不影响主流程
+        _uname = (b.get("username") or "").strip()
+        try:
+            metrics_store.log_activity(actor_kind="weixin", actor_id=(_uname or bot_id),
+                                       actor_name=(_uname or "微信用户"), action="weixin_qa",
+                                       target=question, device="mobile")
+        except Exception:  # noqa: BLE001
+            pass
+
         # ③.5 大盘/复盘高频问:今日复盘已生成→直出已算结论(0 token、秒回、用自有复盘);未生成→落到实时 agent
         if _is_market_overview_q(question):
             ov = _market_overview_reply()

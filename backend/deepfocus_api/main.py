@@ -881,7 +881,7 @@ async function saveCookie(){
     setTimeout(loadZsxq,800);
   }catch(e){ $('#zmsg').innerHTML='<span style="color:#ff5a52">✗ '+esc(e.message)+'</span>'; }
 }
-const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'兑换会员码',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关'};
+const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'兑换会员码',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关'};
 function alabel(a){return ACT_LABEL[a]||a;}
 function tshort(s){
   if(!s) return '';
@@ -2821,6 +2821,68 @@ register_tool(AgentTool(
     description="获取个股期权情绪信号（Put/Call 等），用于判断市场对冲/投机情绪。仅美股有覆盖。",
     parameters=_SYMBOL_MARKET_TOOL_PARAMS,
     handler=_tool_get_options_signal,
+))
+
+
+async def _tool_get_stock_comparison(symbols: str = "") -> Any:
+    """多只股票横向对比：复用速判引擎逐维度信号灯矩阵 + 综合评分。symbols 逗号分隔(最多6只)。"""
+    syms = ",".join([s.strip() for s in (symbols or "").split(",") if s.strip()][:6])
+    if not syms:
+        return None
+    resp = await stock_compare(symbols=syms)
+    items = [
+        {"symbol": it.symbol, "name": it.name, "verdict": it.overall_verdict,
+         "score": it.overall_score, "sector": it.sector, "market_cap": it.market_cap,
+         "dims": {d.label: d.signal for d in (it.dimensions or [])}}
+        for it in (resp.items or [])
+    ]
+    return {"items": items} if items else None
+
+
+register_tool(AgentTool(
+    name="get_stock_comparison",
+    description=(
+        "多只股票横向对比（本平台速判引擎逐维度信号灯矩阵 + 综合评分/评级）。"
+        "用户问『A 和 B 哪个好/对比一下这几只/谁更值得买』时用。symbols 逗号分隔，最多 6 只(如 600519,000858)。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"symbols": {"type": "string", "description": "逗号分隔的股票代码，最多6只"}},
+        "required": ["symbols"],
+    },
+    handler=_tool_get_stock_comparison,
+))
+
+
+async def _tool_get_briefing_today() -> Any:
+    """投研晨报：市场环境速判 + 组合风险 → 买方一句话行动建议。读缓存(30min)秒回，缺则现算一次再缓存。"""
+    from . import data_store
+    cached = data_store.latest("wx_briefing", "TODAY", max_age_seconds=1800)
+    if isinstance(cached, dict) and cached:
+        return cached
+    from .risk_management import get_risk_summary
+    inputs = await _gather_macro_inputs()
+    macro = build_macro_review(**inputs)
+    portfolio = build_portfolio_review(
+        get_risk_summary(), sp500_history=inputs["sp500_history"], rates_history=inputs["rates_history"],
+    )
+    b = build_briefing(macro, portfolio)
+    out = {"headline": b.headline, "macro_verdict": b.macro_verdict, "portfolio_verdict": b.portfolio_verdict}
+    try:
+        data_store.record("wx_briefing", "TODAY", out)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+register_tool(AgentTool(
+    name="get_briefing_today",
+    description=(
+        "获取本平台投研晨报：市场环境(风险偏好/中性/避险)+ 组合风险 → 买方晨会一句话行动建议。"
+        "用户问『今天晨报/买方观点/现在市场环境怎么样/该进还是该防』时用。无需参数。"
+    ),
+    parameters={"type": "object", "properties": {}},
+    handler=_tool_get_briefing_today,
 ))
 
 
