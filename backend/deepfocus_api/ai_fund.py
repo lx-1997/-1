@@ -48,6 +48,7 @@ NAV_HISTORY_KEEP = 1440
 FRESH_HOURS = 72.0
 MD_FETCH_CAP = 8                 # 每轮最多新拉多少只东财日线/资金流(防风控；6h 缓存复用)
 TONE = os.getenv("DEEPFOCUS_AIFUND_NARRATE", "1") != "0"
+MUSE_ALL = os.getenv("DEEPFOCUS_AIFUND_MUSE_ALL", "0") == "1"  # 全员 LLM 独白(更生动·约5×成本)；默认仅主账户 LLM、其余走流派模板
 MUSING_MIN_GAP_MIN = 75.0        # 两条「脑内独白」最小间隔(分钟)；换时段则立即可再发——24h 持续沉淀又不刷屏
 MUSING_KEEP = 60                 # 脑内独白滚动保留条数(独立于观察流的 40 上限)
 DEBATE = os.getenv("DEEPFOCUS_AIFUND_DEBATE", "1") != "0"  # 多空辩论总开关(可关，省 token)
@@ -753,11 +754,22 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
         trend_ok = strong_fresh or (chg is not None and chg > 0.5)  # 盲态只敢做强催化剂+动量
     # 价值派估值闸门：PE 超上限（或尚未盈利）直接不出手——只在便宜处下手
     valuation_ok = True if cfg.max_pe is None else (pe is not None and 0 < pe <= cfg.max_pe)
-    # ⭐数据驱动铁律：必须有本站快讯/文章/研报作催化剂(窗口内)才出手——每笔买入都可溯源到 DeepFocus 内容
     has_catalyst = catalyst_ref is not None
-    entry_ok = (score >= cfg.buy_threshold) and (not overbought) and trend_ok and fund_ok and has_catalyst and valuation_ok
+    # 出手闸门按模型分化：多因子=数据驱动铁律(必须本站催化+趋势确认)；价值/均值回归靠模型本身选股
+    # (便宜+质量 / 超跌+企稳)，不强制本站催化/趋势/资金时点——否则在蓝筹催化池里永远等不到、从不出手
+    # (磐石招行 score 0.72、磁极平安 0.39 都够高，却因无本站催化被卡死=空转根因)。
+    if cfg.model == "value":
+        entry_ok = (score >= cfg.buy_threshold) and (not overbought) and valuation_ok
+    elif cfg.model == "reversion":
+        entry_ok = (score >= cfg.buy_threshold) and (not overbought)
+    else:
+        entry_ok = (score >= cfg.buy_threshold) and (not overbought) and trend_ok and fund_ok and has_catalyst and valuation_ok
 
     bp = []
+    if cfg.model == "value":
+        bp.append("内在价值低估·便宜又有质量")
+    elif cfg.model == "reversion":
+        bp.append("超跌企稳·逆向反手")
     if catalyst_kind:
         bp.append(f"{catalyst_kind['label']}催化（{catalyst_ref['src']}领先 {catalyst_ref['lead_h']:.0f}h）")
     elif catalyst_ref:
@@ -862,15 +874,17 @@ def _llm_narratives(decisions: list[dict], mood: dict, cfg: AgentConfig = MAIN_C
         return {}
 
 
-def _commentary(decisions: list[dict], narr: dict, mood: dict, pos_n: int, nav_pct: float, stats: dict) -> str:
+def _commentary(decisions: list[dict], narr: dict, mood: dict, pos_n: int, nav_pct: float, stats: dict,
+                cfg: AgentConfig = MAIN_CFG) -> str:
     if decisions:
         for d in decisions:
             if narr.get(d["tid"]):
                 return narr[d["tid"]]
     wr = f"，胜率 {stats['win_rate']:.0f}%" if stats.get("win_rate") is not None else ""
+    hunt, tail = _MUSE_FLAVOR.get(cfg.style, _MUSE_FLAVOR["balanced"])   # 直播一句话也按流派口吻
     if pos_n:
-        return f"{mood['emoji']} 持仓 {pos_n} 只、累计 {nav_pct:+.2f}%{wr}，盯着盘和你们的快讯找下一击。"
-    return f"{mood['emoji']} 暂时空仓，正扫描本站快讯/研报等一个看得懂的买点。"
+        return f"{cfg.emoji} 持仓 {pos_n} 只、累计 {nav_pct:+.2f}%{wr}，{tail}。"
+    return f"{cfg.emoji} 暂时空仓，{hunt}。"
 
 
 # --------------------------------------------------------------------------- #
@@ -1075,8 +1089,20 @@ def _recall_line(recalled: list) -> str:
         f"  {_mem_icon(m['mem_type'])} {m['title']}（信度 {int((m.get('confidence') or 0)*100)}%）" for m in recalled[:4])
 
 
-def _template_musing(phase_key: str, mood: dict, nav_pct: float, stats: dict, holds: list, wire: list, recalled: Optional[list] = None) -> str:
-    em = mood["emoji"]
+# 每个流派的『直播口头禅』：(找买点的说法, 收尾态度) —— 让每个角色的脑内独白读着像自己、而非都像阿尔法
+_MUSE_FLAVOR = {
+    "balanced":   ("等一个站上20日线的买点再动手", "买点没到不乱开枪"),
+    "aggressive": ("等一个够猛的突破就重锤", "强催化就追、不手软"),
+    "value":      ("等便宜的好货、不便宜不动手", "先看估值和现金流，贵了不碰"),
+    "event":      ("本站快讯一响我就扑", "快进快出、吃完催化就走"),
+    "contrarian": ("等超跌+本站催化共振再反手抄", "别人恐惧我贪婪、专挑被错杀的"),
+}
+
+
+def _template_musing(cfg: AgentConfig, phase_key: str, mood: dict, nav_pct: float, stats: dict,
+                     holds: list, wire: list, recalled: Optional[list] = None) -> str:
+    em = cfg.emoji                                    # 用角色自己的 emoji，一眼分得清是谁
+    hunt, tail = _MUSE_FLAVOR.get(cfg.style, _MUSE_FLAVOR["balanced"])
     hold_txt = "、".join(holds[:3]) if holds else ""
     pos_line = f"手里还攥着 {hold_txt}" if hold_txt else "目前空仓"
     by = {"研报": None, "文章": None, "快讯": None}
@@ -1089,17 +1115,17 @@ def _template_musing(phase_key: str, mood: dict, nav_pct: float, stats: dict, ho
     mem = (recalled or [None])[0]
     mem_txt = f"我还记着上次「{mem['title'][:22]}」，" if mem else ""
     if phase_key == "preopen":
-        return f"{em} 还有十几分钟开盘。隔夜我把本站快讯文章研报全过了一遍，{ref}最值得盯。{mem_txt}{pos_line}，等一个站上 20 日线的买点再动手。"
+        return f"{em} 还有十几分钟开盘。隔夜我把本站快讯文章研报全过了一遍，{ref}最值得盯。{mem_txt}{pos_line}，{hunt}。"
     if phase_key == "noon":
-        return f"{em} 午休复盘。上午{pos_line}，{ref}还在发酵" + (f"，{art['title'][:16]}那篇文章把逻辑讲透了" if art else "") + f"。{mem_txt}下午只做本站点过名、又确认趋势的票，不追高。"
+        return f"{em} 午休复盘。上午{pos_line}，{ref}还在发酵" + (f"，{art['title'][:16]}那篇文章把逻辑讲透了" if art else "") + f"。{mem_txt}下午{tail}。"
     if phase_key == "postclose":
         wr = f"，胜率 {stats['win_rate']:.0f}%" if stats.get("win_rate") is not None else ""
-        return f"{em} 收盘了，今天累计 {nav_pct:+.2f}%{wr}。复盘一遍：{ref}是今天主线" + (f"，研报那条值得反复琢磨" if rep else "") + f"。{mem_txt}{pos_line}，明天接着跟。"
+        return f"{em} 收盘了，今天累计 {nav_pct:+.2f}%{wr}。复盘一遍：{ref}是今天主线" + (f"，研报那条值得反复琢磨" if rep else "") + f"。{mem_txt}{pos_line}，明天接着跟、{tail}。"
     if phase_key == "weekend":
-        return f"{em} 周末不开盘，功课不停。本周本站快讯文章研报我又翻了一遍，{ref}埋了伏笔" + (f"，尤其那篇研报给了我新视角" if rep else "") + f"。{mem_txt}{pos_line}，下周见真章。"
+        return f"{em} 周末不开盘，功课不停。本周本站快讯文章研报我又翻了一遍，{ref}埋了伏笔" + (f"，尤其那篇研报给了我新视角" if rep else "") + f"。{mem_txt}{pos_line}，下周{hunt}。"
     if phase_key in ("morning", "afternoon"):
-        return f"{em} 盯着盘和你们的快讯文章研报找下一击。{ref}是我现在最在意的线索。{mem_txt}{pos_line}，买点没到不乱开枪。"
-    return f"{em} 夜深了，我把今天本站快讯文章研报又读了一遍，{ref}先记小本本上" + (f"，研报这条得消化消化" if rep else "") + f"。{mem_txt}{pos_line}，养精蓄锐，明天见真章。"
+        return f"{em} 盯着盘和你们的快讯文章研报找下一击。{ref}是我现在最在意的线索。{mem_txt}{pos_line}，{tail}。"
+    return f"{em} 夜深了，我把今天本站快讯文章研报又读了一遍，{ref}先记小本本上" + (f"，研报这条得消化消化" if rep else "") + f"。{mem_txt}{pos_line}，养精蓄锐，{hunt}。"
 
 
 def _llm_musing(phase_key: str, phase_label: str, mood: dict, nav_pct: float, stats: dict, holds: list,
@@ -1158,8 +1184,7 @@ def _deposit_musing(nav: float, cfg: AgentConfig = MAIN_CFG) -> None:
         phase_key, phase_label = _phase()
         with _connect() as conn:
             _decay_memory(conn, fund_id); conn.commit()  # 每日衰减(节流在函数内)，所有 agent 都跑
-        if not cfg.muse:                                  # 非主账户不产 LLM 独白(控成本)
-            return
+        # 所有角色都产『脑内独白』直播流；LLM 润色仅 cfg.muse 主账户(_llm_musing 内部 gate)，其余走模板(零 LLM 成本)
         with _connect() as conn:
             last = conn.execute("SELECT ts,catalyst FROM aif_thought WHERE fund_id=? AND action='musing' ORDER BY ts DESC LIMIT 1",
                                 (fund_id,)).fetchone()
@@ -1180,8 +1205,10 @@ def _deposit_musing(nav: float, cfg: AgentConfig = MAIN_CFG) -> None:
         recalled = _recall_memories(held_syms or None, limit=4, fund_id=fund_id)  # 召回相关记忆
         refs = [{"title": w["title"], "src": w["src"], "url": w.get("url", "")} for w in ammo[:3] if w.get("title")]
         rec_refs = [{"id": m["id"], "title": m["title"], "mem_type": m["mem_type"], "confidence": m.get("confidence")} for m in recalled]
-        text = _llm_musing(phase_key, phase_label, mood, nav_pct, stats, holds, ammo, recalled, cfg=cfg) \
-            or _template_musing(phase_key, mood, nav_pct, stats, holds, ammo, recalled)
+        # LLM 独白仅主账户(或 MUSE_ALL 开)；其余角色用流派模板(零 LLM 成本，仍按各自口吻)
+        text = (_llm_musing(phase_key, phase_label, mood, nav_pct, stats, holds, ammo, recalled, cfg=cfg)
+                if (cfg.muse or MUSE_ALL) else None) \
+            or _template_musing(cfg, phase_key, mood, nav_pct, stats, holds, ammo, recalled)
         with _connect() as conn:
             conn.execute("INSERT INTO aif_thought (id,fund_id,ts,symbol,name,action,catalyst,thinking,narrative,confidence,scores,recalled_refs)"
                          " VALUES (?,?,?,?,?,'musing',?,?,?,?,?,?)",
@@ -1982,7 +2009,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         days_running = 1
     decisions_like = [{"tid": "", "side": f["side"], "narrative": f["narrative"]} for f in feed if f["kind"] == "trade" and f["narrative"]]
-    commentary = (decisions_like[0]["narrative"] if decisions_like else "") or _commentary([], {}, mood, len(pos_out), nav_pct, stats)
+    commentary = (decisions_like[0]["narrative"] if decisions_like else "") or _commentary([], {}, mood, len(pos_out), nav_pct, stats, cfg)
 
     if not ifind_enabled():
         dq = {"level": "degraded", "label": "等待行情接入", "detail": "iFinD A股实时行情未在本环境配置，模拟盘暂以成本价估值、暂停交易。", "reasons": ["ifind_unconfigured"]}
@@ -2160,6 +2187,8 @@ def get_arena() -> dict[str, Any]:
                     "max_positions": cfg.max_positions, "mood": mood, "days_running": days,
                     "last_action": last_action, "last_tick_at": nv["last_tick_at"], "is_main": cfg.fund_id == FUND_ID,
                     "history": _nav_history(conn, cfg.fund_id, started_nav),   # 归一化净值火花线
+                    "commentary": _commentary([], {}, mood, nv["position_count"], nav_pct, stats, cfg),  # 每张卡各自的直播一句话
+                    "model_label": _MODEL_CN.get(cfg.model, cfg.model),
                 })
             except Exception:  # noqa: BLE001
                 continue

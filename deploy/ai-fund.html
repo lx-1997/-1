@@ -258,7 +258,7 @@
   <div class="hero">
     <div class="heroL card"><div class="lbl">累计收益率</div><div class="ret" id="ret">—</div><div class="sub" id="herosub">单位净值 <b class="num" id="navnum">—</b></div></div>
     <div class="heroR card"><span class="alpha-badge wait" id="alpha">基准对齐中</span>
-      <div class="sec-h">📈 阿尔法 vs 沪深300 <small id="navfrom"></small></div><div class="navchart" id="navchart"></div>
+      <div class="sec-h">📈 <span id="navVs">阿尔法 vs 沪深300</span> <small id="navfrom"></small></div><div class="navchart" id="navchart"></div>
       <div class="riskline" id="riskline" style="display:none"></div></div>
   </div>
   <div class="kpis">
@@ -309,7 +309,7 @@ function gradeTxt(v){const a=Math.abs(v);return a<0.3?'中性':(v>0?(a>=0.6?'强
 
 function navLine(h,bench){
   const box=document.getElementById('navchart');
-  if(!h||h.length<2){const d=S.data||{};box.innerHTML='<div class="empty" style="padding:22px;line-height:1.7">🚀 阿尔法第 '+(d.days_running||1)+' 天发车<br><span style="font-size:11px">已扫读 '+((d.scan&&(d.scan.news+d.scan.report+d.scan.article))||0)+' 条站内情报 · 出手 '+(d.decisions_total||0)+' 次 · 净值曲线开盘后累积</span></div>';return;}
+  if(!h||h.length<2){const d=S.data||{};box.innerHTML='<div class="empty" style="padding:22px;line-height:1.7">🚀 '+pNm()+'第 '+(d.days_running||1)+' 天发车<br><span style="font-size:11px">已扫读 '+((d.scan&&(d.scan.news+d.scan.report+d.scan.article))||0)+' 条站内情报 · 出手 '+(d.decisions_total||0)+' 次 · 净值曲线开盘后累积</span></div>';return;}
   const W=560,H=120,P=8,allv=h.map(x=>x.value).concat((bench||[]).map(x=>x.value));
   const mn=Math.min(...allv),mx=Math.max(...allv),sp=(mx-mn)||1,n=h.length;
   const X=(i,m)=>P+(W-2*P)*(m===1?.5:i/(m-1)),Y=z=>H-P-(H-2*P)*(z-mn)/sp;
@@ -414,17 +414,19 @@ function buildLeft(d){
   return html+memoryPanel(d)+wireSidebar(d.wire);  // 认知/记忆 + 本站快讯侧边栏
 }
 function museRefHtml(refs){return(refs||[]).map(r=>'<span class="r" data-url="'+esc(r.url||'')+'" data-title="'+esc(r.title)+'" data-src="'+esc(r.src)+'"><b>'+esc(r.src)+'</b> '+esc((r.title||'').slice(0,30))+'</span>').join('');}
+function pNm(){return (S.data&&S.data.persona&&S.data.persona.name)||'阿尔法';}  // 当前选手名(详情页随角色变，不再写死阿尔法)
 function buildCenter(d){
   const pos=d.positions||[];
-  if(!pos.length){
-    const m=(d.musings||[])[0];
-    if(m){const refs=museRefHtml(m.refs);
-      return'<div class="sec-h">💭 阿尔法此刻在想 <small>空仓 · 7×24 盘前/盘后持续沉淀思考</small></div>'+
-        '<div class="musecard"><div class="mh"><span class="pulse"></span>'+esc(m.phase||'脑内独白')+' · '+tt(m.ts)+'</div><div class="mt">'+esc(m.text)+'</div>'+
-        recallChips(m.recalled)+
-        (refs?'<div class="muse-refs" style="margin-top:11px">'+refs+'</div>':'')+
-        '<div class="mline">阿尔法空仓待机，正读本站快讯/文章/研报等一个看得懂的买点 — 它从不停工、持续学习，思考全程公开。</div></div>';}
-    return'<div class="empty">空仓待机 · 暂无持仓 K 线<br><span style="font-size:11px">阿尔法在等本站快讯/研报点火一个看得懂的买点</span></div>';
+  if(!pos.length){  // 空仓(当前全员待开赛)：中栏不留空洞，放「此刻在想」卡——主账户用脑内独白、其余用观点+在盯清单
+    const nm=pNm(),mood=d.mood||{},m=(d.musings||[])[0];
+    const theses=(d.memory||[]).filter(x=>x.mem_type==='thesis').slice(0,3);
+    const watching=theses.length?('<div class="muse-refs" style="margin-top:11px">'+theses.map(t=>'<span class="r">📌 <b>'+esc((t.name||t.symbol||'').slice(0,6))+'</b> '+esc(((t.title||'').split(/[：:]/).slice(1).join('')||'在盯').slice(0,14))+'</span>').join('')+'</div>'):'';
+    const phaseLbl=m?('💭 '+esc(m.phase||'脑内独白')+' · '+tt(m.ts)):'💭 此刻在想';
+    const body=m?esc(m.text):esc(d.commentary||((mood.emoji||'😎')+' 空仓蓄势，正用本派眼光扫读本站快讯/文章/研报，等一个看得懂的买点。'));
+    return'<div class="sec-h">💭 '+esc(nm)+' 此刻在想 <small>空仓蓄势 · 等本站催化点火、开盘开赛</small></div>'+
+      '<div class="musecard"><div class="mh"><span class="pulse"></span>'+phaseLbl+'</div><div class="mt">'+body+'</div>'+
+      (m?recallChips(m.recalled):'')+watching+
+      '<div class="mline">'+esc(nm)+'目前空仓，从不停工：持续扫读本站快讯/文章/研报、沉淀认知，等一个看得懂的买点。开盘即开赛。</div></div>';
   }
   let sel=S.sel&&pos.find(p=>p.symbol===S.sel)?S.sel:(d.featured_symbol||pos[0].symbol);
   const p=pos.find(x=>x.symbol===sel)||pos[0];
@@ -435,19 +437,19 @@ function buildCenter(d){
     (dec&&dec.narrative?'<div class="say" style="margin-top:9px"><span class="sa">🤖</span><span class="t">'+esc(dec.narrative)+'</span></div>':'');
 }
 function feedItem(f,id){const op=S.open===id;
-  return'<div class="ev '+f.side+(op?' open':'')+'" data-feed="'+id+'"><div class="eav">'+(EAV[f.side]||'•')+'</div><div class="bub"><div class="ev-h"><span class="who2">阿尔法</span><span class="tg2 '+f.side+'">'+TAGS[f.side]+'</span><span class="ev-nm">'+esc(f.name)+'</span><span class="ev-cd">'+esc(f.symbol)+'</span>'+(f.pnl_pct!=null?'<span class="pill '+cl(f.pnl_pct)+'" style="padding:0 6px;font-size:11px">'+fmtPct(f.pnl_pct)+'</span>':'')+'</div>'+
+  return'<div class="ev '+f.side+(op?' open':'')+'" data-feed="'+id+'"><div class="eav">'+(EAV[f.side]||'•')+'</div><div class="bub"><div class="ev-h"><span class="who2">'+esc(pNm())+'</span><span class="tg2 '+f.side+'">'+TAGS[f.side]+'</span><span class="ev-nm">'+esc(f.name)+'</span><span class="ev-cd">'+esc(f.symbol)+'</span>'+(f.pnl_pct!=null?'<span class="pill '+cl(f.pnl_pct)+'" style="padding:0 6px;font-size:11px">'+fmtPct(f.pnl_pct)+'</span>':'')+'</div>'+
     (f.narrative?'<div class="'+(f.kind==='trade'?'narr':'teaser')+'">'+esc(f.narrative)+'</div>':(f.catalyst?'<div class="teaser">📰 '+esc(f.catalyst)+'</div>':''))+
     (op?evFull(f):'')+
     '<div class="ev-foot"><span>'+(f.kind==='trade'?f.qty+'股 @ '+f.price+' · ':'')+tt(f.ts)+'</span><span class="ev-exp">'+(op?'收起 <span class="ar">▾</span>':'查看依据 <span class="ar">›</span>')+'</span></div></div></div>';}
 function museItem(m){const refs=museRefHtml(m.refs);
-  return'<div class="ev muse"><div class="eav">💭</div><div class="bub"><div class="ev-h"><span class="who2">阿尔法</span><span class="muse-ph">'+esc(m.phase||'脑内独白')+'</span></div><div class="muse-tx">'+esc(m.text)+'</div>'+recallChips(m.recalled)+(refs?'<div class="muse-refs">'+refs+'</div>':'')+'<div class="ev-foot"><span>'+tt(m.ts)+'</span></div></div></div>';}
+  return'<div class="ev muse"><div class="eav">💭</div><div class="bub"><div class="ev-h"><span class="who2">'+esc(pNm())+'</span><span class="muse-ph">'+esc(m.phase||'脑内独白')+'</span></div><div class="muse-tx">'+esc(m.text)+'</div>'+recallChips(m.recalled)+(refs?'<div class="muse-refs">'+refs+'</div>':'')+'<div class="ev-foot"><span>'+tt(m.ts)+'</span></div></div></div>';}
 function buildRight(d){
   const items=[];
   (d.feed||[]).forEach((f,i)=>items.push({ts:f.ts||'',html:feedItem(f,'f'+i)}));     // 交易 + 观察
   (d.musings||[]).forEach(m=>items.push({ts:m.ts||'',html:museItem(m)}));             // 7×24 脑内独白
   items.sort((a,b)=>b.ts.localeCompare(a.ts));
-  const body=items.length?items.slice(0,46).map(x=>x.html).join(''):'<div class="empty">阿尔法待机中，扫描本站快讯/研报…</div>';
-  return'<div class="sec-h">🎙️ 阿尔法直播 <small>盘中交易决策 + 7×24 盘后/盘前脑内独白 · 每笔都引本站快讯/研报</small></div>'+body;
+  const body=items.length?items.slice(0,46).map(x=>x.html).join(''):'<div class="empty">'+esc(pNm())+'待机中，扫描本站快讯/研报…</div>';
+  return'<div class="sec-h">🎙️ '+esc(pNm())+'直播 <small>盘中交易决策 + 7×24 盘后/盘前脑内独白 · 每笔都引本站快讯/研报</small></div>'+body;
 }
 function fillCols(){const d=S.data;
   document.getElementById('colLeft').innerHTML=buildLeft(d);
@@ -458,7 +460,7 @@ function fillCols(){const d=S.data;
   setTimeout(()=>drawCenterChart(),120);  // 兜底
 }
 function ticker(f){const t=document.getElementById('ticker');t.className='show '+f.side;
-  t.textContent=(f.side==='buy'?'🟢 阿尔法买入 ':'🔴 阿尔法卖出 ')+f.name+' ¥'+f.price+(f.catalyst?(' · '+f.catalyst.slice(0,18)):'');
+  t.textContent=(f.side==='buy'?'🟢 '+pNm()+'买入 ':'🔴 '+pNm()+'卖出 ')+f.name+' ¥'+f.price+(f.catalyst?(' · '+f.catalyst.slice(0,18)):'');
   document.getElementById('ava').classList.add('shake');document.getElementById('top').classList.add('flash');
   setTimeout(()=>{document.getElementById('ava').classList.remove('shake');document.getElementById('top').classList.remove('flash');t.className='';},3600);}
 function confetti(){if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;const w=document.createElement('div');w.className='conf';const cs=['#16c784','#7c3aed','#ec4899','#f59e0b','#06b6d4'],n=isMobile()?16:30;
@@ -470,10 +472,10 @@ function recallChips(recalled){if(!recalled||!recalled.length)return'';
   return'<div class="muse-recall">'+recalled.slice(0,3).map(r=>'<span class="rcl">💡想起 '+(MEM_IC[r.mem_type]||'')+esc((r.title||'').slice(0,20))+'</span>').join('')+'</div>';}
 function memoryPanel(d){const mem=d.memory||[],ms=d.memory_stats||{};
   const stat='学到 '+(ms.total||0)+' 条 · 观点'+(ms.theses||0)+' · 复盘'+((ms.wins||0)+(ms.losses||0))+' · 平均信度'+Math.round((ms.avg_confidence||0)*100)+'%';
-  if(!mem.length)return'<div class="membox"><div class="mh2">🧠 阿尔法的认知 <small>边交易边学、持续进化</small></div><div class="empty" style="padding:12px 4px;text-align:left;font-size:11.5px">还在攒认知 — 每笔复盘、每条研报都会沉淀成他的长期记忆。</div></div>';
+  if(!mem.length)return'<div class="membox"><div class="mh2">🧠 '+esc(pNm())+'的认知 <small>边交易边学、持续进化</small></div><div class="empty" style="padding:12px 4px;text-align:left;font-size:11.5px">还在攒认知 — 每笔复盘、每条研报都会沉淀成他的长期记忆。</div></div>';
   const rows=mem.slice(0,8).map((m,i)=>{const conf=Math.round((m.confidence||0)*100),seen=(m.seen_count||1);
     return'<div class="mem" data-mi="'+i+'" title="'+esc(m.title)+(seen>1?(' · 印证'+seen+'次'):'')+' · 点开看依据"><span class="mty">'+(MEM_IC[m.mem_type]||'•')+'</span><span class="mmid"><span class="mtt">'+esc(m.title)+'</span><div class="mcb"><i data-w="'+conf+'"></i></div></span><span class="mcf">'+conf+'%</span></div>';}).join('');
-  return'<div class="membox"><div class="mh2">🧠 阿尔法的认知 <small>'+esc(stat)+'</small></div>'+rows+'</div>';}
+  return'<div class="membox"><div class="mh2">🧠 '+esc(pNm())+'的认知 <small>'+esc(stat)+'</small></div>'+rows+'</div>';}
 function wireSidebar(wire){if(!wire||!wire.length)return'';
   const items=wire.slice(0,6).map(w=>'<div class="wli"><span class="s">'+(EVT_EM[w.src]||'•')+w.src+'</span><span class="wt">'+esc(w.title)+'</span></div>').join('');
   return'<div class="wirebox"><div class="wh">📡 本站快讯/文章/研报<a class="more" href="https://daocaijing.com?ch=aifund_wire" target="_top">看全部 →</a></div>'+items+'</div>';}
@@ -486,6 +488,7 @@ function render(d){if(!d)return;const prev=S.data;S.data=d;const up=(d.nav_pct||
   const ret=document.getElementById('ret');ret.className='ret'+(up?'':' dn');countUp(ret,d.nav_pct,fmtPct,prev?prev.nav_pct:null);
   document.getElementById('herosub').innerHTML='单位净值 <b class="num">'+Number(d.nav_unit).toFixed(4)+'</b> · 运行第 '+(d.days_running||1)+' 天 · 出手 '+(d.decisions_total||0)+' 次';
   document.getElementById('navfrom').textContent='自 '+(d.started_at||'').slice(0,10);
+  {const nv=document.getElementById('navVs');if(nv)nv.textContent=(d.persona&&d.persona.name||'阿尔法')+' vs 沪深300';}
   const ab=document.getElementById('alpha');
   if(d.alpha_pct==null||!(d.benchmark&&d.benchmark.length>1)){ab.className='alpha-badge wait';ab.textContent='🏁 发车·基准对齐中';}
   else if(d.alpha_pct>=0){ab.className='alpha-badge';ab.textContent='相对沪深300 +'+d.alpha_pct.toFixed(2)+'%';}
@@ -595,7 +598,7 @@ function arenaSay(s){
   const la=s.last_action;
   if(la&&la.name){const pnl=(la.pnl_pct!=null)?(' '+fmtPct(la.pnl_pct)):'';
     return (la.side==='buy'?'🟢 ':la.side==='sell'?'🔴 ':'👁 ')+'最近'+(SIDE_CN[la.side]||'操作')+' '+esc(la.name)+pnl;}
-  return ((s.mood&&s.mood.emoji)||'😎')+' '+((s.mood&&s.mood.label)||'盯盘找机会')+'，等本站催化点火。';
+  return esc(s.commentary||(((s.mood&&s.mood.emoji)||'😎')+' '+((s.mood&&s.mood.label)||'盯盘找机会')+'，等本站催化点火。'));
 }
 const MEDAL={1:'🥇',2:'🥈',3:'🥉'};
 function lbcard(s,bench,racing){
@@ -646,7 +649,7 @@ function setMode(m){
   document.getElementById('appView').classList.toggle('detail',m==='detail');
 }
 async function loadArena(){
-  try{const r=await fetch('/api/ai-fund/arena?w='+QRW,{headers:{'Accept':'application/json'}});if(!r.ok)throw 0;
+  try{const r=await fetch('/api/ai-fund/arena?w='+QRW,{cache:'no-store',headers:{'Accept':'application/json'}});if(!r.ok)throw 0;
     const d=await r.json();
     if(d&&d.ready===false){ // 引擎竞技场未就绪 → 回退单账户主视图
       if(S.mode==='arena'){S.fund='main';setMode('detail');await load();}
@@ -658,7 +661,7 @@ async function loadArena(){
 }
 function openDetail(fund){S.fund=fund;S.sel=null;S.open=null;S.data=null;setMode('detail');showStSwitch();load();}
 function backToArena(){setMode('arena');loadArena();}
-async function load(){try{const r=await fetch('/api/ai-fund/snapshot?strategy='+encodeURIComponent(S.fund)+'&w='+QRW,{headers:{'Accept':'application/json'}});if(!r.ok)throw 0;render(await r.json());showStSwitch();}
+async function load(){try{const r=await fetch('/api/ai-fund/snapshot?strategy='+encodeURIComponent(S.fund)+'&w='+QRW,{cache:'no-store',headers:{'Accept':'application/json'}});if(!r.ok)throw 0;render(await r.json());showStSwitch();}
   catch(e){if(!S.data)document.getElementById('colCenter').innerHTML='<div class="empty">数据加载失败，正在自动重试…</div>';}}
 function poll(){if(S.mode==='arena')loadArena();else load();}
 // 竞技场卡片 / 切换器 / 返回
