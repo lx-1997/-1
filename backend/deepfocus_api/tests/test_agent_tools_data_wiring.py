@@ -1,14 +1,14 @@
-"""数据打通工具回归守卫：把 AI 模拟盘 / 热度榜 / 焦点人物 包装成 agent 工具。
+"""数据打通工具回归守卫：把 AI 模拟盘 / 热度榜 包装成 agent 工具。
 
-验证：①新工具已注册并出现在 openai_tool_specs ②各 handler 做了精简投影(剔除大字段、截断)
+验证：①新工具已注册并出现在 openai_tool_specs ②各 handler 做了精简投影(剔除大字段、运营数据)
 ③execute_tool 正确包装 {ok,data}。底层数据函数全部 monkeypatch，不触真实 I/O。
+（焦点人物工具因 prod 在中国机房连不上 Google News，已撤除，见 [[ai-native-tool-agent]]）
 """
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace as NS
 
-from deepfocus_api import agent_tools, ai_fund, data_store, people_voices
+from deepfocus_api import agent_tools, ai_fund, data_store
 
 
 def run(tool: str, **args):
@@ -17,9 +17,10 @@ def run(tool: str, **args):
 
 def test_new_tools_registered():
     specs = {s["function"]["name"] for s in agent_tools.openai_tool_specs()}
-    for n in ("get_ai_fund_snapshot", "get_ai_fund_arena", "get_hot_stocks", "get_people_spotlight"):
+    for n in ("get_ai_fund_snapshot", "get_ai_fund_arena", "get_hot_stocks"):
         assert n in agent_tools.TOOL_REGISTRY, n
         assert n in specs, n
+    assert "get_people_spotlight" not in agent_tools.TOOL_REGISTRY  # 已撤除(Google News 在 prod 不可达)
 
 
 def test_ai_fund_snapshot_projection(monkeypatch):
@@ -76,38 +77,3 @@ def test_hot_stocks_projection(monkeypatch):
     top = out["data"]["hot"][0]
     assert out["data"]["window_days"] == 7 and top["symbol"] == "AAPL" and top["rank"] == 1
     assert "count" not in top  # 研判次数(运营数据)不外泄,只回 rank
-
-
-def test_people_spotlight_single(monkeypatch):
-    item = NS(title="AI 需求强劲", summary="x" * 200, source_name="路透",
-              reported_date="2026-06-20", published_at=None, url="http://e")
-    prof = NS(name="黄仁勋", role="CEO", org="NVIDIA", topics=["AI"],
-              latest_date="2026-06-20", digest="综述", items=[item])
-
-    async def fake(figure_id, refresh=False):
-        return prof
-
-    monkeypatch.setattr(people_voices, "fetch_person_voices", fake)
-    out = run("get_people_spotlight", name="黄仁勋")
-    d = out["data"]
-    assert d["person"] == "黄仁勋" and d["voices"][0]["source"] == "路透"
-    assert len(d["voices"][0]["summary"]) <= 120  # 摘要截断
-
-
-def test_people_spotlight_unknown_lists_available():
-    out = run("get_people_spotlight", name="某不存在的人")
-    assert "黄仁勋" in out["data"]["available"]
-
-
-def test_people_spotlight_all(monkeypatch):
-    resp = NS(generated_at="2026-06-22T00:00:00Z",
-              figures=[NS(name="特朗普", role="美国总统", latest_date="d",
-                          items=[NS(title="关税新政")], item_count=3)])
-
-    async def fake(refresh=False):
-        return resp
-
-    monkeypatch.setattr(people_voices, "fetch_people_spotlight", fake)
-    out = run("get_people_spotlight")
-    d = out["data"]
-    assert d["people"][0]["name"] == "特朗普" and d["people"][0]["top"] == "关税新政"

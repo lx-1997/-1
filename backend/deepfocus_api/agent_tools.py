@@ -552,35 +552,6 @@ async def _tool_get_hot_stocks(kind: str = "verdict", days: int = 14, limit: int
                     for i, r in enumerate(rows)]}
 
 
-async def _tool_get_people_spotlight(name: str = "") -> Any:
-    """焦点人物（特朗普/黄仁勋/马斯克/奥特曼等）近期发言与观点。name 留空=全部人物概览，带名=单人下钻。Google News 取数、带溯源链接。"""
-    from . import people_voices
-    nm = (name or "").strip()
-    if nm:
-        low = nm.lower()
-        fig = next((f for f in people_voices.FIGURES
-                    if low in (f.get("name") or "").lower()
-                    or low in (f.get("en_name") or "").lower()
-                    or low == (f.get("id") or "")), None)
-        if not fig:
-            return {"error": f"未收录该人物：{nm}", "available": [f["name"] for f in people_voices.FIGURES]}
-        prof = await people_voices.fetch_person_voices(fig["id"])
-        voices = [
-            {"title": it.title, "summary": (it.summary or "")[:120],
-             "source": it.source_name, "date": it.reported_date or it.published_at, "url": it.url}
-            for it in (prof.items or [])[:8]
-        ]
-        return {"person": prof.name, "role": prof.role, "org": prof.org, "topics": prof.topics,
-                "latest_date": prof.latest_date, "digest": prof.digest or None, "voices": voices}
-    resp = await people_voices.fetch_people_spotlight()
-    people = [
-        {"name": f.name, "role": f.role, "latest_date": f.latest_date,
-         "top": (f.items[0].title if f.items else None), "item_count": f.item_count}
-        for f in (resp.figures or [])
-    ]
-    return {"as_of": resp.generated_at, "people": people}
-
-
 register_tool(AgentTool(
     name="get_ai_fund_snapshot",
     description=(
@@ -621,18 +592,4 @@ register_tool(AgentTool(
         },
     },
     handler=_tool_get_hot_stocks,
-))
-register_tool(AgentTool(
-    name="get_people_spotlight",
-    description=(
-        "查看焦点人物（特朗普/黄仁勋/马斯克/奥特曼/苏姿丰/纳德拉/木头姐/扎克伯格等）近期发言与观点（带新闻溯源）。"
-        "用户问『最近XX(人物)怎么说/对某事的看法』时用；name 留空=全部人物概览，带人名(中/英)=单人近期发言。"
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "name": {"type": "string", "description": "人物中文名或英文名；留空=全部人物概览"},
-        },
-    },
-    handler=_tool_get_people_spotlight,
 ))
