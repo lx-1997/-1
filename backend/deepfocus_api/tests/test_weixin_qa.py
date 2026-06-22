@@ -160,6 +160,21 @@ def test_answer_goes_through_compliance(env):
     assert env["sent"][-1] == "NZ:原始答案"
 
 
+# ---------- make_agent_fn 传放宽后的超时（个股多轮取数不被 30s 默认超时掐死） ----------
+
+def test_make_agent_fn_passes_long_timeout():
+    captured: dict = {}
+
+    class FakeLLM:
+        async def run_tool_agent(self, *, question, context_hint, timeout_seconds, **kw):
+            captured["timeout"] = timeout_seconds
+            return {"answer": "ok"}
+
+    out = asyncio.run(wc.make_agent_fn(FakeLLM())("某股怎么样", ""))
+    assert out == "ok"
+    assert captured["timeout"] == wc._QA_AGENT_TIMEOUT and wc._QA_AGENT_TIMEOUT >= 60
+
+
 # ---------- agent 空答：回兜底、不写缓存（但已计次，保护成本） ----------
 
 def test_empty_answer_falls_back_and_not_cached(env):

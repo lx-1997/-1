@@ -49,6 +49,7 @@ _GREETINGS = {
 # 省 token 三板斧：①答案缓存跨用户复用（命中 0 token、不计次）②每日"现算"配额上限 ③推荐问题引导（把流量收敛到高命中问题）。
 _QA_DAILY_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_QA_DAILY", "10") or 10)            # 每会员每天"现算"问答上限（缓存命中不计入）
 _QA_CACHE_TTL = float(os.getenv("DEEPFOCUS_WEIXIN_QA_CACHE_TTL", "1800") or 1800)    # 答案缓存有效期（秒），默认 30min 兼顾行情时效
+_QA_AGENT_TIMEOUT = float(os.getenv("DEEPFOCUS_WEIXIN_QA_TIMEOUT", "60") or 60)      # run_tool_agent 每轮 LLM 超时(秒)；个股问答需多轮取数，默认30s 易超时返空→回兜底，放宽到 60s
 _RECOMMEND_LIST = (
     "· 今天大盘怎么样 / 收盘复盘\n"
     "· 某只股票怎么样（发名称或代码，如 贵州茅台 / 600519）\n"
@@ -217,7 +218,7 @@ def _qa_fingerprint(question: str) -> str:
 def make_agent_fn(llm: Any) -> AgentFn:
     """把 CloudResearchLLM.run_tool_agent 适配成 AgentFn（返回 answer 文本或 None）。"""
     async def _agent(question: str, hint: str) -> Optional[str]:
-        result = await llm.run_tool_agent(question=question, context_hint=hint)
+        result = await llm.run_tool_agent(question=question, context_hint=hint, timeout_seconds=_QA_AGENT_TIMEOUT)
         if result and (result.get("answer") or "").strip():
             return result["answer"]
         return None
