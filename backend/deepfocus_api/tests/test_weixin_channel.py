@@ -1,23 +1,31 @@
 import asyncio
 
+from deepfocus_api import auth
+from deepfocus_api import data_store
+from deepfocus_api import metrics_store
 from deepfocus_api import weixin_bind as bind
 from deepfocus_api import weixin_ilink as ilink
 from deepfocus_api import weixin_channel as ch
-from deepfocus_api import ifind_api
 
 
 def _use_temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(bind, "DB_PATH", tmp_path / "bind.sqlite3")
     bind.init_weixin_bind_db()
+    # 问答会走答案缓存(data_store)+每日配额(metrics_store)，一并隔离到临时库，避免污染真实库
+    monkeypatch.setattr(data_store, "DB_PATH", tmp_path / "ds.sqlite3")
+    monkeypatch.setattr(metrics_store, "DB_PATH", tmp_path / "ms.sqlite3")
+    data_store.init_data_store()
+    metrics_store.init_db()
 
 
-def _whitelist(monkeypatch, *names):
-    monkeypatch.setattr(ifind_api, "allowed_usernames", lambda: {n.lower() for n in names})
+def _member(monkeypatch, tier="premium"):
+    """把发问用户置为在效会员（AI 问答会员专享，_member_can_push 仅放行 premium/lifetime）。"""
+    monkeypatch.setattr(auth, "membership_of_username", lambda u: ({"tier": tier} if u else None))
 
 
 def test_handle_batch_replies_with_agent_answer(tmp_path, monkeypatch):
     _use_temp_db(tmp_path, monkeypatch)
-    _whitelist(monkeypatch, "qauser")  # 仅白名单走 agent
+    _member(monkeypatch)  # 在效会员可问（已去白名单）
     bind.upsert_binding("u1", "botX@im.bot", "tok", "https://ilinkai.weixin.qq.com", "wxU@im.wechat", username="qauser")
 
     sent = {}
@@ -48,7 +56,7 @@ def test_handle_batch_replies_with_agent_answer(tmp_path, monkeypatch):
 
 def test_handle_batch_skips_bot_and_uses_fallback(tmp_path, monkeypatch):
     _use_temp_db(tmp_path, monkeypatch)
-    _whitelist(monkeypatch, "qauser")
+    _member(monkeypatch)
     bind.upsert_binding("u1", "botX@im.bot", "tok", "base", "wxU", username="qauser")
     sent = {}
 
@@ -73,7 +81,7 @@ def test_handle_batch_skips_bot_and_uses_fallback(tmp_path, monkeypatch):
 def test_handle_batch_greeting_skips_agent(tmp_path, monkeypatch):
     """纯打招呼：不调 agent(不耗 token)，回友好引导。"""
     _use_temp_db(tmp_path, monkeypatch)
-    _whitelist(monkeypatch, "qauser")
+    _member(monkeypatch)
     bind.upsert_binding("u1", "botX@im.bot", "tok", "base", "wxU", username="qauser")
     sent = {}
 
@@ -95,11 +103,11 @@ def test_handle_batch_greeting_skips_agent(tmp_path, monkeypatch):
     assert "投研助手" in sent["text"]
 
 
-def test_handle_batch_non_whitelist_gets_canned_reply_no_agent(tmp_path, monkeypatch):
-    """非白名单用户：问答不调 agent(不耗 token)，回固定话术。"""
+def test_handle_batch_expired_member_no_agent(tmp_path, monkeypatch):
+    """会员过期/降级：AI 问答不调 agent(不耗 token)，回续费引导（推送仍可用）。"""
     _use_temp_db(tmp_path, monkeypatch)
-    _whitelist(monkeypatch, "lx199710")  # 只白名单 lx199710
-    bind.upsert_binding("u2", "botY@im.bot", "tok", "base", "wxV", username="somemember")  # 非白名单尊享会员
+    _member(monkeypatch, tier="trial")  # 已降级/过期 → 非 premium/lifetime
+    bind.upsert_binding("u2", "botY@im.bot", "tok", "base", "wxV", username="somemember")
     sent = {}
 
     async def fake_send(token, base_url, to_user_id, context_token, text, uin=None):
@@ -117,8 +125,8 @@ def test_handle_batch_non_whitelist_gets_canned_reply_no_agent(tmp_path, monkeyp
     mgr = ch.WeixinChannelManager(agent_fn=agent)
     msgs = [{"message_type": 1, "from_user_id": "wxV", "context_token": "C3", "item_list": [{"type": 1, "text_item": {"text": "茅台怎么样"}}]}]
     asyncio.run(mgr._handle_batch("botY@im.bot", msgs))
-    assert agent_calls == []  # agent 未被调用 → 不耗 token
-    assert sent.get("called") and "推送" in sent["text"] and "问答" in sent["text"]
+    assert agent_calls == []  # 过期会员不触发 agent → 不耗 token
+    assert sent.get("called") and sent["text"] == ch._EXPIRED_REPLY
 
 
 def test_member_can_push_gates_on_membership(tmp_path, monkeypatch):

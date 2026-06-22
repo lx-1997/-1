@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -43,17 +45,39 @@ _GREETINGS = {
     "你好", "您好", "你好啊", "您好啊", "哈喽", "哈啰", "嗨", "hi", "hello", "hey",
     "在吗", "在不在", "在", "在么", "在嘛", "有人吗", "早", "早上好", "中午好", "下午好", "晚上好", "你是谁",
 }
+# ⭐ 会员 AI 问答（已对所有在效会员开放，去掉了原 lx199710 白名单灰度）。
+# 省 token 三板斧：①答案缓存跨用户复用（命中 0 token、不计次）②每日"现算"配额上限 ③推荐问题引导（把流量收敛到高命中问题）。
+_QA_DAILY_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_QA_DAILY", "10") or 10)            # 每会员每天"现算"问答上限（缓存命中不计入）
+_QA_CACHE_TTL = float(os.getenv("DEEPFOCUS_WEIXIN_QA_CACHE_TTL", "1800") or 1800)    # 答案缓存有效期（秒），默认 30min 兼顾行情时效
+_RECOMMEND_LIST = (
+    "· 今天大盘怎么样 / 收盘复盘\n"
+    "· 某只股票怎么样（发名称或代码，如 贵州茅台 / 600519）\n"
+    "· 某条快讯 / 事件怎么解读\n"
+    "· 某个行业 / 板块前景如何"
+)
+_HELP_TRIGGERS = {
+    "帮助", "help", "功能", "怎么用", "使用说明", "菜单", "你能干嘛", "你能做什么", "?", "？", "？？",
+}
+_HELP_REPLY = (
+    "我是 DeepFocus 投研助手 🤖 可以问我：\n"
+    f"{_RECOMMEND_LIST}\n"
+    f"（会员每天 {_QA_DAILY_LIMIT} 条 AI 问答；常见问题命中缓存时不计次 😉）"
+)
+_QUOTA_REPLY = (
+    f"今天的 AI 问答额度（{_QA_DAILY_LIMIT} 条/天）已经用完啦，明天再来 🙏\n"
+    "（重要快讯我仍会继续推送给你）\n"
+    "明天可以试试这些：\n"
+    f"{_RECOMMEND_LIST}"
+)
+_EXPIRED_REPLY = (
+    "AI 问答是会员专享功能～你的会员可能已到期。\n"
+    "续费后即可继续畅聊投研问题；快讯推送仍可正常使用。"
+)
 _GREETING_REPLY = (
     "你好 👋 我是 DeepFocus 投研助手。\n"
-    "问我个股（发名称/代码）、今天大盘 / 收盘复盘、或某条快讯解读都行～"
-)
-# 非白名单尊享会员给机器人发消息时的回复：兼作「推送激活确认 + 保活提示」。
-# 用户为激活推送会发一句话过来——此刻正好确认通道已通，并提示长时间无互动需再发一句重新激活。
-_NON_QA_REPLY = (
-    "✅ DeepFocus 快讯推送已激活！有重要快讯我会主动推给你（带利好 / 利空标注）。\n"
-    "📌 推送范围（全部 / 按关键词）可在网站「绑定微信」面板里自助设置。\n"
-    "💡 若隔一段时间没再收到推送，回复任意一条消息即可重新激活。\n"
-    "（AI 问答功能内测中，暂未开放，敬请期待 🙏）"
+    "✅ 快讯推送已激活，有重要快讯我会主动推给你。\n"
+    "想问点啥都行，比如：\n"
+    f"{_RECOMMEND_LIST}"
 )
 _AUTO_PUSH_INTERVAL = 60.0  # 兜底轮询间隔（秒）；事件驱动是主路径，这只防漏/重启
 _KEEPALIVE_INTERVAL = 150.0  # 保活探针间隔（秒，2.5min）：尽量保活——触摸更勤，远小于 token 过期窗，用 getconfig 静默维持 context_token
@@ -181,6 +205,13 @@ def _member_can_push(b: Dict[str, Any]) -> bool:
     except Exception:  # noqa: BLE001  会员服务异常时保守不推
         return False
     return bool(m and m.get("tier") in ("premium", "lifetime"))
+
+
+def _qa_fingerprint(question: str) -> str:
+    """归一化问题 → MD5 指纹（答案缓存键）：去首尾/压缩内部空白、去尾部标点、小写。空问题→''（不缓存）。
+    ⭐微信问答无个人上下文（hint 恒空，见 main.py 构造处不传 context_hint_fn），故同一问题跨用户可安全共享答案。"""
+    q = re.sub(r"\s+", " ", (question or "").strip().lower()).rstrip("?？!！。.,，、 ")
+    return hashlib.md5(q.encode("utf-8")).hexdigest() if q else ""
 
 
 def make_agent_fn(llm: Any) -> AgentFn:
@@ -482,41 +513,62 @@ class WeixinChannelManager:
         if not texts or not to_user or not ctx:
             return
         question = "\n".join(texts)
-        # 问答白名单门控：仅白名单(默认 lx199710)走 run_tool_agent(耗 token)；
-        # 其余尊享会员只收快讯推送，问答回固定话术——不调 agent、不耗我们的 token。
-        from . import ifind_api
-        if (b.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
+        # —— 会员 AI 问答（已去 lx199710 白名单，所有在效会员可用）——
+        # 推送 token 已在上面刷新，故"发消息激活推送"对所有人始终生效；问答另走下面的省 token 闸。
+        from . import compliance, data_store, metrics_store
+
+        async def _reply(text: str) -> None:
             try:
                 async with self._lock_for(bot_id):  # 与推送/保活串行，不抢同一 token
-                    await ilink.send_text(b["token"], b["base_url"], to_user, ctx, _NON_QA_REPLY)
-            except Exception as exc:
-                logger.warning("[weixin] non-qa reply err %s: %s", bot_id[:8], exc)
+                    await ilink.send_text(b["token"], b["base_url"], to_user, ctx, text)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[weixin] reply err %s: %s", bot_id[:8], exc)
+
+        q_norm = question.strip().lower()
+        # ① 会员校验：AI 问答会员专享；会员过期只保留推送、问答引导续费（不耗 token）
+        if not _member_can_push(b):
+            await _reply(_EXPIRED_REPLY)
             return
-        # 纯打招呼/寒暄：不触发研究 agent（既不耗 token、也不会答非所问），直接友好引导
-        if question.strip().lower() in _GREETINGS:
-            try:
-                async with self._lock_for(bot_id):
-                    await ilink.send_text(b["token"], b["base_url"], to_user, ctx, _GREETING_REPLY)
-            except Exception as exc:
-                logger.warning("[weixin] greeting reply err %s: %s", bot_id[:8], exc)
+        # ② 纯寒暄（兼推送激活确认）/ ③ 帮助菜单：友好引导，不触发 agent、不计次
+        if q_norm in _GREETINGS:
+            await _reply(_GREETING_REPLY)
             return
+        if q_norm in _HELP_TRIGGERS:
+            await _reply(_HELP_REPLY)
+            return
+
+        # ④ 答案缓存跨用户复用：命中即秒回，0 token、不计次（同一问题跨用户安全共享，见 _qa_fingerprint）
+        fp = _qa_fingerprint(question)
+        if fp:
+            cached = data_store.latest("wx_qa", fp, max_age_seconds=_QA_CACHE_TTL)
+            if isinstance(cached, dict) and (cached.get("answer") or "").strip():
+                await _reply(compliance.neutralize_text(cached["answer"].strip()))
+                return
+
+        # ⑤ 每日"现算"配额：仅缓存未命中才计次；超额 → 引导明天 / 问推荐问题，不耗 token
+        uname = (b.get("username") or "").strip().lower()
+        qkey = f"q:wxqa:{uname}" if uname else f"q:wxqa:bot:{bot_id}"
+        if metrics_store.get_daily(qkey) >= _QA_DAILY_LIMIT:
+            await _reply(_QUOTA_REPLY)
+            return
+
+        # ⑥ 现算：计次 → 调 agent（耗 token）→ 合规中性化 → 回 → 写缓存供后续复用
+        metrics_store.incr(qkey)
         hint = ""
         if self._context_hint_fn:
             try:
                 hint = self._context_hint_fn(b) or ""
-            except Exception:
+            except Exception:  # noqa: BLE001
                 hint = ""
         try:
             answer = await self._agent_fn(question, hint)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("[weixin] agent err for %s: %s", bot_id[:8], exc)
             answer = None
-        reply = (answer or "").strip() or _FALLBACK_REPLY
-        try:
-            async with self._lock_for(bot_id):
-                await ilink.send_text(b["token"], b["base_url"], to_user, ctx, reply)
-        except Exception as exc:
-            logger.warning("[weixin] send_text err for %s: %s", bot_id[:8], exc)
+        ans = (answer or "").strip()
+        if ans and fp:
+            data_store.record("wx_qa", fp, {"answer": ans, "q": question[:200]})
+        await _reply(compliance.neutralize_text(ans) if ans else _FALLBACK_REPLY)
 
     # ---- 准推送：best-effort flush ----
 
