@@ -71,6 +71,20 @@ def test_split_for_wechat_chunks_long_answer():
     assert len(wc._split_for_wechat("字" * 500, limit=100)) == 5  # 无标点超长串也硬切兜底(防漏切)
 
 
+def test_split_keeps_sections_intact():
+    # 研报总结结构:超长时只在"一、二、三"小节边界断,标题与正文必须同块(不拆散)
+    text = ("引言一句\n\n一、宏观\n" + "宏观内容" * 40 + "\n\n二、大宗\n" + "大宗内容" * 40
+            + "\n\n三、AI\n" + "AI内容" * 40)
+    chunks = wc._split_for_wechat(text, limit=300)
+    assert len(chunks) >= 2
+    for c in chunks:  # 哪个块出现小节标题,该块必含其正文(标题没被孤立到段尾)
+        if "二、大宗" in c:
+            assert "大宗内容" in c
+        if "三、AI" in c:
+            assert "AI内容" in c
+    assert all(x in "".join(chunks) for x in ("宏观内容", "大宗内容", "AI内容"))  # 内容不丢
+
+
 def test_fingerprint_normalizes_whitespace_and_punct():
     # 仅"首尾空白 + 尾部标点 + 大小写"的差异应归一到同一指纹（内部空格按单空格保留，不强删）
     a = wc._qa_fingerprint("今天大盘怎么样？")

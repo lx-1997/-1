@@ -215,14 +215,13 @@ def _qa_fingerprint(question: str) -> str:
     return hashlib.md5(q.encode("utf-8")).hexdigest() if q else ""
 
 
-# 微信单条消息有长度上限(实测约 450 字会被截尾),长答案按行/句切成多段连发,根治"结尾被切断"。
-_WX_MSG_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_MSG_LIMIT", "380") or 380)
+# 多数答案一条发完(门槛设高);只有超长才分段,且【只在小节(一、二、…)边界断,绝不拆散标题与正文】。
+_WX_MSG_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_MSG_LIMIT", "1500") or 1500)
 _REPLY_CHUNK_GAP = 0.6  # 相邻分段消息间隔(秒),错峰、保顺序
 
 
-def _split_for_wechat(text: str, limit: int = 0) -> list[str]:
-    """长答案切成 ≤limit 的多段:先按段落(\\n)→句末标点→无标点超长串硬切,再贪心合并。短答案原样单段。"""
-    limit = limit or _WX_MSG_LIMIT
+def _fine_split(text: str, limit: int) -> list[str]:
+    """超长单元兜底切分:按行→句末标点→无标点硬切,再贪心合并(仅在单节本身就超长时才会用到)。"""
     s = (text or "").strip()
     if len(s) <= limit:
         return [s] if s else []
@@ -231,10 +230,10 @@ def _split_for_wechat(text: str, limit: int = 0) -> list[str]:
         if len(para) <= limit:
             pieces.append(para)
             continue
-        for seg in re.split(r"(?<=[。；;!！?？])", para):  # 超长段落→按句末标点切
+        for seg in re.split(r"(?<=[。；;!！?？])", para):
             if not seg:
                 continue
-            while len(seg) > limit:  # 无标点的超长片→硬切兜底(防漏切仍被微信截)
+            while len(seg) > limit:
                 pieces.append(seg[:limit]); seg = seg[limit:]
             if seg:
                 pieces.append(seg)
@@ -246,6 +245,34 @@ def _split_for_wechat(text: str, limit: int = 0) -> list[str]:
             chunks.append(cur); cur = part
         else:
             cur += add
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _split_for_wechat(text: str, limit: int = 0) -> list[str]:
+    """短答案单条原样发;超长才分段,且**只在顶层小节标题(一、二、…)边界断**,每段含完整小节(标题+正文),
+    绝不把标题与正文拆开。无小节结构的超长答案退回 _fine_split。"""
+    limit = limit or _WX_MSG_LIMIT
+    s = (text or "").strip()
+    if len(s) <= limit:
+        return [s] if s else []
+    # 在"一、/二、/…"小节标题前断(容忍前导 ** 或空格);首段是引言
+    sections = re.split(r"\n(?=\s*\*{0,2}[一二三四五六七八九十]+、)", s)
+    units: list[str] = []
+    for sec in sections:
+        sec = sec.strip("\n")
+        if not sec:
+            continue
+        units.extend([sec] if len(sec) <= limit else _fine_split(sec, limit))
+    chunks: list[str] = []
+    cur = ""
+    for u in units:
+        sep = "\n\n" if cur else ""
+        if cur and len(cur) + len(sep) + len(u) > limit:
+            chunks.append(cur); cur = u
+        else:
+            cur += sep + u
     if cur:
         chunks.append(cur)
     return chunks
