@@ -29,6 +29,13 @@ def _wire(monkeypatch, quotes):
                         lambda s: quotes.get((ai_fund.normalize_a_code(s) or "").split(".")[0]))
 
 
+def _age_pos(symbol):
+    """把持仓买入日改到过去，绕过 A股 T+1 当日锁，模拟隔日后才可卖出。"""
+    with ai_fund._connect() as conn:
+        conn.execute("UPDATE aif_position SET opened_at='2020-01-01T00:00:00+00:00' WHERE symbol=?", (symbol,))
+        conn.commit()
+
+
 def test_headline_direction():
     assert ai_fund._headline_dir([{"title": "中标大订单，业绩超预期", "severity": "success", "age_h": 2}]) > 0.3
     assert ai_fund._headline_dir([{"title": "遭处罚，股东减持", "severity": "warning", "age_h": 2}]) < -0.3
@@ -77,11 +84,27 @@ def test_buy_on_catalyst_then_hard_stop(fund, monkeypatch):
     byd = next(f for f in snap["feed"] if f["symbol"] == "002594" and f["side"] == "buy")
     assert byd["catalyst"] and byd["buy_point"] and byd["thinking"] and byd["narrative"]
     assert byd["scores"].get("消息面") is not None
-    # 暴跌触发硬止损
+    # 暴跌触发硬止损（先把买入日调到过去，绕过 T+1 当日锁）
+    _age_pos("002594")
     q["002594"]["latest"] = 88
     out2 = ai_fund.run_tick()
     sells = [t for t in out2["traded"] if t["side"] == "sell" and t["symbol"] == "002594"]
     assert sells and "止损" in sells[0]["reason"]
+
+
+def test_t_plus_one_no_same_day_sell(fund, monkeypatch):
+    """A股 T+1 铁律：当日买入当日不可卖(含止损)；隔日才可卖。"""
+    q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96}}
+    _wire(monkeypatch, q)
+    monkeypatch.setattr(ai_fund, "_our_content",
+                        lambda name: [{"title": "比亚迪海外大单、销量超预期", "severity": "success", "age_h": 1, "id": "n", "src": "快讯"}] if name == "比亚迪" else [])
+    ai_fund.run_tick()  # 当日建仓
+    q["002594"]["latest"] = 80  # 同日暴跌 -20%，远超硬止损
+    out = ai_fund.run_tick()
+    assert not [t for t in out["traded"] if t["side"] == "sell" and t["symbol"] == "002594"], "T+1：当日买入当日不可卖"
+    _age_pos("002594")          # 隔日
+    out2 = ai_fund.run_tick()
+    assert any(t["side"] == "sell" and t["symbol"] == "002594" for t in out2["traded"]), "隔日应可止损卖出"
 
 
 def test_bull_playbook_dims_flow_through_tick(fund, monkeypatch):
@@ -165,7 +188,8 @@ def test_memory_learns_from_trades(fund, monkeypatch):
     snap = ai_fund.get_snapshot()
     assert "memory" in snap and "memory_stats" in snap
     assert snap["memory_stats"]["theses"] >= 1, "应形成个股观点 thesis"
-    # 暴跌触发硬止损 → 沉淀亏损教训
+    # 暴跌触发硬止损 → 沉淀亏损教训（先绕过 T+1 当日锁）
+    _age_pos("002594")
     q["002594"]["latest"] = 88
     ai_fund.run_tick()
     snap2 = ai_fund.get_snapshot()
@@ -385,3 +409,136 @@ def test_buy_includes_why_this_over_that(fund, monkeypatch):
     assert opt_steps, "至少一笔买入应含『优选』横向对比步骤"
     # 优选步骤点名了另一只候选 + 给出综合分对比
     assert any(("比亚迪" in s["text"] or "宁德时代" in s["text"]) and "综合" in s["text"] for s in opt_steps)
+
+
+# ── 基准修复回归：开赛日基线用开盘价，bench_ret 不再恒 0 ──────────────────────
+def _seed_bench(monkeypatch, klines):
+    import time as _t
+    monkeypatch.setattr(ai_fund, "_BENCH_CACHE", {"csi300": (_t.time(), klines)})
+
+
+def test_benchmark_inception_day_uses_open_not_zero(monkeypatch):
+    """开赛当天只有一根今日K：旧逻辑 start_close==last_close→bench_ret 恒 0(bug)。
+    修复后基线=开盘价 4000、最新 4080 → bench_ret=+2.0，alpha 有意义。"""
+    _seed_bench(monkeypatch, [{"day": "2026-06-22", "open": 4000.0, "close": 4080.0}])
+    b = ai_fund._benchmark("2026-06-22T01:35:00+00:00", nav_pct=0.5)
+    assert b is not None
+    assert b["bench_ret"] == 2.0, "开赛日必须按开盘价算出 +2%，而非旧 bug 的 0%"
+    assert b["alpha"] == round(0.5 - 2.0, 2)   # 基金 +0.5% 实则跑输大盘 2%
+    assert b["series"][0] == {"date": "2026-06-22", "value": 1.0}  # 曲线以开盘锚定 1.0
+
+
+def test_benchmark_multiday_baseline_from_inception_open(monkeypatch):
+    """多日基金：基线=开赛日开盘价，含开赛日当日涨幅。"""
+    _seed_bench(monkeypatch, [
+        {"day": "2026-06-18", "open": 3900.0, "close": 3950.0},   # 开赛前，忽略
+        {"day": "2026-06-20", "open": 4000.0, "close": 4100.0},   # 开赛日：基线=4000
+        {"day": "2026-06-22", "open": 4150.0, "close": 4200.0},   # 最新
+    ])
+    b = ai_fund._benchmark("2026-06-20T01:35:00+00:00", nav_pct=3.0)
+    assert b["bench_ret"] == 5.0   # 4200/4000-1 = +5%
+    assert b["alpha"] == -2.0      # 基金 +3% vs 大盘 +5%
+
+
+# ── A股交易规则硬闸门：涨跌停 + T+1（别让人笑话）────────────────────────────
+def test_price_limit_by_board_and_seal():
+    """涨跌停幅度按板块/ST；封板成交闸门。"""
+    assert ai_fund._price_limit_pct("600519") == 10.0      # 主板
+    assert ai_fund._price_limit_pct("300750") == 20.0      # 创业板
+    assert ai_fund._price_limit_pct("688981") == 20.0      # 科创板
+    assert ai_fund._price_limit_pct("830799") == 30.0      # 北交所
+    assert ai_fund._price_limit_pct("600519", "ST皇庭") == 5.0  # ST
+    assert ai_fund._at_upper_limit("600519", "", 9.9) is True   # 主板 +9.9%≈涨停封板
+    assert ai_fund._at_upper_limit("600519", "", 8.0) is False
+    assert ai_fund._at_upper_limit("300750", "", 9.9) is False  # 创业板 +9.9% 还没到 20%
+    assert ai_fund._at_lower_limit("600519", "", -9.9) is True  # 跌停封板
+    assert ai_fund._at_lower_limit("600519", "", None) is False
+
+
+def _byd_strong(monkeypatch, extra_q=None):
+    """让比亚迪 002594 形成强买入信号的通用布置。"""
+    q = {"002594": {"latest": 100, "changeRatio": 4.0, "pe_ttm": 20, "pb": 3, "turnoverRatio": 5, "high": 101, "low": 96}}
+    if extra_q:
+        q["002594"].update(extra_q)
+    _wire(monkeypatch, q)
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP})
+    monkeypatch.setattr(ai_fund, "_our_content",
+        lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
+    return q
+
+
+def test_upper_limit_blocks_buy(fund, monkeypatch):
+    """涨停封板买不进——不模拟『买在涨停板』。"""
+    _byd_strong(monkeypatch, {"changeRatio": 9.9})   # 主板涨停封板
+    out = ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)
+    assert not [t for t in out["traded"] if t["side"] == "buy" and t["symbol"] == "002594"]
+
+
+def test_t1_blocks_same_day_sell(fund, monkeypatch):
+    """T+1：当日买入当日不可卖出，硬止损也得等下一交易日。"""
+    q = _byd_strong(monkeypatch)
+    ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)            # 建仓 @100（opened_at=今天）
+    q["002594"]["latest"] = 80; q["002594"]["changeRatio"] = -5.0   # 暴跌 -20%(触发硬止损信号)，但非跌停
+    out = ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)
+    assert not [t for t in out["traded"] if t["side"] == "sell" and t["symbol"] == "002594"]
+    with ai_fund._connect() as conn:
+        assert "002594" in {r["symbol"] for r in ai_fund._positions(conn, "main")}   # 仍持有
+
+
+def test_lower_limit_blocks_sell(fund, monkeypatch):
+    """跌停封板卖不出——隔日的持仓即便触发止损也只能等。"""
+    q = _byd_strong(monkeypatch, {"latest": 80, "changeRatio": -9.9})   # 主板跌停封板 + 浮亏触发止损
+    with ai_fund._connect() as conn:           # 注入一笔『昨天』买入的持仓(绕过 T+1)
+        conn.execute("INSERT INTO aif_position (fund_id,symbol,name,qty,avg_cost,opened_at,updated_at,high_water) VALUES (?,?,?,?,?,?,?,?)",
+                     ("main", "002594", "比亚迪", 100, 100.0, "2026-06-01T01:00:00Z", "2026-06-01T01:00:00Z", 100.0))
+        conn.commit()
+    out = ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)
+    assert not [t for t in out["traded"] if t["side"] == "sell" and t["symbol"] == "002594"]   # 跌停卖不出
+    with ai_fund._connect() as conn:
+        assert "002594" in {r["symbol"] for r in ai_fund._positions(conn, "main")}
+
+
+def test_t1_blocks_rotation_of_today_position(fund, monkeypatch):
+    """换仓路径同样守 T+1：当日新仓不会被『卖最弱腾仓位』挤掉。"""
+    import dataclasses
+    cfg1 = dataclasses.replace(ai_fund.MAIN_CFG, max_positions=1)   # 满仓=1，方便触发换仓
+    # 第一天：比亚迪强 → 建仓(占满 1 个仓位)
+    q = {"002594": {"latest": 100, "changeRatio": 4.0, "pe_ttm": 20, "pb": 3, "turnoverRatio": 5, "high": 101, "low": 96},
+         "300750": {"latest": 200, "changeRatio": 0.2, "pe_ttm": 25, "pb": 4, "turnoverRatio": 2, "high": 201, "low": 199}}
+    _wire(monkeypatch, q)
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP, "300750": {"closes": [200]*30, "flow5": 0.0}})
+    monkeypatch.setattr(ai_fund, "_our_content",
+        lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
+    ai_fund.run_tick(cfg=cfg1)
+    with ai_fund._connect() as conn:
+        assert "002594" in {r["symbol"] for r in ai_fund._positions(conn, "main")}
+    # 同一天：宁德转强、比亚迪转弱 → 换仓欲卖比亚迪，但它当日建仓(T+1)→不可卖
+    q["300750"]["changeRatio"] = 5.0
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": {"closes": [100]*30, "flow5": 0.0}, "300750": MD_UP})
+    monkeypatch.setattr(ai_fund, "_our_content",
+        lambda name: [{"title": "宁德时代储能大单、业绩超预期、扩产", "severity": "success", "age_h": 1, "id": "b", "src": "快讯"}] if name == "宁德时代" else [])
+    out = ai_fund.run_tick(cfg=cfg1)
+    assert not [t for t in out["traded"] if t["side"] == "sell" and t["symbol"] == "002594"]   # 当日新仓没被换掉
+    with ai_fund._connect() as conn:
+        assert "002594" in {r["symbol"] for r in ai_fund._positions(conn, "main")}
+
+
+def test_holding_period_learning_adapts_without_close(fund, monkeypatch):
+    """持仓期自适应集成：买入后浮盈，不平仓也会触发每日学习、抬高驱动维度乘子并落每日标记。"""
+    q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96}}
+    _wire(monkeypatch, q)
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP})
+    monkeypatch.setattr(ai_fund, "_our_content",
+        lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
+    ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)                 # 第一次：建仓 002594 @100(浮盈≈0)
+    # 制造浮盈 +10% + 把每日标记倒回，模拟次日仍持有
+    q["002594"]["latest"] = 110
+    with ai_fund._connect() as conn:
+        conn.execute("UPDATE aif_state SET hold_learn_date=NULL WHERE fund_id=?", ("main",)); conn.commit()
+    ai_fund.run_tick(trade=False, cfg=ai_fund.MAIN_CFG)    # 第二次：不交易、仅持仓期学习
+    with ai_fund._connect() as conn:
+        row = conn.execute("SELECT learned_weights, hold_learn_date FROM aif_state WHERE fund_id=?", ("main",)).fetchone()
+    import datetime as _dt
+    assert row["hold_learn_date"] == _dt.datetime.now(ai_fund.BJ_TZ).strftime("%Y-%m-%d")  # 已落每日标记
+    learned = ai_fund._loadj(row["learned_weights"], {})
+    assert learned and max(learned.values()) > 1.0        # 浮盈→至少一个驱动维度乘子被抬高

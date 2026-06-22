@@ -23,6 +23,21 @@ def test_learn_weights_clamped_and_safe():
     assert ev.learn_weights({}, {"x": 0.5}, None) == {}  # pnl None 不动
 
 
+def test_learn_from_holdings_adapts_before_close():
+    """持仓期学习：浮盈的持仓抬高其买入维度乘子、浮亏的压低——不必等平仓。"""
+    out = ev.learn_from_holdings({}, [
+        {"buy_scores": {"趋势": 0.9}, "unrealized_pct": 8.0},    # 趋势驱动、正浮盈 → 抬高
+        {"buy_scores": {"消息面": 0.9}, "unrealized_pct": -8.0},  # 消息面驱动、浮亏 → 压低
+    ])
+    assert out["趋势"] > 1.0 and out["消息面"] < 1.0
+    # 持仓期学习率更轻：同样的盈亏幅度，挪动幅度小于平仓学习
+    hold = ev.learn_from_holdings({}, [{"buy_scores": {"趋势": 1.0}, "unrealized_pct": 10.0}])
+    close = ev.learn_weights({}, {"趋势": 1.0}, pnl_pct=10.0)
+    assert (hold["趋势"] - 1.0) < (close["趋势"] - 1.0)
+    assert ev.learn_from_holdings({}, []) == {}            # 空持仓安全
+    assert ev.learn_from_holdings({}, [{"buy_scores": {}, "unrealized_pct": 5.0}]) == {}  # 无买入打分不动
+
+
 def test_effective_weights_normalizes_and_shifts():
     base = {"技术面": 0.5, "消息面": 0.5}
     eff = ev.effective_weights(base, {"技术面": 1.6})
@@ -35,6 +50,28 @@ def test_weights_drift_reports():
     d = ev.weights_drift({"技术面": 0.5, "消息面": 0.5}, {"技术面": 0.7, "消息面": 1.02})
     keys = {x["dim"] for x in d}
     assert "技术面" in keys and "消息面" not in keys   # 仅显著漂移(技术面 -30%)
+
+
+# ---------------- ①' 市场态势自适应 ----------------
+
+def test_regime_adapt_trend_follower():
+    # 趋势派(激进)：牛市更敢出手+加仓，熊市更挑剔+减仓
+    bull = ev.regime_adapt("aggressive", "bull")
+    bear = ev.regime_adapt("aggressive", "bear")
+    assert bull["thr_delta"] < 0 and bull["size_mult"] > 1
+    assert bear["thr_delta"] > 0 and bear["size_mult"] < 1
+    assert "牛市" in bull["stance"] and "熊市" in bear["stance"]
+
+
+def test_regime_adapt_value_contrarian():
+    # 价值派：熊市恐慌里更敢买(门槛降、仓位升)
+    bear = ev.regime_adapt("value", "bear")
+    assert bear["thr_delta"] < 0 and bear["size_mult"] > 1
+    # 逆向派同理
+    assert ev.regime_adapt("contrarian", "bear")["thr_delta"] < 0
+    # unknown/缺省 → 中性零调整
+    n = ev.regime_adapt("balanced", "unknown")
+    assert n["thr_delta"] == 0.0 and n["size_mult"] == 1.0 and n["regime"] == "neutral"
 
 
 # ---------------- ② value 模型(DCF/质量) ----------------

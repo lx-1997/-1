@@ -17,6 +17,7 @@ from typing import Optional
 # =========================================================================== #
 
 LEARN_LR = 0.06          # 学习率(每笔最多挪这么多)
+LEARN_LR_HOLD = 0.02     # 持仓期(浮盈浮亏)学习率——比平仓更轻，因未落袋、防被盘中噪声带偏
 LEARN_DECAY = 0.03       # 每次向基线(乘子=1)回归，正则化、防漂太远
 LEARN_LO, LEARN_HI = 0.45, 1.7   # 乘子夹界：任一维度权重最多缩到 0.45× / 放大到 1.7×
 
@@ -48,6 +49,19 @@ def effective_weights(base_weights: dict, learned_mult: dict) -> dict:
     return {d: round(w / tot, 4) for d, w in eff.items()}
 
 
+def learn_from_holdings(learned_mult: dict, holdings: list, lr: float = LEARN_LR_HOLD) -> dict:
+    """持仓期学习(每日一次)：对每个未平仓持仓，按其『当前浮动盈亏%』把成败归因到当初买入维度，
+    轻量微调权重——让角色在卖出落袋之前就持续适应『当下市场什么因子有效』，不必死等稀有的平仓。
+    holdings: [{"buy_scores": {...}, "unrealized_pct": float}]。复用 learn_weights 的信用分配/夹界/正则。"""
+    out = dict(learned_mult or {})
+    for h in holdings or []:
+        bs = h.get("buy_scores") or {}
+        up = h.get("unrealized_pct")
+        if bs and up is not None:
+            out = learn_weights(out, bs, float(up), lr=lr)
+    return out
+
+
 def weights_drift(base_weights: dict, learned_mult: dict) -> list[dict]:
     """把「学到的偏移」总结成人话(给前端/教练解说)：哪几维被自己调高/调低了多少。"""
     out = []
@@ -56,6 +70,41 @@ def weights_drift(base_weights: dict, learned_mult: dict) -> list[dict]:
             out.append({"dim": d, "mult": round(float(m), 2),
                         "pct": round((float(m) - 1.0) * 100)})
     return sorted(out, key=lambda x: -abs(x["pct"]))
+
+
+# =========================================================================== #
+# ①' 市场态势自适应：各流派按大盘多空(regime)动态调整打法 —— 先进的"择时/战术配置"层
+#    趋势派(猛犸)牛市加仓追强、熊市降仓防守(趋势跟随)；价值派(磐石)熊市恐慌里捡便宜(逆向);
+#    逆向派(磁极)杀跌中抄超跌；事件派(游隼)牛市催化扩散快打。让"同一套模型"在不同市道有不同攻防。
+# =========================================================================== #
+
+# style -> regime -> (买入门槛增量, 仓位系数, 立场说明)。门槛+=更挑剔、-=更敢出手；仓位>1加仓、<1减仓。
+_REGIME_TILT: dict[str, dict[str, tuple[float, float, str]]] = {
+    "aggressive": {"bull": (-0.03, 1.25, "🔥 牛市顺势·加仓追强"),
+                   "bear": (0.07, 0.55, "🛡 熊市降仓·只打最强突破"),
+                   "neutral": (0.0, 1.0, "震荡观望·等突破")},
+    "value": {"bull": (0.03, 0.9, "牛市估值贵·更挑剔"),
+              "bear": (-0.05, 1.15, "💎 熊市恐慌·捡便宜好货"),
+              "neutral": (0.0, 1.0, "耐心等便宜")},
+    "contrarian": {"bull": (0.04, 0.85, "牛市超跌少·谨慎"),
+                   "bear": (-0.04, 1.1, "🪃 恐慌杀跌·抄超跌"),
+                   "neutral": (0.0, 1.0, "盯被错杀的")},
+    "event": {"bull": (-0.02, 1.1, "牛市催化扩散·快打"),
+              "bear": (0.04, 0.8, "熊市催化易夭折·更快进快出"),
+              "neutral": (0.0, 1.0, "闻讯而动")},
+    "balanced": {"bull": (-0.02, 1.1, "牛市顺势"),
+                 "bear": (0.05, 0.7, "🛡 熊市收紧·依指数止损"),
+                 "neutral": (0.0, 1.0, "稳中找机会")},
+}
+
+
+def regime_adapt(style: str, regime: Optional[str]) -> dict:
+    """大盘态势 → 该流派的动态打法调整。regime∈bull/bear/neutral/unknown(unknown 按 neutral)。
+    返回 {thr_delta(买入门槛增量), size_mult(仓位系数), stance(立场说明), regime}。"""
+    tilt = _REGIME_TILT.get(style, _REGIME_TILT["balanced"])
+    r = regime if regime in ("bull", "bear", "neutral") else "neutral"
+    thr_d, size_m, stance = tilt[r]
+    return {"thr_delta": thr_d, "size_mult": size_m, "stance": stance, "regime": r}
 
 
 # =========================================================================== #
