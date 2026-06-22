@@ -411,6 +411,18 @@ def test_buy_includes_why_this_over_that(fund, monkeypatch):
     assert any(("比亚迪" in s["text"] or "宁德时代" in s["text"]) and "综合" in s["text"] for s in opt_steps)
 
 
+# ── 直播独白截断：绝不断在半句（修「财政部 这预算数据」式硬切）────────────────
+def test_musing_trim_never_cuts_mid_sentence():
+    full = "收盘了，泡壶茶复盘。光模块我继续熬。英特尔盘后又下滑，跟咱A股不搭边。财政部这预算数据值得琢磨。"
+    assert ai_fund._trim_to_sentence(full, 999) == full          # 不超长→原样
+    out = ai_fund._trim_to_sentence(full, 24)                     # 超长→落在句尾，不半句
+    assert out[-1] in "。！？…" and len(out) <= 24 + 1
+    assert out == "收盘了，泡壶茶复盘。光模块我继续熬。"            # 截到最后一个完整句
+    # 前段无句尾标点→软省略号收尾，绝不硬切到半个词
+    hard = ai_fund._trim_to_sentence("一二三四五六七八九十一二三四五六七八九十", 8)
+    assert hard.endswith("…")
+
+
 # ── 基准修复回归：开赛日基线用开盘价，bench_ret 不再恒 0 ──────────────────────
 def _seed_bench(monkeypatch, klines):
     import time as _t

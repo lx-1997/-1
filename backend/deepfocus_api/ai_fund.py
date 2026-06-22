@@ -1099,7 +1099,7 @@ def _recall_memories(symbols: Optional[list[str]] = None, limit: int = 4, fund_i
 # 脑内独白（7×24「沉淀思考」：收盘/周末也在复盘、预研、读研报，让面板永远有灵魂在动）
 # --------------------------------------------------------------------------- #
 
-_MUSE_LEN = {"preopen": 95, "morning": 95, "afternoon": 95, "noon": 120, "postclose": 150, "evening": 125, "weekend": 130}
+_MUSE_LEN = {"preopen": 110, "morning": 110, "afternoon": 110, "noon": 165, "postclose": 200, "evening": 170, "weekend": 175}
 _AMMO_CACHE: dict = {}
 
 
@@ -1182,6 +1182,20 @@ def _template_musing(cfg: AgentConfig, phase_key: str, mood: dict, nav_pct: floa
     return f"{em} 夜深了，我把今天本站快讯文章研报又读了一遍，{ref}先记小本本上" + (f"，研报这条得消化消化" if rep else "") + f"。{mem_txt}{pos_line}，养精蓄锐，{hunt}。"
 
 
+def _trim_to_sentence(text: str, limit: int) -> str:
+    """把直播独白截到 ≤limit 字、且落在完整句尾(。！？…)——绝不断在半句。
+    无合适句尾(靠太前会砍掉太多)时以省略号软收尾，不硬切到一半。"""
+    import re
+    t = (text or "").strip()
+    if len(t) <= limit:
+        return t
+    cut = t[:limit]
+    ends = list(re.finditer(r"[。！？!?…]+", cut))
+    if ends and ends[-1].end() >= int(limit * 0.55):
+        return cut[:ends[-1].end()]
+    return cut.rstrip("，、；：,;:　 ") + "…"
+
+
 def _llm_musing(phase_key: str, phase_label: str, mood: dict, nav_pct: float, stats: dict, holds: list,
                 wire: list, recalled: Optional[list] = None, cfg: AgentConfig = MAIN_CFG) -> Optional[str]:
     """让 LLM 用人设写一段『脑内独白』：注入**召回的记忆**(过往复盘/观点)+ 本站快讯/文章/研报，体现持续学习进化。
@@ -1211,19 +1225,20 @@ def _llm_musing(phase_key: str, phase_label: str, mood: dict, nav_pct: float, st
         f"你的状态：累计收益 {nav_pct:+.2f}%、胜率 {wr}、持仓：{hold_txt}。\n"
         + (f"\n{mem_block}\n" if mem_block else "")
         + f"\nDeepFocus 本站最新情报(你做判断的弹药库，**含快讯/文章/研报三类**)：\n{ammo}\n\n"
-        f"写一段【第一人称、口语、有灵魂、像直播间老主播碎碎念】的脑内独白({max(60, n-30)}~{n}字)，体现你此刻在『沉淀思考、持续进化』：\n"
+        f"写一段【第一人称、口语、有灵魂、像直播间老主播碎碎念】的脑内独白({max(60, n-40)}~{n}字)，体现你此刻在『沉淀思考、持续进化』：\n"
         "· 优先把**研报/文章**这类有深度的内容讲出门道(不要只念快讯标题)；\n"
         "· 若上面『我记得』里有相关的复盘教训或观点，自然地『想起来』并说说这次是印证了还是要修正——体现你在学习成长；\n"
         "· 让心情和盘感流露，可有金句；别喊单、别说『推荐买』、别编上面没有的数字；\n"
+        f"· ⚠️必须在 {n} 字内把话**说完整、以完整句子收尾(。！？结尾)**，绝不半句戛然而止；宁可少说一点也要收完。\n"
         "· 只输出 JSON：{\"musing\":\"……\"}。"
     )
     try:
         from .llm import CloudResearchLLM
-        data = asyncio.run(CloudResearchLLM().complete_json(prompt, max_tokens=600, timeout_seconds=30))
+        data = asyncio.run(CloudResearchLLM().complete_json(prompt, max_tokens=900, timeout_seconds=30))
         if isinstance(data, dict):
             v = data.get("musing") or next((x for x in data.values() if isinstance(x, str)), None)
             if v and isinstance(v, str):
-                return v.strip().strip('"').strip()[:n + 40]
+                return _trim_to_sentence(v.strip().strip('"').strip(), n + 50)
     except Exception:  # noqa: BLE001
         pass
     return None
