@@ -1294,6 +1294,10 @@
 .bbt-ai-chip--subject { background: var(--blue-bg); color: var(--blue-2); }
 .bbt-ai-chip--rating { background: var(--purple-bg); color: var(--purple); }
 .bbt-ai-chip--target { background: var(--green-bg); color: var(--green-2); }
+/* 原文提及个股：弹层内独占一行、可换行全部显示 */
+.bbt-ai-insts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 12px; }
+.bbt-ai-insts-h { font-size: 12px; font-weight: 700; color: var(--purple-2); margin-right: 2px; }
+.bbt-ai-inst { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: var(--blue-bg); color: var(--blue); }
 /* 一句话结论：醒目大字 */
 .bbt-ai-oneliner {
   margin: 4px 0 14px; padding: 10px 12px; border-radius: 6px;

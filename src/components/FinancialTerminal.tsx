@@ -109,6 +109,7 @@ interface ResearchWireItem {
 interface AiAnalysis {
   title: string; subject?: string; one_liner?: string; summary: string; core_logic?: string; takeaway?: string;
   bullish?: string[]; bearish?: string[]; key_points?: string[]; risks?: string[];
+  instruments?: string[]; market?: string;   // 原文提及的可交易标的（A/美/港股+黄金原油白银比特币）+ 主要市场
   rating?: string | null; target_price?: string | null; confidence?: number; pages_analyzed?: number; provider?: string;
 }
 
@@ -2122,6 +2123,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (aiReport?.date) L.push(`🗓 ${aiReport.date}`);
     const meta = [r.subject && `标的 ${r.subject}`, r.rating && `评级 ${r.rating}`, r.target_price && `目标价 ${r.target_price}`].filter(Boolean);
     if (meta.length) { L.push(''); L.push(meta.join('  |  ')); }
+    if (r.instruments?.length) { L.push('', `📈 提及个股：${r.instruments.join('、')}`); }
     if (r.one_liner) { L.push(''); L.push(`💡 ${r.one_liner}`); }
     if (r.summary) { L.push('', '【摘要】', r.summary); }
     if (r.core_logic) { L.push('', '【投资逻辑】', r.core_logic); }
@@ -3116,6 +3118,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       {aiResult.subject && <span className="bbt-ai-chip bbt-ai-chip--subject">标的 {aiResult.subject}</span>}
                       {aiResult.rating && <span className="bbt-ai-chip bbt-ai-chip--rating">评级 {aiResult.rating}</span>}
                       {aiResult.target_price && <span className="bbt-ai-chip bbt-ai-chip--target">目标价 {aiResult.target_price}</span>}
+                    </div>
+                  )}
+                  {!!aiResult.instruments?.length && (
+                    <div className="bbt-ai-insts">
+                      <span className="bbt-ai-insts-h">📈 提及个股</span>
+                      {aiResult.instruments.map((t, i) => <span key={t + i} className="bbt-ai-inst">{t}</span>)}
                     </div>
                   )}
                   {aiResult.one_liner && <div className="bbt-ai-oneliner">💡 {aiResult.one_liner}</div>}
