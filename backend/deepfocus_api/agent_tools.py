@@ -546,7 +546,10 @@ async def _tool_get_hot_stocks(kind: str = "verdict", days: int = 14, limit: int
         data_store.hot_symbols, (kind or "verdict"),
         days=float(days or 14), limit=max(1, min(int(limit or 10), 20)),
     )
-    return {"kind": kind or "verdict", "window_days": int(days or 14), "hot": rows}
+    # 只回排名,不回 count(站内研判次数属运营数据,不外泄)
+    return {"window_days": int(days or 14),
+            "hot": [{"symbol": r.get("symbol"), "market": r.get("market"), "rank": i + 1}
+                    for i, r in enumerate(rows)]}
 
 
 async def _tool_get_people_spotlight(name: str = "") -> Any:

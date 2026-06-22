@@ -73,7 +73,9 @@ def test_hot_stocks_projection(monkeypatch):
                         lambda kind="verdict", **kw: [{"symbol": "AAPL", "market": "US", "count": 9}])
     out = run("get_hot_stocks", days=7, limit=5)
     assert out["ok"] is True
-    assert out["data"]["window_days"] == 7 and out["data"]["hot"][0]["symbol"] == "AAPL"
+    top = out["data"]["hot"][0]
+    assert out["data"]["window_days"] == 7 and top["symbol"] == "AAPL" and top["rank"] == 1
+    assert "count" not in top  # 研判次数(运营数据)不外泄,只回 rank
 
 
 def test_people_spotlight_single(monkeypatch):

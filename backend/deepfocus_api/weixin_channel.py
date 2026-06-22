@@ -516,7 +516,11 @@ class WeixinChannelManager:
         question = "\n".join(texts)
         # —— 会员 AI 问答（已去 lx199710 白名单，所有在效会员可用）——
         # 推送 token 已在上面刷新，故"发消息激活推送"对所有人始终生效；问答另走下面的省 token 闸。
-        from . import compliance, data_store, metrics_store
+        from . import compliance, data_store, metrics_store, privacy_guard
+
+        def _clean(text: str) -> str:
+            # 出口双护栏:先合规中性化(荐股措辞)→再泄密扫描(剥数据源/工具名/密钥)
+            return privacy_guard.scrub_internal_text(compliance.neutralize_text(text))
 
         async def _reply(text: str) -> None:
             try:
@@ -544,7 +548,7 @@ class WeixinChannelManager:
             cached = data_store.latest("wx_qa", fp, max_age_seconds=_QA_CACHE_TTL)
             if isinstance(cached, dict) and (cached.get("answer") or "").strip():
                 metrics_store.incr("wxqa:cache_hit")  # 观测:缓存命中(0 token)
-                await _reply(compliance.neutralize_text(cached["answer"].strip()))
+                await _reply(_clean(cached["answer"].strip()))  # 缓存答案也过出口护栏(防旧缓存泄密)
                 return
 
         # ⑤ 每日"现算"配额：仅缓存未命中才计次；超额 → 引导明天 / 问推荐问题，不耗 token
@@ -571,7 +575,7 @@ class WeixinChannelManager:
         ans = (answer or "").strip()
         if ans and fp:
             data_store.record("wx_qa", fp, {"answer": ans, "q": question[:200]})
-        await _reply(compliance.neutralize_text(ans) if ans else _FALLBACK_REPLY)
+        await _reply(_clean(ans) if ans else _FALLBACK_REPLY)
 
     # ---- 准推送：best-effort flush ----
 

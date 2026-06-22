@@ -198,6 +198,16 @@ def test_weixin_orchestrator_agent_fn(monkeypatch):
     assert captured["msg"] == "茅台怎么样"
 
 
+# ---------- 出口护栏：答案里的数据源/工具名被剥掉再发出 ----------
+
+def test_answer_output_scrubs_internal_leaks(env):
+    mgr = _mgr(answer="据 iFinD 实时数据，我调用 get_market_quote 得出 PE 18.8。")
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("某出口护栏测试问题")]))
+    sent = env["sent"][-1]
+    assert "iFinD" not in sent and "get_market_quote" not in sent
+    assert "18.8" in sent  # 数据本身保留
+
+
 # ---------- agent 空答：回兜底、不写缓存（但已计次，保护成本） ----------
 
 def test_empty_answer_falls_back_and_not_cached(env):
