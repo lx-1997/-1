@@ -5890,6 +5890,8 @@ async def api_research_vision_analyze(
             bearish=result.get("bearish", result.get("risks", [])),
             key_points=result.get("key_points", []),
             risks=result.get("risks", []),
+            instruments=result.get("instruments", []),  # 原文提及个股/标的——曾在此漏传，前端永远拿不到
+            market=result.get("market", ""),
             rating=result.get("rating"),
             target_price=result.get("target_price"),
             confidence=result.get("confidence", 0.5),
@@ -5952,6 +5954,7 @@ async def api_news_ai_analyze(
             core_logic=result.get("core_logic", ""), takeaway=result.get("takeaway", ""),
             bullish=result.get("bullish", []), bearish=result.get("bearish", []),
             key_points=result.get("key_points", []), risks=result.get("risks", []),
+            instruments=result.get("instruments", []), market=result.get("market", ""),  # 提及个股，曾漏传
             rating=result.get("rating"), target_price=result.get("target_price"),
             confidence=result.get("confidence", 0.5), provider=_AI_BRAND,
             disclaimer=result.get("disclaimer", ""),
