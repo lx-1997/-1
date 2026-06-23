@@ -807,6 +807,14 @@
 .bbt-grid .bbt-panel:nth-child(4) .bbt-ph { box-shadow: inset 0 -2px 0 var(--green); }
 
 /* 研报流：标题为主，AI 总结为主操作、原文为次操作（点整行=AI 总结） */
+/* 研报日期块头:粘性吸顶,同一天的研报归在它下面成一「块」 */
+.bbt-rdivider {
+  position: sticky; top: 0; z-index: 3;
+  padding: 6px 12px; font-size: 11.5px; font-weight: 700; letter-spacing: .4px;
+  color: var(--amber-2); background: var(--cmd-grad-b, var(--panel, #0d1117));
+  border-top: 1px solid var(--line-row); border-bottom: 1px solid var(--line);
+}
+.bbt-rdivider:first-child { border-top: none; }
 .bbt-rrow {
   display: grid; grid-template-columns: auto 1fr auto; gap: 9px; align-items: center;
   padding: 7px 10px; border-bottom: 1px solid var(--line-row); cursor: pointer; border-left: 2px solid transparent;

@@ -255,6 +255,26 @@ function fmtReportDate(iso: string): string {
   const s = (iso || '').slice(0, 10);
   return s ? s.slice(5) : '--'; // MM-DD
 }
+// 研报按日期分组:取归组键(YYYY-MM-DD,优先 r.date,回退 created_at)+ 日期块标题(今天/昨天/MM-DD 周X)
+function resDayKey(r: ResearchWireItem): string {
+  const d = (r.date || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
+  const c = (r.created_at || '').slice(0, 10);
+  return c || d || '其他';
+}
+function fmtResGroup(key: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return key || '其他';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const t = new Date();
+  const todayKey = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+  const yd = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1);
+  const yestKey = `${yd.getFullYear()}-${pad(yd.getMonth() + 1)}-${pad(yd.getDate())}`;
+  const md = key.slice(5);
+  const wd = '日一二三四五六'[new Date(`${key}T00:00:00`).getDay()];
+  if (key === todayKey) return `今天 · ${md} 周${wd}`;
+  if (key === yestKey) return `昨天 · ${md} 周${wd}`;
+  return `${md} 周${wd}`;
+}
 const MAX_KEEP = 6000;   // 内存里保留的最大消息数（支持向历史翻页，不再丢历史）
 const EQ_MIN = 180, EQ_MAX = 560, EQ_NARROW = 360;   // 行情监视列宽拖拽：最小/最大/窄列阈值(px)
 const PAGE_SIZES = [20, 30, 50];                          // 每页条数可选项
@@ -2844,12 +2864,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               {(() => {
                 const resPageCur = Math.min(resPage, Math.max(1, Math.ceil(resFiltered.length / pageSize)));
                 const shown = resFiltered.slice((resPageCur - 1) * pageSize, resPageCur * pageSize);
+                // 按日期分组:同一天的研报归在一个「日期块」下(粘性日期头);头条高亮保留。跨页时该页首条也补一个日期头。
+                const out: React.ReactNode[] = [];
+                let lastDay = '';
+                shown.forEach((r, i) => {
+                  const isHead = resPageCur === 1 && (ybHeadKeys.size ? ((!!r.file_id && ybHeadKeys.has(r.file_id)) || ybHeadKeys.has(r.id)) : i === 0);
+                  const dk = resDayKey(r);
+                  if (dk !== lastDay) {
+                    lastDay = dk;
+                    out.push(<div key={`rd-${dk}-${i}`} className="bbt-rdivider">{fmtResGroup(dk)}</div>);
+                  }
+                  out.push(renderResearchRow(r, isHead));
+                });
                 return (<>
-                  {shown.map((r, i) => {
-                    // AI 评选的研报头条（最多3条，仅第 1 页置顶）
-                    const isHead = resPageCur === 1 && (ybHeadKeys.size ? ((!!r.file_id && ybHeadKeys.has(r.file_id)) || ybHeadKeys.has(r.id)) : i === 0);
-                    return renderResearchRow(r, isHead);
-                  })}
+                  {out}
                   <Pager page={resPageCur} total={resFiltered.length} pageSize={pageSize} onPage={setResPage} onSize={setPageSize} />
                 </>);
               })()}
