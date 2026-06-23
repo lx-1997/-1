@@ -62,6 +62,21 @@ def test_subscription_crud_normalizes_and_roundtrips(tmp_path):
     assert recall.delete_recall_subscription("nope") is False
 
 
+def _review_msg():
+    return RealtimeMessageRecord(
+        id="rev-1", title="📊 今日A股收盘复盘已生成", content="点开看复盘",
+        topic="复盘", severity="info", symbol="", created_at="2026-06-04T00:00:00Z",
+    )
+
+
+def test_daily_review_broadcasts_to_all_subscribers():
+    # 每日复盘(topic=复盘, severity=info, 无个股)即便默认 watchlist 订阅也要送达——每日回访钩子
+    sub = _sub()  # 默认 scope=watchlist, severities=[warning,critical]
+    assert recall.subscription_matches(sub, _review_msg()) is True
+    # 同样无个股的普通 info 仍不送(无回归)
+    assert recall.subscription_matches(sub, _msg("", "info")) is False
+
+
 def test_subscription_matches_scope_and_severity():
     sub = _sub()
     assert recall.subscription_matches(sub, _msg("TSLA", "warning")) is True

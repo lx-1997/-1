@@ -155,7 +155,11 @@ def delete_recall_subscription(subscription_id: str) -> bool:
 
 
 def subscription_matches(subscription: RecallSubscriptionRecord, message: RealtimeMessageRecord) -> bool:
-    """与前端 signalRecall.shouldRecall 同义：级别命中 + 范围/标的匹配。"""
+    """与前端 signalRecall.shouldRecall 同义：级别命中 + 范围/标的匹配。
+    例外：每日复盘是一日一次的策划摘要，对所有开了盯盘的人都是高价值「每日回访钩子」
+    → 全员送达（不受 scope=watchlist / severities 收窄）。这是把流失用户拉回来的核心信号。"""
+    if (getattr(message, "topic", "") or "") == "复盘":
+        return True
     if message.severity not in subscription.severities:
         return False
     if subscription.scope == "all":
