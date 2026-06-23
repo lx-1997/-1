@@ -292,49 +292,8 @@ const Pager: React.FC<{ page: number; total: number; pageSize: number; onPage: (
   );
 };
 
-// 研报市场归类：A股 / 港美股。综合「标题/名字关键词 + 提及标的代码」。
-// 名字信号很重要（很多研报还没提取到标的，全靠标题判断）。
-// 港/美股关键词：美股宏观、美/港主要公司中英文名、港股市场词
-const RES_HKUS_KW = [
-  '港股', '美股', '恒生', '恒指', '港交所', '香港', '纳斯达克', '纳指', '标普', '道琼斯', '道指', '美联储',
-  'fomc', '美债', '美国国债', '美国经济', '美国', '降息', '加息', '非农', '华尔街', '费城半导体', '费半', '中概', '海外中资', '港美',
-  '英伟达', 'nvidia', 'nvda', '特斯拉', 'tesla', 'tsla', '苹果公司', 'apple', 'aapl', '微软', 'microsoft', 'msft',
-  '谷歌', 'google', 'alphabet', 'googl', '亚马逊', 'amazon', 'amzn', 'meta', '脸书', '奈飞', 'netflix', 'nflx',
-  '博通', 'broadcom', 'avgo', '美光', 'micron', '高通', 'qualcomm', 'qcom', '英特尔', 'intel', 'intc',
-  'amd', '超威', '台积电', 'tsmc', 'tsm', '阿斯麦', 'asml', '甲骨文', 'oracle', 'palantir', 'pltr', '美超微', 'supermicro', 'smci',
-  'arm', '镁光', '应用材料', 'marvell', '戴尔', 'dell', 'snowflake', 'datadog', 'coinbase', '礼来', '辉瑞',
-  '腾讯', '阿里巴巴', '美团', '小米集团', '快手', '中芯国际', '友邦', '汇丰', '理想汽车', '蔚来', '小鹏', 'umc', 'uec'
-];
-// A股关键词：A股市场词 + 仅 A 股的典型主题
-const RES_A_KW = [
-  'a股', '沪深', '沪市', '深市', '上证', '深证', '科创', '创业板', '北交所', '北证', '两市', '龙虎榜', '涨停',
-  '游资', '打板', '北向', '北上资金', '主力净', '沪指', '深成指', '涨停板', '炸板', '连板'
-];
-const classifyMarket = (r: ResearchWireItem): 'A' | 'HKUS' => {
-  // 0) 模型权威判定优先（读过正文，最准）
-  if (r.market === 'A') return 'A';
-  if (r.market === 'HK' || r.market === 'US') return 'HKUS';
-  // 1) 提及标的占比（较可靠）：A股 6 位/.SH/.SZ；港股 .HK/5 位；美股纯字母代号；
-  //    中文名个股若在「海外名单」(英伟达/特斯拉/腾讯…)算港美，否则算 A股（避免 A 股报告提到美股概念股被误判）
-  const COMMO = ['黄金', '原油', '白银', '比特币'];
-  let a = 0, h = 0;
-  for (const raw of (r.instruments || [])) {
-    const t = String(raw).trim(); const tl = t.toLowerCase();
-    if (COMMO.includes(t)) continue;
-    if (/\.(SH|SZ)\b/i.test(t) || /(^|\D)(60\d{4}|68\d{4}|00\d{4}|30\d{4})(\D|$)/.test(t)) a++;
-    else if (/\.HK\b/i.test(t) || /(^|\D)(0\d{4})(\D|$)/.test(t) || /^[A-Za-z]{1,5}$/.test(t)) h++;
-    else if (/[一-龥]/.test(t)) (RES_HKUS_KW.some(k => tl.includes(k)) ? h++ : a++);
-  }
-  if (h !== a) return h > a ? 'HKUS' : 'A';   // 标的占比明确 → 直接定
-  // 2) 标的无定论 → 看标题/名字关键词（含中英文公司名、市场宏观词）
-  const hay = `${r.title || ''} ${(r.instruments || []).join(' ')}`.toLowerCase();
-  const hkus = RES_HKUS_KW.some(k => hay.includes(k));
-  const ash = RES_A_KW.some(k => hay.includes(k));
-  if (hkus && !ash) return 'HKUS';
-  if (ash && !hkus) return 'A';
-  if (hkus) return 'HKUS';   // 既有海外名又有A信号时，标题含海外标的优先归港美股
-  return 'A';                // 默认 A股（国内券商研报为主）
-};
+// 注:研报「A股/港美股」分市场已取消(标题中英混杂、源头无市场字段→启发式误分多,与其分错不如不分)。
+// 原 classifyMarket + RES_*_KW 关键词表随之移除;研报统一一个列表展示。
 
 // 顶部时钟 + 市场开/收盘标签：独立组件自带每秒刷新，避免整个终端每秒全量重渲染（性能关键）。
 
@@ -601,7 +560,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [resQuery, setResQuery] = useState('');           // 研报在线全局搜索关键词
   const [resLoading, setResLoading] = useState(false);
   const [resSyncedAt, setResSyncedAt] = useState<Date | null>(null);  // 研报最近一次成功同步时刻
-  const [resMarket, setResMarket] = useState<'A' | 'HKUS'>('A');      // 研报市场子板块：A股 / 港美股
   const [newsPreview, setNewsPreview] = useState<RealtimeMessageRecord | null>(null);  // 文章在线预览
   const [aiReport, setAiReport] = useState<{ title?: string; date?: string } | null>(null);  // AI 解读对象（研报或文章）
   const aiRetryRef = useRef<null | (() => void)>(null);
@@ -2375,18 +2333,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [reports, resSearchKw, ybHeadKeys]);
   const isResearch = feedFilter === '研报';        // 研报标签：信息流面板切换为研报视图
 
-  // 研报分 A股 / 港美股 两个子板块；搜索或选股态下展示全部命中（不再按市场过滤）
-  const resCounts = useMemo(() => {
-    let A = 0, HKUS = 0;
-    for (const r of reportFeed) (classifyMarket(r) === 'HKUS' ? HKUS++ : A++);
-    return { A, HKUS };
-  }, [reportFeed]);
-  const resSplit = resQuery.trim() === '' && !active;   // 是否处于「分市场」浏览态
-  const resFiltered = useMemo(
-    () => resSplit ? reportFeed.filter(r => classifyMarket(r) === resMarket) : reportFeed,
-    [reportFeed, resMarket, resSplit]
-  );
-  useEffect(() => { setResPage(1); }, [resMarket, resSearchKw, feedFilter, pageSize]);
+  // ⭐已取消「A股 / 港美股」分市场:研报标题中英混杂、源头无市场字段,classifyMarket 启发式误分多,
+  // 与其分错不如不分——统一一个列表(用户决策)。resFiltered 即全量 reportFeed。
+  const resFiltered = reportFeed;
+  useEffect(() => { setResPage(1); }, [resSearchKw, feedFilter, pageSize]);
 
   // 研报「提及标的」标签：标题下方独占一行、可换行全部显示；超过 10 个折叠成「+N」
   const INST_MAX = 10;
@@ -2866,7 +2816,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <input className="bbt-res-input" value={resQuery} placeholder="🔍 在线搜全球研报（公司 / 主题）…" onChange={e => setResQuery(e.target.value)} />
                 {resQuery && <button className="bbt-clear" aria-label="清除搜索" title="清除搜索" onClick={() => setResQuery('')}>✕</button>}
               </span>
-              <span className="bbt-breadth bbt-mute">{resLoading ? '检索中…' : `${reportFeed.length} 篇`}</span>
+              {resLoading && <span className="bbt-breadth bbt-mute">检索中…</span>}
               <button className="bbt-max-btn" title="刷新研报" onClick={() => loadReports(resQuery)}>⟳</button>
             </div>
           )}
@@ -2883,20 +2833,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
           {isResearch ? (
             <div className="bbt-res">
-              {/* A股 / 港美股 子板块（仅默认浏览态显示；搜索/选股时展示全部命中） */}
-              {resSplit && (
-                <div className="bbt-submkt" role="tablist" aria-label="研报市场">
-                  <button className={`bbt-submkt-tab${resMarket === 'A' ? ' on' : ''}`} role="tab" aria-selected={resMarket === 'A'} onClick={() => { logAct('tab', '研报·A股'); setResMarket('A'); }}>A股 <span className="bbt-submkt-n">{resCounts.A}</span></button>
-                  <button className={`bbt-submkt-tab${resMarket === 'HKUS' ? ' on' : ''}`} role="tab" aria-selected={resMarket === 'HKUS'} onClick={() => { logAct('tab', '研报·港美股'); setResMarket('HKUS'); }}>港/美股 <span className="bbt-submkt-n">{resCounts.HKUS}</span></button>
-                </div>
-              )}
               {resFiltered.length === 0 && (
                 <div className="bbt-empty">{
                   resLoading ? '检索中…'
                     : resQuery.trim() ? `无「${resQuery.trim()}」相关研报`
                       : active ? `无 ${activeName} 相关研报`
-                        : reportFeed.length ? `${resMarket === 'A' ? 'A股' : '港/美股'}暂无研报`
-                          : (reportDq?.detail || '研报暂时同步失败，点右上角 ⟳ 重试')
+                        : (reportDq?.detail || '研报暂时同步失败，点右上角 ⟳ 重试')
                 }</div>
               )}
               {(() => {
@@ -2905,7 +2847,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 return (<>
                   {shown.map((r, i) => {
                     // AI 评选的研报头条（最多3条，仅第 1 页置顶）
-                    const isHead = resSplit && resPageCur === 1 && (ybHeadKeys.size ? ((!!r.file_id && ybHeadKeys.has(r.file_id)) || ybHeadKeys.has(r.id)) : i === 0);
+                    const isHead = resPageCur === 1 && (ybHeadKeys.size ? ((!!r.file_id && ybHeadKeys.has(r.file_id)) || ybHeadKeys.has(r.id)) : i === 0);
                     return renderResearchRow(r, isHead);
                   })}
                   <Pager page={resPageCur} total={resFiltered.length} pageSize={pageSize} onPage={setResPage} onSize={setPageSize} />
@@ -3086,7 +3028,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               })()}
             </div>
           )}
-          {isResearch && <div className="bbt-pf">海外投行研报 · {resQuery.trim() ? `检索「${resQuery.trim()}」` : `最新 ${reports.length} 篇`} · <span className={resLoading ? 'bbt-up' : ''}>{resLoading ? '● 同步中…' : `每分钟自动同步${resSyncedAt ? ` · 同步于 ${fmtTime(resSyncedAt.toISOString())}` : ''}`}</span> · 点条目 → AI 解读</div>}
+          {isResearch && <div className="bbt-pf">海外投行研报{resQuery.trim() ? ` · 检索「${resQuery.trim()}」` : ''} · <span className={resLoading ? 'bbt-up' : ''}>{resLoading ? '● 同步中…' : `每分钟自动同步${resSyncedAt ? ` · 同步于 ${fmtTime(resSyncedAt.toISOString())}` : ''}`}</span> · 点条目 → AI 解读</div>}
         </section>
       </div>
 
