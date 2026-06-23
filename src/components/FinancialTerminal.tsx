@@ -11,7 +11,7 @@ import {
 import * as authService from '../services/authService';
 import { runToolResearch, startDeepResearch, pollDeepResearch, type ToolTraceItem, type DeepTask } from '../services/agentService';
 import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
-import { loadRecallPrefs, saveRecallPrefs, requestBrowserPermission, evaluateAndNotify, RECALL_PREFS_EVENT } from '../utils/signalRecall';
+import { loadRecallPrefs, saveRecallPrefs, requestBrowserPermission, evaluateAndNotify, RECALL_PREFS_EVENT, subscribeWebPush, getNotificationPermission } from '../utils/signalRecall';
 import { copyText } from '../utils/clipboard';
 import { shareImageNative } from '../utils/share';
 import TerminalAuthModal from './TerminalAuthModal';
@@ -709,11 +709,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       window.dispatchEvent(new Event(RECALL_PREFS_EVENT));
       localStorage.setItem('dfx_activate_v1', '1');
     } catch { /* */ }
+    // 关页也能被叫回:注册 Web Push 离线订阅(仅授权后有意义;best-effort 内部已吞错,不阻塞)
+    if (perm === 'granted') { try { void subscribeWebPush({ symbols: watchlist }); } catch { /* */ } }
     setActivateDone(true);
     showToast(perm === 'granted'
-      ? '🔔 盯盘已开启 · 你的自选有快讯/异动会第一时间通知你'
+      ? '🔔 盯盘已开启 · 自选有快讯/异动第一时间通知你(关掉页面也能收到)'
       : '✅ 盯盘已开启 · 浏览器通知未授权可在系统设置允许，以便离开页面也能收到提醒');
-  }, [showToast]);
+  }, [showToast, watchlist]);
   const dismissActivate = useCallback(() => {
     try { localStorage.setItem('dfx_activate_v1', '1'); } catch { /* */ }
     setActivateDone(true);
@@ -2199,6 +2201,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     });
     return () => stream.close();
   }, [loadInitial, mergeMessages]);
+
+  // 离线召回补订阅:对「已开启盯盘 + 已授权通知」的用户(尤其 Web Push/VAPID 上线前点过盯盘的老用户),
+  // 打开页面即静默补上 Web Push 订阅(subscribeWebPush 幂等、失败安静)。这是把关页用户叫回来的命脉,
+  // 否则历史上「开启盯盘」只存了本地偏好、从不注册离线订阅 → recall 订阅恒为 0。
+  const webpushArmedRef = useRef(false);
+  useEffect(() => {
+    if (webpushArmedRef.current || !feedBooted) return;
+    try {
+      if (getNotificationPermission() === 'granted' && loadRecallPrefs().browserEnabled) {
+        webpushArmedRef.current = true;
+        void subscribeWebPush({ symbols: watchlistRef.current });
+      }
+    } catch { /* */ }
+  }, [feedBooted]);
 
   // 文章在实时流里稀疏（最近 200 条里常只有几篇）→ 单独按 topic 拉全量文章，
   // 用于角标真实计数 + 「文章」标签展示全部，而非只展示混进窗口的那几篇。
