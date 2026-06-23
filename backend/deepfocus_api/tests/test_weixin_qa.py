@@ -261,6 +261,36 @@ def test_is_market_overview_q_heuristic():
     assert not wc._is_market_overview_q("分析今天大盘对消费和半导体板块的影响到底多大")  # 太长
 
 
+def test_conversation_context_carries_across_turns(env):
+    # ⭐多轮上下文:第1轮反问→第2轮用户补答,第2轮必须带着第1轮问答喂给 agent(否则接不上=伪AI)
+    seen: list = []
+
+    async def _agent(question: str, hint: str):
+        seen.append((question, hint))
+        return "请问您想预测哪只股票或指数？" if question == "预测下后续走势" else "为你分析A股/港股大盘后续走势……"
+
+    mgr = wc.WeixinChannelManager(agent_fn=_agent)
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("预测下后续走势")]))
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("a股 港股")]))
+
+    assert len(seen) == 2
+    q1, hint1 = seen[0]
+    assert "最近对话" not in hint1          # 第1轮无历史
+    q2, hint2 = seen[1]
+    assert q2 == "a股 港股"
+    assert "预测下后续走势" in hint2 and "请问您想预测哪只股票" in hint2  # 第2轮带上了第1轮问答
+    assert "用户当前消息" in hint2
+
+
+def test_followup_bypasses_cross_user_cache(env):
+    # 有会话上下文时,追问不能命中/写入跨用户共享缓存(答案是个人化的)
+    calls: list = []
+    mgr = _mgr(answer="个性化答案", calls=calls)
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("贵州茅台怎么样")]))   # 第1轮:独立问,写缓存
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("那它估值贵吗")]))     # 第2轮:追问,有上下文→绕开缓存→照常调 agent
+    assert len(calls) == 2  # 两轮都真调了 agent(第2轮没被缓存短路)
+
+
 def test_market_overview_excludes_analytical_questions():
     # ⭐带因果/分析/预测/事件/操作意图的"大盘"问题不能被复盘直出截走(否则=伪AI),要交给真 agent
     for q in ("今天大盘为啥暴跌", "今天为什么大跌", "大盘怎么回事", "大盘后市怎么看",

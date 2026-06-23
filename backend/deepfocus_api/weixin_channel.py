@@ -50,6 +50,9 @@ _GREETINGS = {
 _QA_DAILY_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_QA_DAILY", "10") or 10)            # 每会员每天"现算"问答上限（缓存命中不计入）
 _QA_CACHE_TTL = float(os.getenv("DEEPFOCUS_WEIXIN_QA_CACHE_TTL", "1800") or 1800)    # 答案缓存有效期（秒），默认 30min 兼顾行情时效
 _QA_AGENT_TIMEOUT = float(os.getenv("DEEPFOCUS_WEIXIN_QA_TIMEOUT", "60") or 60)      # run_tool_agent 每轮 LLM 超时(秒)；个股问答需多轮取数，默认30s 易超时返空→回兜底，放宽到 60s
+# 轻量会话上下文：每用户记最近几轮(短窗口)，让"反问→追答"能接上、像真助手。窗口内的追问绕开跨用户缓存(答案跟上文相关)。
+_WX_CTX_TTL = float(os.getenv("DEEPFOCUS_WEIXIN_CTX_TTL", "600") or 600)             # 会话上下文窗口(秒)，默认 10min；超时即视作新对话
+_WX_CTX_TURNS = int(os.getenv("DEEPFOCUS_WEIXIN_CTX_TURNS", "3") or 3)               # 记忆最近几轮(问+答)
 _RECOMMEND_LIST = (
     "· 今天大盘怎么样 / 收盘复盘\n"
     "· 某只股票怎么样（发名称或代码，如 贵州茅台 / 600519）\n"
@@ -213,6 +216,49 @@ def _qa_fingerprint(question: str) -> str:
     ⭐微信问答无个人上下文（hint 恒空，见 main.py 构造处不传 context_hint_fn），故同一问题跨用户可安全共享答案。"""
     q = re.sub(r"\s+", " ", (question or "").strip().lower()).rstrip("?？!！。.,，、 ")
     return hashlib.md5(q.encode("utf-8")).hexdigest() if q else ""
+
+
+# ===== 轻量会话上下文记忆(每用户最近几轮,短窗口)=====
+def _load_ctx(cid: str) -> list:
+    """取该用户窗口内最近几轮对话；超时/无则空。失败安静返回 []。"""
+    if not cid:
+        return []
+    try:
+        from . import data_store
+        rec = data_store.latest("wx_ctx", cid, max_age_seconds=_WX_CTX_TTL)
+        turns = (rec.get("turns") if isinstance(rec, dict) else None) or []
+        return turns if isinstance(turns, list) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _remember(cid: str, q: str, a: str) -> None:
+    """把这一轮(问+答)追加进该用户的会话记忆,只留最近 _WX_CTX_TURNS 轮。失败不影响主流程。"""
+    if not cid or not (q or "").strip() or not (a or "").strip():
+        return
+    try:
+        from . import data_store
+        turns = _load_ctx(cid)
+        turns = (turns + [{"q": q[:200], "a": a[:400]}])[-_WX_CTX_TURNS:]
+        data_store.record("wx_ctx", cid, {"turns": turns})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _ctx_hint(turns: list) -> str:
+    """把最近几轮拼成喂给 agent 的上下文前缀(run_tool_agent 会拼在当前问题前)；助手长答截断省 token。"""
+    lines: list = []
+    for t in (turns or [])[-_WX_CTX_TURNS:]:
+        if not isinstance(t, dict):
+            continue
+        if (t.get("q") or "").strip():
+            lines.append(f"用户: {t['q']}")
+        if (t.get("a") or "").strip():
+            lines.append(f"助手: {str(t['a'])[:160]}")
+    if not lines:
+        return ""
+    return ("【最近对话(仅用于理解用户当前这条追问的上下文;不要重复回答历史问题)】\n"
+            + "\n".join(lines) + "\n\n用户当前消息：")
 
 
 # 多数答案一条发完(门槛设高);只有超长才分段,且【只在小节(一、二、…)边界断,绝不拆散标题与正文】。
@@ -667,21 +713,29 @@ class WeixinChannelManager:
         except Exception:  # noqa: BLE001
             pass
 
+        # 会话记忆:取该用户窗口内最近几轮。有上下文(正在多轮对话中)→ 追问绕开跨用户缓存(答案跟上文相关),交给 agent 带上下文作答。
+        cid = (b.get("username") or "").strip().lower() or bot_id
+        recent_turns = _load_ctx(cid)
+        has_ctx = bool(recent_turns)
+
         # ③.5 大盘/复盘高频问:今日复盘已生成→直出已算结论(0 token、秒回、用自有复盘);未生成→落到实时 agent
         if _is_market_overview_q(question):
             ov = _market_overview_reply()
             if ov:
                 metrics_store.incr("wxqa:overview_hit")  # 观测:大盘直出命中(0 token)
                 await _reply(_clean(ov))
+                _remember(cid, question, ov)  # 记进会话,后续"为啥跌"等追问能接上
                 return
 
         # ④ 答案缓存跨用户复用：命中即秒回，0 token、不计次（同一问题跨用户安全共享，见 _qa_fingerprint）
+        # ⚠️仅【无会话上下文】才用共享缓存：多轮追问的答案跟个人上文相关,不能给别人(也不该被别人的缓存覆盖)。
         fp = _qa_fingerprint(question)
-        if fp:
+        if fp and not has_ctx:
             cached = data_store.latest("wx_qa", fp, max_age_seconds=_QA_CACHE_TTL)
             if isinstance(cached, dict) and (cached.get("answer") or "").strip():
                 metrics_store.incr("wxqa:cache_hit")  # 观测:缓存命中(0 token)
                 await _reply(_clean(cached["answer"].strip()))  # 缓存答案也过出口护栏(防旧缓存泄密)
+                _remember(cid, question, cached["answer"].strip())
                 return
 
         # ⑤ 每日"现算"配额：仅缓存未命中才计次；超额 → 引导明天 / 问推荐问题，不耗 token
@@ -694,8 +748,9 @@ class WeixinChannelManager:
         # ⑥ 现算：计次 → 调 agent（耗 token）→ 合规中性化 → 回 → 写缓存供后续复用
         metrics_store.incr(qkey)
         metrics_store.incr("wxqa:fresh")  # 观测:现算次数(配 wxqa:cache_hit 看命中率)
-        hint = ""
-        if self._context_hint_fn:
+        # 上下文优先:有最近对话→把历史拼进 hint(run_tool_agent 会拼在当前问题前),让"反问→追答"能接上;否则用既有 hint 注入(prod 恒空)
+        hint = _ctx_hint(recent_turns)
+        if not hint and self._context_hint_fn:
             try:
                 hint = self._context_hint_fn(b) or ""
             except Exception:  # noqa: BLE001
@@ -706,8 +761,10 @@ class WeixinChannelManager:
             logger.warning("[weixin] agent err for %s: %s", bot_id[:8], exc)
             answer = None
         ans = (answer or "").strip()
-        if ans and fp:
+        if ans and fp and not has_ctx:  # 只把【独立问题】的答案写进跨用户共享缓存;带上下文的答案是个人化的,不共享
             data_store.record("wx_qa", fp, {"answer": ans, "q": question[:200]})
+        if ans:
+            _remember(cid, question, ans)  # 记进会话(含 agent 的反问),下一条追问才接得上
         await _reply(_clean(ans) if ans else _FALLBACK_REPLY)
 
     # ---- 准推送：best-effort flush ----
