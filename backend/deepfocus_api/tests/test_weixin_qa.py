@@ -261,6 +261,16 @@ def test_is_market_overview_q_heuristic():
     assert not wc._is_market_overview_q("分析今天大盘对消费和半导体板块的影响到底多大")  # 太长
 
 
+def test_market_overview_excludes_analytical_questions():
+    # ⭐带因果/分析/预测/事件/操作意图的"大盘"问题不能被复盘直出截走(否则=伪AI),要交给真 agent
+    for q in ("今天大盘为啥暴跌", "今天为什么大跌", "大盘怎么回事", "大盘后市怎么看",
+              "大盘会不会跌", "分析下今天大盘", "今天该加仓吗", "大盘明天走势"):
+        assert not wc._is_market_overview_q(q), q
+    # 纯泛问仍走直出(秒回省 token)
+    for q in ("今天大盘", "今天大盘怎么样", "收盘复盘", "盘面如何", "今天行情"):
+        assert wc._is_market_overview_q(q), q
+
+
 # ---------- 出口护栏：答案里的数据源/工具名被剥掉再发出 ----------
 
 def test_answer_output_scrubs_internal_leaks(env):
