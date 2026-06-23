@@ -26,8 +26,22 @@ def test_research_with_competitor_domain_kept_and_scrubbed():
     assert changed
     assert "futoucaixin" not in (nt + nc).lower()         # 可见正文/标题里的域名已抹
     assert "大摩" in nt and "CPO" in nt and "正文要点" in nc  # 研报内容保留
+    # 竞品链接直接删除,不留「链接已隐藏」提示,且收尾不留悬挂分隔符
+    assert "链接已隐藏" not in (nt + nc)
+    assert nc == "正文要点……"                              # 「 || URL」整段被清掉
     # 结构化 url 原文链接字段刻意不动（聚合源整体挂该域名，属单独决策）
     assert nu == "https://backend.futoucaixin.cn/x.pdf"
+
+
+def test_scrub_removes_link_without_placeholder():
+    # URL 在句尾、句中、被括号包裹三种位置都干净删除,不留占位符/空括号/悬挂分隔符
+    nt, nc, _u, ch = nf.scrub("高盛：微信AI智能体公测", "详情见 https://backend.futoucaixin.cn/a 了解", "")
+    assert ch and "链接已隐藏" not in nc and "futoucaixin" not in nc.lower()
+    assert nc == "详情见 了解"
+    _t2, nc2, _u2, _c2 = nf.scrub("x", "公测（https://backend.futoucaixin.cn/b）", "")
+    assert nc2 == "公测" and "（）" not in nc2               # 空括号也清掉
+    _t3, nc3, _u3, _c3 = nf.scrub("x", "公测 https://backend.futoucaixin.cn/c", "")
+    assert nc3 == "公测"                                     # 句尾链接+空格清掉
 
 
 def test_passes_normal_financial_news():

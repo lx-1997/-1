@@ -84,6 +84,17 @@ def block_reason(title: str, content: str = "") -> Optional[str]:
     return None  # 有竞品词但无广告特征 → 不丢，交给 scrub
 
 
+def _tidy(s: str) -> str:
+    """链接/品牌词删除后的收尾清理:去空括号对、串尾悬挂的分隔符/链接引导词、合并多余空白。
+    不做激进的串中清理(避免误伤正文),只处理删除后最常见的"尾巴"残留。"""
+    s = re.sub(r"[（(【\[「]\s*[）)】\]」]", "", s)                 # 删除后残留的空括号对
+    s = re.sub(r"[ \t]{2,}", " ", s)                              # 多空格→单空格
+    s = re.sub(r"[ \t]+([，。；、！？）】」])", r"\1", s)           # 标点前多余空格
+    s = re.sub(r"[ \t]*[|｜·•\-—–]+[ \t]*$", "", s)               # 串尾悬挂分隔符(| · — 等)
+    s = re.sub(r"[ \t]*(链接|详情|原文|全文|查看详情|点击查看|阅读原文)[:：]?[ \t]*$", "", s)  # 串尾悬挂引导词
+    return s.rstrip()
+
+
 def scrub(title: str, content: str = "", url: str = "") -> Tuple[str, str, str, bool]:
     """抹掉**可见正文/标题**里的竞品域名/品牌字眼，保留文章本身。
 
@@ -93,10 +104,10 @@ def scrub(title: str, content: str = "", url: str = "") -> Tuple[str, str, str, 
     def _clean(s: str) -> str:
         if not s:
             return s
-        out = _URL_RE.sub("[链接已隐藏]", s)
+        out = _URL_RE.sub("", s)  # 竞品链接直接删掉,不留「[链接已隐藏]」占位符(用户不想看到这种提示)
         for w in ("futoucaixin", "斧头财信", "斧头财经"):
             out = re.sub(re.escape(w), "", out, flags=re.I)
-        return out
+        return _tidy(out) if out != s else s
     nt, nc = _clean(title or ""), _clean(content or "")
     changed = (nt != (title or "")) or (nc != (content or ""))
     return nt, nc, (url or ""), changed
