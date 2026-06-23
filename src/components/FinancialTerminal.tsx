@@ -514,7 +514,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 翻页时间锚点：实时流(全部/快讯)翻到第 2 页起冻结此刻最新时间，新到的快讯(比锚点新)不再插进翻页视图、
   // 避免下标分页被前移打乱(第 2 页内容错位/与第 1 页重复)。回到第 1 页清空 → 恢复实时。
   const [feedAnchor, setFeedAnchor] = useState<string | null>(null);
-  const [resPage, setResPage] = useState(1);    // 研报当前页
+  const [resPage, setResPage] = useState(1);    // 研报当前页（仅「全部」搜索区的研报小节用；研报标签本身改日期手风琴、不分页）
+  // 研报日期手风琴：默认仅最新一天展开。openDays=用户显式展开的旧日期；closedDays=用户显式收起的(含最新天)。
+  const [resOpenDays, setResOpenDays] = useState<Set<string>>(new Set());
+  const [resClosedDays, setResClosedDays] = useState<Set<string>>(new Set());
+  const [resDayFull, setResDayFull] = useState<Set<string>>(new Set());   // 用户点「展开本日剩余」的日期(突破单日初始渲染上限)
   const [histLoading, setHistLoading] = useState(false);        // 正在拉取更旧历史
   const [histDone, setHistDone] = useState(false);              // 已无更多历史
   const [searchMsgs, setSearchMsgs] = useState<RealtimeMessageRecord[]>([]);  // 选股/搜索时：服务端全量历史检索结果
@@ -2357,6 +2361,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 与其分错不如不分——统一一个列表(用户决策)。resFiltered 即全量 reportFeed。
   const resFiltered = reportFeed;
   useEffect(() => { setResPage(1); }, [resSearchKw, feedFilter, pageSize]);
+  // 研报日期手风琴:某天是否展开 = 用户显式展开 ∨ (它是最新一天 ∧ 没被用户收起)。点头部切换。
+  const resDayOpen = useCallback((day: string, isLatest: boolean) =>
+    resOpenDays.has(day) || (isLatest && !resClosedDays.has(day)), [resOpenDays, resClosedDays]);
+  const toggleResDay = useCallback((day: string, isLatest: boolean) => {
+    const open = resOpenDays.has(day) || (isLatest && !resClosedDays.has(day));
+    setResOpenDays(prev => { const n = new Set(prev); if (open) n.delete(day); else n.add(day); return n; });
+    setResClosedDays(prev => { const n = new Set(prev); if (open) n.add(day); else n.delete(day); return n; });
+  }, [resOpenDays, resClosedDays]);
 
   // 研报「提及标的」标签：标题下方独占一行、可换行全部显示；超过 10 个折叠成「+N」
   const INST_MAX = 10;
@@ -2862,24 +2874,45 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 }</div>
               )}
               {(() => {
-                const resPageCur = Math.min(resPage, Math.max(1, Math.ceil(resFiltered.length / pageSize)));
-                const shown = resFiltered.slice((resPageCur - 1) * pageSize, resPageCur * pageSize);
-                // 按日期分组:同一天的研报归在一个「日期块」下(粘性日期头);头条高亮保留。跨页时该页首条也补一个日期头。
-                const out: React.ReactNode[] = [];
-                let lastDay = '';
-                shown.forEach((r, i) => {
-                  const isHead = resPageCur === 1 && (ybHeadKeys.size ? ((!!r.file_id && ybHeadKeys.has(r.file_id)) || ybHeadKeys.has(r.id)) : i === 0);
+                // 按日期分组成「模块」(reportFeed 已按日期倒序)。每个模块=可折叠的一天:默认仅最新一天展开。
+                // 搜索/选股态:命中通常不多且要一眼看全 → 全部展开,不折叠。
+                const groups: { day: string; items: ResearchWireItem[] }[] = [];
+                const gidx: Record<string, number> = {};
+                resFiltered.forEach(r => {
                   const dk = resDayKey(r);
-                  if (dk !== lastDay) {
-                    lastDay = dk;
-                    out.push(<div key={`rd-${dk}-${i}`} className="bbt-rdivider">{fmtResGroup(dk)}</div>);
-                  }
-                  out.push(renderResearchRow(r, isHead));
+                  if (gidx[dk] === undefined) { gidx[dk] = groups.length; groups.push({ day: dk, items: [] }); }
+                  groups[gidx[dk]].items.push(r);
                 });
-                return (<>
-                  {out}
-                  <Pager page={resPageCur} total={resFiltered.length} pageSize={pageSize} onPage={setResPage} onSize={setPageSize} />
-                </>);
+                // ⚠️reportFeed 会把 AI 头条提前(头条可能来自更早一天)→ groups[0] 未必是最新日。
+                // 取「日期最大」的有效日期组当「最新一天」(YYYY-MM-DD 字典序==时间序;'其他'桶忽略)。
+                let latestIdx = 0, latestKey = '';
+                groups.forEach((g, k) => { if (/^\d{4}-\d{2}-\d{2}$/.test(g.day) && g.day > latestKey) { latestKey = g.day; latestIdx = k; } });
+                const forceOpen = !!resQuery.trim() || !!active;   // 搜索/选股态:全展开、不可折叠
+                const DAY_CAP = 80;   // 单日初始最多渲染数,超出收到「展开本日剩余」,防最新一天数百篇一次性渲染卡顿
+                return groups.map((g, gi) => {
+                  const isLatest = gi === latestIdx;
+                  const open = forceOpen || resDayOpen(g.day, isLatest);
+                  const full = forceOpen || resDayFull.has(g.day);
+                  const items = full ? g.items : g.items.slice(0, DAY_CAP);
+                  return (
+                    <div key={`g-${g.day}`} className="bbt-rgroup">
+                      <button className={'bbt-rgroup-h' + (open ? ' open' : '') + (forceOpen ? ' static' : '')}
+                              aria-expanded={open} aria-disabled={forceOpen || undefined}
+                              onClick={() => { if (!forceOpen) toggleResDay(g.day, isLatest); }}>
+                        {!forceOpen && <span className="bbt-rgroup-arr" aria-hidden="true">{open ? '▾' : '▸'}</span>}
+                        <span className="bbt-rgroup-date">{fmtResGroup(g.day)}</span>
+                      </button>
+                      {open && items.map((r, i) => {
+                        // AI 头条 = ybHeadKeys 命中的报告(在哪天都高亮);无头条名单则退化为「最新一天首条」
+                        const isHead = ybHeadKeys.size ? ((!!r.file_id && ybHeadKeys.has(r.file_id)) || ybHeadKeys.has(r.id)) : (isLatest && i === 0);
+                        return renderResearchRow(r, isHead);
+                      })}
+                      {open && !full && g.items.length > DAY_CAP && (
+                        <button className="bbt-rmore" onClick={() => setResDayFull(prev => new Set(prev).add(g.day))}>↓ 展开本日剩余研报</button>
+                      )}
+                    </div>
+                  );
+                });
               })()}
             </div>
           ) : (active && feedFilter === 'all') ? (
