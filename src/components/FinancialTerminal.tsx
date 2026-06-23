@@ -2577,13 +2577,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-cmd-right">
           {/* 今日早报按钮已按需求隐藏 */}
           <button className="bbt-theme-btn" onClick={() => { logAct('theme', theme === 'dark' ? 'light' : 'dark'); toggleTheme(); }} aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'} title={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}>
-            {theme === 'dark' ? '☀️ 浅色' : '🌙 深色'}
+            {theme === 'dark' ? '☀️' : '🌙'}
           </button>
           {ttsSupported && (
             <button className={'bbt-tts-btn' + (ttsOn ? ' on' : '')} onClick={toggleTts}
                     aria-label={ttsOn ? '快讯语音播报：开，点击关闭' : '快讯语音播报：关，点击开启'} aria-pressed={ttsOn}
                     title={ttsOn ? '快讯语音播报：开（点击关闭）' : '快讯语音播报：关（点击开启）'}>
-              {ttsOn ? '🔊 播报' : '🔈 播报'}
+              {ttsOn ? '🔊' : '🔈'}
             </button>
           )}
           <button className="bbt-review-entry" onClick={() => openReview()} title="A股每日收盘复盘 · DeepFocus 提前发现">📊 复盘</button>
@@ -2609,8 +2609,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             );
           })()}
           <button className={'bbt-ref-entry' + (refOpened ? '' : ' attract')} onClick={() => { logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }} aria-label="邀请好友得会员" title="邀请好友 · 累计解锁会员卡，最高免费拿 ¥698 年卡">🎁 邀请得会员<span className="bbt-ref-entry-hot">免费拿年卡</span>{refAvail > 0 && <span className="bbt-ref-entry-badge">{refAvail}</span>}</button>
-          <button className="bbt-help-btn bbt-manual-btn" onClick={() => setShowHelp(true)} aria-label="产品说明书" title="产品说明书">📖 说明书</button>
-          <button className="bbt-help-btn" onClick={() => setShowOnb(true)} aria-label="新手引导" title="新手引导">❔ 引导</button>
+          <button className="bbt-help-btn bbt-manual-btn" onClick={() => setShowHelp(true)} aria-label="产品说明书" title="产品说明书">📖</button>
+          <button className="bbt-help-btn" onClick={() => setShowOnb(true)} aria-label="新手引导" title="新手引导">❔</button>
           {authUser
             ? (() => {
                 const isLifetime = membership?.tier === 'lifetime';

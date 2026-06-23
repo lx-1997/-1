@@ -1911,6 +1911,18 @@
 [data-theme="light"] .bbt-tts-btn:hover { background: rgba(120,128,142,.2); }
 [data-theme="light"] .bbt-tts-btn.on { background: var(--up); color: #fff; border-color: var(--up); box-shadow: 0 0 8px rgba(26,163,90,.35); }
 
+/* 桌面顶栏：纯工具钮(主题/播报/说明书/引导)统一成紧凑圆形图标钮——只留 emoji(说明在 title)。
+   ⭐根因修复：base 把「说明书/引导」做成 22px 圆框，但 JSX 原来塞了「📖 说明书」整段文字 → 文字撑爆圆框
+   溢出去跟账号头像撞一起(就是「右侧重叠被截」)；同时整排按钮过挤。手机端(≤960)仍走上方既有图标规则。 */
+@media (min-width: 961px) {
+  .bbt-cmd-right .bbt-theme-btn,
+  .bbt-cmd-right .bbt-tts-btn,
+  .bbt-cmd-right .bbt-help-btn {
+    width: 26px; height: 26px; padding: 0; border-radius: 50%; gap: 0;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1;
+  }
+}
+
 /* ===== 兑换会员码弹窗 ===== */
 .bbt-redeem {
   width: min(380px, 94vw); box-sizing: border-box; padding: 18px 18px 20px;
