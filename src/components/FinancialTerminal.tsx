@@ -532,6 +532,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [pageSize, setPageSizeRaw] = useState<number>(defaultPageSize);  // 每页条数（PC/移动默认不同，可调，记 localStorage）
   const setPageSize = useCallback((n: number) => { setPageSizeRaw(n); try { localStorage.setItem('df_pagesize', String(n)); } catch { /* */ } }, []);
   const [newsPage, setNewsPage] = useState(1);  // 资讯当前页
+  // 翻页时间锚点：实时流(全部/快讯)翻到第 2 页起冻结此刻最新时间，新到的快讯(比锚点新)不再插进翻页视图、
+  // 避免下标分页被前移打乱(第 2 页内容错位/与第 1 页重复)。回到第 1 页清空 → 恢复实时。
+  const [feedAnchor, setFeedAnchor] = useState<string | null>(null);
   const [resPage, setResPage] = useState(1);    // 研报当前页
   const [histLoading, setHistLoading] = useState(false);        // 正在拉取更旧历史
   const [histDone, setHistDone] = useState(false);              // 已无更多历史
@@ -2319,27 +2322,39 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     () => (feedFilter === '自选' || active || newsQuery.trim()) ? feed : feed.filter(m => !pinnedIds.has(m.id)),
     [feed, feedFilter, active, newsQuery, pinnedIds]
   );
+  // 翻页实际数据源：实时流(全部/快讯)在第 2 页起按锚点冻结(剔除比锚点更新的新到快讯),分页稳定不前移;
+  // 第 1 页或服务端态(文章/自选/搜索,本就不实时插入)不冻结。created_at 为 ISO,字典序==时间序。
+  const pagedRows = useMemo(
+    () => (!useServerFeed && feedAnchor) ? newsRows.filter(m => (m.created_at || '') <= feedAnchor) : newsRows,
+    [newsRows, useServerFeed, feedAnchor]
+  );
   // 当前页（夹紧到有效范围）。头条/自选相关只在第 1 页置顶，翻页看历史时不再霸占顶部。
   const newsPageCur = useMemo(
-    () => Math.min(newsPage, Math.max(1, Math.ceil(newsRows.length / pageSize))),
-    [newsPage, newsRows.length, pageSize]
+    () => Math.min(newsPage, Math.max(1, Math.ceil(pagedRows.length / pageSize))),
+    [newsPage, pagedRows.length, pageSize]
   );
   // 资讯翻页：翻到已加载末页且服务器可能还有更旧 → 先回源拉一批历史，再翻过去
   const goNewsPage = useCallback(async (p: number) => {
+    // 离开第 1 页 → 冻结此刻最新时间为锚点(没有则用首行时间);回到第 1 页 → 解冻恢复实时
+    if (p <= 1) setFeedAnchor(null);
+    else setFeedAnchor(prev => prev || (newsRows[0]?.created_at || null));
     if (!useServerFeed && p * pageSize > newsRows.length && !histDone && !histLoading) {
       setHistLoading(true);
       try {
+        const known = new Set(messages.map(m => m.id));
         const oldest = messages.length ? messages[messages.length - 1].created_at : undefined;
         const older = await listRealtimeMessages({ ...(oldest ? { before: oldest } : {}), limit: 200 });
-        if (older.length) mergeMessages(older);
-        if (older.length < 200) setHistDone(true);
+        const fresh = older.filter(o => !known.has(o.id));
+        if (fresh.length) mergeMessages(older);
+        // <200 或回源没带来任何新行(全是重复) → 标记到底,避免「下一页」点了没反应卡死
+        if (older.length < 200 || fresh.length === 0) setHistDone(true);
       } catch { /* 下轮再试 */ } finally { setHistLoading(false); }
     }
     setNewsPage(Math.max(1, p));
-  }, [useServerFeed, pageSize, newsRows.length, histDone, histLoading, messages, mergeMessages]);
+  }, [useServerFeed, pageSize, newsRows, histDone, histLoading, messages, mergeMessages]);
 
-  // 切换标签/搜索/选股/改每页 时，资讯回到第 1 页
-  useEffect(() => { setNewsPage(1); }, [feedFilter, newsManual, active, pageSize]);
+  // 切换标签/搜索/选股/改每页 时，资讯回到第 1 页(并解冻锚点)
+  useEffect(() => { setNewsPage(1); setFeedAnchor(null); }, [feedFilter, newsManual, active, pageSize]);
   // 资讯搜索：去抖后记一条流水（≥2 字，避免逐键噪音）
   useEffect(() => {
     const q = newsQuery.trim();
@@ -3063,10 +3078,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 })
               ) : (() => {
                 const hasMore = !useServerFeed && !histDone;  // 实时流态(ALL/快讯)：服务器可能还有更旧历史可翻
-                const shown = newsRows.slice((newsPageCur - 1) * pageSize, newsPageCur * pageSize);
+                const shown = pagedRows.slice((newsPageCur - 1) * pageSize, newsPageCur * pageSize);
                 return (<>
                   {shown.map(m => renderNewsRow(m, false, undefined))}
-                  <Pager page={newsPageCur} total={newsRows.length} pageSize={pageSize} onPage={goNewsPage} onSize={setPageSize} busy={histLoading} hasMore={hasMore} />
+                  <Pager page={newsPageCur} total={pagedRows.length} pageSize={pageSize} onPage={goNewsPage} onSize={setPageSize} busy={histLoading} hasMore={hasMore} />
                 </>);
               })()}
             </div>
