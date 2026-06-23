@@ -535,6 +535,35 @@ def test_t1_blocks_rotation_of_today_position(fund, monkeypatch):
         assert "002594" in {r["symbol"] for r in ai_fund._positions(conn, "main")}
 
 
+def test_get_snapshot_unknown_strategy_falls_back_to_main(fund):
+    """未知 strategy 不崩、归一到主账户(修 _state(None)→st['cash'] TypeError)。"""
+    snap = ai_fund.get_snapshot("does-not-exist-xyz")
+    assert isinstance(snap, dict) and snap.get("nav_unit") is not None
+    assert snap.get("fund_id") == "main"
+
+
+def test_rotation_skips_when_incoming_at_upper_limit(fund, monkeypatch):
+    """换仓接盘股涨停封板时不换仓——避免「卖了最弱却买不进」的空仓换仓。"""
+    import dataclasses
+    cfg1 = dataclasses.replace(ai_fund.MAIN_CFG, max_positions=1)
+    with ai_fund._connect() as conn:   # 注入一笔『昨天』的持仓占满仓位(可被换)
+        conn.execute("INSERT INTO aif_position (fund_id,symbol,name,qty,avg_cost,opened_at,updated_at,high_water) VALUES (?,?,?,?,?,?,?,?)",
+                     ("main", "300750", "宁德时代", 100, 200.0, "2026-06-01T01:00:00Z", "2026-06-01T01:00:00Z", 200.0))
+        conn.commit()
+    # 比亚迪强信号但涨停封板(+9.9%)
+    q = {"002594": {"latest": 100, "changeRatio": 9.9, "pe_ttm": 20, "pb": 3, "turnoverRatio": 5, "high": 101, "low": 96},
+         "300750": {"latest": 200, "changeRatio": -1.0, "pe_ttm": 25, "pb": 4, "turnoverRatio": 2, "high": 201, "low": 199}}
+    _wire(monkeypatch, q)
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP, "300750": {"closes": [200]*30, "flow5": 0.0}})
+    monkeypatch.setattr(ai_fund, "_our_content",
+        lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
+    out = ai_fund.run_tick(cfg=cfg1)
+    assert not [t for t in out["traded"] if t["side"] == "sell"]            # 没卖宁德(接盘的比亚迪买不进)
+    assert "002594" not in {t["symbol"] for t in out["traded"] if t["side"] == "buy"}  # 涨停也没买进
+    with ai_fund._connect() as conn:
+        assert "300750" in {r["symbol"] for r in ai_fund._positions(conn, "main")}   # 宁德仍在
+
+
 def test_holding_period_learning_adapts_without_close(fund, monkeypatch):
     """持仓期自适应集成：买入后浮盈，不平仓也会触发每日学习、抬高驱动维度乘子并落每日标记。"""
     q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96}}

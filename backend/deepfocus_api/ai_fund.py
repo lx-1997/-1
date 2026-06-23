@@ -218,6 +218,8 @@ def _db_path() -> Path:
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")   # 公开读端点与写 tick 并发时不至于直接 database is locked
+    conn.execute("PRAGMA journal_mode=WAL")    # 读写并发：写不再阻塞读
     return conn
 
 
@@ -1617,7 +1619,9 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                     continue
                 weakest = min(sellable, key=lambda c: analyses.get(c, {}).get("score", 0.0))
                 ws = analyses.get(weakest, {}).get("score", 0.0)
-                if code not in held and an["score"] - ws >= cfg.rotate_edge:
+                # 换仓前确认接盘股买得进(没涨停封板)，否则会「卖了最弱却买不进」→ 空仓换仓、现金空置、直播流食言
+                incoming_sealed = _at_upper_limit(code, universe.get(code, code), safe_float((quotes.get(code) or {}).get("changeRatio")))
+                if code not in held and not incoming_sealed and an["score"] - ws >= cfg.rotate_edge:
                     q = quotes.get(weakest)
                     if q and safe_float(q.get("latest")):
                         wp = safe_float(q.get("latest")); wpos = held[weakest]
@@ -1977,6 +1981,7 @@ def _info_attribution(conn, fund_id: str = FUND_ID) -> Optional[dict]:
 def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     init_ai_fund_db()
     cfg = cfg_for(fund_id)
+    fund_id = cfg.fund_id   # 未知/别名 strategy 归一到真实 fund_id，避免 _state 取到 None 后 st["cash"] 崩、被上游静默兜回主账户
     with _connect() as conn:
         st = _state(conn, fund_id); cash = float(st["cash"]); started_nav = float(st["started_nav"])
         positions = _positions(conn, fund_id)

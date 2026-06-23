@@ -4864,7 +4864,19 @@ async def run_ashare_review() -> None:
                 saved = ashare_review.save_review(review)
                 tries += 1
             if saved:
-                print(f"[ashare-review] 已生成 {today} {ashare_review.session_label(session)}（提前发现 {len(review.get('our_edge') or [])} 条）")
+                _edge_n = len(review.get('our_edge') or [])
+                print(f"[ashare-review] 已生成 {today} {ashare_review.session_label(session)}（提前发现 {_edge_n} 条）")
+                # 发一条「复盘已生成」信号 → post_message_hook→dispatch_recall 推给所有开盯盘的人(每日回访钩子,留存核心)
+                try:
+                    _lab = ashare_review.session_label(session)
+                    create_realtime_message(RealtimeMessageCreateRequest(
+                        title=f"📊 今日A股{_lab}已生成",
+                        content="大盘 · 板块 · 个股全维度" + _lab + (f",含我们提前发现的 {_edge_n} 条信号" if _edge_n else "") + " → 点开看复盘。",
+                        topic="复盘", severity="info", source_name="DeepFocus 复盘",
+                        url=f"/?review={today}",
+                    ))
+                except Exception as _rexc:  # noqa: BLE001
+                    print(f"[ashare-review] 复盘信号发送失败：{type(_rexc).__name__}")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -4920,10 +4932,8 @@ async def run_ai_fund_trader() -> None:
 
 def _aifund_snapshot(strategy: str) -> dict[str, Any]:
     """调 get_snapshot；兼容引擎是否已按策略参数化(多策略竞技场过渡期)：支持则传 strategy，否则回退主账户。"""
-    try:
-        return ai_fund.get_snapshot(strategy) if strategy else ai_fund.get_snapshot()
-    except TypeError:
-        return ai_fund.get_snapshot()  # 引擎尚未参数化 → 主账户
+    # 引擎已参数化且 get_snapshot 内部把未知 strategy 归一到主账户；不再吞 TypeError（曾会掩盖真错误、静默返回错号数据）
+    return ai_fund.get_snapshot(strategy) if strategy else ai_fund.get_snapshot()
 
 
 @app.get("/api/ai-fund/snapshot")
@@ -5878,18 +5888,19 @@ async def api_research_vision_analyze(
     metrics_incr_ai_ref((request.file_id or request.workbench_filename or "").strip(), (request.title or "").strip())  # AI 解读榜
 
     def _build_response(result: dict[str, Any]) -> ResearchVisionAnalysisResponse:
+        from .compliance import neutralize_text as _nz  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)，结构化字段不动
         return ResearchVisionAnalysisResponse(
             title=title,
             symbol=request.symbol,
-            subject=result.get("subject", ""),
-            one_liner=result.get("one_liner", ""),
-            summary=result["summary"],
-            core_logic=result.get("core_logic", ""),
-            takeaway=result.get("takeaway", ""),
-            bullish=result.get("bullish", result.get("key_points", [])),
-            bearish=result.get("bearish", result.get("risks", [])),
-            key_points=result.get("key_points", []),
-            risks=result.get("risks", []),
+            subject=_nz(result.get("subject", "")),
+            one_liner=_nz(result.get("one_liner", "")),
+            summary=_nz(result.get("summary", "")),
+            core_logic=_nz(result.get("core_logic", "")),
+            takeaway=_nz(result.get("takeaway", "")),
+            bullish=[_nz(x) for x in result.get("bullish", result.get("key_points", []))],
+            bearish=[_nz(x) for x in result.get("bearish", result.get("risks", []))],
+            key_points=[_nz(x) for x in result.get("key_points", [])],
+            risks=[_nz(x) for x in result.get("risks", [])],
             instruments=result.get("instruments", []),  # 原文提及个股/标的——曾在此漏传，前端永远拿不到
             market=result.get("market", ""),
             rating=result.get("rating"),
@@ -5948,12 +5959,13 @@ async def api_news_ai_analyze(
         metrics_incr_news_heat("wz:" + _hashlib.sha1(title.encode("utf-8")).hexdigest()[:16], title)
 
     def _resp(result: dict[str, Any]) -> ResearchVisionAnalysisResponse:
+        from .compliance import neutralize_text as _nz  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)
         return ResearchVisionAnalysisResponse(
-            title=title or "新闻解读", subject=result.get("subject", ""),
-            one_liner=result.get("one_liner", ""), summary=result["summary"],
-            core_logic=result.get("core_logic", ""), takeaway=result.get("takeaway", ""),
-            bullish=result.get("bullish", []), bearish=result.get("bearish", []),
-            key_points=result.get("key_points", []), risks=result.get("risks", []),
+            title=title or "新闻解读", subject=_nz(result.get("subject", "")),
+            one_liner=_nz(result.get("one_liner", "")), summary=_nz(result.get("summary", "")),
+            core_logic=_nz(result.get("core_logic", "")), takeaway=_nz(result.get("takeaway", "")),
+            bullish=[_nz(x) for x in result.get("bullish", [])], bearish=[_nz(x) for x in result.get("bearish", [])],
+            key_points=[_nz(x) for x in result.get("key_points", [])], risks=[_nz(x) for x in result.get("risks", [])],
             instruments=result.get("instruments", []), market=result.get("market", ""),  # 提及个股，曾漏传
             rating=result.get("rating"), target_price=result.get("target_price"),
             confidence=result.get("confidence", 0.5), provider=_AI_BRAND,
