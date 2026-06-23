@@ -86,6 +86,10 @@ def init_recall_subscription_db() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_sub_channel ON recall_subscriptions(channel)")
+        try:  # 归属人列：list/delete 据此隔离，杜绝任一登录用户看到/删除他人订阅(邮箱/wxid/推送密钥 = PII)
+            conn.execute("ALTER TABLE recall_subscriptions ADD COLUMN user_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS recall_deliveries (
@@ -106,7 +110,7 @@ def init_recall_subscription_db() -> None:
         conn.commit()
 
 
-def create_recall_subscription(request: RecallSubscriptionCreateRequest) -> RecallSubscriptionRecord:
+def create_recall_subscription(request: RecallSubscriptionCreateRequest, user_id: Optional[str] = None) -> RecallSubscriptionRecord:
     init_recall_subscription_db()
     symbols = _normalize_symbols(request.symbols)
     severities = list(request.severities) or ["warning", "critical"]
@@ -120,14 +124,15 @@ def create_recall_subscription(request: RecallSubscriptionCreateRequest) -> Reca
         "label": (request.label or "").strip() or None,
         "active": 1,
         "created_at": utc_now_iso(),
+        "user_id": user_id,  # 归属人：登录则绑定，便于本人 list/delete；匿名为 None（仍正常投递，只是不可在 UI 管理）
     }
     with _connect() as conn:
         conn.execute(
             """
             INSERT INTO recall_subscriptions (
-                id, channel, address, symbols_json, severities_json, scope, label, active, created_at
+                id, channel, address, symbols_json, severities_json, scope, label, active, created_at, user_id
             ) VALUES (
-                :id, :channel, :address, :symbols_json, :severities_json, :scope, :label, :active, :created_at
+                :id, :channel, :address, :symbols_json, :severities_json, :scope, :label, :active, :created_at, :user_id
             )
             """,
             record,
@@ -136,20 +141,30 @@ def create_recall_subscription(request: RecallSubscriptionCreateRequest) -> Reca
     return _row_to_subscription(record)
 
 
-def list_recall_subscriptions(active_only: bool = True) -> list[RecallSubscriptionRecord]:
+def list_recall_subscriptions(active_only: bool = True, user_id: Optional[str] = None) -> list[RecallSubscriptionRecord]:
+    """传 user_id 则仅返回该用户自己的订阅（用户 UI 用，防跨用户 PII 泄漏）；不传则全量（投递扇出 dispatch_recall 用）。"""
     init_recall_subscription_db()
-    where = "WHERE active = 1" if active_only else ""
+    clauses, params = [], []
+    if active_only:
+        clauses.append("active = 1")
+    if user_id is not None:
+        clauses.append("user_id = ?"); params.append(user_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     with _connect() as conn:
         rows = conn.execute(
-            f"SELECT * FROM recall_subscriptions {where} ORDER BY created_at DESC"
+            f"SELECT * FROM recall_subscriptions {where} ORDER BY created_at DESC", params
         ).fetchall()
     return [_row_to_subscription(dict(row)) for row in rows]
 
 
-def delete_recall_subscription(subscription_id: str) -> bool:
+def delete_recall_subscription(subscription_id: str, user_id: Optional[str] = None) -> bool:
+    """传 user_id 则只能删自己的订阅（防越权删他人）。"""
     init_recall_subscription_db()
     with _connect() as conn:
-        cursor = conn.execute("DELETE FROM recall_subscriptions WHERE id = ?", (subscription_id,))
+        if user_id is not None:
+            cursor = conn.execute("DELETE FROM recall_subscriptions WHERE id = ? AND user_id = ?", (subscription_id, user_id))
+        else:
+            cursor = conn.execute("DELETE FROM recall_subscriptions WHERE id = ?", (subscription_id,))
         conn.commit()
         return cursor.rowcount > 0
 
@@ -308,9 +323,16 @@ def _deliver_webpush(
         return _result(subscription, "skipped", "Web Push 依赖未安装（pywebpush）")
     try:
         prefix = f"{message.symbol} · " if message.symbol else ""
-        # 通知点击 url 走可追踪链接，点回时记录回流。
+        # 分离导航与回流追踪：url=App 深链(SW 聚焦/新开后直接落地应用内)，
+        # track=可追踪点击端点(SW 用 fetch 信标命中即记 CTR)。避免把已打开的标签页
+        # 导航到 302 追踪端点而停在 /api/.../click 上。
         payload = json.dumps(
-            {"title": f"{prefix}{message.title}", "body": message.content, "url": tracked_url},
+            {
+                "title": f"{prefix}{message.title}",
+                "body": message.content,
+                "url": _deep_link(message),
+                "track": tracked_url,
+            },
             ensure_ascii=False,
         )
         webpush(

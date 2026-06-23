@@ -1019,6 +1019,7 @@ ADMIN_RULES = (
     ("PUT", "/api/mcp/servers"),
     ("DELETE", "/api/mcp/servers"),
     ("POST", "/api/data-sources/agent-crawl"),
+    ("POST", "/api/data-sources/keyword-crawl"),  # 与 agent-crawl 同属管理端爬取，曾漏在规则外→trial 用户可触发出网/耗资源
 )
 
 

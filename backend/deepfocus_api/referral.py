@@ -11,9 +11,14 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+
+# 兑换串行锁：杜绝并发双发（双击/并发请求都通过『查可兑额度』后各自发放）。单进程 uvicorn 下足够；
+# 若将来上多 worker，需改 DB 级（如 (inviter_id,card_type,序号) 唯一约束 + 原子插入）。
+_REDEEM_LOCK = threading.Lock()
 
 from sqlalchemy import DateTime, Integer, String, func, select
 from sqlalchemy.orm import Mapped, mapped_column
@@ -492,6 +497,11 @@ def redeem(user_id: str, card_type: str) -> dict:
     card_type = (card_type or "").strip().lower()
     if card_type not in CARD_DAYS:
         return {"ok": False, "error": "无效的卡类型"}
+    with _REDEEM_LOCK:  # 串行化：并发兑换不再各自通过额度检查后双发
+        return _redeem_locked(user_id, card_type)
+
+
+def _redeem_locked(user_id: str, card_type: str) -> dict:
     g = _gather(user_id)
     if g is None:
         return {"ok": False, "error": "用户不存在"}

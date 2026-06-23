@@ -4399,9 +4399,14 @@ _ACTIVITY_ACTION_RE = _re_act.compile(r"^[a-z][a-z0-9_]{1,39}$")
 
 
 def _client_ip(request: Request) -> str:
+    # ⚠️本机 nginx 设 X-Real-IP=$remote_addr（真实对端），优先用它。X-Forwarded-For 的【首段】是
+    # 客户端可任意伪造的（用来刷邀请注册去重/匿名配额），故绝不取首段——退而取最后一跳（nginx 追加的真实IP）。
+    real = (request.headers.get("x-real-ip") or "").strip()
+    if real:
+        return real[:64]
     xff = request.headers.get("x-forwarded-for") or ""
     if xff:
-        return xff.split(",")[0].strip()[:64]
+        return xff.split(",")[-1].strip()[:64]
     return (request.client.host if request.client else "")[:64]
 
 
@@ -6045,7 +6050,11 @@ async def api_list_realtime_messages(
 
 
 @app.post("/api/realtime/messages", response_model=RealtimeMessageRecord)
-async def api_push_realtime_message(request: RealtimeMessageCreateRequest) -> RealtimeMessageRecord:
+async def api_push_realtime_message(request: RealtimeMessageCreateRequest, http_req: Request, token: str = "") -> RealtimeMessageRecord:
+    # ⚠️该前缀对 GET/SSE 公开（免登录看快讯），但 POST 写入必须管理令牌——否则任何人可伪造快讯广播全员+触发邮件/推送召回。
+    # 正常快讯摄入走进程内 dao_bridge.create_realtime_message（不经此 HTTP 端点），故加闸不影响生产管线。
+    if not _admin_token_ok(http_req, token):
+        raise HTTPException(status_code=403, detail="无权限：写入快讯需管理令牌")
     msg = create_realtime_message(request)
     if msg is None:  # 命中内容过滤(斧头/futou 等)→ 拒绝入库
         raise HTTPException(status_code=422, detail="内容被资讯过滤规则拦截")
@@ -6066,18 +6075,20 @@ async def api_realtime_message_stream(request: Request) -> StreamingResponse:
 
 
 @app.post("/api/realtime/recall/subscriptions", response_model=RecallSubscriptionRecord)
-async def api_create_recall_subscription(request: RecallSubscriptionCreateRequest) -> RecallSubscriptionRecord:
-    return create_recall_subscription(request)
+async def api_create_recall_subscription(request: RecallSubscriptionCreateRequest, _user: Optional[dict] = Depends(optional_current_user)) -> RecallSubscriptionRecord:
+    return create_recall_subscription(request, user_id=(str(_user.get("sub")) if _user else None))
 
 
 @app.get("/api/realtime/recall/subscriptions", response_model=RecallSubscriptionListResponse)
-async def api_list_recall_subscriptions() -> RecallSubscriptionListResponse:
-    return RecallSubscriptionListResponse(subscriptions=list_recall_subscriptions(active_only=False))
+async def api_list_recall_subscriptions(_user: dict = Depends(require_current_user)) -> RecallSubscriptionListResponse:
+    # 只返回本人订阅——曾返回全量(任何登录用户都能看到他人邮箱/wxid/推送密钥 = 跨用户 PII 泄漏)
+    return RecallSubscriptionListResponse(subscriptions=list_recall_subscriptions(active_only=False, user_id=str(_user.get("sub"))))
 
 
 @app.delete("/api/realtime/recall/subscriptions/{subscription_id}")
-async def api_delete_recall_subscription(subscription_id: str) -> dict[str, bool]:
-    return {"deleted": delete_recall_subscription(subscription_id)}
+async def api_delete_recall_subscription(subscription_id: str, _user: dict = Depends(require_current_user)) -> dict[str, bool]:
+    # 只能删本人订阅——曾可删任何人(行无归属)
+    return {"deleted": delete_recall_subscription(subscription_id, user_id=str(_user.get("sub")))}
 
 
 @app.get("/api/realtime/recall/webpush-key")
