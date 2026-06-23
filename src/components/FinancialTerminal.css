@@ -972,6 +972,31 @@
 }
 @keyframes bbt-toast-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
+/* 加自选后的「开盯盘」上下文提示条（高意向时刻捕获离线推送订阅） */
+.bbt-pushnudge {
+  position: fixed; left: 50%; bottom: 8%; transform: translateX(-50%); z-index: 85;
+  width: max-content; max-width: 92vw; display: flex; align-items: center; gap: 10px;
+  background: rgba(16,22,31,.97); border: 1px solid rgba(255,176,0,.45); border-radius: 12px;
+  padding: 11px 14px; box-shadow: 0 10px 36px rgba(0,0,0,.55); backdrop-filter: blur(6px);
+  animation: bbt-toast-in .22s ease-out;
+}
+.bbt-pushnudge-ico { font-size: 18px; flex: 0 0 auto; }
+.bbt-pushnudge-txt { font-size: 13px; color: var(--text-soft); line-height: 1.45; }
+.bbt-pushnudge-txt b { color: var(--amber-2); font-weight: 700; }
+.bbt-pushnudge-go {
+  flex: 0 0 auto; font-family: inherit; font-size: 13px; font-weight: 800; cursor: pointer; white-space: nowrap;
+  padding: 6px 16px; border-radius: 999px; border: none; color: #1a0f00;
+  background: linear-gradient(90deg, #ffd54a, #ff9d2f);
+}
+.bbt-pushnudge-go:hover { filter: brightness(1.08); }
+.bbt-pushnudge-x {
+  flex: 0 0 auto; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  padding: 6px 10px; border-radius: 999px; background: transparent; color: var(--mute, #9aa4b2);
+  border: 1px solid rgba(255,255,255,.16);
+}
+.bbt-pushnudge-x:hover { color: var(--text-soft); border-color: rgba(255,255,255,.3); }
+@media (max-width: 560px) { .bbt-pushnudge { flex-wrap: wrap; max-width: 94vw; } .bbt-pushnudge-txt { flex: 1 1 100%; order: -1; } }
+
 /* 文章正文 / AI 分析浮层 */
 .bbt-doc--text, .bbt-doc--ai { max-width: 860px; width: 86%; height: auto; max-height: 84vh; }
 /* 图片型原文（整篇截图）：固定一个舒适阅读宽度，纵向滚动；图片按宽度自适配 */

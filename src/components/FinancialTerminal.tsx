@@ -452,10 +452,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const reviewRetryRef = useRef<string | undefined>(undefined);  // 失败时记住该重试哪一天
   const [reviewToday, setReviewToday] = useState<any>(null);     // 首页置顶卡片用（今日复盘）
   const [trackRecord, setTrackRecord] = useState<authService.TrackRecord | null>(null);  // 「我们提前发现的」量化战绩
-  // Day-1 激活：引导新用户「选自选 + 开盯盘」，建立回访触发器(留存核心)
+  // Day-1 激活：引导新用户「选自选 + 开盯盘」，建立回访触发器(留存核心)。
+  // ⭐已开盯盘→永不再显;否则「稍后」只是软关闭、下次再提示,累计 3 次才彻底不显(点一次就永久消失=白白流失订阅)。
   const [activateDone, setActivateDone] = useState<boolean>(() => {
-    try { return !!localStorage.getItem('dfx_activate_v1') || loadRecallPrefs().browserEnabled; } catch { return false; }
+    try { return loadRecallPrefs().browserEnabled || Number(localStorage.getItem('dfx_activate_seen') || '0') >= 3; } catch { return false; }
   });
+  // 加自选后的「开盯盘」上下文提示——高意向时刻顺势捕获推送订阅;每会话至多一次,不打扰。
+  const [pushNudge, setPushNudge] = useState(false);
+  const pushNudgeRef = useRef(false);
   // 连续看复盘签到：打开复盘即签到（登录用户），连续天数到里程碑送会员
   const [checkin, setCheckin] = useState<{ streak: number; total: number; longest: number } | null>(null);
   const checkinDayRef = useRef('');  // 本会话今天已签过（避免每次开弹层都重复 POST）
@@ -693,6 +697,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (activate) setActive(sym);  // 命令面板加股=下钻该标的；激活卡加股传 false，只悄悄入自选、不跳转
     logAct('watch_add', name ? `${sym} ${name}` : sym);
     showToast(`已添加自选 ${name || sym}`);
+    // 高意向时刻:刚加自选 → 若还没开盯盘且通知未被拒,弹一次「开盯盘」提示把这份意向变成离线订阅(每会话至多一次)
+    try {
+      if (!pushNudgeRef.current && !loadRecallPrefs().browserEnabled && getNotificationPermission() !== 'denied') {
+        pushNudgeRef.current = true; setPushNudge(true);
+      }
+    } catch { /* */ }
   }, [showToast, logAct]);
   const removeSymbol = useCallback((code: string) => {
     setWatchlist(prev => prev.filter(s => s !== code));
@@ -707,17 +717,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       saveRecallPrefs({ ...loadRecallPrefs(), browserEnabled: true });
       window.dispatchEvent(new Event(RECALL_PREFS_EVENT));
-      localStorage.setItem('dfx_activate_v1', '1');
+      localStorage.setItem('dfx_activate_seen', '3');  // 已开启→彻底不再提示
     } catch { /* */ }
     // 关页也能被叫回:注册 Web Push 离线订阅(仅授权后有意义;best-effort 内部已吞错,不阻塞)
     if (perm === 'granted') { try { void subscribeWebPush({ symbols: watchlist }); } catch { /* */ } }
-    setActivateDone(true);
+    setActivateDone(true); setPushNudge(false);
     showToast(perm === 'granted'
       ? '🔔 盯盘已开启 · 自选有快讯/异动第一时间通知你(关掉页面也能收到)'
       : '✅ 盯盘已开启 · 浏览器通知未授权可在系统设置允许，以便离开页面也能收到提醒');
   }, [showToast, watchlist]);
   const dismissActivate = useCallback(() => {
-    try { localStorage.setItem('dfx_activate_v1', '1'); } catch { /* */ }
+    // 软关闭:累计次数,本次会话先收起,下次仍提示,满 3 次才彻底不显(避免点一次就永久流失订阅)
+    try { localStorage.setItem('dfx_activate_seen', String(Number(localStorage.getItem('dfx_activate_seen') || '0') + 1)); } catch { /* */ }
     setActivateDone(true);
   }, []);
 
@@ -3179,6 +3190,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       )}
 
       {toast && <div className="bbt-toast">{toast}</div>}
+
+      {pushNudge && (
+        <div className="bbt-pushnudge" role="dialog" aria-label="开启盯盘提醒">
+          <span className="bbt-pushnudge-ico" aria-hidden="true">🔔</span>
+          <span className="bbt-pushnudge-txt">已加自选 · 开启盯盘,有快讯/异动第一时间叫你<b>(关掉页面也能收到)</b></span>
+          <button className="bbt-pushnudge-go" onClick={armRecall}>开启</button>
+          <button className="bbt-pushnudge-x" onClick={() => setPushNudge(false)} aria-label="稍后">稍后</button>
+        </div>
+      )}
 
       {paletteOpen && (
         <div className="bbt-palette-overlay" onMouseDown={() => setPaletteOpen(false)}>
