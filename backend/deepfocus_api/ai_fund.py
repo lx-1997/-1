@@ -382,7 +382,48 @@ def _sentiment(items: list[dict]) -> Optional[float]:
         return None
 
 
-def _quote(symbol): return cached_single_quote(symbol)
+_FREE_Q_CACHE: dict = {}            # symbol -> (ts, quote)  iFinD 不可用时的免费兜底报价缓存
+_FREE_Q_TTL = 90.0
+
+
+def _free_quote(symbol: str) -> Optional[dict]:
+    """iFinD 不可用(配额耗尽/未配置)时的免费实时价兜底——新浪行情(prod 实测可用,东财 push2 被服务器侧重置)。
+    同步 httpx 直连(不起 asyncio 事件循环,无收尾噪音、更快);90s 缓存跨 5 策略共享、控请求。
+    只取交易必需字段(价/涨跌/开高低);pe/pb/换手等缺失维度在 _analyze 里 `if x is not None` 自动跳过、不乱打分 → 优雅降级。"""
+    import time as _t
+    code = "".join(ch for ch in str(symbol) if ch.isdigit())[:6]
+    if len(code) != 6:
+        return None
+    hit = _FREE_Q_CACHE.get(code)
+    if hit and _t.time() - hit[0] < _FREE_Q_TTL:
+        return hit[1]
+    prefix = "sh" if code[0] in ("6", "9") else ("bj" if code[0] in ("4", "8") else "sz")
+    try:
+        import httpx
+        r = httpx.get(f"https://hq.sinajs.cn/list={prefix}{code}",
+                      headers={"Referer": "https://finance.sina.com.cn"}, timeout=10, trust_env=False)
+        seg = r.text.split('"', 2)[1] if '"' in r.text else ""
+        f = seg.split(",")  # A股: 0名 1开 2昨收 3现价 4高 5低 ...
+        if len(f) < 6:
+            return None
+        latest = float(f[3]) or float(f[2])   # 现价为 0(停牌/集合竞价前)→ 用昨收兜底
+        prev = float(f[2])
+        if latest <= 0:
+            return None
+        chg = round((latest - prev) / prev * 100, 2) if prev else None
+        q = {"latest": round(latest, 3), "changeRatio": chg,
+             "open": float(f[1]) or None, "high": float(f[4]) or None, "low": float(f[5]) or None, "_src": "sina"}
+        _FREE_Q_CACHE[code] = (_t.time(), q)
+        return q
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _quote(symbol):
+    q = cached_single_quote(symbol)
+    if q and safe_float(q.get("latest")):
+        return q
+    return _free_quote(symbol) or q   # iFinD 空(配额耗尽/未配置)→ 免费实时价兜底,保竞技场不停摆
 
 
 def _secid(code: str) -> str:
