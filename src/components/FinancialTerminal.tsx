@@ -868,23 +868,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setReportDq(prev => prev || { level: 'error', detail: '研报同步失败，可能是源不稳，点右上角 ⟳ 重试' });
     } finally { setResLoading(false); }
   }, []);
-  // 加载更早研报:取当前最旧一条的日期为游标,用归档 before= 往回翻一档,去重追加(历史一条不丢、按需可查)
+  // 一次性加载全部更早历史:循环用归档 before= 往回翻到底(渐进填充,边翻边显),不用反复点。历史一条不丢。
   const loadMoreReports = useCallback(async () => {
     if (resMoreLoading || resHistDone) return;
-    const oldest = reports.length ? (reports[reports.length - 1].date || '').slice(0, 10) : '';
-    if (!oldest) return;
     setResMoreLoading(true);
     resHistLoadedRef.current = true;       // 翻历史中 → 暂停自动刷新,不收回已展开的历史
+    const keyOf = (it: ResearchWireItem) => (it.id || it.file_id || it.title || '').trim().toLowerCase();
     try {
-      const d = await apiGet<{ items: ResearchWireItem[] }>('/api/research/wire', { params: { limit: RES_RECENT_LIMIT, before: oldest } });
-      const older = d.items || [];
-      setReports(prev => {
-        const seen = new Set(prev.map(it => (it.id || it.file_id || it.title || '').trim().toLowerCase()));
-        const add = older.filter(it => { const k = (it.id || it.file_id || it.title || '').trim().toLowerCase(); return k && !seen.has(k); });
-        if (!add.length) setResHistDone(true);
-        return add.length ? [...prev, ...add] : prev;
-      });
-      if (older.length < RES_RECENT_LIMIT) setResHistDone(true);
+      let cur = reports;
+      for (let guard = 0; guard < 40; guard++) {   // 守护上限:40×60=2400 条,远超归档量,防异常死循环
+        const oldest = cur.length ? (cur[cur.length - 1].date || '').slice(0, 10) : '';
+        if (!oldest) break;
+        const d = await apiGet<{ items: ResearchWireItem[] }>('/api/research/wire', { params: { limit: RES_RECENT_LIMIT, before: oldest } });
+        const older = d.items || [];
+        const seen = new Set(cur.map(keyOf));
+        const add = older.filter(it => { const k = keyOf(it); return k && !seen.has(k); });
+        if (add.length) { cur = [...cur, ...add]; setReports(cur); }   // 渐进更新:列表边翻边变长
+        if (!add.length || older.length < RES_RECENT_LIMIT) { setResHistDone(true); break; }
+      }
     } catch { /* 下次再试 */ } finally { setResMoreLoading(false); }
   }, [reports, resMoreLoading, resHistDone]);
   // 关键词去抖在线检索；空关键词回到最新流并每分钟自动同步知识星球
@@ -2947,7 +2948,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               {/* 加载更早研报:默认只显最新一档,历史按需翻(归档一条不丢)。搜索/选股态(全量命中)不显 */}
               {!resQuery.trim() && !active && resFiltered.length > 0 && !resHistDone && (
                 <button className="bbt-rmore" disabled={resMoreLoading} onClick={loadMoreReports}>
-                  {resMoreLoading ? '加载中…' : '↓ 加载更早研报'}
+                  {resMoreLoading ? '加载中…' : '↓ 加载全部历史研报'}
                 </button>
               )}
             </div>
