@@ -1540,7 +1540,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       try { return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' }).format(new Date(m.created_at)); }
       catch { return ''; }
     })();
-    showToast('✍️ 生成金十式文案…');
+    showToast('✍️ AI 润色中…');
     // AI 改写(登录态)：忠实原文、署名 DeepFocus；失败/匿名/超时 → null 走静态回退
     let styled: string | null = null;
     try {
@@ -1562,7 +1562,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
       else { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
       setCopiedNewsId(m.id); window.setTimeout(() => setCopiedNewsId(''), 1600);
-      pingMetric('copy_news', m.title); logAct('copy', m.title); showToast(styled ? '✅ 已复制(金十式)' : '✅ 已复制');
+      pingMetric('copy_news', m.title); logAct('copy', m.title); showToast(styled ? '✅ 已复制(AI 润色)' : '✅ 已复制');
     } catch { showToast('⚠️ 复制失败，请重试'); }
   }, [pingMetric, logAct, showToast]);
 
