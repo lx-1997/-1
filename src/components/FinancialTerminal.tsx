@@ -276,6 +276,7 @@ function fmtResGroup(key: string): string {
   return `${md} 周${wd}`;
 }
 const MAX_KEEP = 6000;   // 内存里保留的最大消息数（支持向历史翻页，不再丢历史）
+const RES_RECENT_LIMIT = 60;   // 研报默认只取最新一档(界面干净);更早历史靠「加载更早」按需翻(归档 before=)
 const EQ_MIN = 180, EQ_MAX = 560, EQ_NARROW = 360;   // 行情监视列宽拖拽：最小/最大/窄列阈值(px)
 const PAGE_SIZES = [20, 30, 50];                          // 每页条数可选项
 const isMobileView = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches;
@@ -583,6 +584,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [reportDq, setReportDq] = useState<{ level?: string; label?: string; detail?: string } | null>(null);
   const [resQuery, setResQuery] = useState('');           // 研报在线全局搜索关键词
   const [resLoading, setResLoading] = useState(false);
+  // 研报默认只展示最近一档(干净);更早历史靠底部「加载更早」按需翻(归档 before= 分页,历史一条不丢)
+  const [resHistDone, setResHistDone] = useState(false);  // 已无更早历史
+  const [resMoreLoading, setResMoreLoading] = useState(false);
+  const resHistLoadedRef = useRef(false);                 // 用户已翻过历史 → 暂停自动刷新(免得把展开的历史收回去)
   const [resSyncedAt, setResSyncedAt] = useState<Date | null>(null);  // 研报最近一次成功同步时刻
   const [newsPreview, setNewsPreview] = useState<RealtimeMessageRecord | null>(null);  // 文章在线预览
   const [aiReport, setAiReport] = useState<{ title?: string; date?: string } | null>(null);  // AI 解读对象（研报或文章）
@@ -832,11 +837,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       const kws = (Array.isArray(q) ? q : [q]).map(s => s.trim()).filter(Boolean);
       if (kws.length <= 1) {
-        const params: Record<string, any> = { limit: 400 };
+        // 默认(空 q)只取最新一档,界面干净;搜索仍走全量历史归档(400)。更早历史靠底部「加载更早」按需翻(before=)。
+        const params: Record<string, any> = { limit: kws[0] ? 400 : RES_RECENT_LIMIT };
         if (kws[0]) params.q = kws[0];
         const d = await apiGet<{ items: ResearchWireItem[]; data_quality?: any }>('/api/research/wire', { params });
         setReports(d.items || []);
         setReportDq(d.data_quality || null);
+        setResHistDone((d.items || []).length < RES_RECENT_LIMIT);  // 不足一档=没更早了
+        resHistLoadedRef.current = false;  // 回到最新视图,恢复自动刷新
       } else {
         // 多关键词(中文→英文)并发检索，按序累加去重——中文命中在前，英文标题原文补在后
         const ds = await Promise.all(kws.map(kw =>
@@ -851,6 +859,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         }));
         setReports(merged);
         setReportDq(ds.find(d => d.data_quality)?.data_quality || null);
+        setResHistDone(true);              // 搜索已是全量归档,无「加载更早」
+        resHistLoadedRef.current = false;
       }
       setResSyncedAt(new Date());
     } catch {
@@ -858,12 +868,32 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setReportDq(prev => prev || { level: 'error', detail: '研报同步失败，可能是源不稳，点右上角 ⟳ 重试' });
     } finally { setResLoading(false); }
   }, []);
+  // 加载更早研报:取当前最旧一条的日期为游标,用归档 before= 往回翻一档,去重追加(历史一条不丢、按需可查)
+  const loadMoreReports = useCallback(async () => {
+    if (resMoreLoading || resHistDone) return;
+    const oldest = reports.length ? (reports[reports.length - 1].date || '').slice(0, 10) : '';
+    if (!oldest) return;
+    setResMoreLoading(true);
+    resHistLoadedRef.current = true;       // 翻历史中 → 暂停自动刷新,不收回已展开的历史
+    try {
+      const d = await apiGet<{ items: ResearchWireItem[] }>('/api/research/wire', { params: { limit: RES_RECENT_LIMIT, before: oldest } });
+      const older = d.items || [];
+      setReports(prev => {
+        const seen = new Set(prev.map(it => (it.id || it.file_id || it.title || '').trim().toLowerCase()));
+        const add = older.filter(it => { const k = (it.id || it.file_id || it.title || '').trim().toLowerCase(); return k && !seen.has(k); });
+        if (!add.length) setResHistDone(true);
+        return add.length ? [...prev, ...add] : prev;
+      });
+      if (older.length < RES_RECENT_LIMIT) setResHistDone(true);
+    } catch { /* 下次再试 */ } finally { setResMoreLoading(false); }
+  }, [reports, resMoreLoading, resHistDone]);
   // 关键词去抖在线检索；空关键词回到最新流并每分钟自动同步知识星球
   useEffect(() => {
     const kws = resSearchKws;   // 手输研报搜索 或 选中个股(中文→英文序列) → 在线全量检索历史研报
     if (!kws.length) {
       loadReports('');
-      const t = window.setInterval(() => loadReports(''), 60000);
+      // 自动同步最新;但用户正在翻历史(resHistLoadedRef)时跳过,免得把展开的更早研报收回去
+      const t = window.setInterval(() => { if (!resHistLoadedRef.current) loadReports(''); }, 60000);
       return () => window.clearInterval(t);
     }
     const t = window.setTimeout(() => { loadReports(kws); logAct('search', '研报:' + kws.join('+')); }, 350);
@@ -2914,6 +2944,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   );
                 });
               })()}
+              {/* 加载更早研报:默认只显最新一档,历史按需翻(归档一条不丢)。搜索/选股态(全量命中)不显 */}
+              {!resQuery.trim() && !active && resFiltered.length > 0 && !resHistDone && (
+                <button className="bbt-rmore" disabled={resMoreLoading} onClick={loadMoreReports}>
+                  {resMoreLoading ? '加载中…' : '↓ 加载更早研报'}
+                </button>
+              )}
             </div>
           ) : (active && feedFilter === 'all') ? (
             // 选股后：快讯 / 文章 / 研报 三列并排，一次性看全该标的的三类信息（各列独立滚动）
