@@ -1527,7 +1527,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, []);
 
 
-  // 快讯复制：发布时间(精确到秒，秀实时速度)+标题+正文+原文链接，末尾带站点网址
+  // 快讯复制(金十式)：标题头条 + 正文成段 + 落款(DeepFocus·精确到秒，秀实时) + 引流链接；原文链接保留(竞品域名除外)
   const copyNews = useCallback(async (m: RealtimeMessageRecord) => {
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
     const dt = (() => {
@@ -1535,12 +1535,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(m.created_at)).replace(/\//g, '-');
       } catch { return ''; }
     })();
+    // 金十式专业资讯文案：标题做头条 → 正文成段 → 落款(来源·精确到秒,秀实时) → 引流链接。不再用🕐时间打头/广告味页脚。
     const parts: string[] = [];
-    if (dt) parts.push(`🕐 ${dt}（北京时间）`);
-    parts.push(m.title);
-    if (m.content && m.content !== m.title) parts.push(m.content);
-    if (m.url && !isOwnHosted(m)) parts.push(`原文：${m.url}`);  // 竞品域名(futoucaixin)原文链接不外泄到复制文本
-    parts.push('', `📈 全球行情·7×24快讯·AI研报速读，搜个股一键看相关资讯`, `→ ${site}`);
+    parts.push(m.title);                                                  // ① 头条标题
+    if (m.content && m.content !== m.title) parts.push('', m.content);    // ② 正文(有更详内容才带,空行分隔)
+    if (m.url && !isOwnHosted(m)) parts.push('', `原文：${m.url}`);        // 竞品域名(futoucaixin)原文链接不外泄
+    parts.push('', `—— DeepFocus 实时快讯${dt ? ` · ${dt}（北京时间）` : ''}`,   // ③ 落款:来源+精确时间
+      `🔗 全球行情 · 7×24 快讯 · AI 研报速读 → ${site}`);                  // ④ 引流链接(保留)
     const text = parts.join('\n');
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
