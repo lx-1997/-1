@@ -178,7 +178,9 @@ async def fetch_research_wire_online(
         seen_titles.add(dedup_key)
         topic_time = str(it.get("topicCreateTime") or it.get("createTime") or "").strip()
         created = str(it.get("createTime") or "").strip()
-        disp_date = _extract_doc_date(name) or topic_time[:10] or created[:10]
+        _doc = _extract_doc_date(name)
+        # 只接受完整 YYYY-MM-DD；部分日期(如「2026年6月」→2026-06)会在前端日期分组里多出脏分组，回退到帖子时间
+        disp_date = (_doc if len(_doc) == 10 else "") or topic_time[:10] or created[:10]
         fid = str(it.get("fileId") or "")
         items.append({
             "id": fid or hashlib.sha1(name.encode("utf-8")).hexdigest()[:12],

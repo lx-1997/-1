@@ -78,6 +78,7 @@ from . import membership_codes
 from . import payment_config
 from . import ashare_review
 from . import ai_fund
+from . import research_archive
 from . import engagement
 from . import track_record
 from .ai_supply_chain import fetch_ai_supply_chain_capacity_trends
@@ -4182,52 +4183,80 @@ _WIRE_RESP_TTL = float(os.getenv("DEEPFOCUS_WIRE_RESP_TTL", "45"))  # 已构建�
 
 
 @app.get("/api/research/wire", response_model=ResearchWireResponse)
-async def api_research_wire(request: Request, limit: int = 60, q: str = ""):
+async def api_research_wire(request: Request, limit: int = 60, q: str = "", before: str = ""):
     """知识星球「海外投行报告」研报流：终端「研报」面板的数据源。
 
-    优先**在线**（同机 Node 工作台直连知识星球：空 q=最新、带 q=搜索），
-    在线不可用时回退本地抓取舱。每条带 preview_url，可在终端内联预览原文 PDF。"""
+    优先**在线**（同机 Node 工作台直连知识星球：空 q=最新、带 q=搜索），在线不可用时回退本地。
+    ⭐每次在线拉取都 upsert 进**持久归档**，最新视图合并「在线最新 + 历史归档」——老研报不再随
+    星球最新窗口滑出而消失；`before=YYYY-MM-DD` 可往回翻更早的历史。每条带 preview_url 可内联预览。"""
     # 响应级缓存：富化(市场分类/标的)有 CPU 成本，几十并发下重复请求同一列表直接命中，避免重复计算
-    _rk = f"{q.strip()}|{limit}"
+    _rk = f"{q.strip()}|{limit}|{(before or '').strip()}"
     _hit = _WIRE_RESP_CACHE.get(_rk)
     if _hit and (time.monotonic() - _hit[0]) < _WIRE_RESP_TTL:
         return _wire_conditional(request, _hit[1])
     try:
         online = await fetch_research_wire_online(limit=limit, query=q)
-        if online["items"]:
+        if online.get("items"):
+            research_archive.upsert(online["items"])  # 每次在线结果落归档，累积历史
+        # 最新视图(空 q)：合并历史归档 → 能往回翻；搜索(带 q)走在线全索引；带 before 翻更早
+        if not q.strip() or (before or "").strip():
+            rows = research_archive.query(limit=limit, query_text=q, before=before) or online.get("items") or []
+            archived = True
+        else:
+            rows = online.get("items") or []
+            archived = False
+        if rows:
             # 一次性批量取所有研报的 AI 缓存（替代逐条 2 次 SQLite 读，几十并发下从 ~1.6s 降到几十 ms）
-            cache_map = metrics_get_ai_cache_many([row["file_id"] for row in online["items"] if row.get("file_id")])
+            cache_map = metrics_get_ai_cache_many([row["file_id"] for row in rows if row.get("file_id")])
             online_items = [
                 ResearchWireItem(
-                    id=row["id"], title=row["title"], org=row["org"], date=row["date"],
-                    created_at=row["created_at"], filename=row["filename"], out=row["out"],
-                    size=row["size"], hashtag=row["hashtag"], download_count=row["download_count"],
-                    file_id=row["file_id"],
-                    instruments=_instruments_for(row["file_id"], cache_map.get(str(row.get("file_id") or "").strip())),
-                    market=_market_for(row["file_id"], row["title"], cache_map.get(str(row.get("file_id") or "").strip())),
+                    id=row["id"], title=row["title"], org=row.get("org") or "海外投行", date=row["date"],
+                    created_at=row.get("created_at") or "", filename=row.get("filename") or "", out=row.get("out") or "",
+                    size=row.get("size") or 0, hashtag=row.get("hashtag") or "#海外投行报告#",
+                    download_count=row.get("download_count") or 0, file_id=row.get("file_id") or "",
+                    instruments=_instruments_for(row.get("file_id"), cache_map.get(str(row.get("file_id") or "").strip())),
+                    market=_market_for(row.get("file_id"), row["title"], cache_map.get(str(row.get("file_id") or "").strip())),
                     preview_url=(
                         "/api/research/wire-file"
-                        f"?file_id={quote(row['file_id'])}&name={quote(row['filename'])}"
-                    ),
+                        f"?file_id={quote(row['file_id'])}&name={quote(row.get('filename') or '')}"
+                    ) if row.get("file_id") else None,
                 )
-                for row in online["items"]
+                for row in rows
             ]
             _resp = ResearchWireResponse(
-                items=online_items, total=online["total"],
+                items=online_items, total=len(rows),
                 source="海外投行研报 · 在线检索",
                 fetched_at=datetime.now(timezone.utc).isoformat(),
                 data_quality=DataQuality(
                     level="live", label="在线 · 海外投行",
-                    detail=(f"实时检索「{q.strip()}」· {online['total']} 篇" if q.strip()
-                            else f"实时最新 · {online['total']} 篇"),
+                    detail=(f"实时检索「{q.strip()}」· {len(rows)} 篇" if q.strip()
+                            else f"最新 + 历史归档 · {len(rows)} 篇" if archived
+                            else f"实时最新 · {len(rows)} 篇"),
                 ),
             )
             _WIRE_RESP_CACHE[_rk] = (time.monotonic(), _resp)
             if len(_WIRE_RESP_CACHE) > 80:  # 防无界增长
                 _WIRE_RESP_CACHE.pop(next(iter(_WIRE_RESP_CACHE)), None)
             return _wire_conditional(request, _resp)
-    except Exception:  # 在线失败（工作台未起/cookie 失效/网络）→ 回退本地抓取舱
-        pass
+    except Exception:  # 在线失败（工作台未起/cookie 失效/网络）→ 先试归档，再回退本地抓取舱
+        arch_rows = research_archive.query(limit=limit, query_text=q, before=before)
+        if arch_rows:
+            cache_map = metrics_get_ai_cache_many([r["file_id"] for r in arch_rows if r.get("file_id")])
+            return _wire_conditional(request, ResearchWireResponse(
+                items=[ResearchWireItem(
+                    id=r["id"], title=r["title"], org=r.get("org") or "海外投行", date=r["date"],
+                    created_at=r.get("created_at") or "", filename=r.get("filename") or "", out=r.get("out") or "",
+                    size=r.get("size") or 0, hashtag=r.get("hashtag") or "#海外投行报告#",
+                    download_count=r.get("download_count") or 0, file_id=r.get("file_id") or "",
+                    instruments=_instruments_for(r.get("file_id"), cache_map.get(str(r.get("file_id") or "").strip())),
+                    market=_market_for(r.get("file_id"), r["title"], cache_map.get(str(r.get("file_id") or "").strip())),
+                    preview_url=(f"/api/research/wire-file?file_id={quote(r['file_id'])}&name={quote(r.get('filename') or '')}") if r.get("file_id") else None,
+                ) for r in arch_rows],
+                total=len(arch_rows), source="海外投行研报 · 历史归档",
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+                data_quality=DataQuality(level="degraded", label="历史归档",
+                    detail=f"在线源暂不可用，显示已归档历史 · {len(arch_rows)} 篇", reasons=["online-down"]),
+            ))
 
     result = list_research_wire(limit=max(1, min(limit, 200)), query=q)
     items = [
