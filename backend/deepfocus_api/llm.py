@@ -712,34 +712,6 @@ class CloudResearchLLM:
         if isinstance(headline, str) and headline.strip():
             return neutralize_text(headline.strip())  # 晨报一句话也过合规硬护栏
 
-    async def synthesize_news_style(self, title: str, content: str = "", date_label: str = ""):
-        """把一条快讯改写成「金十数据」式简洁专业的财经通讯口吻(用于分享引流)。
-        ⚠️严格忠实:只用原文已有事实,绝不新增/编造任何数字、主体、细节;署名 DeepFocus、不冒充金十。mock/失败→None。"""
-        if self.provider == "mock":
-            return None
-        body = (content or "").strip()
-        dl = (date_label or "").strip()
-        prompt = (
-            "你是财经快讯编辑,模仿『金十数据』那种简洁、客观、专业的新闻通讯口吻,把下面这条快讯改写成一条规范的财经快讯。\n"
-            "铁律:\n"
-            "① 只用原文已有的事实,绝不新增或编造任何数字、主体、机构、时间、细节;所有数字/金额/比例/公司名必须与原文完全一致。\n"
-            f"② 开头用「DeepFocus快讯丨{dl}讯，」起手(模仿『X月X日讯，』通讯体);署名只能是 DeepFocus,严禁出现『金十数据』或任何其他媒体名。\n"
-            "③ 语言客观凝练、一段到底,不加评论、不加投资建议、不加表情符号、不加免责声明。\n"
-            "④ 原文只有一句话的,就用这种口吻把这一句写规范即可——不要硬凑长度、不要补充任何背景或推测。\n\n"
-            f"原标题:{title}\n原内容:{body or title}\n\n仅返回 JSON:{{\"styled\": \"改写后的快讯正文\"}}"
-        )
-        try:
-            data = await self.complete_json(
-                prompt, max_tokens=700, timeout_seconds=18, force_json_first=True,
-                retry_schema_hint="只需填充 styled 一个字段:忠实原文事实、金十口吻、署名DeepFocus、一段、不超过 220 字。",
-            )
-        except Exception:
-            return None
-        styled = (data or {}).get("styled")
-        if isinstance(styled, str) and styled.strip():
-            return styled.strip()  # 合规中性化在调用方(main.py 端点)统一做,本方法不依赖 compliance(prod llm.py 旧版未 import)
-        return None
-
     async def parse_screen_query(self, query):
         """把自然语言选股需求解析成对速判卡维度信号的筛选条件。mock/失败/空 → None。"""
         if self.provider == "mock":

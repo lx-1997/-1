@@ -1997,37 +1997,6 @@ async def api_news_reactions(request: Request) -> dict[str, Any]:
     return {"reactions": engagement.reactions_for(list(ids), uid)}
 
 
-@app.post("/api/news/styled")
-async def api_news_styled(request: Request) -> dict[str, Any]:
-    """把一条快讯改写成「金十数据」式专业财经口吻(分享引流用)。登录态(防滥刷,匿名前端回退静态格式)。
-    ⚠️忠实原文不编数字、署名 DeepFocus 不冒充金十;按内容指纹缓存省 token;过合规中性化;失败→styled:null。"""
-    require_current_user(request)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    title = str((body or {}).get("title") or "").strip()[:300]
-    content = str((body or {}).get("content") or "").strip()[:1500]
-    date_label = str((body or {}).get("date") or "").strip()[:16]
-    if not title:
-        return {"styled": None}
-    import hashlib as _h
-    key = "jin10:" + _h.sha1((title + "\n" + content).encode("utf-8")).hexdigest()[:24]
-    cached = metrics_get_ai_cache(key)  # 同一条快讯改写一次后跨用户复用，零增量 token
-    if isinstance(cached, dict) and isinstance(cached.get("styled"), str) and cached["styled"].strip():
-        return {"styled": cached["styled"]}
-    try:
-        styled = await llm.synthesize_news_style(title, content, date_label)
-    except Exception:
-        styled = None
-    if styled and styled.strip():
-        from .compliance import neutralize_text as _nz  # 荐股/操作措辞中性化硬护栏(改写出口)
-        styled = _nz(styled.strip())
-        metrics_set_ai_cache(key, {"styled": styled})
-        return {"styled": styled}
-    return {"styled": None}
-
-
 @app.post("/api/me/bookmark")
 async def api_bookmark_toggle(request: Request) -> dict[str, Any]:
     """收藏/取消收藏一条资讯（登录态）。返回 {bookmarked,count}。"""

@@ -1527,42 +1527,27 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, []);
 
 
-  // 快讯复制(金十式)：登录态优先用 AI 把快讯改写成「金十数据」式专业通讯口吻(忠实原文不编数字、署名 DeepFocus)，
-  // 失败/匿名回退本地静态金十排版(标题头条+正文成段+落款+链接)；两种都保留引流链接与原文(竞品域名除外)。
+  // 快讯复制(金十式·固定规则·零大模型)：头条用「DeepFocus快讯丨X月X日讯，」通讯体起手 + 原文事实(逐字忠实、不改不编) + 引流链接；
+  // 原文链接保留(竞品域名除外)。即时、确定、零 token——固定格式没必要叫大模型。
   const copyNews = useCallback(async (m: RealtimeMessageRecord) => {
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-    const dt = (() => {
-      try {
-        return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(m.created_at)).replace(/\//g, '-');
-      } catch { return ''; }
-    })();
-    const dateLabel = (() => {  // AI 通讯体起手用的「X月X日」
+    const dateLabel = (() => {  // 通讯体起手的「X月X日」(北京时间)
       try { return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' }).format(new Date(m.created_at)); }
       catch { return ''; }
     })();
-    showToast('✍️ AI 润色中…');
-    // AI 改写(登录态)：忠实原文、署名 DeepFocus；失败/匿名/超时 → null 走静态回退
-    let styled: string | null = null;
-    try {
-      const res = await apiPost<{ styled?: string | null }>('/api/news/styled', { title: m.title, content: m.content || '', date: dateLabel });
-      if (res && typeof res.styled === 'string' && res.styled.trim()) styled = res.styled.trim();
-    } catch { /* 匿名 401 / 失败 → 回退静态 */ }
-    const parts: string[] = [];
-    if (styled) {
-      parts.push(styled);  // AI 正文已含「DeepFocus快讯丨X日讯，…」头条+落款，不再重复落款
-    } else {               // 静态回退：标题头条 → 正文成段 → 落款(精确时间)
-      parts.push(m.title);
-      if (m.content && m.content !== m.title) parts.push('', m.content);
-    }
-    if (m.url && !isOwnHosted(m)) parts.push('', `原文：${m.url}`);   // 竞品域名(futoucaixin)原文链接不外泄
-    if (!styled) parts.push('', `—— DeepFocus 实时快讯${dt ? ` · ${dt}（北京时间）` : ''}`);
-    parts.push('', `🔗 全球行情 · 7×24 快讯 · AI 研报速读 → ${site}`);  // 引流链接(保留)
+    const headline = (m.title || '').trim();
+    // 头条:「DeepFocus快讯丨6月24日讯，<原文标题>。」标题已带句末标点则不再补
+    const lead = `DeepFocus快讯${dateLabel ? `丨${dateLabel}讯，` : '丨'}${headline}${/[。！？!?…」』）)\.]$/.test(headline) ? '' : '。'}`;
+    const parts: string[] = [lead];
+    if (m.content && m.content !== m.title) parts.push('', m.content);   // 正文(有更详内容才带,空行分隔)
+    if (m.url && !isOwnHosted(m)) parts.push('', `原文：${m.url}`);        // 竞品域名(futoucaixin)原文链接不外泄
+    parts.push('', `🔗 全球行情 · 7×24 快讯 · AI 研报速读 → ${site}`);     // 引流链接(保留)
     const text = parts.join('\n');
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
       else { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
       setCopiedNewsId(m.id); window.setTimeout(() => setCopiedNewsId(''), 1600);
-      pingMetric('copy_news', m.title); logAct('copy', m.title); showToast(styled ? '✅ 已复制(AI 润色)' : '✅ 已复制');
+      pingMetric('copy_news', m.title); logAct('copy', m.title); showToast('✅ 已复制');
     } catch { showToast('⚠️ 复制失败，请重试'); }
   }, [pingMetric, logAct, showToast]);
 
