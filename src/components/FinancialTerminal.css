@@ -2161,6 +2161,14 @@
   .bbt-review-entry { border-radius: 8px; }
   .bbt-trial-banner { box-shadow: none; }
 
+  /* 顶栏再压一档(用户要求图标化)：复盘/AI模拟盘/邀请得会员 收成纯图标方块(保留 title 悬浮提示),
+     只保留 开通会员(主付费 CTA)+登录 文字 → 大众入口一行排开、更短更齐，不再"又大又乱"。 */
+  .bbt-review-entry:not(.bbt-ifind-entry):not(.bbt-aiqa-entry),
+  .bbt-ref-entry { font-size: 0; gap: 0; min-width: 36px; padding: 5px 0; justify-content: center; }
+  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-ifind-entry):not(.bbt-aiqa-entry)::before { content: "📊"; font-size: 16px; }
+  .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }
+  .bbt-ref-entry::before { content: "🎁"; font-size: 16px; }
+
   /* —— 资讯筛选 chip：紧凑(仍≥32px 可点) —— */
   .bbt-filters { gap: 5px; }
   .bbt-filters .bbt-chip { min-height: 32px; padding: 5px 12px; font-size: 12px; }
