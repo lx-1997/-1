@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../services/apiClient';
 import {
   listRealtimeMessages,
+  getRealtimeMessageById,
   createRealtimeMessageStream,
   RealtimeMessageRecord,
   RealtimeMessageSeverity,
   RealtimeMessageFilters,
   StreamConnectionStatus,
 } from '../services/eventService';
+import ShareButton from './common/ShareButton';
 import * as authService from '../services/authService';
 import { runToolResearch, startDeepResearch, pollDeepResearch, type ToolTraceItem, type DeepTask } from '../services/agentService';
 import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
@@ -1356,6 +1358,23 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       openReview();
     }
   }, [refreshMembership, logAct, showToast, openReview]);
+
+  // 文章分享深链：?article={id} → 拉取该文章，未登录先弹登录（登录即解锁这一篇，不卡会员墙，契合「分享链接登录就能看原文」），
+  // 登录后打开站内全文阅读器。只跑一次：抓到参数即清掉 URL，避免重复触发。
+  const articleDeepLinkDone = useRef(false);
+  useEffect(() => {
+    if (articleDeepLinkDone.current) return;
+    let articleId = '';
+    try { articleId = new URLSearchParams(window.location.search).get('article') || ''; } catch { /* */ }
+    if (!articleId) return;
+    articleDeepLinkDone.current = true;
+    try { window.history.replaceState({}, '', window.location.pathname + window.location.hash); } catch { /* */ }
+    (async () => {
+      const article = await getRealtimeMessageById(articleId);
+      if (!article) { showToast('该文章不存在或已下线'); return; }
+      requireLogin(() => { logAct('open_news', `深链·${article.title}`); setNewsPreview(article); }, '登录查看文章全文');
+    })();
+  }, [requireLogin, logAct, showToast]);
   // 领取「登录送 3 天体验会员」：未登录先弹登录，登录后自动领取；每账号仅一次
   const onClaimTrial = useCallback(() => {
     requireLogin(async () => {
@@ -2527,6 +2546,27 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 : (m.url
                   ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
                   : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button> : null))}
+              {/* 文章分享：链接指向公开落地页 /article/{id}（软墙，登录看全文）。span 兜住冒泡，不触发整行的 AI 解读 */}
+              {m.topic === '文章' && (
+                <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
+                  <ShareButton
+                    className="bbt-nsrc"
+                    modalTitle="分享文章"
+                    tooltip="分享这篇文章"
+                    target={() => {
+                      logAct('share_click', '文章分享');
+                      const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
+                      const t = stripUrls(m.title) || m.title;
+                      return {
+                        title: t,
+                        summary: (stripUrls(m.content) || t).slice(0, 80),
+                        byline: m.source_name ? `来源 · ${m.source_name}` : undefined,
+                        url: `${site}/article/${m.id}`,
+                      };
+                    }}
+                  >分享</ShareButton>
+                </span>
+              )}
             </>
           )}
         </span>

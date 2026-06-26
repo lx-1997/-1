@@ -287,6 +287,15 @@ export async function pushRealtimeMessage(payload: RealtimeMessageCreate): Promi
   return apiPost<RealtimeMessageRecord>('/api/realtime/messages', payload);
 }
 
+/** 按 id 取单条消息（文章分享深链 ?article={id} 用）；不存在返回 null。 */
+export async function getRealtimeMessageById(id: string): Promise<RealtimeMessageRecord | null> {
+  try {
+    return await apiGet<RealtimeMessageRecord>(`/api/realtime/messages/${encodeURIComponent(id)}`);
+  } catch {
+    return null;
+  }
+}
+
 export function getRealtimeStreamUrl(): string {
   return `${getApiBaseUrls()[0]}/api/realtime/messages/stream`;
 }

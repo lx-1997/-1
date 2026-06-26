@@ -236,6 +236,22 @@ def list_realtime_messages(
     return [_row_to_message(dict(row)) for row in rows]
 
 
+def get_realtime_message(message_id: str) -> Optional[RealtimeMessageRecord]:
+    """按 id 取单条消息（文章公开落地页用）。找不到/失败 → None。"""
+    mid = (message_id or "").strip()
+    if not mid:
+        return None
+    init_realtime_message_db()
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM realtime_messages WHERE id = ?", (mid,)
+            ).fetchone()
+    except Exception:
+        return None
+    return _row_to_message(dict(row)) if row else None
+
+
 def publish_data_source_items(
     items: list[DataSourceItemRecord],
     *,

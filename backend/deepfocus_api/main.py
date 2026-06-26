@@ -244,6 +244,7 @@ from .cross_module_aggregator import (
 )
 from .realtime_messages import (
     create_realtime_message,
+    get_realtime_message,
     init_realtime_message_db,
     list_realtime_messages,
     publish_data_source_items,
@@ -6122,6 +6123,15 @@ async def api_realtime_message_stream(request: Request) -> StreamingResponse:
     )
 
 
+@app.get("/api/realtime/messages/{message_id}", response_model=RealtimeMessageRecord)
+async def api_get_realtime_message(message_id: str) -> RealtimeMessageRecord:
+    """按 id 取单条消息（文章分享深链 ?article={id} 登录后定位用）。公开，与列表端点同口径。"""
+    msg = get_realtime_message(message_id)
+    if msg is None:
+        raise HTTPException(status_code=404, detail="消息不存在")
+    return msg
+
+
 @app.post("/api/realtime/recall/subscriptions", response_model=RecallSubscriptionRecord)
 async def api_create_recall_subscription(request: RecallSubscriptionCreateRequest, _user: Optional[dict] = Depends(optional_current_user)) -> RecallSubscriptionRecord:
     return create_recall_subscription(request, user_id=(str(_user.get("sub")) if _user else None))
@@ -6498,7 +6508,8 @@ async def public_sitemap() -> Response:
             seen.add(d)
             dates.append(d)
     symbols = [h["symbol"] for h in data_hot_symbols("verdict", days=90, limit=100)]
-    return Response(seo_pages.render_sitemap_xml(dates, symbols), media_type="application/xml")
+    article_ids = [m.id for m in list_realtime_messages(topic="文章", limit=200)]
+    return Response(seo_pages.render_sitemap_xml(dates, symbols, article_ids), media_type="application/xml")
 
 
 @app.get("/review", response_class=HTMLResponse, include_in_schema=False)
@@ -6556,6 +6567,24 @@ async def public_stock_page(symbol: str, request: Request, market: str = "") -> 
     record_datapoint("seo_view", sym, {"path": "stock"}, market=(market or "").upper())  # 页面热度（推荐/榜单信号）
     related = _seo_related_stocks(sym, (market or "").upper())
     return HTMLResponse(seo_pages.render_stock_page_html(ts_dict, related, page_url=str(request.url)))
+
+
+@app.get("/articles", response_class=HTMLResponse, include_in_schema=False)
+async def public_articles_hub() -> HTMLResponse:
+    items = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=60)]
+    return HTMLResponse(seo_pages.render_articles_hub_html(items))
+
+
+@app.get("/article/{article_id}", response_class=HTMLResponse, include_in_schema=False)
+async def public_article_page(article_id: str, request: Request) -> HTMLResponse:
+    """文章公开落地页（软墙）：标题+来源+短导语公开可分享/收录；全文需登录在 App 内看。"""
+    article = get_realtime_message(article_id)
+    if article is None or (article.topic or "") != "文章":
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    recent = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=12)]
+    return HTMLResponse(
+        seo_pages.render_article_page_html(article.model_dump(mode="json"), recent, page_url=str(request.url))
+    )
 
 
 @app.get("/api/mcp/servers", response_model=McpServerListResponse)

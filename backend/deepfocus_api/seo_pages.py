@@ -319,12 +319,92 @@ def render_stocks_hub_html(items: list[dict[str, Any]]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 文章公开落地页（软墙：标题+来源+短导语公开可分享/收录，全文需登录在 App 内看）
+# --------------------------------------------------------------------------- #
+def _app_article_url(article_id: str) -> str:
+    """登录后看全文的深链：打开终端 App 并定位到该文章。"""
+    base = APP_URL if APP_URL.startswith("http") else f"{BASE_URL}{APP_URL}"
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}article={_esc(article_id)}"
+
+
+def _teaser(content: str, limit: int = 120) -> str:
+    """从正文取一段短导语（仅预览，第三方全文不上公开页）。"""
+    flat = " ".join(str(content or "").split())
+    return flat[:limit] + ("…" if len(flat) > limit else "")
+
+
+def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any]], page_url: str = "") -> str:
+    aid = str(article.get("id") or "")
+    title = str(article.get("title") or "资讯文章").strip()
+    source = str(article.get("source_name") or "DeepFocus").strip()
+    when = str(article.get("created_at") or "")[:16].replace("T", " ")
+    teaser = _teaser(article.get("content") or "", 120)
+
+    parts = [f"<h1>{_esc(title)}</h1>"]
+    parts.append(f'<div class="meta">{_esc(source)} · {_esc(when)}（UTC） · 资讯文章</div>')
+    if teaser:
+        parts.append(f'<div class="lead">{_esc(teaser)}</div>')
+    # 软墙：全文需登录在 App 内看
+    parts.append(
+        f'<a class="cta" href="{_app_article_url(aid)}">登录 DeepFocus 看全文 →</a>'
+        '<p style="color:#8b939b;font-size:13px;margin-top:10px">登录即可阅读全文，并解锁行情、自选与 AI 解读 · 行情与资讯免费。</p>'
+    )
+
+    others = [r for r in recent if r.get("id") and r.get("id") != aid][:10]
+    if others:
+        links = "".join(
+            f'<a href="{_esc(BASE_URL)}/article/{_esc(r["id"])}">{_esc((r.get("title") or "")[:30])}</a>'
+            for r in others
+        )
+        parts.append(f'<h2>近期文章</h2><div class="chips">{links}</div>')
+
+    json_ld = {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": title[:110],
+        "description": teaser[:200],
+        "datePublished": str(article.get("created_at") or ""),
+        "author": {"@type": "Organization", "name": source},
+        "publisher": {"@type": "Organization", "name": "DeepFocus 投研工作台"},
+        **({"url": page_url, "mainEntityOfPage": page_url} if page_url else {}),
+    }
+    return _page(
+        title=title,
+        description=teaser or f"{title} · 在 DeepFocus 阅读全文。",
+        body="".join(parts),
+        canonical=page_url or f"{BASE_URL}/article/{aid}",
+        json_ld=json_ld,
+    )
+
+
+def render_articles_hub_html(items: list[dict[str, Any]]) -> str:
+    rows = "".join(
+        f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
+        f'href="{_esc(BASE_URL)}/article/{_esc(it.get("id"))}">{_esc((it.get("title") or "")[:48])}</a></div>'
+        f'<ul><li>{_esc(it.get("source_name") or "DeepFocus")} · {_esc(_teaser(it.get("content") or "", 60))}</li></ul></div>'
+        for it in items if it.get("id")
+    ) or "<p>暂无文章。</p>"
+    body = (
+        "<h1>财经资讯文章</h1>"
+        '<div class="meta">DeepFocus 聚合的财经资讯，登录后阅读全文并解锁行情 / 自选 / AI 解读</div>' + rows
+    )
+    return _page(
+        title="财经资讯文章",
+        description="DeepFocus 聚合的财经资讯文章：登录后阅读全文，并解锁实时行情、自选与 AI 解读。",
+        body=body,
+        canonical=f"{BASE_URL}/articles",
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 站点地图 / robots
 # --------------------------------------------------------------------------- #
-def render_sitemap_xml(review_dates: list[str], symbols: list[str]) -> str:
-    urls = [f"{BASE_URL}/", f"{BASE_URL}/review", f"{BASE_URL}/stocks"]
+def render_sitemap_xml(review_dates: list[str], symbols: list[str], article_ids: Optional[list[str]] = None) -> str:
+    urls = [f"{BASE_URL}/", f"{BASE_URL}/review", f"{BASE_URL}/stocks", f"{BASE_URL}/articles"]
     urls += [f"{BASE_URL}/review/{d}" for d in review_dates]
     urls += [f"{BASE_URL}/stock/{s}" for s in symbols]
+    urls += [f"{BASE_URL}/article/{a}" for a in (article_ids or [])]
     entries = "".join(f"<url><loc>{html.escape(u)}</loc></url>" for u in urls)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
