@@ -111,6 +111,7 @@ interface AiAnalysis {
   bullish?: string[]; bearish?: string[]; key_points?: string[]; risks?: string[];
   instruments?: string[]; market?: string;   // 原文提及的可交易标的（A/美/港股+黄金原油白银比特币）+ 主要市场
   rating?: string | null; target_price?: string | null; confidence?: number; pages_analyzed?: number; provider?: string;
+  source_note?: string;   // 取料充分度：「已读取原文全文」/「⚠ 仅据标题概括」，诚实展示不误导
 }
 
 const SEV_TAG: Record<RealtimeMessageSeverity, string> = { critical: '紧急', warning: '利空', success: '利好', info: '资讯' };
@@ -468,7 +469,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     };
     pick();
     window.speechSynthesis.addEventListener?.('voiceschanged', pick);
-    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', pick);
+    return () => {
+      window.speechSynthesis.removeEventListener?.('voiceschanged', pick);
+      try { window.speechSynthesis.cancel(); } catch { /* 卸载时停掉排队/进行中的朗读，避免组件走后仍在念 */ }
+    };
   }, [ttsSupported]);
   const ttsSpeak = useCallback((text: string) => {
     try {
@@ -961,12 +965,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [deepErr, setDeepErr] = useState('');
   const deepPollRef = useRef<number | null>(null);
   const deepPollsRef = useRef(0);
+  const deepInFlightRef = useRef(false);   // 单次轮询在途标记：上次没回来就跳过本次，杜绝 2s 间隔下请求叠加（曾因轮询叠加吃过 429）
+  const deepStartingRef = useRef(false);    // 发起研判同步锁：防极快连点在 setDeepBusy 生效前并发建出两个轮询
   const stopDeepPoll = useCallback(() => {
     if (deepPollRef.current) { window.clearInterval(deepPollRef.current); deepPollRef.current = null; }
+    deepInFlightRef.current = false;
   }, []);
   const startDeep = useCallback(async (force = false) => {
     const sym = deepSymbol.trim();
-    if (!sym || deepBusy) return;
+    if (!sym || deepBusy || deepStartingRef.current) return;
+    deepStartingRef.current = true;
     setDeepBusy(true); setDeepErr(''); setDeepTask(null); deepPollsRef.current = 0;
     logAct(force ? 'deep_research_redo' : 'deep_research_start', sym);
     try {
@@ -974,8 +982,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       const { task_id } = await startDeepResearch(sym, nm, 'CN', force);
       stopDeepPoll();
       deepPollRef.current = window.setInterval(async () => {
+        if (deepInFlightRef.current) return;  // 上一次轮询还没回来 → 跳过本次，避免请求叠加
         deepPollsRef.current += 1;
         if (deepPollsRef.current > 90) { stopDeepPoll(); setDeepBusy(false); setDeepErr('研判超时，请稍后重试'); return; }
+        deepInFlightRef.current = true;
         try {
           const t = await pollDeepResearch(task_id);
           setDeepTask(t);
@@ -985,10 +995,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             else logAct('deep_research_done', sym);
           }
         } catch { /* 单次轮询失败不致命，继续；maxPolls 兜底 */ }
+        finally { deepInFlightRef.current = false; }
       }, 2000);
     } catch (e: any) {
       setDeepBusy(false);
       setDeepErr(e?.response?.data?.detail || e?.message || '发起失败，请稍后重试');
+    } finally {
+      deepStartingRef.current = false;
     }
   }, [deepSymbol, deepBusy, logAct, stopDeepPoll]);
   const enterDeepMode = useCallback(() => {
@@ -1156,14 +1169,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [buyOpen, payCfg, buySel, logAct]);
   // 第一步「我已完成付款」：先确认收到，进入第二步才揭示"发凭证给管理员"——付款前不提管理员，降低劝退
   const markPaid = useCallback(() => {
-    const pkg = payCfg?.packages.find(p => p.key === buyPkg) || payCfg?.packages?.[0];
+    const pkg = (payCfg?.packages || []).find(p => p.key === buyPkg) || payCfg?.packages?.[0];
     buyOutcomeRef.current = 'paid';
     logAct('buy_paid_click', pkg ? `${pkg.label} ¥${pkg.price}` : '未选套餐');  // 付款转化点（点了"我已完成付款"）
     setBuyPaid(true);
   }, [payCfg, buyPkg, logAct]);
   // 第二步「发凭证给管理员」→ 打开私信并预填套餐 + 用户名，方便管理员核对开通
   const buyContactAdmin = useCallback(async () => {
-    const pkg = payCfg?.packages.find(p => p.key === buyPkg) || payCfg?.packages[0];
+    const pkg = (payCfg?.packages || []).find(p => p.key === buyPkg) || payCfg?.packages?.[0];
     buyOutcomeRef.current = 'contact';
     logAct('buy_contact', pkg ? `${pkg.label} ¥${pkg.price}` : '未选套餐');   // 付款转化：点了「我已付款」+ 哪个套餐
     const hasQr = !!(payCfg?.wechat || payCfg?.alipay);
@@ -3215,7 +3228,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   {bull.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bull">✅ 利好 · 看涨理由</div><ul className="bbt-ai-list bbt-ai-bull">{bull.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
                   {bear.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bear">⚠️ 利空 · 风险点</div><ul className="bbt-ai-list bbt-ai-risk">{bear.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
                   {aiResult.takeaway && <div className="bbt-ai-takeaway"><b>📌 一句话启示</b>{aiResult.takeaway}</div>}
-                  <div className="bbt-ai-foot">{aiResult.provider || 'AI'} 解读 · 仅供参考、非投资建议、无逐句溯源{typeof aiResult.confidence === 'number' ? ` · 置信 ${Math.round((aiResult.confidence || 0) * 100)}%` : ''}</div>
+                  <div className="bbt-ai-foot">{aiResult.provider || 'AI'} 解读 · 仅供参考、非投资建议、无逐句溯源{typeof aiResult.confidence === 'number' ? ` · 置信 ${Math.round((aiResult.confidence || 0) * 100)}%` : ''}{aiResult.source_note ? ` · ${aiResult.source_note}` : ''}</div>
                 </>
                 );
               })()}

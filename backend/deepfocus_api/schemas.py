@@ -1058,6 +1058,7 @@ class ResearchVisionAnalysisResponse(BaseModel):
     provider: str = ""
     mode: Literal["vision"] = "vision"
     disclaimer: str = ""
+    source_note: str = ""  # 取料充分度提示：「已读取原文全文」/「仅据标题概括」，前端诚实展示不误导
     data_quality: DataQuality = Field(default_factory=DataQuality)
 
 

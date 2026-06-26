@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from html import unescape as _html_unescape
 from typing import Any, Optional
 
 import fitz  # PyMuPDF
+import httpx
 
 from .llm import CloudResearchLLM, _extract_json
 
@@ -83,8 +85,8 @@ _SCHEMA_BLOCK = (
     "{\n"
     '  "subject": "标的：这篇研报研究的公司/股票名称（有代码就带上），无法判断则留空",\n'
     '  "one_liner": "一句话结论：点明「看多还是看空 + 核心理由」，30字内，专业但好懂",\n'
-    '  "summary": "2-3句综述：研报的核心观点与买方该怎么看，专业但通俗、不堆黑话",\n'
-    '  "core_logic": "投资逻辑：这篇报告看多/看空的核心驱动与因果链是什么（如「需求超预期→产能紧张→提价→盈利上修」），2-3句讲清楚，不要空泛",\n'
+    '  "summary": "2-3句综述：研报的核心观点与买方该怎么看，专业但通俗、不堆黑话。**点名报告重点提及的具体公司/标的**（如英伟达、贵州茅台），不要只说「某科技龙头」这类泛称",\n'
+    '  "core_logic": "投资逻辑：这篇报告看多/看空的核心驱动与因果链是什么（如「英伟达数据中心需求超预期→产能紧张→提价→盈利上修」），**点名具体标的**、2-3句讲清楚，不要空泛",\n'
     '  "bullish": ["利好/看涨理由，越具体越好，尽量带数字（如 营收+25%、目标价上调）；3-5条"],\n'
     '  "bearish": ["利空/风险/看空理由，具体；2-4条"],\n'
     '  "instruments": ["报告重点提及的可交易标的，最多8个、按重要性排序。只允许两类：'
@@ -105,7 +107,9 @@ _STYLE_RULE = (
     "②利好/利空都按重要性从高到低排序，要具体、能落地，尽量带数字或事件；"
     "③一句话结论必须点明「看多还是看空」及核心理由；"
     "④投资逻辑要讲清驱动的因果链，不要空泛套话；"
-    "⑤只依据材料中真实出现的信息，没有的字段留空，绝不编造。"
+    "⑤只依据材料中真实出现的信息，没有的字段留空，绝不编造；"
+    "⑥**综述/投资逻辑/利好利空等叙述里要点名报告重点提及的具体公司或标的（与 instruments 一致）**，"
+    "让读者一眼知道在说哪只票，不要用「某公司」「科技龙头」「头部厂商」这类泛称遮掉标的。"
 )
 
 
@@ -285,6 +289,47 @@ async def analyze_pdf_auto(
         return await analyze_pdf_vision(pdf_bytes, title=title, symbol=symbol, max_pages=max_pages)
 
 
+_FETCH_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+_STRIP_NOISE_RE = re.compile(r"(?is)<(script|style|noscript|template|svg)[^>]*>.*?</\1>")
+_BLOCK_RE = re.compile(r"(?is)<(?:p|h[1-4]|li|blockquote|article|section|td)[^>]*>(.*?)</(?:p|h[1-4]|li|blockquote|article|section|td)>")
+_TAG_RE = re.compile(r"(?s)<[^>]+>")
+_WS_RE = re.compile(r"\s+")  # 块内空白(含换行/回车)统一折叠成单空格；段落间分隔由 join('\n') 保留
+
+
+async def _fetch_article_text(url: Optional[str], max_chars: int = MAX_TEXT_CHARS) -> str:
+    """尽力抓取原文正文(轻量提取，无第三方依赖)。
+
+    很多聚合「文章/综述」入库时只有标题或一句导语，正文留在 url。这里直连(trust_env=False，
+    与本仓东财/sina 抓取一致，prod 对国内站可达)取 HTML，正则抽 <p>/<li> 等段落文本拼成正文，
+    抽不出再整页去标签兜底。任何失败(超时/被墙/反爬/付费墙)都返回空串 → 上层回退「仅据标题」。"""
+    if not url or not url.startswith(("http://", "https://")):
+        return ""
+    try:
+        async with httpx.AsyncClient(
+            trust_env=False, timeout=8.0, follow_redirects=True,
+            headers={"User-Agent": _FETCH_UA, "Accept": "text/html,application/xhtml+xml"},
+        ) as client:
+            resp = await client.get(url)
+        if resp.status_code != 200:
+            return ""
+        html = resp.text or ""
+    except Exception:
+        return ""
+    html = _STRIP_NOISE_RE.sub(" ", html)
+    blocks: list[str] = []
+    for m in _BLOCK_RE.finditer(html):
+        txt = _WS_RE.sub(" ", _html_unescape(_TAG_RE.sub("", m.group(1)))).strip()
+        if len(txt) >= 12:  # 滤掉导航/按钮/版权等短碎块
+            blocks.append(txt)
+    text = "\n".join(blocks).strip()
+    if len(text) < 120:  # 段落抽取太少 → 整页去标签兜底
+        text = _WS_RE.sub(" ", _html_unescape(_TAG_RE.sub(" ", html))).strip()
+    return text[:max_chars]
+
+
 def _build_news_prompt(title: Optional[str], content: str) -> str:
     return (
         "你是资深财经编辑，擅长把新闻讲给普通投资者听。根据下面这条财经新闻，"
@@ -298,13 +343,27 @@ def _build_news_prompt(title: Optional[str], content: str) -> str:
     )
 
 
-async def analyze_news(title: Optional[str], content: str) -> dict[str, Any]:
-    """对一条财经新闻做大白话 AI 解读，返回与研报同构的结构（可复用同一前端卡片）。"""
+async def analyze_news(title: Optional[str], content: str, url: Optional[str] = None) -> dict[str, Any]:
+    """对一条财经新闻做大白话 AI 解读，返回与研报同构的结构（可复用同一前端卡片）。
+
+    解读深度取决于喂进去的料：很多聚合「文章/综述」入库只有标题或一句导语，正文留在 url。
+    这里在正文太薄且有链接时，先尽力抓回原文全文再喂模型（治本）；抓不到就照旧、并把
+    source_note 标成「仅据标题概括」让前端诚实展示（治标，不误导）。"""
     body = (content or "").strip()
     if len((title or "") + body) < 8:
         raise RuntimeError("新闻内容过短，无需解读")
-    # 同一条资讯(标题+正文相同)的 AI 解读结果稳定，按内容哈希缓存 14 天。
-    # 资讯解读是终端高频、多人重复点开的场景，命中即省整次调用。
+    # 正文太薄(<200字，多半只有标题/导语)且有原文链接 → 尽力补抓全文。抓取失败静默回退。
+    source_note = ""
+    if len(body) < 200 and url:
+        fetched = await _fetch_article_text(url)
+        if len(fetched) >= 300 and len(fetched) > len(body):
+            body = fetched
+            source_note = "已读取原文全文"
+    thin = len(body) < 80  # 抓完仍极短 = 实质只有标题
+    if thin:
+        source_note = "⚠ 原文信息有限，本解读仅据标题概括"
+    # 同一条资讯(标题+最终正文相同)的 AI 解读结果稳定，按内容哈希缓存 14 天。
+    # 抓到全文后 body 变化→哈希变→自然产生新的(更优的)缓存，不会复用旧的薄版本。
     cache_key = "NEWS:" + hashlib.md5(((title or "") + "\x00" + body).encode("utf-8")).hexdigest()
     try:
         from . import data_store
@@ -321,6 +380,8 @@ async def analyze_news(title: Optional[str], content: str) -> dict[str, Any]:
         _build_news_prompt(title, body), max_tokens=1600, timeout_seconds=45,
     )
     result = _normalize_result(data, provider=llm.model, pages=0, disclaimer=_TEXT_DISCLAIMER)
+    if source_note:
+        result["source_note"] = source_note
     if data_store is not None:
         try:
             data_store.record("news_ai", cache_key, result)

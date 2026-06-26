@@ -1510,6 +1510,7 @@ html {
 /* 终端独占模式（REACT_APP_TERMINAL_ONLY）：整页深色背景，终端居中铺满。 */
 .terminal-only-root {
   min-height: 100vh;
+  min-height: 100dvh;
   background: #000;
   display: block;
   padding: 0;
@@ -1522,6 +1523,7 @@ html {
   --z: 1;
   width: calc(100vw / var(--z));
   height: calc(100vh / var(--z));
+  height: calc(100dvh / var(--z));
   max-width: none;
   border: none;
   border-radius: 0;

@@ -5398,13 +5398,15 @@ async def run_news_prewarm() -> None:
                     break
                 title = (m.title or "").strip()
                 content = (m.content or "").strip()
-                if len(title + content) < 60:  # 太短不值得解读
+                url = (m.url or "").strip()
+                # 太短且无原文链接才跳过；有链接的薄文章正好交给抓全文补料（这类才是「解读简略」的元凶）
+                if len(title + content) < 60 and not url:
                     continue
                 key = "news:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
                 if metrics_get_ai_cache(key):
                     continue
                 try:
-                    result = await analyze_news(title, content)
+                    result = await analyze_news(title, content, url=url or None)
                     metrics_set_ai_cache(key, result)
                     done += 1
                 except asyncio.CancelledError:
@@ -6004,6 +6006,7 @@ async def api_news_ai_analyze(
             rating=result.get("rating"), target_price=result.get("target_price"),
             confidence=result.get("confidence", 0.5), provider=_AI_BRAND,
             disclaimer=result.get("disclaimer", ""),
+            source_note=result.get("source_note", ""),  # 取料充分度：已读全文/仅据标题，前端诚实展示
             data_quality=DataQuality(
                 level="degraded", label="AI 解读",
                 detail="AI 自动解读，仅供参考、非投资建议", reasons=["ai-no-citation"],
@@ -6016,7 +6019,7 @@ async def api_news_ai_analyze(
     # 走到这里必为会员（非会员未缓存已被 _check_ai_quota 拦下，不会触发生成）
     try:
         async with _AI_ANALYZE_SEM:  # 并发闸：与研报解读共用，避免小机器过载
-            result = await analyze_news(title, content)
+            result = await analyze_news(title, content, url=(request.url or "").strip() or None)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
