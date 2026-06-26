@@ -2133,24 +2133,29 @@
    作为文件末尾的集中覆盖块，靠后生效、便于统一维护与回滚。
    ============================================================ */
 @media (max-width: 560px) {
-  /* —— 顶栏压缩：品牌+按钮并到一行、搜索独占一行 → 顶栏 2 行 —— */
-  .bbt-cmd { gap: 6px; padding: 5px 9px; row-gap: 6px; }
+  /* —— 顶栏紧凑：品牌+按钮+搜索尽量少占首屏，让资讯更早出现（用户要求压缩顶部）—— */
+  .bbt-cmd { gap: 5px; padding: 4px 9px; row-gap: 4px; }
   .bbt-cmd-amber { display: none; }                     /* 隐藏「金融终端」副标题 */
   .bbt-cmd-key { font-size: 11px; padding: 1px 5px; letter-spacing: 0; }  /* DEEPFOCUS 缩小 */
-  .bbt-cmd-right { gap: 7px; row-gap: 8px; }   /* 比原 5px 舒展，按钮间不再黏在一起 */
-  .bbt-cmd-input { flex: 1 1 100%; min-width: 0; max-width: none; height: 38px; font-size: 14px; }
+  .bbt-cmd-right { gap: 6px; row-gap: 5px; }
+  .bbt-cmd-input { flex: 1 1 100%; min-width: 0; max-width: none; height: 34px; font-size: 14px; }
 
-  /* —— 顶栏按钮：≥36px 点击区(手指好点)；主操作带文字给足内边距，工具/管理员入口收成纯图标 —— */
+  /* —— 顶栏按钮：紧凑但仍够点(≥30px)；主操作带文字，工具/管理员入口收成纯图标 —— */
   .bbt-review-entry, .bbt-buy-cta, .bbt-ref-entry, .bbt-theme-btn {
-    min-height: 36px; padding: 6px 11px; display: inline-flex; align-items: center; justify-content: center;
+    min-height: 30px; padding: 4px 9px; display: inline-flex; align-items: center; justify-content: center;
   }
-  .bbt-ifind-entry, .bbt-aiqa-entry { min-width: 34px; padding: 5px 8px; }  /* 管理员专属纯图标：方块 */
+  .bbt-ifind-entry, .bbt-aiqa-entry { min-width: 32px; padding: 4px 7px; }  /* 管理员专属纯图标：方块 */
   .bbt-tts-btn { display: none; }                       /* 快讯语音播报：移动端隐藏(niche) */
   .bbt-help-btn:not(.bbt-manual-btn) { display: none; } /* 新手引导❔：移动端隐藏(一次性；说明书📖保留) */
 
-  /* —— 资讯筛选 chip：≥40px 命中区 + 更易读 —— */
-  .bbt-filters { gap: 6px; }
-  .bbt-filters .bbt-chip { min-height: 40px; padding: 8px 14px; font-size: 13px; }
+  /* —— 资讯筛选 chip：紧凑(仍≥32px 可点) —— */
+  .bbt-filters { gap: 5px; }
+  .bbt-filters .bbt-chip { min-height: 32px; padding: 5px 12px; font-size: 12px; }
+
+  /* —— 资讯搜索框 / MACRO：压低高度，让首条资讯更早出现 —— */
+  .bbt-res-bar { padding: 4px 10px; }
+  .bbt-res-input { font-size: 14px; padding: 5px 9px; }   /* 覆盖前面 ≤560 的 16px/7px */
+  .bbt-macro { padding: 4px 10px; }
 
   /* —— 资讯行：加高、放大字号行距，好读好点 —— */
   .bbt-nrow { padding: 9px 12px; gap: 8px; align-items: center; min-height: 44px; }
