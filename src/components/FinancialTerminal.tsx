@@ -277,7 +277,7 @@ function fmtResGroup(key: string): string {
   return `${md} 周${wd}`;
 }
 const MAX_KEEP = 6000;   // 内存里保留的最大消息数（支持向历史翻页，不再丢历史）
-const RES_RECENT_LIMIT = 60;   // 研报默认只取最新一档(界面干净);更早历史靠「加载更早」按需翻(归档 before=)
+const RES_RECENT_LIMIT = 250;  // 研报默认取最近一档(约覆盖最新 3 天完整;单日可达 80~90 篇,60 太小会把昨天挤成几篇);更早历史靠「加载全部历史」按需翻(归档 before=)。配合按日期手风琴折叠,默认仍只展开今天、界面干净
 const EQ_MIN = 180, EQ_MAX = 560, EQ_NARROW = 360;   // 行情监视列宽拖拽：最小/最大/窄列阈值(px)
 const PAGE_SIZES = [20, 30, 50];                          // 每页条数可选项
 const isMobileView = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches;
