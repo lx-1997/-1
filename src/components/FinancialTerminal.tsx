@@ -2553,6 +2553,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     className="bbt-nsrc"
                     modalTitle="分享文章"
                     tooltip="分享这篇文章"
+                    simple
                     target={() => {
                       logAct('share_click', '文章分享');
                       const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';

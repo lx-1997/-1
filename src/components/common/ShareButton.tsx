@@ -13,6 +13,8 @@ interface ShareButtonProps {
   tooltip?: string;
   /** 自定义按钮内容；缺省「分享」。 */
   children?: React.ReactNode;
+  /** 极简分享弹窗：只给可复制文案 + 可跳转链接。 */
+  simple?: boolean;
 }
 
 /**
@@ -25,6 +27,7 @@ const ShareButton: React.FC<ShareButtonProps> = ({
   className,
   tooltip = '把这段结论生成分享文案',
   children,
+  simple,
 }) => {
   const [active, setActive] = useState<ShareTarget | null>(null);
 
@@ -41,6 +44,7 @@ const ShareButton: React.FC<ShareButtonProps> = ({
         visible={Boolean(active)}
         content={active ?? undefined}
         modalTitle={modalTitle}
+        simple={simple}
         onCancel={() => setActive(null)}
       />
     </>

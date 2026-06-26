@@ -44,6 +44,8 @@ interface ShareModalProps {
   content?: ShareTarget;
   /** 弹窗标题，默认「分享」。 */
   modalTitle?: string;
+  /** 极简模式：只给「可复制文案 + 可跳转链接」，不展开 12 平台/生成链接等（文章分享用）。 */
+  simple?: boolean;
 }
 
 function postToTarget(post: LegacyPost): ShareTarget {
@@ -61,6 +63,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
   post,
   content,
   modalTitle,
+  simple,
 }) => {
   const target: ShareTarget = content ?? (post ? postToTarget(post) : { title: '', summary: '' });
 
@@ -206,9 +209,9 @@ const ShareModal: React.FC<ShareModalProps> = ({
     copyToClipboard(shareUrl, '链接已复制到剪贴板');
   };
 
-  // 复制完整内容
+  // 复制完整内容（极简模式用带品牌行的 wechat 文案，与文本框展示一致）
   const copyContent = () => {
-    copyToClipboard(customMessage || generateShareContent('default'), '内容已复制到剪贴板');
+    copyToClipboard(customMessage || generateShareContent(simple ? 'wechat' : 'default'), '文案已复制到剪贴板');
   };
 
   const sharePlatforms = [
@@ -281,6 +284,34 @@ const ShareModal: React.FC<ShareModalProps> = ({
       ]}
     >
       <div style={{ padding: '16px 0' }}>
+        {simple ? (
+          /* 极简模式：可复制文案 + 可跳转链接 */
+          <div>
+            <Title level={5} style={{ marginTop: 0 }}>分享文案</Title>
+            <TextArea
+              rows={4}
+              value={customMessage || generateShareContent('wechat')}
+              onChange={(e) => setCustomMessage(e.target.value)}
+              style={{ marginBottom: 10 }}
+            />
+            <Button type="primary" icon={<CopyOutlined />} onClick={copyContent} block>
+              复制文案
+            </Button>
+            {hasUrl && (
+              <div style={{ marginTop: 20 }}>
+                <Title level={5}>链接</Title>
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input value={shareUrl} readOnly prefix={<LinkOutlined style={{ color: 'var(--text-muted)' }} />} />
+                  <Button icon={<CopyOutlined />} onClick={copyLink}>复制</Button>
+                </Space.Compact>
+                <a href={shareUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 8, fontSize: 13 }}>
+                  打开链接 ↗
+                </a>
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         {/* 内容预览 */}
         <Card size="small" style={{ marginBottom: '24px', background: 'var(--surface-muted)' }}>
           <Title level={5} style={{ margin: '0 0 8px 0' }}>{target.title}</Title>
@@ -414,6 +445,8 @@ const ShareModal: React.FC<ShareModalProps> = ({
             )}
           </Text>
         </div>
+        </>
+        )}
       </div>
     </Modal>
   );

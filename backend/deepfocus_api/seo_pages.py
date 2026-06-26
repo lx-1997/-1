@@ -347,25 +347,39 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     title = str(article.get("title") or "资讯文章").strip()
     source = _public_source(article.get("source_name") or "")
     when = str(article.get("created_at") or "")[:16].replace("T", " ")
-    teaser = _teaser(article.get("content") or "", 120)
+    teaser = _teaser(article.get("content") or "", 300)
+    symbol = str(article.get("symbol") or "").strip()
 
-    parts = [f"<h1>{_esc(title)}</h1>"]
-    parts.append(f'<div class="meta">{_esc(source)} · {_esc(when)}（UTC） · 资讯文章</div>')
+    meta_bits = [_esc(source), f"{_esc(when)}（UTC）", "资讯文章"]
+    if symbol:
+        meta_bits.append(_esc(symbol))
+    parts = [f"<h1>{_esc(title)}</h1>", f'<div class="meta">{" · ".join(meta_bits)}</div>']
     if teaser and teaser.strip() != title.strip():  # 正文与标题相同则不重复展示导语
-        parts.append(f'<div class="lead">{_esc(teaser)}</div>')
+        parts.append(f'<h2>内容摘要</h2><div class="lead">{_esc(teaser)}</div>')
     # 软墙：全文需登录在 App 内看
+    parts.append(f'<a class="cta" href="{_app_article_url(aid)}">登录 DeepFocus 看全文 →</a>')
+    # 价值点：登录能看到什么（填充页面 + 说明为何登录）
     parts.append(
-        f'<a class="cta" href="{_app_article_url(aid)}">登录 DeepFocus 看全文 →</a>'
-        '<p style="color:#8b939b;font-size:13px;margin-top:10px">登录即可阅读全文，并解锁行情、自选与 AI 解读 · 行情与资讯免费。</p>'
+        '<h2>登录后你可以</h2>'
+        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+        '<li>阅读本文<strong>完整原文</strong></li>'
+        '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
+        '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>，以及每日 A 股收盘复盘</li>'
+        '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 登录即用</p></div>'
     )
 
-    others = [r for r in recent if r.get("id") and r.get("id") != aid][:10]
+    others = [r for r in recent if r.get("id") and r.get("id") != aid][:12]
     if others:
-        links = "".join(
-            f'<a href="{_esc(BASE_URL)}/article/{_esc(r["id"])}">{_esc((r.get("title") or "")[:30])}</a>'
-            for r in others
-        )
-        parts.append(f'<h2>近期文章</h2><div class="chips">{links}</div>')
+        cards = ""
+        for r in others:
+            rt = str(r.get("title") or "")
+            rteaser = _teaser(r.get("content") or "", 56)
+            sub = f'<ul><li>{_esc(rteaser)}</li></ul>' if rteaser and rteaser.strip() != rt.strip() else ""
+            cards += (
+                f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
+                f'href="{_esc(BASE_URL)}/article/{_esc(r["id"])}">{_esc(rt[:48])}</a></div>{sub}</div>'
+            )
+        parts.append(f'<h2>更多资讯</h2>{cards}')
 
     json_ld = {
         "@context": "https://schema.org",
