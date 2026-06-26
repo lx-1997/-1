@@ -2148,6 +2148,19 @@
   .bbt-tts-btn { display: none; }                       /* 快讯语音播报：移动端隐藏(niche) */
   .bbt-help-btn:not(.bbt-manual-btn) { display: none; } /* 新手引导❔：移动端隐藏(一次性；说明书📖保留) */
 
+  /* —— 降营销感(用户反馈手机端"太花太营销")：会员/邀请 CTA 从高饱和渐变+发光 → 克制扁平暖色边框，
+     圆角 14→8 收紧、去光晕；仍是醒目暖色、不弱化功能，只是不再"喊"。复盘/AI模拟盘同步收圆角。 —— */
+  .bbt-buy-cta {
+    background: rgba(255,176,46,.16); color: var(--amber-2, #ffce72);
+    border: 1px solid rgba(255,176,46,.46); box-shadow: none; border-radius: 8px; font-weight: 700;
+  }
+  .bbt-ref-entry {
+    background: rgba(255,176,46,.09); color: var(--amber-2, #ffce72);
+    border: 1px solid rgba(255,176,46,.3); box-shadow: none; border-radius: 8px; font-weight: 600;
+  }
+  .bbt-review-entry { border-radius: 8px; }
+  .bbt-trial-banner { box-shadow: none; }
+
   /* —— 资讯筛选 chip：紧凑(仍≥32px 可点) —— */
   .bbt-filters { gap: 5px; }
   .bbt-filters .bbt-chip { min-height: 32px; padding: 5px 12px; font-size: 12px; }
