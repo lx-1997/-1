@@ -17,6 +17,7 @@ import httpx
 
 from .eastmoney_announcements import EASTMONEY_HEADERS, EASTMONEY_SOURCE_NAME, query_eastmoney_announcements
 from .shared_utils import display_value, join_nonempty, parse_date, clean_title, to_float, dedupe, safe_float, short_text, safe_error
+from .skill_routing import mentions_specific_stock
 from .schemas import (
 
     ShareholderChangeInterpretRequest,
@@ -81,10 +82,14 @@ def detect_shareholder_change_request(message: str) -> Optional[ShareholderChang
     has_change_keyword = bool(
         re.search(r"增减持|增持|减持|持股变动|股份变动|股东变动|内部人交易|insider|form4|form-4|form 4", compact, re.I)
     )
+    # 范围词收紧：去掉裸"市场/所有/全部"(太泛)，市场归属仍由 A股/港股/美股等明确词判定。
     has_scope_keyword = bool(
-        re.search(r"A股|全A|沪深|港股|港交所|香港|H股|美股|美国|SEC|EDGAR|全市场|上市公司|所有|全部|市场", compact, re.I)
+        re.search(r"A股|全A|沪深|两市|港股|港交所|香港|H股|美股|美国|SEC|EDGAR|全市场|上市公司", compact, re.I)
     )
     if not has_change_keyword or not has_scope_keyword:
+        return None
+    # 锁定了具体个股(6 位代码或已知股票名)⇒ 是"这只股"的增减持问题，不跑全市场扫描，让位给个股研究路径。
+    if mentions_specific_stock(text):
         return None
 
     market = "A"

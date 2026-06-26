@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .eastmoney_announcements import EASTMONEY_HEADERS, EASTMONEY_SOURCE_NAME, query_eastmoney_announcements
+from .skill_routing import mentions_specific_stock
 from .shared_utils import safe_int, safe_float, short_text, parse_date, clean_title, display_value, join_nonempty, dedupe, safe_error
 from .schemas import (
 
@@ -56,9 +57,13 @@ def detect_cn_earnings_request(message: str) -> Optional[CnEarningsScanRequest]:
     if not text:
         return None
     compact = re.sub(r"\s+", "", text)
-    has_scope = bool(re.search(r"A股|全A|沪深|上市公司|市场", compact, re.I))
+    # 范围词收紧：去掉裸"市场"(太泛)，只认明确的全市场表述。
+    has_scope = bool(re.search(r"A股|全A|沪深|两市|上市公司|全市场", compact, re.I))
     has_earnings = bool(re.search(r"财报|年报|半年报|季报|一季报|三季报|季度报告|业绩预告|业绩快报|营业收入|净利润|扣非", compact))
     if not has_scope or not has_earnings:
+        return None
+    # 锁定了具体个股(6 位代码或已知股票名)⇒ 是"这只股"的财报问题，不跑全市场扫描，让位给个股研究路径。
+    if mentions_specific_stock(text):
         return None
 
     days = 30

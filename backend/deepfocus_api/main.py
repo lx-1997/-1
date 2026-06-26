@@ -1293,6 +1293,8 @@ async def lifespan(app: FastAPI):
     expiry_reminder_task = asyncio.create_task(run_expiry_reminder())
     # 合作方 API 续费/对账告警：每日 09:30 给管理员汇总近配额/近到期/待收款
     partner_alert_task = asyncio.create_task(run_partner_billing_alerts())
+    # A股名称→代码表：启动后拉取并每日刷新，供路由识别「个股提问」（防全市场扫描技能误触发）
+    stock_name_task = asyncio.create_task(run_stock_name_refresh())
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
@@ -5359,6 +5361,20 @@ async def run_wire_refresher() -> None:
         await asyncio.sleep(interval)
 
 
+async def run_stock_name_refresh() -> None:
+    """启动后拉取全 A 股「名称→代码」表(供路由识别个股提问，防全市场扫描技能误触发)，之后每日刷新。
+    失败静默退回磁盘缓存/内置种子，绝不影响主流程。"""
+    from .stock_name_index import refresh as _refresh_stock_names
+    await asyncio.sleep(20)  # 启动后稍等，避开冷启动繁忙期
+    while True:
+        try:
+            count = await _refresh_stock_names()
+            print(f"[stock-names] A股名称表已就绪：{count} 个")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[stock-names] 刷新失败（退回缓存/种子）：{exc}")
+        await asyncio.sleep(86400)
+
+
 async def run_cache_pruner() -> None:
     """每日清理过期 AI 解读缓存（默认 >90 天）。老研报/文章缓存极少再被读，删后即使再点也只重解析一次。
     DEEPFOCUS_AI_CACHE_MAX_AGE_DAYS=0 可关闭。"""
@@ -7946,6 +7962,37 @@ def _is_research_intent(message: str) -> bool:
     return any(kw in msg for kw in research_keywords)
 
 
+def _is_smalltalk_or_service(message: str) -> bool:
+    """闲聊 / 产品·客服·计费类问题判定——这类问题不该被强制走投研取数路径。
+
+    微信端原本对所有消息 force_research=True(确保投研问题取真数)，但「怎么充值/会员多少钱/怎么续费」
+    这类客服问题不在 weixin_channel 的问候/帮助预拦截集合里，会穿透到 tool-agent 被当投研处理 → 答非所问。
+    命中此判定时，微信端改为不强制研究，让朴素 orchestrator 自然作答。
+    """
+    t = (message or "").strip()
+    if not t:
+        return False
+    # 短问候/应答语(整句很短且以问候/客套词开头)
+    if len(t) <= 8 and re.match(
+        r"^(你好|您好|哈喽|嗨|hi|hello|hey|在吗|在不在|早|早上好|中午好|下午好|晚上好|"
+        r"谢谢|多谢|感谢|辛苦|麻烦了|好的|收到|明白|了解|嗯|哦|ok|okay|拜拜|再见)",
+        t,
+        re.I,
+    ):
+        return True
+    # 产品 / 客服 / 计费类(不涉及具体投研)
+    if re.search(
+        r"怎么(充值|付费|开通|续费|缴费|登录|注册|绑定|解绑|退订)|"
+        r"(会员|vip|套餐|价格|费用|多少钱|资费)(.*?)(多少|价格|怎么(买|开|续)|费用|贵不贵)?|"
+        r"如何(充值|付费|开通|续费|缴费|登录|注册)|"
+        r"客服|人工|投诉|退款|退费|发票|账号|密码|绑定手机|换绑",
+        t,
+        re.I,
+    ):
+        return True
+    return False
+
+
 def _tool_agent_enabled() -> bool:
     """AI 原生 tool-use agent 路径开关。
 
@@ -8136,15 +8183,27 @@ async def _route_orchestrator_chat(
     - tool_timeout：tool-agent 每轮 LLM 超时；微信个股问答多轮取数需更长(传 60)，HTTP 端点用默认 30。
     - force_research：微信场景几乎全是投研提问，强制走研究路径(确保调工具取真数)，避免「值得关注吗」这类
       不含意图关键词的问句漏判 _is_research_intent → 落到不取数的朴素 orchestrator。"""
-    shareholder_change_reply = await _maybe_shareholder_change_skill_chat(request)
-    if shareholder_change_reply:
-        return attach_data_quality(shareholder_change_reply)
-    cn_earnings_reply = await _maybe_cn_earnings_skill_chat(request)
-    if cn_earnings_reply:
-        return attach_data_quality(cn_earnings_reply)
-    major_event_reply = await _maybe_major_event_skill_chat(request)
-    if major_event_reply:
-        return attach_data_quality(major_event_reply)
+    # 全市场扫描类技能仲裁：不再「固定顺序 + 首个命中即短路」(会让上游劣质匹配抢走更合适的下游)，
+    # 而是收集所有命中的候选、按特异性打分(命中的子类型越多越具体)，只跑最高分那个；
+    # 打平时按声明顺序(股东→财报→事件)兜底。落选者不会触发各自昂贵的巨潮扫描(detect 是纯正则、零成本)。
+    scan_candidates: list[tuple[float, int, Any]] = []
+    _sh_req = detect_shareholder_change_request(request.message)
+    if _sh_req is not None:
+        _score = 1.0 + (1.0 if getattr(_sh_req, "direction", "all") != "all" else 0.0)
+        scan_candidates.append((_score, 0, _maybe_shareholder_change_skill_chat))
+    _ce_req = detect_cn_earnings_request(request.message)
+    if _ce_req is not None:
+        _score = 1.0 + len(getattr(_ce_req, "report_types", []) or [])
+        scan_candidates.append((_score, 1, _maybe_cn_earnings_skill_chat))
+    _me_req = detect_major_event_request(request.message)
+    if _me_req is not None:
+        _score = 1.0 + len(getattr(_me_req, "event_types", []) or [])
+        scan_candidates.append((_score, 2, _maybe_major_event_skill_chat))
+    if scan_candidates:
+        scan_candidates.sort(key=lambda c: (-c[0], c[1]))
+        skill_reply = await scan_candidates[0][2](request)
+        if skill_reply:
+            return attach_data_quality(skill_reply)
     # 专业研报技能=「上传 PDF/入库报告」的 IC 工作台,微信用户无法上传→对微信是死路;
     # skip_professional=True 时跳过它,让"总结最近研报"落到 get_recent_research(读网站研报wire/缓存)。
     if not skip_professional:
@@ -8204,12 +8263,14 @@ def make_weixin_orchestrator_agent_fn():
 
     async def _agent(question: str, hint: str):
         message = f"{hint}\n\n{question}" if hint else question
+        # 闲聊/客服/计费类问题不强制走投研路径(否则被当投研取数 → 答非所问)；其余仍 force_research 兜住漏判。
+        force_research = not _is_smalltalk_or_service(question)
         try:
             resp = await _route_orchestrator_chat(
                 OrchestratorChatRequest(message=message),
                 _ifind=False,
                 tool_timeout=_wx_timeout,
-                force_research=True,
+                force_research=force_research,
                 skip_professional=True,  # 微信无法上传PDF→跳过IC工作台技能,研报问落到 get_recent_research 读网站缓存
             )
         except Exception:

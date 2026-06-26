@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .schemas import MajorEventRecord, MajorEventScanRequest, MajorEventScanResponse
+from .skill_routing import mentions_specific_stock
 from .shared_utils import parse_date, clean_title, display_value, dedupe, safe_error
 
 
@@ -118,7 +119,8 @@ def detect_major_event_request(message: str) -> Optional[MajorEventScanRequest]:
     if not text:
         return None
     compact = re.sub(r"\s+", "", text)
-    has_scope = bool(re.search(r"A股|全A|沪深|上市公司|市场", compact, re.I))
+    # 范围词收紧：去掉裸"市场"(太泛，"市场怎么看/市场情绪"都会误命中)，只认明确的全市场表述。
+    has_scope = bool(re.search(r"A股|全A|沪深|两市|上市公司|全市场", compact, re.I))
     has_event = bool(
         re.search(
             r"重大事项|事件中心|公告事件|事件预警|重大公告|风险预警|控制权|重组|回购|股权激励|员工持股|"
@@ -129,6 +131,9 @@ def detect_major_event_request(message: str) -> Optional[MajorEventScanRequest]:
         )
     )
     if not has_scope or not has_event:
+        return None
+    # 锁定了具体个股(6 位代码或已知股票名)⇒ 是"这只股"的问题，不跑全市场扫描，让位给个股研究路径。
+    if mentions_specific_stock(text):
         return None
 
     days = 30
