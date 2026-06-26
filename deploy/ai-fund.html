@@ -257,14 +257,12 @@
     <div class="topright"><span class="stswitch" id="stswitch"></span><span id="bdg" class="bdg">…</span><button class="share" id="share">📸 战绩海报</button></div>
   </div>
   <div class="hero">
-    <div class="heroL card"><div class="lbl">累计收益率</div><div class="ret" id="ret">—</div><div class="sub" id="herosub">单位净值 <b class="num" id="navnum">—</b></div></div>
+    <div class="heroL card"><div class="lbl">累计收益率</div><div class="ret" id="ret">—</div><div class="sub" id="herosub">单位净值 <b class="num" id="navnum">—</b></div><div class="sub" id="herostat" style="margin-top:5px">总资产 <b class="num">—</b></div></div>
     <div class="heroR card"><span class="alpha-badge wait" id="alpha">基准对齐中</span>
       <div class="sec-h">📈 <span id="navVs">阿尔法 vs 沪深300</span> <small id="navfrom"></small></div><div class="navchart" id="navchart"></div>
       <div class="riskline" id="riskline" style="display:none"></div></div>
   </div>
   <div class="kpis">
-    <div class="kpi card"><span class="l">总资产</span><span class="v num" id="k_nav">—</span></div>
-    <div class="kpi card"><span class="l">累计盈亏</span><span class="v num" id="k_pnl">—</span></div>
     <div class="kpi card"><span class="l">胜率 / 连胜</span><span class="v" id="k_wr">—</span></div>
     <div class="kpi card accent"><span class="l">📡 本站信息驱动</span><span class="v" id="k_info">—</span><span class="x" id="k_info_x"></span></div>
   </div>
@@ -312,7 +310,7 @@ function gradeTxt(v){const a=Math.abs(v);return a<0.3?'中性':(v>0?(a>=0.6?'强
 
 function navLine(h,bench){
   const box=document.getElementById('navchart');
-  if(!h||h.length<2){const d=S.data||{};box.innerHTML='<div class="empty" style="padding:22px;line-height:1.7">🚀 '+pNm()+'第 '+(d.days_running||1)+' 天发车<br><span style="font-size:11px">已扫读 '+((d.scan&&(d.scan.news+d.scan.report+d.scan.article))||0)+' 条站内情报 · 出手 '+(d.decisions_total||0)+' 次 · 净值曲线开盘后累积</span></div>';return;}
+  if(!h||h.length<2){const d=S.data||{};box.innerHTML='<div class="empty" style="padding:22px;line-height:1.7">🚀 '+pNm()+'第 '+(d.days_running||1)+' 天发车<br><span style="font-size:11px">已扫读 '+((d.scan&&(d.scan.news+d.scan.report+d.scan.article))||0)+' 条站内情报 · 决策 '+(d.decisions_total||0)+' 次 · 净值曲线开盘后累积</span></div>';return;}
   const W=560,H=120,P=8,allv=h.map(x=>x.value).concat((bench||[]).map(x=>x.value));
   const mn=Math.min(...allv),mx=Math.max(...allv),sp=(mx-mn)||1,n=h.length;
   const X=(i,m)=>P+(W-2*P)*(m===1?.5:i/(m-1)),Y=z=>H-P-(H-2*P)*(z-mn)/sp;
@@ -441,7 +439,7 @@ function buildCenter(d){
   const dec=(d.feed||[]).find(f=>f.symbol===p.symbol&&f.kind==='trade');
   return'<div class="chips">'+chips+'</div><div class="kmeta"><span class="nm">'+esc(p.name)+'</span><span class="cd">'+esc(p.symbol)+'</span><span class="px num">'+nf(p.current_price)+'</span><span class="cg '+cl(p.pnl_pct)+'">'+fmtPct(p.pnl_pct)+'</span></div>'+
     '<div class="kwrap"><div class="chart" id="kchart"></div><div class="klegend"><i class="m5"></i>MA5 <i class="m20"></i>MA20 · <span class="up">▲买</span> <span class="down">▼卖</span> · 旗=本站快讯/研报(点看·发光为24h内新) · 悬停看当日量价</div></div>'+
-    (dec&&dec.narrative?'<div class="say" style="margin-top:9px"><span class="sa">🤖</span><span class="t">'+esc(dec.narrative)+'</span></div>':'');
+    (dec&&dec.narrative&&dec.narrative!==d.commentary?'<div class="say" style="margin-top:9px"><span class="sa">🤖</span><span class="t">'+esc(dec.narrative)+'</span></div>':'');  // 与顶部 #commentary 相同则不重复展示
 }
 function feedItem(f,id){const op=S.open===id;
   return'<div class="ev '+f.side+(op?' open':'')+'" data-feed="'+id+'"><div class="eav">'+(EAV[f.side]||'•')+'</div><div class="bub"><div class="ev-h"><span class="who2">'+esc(pNm())+'</span><span class="tg2 '+f.side+'">'+TAGS[f.side]+'</span><span class="ev-nm">'+esc(f.name)+'</span><span class="ev-cd">'+esc(f.symbol)+'</span>'+(f.pnl_pct!=null?'<span class="pill '+cl(f.pnl_pct)+'" style="padding:0 6px;font-size:11px">'+fmtPct(f.pnl_pct)+'</span>':'')+'</div>'+
@@ -493,7 +491,7 @@ function render(d){if(!d)return;const prev=S.data;S.data=d;const up=(d.nav_pct||
   if(d.mood)document.getElementById('mood').textContent=d.mood.emoji+' '+d.mood.label;
   const ls=liveState(d);document.getElementById('dot').style.setProperty('--beat',ls.beat);document.getElementById('bdg').textContent=ls.bdg;
   const ret=document.getElementById('ret');ret.className='ret'+(up?'':' dn');countUp(ret,d.nav_pct,fmtPct,prev?prev.nav_pct:null);
-  document.getElementById('herosub').innerHTML='单位净值 <b class="num">'+Number(d.nav_unit).toFixed(4)+'</b> · 运行第 '+(d.days_running||1)+' 天 · 出手 '+(d.decisions_total||0)+' 次';
+  document.getElementById('herosub').innerHTML='单位净值 <b class="num">'+Number(d.nav_unit).toFixed(4)+'</b> · 运行第 '+(d.days_running||1)+' 天 · 决策 '+(d.decisions_total||0)+' 次';  // 决策含观察/换仓；实际成交「出手」数见纪律行
   document.getElementById('navfrom').textContent='自 '+(d.started_at||'').slice(0,10);
   {const nv=document.getElementById('navVs');if(nv)nv.textContent=(d.persona&&d.persona.name||'阿尔法')+' vs 沪深300';}
   const ab=document.getElementById('alpha');
@@ -518,8 +516,8 @@ function render(d){if(!d)return;const prev=S.data;S.data=d;const up=(d.nav_pct||
   }
   document.getElementById('commentary').textContent=d.commentary||'盯盘中…';
   const s=d.stats||{},pnl=d.nav-d.started_nav;
-  countUp(document.getElementById('k_nav'),d.nav,fmtMoney,prev?prev.nav:null);
-  const kp=document.getElementById('k_pnl');kp.className='v num '+(pnl>=0?'up':'down');kp.textContent=(pnl>=0?'+':'')+fmtMoney(pnl);
+  // 总资产 + 累计盈亏并入收益率卡(与百分比同组、填补留白)，不再单列冗余 kpi
+  document.getElementById('herostat').innerHTML='总资产 <b class="num">'+fmtMoney(d.nav)+'</b> · 累计盈亏 <b class="num '+(pnl>=0?'up':'down')+'">'+(pnl>=0?'+':'')+fmtMoney(pnl)+'</b>';
   document.getElementById('k_wr').textContent=(s.win_rate!=null?s.win_rate+'%':'持有中')+' / '+(s.win_streak||0)+'连';
   const inf=s.info_driven;
   if(inf&&inf.count){document.getElementById('k_info').textContent=(inf.trade_pct>=80?'🔥 ':'')+inf.trade_pct+'%';document.getElementById('k_info_x').textContent=inf.count+' 笔由 DeepFocus 快讯/研报点火'+(inf.pnl_pct!=null?(' · 贡献'+inf.pnl_pct+'%收益'):'');}
