@@ -3032,13 +3032,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       const inWl = watchlist.includes(p.code);
                       return (
                         <button key={p.code} className={'bbt-activate-chip' + (inWl ? ' on' : '')} disabled={inWl}
-                          onClick={() => addSymbol(p.code, p.name, false)}>{inWl ? '✓ 已加' : '＋ ' + p.name}</button>
+                          onClick={() => requireLogin(() => addSymbol(p.code, p.name, false), '添加自选股票')}>{inWl ? '✓ 已加' : '＋ ' + p.name}</button>
                       );
                     })}
                     <button className="bbt-activate-chip bbt-activate-chip--more" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 搜索添加</button>
                   </div>
                   <div className="bbt-activate-foot">
-                    <button className="bbt-activate-go" onClick={armRecall}>开启盯盘提醒</button>
+                    <button className="bbt-activate-go" onClick={() => requireLogin(armRecall, '开启盯盘提醒')}>开启盯盘提醒</button>
                     <button className="bbt-activate-skip" onClick={dismissActivate}>稍后再说</button>
                   </div>
                 </div>
@@ -3264,7 +3264,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <div className="bbt-pushnudge" role="dialog" aria-label="开启盯盘提醒">
           <span className="bbt-pushnudge-ico" aria-hidden="true">🔔</span>
           <span className="bbt-pushnudge-txt">已加自选 · 开启盯盘,有快讯/异动第一时间叫你<b>(关掉页面也能收到)</b></span>
-          <button className="bbt-pushnudge-go" onClick={armRecall}>开启</button>
+          <button className="bbt-pushnudge-go" onClick={() => requireLogin(armRecall, '开启盯盘提醒')}>开启</button>
           <button className="bbt-pushnudge-x" onClick={() => setPushNudge(false)} aria-label="稍后">稍后</button>
         </div>
       )}

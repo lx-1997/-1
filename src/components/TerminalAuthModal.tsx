@@ -55,7 +55,14 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
   useEffect(() => {
     if (open) {
       setError(''); setBusy(false);
-      try { const r = localStorage.getItem('df_ref'); if (r && !invite) { setInvite(r); setMode('register'); } } catch { /* */ }
+      try {
+        const r = localStorage.getItem('df_ref');
+        if (r && !invite) { setInvite(r); setMode('register'); }
+        // 匿名(本机从未登录过)默认开「注册」态——撞到收藏/自选/盯盘等钩子的多是新访客，直接给注册表单提转化；
+        // 老用户(本机有登录记录 df_has_account)仍默认登录，免去多点一下的摩擦。
+        else if (!localStorage.getItem('df_has_account')) { setMode('register'); }
+        else { setMode('login'); }
+      } catch { /* */ }
     } else { setUsername(''); setPassword(''); setPhone(''); setEmail(''); setInvite(''); }
   }, [open]);
 
@@ -110,7 +117,7 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
       const session = isRegister
         ? await authService.register(email.trim(), u, password, phone.trim(), invite.trim(), hp, tsTokenRef.current)
         : await authService.login(u, password);
-      try { localStorage.removeItem('df_ref'); } catch { /* */ }  // 注册成功消费掉邀请码
+      try { localStorage.removeItem('df_ref'); localStorage.setItem('df_has_account', '1'); } catch { /* */ }  // 消费邀请码 + 标记本机已有账号(下次弹层默认登录态)
       onAuthed(session.authUser.username, isRegister);
       onClose();
     } catch (err) {
