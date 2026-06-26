@@ -1476,23 +1476,44 @@
     font-size: 13px; letter-spacing: 0; -webkit-text-size-adjust: 100%;
   }
 
-  /* 命令栏：品牌+控制按钮合并成一行（时钟/副标题/按钮文字全隐藏，只留图标），搜索框单独占一行 */
+  /* 命令栏：品牌一行，右侧控件统一成【等高 32px 图标钮】，搜索框单独占一行。
+     统一尺寸/形状 = 视觉协调，换行也整齐，不再高矮参差堆满半屏。 */
   .bbt-cmd { flex-wrap: wrap; gap: 6px 7px; padding: 7px 10px; }
   .bbt-cmd-amber { display: none; }
-  .bbt-cmd-input { order: 5; flex: 1 1 100%; font-size: 13px; padding: 6px 8px; background: var(--input-bg); border-radius: 4px; }
-  /* 右侧按钮：允许换行成多排 + 舒展间距，别再挤死在一行(挤死就只能收成看不懂的图标) */
-  .bbt-cmd-right { margin-left: auto; gap: 8px; row-gap: 8px; font-size: 10px; flex-wrap: wrap; justify-content: flex-end; }
-  /* 按钮不被压缩：放不下就整颗换到下一排，而非压扁裁掉文字 */
+  .bbt-cmd-input { order: 5; flex: 1 1 100%; font-size: 13px; padding: 7px 10px; background: var(--input-bg); border-radius: 8px; }
+  .bbt-cmd-right { margin-left: auto; gap: 7px; row-gap: 7px; font-size: 10px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
   .bbt-cmd-right > button, .bbt-cmd-right > .bbt-acctwrap { flex-shrink: 0; }
-  .bbt-clock { display: none; }
-  .bbt-mkt { display: none; }            /* 各市场开/闭盘时钟：手机隐藏（底部状态栏已有连接态） */
-  .bbt-btn-txt { display: none; }        /* 主题按钮只留图标 */
-  .bbt-theme-btn { padding: 6px 10px; }
-  /* 说明书/引导：收成干净的小图标圆钮——base 是 22px 圆框，「说明书」文字会溢出去跟登录撞一起。
-     用 .bbt-cmd-right 前缀提高特异性，压过文件后面的 base 定义(否则覆盖不生效)。 */
-  .bbt-cmd-right .bbt-help-btn { font-size: 0; width: 32px; height: 32px; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; }
-  .bbt-cmd-right .bbt-manual-btn::before { content: "📖"; font-size: 15px; }
+  .bbt-clock, .bbt-mkt, .bbt-btn-txt { display: none; }
+
+  /* —— 统一图标钮：等高等宽 32×32、同圆角 —— */
+  .bbt-cmd-right .bbt-theme-btn, .bbt-cmd-right .bbt-tts-btn,
+  .bbt-cmd-right .bbt-review-entry, .bbt-cmd-right .bbt-ref-entry,
+  .bbt-cmd-right .bbt-help-btn {
+    width: 32px; height: 32px; min-width: 32px; padding: 0; gap: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 9px; line-height: 1; overflow: visible;
+  }
+  /* 主题/语音钮的 emoji 在文本里，保留字号(不可 font-size:0) */
+  .bbt-cmd-right .bbt-theme-btn, .bbt-cmd-right .bbt-tts-btn { font-size: 15px; }
+  /* 数据类入口/邀请/说明书：隐藏文字，用 ::before 给等大图标 */
+  .bbt-cmd-right .bbt-review-entry, .bbt-cmd-right .bbt-ref-entry,
+  .bbt-cmd-right .bbt-help-btn { font-size: 0; }
+  .bbt-cmd-right .bbt-review-entry::before { content: "📊"; font-size: 16px; }   /* 复盘 */
+  .bbt-cmd-right .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }   /* AI 模拟盘 */
+  .bbt-cmd-right .bbt-ifind-entry::before  { content: "📡"; font-size: 16px; }   /* iFinD */
+  .bbt-cmd-right .bbt-aiqa-entry::before   { content: "💬"; font-size: 16px; }   /* AI 问答 */
+  .bbt-cmd-right .bbt-ref-entry::before    { content: "🎁"; font-size: 16px; }   /* 邀请 */
+  .bbt-cmd-right .bbt-manual-btn::before   { content: "📖"; font-size: 15px; }
   .bbt-cmd-right .bbt-help-btn:not(.bbt-manual-btn)::before { content: "❔"; font-size: 15px; }
+  .bbt-cmd-right .bbt-ref-entry-hot, .bbt-cmd-right .bbt-buy-cta-hot { display: none; }
+  .bbt-cmd-right .bbt-ref-entry-badge { position: absolute; top: -5px; right: -5px; }
+
+  /* 续费会员：唯一保留文字的强调钮（转化关键），同高 32px 小药丸 */
+  .bbt-cmd-right .bbt-buy-cta { height: 32px; padding: 0 13px; font-size: 12px; border-radius: 9px; gap: 4px; }
+
+  /* 头像：手机上只留圆形头像，隐藏用户名+副标题那一大坨（点开抽屉里有全部） */
+  .bbt-cmd-right .bbt-acct-trigger { padding: 0; border: none; background: transparent; gap: 0; }
+  .bbt-cmd-right .bbt-acct-trigger-txt, .bbt-cmd-right .bbt-acct-trigger-caret { display: none; }
 
   /* 跑马灯 / 宏观条：可横向滑动，不强行换行成高墙 */
   .bbt-macro { gap: 12px; padding: 6px 10px; font-size: 12px; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }

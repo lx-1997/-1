@@ -94,28 +94,30 @@ const ShareModal: React.FC<ShareModalProps> = ({
     }
   };
 
-  // 生成分享内容
+  // 生成分享内容。标题/摘要/署名按非空拼接（空字段不留空行，避免重复/冗余），脚注统一带品牌归属。
   const generateShareContent = (platform: string) => {
-    const byline = target.byline ? `${target.byline}\n\n` : '';
-    const baseContent = `${target.title}\n\n${target.summary}\n\n${byline}`;
+    const baseContent = [target.title, target.summary, target.byline]
+      .map(s => (s || '').trim())
+      .filter(Boolean)
+      .join('\n\n');
     const link = hasUrl ? shareUrl : '';
 
     switch (platform) {
       case 'wechat':
-        return `${baseContent}来自 DeepFocus 投研工作台${link ? `\n${link}` : ''}`;
+        return `${baseContent}\n\n来自 DeepFocus 投研工作台${link ? `\n${link}` : ''}`;
       case 'weibo':
-        return `${baseContent}#DeepFocus# #投研#${link ? ` ${link}` : ''}`;
+        return `${baseContent}\n\n#DeepFocus# #投研#${link ? ` ${link}` : ''}`;
       case 'qq':
-        return `${baseContent}分享自 DeepFocus${link ? `：${link}` : ''}`;
+        return `${baseContent}\n\n分享自 DeepFocus${link ? `：${link}` : ''}`;
       case 'twitter':
-        return `${baseContent}From DeepFocus${link ? `\n${link}` : ''}`;
+        return `${baseContent}\n\nFrom DeepFocus${link ? `\n${link}` : ''}`;
       case 'facebook':
       case 'linkedin':
-        return `${baseContent}Shared from DeepFocus${link ? `\n${link}` : ''}`;
+        return `${baseContent}\n\nShared from DeepFocus${link ? `\n${link}` : ''}`;
       case 'email':
-        return `主题：${target.title}\n\n内容：${target.summary}\n\n${byline}${link ? `查看完整内容：${link}` : ''}`;
+        return `主题：${target.title}\n\n内容：${target.summary || target.title}${target.byline ? `\n\n${target.byline}` : ''}${link ? `\n\n查看完整内容：${link}` : ''}`;
       default:
-        return `${baseContent}${link}`.trim();
+        return `${baseContent}${link ? `\n\n${link}` : ''}`.trim();
     }
   };
 

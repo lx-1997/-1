@@ -334,16 +334,24 @@ def _teaser(content: str, limit: int = 120) -> str:
     return flat[:limit] + ("…" if len(flat) > limit else "")
 
 
+def _public_source(name: str) -> str:
+    """对外署名：内部聚合源名(DAO财经/道财经等)一律收敛为 DeepFocus(品牌红线，不外露)。"""
+    n = (name or "").strip()
+    if not n or "DAO" in n.upper() or "道财经" in n or "财经" in n:
+        return "DeepFocus"
+    return n
+
+
 def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any]], page_url: str = "") -> str:
     aid = str(article.get("id") or "")
     title = str(article.get("title") or "资讯文章").strip()
-    source = str(article.get("source_name") or "DeepFocus").strip()
+    source = _public_source(article.get("source_name") or "")
     when = str(article.get("created_at") or "")[:16].replace("T", " ")
     teaser = _teaser(article.get("content") or "", 120)
 
     parts = [f"<h1>{_esc(title)}</h1>"]
     parts.append(f'<div class="meta">{_esc(source)} · {_esc(when)}（UTC） · 资讯文章</div>')
-    if teaser:
+    if teaser and teaser.strip() != title.strip():  # 正文与标题相同则不重复展示导语
         parts.append(f'<div class="lead">{_esc(teaser)}</div>')
     # 软墙：全文需登录在 App 内看
     parts.append(
@@ -382,7 +390,7 @@ def render_articles_hub_html(items: list[dict[str, Any]]) -> str:
     rows = "".join(
         f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
         f'href="{_esc(BASE_URL)}/article/{_esc(it.get("id"))}">{_esc((it.get("title") or "")[:48])}</a></div>'
-        f'<ul><li>{_esc(it.get("source_name") or "DeepFocus")} · {_esc(_teaser(it.get("content") or "", 60))}</li></ul></div>'
+        f'<ul><li>{_esc(_public_source(it.get("source_name") or ""))} · {_esc(_teaser(it.get("content") or "", 60))}</li></ul></div>'
         for it in items if it.get("id")
     ) or "<p>暂无文章。</p>"
     body = (

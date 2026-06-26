@@ -34,8 +34,16 @@ def test_article_page_soft_wall_no_fulltext_leak():
     assert _TAIL_MARKER not in page                   # ⭐ 导语之外的全文尾部不泄漏
     assert "登录 DeepFocus 看全文" in page            # 软墙 CTA
     assert "?article=a-1" in page                      # 登录深链
-    assert "DAO财经" in page                           # 来源
+    assert "DeepFocus" in page                         # 对外署名 DeepFocus
+    assert "DAO财经" not in page                        # ⭐ 内部聚合源名不外露(品牌红线)
     assert '"@type": "NewsArticle"' in page            # 结构化数据
+
+
+def test_public_source_neutralizes_internal_names():
+    assert seo_pages._public_source("DAO财经") == "DeepFocus"
+    assert seo_pages._public_source("道财经") == "DeepFocus"
+    assert seo_pages._public_source("") == "DeepFocus"
+    assert seo_pages._public_source("Morgan Stanley") == "Morgan Stanley"  # 正经外部源保留
 
 
 def test_article_page_escapes_content():

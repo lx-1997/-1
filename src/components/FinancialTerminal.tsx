@@ -2557,10 +2557,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       logAct('share_click', '文章分享');
                       const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
                       const t = stripUrls(m.title) || m.title;
+                      const body = stripUrls(m.content);
+                      // 正文与标题不同才作摘要,避免标题重复;不带来源 byline(品牌归属由文案脚注「来自 DeepFocus」承担,且不外露内部聚合源名)
                       return {
                         title: t,
-                        summary: (stripUrls(m.content) || t).slice(0, 80),
-                        byline: m.source_name ? `来源 · ${m.source_name}` : undefined,
+                        summary: body && body !== t ? body.slice(0, 80) : '',
                         url: `${site}/article/${m.id}`,
                       };
                     }}
