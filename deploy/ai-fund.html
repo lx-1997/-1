@@ -78,13 +78,14 @@
   .heroL .ret{font-size:42px;font-weight:900;line-height:1;letter-spacing:-1px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .heroL .ret.dn{background:linear-gradient(135deg,#f6465d,#ff8a3d);-webkit-background-clip:text;background-clip:text;color:transparent}
   .heroL .sub{font-size:13px;color:var(--ink2);margin-top:6px}.heroL .sub b{color:var(--ink)}
-  .heroR{flex:1.7;min-width:320px;padding:12px 15px;display:flex;flex-direction:column;position:relative}
+  .heroL #herostat{font-size:15px;margin-top:8px}.heroL #herostat b{font-weight:800}  /* 强化：总资产/盈亏提为头部关键数 */
+  .heroR{flex:1;min-width:300px;padding:12px 15px;display:flex;flex-direction:column;position:relative}  /* 弱化：沪深300基准图从独大(1.7)收到与收益率卡相当 */
   .alpha-badge{position:absolute;right:14px;top:12px;font-size:13px;font-weight:800;padding:5px 12px;border-radius:13px;color:#fff;background:var(--grad);box-shadow:0 5px 14px rgba(124,58,237,.3);z-index:2}
   .alpha-badge.dn{background:#9aa0b8;box-shadow:none}.alpha-badge.wait{background:#cdd2e6;color:#5b6178;box-shadow:none}
   .riskline{margin-top:9px;gap:8px 12px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--ink2);line-height:1.5}
   .riskline b{color:var(--ink);font-weight:800}.riskline i{color:var(--ink3);font-style:normal;margin:0 1px}
   .riskline .acc{color:var(--ink3)}
-  .navchart{flex:1;position:relative;min-height:104px}
+  .navchart{flex:1;position:relative;min-height:88px}
   .navbub{position:absolute;right:0;transform:translateY(-50%);display:flex;align-items:center;gap:5px;color:#fff;font-size:12px;font-weight:800;padding:3px 9px 3px 4px;border-radius:14px;white-space:nowrap;z-index:2}
   .navbub.me{background:var(--grad);box-shadow:0 4px 12px rgba(124,58,237,.35)}.navbub.bench{background:#9aa0b8;font-weight:700;font-size:11px}
   .navbub .a{width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-size:11px}
@@ -92,11 +93,11 @@
   .kpis{flex:0 0 auto;display:flex;gap:10px;flex-wrap:wrap}
   .kpi{flex:1;min-width:116px;padding:10px 14px;display:flex;flex-direction:column;gap:3px}
   .kpi .l{font-size:11px;color:var(--ink2);font-weight:600}.kpi .v{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}.kpi .x{font-size:10px;color:var(--ink3)}
-  .kpi.accent{background:linear-gradient(135deg,#faf5ff,#fdf2f8);border-color:#f0e6fb}
+  .kpi.accent{background:var(--card);border-color:var(--line)}  /* 弱化：本站信息驱动去紫色高亮，回归普通卡(8%/0%收益不再被放大) */
 
-  .say{flex:0 0 auto;display:flex;gap:11px;align-items:center;padding:9px 15px;border-radius:14px;background:linear-gradient(135deg,#faf5ff,#fef2fb);border:1px solid #f0e6fb}
-  .say .sa{font-size:20px;width:34px;height:34px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;background:var(--grad);border-radius:11px}
-  .say .t{font-size:13px;line-height:1.5;font-weight:500;flex:1;min-width:0}
+  .say{flex:0 0 auto;display:flex;gap:9px;align-items:center;padding:6px 12px;border-radius:10px;background:var(--card);border:1px solid var(--line)}  /* 弱化：口语解说去紫底缩小，不再占整条主位 */
+  .say .sa{font-size:15px;width:26px;height:26px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;background:var(--grad);border-radius:8px}
+  .say .t{font-size:12px;line-height:1.45;font-weight:500;flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   .scan{font-size:11px;font-weight:700;color:var(--cyan);background:rgba(6,182,212,.1);padding:4px 10px;border-radius:11px;white-space:nowrap}
 
   .tabs{display:none;gap:7px;flex:0 0 auto}
