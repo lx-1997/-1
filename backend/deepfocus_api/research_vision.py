@@ -21,7 +21,7 @@ from .llm import CloudResearchLLM, _extract_json
 _SENSITIVE_CONTENT_RE = re.compile(r"content\[(\d+)\]")
 
 RENDER_DPI = 120  # 适度降低 DPI：渲染更快、图更小、推理更快（摘要场景足够清晰）
-MAX_VISION_PAGES = 8
+MAX_VISION_PAGES = 14  # 厚 deck(如高盛十大产业主线 46 页)的重点标的在更深的页，读 6-8 页抽不到→读到 ~14 页才能抽出 NVDA/MSFT 等
 MIN_TEXT_CHARS = 400  # 文本层够多时走快速文本通道（~5-10s），否则回退视觉（~30-50s）
 MAX_TEXT_CHARS = 7000
 _VISION_DISCLAIMER = "本结论基于研报页面图像的 AI 视觉解读，非逐句溯源，可能遗漏或误读，请以原文为准。"

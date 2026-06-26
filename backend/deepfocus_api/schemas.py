@@ -1028,7 +1028,7 @@ class ResearchVisionAnalyzeRequest(BaseModel):
     filename: Optional[str] = None
     title: Optional[str] = None
     symbol: Optional[str] = None
-    max_pages: int = 6
+    max_pages: int = 14  # 视觉解读读取页数：厚 deck 标的在深页（实测高盛46页deck标的在13-14页），读14页才能抽出；短报告按实际页数渲染不浪费
 
 
 class NewsAnalyzeRequest(BaseModel):
