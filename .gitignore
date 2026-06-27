@@ -103,6 +103,8 @@ android/keystore.properties
 backend/*.sqlite3
 backend/*.sqlite3-*
 backend/.payment_config.json
+backend/.community_config.json
+backend/community_qr/
 backend/.dao_bridge_state.json
 
 # 构建产物
