@@ -267,7 +267,7 @@ const TerminalWeixinBind: React.FC<{ onClose: () => void; showToast?: (m: string
 
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #222a38', color: '#8b95a7', fontSize: 12, lineHeight: 1.6 }}>
           尊享 / 永久会员专享：绑定后，DeepFocus 的重要快讯会<b>主动推送</b>到你微信（带利好/利空标注），可在上方<b>自助选择</b>推送范围。
-          <br />AI 问答功能内测中，暂未开放。
+          <br />绑定后还能在微信里直接<b>向 DeepFocus AI 提问</b>（会员专享，畅聊不限次；常见问题秒回）。
           {onOpenConsole ? (
             <div style={{ marginTop: 10 }}>
               <span onClick={onOpenConsole} style={{ color: '#5a9cff', cursor: 'pointer' }}>📣 打开管理员推送台（内测）→</span>
