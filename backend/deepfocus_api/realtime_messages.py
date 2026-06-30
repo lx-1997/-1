@@ -28,9 +28,19 @@ DB_PATH = Path(
 )
 
 MAX_MESSAGES = int(os.getenv("DEEPFOCUS_REALTIME_MAX_MESSAGES", "20000"))
+MAX_SUBSCRIBERS = int(os.getenv("DEEPFOCUS_REALTIME_MAX_SUBSCRIBERS", "300"))
+# SSE 最大存活时长(秒)：长连接到点主动收尾，让浏览器原生 EventSource 重连。
+# 作用=回收「后台/已离开标签页长期占用的连接槽」，防止 200 总量上限被僵尸连接永久占满。
+# 活跃用户重连无感(几秒);移动端被挂起的后台页则借机彻底释放槽位。0/负数=不限(回退旧行为)。
+STREAM_MAX_LIFETIME_SECONDS = int(os.getenv("DEEPFOCUS_REALTIME_STREAM_MAX_LIFETIME", "1500"))
 _subscribers: set[asyncio.Queue[RealtimeMessageRecord]] = set()
 # 新消息落库+广播后的同步钩子（如离线召回扇出）。解耦：本模块不依赖召回实现。
 _post_hooks: list[Callable[[RealtimeMessageRecord], None]] = []
+
+
+def subscriber_count() -> int:
+    """当前在线的实时快讯 SSE 长连接数（容量监控用：这正是会占满 nginx 连接的那批）。"""
+    return len(_subscribers)
 
 
 def register_post_message_hook(hook: Callable[[RealtimeMessageRecord], None]) -> None:
@@ -286,15 +296,23 @@ def publish_data_source_items(
 
 
 async def realtime_message_event_stream(request: Request) -> AsyncIterator[str]:
+    if len(_subscribers) >= MAX_SUBSCRIBERS:
+        yield _sse_event("error", {"message": "当前在线人数已达上限，请稍后重试。"})
+        return
     queue: asyncio.Queue[RealtimeMessageRecord] = asyncio.Queue(maxsize=100)
     _subscribers.add(queue)
+    started = asyncio.get_event_loop().time()  # 单调时钟：用于最大存活时长回收，无需新增 import
     try:
         yield _sse_event("connected", {"connected": True, "created_at": utc_now_iso()})
         while True:
             if await request.is_disconnected():
                 break
+            # 到达最大存活时长 → 主动收尾,客户端原生重连;回收后台/僵尸标签页长期占用的连接槽。
+            if STREAM_MAX_LIFETIME_SECONDS > 0 and (asyncio.get_event_loop().time() - started) >= STREAM_MAX_LIFETIME_SECONDS:
+                yield _sse_event("reconnect", {"reason": "max-lifetime", "created_at": utc_now_iso()})
+                break
             try:
-                message = await asyncio.wait_for(queue.get(), timeout=20)
+                message = await asyncio.wait_for(queue.get(), timeout=15)
             except asyncio.TimeoutError:
                 yield _sse_event("heartbeat", {"created_at": utc_now_iso()})
                 continue

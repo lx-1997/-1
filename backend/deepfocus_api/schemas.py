@@ -818,6 +818,78 @@ class PersonDigestResponse(BaseModel):
     data_quality: DataQuality = Field(default_factory=DataQuality)
 
 
+class CelebrityViewItem(BaseModel):
+    """一条名人观点：标题 + 正文(文字) + 图片 + 可播放语音 + 出处/时间。
+
+    与 PersonVoiceItem 的区别：支持富媒体（图文 + 语音），数据源可插拔（不止 Google）。
+    image_urls / audio_url 为空时前端自动省略对应区块；source_url 可空（非新闻聚合源）。
+    """
+
+    id: str
+    title: str
+    body: str = ""
+    image_urls: list[str] = Field(default_factory=list)      # 列表小图(large)
+    image_fulls: list[str] = Field(default_factory=list)     # 点开放大用原图(original)，与 image_urls 同序
+    audio_url: str = ""
+    source_name: str = ""
+    source_url: str = ""
+    source_type: str = ""  # curated / zsxq / ... 数据来源标识
+    published_at: Optional[str] = None
+    reported_date: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    importance_score: int = Field(default=55, ge=0, le=100)
+
+
+class CelebrityProfile(BaseModel):
+    """名人档案 + 其观点条目聚合（镜像 PersonProfile，条目改为富媒体）。"""
+
+    id: str
+    name: str
+    en_name: str = ""
+    role: str = ""
+    org: str = ""
+    image: str = ""
+    image_credit: str = ""
+    avatar: str = ""
+    monogram: str = ""
+    accent: str = "#2563eb"
+    bio: str = ""
+    topics: list[str] = Field(default_factory=list)
+    why_it_matters: str = ""
+    items: list[CelebrityViewItem] = Field(default_factory=list)
+    item_count: int = 0
+    latest_date: Optional[str] = None
+    digest: str = ""
+    digest_provider: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class CelebrityViewsResponse(BaseModel):
+    """名人观点：名人头像墙 → 各自观点（图文 / 语音 / 出处），数据源可插拔。"""
+
+    provider: str = "curated"  # curated / zsxq / mixed / fallback
+    generated_at: str
+    figures: list[CelebrityProfile] = Field(default_factory=list)
+    total_items: int = 0
+    sources: list[str] = Field(default_factory=list)  # 本次启用的数据源
+    cache_age_seconds: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
+class CelebrityDigestResponse(BaseModel):
+    """单个名人的 AI 观点综述（由其观点条目合成，方向不可编造，失败回退确定性模板）。"""
+
+    id: str
+    name: str
+    digest: str = ""
+    digest_provider: str = ""
+    item_count: int = 0
+    generated_at: str
+    data_quality: DataQuality = Field(default_factory=DataQuality)
+
+
 McpTransport = Literal["streamable_http", "stdio", "hosted"]
 McpServerStatus = Literal["unknown", "connected", "error", "disabled"]
 McpCapabilityType = Literal["tool", "resource", "prompt"]
@@ -909,6 +981,7 @@ class McpToolCallResponse(BaseModel):
 
 class MarketQuote(BaseModel):
     symbol: str
+    name: Optional[str] = None  # 标的名称(东财 f58)：让调用方/模型核对"拿到的是不是想要的那只"(防 000001 等歧义码静默错配)
     price: float
     change: Optional[float] = None
     change_percent: Optional[float] = None
@@ -1045,6 +1118,7 @@ class ResearchVisionAnalysisResponse(BaseModel):
     summary: str = ""
     core_logic: str = ""                                # 投资逻辑：核心驱动/因果链
     takeaway: str = ""                                  # 一句话启示
+    df_take: str = ""                                   # DeepFocus 视角点评：我方原创独立判断（转化创作，版权安全，可盖 DeepFocus 水印）
     bullish: list[str] = Field(default_factory=list)    # 利好/看涨
     bearish: list[str] = Field(default_factory=list)    # 利空/风险
     instruments: list[str] = Field(default_factory=list)  # 提及标的（A/美/港股+黄金原油白银比特币）

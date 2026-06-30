@@ -727,6 +727,35 @@ def create_user(
         return _to_out(user)
 
 
+def reset_password(identifier: str, new_password: str) -> Optional[AuthUserOut]:
+    """管理员重置某用户口令（按 用户名 / 邮箱 / 手机号 定位，大小写不敏感）。
+
+    安全说明：口令以 bcrypt 单向哈希存储、原文不可逆查询，故只能「重置成新值」而非「找回旧值」。
+    返回被改用户的 AuthUserOut；用户不存在返回 None。会同时轮换 session_id 把该用户旧端挤下线。
+    """
+    ident = (identifier or "").strip()
+    if not ident:
+        return None
+    if not (6 <= len(new_password) <= 200):
+        raise ValueError("新口令长度需在 6~200 之间")
+    email_n = ident.lower()
+    phone_n = re.sub(r"[\s\-()]", "", ident)
+    with session_scope() as session:
+        user = session.scalar(
+            select(User).where(
+                (func.lower(User.username) == ident.lower())
+                | (User.email == email_n)
+                | (User.phone == phone_n)
+            )
+        )
+        if user is None:
+            return None
+        user.password_hash = hash_password(new_password)
+        user.session_id = uuid.uuid4().hex  # 轮换会话：改密后旧端 token 失配被挤下线
+        session.flush()
+        return _to_out(user)
+
+
 def authenticate(identifier: str, password: str) -> Optional[AuthUserOut]:
     ident = identifier.strip()
     with session_scope() as session:
@@ -951,12 +980,18 @@ PUBLIC_PREFIXES = (
     "/api/share",
     "/api/realtime/recall/click",  # 邮件/推送点击回流：用户无 JWT 也要能点回
     "/api/realtime/messages",      # 实时快讯列表 + /stream SSE：免登录免费看（终端公开页核心体验）
+    "/api/report/view/",           # 研报解读分享记录按 id 读（深链 ?report={id} 登录前先取标题/导语）；POST /api/report/share 不在此列、仍须登录
     "/api/review/",                # A股收盘复盘：免登录可看（信息价值引流位）；/api/admin/review/* 仍受保护
     "/research-workbench",
     # 管理端点（会员管理 / 看板私信）：无用户 JWT，由各 handler 自校验 DEEPFOCUS_MEMBERSHIP_TOKEN /
     # METRICS_TOKEN（与 /api/metrics 看板同款）；中间件放行才能在 AUTH_REQUIRED=true 时正常用 curl/看板。
     "/api/admin/",
     "/api/payment-qr/",   # 收款码图片（公开，购买页展示）
+    "/api/community/qr/", # 交流群二维码图片（公开，全站用户进群入口）
+    # 名人观点：仅媒体(图片/语音)公开——因 <img>/<audio> 标签无法带 JWT；非敏感占位/配图。
+    # 墙(/views)与综述(/{id}/digest)【不】公开：endpoint 内 _require_celebrity_user 仅放行白名单(lx199710)。
+    # 写操作走 /api/admin/celebrity/*（已被 /api/admin/ 前缀放行 + handler 自校验令牌）。
+    "/api/celebrity/media/",
     "/api/v1",            # 合作方/开发者 API：handler 自校验 X-API-Key（中间件放行，不走用户 JWT）
 )
 
@@ -967,7 +1002,12 @@ PUBLIC_EXACT = frozenset(
     {
         "/api/market/quotes",       # 行情报价
         "/api/market/search",       # 标的搜索（命令面板）
+        "/api/market/kline",        # 个股日线 K 线（OHLC，终端蜡烛图，免费层）
         "/api/market-dashboard",    # 大盘指标盘
+        "/api/themes/boards",      # A股概念板块涨幅榜（题材导航·免费引流）
+        "/api/themes/detail",      # 题材→受益股（顺藤摸瓜·免费）
+        "/api/themes/stock",       # 个股→所属行业/板块（免费）
+        "/api/themes/limit-up",    # 涨停天梯/连板梯队（免费引流）
         "/api/headlines",           # AI 今日头条（免费引流位）
         "/api/news/reactions",      # 资讯聚合情绪（看多/看空计数）：匿名也可看，handler 内 mine 仅登录可见
         "/api/track-record",        # 「我们提前发现的」平台战绩：公开引流（登录附个人战绩）
@@ -990,6 +1030,7 @@ PUBLIC_EXACT = frozenset(
         "/api/metrics/activity",
         "/api/metrics/review-quality",
         "/api/metrics/growth",      # 增长分析看板数据（handler 自校验 metrics token）
+        "/api/metrics/system",      # 系统连接/句柄容量监控（handler 自校验 metrics token）
         "/api/research/auth-status",
         "/api/research/auth",
         "/api/activity",            # 匿名操作流水
@@ -998,12 +1039,18 @@ PUBLIC_EXACT = frozenset(
         "/api/referral/campaign",     # 限时冲榜赛（榜单+奖励+倒计时，引流位）
         "/api/auth/captcha",          # 人机校验配置（公开，前端据此渲染 Turnstile）
         "/api/payment-config",      # 购买页配置（套餐价格 + 收款码是否就绪），公开展示
+        "/api/community/group",     # 交流群配置（文案/失效日/客服号/二维码就绪），全站用户公开展示
         "/api/app/version",         # 移动 App 版本检查（壳更新提示），公开
         "/api/recall/t1/run",       # T+1 召回手动触发（handler 自校验 metrics token）
         "/api/recall/t1/stats",     # T+1 召回效果（handler 自校验 metrics token）
         "/api/recall/expiry/run",   # 到期转化召回手动触发（handler 自校验 metrics token）
         "/api/recall/expiry/stats", # 到期转化召回效果（handler 自校验 metrics token）
         "/api/realtime/recall/webpush-key",  # Web Push VAPID 公钥（公开、非敏感，前端订阅离线召回前读取）
+        # 离线召回「创建订阅」（POST）：handler 用 optional_current_user，本就允许匿名（免费用户唯一的离线
+        # 召回通道，关页也能被叫回）。必须在此放行，否则 AUTH_REQUIRED=true 下中间件抢先 401 → 前端整页跳
+        # /login → 重发该请求 → 再 401 → 无限刷新死循环。精确匹配仅命中本路径：GET（列表）handler 仍自带
+        # require_current_user 守卫、DELETE 带 {id} 后缀不在此列，均不受影响。
+        "/api/realtime/recall/subscriptions",
         # 微信推送台：独立 HTML 页(?token=)+ 推送接口，handler 自校验 metrics token；与看板同款，故放行 JWT 网关。
         "/api/weixin/console",
         "/api/weixin/push-news",

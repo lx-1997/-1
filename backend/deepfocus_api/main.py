@@ -76,6 +76,7 @@ from .user_prefs import get_watchlist as get_user_watchlist, set_watchlist as se
 from . import support_store
 from . import membership_codes
 from . import payment_config
+from . import community_config
 from . import ashare_review
 from . import ai_fund
 from . import research_archive
@@ -135,6 +136,8 @@ from .data_store import (
     stats as data_stats,
 )
 from . import seo_pages
+from . import report_share
+from . import og_image
 from .metrics_store import (
     init_db as init_metrics_db,
     incr as metrics_incr,
@@ -189,6 +192,7 @@ from .people_voices import (
     fetch_people_spotlight,
     fetch_person_voices,
 )
+from . import celebrity_views
 from .premarket_opportunity import build_premarket_opportunity_radar
 from .professional_research import (
     analyze_professional_report,
@@ -455,6 +459,7 @@ async function load(){
       '<a class="pill" id="pill-dm" href="#g-ops"><b>·</b><span class="pl">未读私信</span></a>'+
       '<a class="pill" id="pill-redeem" href="#g-biz"><b>·</b><span class="pl">待人工兑换</span></a>'+
       '<a class="pill" id="pill-expire" href="#g-biz"><b>·</b><span class="pl">7 天内到期会员</span></a>'+
+      '<a class="pill" id="pill-conn" href="#g-ops"><b>·</b><span class="pl">在线连接</span></a>'+
       '<a class="pill" id="pill-src" href="#g-ops"><b>·</b><span class="pl">研报源状态</span></a>'+
     '</div>'+
     // ===== 概览明细（折叠）=====
@@ -485,6 +490,7 @@ async function load(){
     '<div id="referrals"><div class="sub">邀请活动加载中…</div></div>'+
     '<div id="pay"><div class="panel"><h2>💰 收款设置</h2><div class="sub">加载中…</div></div></div>'+
     '<div id="codes"><div class="panel"><h2>🎟️ 会员兑换码</h2><div class="sub">加载中…</div></div></div>'+
+    '<div id="community"><div class="panel"><h2>💬 用户交流群</h2><div class="sub">加载中…</div></div></div>'+
     // ===== 使用 · 内容（次要分析，默认折叠，点开才看） =====
     '<details class="fold"><summary class="group anchor" id="g-use"><h2>🔥 使用 · 内容</h2><span class="gs">点开展开 · 趋势 / 时段 / 设备 / 榜单</span></summary>'+
     '<div class="panel"><h2>📈 近 '+(tr.length||0)+' 日趋势</h2>'+
@@ -503,6 +509,7 @@ async function load(){
     // ===== 运营待办 =====
     grp('g-ops','🛠 运营待办','用户私信 / 研报源登录态 / 操作流水')+
     '<div id="dm"><div class="panel"><h2>💬 用户私信</h2><div class="sub">加载中…</div></div></div>'+
+    '<div id="syscap"><div class="sub">系统连接容量加载中…</div></div>'+
     '<div id="zsxq"><div class="sub">研报源状态加载中…</div></div>'+
     '<div id="pkeys"><div class="panel"><h2>🔌 合作方 API</h2><div class="sub">加载中…</div></div></div>'+
     '<div id="act"><div class="sub">操作流水加载中…</div></div>'+
@@ -511,12 +518,14 @@ async function load(){
   loadGrowth();
   loadActivity('');
   loadReferrals();
+  loadSystem();
   loadZsxq();
   loadPartnerKeys();
   loadDM();
   loadMembers();
   loadCodes();
   loadPay();
+  loadCommunity();
   loadReviewQuality();
 }
 // ===== AI 增长分析：KPI 卡 + DAU 趋势 + AI 报告 =====
@@ -586,6 +595,7 @@ async function loadPay(){
   $('#pay').innerHTML='<div class="panel"><h2>💰 收款设置 <span class="sub" style="font-weight:400">用户购买页展示</span></h2>'+
     '<div class="two" style="grid-template-columns:1fr 1fr"><div><div class="sub" style="margin-bottom:8px">套餐价格（元）</div>'+rows+
     '<div class="sub" style="margin:10px 0 4px">购买说明</div><textarea id="payNote" style="width:100%;box-sizing:border-box;height:60px;background:#0c0d12;color:#e6ebf2;border:1px solid var(--line);border-radius:6px;padding:6px;font-family:inherit;font-size:12px">'+esc(c.note||'')+'</textarea>'+
+    '<div class="sub" style="margin:10px 0 4px">🔗 自助秒发卡密店铺链接（闲鱼/淘宝/发卡网；填了买家就能「立刻开通」，留空=隐藏该入口）</div><input id="payStore" type="text" placeholder="https://..." value="'+esc(c.storefront_url||'')+'" style="width:100%;box-sizing:border-box;background:#0c0d12;color:#e6ebf2;border:1px solid var(--line);border-radius:6px;padding:6px;font-family:inherit;font-size:12px">'+
     '<button id="paySave" style="margin-top:8px;background:var(--amber);color:#000;border:none;border-radius:6px;font-weight:700;padding:7px 18px;cursor:pointer;font-family:inherit">保存价格/说明</button></div>'+
     '<div style="display:flex;gap:14px;justify-content:center;align-items:flex-start;padding-top:6px">'+qrBox('wechat','微信收款码')+qrBox('alipay','支付宝收款码')+'</div></div></div>';
   $('#paySave').onclick=savePay;
@@ -596,7 +606,7 @@ async function savePay(){
   const cur=await (await fetch('/api/payment-config')).json();
   const pkgs=(cur.packages||[]).map((p,i)=>({ ...p, price: parseInt(document.querySelector('.payPrice[data-i="'+i+'"]').value)||p.price }));
   try{
-    const r=await fetch('/api/admin/payment-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({packages:pkgs, note:$('#payNote').value, token:token})});
+    const r=await fetch('/api/admin/payment-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({packages:pkgs, note:$('#payNote').value, storefront_url:$('#payStore').value, token:token})});
     if(!r.ok) throw new Error(r.status); btn.textContent='✓ 已保存'; setTimeout(loadPay,800);
   }catch(e){ alert('保存失败：'+e.message); btn.disabled=false; btn.textContent='保存价格/说明'; }
 }
@@ -612,6 +622,60 @@ async function uploadQR(which, f){
     const r=await fetch('/api/admin/payment-qr',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({which:which, image:b64, token:token})});
     if(!r.ok){ let d=''; try{ d=(await r.json()).detail; }catch(e){} throw new Error(d||('HTTP '+r.status)); }
     loadPay();
+  }catch(e){ alert('上传失败：'+(e&&e.message||e)); }
+}
+// ===== 用户交流群：每周换群码(7天失效) + 文案/失效日期/客服兜底 =====
+async function loadCommunity(){
+  let c;
+  try{ const r=await fetch('/api/community/group'); if(!r.ok) throw new Error(r.status); c=await r.json(); }
+  catch(e){ const el=$('#community'); if(el) el.innerHTML='<div class="panel"><h2>💬 用户交流群</h2><div class="sub">读取失败('+e.message+')</div></div>'; return; }
+  const qrBox=(w,label,tip)=>{ const has=c[w+'_qr']; return '<div style="text-align:center"><div class="sub" style="margin-bottom:4px">'+label+'</div>'+
+    (has?'<img src="/api/community/qr/'+w+'?t='+Date.now()+'" style="width:130px;height:130px;object-fit:contain;background:#fff;border-radius:6px">':'<div style="width:130px;height:130px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--line);border-radius:6px;color:var(--mute);font-size:12px">未上传</div>')+
+    '<div style="margin-top:6px"><input type="file" accept="image/*" id="cq_'+w+'" style="display:none"><button onclick="document.getElementById(\\'cq_'+w+'\\').click()" style="background:rgba(106,176,255,.14);color:#9fd0ff;border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:12px">'+(has?'更换':'上传')+'</button></div>'+
+    '<div class="sub" style="margin-top:4px;font-size:11px;max-width:140px">'+tip+'</div></div>'; };
+  const inp=(id,val,ph)=>'<input id="'+id+'" value="'+esc(val||'')+'" placeholder="'+ph+'" style="width:100%;box-sizing:border-box;background:#0c0d12;color:#e6ebf2;border:1px solid var(--line);border-radius:6px;padding:6px;font-family:inherit;font-size:12px">';
+  $('#community').innerHTML='<div class="panel"><h2>💬 用户交流群 <span class="sub" style="font-weight:400">全站用户(含未登录)可见的进群入口</span></h2>'+
+    '<div class="sub" style="margin-bottom:8px;color:var(--amber)">⏳ 微信群码 7 天失效，过期请每周来这换一张新码；下方「客服微信」做兜底(名片码不失效)。</div>'+
+    '<div class="two" style="grid-template-columns:1.1fr 1fr">'+
+      '<div>'+
+        '<div class="sub" style="margin-bottom:3px">群标题</div>'+inp('cmTitle',c.title,'DeepFocus 用户交流群')+
+        '<div class="sub" style="margin:8px 0 3px">副标题</div>'+inp('cmSub',c.subtitle,'免费 · 对所有用户开放')+
+        '<div class="sub" style="margin:8px 0 3px">群码失效日期(YYYY-MM-DD，留空=不提示)</div>'+inp('cmExp',c.expires_at,'2026-07-04')+
+        '<div class="sub" style="margin:8px 0 3px">客服微信号(兜底拉群，留空=隐藏)</div>'+inp('cmCs',c.cs_wechat,'例：deepfocus_cs')+
+        '<label style="display:flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer" class="sub"><input type="checkbox" id="cmEn"'+(c.enabled?' checked':'')+'>启用(前端展示「💬 交流群」入口)</label>'+
+        '<button id="cmSave" style="margin-top:10px;background:var(--amber);color:#000;border:none;border-radius:6px;font-weight:700;padding:7px 18px;cursor:pointer;font-family:inherit">保存文案</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:14px;justify-content:center;align-items:flex-start;padding-top:6px">'+
+        qrBox('group','微信群二维码','每周更换 · 7 天有效')+qrBox('cs','客服微信码(兜底)','名片码 · 不失效')+
+      '</div>'+
+    '</div></div>';
+  $('#cmSave').onclick=saveCommunity;
+  ['group','cs'].forEach(w=>{ var el=$('#cq_'+w); if(el) el.onchange=function(){ uploadCommunityQR(w, this.files[0]); }; });
+}
+async function saveCommunity(){
+  const btn=$('#cmSave'); btn.disabled=true; btn.textContent='…';
+  const payload={ title:$('#cmTitle').value, subtitle:$('#cmSub').value, expires_at:$('#cmExp').value, cs_wechat:$('#cmCs').value, enabled:$('#cmEn').checked, token:token };
+  try{
+    const r=await fetch('/api/admin/community/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok) throw new Error(r.status); btn.textContent='✓ 已保存'; setTimeout(loadCommunity,800);
+  }catch(e){ alert('保存失败：'+e.message); btn.disabled=false; btn.textContent='保存文案'; }
+}
+async function uploadCommunityQR(which, f){
+  if(!f){ alert('没拿到文件，请重新选择'); return; }
+  if(f.size > 6*1024*1024){ alert('图片过大（>6MB），请压缩后再传'); return; }
+  let bytes;
+  try{
+    try{ bytes = new Uint8Array(await f.arrayBuffer()); }      // 首选 arrayBuffer
+    catch(e1){ bytes = await new Promise(function(res,rej){     // 兜底 FileReader（部分系统 arrayBuffer 抽风时仍能读）
+      var fr=new FileReader(); fr.onload=function(){ res(new Uint8Array(fr.result)); }; fr.onerror=function(){ rej(fr.error||new Error('read fail')); }; fr.readAsArrayBuffer(f); }); }
+  }catch(e){ alert('读取图片失败：浏览器拿不到这个文件的内容（多半是图片在 iCloud 没下全 / 在「照片」库里 / 是预览的临时文件）。请把二维码另存为 PNG 放到「下载」文件夹，再重新选这张。'); return; }
+  try{
+    let bin=''; const CH=0x8000;
+    for(let i=0;i<bytes.length;i+=CH){ bin += String.fromCharCode.apply(null, bytes.subarray(i, i+CH)); }
+    const b64 = btoa(bin);
+    const r=await fetch('/api/admin/community/qr',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({which:which, image:b64, token:token})});
+    if(!r.ok){ let d=''; try{ d=(await r.json()).detail; }catch(e){} throw new Error(d||('HTTP '+r.status)); }
+    loadCommunity();
   }catch(e){ alert('上传失败：'+(e&&e.message||e)); }
 }
 // ===== 会员兑换码：生成 + 复制 + 列表统计 =====
@@ -844,6 +908,25 @@ async function sendReply(uid){
     ta.value=''; await loadMsgs(uid); refreshDMList();
   }catch(e){ alert('回复失败：'+e.message); }
   finally{ btn.disabled=false; btn.textContent='发送'; }
+}
+async function loadSystem(){
+  let s;
+  try{ const r=await fetch('/api/metrics/system?token='+encodeURIComponent(token)); if(!r.ok) throw new Error(r.status); s=await r.json(); }
+  catch(e){ $('#syscap').innerHTML='<div class="panel"><h2>🔌 系统连接容量</h2><div class="sub">读取失败('+e.message+')</div></div>'; return; }
+  const st=s.status||'ok';
+  const col = st==='critical' ? '#ff5a52' : (st==='warn' ? '#ffb000' : '#2bd96a');
+  const word = st==='critical' ? '紧张·接近上限' : (st==='warn' ? '偏高·留意' : '正常');
+  setPill('pill-conn', (st==='ok'?'ok':(st==='warn'?'warn':'bad')), (s.active_sse||0), '在线连接');
+  const fdpct = s.fd_limit ? Math.round((s.fd_used/s.fd_limit)*100) : 0;
+  $('#syscap').innerHTML=
+    '<div class="panel" style="'+(st==='ok'?'':('border-color:'+col))+'">'+
+      '<h2>🔌 系统连接容量 <span style="color:'+col+'">● '+word+'</span></h2>'+
+      '<div class="sub" style="margin-bottom:8px">每个在线用户开一条实时快讯长连接；过多会占满 nginx 连接 → 新访客打不开(502)。逼近上限会自动发告警邮件。</div>'+
+      '<table><tbody>'+
+        '<tr><td>在线 SSE 长连接</td><td style="text-align:right;color:'+col+'"><b>'+(s.active_sse||0)+'</b> <span class="sub">（提醒≥'+(s.sse_warn||0)+' / 紧张≥'+(s.sse_crit||0)+'）</span></td></tr>'+
+        '<tr><td>后端文件句柄</td><td style="text-align:right">'+(s.fd_used||0)+' / '+(s.fd_limit||0)+' <span class="sub">('+fdpct+'%)</span></td></tr>'+
+      '</tbody></table>'+
+    '</div>';
 }
 async function loadZsxq(){
   let z;
@@ -1101,6 +1184,8 @@ from .schemas import (
     McpToolCallResponse,
     NewsSummaryRequest,
     OfficialNewsResponse,
+    CelebrityViewsResponse,
+    CelebrityDigestResponse,
     PeopleSpotlightResponse,
     PersonDigestResponse,
     PersonProfile,
@@ -1241,8 +1326,10 @@ async def lifespan(app: FastAPI):
     # 微信 iLink 渠道（扫码即问 + 准推送）——灰色地基/有封号风险，默认关；DEEPFOCUS_WEIXIN_CHANNEL=1 显式开
     global _WEIXIN_MGR
     if os.getenv("DEEPFOCUS_WEIXIN_CHANNEL", "0") == "1":
-        from .weixin_channel import WeixinChannelManager
-        _WEIXIN_MGR = WeixinChannelManager(agent_fn=make_weixin_orchestrator_agent_fn())
+        from .weixin_channel import WeixinChannelManager, make_multiview_fn
+        # 争议个股多空深度档：仅在 DEEPFOCUS_WEIXIN_MULTIVIEW=1 灰度时注入 fn（否则 None=不深化）
+        _mv_fn = make_multiview_fn(CloudResearchLLM()) if os.getenv("DEEPFOCUS_WEIXIN_MULTIVIEW", "0") == "1" else None
+        _WEIXIN_MGR = WeixinChannelManager(agent_fn=make_weixin_orchestrator_agent_fn(), multiview_fn=_mv_fn)
         _WEIXIN_MGR.start()
         print("[weixin] iLink 渠道已启动（多租户扫码即问）")
     init_share_snapshot_db()
@@ -1274,10 +1361,14 @@ async def lifespan(app: FastAPI):
     zsxq_health_task = asyncio.create_task(run_zsxq_health())
     # 微信桥接(gewechat)登录态健康监测：每 5min 探活，掉线即邮件告警提醒重新扫码
     wechat_health_task = asyncio.create_task(run_wechat_health())
+    # 连接容量监控：每 3min 看在线 SSE 长连接/句柄占用，逼近上限即邮件告警（防 SSE 打满 nginx 致全站 502）
+    capacity_monitor_task = asyncio.create_task(run_capacity_monitor())
     # AI 解读缓存：每日清理过期(默认 >90 天)条目，防长期累积
     cache_pruner_task = asyncio.create_task(run_cache_pruner())
     # A股收盘复盘：每个交易日 15:35 生成「大盘+板块+个股 × 我们提前发现的资讯」复盘
     ashare_review_task = asyncio.create_task(run_ashare_review())
+    # 投研晨报：每个交易日盘前 08:30 推送「宏观×组合」晨会一句话 → 全员盯盘送达（每日盘前回访仪式）
+    morning_briefing_task = asyncio.create_task(run_morning_briefing())
     # 增长分析师：每日 16:20 自动计算 KPI（用户/留存/日活/付费转化）+ AI 改进建议 → 运营看板
     growth_analytics.init_growth_db()
     growth_analyst_task = asyncio.create_task(run_growth_analyst())
@@ -1296,13 +1387,17 @@ async def lifespan(app: FastAPI):
     partner_alert_task = asyncio.create_task(run_partner_billing_alerts())
     # A股名称→代码表：启动后拉取并每日刷新，供路由识别「个股提问」（防全市场扫描技能误触发）
     stock_name_task = asyncio.create_task(run_stock_name_refresh())
+    # 搜索/AI 引擎主动提交：每 30min diff sitemap 把新 URL 推给百度主动推送 + IndexNow（冷启动收录加速）
+    seo_submit_task = asyncio.create_task(run_seo_submit())
+    # SEO 预热：后台把热门个股速判卡提前 build 落库，让 sitemap 一开始就有真实优质页（不必等爬虫触发）
+    seo_prewarm_task = asyncio.create_task(run_seo_prewarm())
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
     _bg_tasks = (dao_bridge_task, cache_warmer_task, research_prewarm_task,
-                 wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, cache_pruner_task,
-                 ashare_review_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
-                 ai_fund_task)
+                 wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
+                 ashare_review_task, morning_briefing_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
+                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task)
     for _task in _bg_tasks:
         _task.cancel()
     try:
@@ -1842,6 +1937,73 @@ async def admin_payment_qr_upload(request: Request) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# 用户交流群：面向【所有用户】(不登录/非会员也可见)的开放微信群入口。
+# 微信群码 7 天失效 → 走「活码」：图片落盘 + 运营在看板每周换码，零发版；再加客服名片码兜底。
+# --------------------------------------------------------------------------- #
+@app.get("/api/community/group")
+async def community_group_get() -> dict[str, Any]:
+    """交流群配置（公开）：文案 + 失效日期 + 客服兜底 + 二维码是否已上传。"""
+    return community_config.get_config()
+
+
+@app.get("/api/community/qr/{which}")
+async def community_qr_get(which: str):
+    """交流群二维码图片（公开）。which ∈ group（微信群码）| cs（客服名片码）。"""
+    p = community_config.qr_file(which)
+    if p is None:
+        raise HTTPException(status_code=404, detail="未设置该二维码")
+    media = "image/png"  # 按真实字节判类型（二维码可能是 PNG 或 JPG）
+    try:
+        if p.read_bytes()[:3] == b"\xff\xd8\xff":
+            media = "image/jpeg"
+    except Exception:  # noqa: BLE001
+        pass
+    return FileResponse(str(p), media_type=media, headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/admin/community/config")
+async def admin_community_config_set(request: Request) -> dict[str, Any]:
+    """改交流群文案/失效日期/客服号/启用（管理端，需令牌）。
+    body JSON: {enabled, title, subtitle, perks, expires_at, cs_wechat, disclaimer, token}。"""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if not _admin_token_ok(request, str(body.get("token") or "")):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    return {"ok": True, "config": community_config.set_config(body)}
+
+
+@app.post("/api/admin/community/qr")
+async def admin_community_qr_upload(request: Request) -> dict[str, Any]:
+    """上传交流群二维码（管理端，需令牌）。body JSON: {which:group|cs, image:dataURL或base64, token}。
+    用 base64+JSON 而非 multipart，规避前置 WAF/云盾对二进制文件上传的拦截（同收款码做法）。"""
+    import base64 as _b64
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    token = str(body.get("token") or request.query_params.get("token") or "")
+    if not _admin_token_ok(request, token):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    which = str(body.get("which") or request.query_params.get("which") or "group")
+    img = str(body.get("image") or "").strip()
+    if img.lower().startswith("data:") and "," in img:  # 去掉 data:image/png;base64, 前缀
+        img = img.split(",", 1)[1]
+    try:
+        data = _b64.b64decode(img, validate=False)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail="图片数据无效")
+    if not data:
+        raise HTTPException(status_code=422, detail="图片为空")
+    if len(data) > 6 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="图片过大（>6MB）")
+    if not community_config.save_qr(which, data):
+        raise HTTPException(status_code=400, detail="保存失败（which 仅支持 group/cs）")
+    return {"ok": True, "which": which}
+
+
+# --------------------------------------------------------------------------- #
 # 后台私信：登录用户 ↔ 管理员（用户端发信/拉会话；管理端=看板，令牌鉴权，收发回复）
 # --------------------------------------------------------------------------- #
 _SUPPORT_AUTOREPLY = os.getenv("DEEPFOCUS_SUPPORT_AUTOREPLY", "").strip() or (
@@ -2235,6 +2397,95 @@ async def ashare_structured_data(
         end_date=end_date,
         limit=max(1, min(limit, 500)),
     )
+
+
+@app.get("/api/market/kline")
+async def market_kline(symbol: str, market: str = "", points: int = 160) -> dict:
+    """个股日线 K 线（OHLC+量）——A股新浪主源 + 东财兜底，港股东财；美股暂不接入（返回空）。
+    供终端蜡烛图。公开免费层（auth.PUBLIC_EXACT 精确放行）。失败优雅降级为空 candles。"""
+    import re as _re
+    from .eastmoney_data import _em_stock_secid, fetch_eastmoney_ohlc, fetch_sina_ohlc
+
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol 不能为空")
+    pts = max(20, min(int(points or 160), 500))
+    secid = _em_stock_secid(sym, market or None)
+    candles: list = []
+    source = "unsupported"
+    # A股(6位)优先新浪：push2his(东财)对生产 IP 间歇空回/被封，新浪走另一套基建更稳；失败回退东财。港股走东财。
+    if _re.fullmatch(r"\d{6}", sym):
+        try:
+            candles = await fetch_sina_ohlc(sym, points=pts)
+        except Exception:
+            candles = []
+        if candles:
+            source = "sina"
+    if not candles and secid:
+        try:
+            candles = await fetch_eastmoney_ohlc(secid, points=pts)
+        except Exception:
+            candles = []
+        if candles:
+            source = "eastmoney"
+    return {
+        "symbol": sym,
+        "market": (market or "").upper(),
+        "points": len(candles),
+        "candles": candles,
+        "source": source,
+        "is_realtime": False,
+    }
+
+
+@app.get("/api/themes/boards")
+async def themes_boards(limit: int = 40) -> dict:
+    """A股概念板块涨幅榜（公开免费层）——看当日哪些题材主线在动 + 各板领涨股。东财概念板块，确定性归属。"""
+    from .theme_navigation import fetch_concept_boards
+    n = max(1, min(int(limit or 40), 80))
+    boards = await fetch_concept_boards(limit=n)
+    return {"boards": boards, "count": len(boards), "is_realtime": False}
+
+
+@app.get("/api/themes/detail")
+async def themes_detail(q: str = "", code: str = "", limit: int = 40) -> dict:
+    """题材→受益股（顺藤摸瓜）：q=题材/行业名（白酒/半导体/人工智能…）或 code=BKxxxx → 板块 + 成分股（按涨跌幅降序）。
+    确定性板块归属，非荐股。公开免费层。"""
+    import re as _re
+    from .theme_navigation import _board_name_pairs, fetch_board_stocks, find_board_by_name
+    n = max(1, min(int(limit or 40), 80))
+    bc = (code or "").strip().upper()
+    if bc:
+        if not _re.fullmatch(r"BK\d+", bc):
+            raise HTTPException(status_code=400, detail="code 须形如 BK1175")
+        pairs = await _board_name_pairs()
+        board: Optional[dict] = {"code": bc, "name": next((p["name"] for p in pairs if p["code"] == bc), bc)}
+    elif (q or "").strip():
+        board = await find_board_by_name(q)
+    else:
+        raise HTTPException(status_code=400, detail="需提供 q(题材名) 或 code(BKxxxx)")
+    if not board:
+        return {"board": None, "stocks": [], "count": 0, "error": "未找到对应题材/行业板块"}
+    stocks = await fetch_board_stocks(board["code"], limit=n)
+    return {"board": board, "stocks": stocks, "count": len(stocks), "is_realtime": False}
+
+
+@app.get("/api/themes/stock")
+async def themes_stock(symbol: str) -> dict:
+    """个股所属行业/板块（东财），用于个股→题材反查。公开免费层。"""
+    from .theme_navigation import fetch_stock_themes
+    sym = (symbol or "").strip()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol 不能为空")
+    return await fetch_stock_themes(sym) or {"symbol": sym, "name": "", "industry": "", "board": ""}
+
+
+@app.get("/api/themes/limit-up")
+async def themes_limit_up(limit: int = 60) -> dict:
+    """A股涨停天梯（连板梯队·公开免费层）：按连板数降序，含 N天M板/所属行业/炸板。东财涨停池，纯事实非荐股。"""
+    from .theme_navigation import fetch_limit_up_ladder
+    n = max(1, min(int(limit or 60), 120))
+    return await fetch_limit_up_ladder(limit=n)
 
 
 @app.get("/api/options/signals", response_model=OptionsSignalResponse)
@@ -3341,6 +3592,105 @@ def _template_person_digest(profile: PersonProfile, headlines: list[str]) -> str
     )
 
 
+def _require_celebrity_user(request: Request) -> dict:
+    """名人观点仅对白名单账号开放（默认 lx199710，复用 iFinD 白名单）；否则登录 401 / 非白名单 403。"""
+    from . import ifind_api
+    claims = require_current_user(request)
+    if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
+        raise HTTPException(status_code=403, detail="名人观点暂未对你的账号开放")
+    return claims
+
+
+@app.get("/api/celebrity/views", response_model=CelebrityViewsResponse)
+async def celebrity_views_wall(request: Request, refresh: bool = False) -> CelebrityViewsResponse:
+    """名人观点：名人头像墙 + 各自观点（图文 / 语音 / 出处）。数据源可插拔（curated / 知识星球…）。仅白名单可见。"""
+    _require_celebrity_user(request)
+    return await celebrity_views.fetch_celebrity_views(refresh=refresh)
+
+
+@app.get("/api/celebrity/media/{name}")
+async def celebrity_media(name: str):
+    """名人观点的媒体文件（图片 / 语音），公开内联返回。"""
+    p = celebrity_views.media_file(name)
+    if p is None:
+        raise HTTPException(status_code=404, detail="未找到该媒体文件")
+    return FileResponse(
+        str(p),
+        media_type=celebrity_views.media_content_type(p),
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.get("/api/celebrity/{celeb_id}/digest", response_model=CelebrityDigestResponse)
+async def celebrity_digest(request: Request, celeb_id: str, refresh: bool = False) -> CelebrityDigestResponse:
+    """单个名人的 AI 观点综述：把其观点条目合成 2-3 句，方向不可编造，失败回退确定性模板。仅白名单可见。"""
+    _require_celebrity_user(request)
+    profile = await celebrity_views.fetch_celebrity(celeb_id, refresh=refresh)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"未知名人：{celeb_id}")
+    # 复用人物专题的综述合成器（按属性鸭子调用，CelebrityProfile 字段同构）。
+    digest, provider = await _synthesize_person_digest(profile, refresh=refresh)
+    quality = profile.data_quality
+    if profile.item_count and provider in {"template", "fallback"}:
+        quality = classify_data_quality("template")
+    return CelebrityDigestResponse(
+        id=profile.id,
+        name=profile.name,
+        digest=digest,
+        digest_provider=provider,
+        item_count=profile.item_count,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        data_quality=quality,
+    )
+
+
+@app.get("/api/celebrity/{celeb_id}/more")
+async def celebrity_more(request: Request, celeb_id: str, before: str = "", limit: int = 20) -> dict[str, Any]:
+    """加载该名人 before 时间点之前的更早观点（知识星球分页）。仅白名单可见。"""
+    _require_celebrity_user(request)
+    res = await celebrity_views.fetch_celebrity_more(celeb_id, before=before, limit=limit)
+    if res is None:
+        raise HTTPException(status_code=404, detail=f"未知名人：{celeb_id}")
+    return res
+
+
+@app.post("/api/admin/celebrity/config")
+async def admin_celebrity_config(request: Request) -> dict[str, Any]:
+    """改名人观点配置（启用/数据源/星球ID/免责/名人花名册与观点条目）。管理端，需令牌。"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not _admin_token_ok(request, str(body.get("token") or "")):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    return {"ok": True, "config": celebrity_views.set_config(body)}
+
+
+@app.post("/api/admin/celebrity/media")
+async def admin_celebrity_media(request: Request) -> dict[str, Any]:
+    """上传名人观点媒体（图片/语音）。body JSON: {name, image(dataURL/base64), token}；返回可引用的 url。"""
+    import base64 as _b64
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = str(body.get("token") or request.query_params.get("token") or "")
+    if not _admin_token_ok(request, token):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    name = str(body.get("name") or "").strip()
+    blob = str(body.get("image") or body.get("data") or "").strip()
+    if blob.lower().startswith("data:") and "," in blob:
+        blob = blob.split(",", 1)[1]
+    try:
+        raw = _b64.b64decode(blob)
+    except Exception:
+        raise HTTPException(status_code=400, detail="媒体内容无法解码（需 base64 或 dataURL）")
+    saved = celebrity_views.save_media(name, raw)
+    if not saved:
+        raise HTTPException(status_code=400, detail="文件名非法或类型不支持（仅图片/语音）")
+    return {"ok": True, "name": saved, "url": f"/api/celebrity/media/{saved}"}
+
+
 @app.get("/api/ai-supply-chain/capacity-trends")
 async def ai_supply_chain_capacity_trends(horizon: str = "3m") -> dict[str, Any]:
     return await fetch_ai_supply_chain_capacity_trends(horizon=horizon)
@@ -3922,6 +4272,96 @@ async def run_wechat_health() -> None:
         await asyncio.sleep(interval)
 
 
+# ============================ 连接/句柄容量监控（防 SSE 打满 nginx 致全站 502）============================
+_CAPACITY_HEALTH: dict[str, Any] = {"ok": True, "alerted": False, "last_check": None}
+
+
+def _system_capacity_snapshot() -> dict[str, Any]:
+    """系统连接/句柄容量快照：在线 SSE 长连接数 + 后端文件句柄占用 + 健康档位。"""
+    from .realtime_messages import subscriber_count
+    active_sse = subscriber_count()
+    fd_used = 0
+    fd_limit = 0
+    try:
+        import resource
+        fd_limit = int(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        fd_used = len(os.listdir("/proc/self/fd"))
+    except Exception:  # noqa: BLE001
+        pass
+    warn = int(os.getenv("DEEPFOCUS_SSE_WARN", "3000"))
+    crit = int(os.getenv("DEEPFOCUS_SSE_CRIT", "5000"))
+    status = "ok"
+    if active_sse >= crit:
+        status = "critical"
+    elif active_sse >= warn:
+        status = "warn"
+    if fd_limit:
+        if fd_used >= fd_limit * 0.85:
+            status = "critical"
+        elif fd_used >= fd_limit * 0.70 and status == "ok":
+            status = "warn"
+    return {
+        "active_sse": active_sse,
+        "sse_warn": warn,
+        "sse_crit": crit,
+        "fd_used": fd_used,
+        "fd_limit": fd_limit,
+        "status": status,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/metrics/system")
+async def api_metrics_system(request: Request, token: str = "") -> dict[str, Any]:
+    """系统连接/句柄容量（看板用，需 metrics 令牌）。"""
+    _require_metrics_token(request, token)
+    return _system_capacity_snapshot()
+
+
+async def run_capacity_monitor() -> None:
+    """连接容量监控：定期看在线 SSE/句柄占用，越过阈值即邮件告警（恢复后再邮件）；看板亦显示。
+
+    背景：本站每在线用户开一条快讯 SSE 长连接，会占满 nginx worker_connections → 新访客 502。
+    """
+    interval = float(os.getenv("DEEPFOCUS_CAPACITY_PROBE_SECONDS", "180"))
+    await asyncio.sleep(60)
+    print(f"[capacity] 启动：每 {interval}s 检查在线连接/句柄占用")
+    while True:
+        try:
+            snap = _system_capacity_snapshot()
+            _CAPACITY_HEALTH.update(snap)
+            bad = snap["status"] in ("warn", "critical")
+            if bad and not _CAPACITY_HEALTH.get("alerted"):
+                _CAPACITY_HEALTH["alerted"] = True
+                print(f"[capacity] 容量告警：sse={snap['active_sse']} fd={snap['fd_used']}/{snap['fd_limit']} status={snap['status']}")
+                try:
+                    send_alert_email(
+                        "⚠️ DeepFocus 在线连接接近上限",
+                        f"在线快讯 SSE 长连接：{snap['active_sse']}（warn≥{snap['sse_warn']} / crit≥{snap['sse_crit']}）\n"
+                        f"后端文件句柄：{snap['fd_used']} / {snap['fd_limit']}\n档位：{snap['status']}\n"
+                        f"时间：{snap['generated_at']}\n\n"
+                        "说明：每个在线用户开一条实时快讯长连接；过多会占满 nginx 连接数，导致新访客打不开网站(502)。\n"
+                        "应急：systemctl restart deepfocus-api（清空堆积长连接，秒级恢复）。\n"
+                        "现上限已调高(nginx worker_connections=8192 / 句柄=65535)；若持续逼近请扩容或加多 worker。",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[capacity] 告警邮件异常：{exc}")
+            elif not bad and _CAPACITY_HEALTH.get("alerted"):
+                _CAPACITY_HEALTH["alerted"] = False
+                try:
+                    send_alert_email("✅ DeepFocus 在线连接已回落正常", f"在线 SSE：{snap['active_sse']}，档位正常。\n时间：{snap['generated_at']}")
+                except Exception:  # noqa: BLE001
+                    pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[capacity] 检查异常：{type(exc).__name__}")
+        await asyncio.sleep(interval)
+
+
 async def run_zsxq_health() -> None:
     """研报登录态(ZSXQ cookie)健康监测：定期探活，失效即记录 + 看板红灯 + 邮件告警（恢复后再次邮件）。"""
     interval = float(os.getenv("DEEPFOCUS_ZSXQ_PROBE_SECONDS", "300"))
@@ -4240,6 +4680,9 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
             _WIRE_RESP_CACHE[_rk] = (time.monotonic(), _resp)
             if len(_WIRE_RESP_CACHE) > 80:  # 防无界增长
                 _WIRE_RESP_CACHE.pop(next(iter(_WIRE_RESP_CACHE)), None)
+            # 预热：列表刷新时后台自动处理最新 5 篇 PDF，第一个用户点「原文」也秒开
+            if not q.strip() and not before:
+                _trigger_pdf_prewarm(rows[:5])
             return _wire_conditional(request, _resp)
     except Exception:  # 在线失败（工作台未起/cookie 失效/网络）→ 先试归档，再回退本地抓取舱
         arch_rows = research_archive.query(limit=limit, query_text=q, before=before)
@@ -4310,17 +4753,16 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
 
 @app.get("/api/research/workbench-pdf")
 async def api_research_workbench_pdf(
-    filename: str, out: str = "downloads/海外投行报告"
+    request: Request, filename: str, out: str = "downloads/海外投行报告"
 ) -> FileResponse:
-    """内联返回抓取舱内的研报原文（终端研报面板预览）。
+    """内联返回抓取舱内的研报原文（终端研报面板「原文」按钮）。
 
     路径穿越由 _safe_workbench_file_path 防护；Content-Disposition 用 ASCII 文件名，
-    避免中文研报名破坏响应头编码。
-
-    ⚠️原文文件下载默认关闭（DEEPFOCUS_RESEARCH_FILE_DOWNLOAD!=1 → 403）：第三方研报版权 +
-    不对用户开放任何原始文件，只提供 AI 解读（服务端读文件，不经此端点）。"""
-    if os.getenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", "0") != "1":
-        raise HTTPException(status_code=403, detail="研报原文下载未开放，请使用 AI 解读")
+    避免中文研报名破坏响应头编码。会员专享（trial 用户 402）。"""
+    claims = require_current_user(request)
+    mem = membership_of_username(claims.get("username", ""))
+    if not mem or mem.get("tier") == "trial":
+        raise HTTPException(status_code=402, detail="研报原文是会员功能，开通会员即可阅读")
     path = _safe_workbench_file_path(out, filename)
     media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
     metrics_incr_research(filename, filename)  # 研报下载/打开计数（本地原文）
@@ -4334,10 +4776,49 @@ async def api_research_workbench_pdf(
     )
 
 
+_PDF_PREWARM_SEEN: set[str] = set()  # 已触发预热的 file_id，进程级去重
+
+
+def _trigger_pdf_prewarm(rows: list[dict]) -> None:
+    """fire-and-forget：对新研报 PDF 后台预热（最多 5 个，已见跳过）。"""
+    targets = [(r["file_id"], r.get("filename", "")) for r in rows
+               if r.get("file_id") and r["file_id"] not in _PDF_PREWARM_SEEN][:10]
+    if not targets:
+        return
+    for fid, _ in targets:
+        _PDF_PREWARM_SEEN.add(fid)
+    asyncio.create_task(_prewarm_pdf_batch(targets))
+
+
+async def _prewarm_pdf_batch(targets: list[tuple[str, str]]) -> None:
+    log = logging.getLogger(__name__)
+    sem = asyncio.Semaphore(3)   # 最多 3 个并发，避免同时打爆 Node 工作台
+
+    async def _one(fid: str, fname: str) -> None:
+        async with sem:
+            try:
+                await _fetch_research_online_pdf(fid, fname)
+                log.debug("[pdf_prewarm] done %s", fid)
+            except Exception as exc:
+                log.debug("[pdf_prewarm] skip %s: %s", fid, exc)
+
+    await asyncio.gather(*[_one(fid, fname) for fid, fname in targets])
+
+
 async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[bytes, str]:
     """经同机 Node 工作台解析研报在线下载链并取回原文字节，返回 (content, content_type)。
 
-    供在线预览（wire-file）与在线研报 AI 解读（vision-analyze）共用。"""
+    供在线预览（wire-file）与在线研报 AI 解读（vision-analyze）共用。
+    优先按 file_id 查磁盘缓存（跳过网络下载），命中直接返回。"""
+    # ── 快路径：已处理过的 PDF 直接从磁盘缓存返回，跳过网络下载 ──────────────
+    try:
+        from .pdf_brand import get_cached_by_file_id  # noqa: PLC0415
+        cached = get_cached_by_file_id(file_id)
+        if cached is not None:
+            return cached, "application/pdf"
+    except Exception:
+        pass
+
     base = f"http://127.0.0.1:{os.getenv('RESEARCH_WORKBENCH_INTERNAL_PORT', '3927')}"
     safe_name = (name or f"{file_id}.pdf").strip()
     async with httpx.AsyncClient(trust_env=False) as client:
@@ -4350,19 +4831,25 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
             raise HTTPException(status_code=502, detail="工作台未返回在线预览地址")
         fr = await client.get(f"{base}{preview_url}", timeout=90)
         fr.raise_for_status()
-        return fr.content, (fr.headers.get("content-type") or "application/pdf")
+        raw = fr.content
+        ct = fr.headers.get("content-type") or "application/pdf"
+        if ct.lower().startswith("application/pdf") or safe_name.lower().endswith(".pdf"):
+            from .pdf_brand import apply_pdf_brand  # noqa: PLC0415
+            raw = await apply_pdf_brand(raw, file_id=file_id)
+        return raw, ct
 
 
 @app.get("/api/research/wire-file")
-async def api_research_wire_file(file_id: str, name: str = "") -> Response:
-    """在线预览研报原文：经同机 Node 工作台解析在线下载链并流式返回。
+async def api_research_wire_file(request: Request, file_id: str, name: str = "") -> Response:
+    """在线查看研报原文：经同机 Node 工作台解析在线下载链并返回 PDF 字节。
 
-    用于终端研报面板「在线」模式下点开原文（本地未下载也能读）。
-
-    ⚠️原文文件下载默认关闭（DEEPFOCUS_RESEARCH_FILE_DOWNLOAD!=1 → 403）：不对用户开放原始文件，
-    只提供 AI 解读（vision-analyze 经 _fetch_research_online_pdf 服务端读取，不经此端点）。"""
-    if os.getenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", "0") != "1":
-        raise HTTPException(status_code=403, detail="研报原文下载未开放，请使用 AI 解读")
+    用于终端研报面板「原文」按钮（前端以带 JWT 头的 fetch 取 Blob 新标签预览）。
+    会员专享（trial 用户 402）。"""
+    claims = require_current_user(request)
+    is_admin = claims.get("role") == "admin" or claims.get("username") == "lx199710"
+    mem = membership_of_username(claims.get("username", ""))
+    if not is_admin and (not mem or mem.get("tier") == "trial"):
+        raise HTTPException(status_code=402, detail="研报原文是会员功能，开通会员即可阅读")
     safe_name = (name or f"{file_id}.pdf").strip()
     ext = safe_name[safe_name.rfind("."):].lower() if "." in safe_name else ".pdf"
     try:
@@ -4921,6 +5408,46 @@ async def run_ashare_review() -> None:
             await asyncio.sleep(300)
 
 
+async def run_morning_briefing() -> None:
+    """投研晨报：每个交易日盘前 08:30（北京）生成晨会一句话 → 发「晨报」信号 → dispatch_recall 全员送达
+    （Web Push / 邮件 / 站内），做每日盘前打开仪式。中性聚合（宏观环境 × 组合风险），非个性化研判，合规安全区。
+    一日一次（in-memory date 去重 + 单时段 sleep-until-next 天然不重发）。"""
+    await asyncio.sleep(45)
+    print("[briefing] 启动：每交易日盘前 08:30 推送投研晨报")
+    last_sent = ""
+    while True:
+        try:
+            now = datetime.now(ai_fund.BJ_TZ)
+            target = now.replace(hour=8, minute=30, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            await asyncio.sleep(max(30, (target - now).total_seconds()))
+            now = datetime.now(ai_fund.BJ_TZ)
+            today = now.strftime("%Y-%m-%d")
+            if last_sent == today:
+                continue  # 已推过（防同日重复）
+            if not ai_fund._is_trading_day(now):
+                continue  # 周末/法定节假日不推（CN_MARKET_HOLIDAYS）
+            briefing = await briefing_today()  # 复用端点聚合：宏观+组合+LLM 增强 headline
+            headline = (getattr(briefing, "headline", "") or "").strip()
+            if not headline:
+                continue  # 数据不足/合成失败 → 当日不强发
+            mlab = f"{now.month}月{now.day}日"
+            create_realtime_message(RealtimeMessageCreateRequest(
+                title=f"🌅 投研晨报 · {mlab}",
+                content=headline + " · 点开看今日宏观与组合全貌。",
+                topic="晨报", severity="info", source_name="DeepFocus 投研晨报",
+                url="/",
+            ))
+            last_sent = today
+            print(f"[briefing] 已推送 {today} 投研晨报")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[briefing] 异常：{type(exc).__name__}")
+            await asyncio.sleep(300)
+
+
 async def run_ai_fund_trader() -> None:
     """AI 模拟盘交易员：A股交易时段（北京时间周一~五 09:35–15:05）内每 30min 跑一轮多因子决策。
 
@@ -4941,6 +5468,14 @@ async def run_ai_fund_trader() -> None:
             except Exception as exc:  # noqa: BLE001
                 fid = getattr(cfg, "fund_id", "main")
                 print(f"[ai-fund] {fid} 异常：{type(exc).__name__}")
+        # 全场跑完后：后台预生成「分歧票多空对话」并缓存（同阵营不变则跳过，get_arena 只读缓存）
+        if hasattr(ai_fund, "refresh_divergence_takes"):
+            try:
+                n = await asyncio.to_thread(ai_fund.refresh_divergence_takes)
+                if n:
+                    print(f"[ai-fund] 分歧票多空对话新生成 {n} 条")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ai-fund] 分歧对话异常：{type(exc).__name__}")
         return traded
 
     try:
@@ -5376,6 +5911,98 @@ async def run_stock_name_refresh() -> None:
         await asyncio.sleep(86400)
 
 
+async def run_seo_submit() -> None:
+    """搜索 / AI 引擎主动提交：定时 diff sitemap 里的 URL，把新增内容推给百度主动推送 + IndexNow。
+
+    冷启动收录最快的路径（被动等爬太慢）。未配置任一推送 token 即不启动；推送失败只打日志、不影响主流程。
+    已推送集合持久化在 data_store（重启不重复推），沙箱出网被封→只能在生产真正生效。"""
+    from . import seo_submit
+    if not seo_submit.enabled():
+        print("[seo-submit] 未配置推送 token（DEEPFOCUS_BAIDU_PUSH_TOKEN / DEEPFOCUS_INDEXNOW_KEY），未启用")
+        return
+    interval = float(os.getenv("DEEPFOCUS_SEO_SUBMIT_CYCLE_SECONDS", "1800"))
+    base = seo_pages.BASE_URL
+    await asyncio.sleep(60)  # 启动后稍等，避开冷启动繁忙期
+    print(f"[seo-submit] 启动：每 {interval:.0f}s diff sitemap 推送新 URL")
+    while True:
+        try:
+            urls = [f"{base}/", f"{base}/review", f"{base}/stocks", f"{base}/stocks/all",
+                    f"{base}/qa", f"{base}/articles", f"{base}/feed.xml"]
+            for it in ashare_review.list_reviews(limit=60):
+                if it.get("date"):
+                    urls.append(f"{base}/review/{it['date']}")
+            for sym, _lm in _indexable_stock_symbols(200):  # C6：只推已 build 且过质量门控的个股
+                urls.append(f"{base}/stock/{sym}")
+            for qa in _public_qa_items(200):  # C3：投研问答页
+                urls.append(f"{base}/qa/{qa['slug']}")
+            from . import glossary as _gl  # C12：术语科普页
+            urls.append(f"{base}/learn")
+            urls += [f"{base}/learn/{_t['slug']}" for _t in _gl.GLOSSARY]
+            for m in list_realtime_messages(topic="文章", limit=120):
+                urls.append(f"{base}/article/{m.id}")
+            urls = list(dict.fromkeys(u for u in urls if u))  # 去重保序
+            state = data_latest("seo_submit_state", "global") or {}
+            pushed = set(state.get("pushed") or [])
+            new_urls = [u for u in urls if u not in pushed]
+            if new_urls:
+                res = await asyncio.to_thread(seo_submit.submit_urls, new_urls)
+                pushed.update(new_urls)
+                record_datapoint("seo_submit_state", "global", {"pushed": list(pushed)[-5000:]})
+                print(f"[seo-submit] 推送 {len(new_urls)} 个新 URL：{res}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[seo-submit] 异常：{type(exc).__name__}: {exc}")
+        await asyncio.sleep(interval)
+
+
+async def run_seo_prewarm() -> None:
+    """SEO 预热：后台把热门个股速判卡提前 build 落库，让 sitemap/主动推送一开始就有真实优质页（不必等爬虫触发）。
+
+    复用 /stock 路由同款构建（共享 _seo_build_semaphore 并发上限 2，不与在线请求争抢）；只重建 >6h 旧的，控外取负载。
+    DEEPFOCUS_SEO_PREWARM=0 可关。"""
+    if os.getenv("DEEPFOCUS_SEO_PREWARM", "1").strip().lower() in {"0", "false", "no"}:
+        print("[seo-prewarm] 未启用")
+        return
+    per_cycle = int(os.getenv("DEEPFOCUS_SEO_PREWARM_PER_CYCLE", "8"))
+    interval = float(os.getenv("DEEPFOCUS_SEO_PREWARM_CYCLE_SECONDS", "900"))
+    fresh = float(os.getenv("DEEPFOCUS_SEO_PREWARM_FRESH_SECONDS", "21600"))  # 6h 内已建的不重建
+    await asyncio.sleep(90)
+    print(f"[seo-prewarm] 启动：每轮预热 {per_cycle} 只热门个股速判卡")
+    while True:
+        done = 0
+        try:
+            for h in data_hot_symbols("verdict", days=60, limit=60):
+                if done >= per_cycle:
+                    break
+                sym = (h.get("symbol") or "").upper()
+                mkt = h.get("market") or ""
+                if not sym or data_latest("seo_tear_sheet", sym, max_age_seconds=fresh):
+                    continue
+                try:
+                    async with _seo_build_semaphore:
+                        if data_latest("seo_tear_sheet", sym, max_age_seconds=fresh):
+                            continue
+                        ts = await _build_stock_tear_sheet_core(sym, market=mkt)
+                    ts_dict = ts.model_dump(mode="json")
+                    for heavy in ("price_series", "sp500_series", "us10y_series"):
+                        ts_dict.pop(heavy, None)
+                    record_datapoint("seo_tear_sheet", sym, ts_dict, market=mkt.upper())
+                    done += 1
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    pass
+                await asyncio.sleep(3)
+            if done:
+                print(f"[seo-prewarm] 本轮预热 {done} 只个股速判卡")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[seo-prewarm] 异常：{type(exc).__name__}: {exc}")
+        await asyncio.sleep(interval)
+
+
 async def run_cache_pruner() -> None:
     """每日清理过期 AI 解读缓存（默认 >90 天）。老研报/文章缓存极少再被读，删后即使再点也只重解析一次。
     DEEPFOCUS_AI_CACHE_MAX_AGE_DAYS=0 可关闭。"""
@@ -5648,18 +6275,20 @@ async def run_research_prewarm() -> None:
     fresh_reserve = int(os.getenv("DEEPFOCUS_RESEARCH_FRESH_RESERVE", "15"))
     backfill_cap = int(os.getenv("DEEPFOCUS_RESEARCH_BACKFILL_PER_CYCLE", "8"))
     _DL_KEY = "research_pdf_dl"  # 当日 PDF 下载计数（按自然日滚动）
+    from .pdf_brand import has_cached_file_id  # noqa: PLC0415 - 判定原文去水印成品是否已落盘
     await asyncio.sleep(25)  # 启动后稍等，让服务与工作台就绪
     print(f"[prewarm] 启动：并发 {workers}、每日下载上限 {daily_max}（为新报告预留 {fresh_reserve}）、周期 {cycle}s")
     done_counter = {"n": 0}
     banned = {"hit": False}
     failed_fids: set[str] = set()  # 下载成功但解读失败的，本进程内不再重复下载（避免浪费当日预算；重启后再试）
 
-    async def _warm_one(item: dict, sem: asyncio.Semaphore) -> None:
+    async def _warm_one(item: dict, sem: asyncio.Semaphore, ai: bool = True) -> None:
         fid = str(item.get("file_id") or "").strip()
         async with sem:
             if banned["hit"] or metrics_get_daily(_DL_KEY) >= daily_max:
                 return
             try:
+                # _fetch_research_online_pdf 内部即会去水印并按 file_id 落盘成品（下载本身就完成了 PDF 缓存）。
                 content, _ = await _fetch_research_online_pdf(fid, item.get("filename", ""))
             except asyncio.CancelledError:
                 raise
@@ -5672,6 +6301,11 @@ async def run_research_prewarm() -> None:
                     print(f"[prewarm] 下载失败 {fid}: {type(exc).__name__}: {msg[:50]}")
                 return
             metrics_incr(_DL_KEY)  # 下载成功即计入当日预算（无论解读成败，配额都已消耗）
+            if not ai:
+                # 仅补原文去水印缓存（已 AI 解读过的存量），让用户点开秒看，不再重复烧模型 token。
+                done_counter["n"] += 1
+                await asyncio.sleep(gap)
+                return
             try:
                 result = await analyze_pdf_auto(content, title=item.get("title", "研报"), max_pages=4)
                 metrics_set_ai_cache(fid, result)
@@ -5696,23 +6330,29 @@ async def run_research_prewarm() -> None:
             data = await fetch_research_wire_online(limit=200)  # 整库覆盖（知识星球返回上限）
             fresh: list[dict] = []
             migrate: list[dict] = []
+            pdf_only: list[dict] = []  # 已 AI 解读但原文未去水印落盘 → 仅补 PDF 成品缓存(列表近新优先)，让用户点开秒看
             for it in (data.get("items") or []):
                 fid = str(it.get("file_id") or "").strip()
                 if not fid or fid in failed_fids:
                     continue
                 cached = metrics_get_ai_cache(fid)
                 if not cached:
-                    fresh.append(it)  # 新报告(无缓存)
+                    fresh.append(it)  # 新报告(无缓存)：下载→去水印缓存+AI 解读
                 elif isinstance(cached, dict) and "instruments" not in cached:
                     migrate.append(it)  # 旧缓存补「提及标的」（市场归类由 _market_for 用 subject 即时算，无需重下载）
-            # 新报告绝对优先（用满当日预算）；回填只用「预留新报告额度后」的剩余空间
+                elif not has_cached_file_id(fid):
+                    pdf_only.append(it)  # AI 已就绪、仅差原文去水印成品 → 补缓存让点开秒看（不重复烧模型）
+            # 优先级：新报告(全价值) > 原文 PDF 缓存(高频诉求,点开秒看) > instruments 回填(可即时算,最次)。
             fresh_pending = fresh[:total_room]
-            backfill_room = max(0, min(backfill_cap, (daily_max - fresh_reserve) - used, total_room - len(fresh_pending)))
-            pending = fresh_pending + migrate[:backfill_room]
+            room_after_fresh = total_room - len(fresh_pending)
+            pdf_pending = pdf_only[:room_after_fresh]  # 用满剩余预算补原文缓存（存量将在数日内逐步补齐）
+            backfill_room = max(0, min(backfill_cap, (daily_max - fresh_reserve) - used, room_after_fresh - len(pdf_pending)))
+            pending = fresh_pending + pdf_pending + migrate[:backfill_room]
             if pending:
-                print(f"[prewarm] 本轮处理 {len(pending)} 篇（新{len(fresh_pending)}/回填{len(pending) - len(fresh_pending)}），当日已下 {used}/{daily_max}")
+                print(f"[prewarm] 本轮处理 {len(pending)} 篇（新{len(fresh_pending)}/原文{len(pdf_pending)}/回填{len(migrate[:backfill_room])}），当日已下 {used}/{daily_max}")
                 sem = asyncio.Semaphore(workers)
-                await asyncio.gather(*[_warm_one(it, sem) for it in pending], return_exceptions=True)
+                pdf_ids = {id(x) for x in pdf_pending}  # 仅这批走「只补 PDF、不重解读」
+                await asyncio.gather(*[_warm_one(it, sem, ai=(id(it) not in pdf_ids)) for it in pending], return_exceptions=True)
                 print(f"[prewarm] 本轮完成 {done_counter['n']} 篇，当日累计 {metrics_get_daily(_DL_KEY)}/{daily_max}")
         except asyncio.CancelledError:
             raise
@@ -5830,16 +6470,18 @@ async def api_research_pdf(info_code: str) -> StreamingResponse:
         await client.aclose()
         raise HTTPException(status_code=404 if status == 404 else 502, detail=f"研报 PDF 不可用（HTTP {status}）")
 
-    async def body_iter() -> AsyncIterator[bytes]:
-        try:
-            async for chunk in upstream.aiter_bytes():
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
-
-    return StreamingResponse(
-        body_iter(),
+    try:
+        chunks: list[bytes] = []
+        async for chunk in upstream.aiter_bytes():
+            chunks.append(chunk)
+    finally:
+        await upstream.aclose()
+        await client.aclose()
+    raw = b"".join(chunks)
+    from .pdf_brand import apply_pdf_brand  # noqa: PLC0415
+    raw = await apply_pdf_brand(raw)
+    return Response(
+        content=raw,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'inline; filename="{code}.pdf"',
@@ -5924,6 +6566,35 @@ def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] 
     return fkey
 
 
+# AI 投研问答（tool-research）每日额度护栏：前端已对「所有登录用户」放开入口（让非会员也能尝到旗舰「哇时刻」），
+# 这里是后端真正的成本闸——会员/管理员无限，登录非会员每天 _AGENT_FREE_QA 次，匿名兜底防开放端点被滥用。
+_AGENT_FREE_QA = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA", "5") or 5)
+_AGENT_FREE_QA_ANON = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA_ANON", "1") or 1)
+
+
+def _check_agent_quota(user: Optional[dict], request: Optional[Request] = None) -> Optional[str]:
+    """AI 投研问答额度闸。返回计数 key（成功后 incr）或 None（会员/管理员无限）。
+    会员(premium/lifetime)/管理员 → 无限；登录非会员 → 每天 _AGENT_FREE_QA 次；匿名 → 每天 _AGENT_FREE_QA_ANON 次后引导登录。
+    超额：登录非会员抛 402（→前端升级弹窗）；匿名抛 403（→前端登录弹窗，用 403 而非 401 避免被当登录失效整页跳转）。"""
+    if user:
+        if str(user.get("role") or "").strip().lower() == "admin":
+            return None
+        uid = str(user.get("sub", ""))
+        u = get_user_out_by_id(uid)
+        tier = (u.membership or {}).get("tier") if (u and u.membership) else None
+        if tier in ("premium", "lifetime"):
+            return None
+        fkey = f"q:agentqa:{uid}"
+        if metrics_get_daily(fkey) >= _AGENT_FREE_QA:
+            raise HTTPException(status_code=402, detail=f"今日免费 AI 问答已用完（非会员每天 {_AGENT_FREE_QA} 次）。开通会员畅享无限——点右上角头像 💬 联系管理员开通，或 🎁 邀请好友得会员。")
+        return fkey
+    ip = _client_ip(request) if request is not None else "?"
+    fkey = f"q:agentqa:anon:{ip}"
+    if metrics_get_daily(fkey) >= _AGENT_FREE_QA_ANON:
+        raise HTTPException(status_code=403, detail="登录即可继续用 AI 投研问答，还送 3 天尊享会员 🎁")
+    return fkey
+
+
 @app.post("/api/research/vision-analyze", response_model=ResearchVisionAnalysisResponse)
 async def api_research_vision_analyze(
     request: ResearchVisionAnalyzeRequest,
@@ -5950,6 +6621,7 @@ async def api_research_vision_analyze(
             summary=_nz(result.get("summary", "")),
             core_logic=_nz(result.get("core_logic", "")),
             takeaway=_nz(result.get("takeaway", "")),
+            df_take=_nz(result.get("df_take", "")),  # DeepFocus 视角点评（转化创作）
             bullish=[_nz(x) for x in result.get("bullish", result.get("key_points", []))],
             bearish=[_nz(x) for x in result.get("bearish", result.get("risks", []))],
             key_points=[_nz(x) for x in result.get("key_points", [])],
@@ -6017,6 +6689,7 @@ async def api_news_ai_analyze(
             title=title or "新闻解读", subject=_nz(result.get("subject", "")),
             one_liner=_nz(result.get("one_liner", "")), summary=_nz(result.get("summary", "")),
             core_logic=_nz(result.get("core_logic", "")), takeaway=_nz(result.get("takeaway", "")),
+            df_take=_nz(result.get("df_take", "")),  # DeepFocus 视角点评（转化创作）
             bullish=[_nz(x) for x in result.get("bullish", [])], bearish=[_nz(x) for x in result.get("bearish", [])],
             key_points=[_nz(x) for x in result.get("key_points", [])], risks=[_nz(x) for x in result.get("risks", [])],
             instruments=result.get("instruments", []), market=result.get("market", ""),  # 提及个股，曾漏传
@@ -6130,6 +6803,49 @@ async def api_get_realtime_message(message_id: str) -> RealtimeMessageRecord:
     if msg is None:
         raise HTTPException(status_code=404, detail="消息不存在")
     return msg
+
+
+# ===== 研报「AI 解读」可分享落地页（软墙，分享我们的解读而非第三方原文，见 [[report_share]]）=====
+class _ReportShareCreate(_BaseModel):
+    title: str
+    summary: str
+    source_name: str = ""
+    symbol: str = ""
+
+
+@app.post("/api/report/share")
+async def api_create_report_share(payload: _ReportShareCreate, request: Request) -> dict[str, str]:
+    """登录用户把当前研报的 AI 解读存成可分享记录 → 返回公开落地页 URL。
+    summary 是我们自己的解读正文，存前再过一道合规+泄密护栏（剥荐股措辞/数据源/工具名）。"""
+    claims = require_current_user(request)  # 须登录（防匿名灌库）
+    from . import compliance, privacy_guard
+    title = privacy_guard.scrub_internal_text((payload.title or "").strip())
+    summary = privacy_guard.scrub_internal_text(compliance.neutralize_text((payload.summary or "").strip()))
+    if not title or not summary:
+        raise HTTPException(status_code=422, detail="标题与解读内容不能为空")
+    try:
+        rec = report_share.save_share(
+            title=title, summary=summary,
+            source_name=(payload.source_name or ""), symbol=(payload.symbol or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    try:
+        metrics_log_activity(actor_kind="user", actor_id=f"u:{claims.get('sub') or claims.get('username') or ''}",
+                             actor_name=str(claims.get("username") or "用户"), action="share_report",
+                             target=title, device="web")
+    except Exception:  # noqa: BLE001
+        pass
+    return {"id": rec["id"], "url": f"{seo_pages.BASE_URL}/report/{rec['id']}"}
+
+
+@app.get("/api/report/view/{report_id}")
+async def api_get_report_share(report_id: str) -> dict[str, Any]:
+    """按 id 取一条研报解读分享记录（深链 ?report={id} 登录后定位用）。公开（白名单前缀放行）。"""
+    rec = report_share.get_share(report_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="解读不存在或已下线")
+    return rec
 
 
 @app.post("/api/realtime/recall/subscriptions", response_model=RecallSubscriptionRecord)
@@ -6479,7 +7195,7 @@ async def public_share_page(snapshot_id: str, request: Request) -> HTMLResponse:
     if record is None:
         return HTMLResponse(render_not_found_html(), status_code=404)
     increment_share_views(snapshot_id)
-    return HTMLResponse(render_share_page_html(record, page_url=str(request.url)))
+    return HTMLResponse(render_share_page_html(record, page_url=_canonical_url(request)))
 
 
 # --------------------------------------------------------------------------- #
@@ -6493,23 +7209,107 @@ _seo_build_semaphore = asyncio.Semaphore(2)
 _SEO_SYMBOL_RE = re.compile(r"^[A-Za-z0-9.\-]{1,12}$")
 
 
+def _canonical_url(request: Request) -> str:
+    """canonical / og:url 去掉 query string，避免 ?market= / ?utm_ 造成自指重复 URL（重复内容稀释收录）。"""
+    return str(request.url).split("?", 1)[0]
+
+
 @app.get("/robots.txt", include_in_schema=False)
 async def public_robots() -> Response:
-    return Response(seo_pages.render_robots_txt(), media_type="text/plain")
+    return Response(seo_pages.render_robots_txt(), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/llms.txt", include_in_schema=False)
+async def public_llms_txt() -> Response:
+    """llms.txt（GEO）：告诉 AI 引擎本站有哪些可引用的常青内容、在哪。"""
+    return Response(seo_pages.render_llms_txt(), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/BingSiteAuth.xml", include_in_schema=False)
+async def public_bing_siteauth() -> Response:
+    """Bing 站点验证文件（env DEEPFOCUS_BING_SITE_VERIFICATION 配置后生效，否则 404）。"""
+    code = os.getenv("DEEPFOCUS_BING_SITE_VERIFICATION", "").strip()
+    if not code:
+        return Response(status_code=404)
+    return Response(f'<?xml version="1.0"?>\n<users><user>{code}</user></users>', media_type="application/xml")
+
+
+@app.get("/indexnow-key.txt", include_in_schema=False)
+async def public_indexnow_key() -> Response:
+    """IndexNow 密钥文件（env DEEPFOCUS_INDEXNOW_KEY 配置后生效，否则 404）。"""
+    key = os.getenv("DEEPFOCUS_INDEXNOW_KEY", "").strip()
+    if not key:
+        return Response(status_code=404)
+    return Response(key, media_type="text/plain; charset=utf-8")
+
+
+def _indexable_stock_symbols(limit: int = 200) -> list[tuple[str, str]]:
+    """已 build 且过 C7 质量门控的个股 (symbol, lastmod)；sitemap 与主动推送共用，保证一致。
+
+    只枚举真正渲染过的 seo_tear_sheet（不是全 5000）——薄页靠 /stocks/all 内链发现并各自 noindex，
+    sitemap/主动推送只收优质页，避免批量薄页反噬站点权重。
+    """
+    out: list[tuple[str, str]] = []
+    for h in data_hot_symbols("seo_tear_sheet", days=400, limit=limit):
+        ts = data_latest("seo_tear_sheet", h["symbol"])
+        if ts and seo_pages.stock_indexable(ts):
+            out.append((h["symbol"], str(ts.get("generated_at") or "")))
+    return out
+
+
+_QA_SLUG_RE = re.compile(r"^[a-fA-F0-9]{32}$")  # wx_qa 指纹 = md5 hex（data_store 存大写，故大小写都收）
+
+
+def _public_qa_items(limit: int = 200) -> list[dict[str, Any]]:
+    """可公开/收录的投研问答（C3）：微信真实提问 + 已落库答案，过质量门控（净化后答案够实）。"""
+    out: list[dict[str, Any]] = []
+    for h in data_hot_symbols("wx_qa", days=400, limit=limit):
+        slug = h["symbol"]
+        if not _QA_SLUG_RE.match(slug or ""):
+            continue
+        qa = data_latest("wx_qa", slug)
+        if not qa or not seo_pages.qa_indexable(qa):
+            continue
+        out.append({"slug": slug, "q": qa.get("q"), "answer": qa.get("answer")})
+    return out
 
 
 @app.get("/sitemap.xml", include_in_schema=False)
 async def public_sitemap() -> Response:
+    base = seo_pages.BASE_URL
     dates: list[str] = []
     seen: set[str] = set()
+    lastmod: dict[str, str] = {}
     for it in ashare_review.list_reviews(limit=120):
         d = it.get("date") or ""
         if d and d not in seen:
             seen.add(d)
             dates.append(d)
-    symbols = [h["symbol"] for h in data_hot_symbols("verdict", days=90, limit=100)]
-    article_ids = [m.id for m in list_realtime_messages(topic="文章", limit=200)]
-    return Response(seo_pages.render_sitemap_xml(dates, symbols, article_ids), media_type="application/xml")
+            lastmod[f"{base}/review/{d}"] = str(it.get("generated_at") or d)
+    symbols: list[str] = []
+    for sym, lm in _indexable_stock_symbols(200):  # C1+C7：只放已 build 且过质量门控的个股
+        symbols.append(sym)
+        if lm:
+            lastmod[f"{base}/stock/{sym}"] = lm
+    article_ids: list[str] = []
+    for m in list_realtime_messages(topic="文章", limit=200):
+        article_ids.append(m.id)
+        if getattr(m, "created_at", None):
+            lastmod[f"{base}/article/{m.id}"] = str(m.created_at)
+    qa_slugs = [it["slug"] for it in _public_qa_items(200)]  # C3：投研问答页
+    report_ids: list[str] = []
+    for rid in report_share.all_ids(300):  # 研报解读分享页（软墙引流，发现通道）
+        rec = report_share.get_share(rid)
+        if not rec:
+            continue
+        report_ids.append(rid)
+        if rec.get("created_at"):
+            lastmod[f"{base}/report/{rid}"] = str(rec["created_at"])
+    return Response(
+        seo_pages.render_sitemap_xml(dates, symbols, article_ids, lastmod_map=lastmod,
+                                     qa_slugs=qa_slugs, report_ids=report_ids),
+        media_type="application/xml",
+    )
 
 
 @app.get("/review", response_class=HTMLResponse, include_in_schema=False)
@@ -6525,7 +7325,7 @@ async def public_review_page(date_str: str, request: Request) -> HTMLResponse:
     if not review:
         return HTMLResponse(render_not_found_html(), status_code=404)
     recent = ashare_review.list_reviews(limit=12)
-    return HTMLResponse(seo_pages.render_review_page_html(review, recent, page_url=str(request.url)))
+    return HTMLResponse(seo_pages.render_review_page_html(review, recent, page_url=_canonical_url(request)))
 
 
 def _seo_related_stocks(symbol: str, market: str) -> list[dict[str, Any]]:
@@ -6544,6 +7344,28 @@ async def public_stocks_hub() -> HTMLResponse:
         v = data_latest("verdict", h["symbol"]) or {}
         items.append({**h, "verdict": v.get("verdict"), "change_percent": v.get("change_percent")})
     return HTMLResponse(seo_pages.render_stocks_hub_html(items))
+
+
+@app.get("/stocks/all", response_class=HTMLResponse, include_in_schema=False)
+async def public_stocks_all(page: int = 1) -> HTMLResponse:
+    """全市场发现页（C1）：把全 A 名录分页成可爬内链，引导爬虫发现每一个 /stock/{code}。"""
+    from . import stock_name_index
+    entries = sorted(stock_name_index.all_name_code().items(), key=lambda kv: kv[1])  # 按代码稳定分页
+    per = seo_pages.STOCKS_ALL_PER_PAGE
+    total = len(entries)
+    total_pages = max(1, (total + per - 1) // per)
+    page = max(1, min(int(page or 1), total_pages))
+    chunk = entries[(page - 1) * per: page * per]
+    return HTMLResponse(seo_pages.render_stocks_all_html(chunk, page, total_pages, total))
+
+
+@app.get("/feed.xml", include_in_schema=False)
+async def public_feed() -> Response:
+    """RSS 2.0（C6）：复盘 + 资讯增量发现通道。"""
+    reviews = ashare_review.list_reviews(limit=25)
+    articles = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=25)]
+    return Response(seo_pages.render_feed_xml(reviews, articles),
+                    media_type="application/rss+xml; charset=utf-8")
 
 
 @app.get("/stock/{symbol}", response_class=HTMLResponse, include_in_schema=False)
@@ -6566,7 +7388,7 @@ async def public_stock_page(symbol: str, request: Request, market: str = "") -> 
                 record_datapoint("seo_tear_sheet", sym, ts_dict, market=(market or "").upper())
     record_datapoint("seo_view", sym, {"path": "stock"}, market=(market or "").upper())  # 页面热度（推荐/榜单信号）
     related = _seo_related_stocks(sym, (market or "").upper())
-    return HTMLResponse(seo_pages.render_stock_page_html(ts_dict, related, page_url=str(request.url)))
+    return HTMLResponse(seo_pages.render_stock_page_html(ts_dict, related, page_url=_canonical_url(request)))
 
 
 @app.get("/articles", response_class=HTMLResponse, include_in_schema=False)
@@ -6583,8 +7405,101 @@ async def public_article_page(article_id: str, request: Request) -> HTMLResponse
         return HTMLResponse(render_not_found_html(), status_code=404)
     recent = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=12)]
     return HTMLResponse(
-        seo_pages.render_article_page_html(article.model_dump(mode="json"), recent, page_url=str(request.url))
+        seo_pages.render_article_page_html(article.model_dump(mode="json"), recent, page_url=_canonical_url(request))
     )
+
+
+@app.get("/reports", response_class=HTMLResponse, include_in_schema=False)
+async def public_reports_hub() -> HTMLResponse:
+    """研报 AI 解读聚合页：最近被分享的研报解读（软墙引流，分享的是我们自己的解读）。"""
+    return HTMLResponse(seo_pages.render_reports_hub_html(report_share.recent_shares(60)))
+
+
+@app.get("/report/{report_id}", response_class=HTMLResponse, include_in_schema=False)
+async def public_report_page(report_id: str, request: Request) -> HTMLResponse:
+    """研报解读公开落地页（软墙）：标题+机构+解读导语公开可分享/收录；完整解读需登录在 App 内看。"""
+    rec = report_share.get_share(report_id)
+    if rec is None:
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    recent = report_share.recent_shares(12)
+    return HTMLResponse(
+        seo_pages.render_report_page_html(rec, recent, page_url=_canonical_url(request))
+    )
+
+
+@app.get("/qa", response_class=HTMLResponse, include_in_schema=False)
+async def public_qa_hub() -> HTMLResponse:
+    """投研问答聚合页（C3）：微信真实高频提问 + AI 解答沉淀成可索引/可被引用的页型。"""
+    return HTMLResponse(seo_pages.render_qa_hub_html(_public_qa_items(80)))
+
+
+@app.get("/qa/{slug}", response_class=HTMLResponse, include_in_schema=False)
+async def public_qa_page(slug: str, request: Request) -> HTMLResponse:
+    if not _QA_SLUG_RE.match(slug or ""):
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    qa = data_latest("wx_qa", slug)
+    if not qa or not (qa.get("q") or "").strip():
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    qa = {"slug": slug, "q": qa.get("q"), "answer": qa.get("answer")}
+    related = [r for r in _public_qa_items(40) if r["slug"] != slug][:10]
+    return HTMLResponse(seo_pages.render_qa_page_html(qa, related, page_url=_canonical_url(request)))
+
+
+# 动态社交分享卡（C4）：只读已缓存数据渲染 PNG，不触发重建；取不到数据降级简卡。
+@app.get("/og/stock/{symbol}.png", include_in_schema=False)
+async def og_stock(symbol: str) -> Response:
+    sym = (symbol or "").strip().upper()
+    if not _SEO_SYMBOL_RE.match(sym):
+        return Response(og_image.generic_card(), media_type="image/png")
+    return Response(og_image.stock_card(data_latest("seo_tear_sheet", sym) or {}, sym), media_type="image/png")
+
+
+@app.get("/og/review/{date_str}.png", include_in_schema=False)
+async def og_review(date_str: str) -> Response:
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str or ""):
+        return Response(og_image.generic_card(), media_type="image/png")
+    return Response(og_image.review_card(ashare_review.review_for_date(date_str) or {}, date_str),
+                    media_type="image/png")
+
+
+@app.get("/og/qa/{slug}.png", include_in_schema=False)
+async def og_qa(slug: str) -> Response:
+    if not _QA_SLUG_RE.match(slug or ""):
+        return Response(og_image.generic_card(), media_type="image/png")
+    return Response(og_image.qa_card(data_latest("wx_qa", slug) or {}, slug), media_type="image/png")
+
+
+@app.get("/learn", response_class=HTMLResponse, include_in_schema=False)
+async def public_learn_hub() -> HTMLResponse:
+    """财经术语科普聚合页（C12）。"""
+    from . import glossary
+    return HTMLResponse(seo_pages.render_learn_hub_html(glossary.GLOSSARY))
+
+
+@app.get("/learn/{slug}", response_class=HTMLResponse, include_in_schema=False)
+async def public_learn_page(slug: str, request: Request) -> HTMLResponse:
+    from . import glossary
+    term = glossary.BY_SLUG.get((slug or "").strip().lower())
+    if not term:
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    related = [glossary.BY_SLUG[s] for s in term.get("related", []) if s in glossary.BY_SLUG][:6]
+    return HTMLResponse(seo_pages.render_learn_page_html(term, related, page_url=_canonical_url(request)))
+
+
+@app.get("/compare/{pair}", response_class=HTMLResponse, include_in_schema=False)
+async def public_compare_page(pair: str, request: Request) -> HTMLResponse:
+    """个股横向对比页（C11）：只读已缓存速判卡（不触发重建），双方都需有数据。"""
+    if "-vs-" not in (pair or ""):
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    a_sym, b_sym = pair.split("-vs-", 1)
+    a_sym, b_sym = a_sym.strip().upper(), b_sym.strip().upper()
+    if not (_SEO_SYMBOL_RE.match(a_sym) and _SEO_SYMBOL_RE.match(b_sym)) or a_sym == b_sym:
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    a = data_latest("seo_tear_sheet", a_sym, max_age_seconds=_SEO_TS_TTL * 24)
+    b = data_latest("seo_tear_sheet", b_sym, max_age_seconds=_SEO_TS_TTL * 24)
+    if not a or not b:
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    return HTMLResponse(seo_pages.render_compare_page_html(a, b, page_url=_canonical_url(request)))
 
 
 @app.get("/api/mcp/servers", response_model=McpServerListResponse)
@@ -8080,12 +8995,14 @@ def _sse_frame(event_type: str, payload: dict) -> str:
 
 
 @app.post("/api/agents/tool-research")
-async def tool_research(request: Request, message: str = "", symbol: str = "", name: str = "") -> dict[str, Any]:
+async def tool_research(request: Request, message: str = "", symbol: str = "", name: str = "",
+                        _user: Optional[dict] = Depends(optional_current_user)) -> dict[str, Any]:
     """非流式 AI 原生 tool-use：一次 POST 返回 {ok, answer, tool_trace}。
     与 /stream 同一 agent（iFinD 灰度 + 我们的快讯/研报/复盘工具），但走普通 JSON——经 nginx 比 SSE 稳。
     参数走 query（与 /stream 一致，axios 以 params 传）。"""
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
+    quota_key = _check_agent_quota(_user, request)  # 会员/管理员无限；非会员超额抛 402/403（前端转升级/登录）
     _ifind = ifind_enhance_enabled(request)
     hint = f"当前标的：{name}（{symbol}）" if symbol.strip() else ""
     try:
@@ -8093,12 +9010,15 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "answer": "", "tool_trace": [], "error": str(exc)[:160]}
     if result and (result.get("answer") or "").strip():
+        if quota_key:
+            metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败不扣）
         return {"ok": True, "answer": result["answer"], "tool_trace": result.get("tool_trace", []), "rounds": result.get("rounds", 0)}
     return {"ok": False, "answer": "", "tool_trace": [], "reason": "tool-agent 未返回结果"}
 
 
 @app.post("/api/agents/tool-research/stream")
-async def tool_research_stream(request: Request, message: str = "", symbol: str = "", name: str = ""):
+async def tool_research_stream(request: Request, message: str = "", symbol: str = "", name: str = "",
+                               _user: Optional[dict] = Depends(optional_current_user)):
     """流式 AI 原生 tool-use：边调工具边把进度（tool_start / tool_result）实时推给前端，最后 final/error/fallback。
 
     打磨「研究类问题等 15-30 秒」的体验——让用户看到模型正在调哪些工具，而不是干等一个转圈。
@@ -8106,6 +9026,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
     """
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
+    quota_key = _check_agent_quota(_user, request)  # 会员/管理员无限；非会员超额抛 402/403（流前先拦，正常 HTTP 错误）
     _ifind = ifind_enhance_enabled(request)  # 仅白名单(lx199710) A股走 iFinD；匿名/失效 token → False(不抛)
 
     async def event_generator() -> AsyncIterator[str]:
@@ -8120,6 +9041,8 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
             try:
                 result = await llm.run_tool_agent(question=message, context_hint=hint, emit=emit, ifind_user=_ifind)
                 if result and (result.get("answer") or "").strip():
+                    if quota_key:
+                        metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败/fallback 不扣）
                     await queue.put(_sse_frame("final", {
                         "answer": result["answer"],
                         "tool_trace": result.get("tool_trace", []),
@@ -8206,12 +9129,17 @@ async def _route_orchestrator_chat(
     tool_timeout: float = 30.0,
     force_research: bool = False,
     skip_professional: bool = False,
+    context_prefix: str = "",
 ) -> OrchestratorChatResponse:
     """orchestrator-chat 路由内核（HTTP 端点与微信「扫码即问」共用，避免重复造轮子）：
     依次试技能(股东/财报/重大事件/专业研报) → 研究意图则跑 tool-agent → 有 ticker 则跨模块注入 → 兜底。
     - tool_timeout：tool-agent 每轮 LLM 超时；微信个股问答多轮取数需更长(传 60)，HTTP 端点用默认 30。
     - force_research：微信场景几乎全是投研提问，强制走研究路径(确保调工具取真数)，避免「值得关注吗」这类
-      不含意图关键词的问句漏判 _is_research_intent → 落到不取数的朴素 orchestrator。"""
+      不含意图关键词的问句漏判 _is_research_intent → 落到不取数的朴素 orchestrator。
+    - context_prefix：会话历史(多轮追问上下文)。⭐只喂给 LLM(tool-agent / 朴素 orchestrator)帮助理解追问，
+      **绝不参与确定性技能路由(detect_*)**——否则上一轮技能的长答案(满是 增持/减持/股东/A股 等关键词)会让
+      detector 在后续每一轮反复重命中，造成「某技能触发过一次后，之后问啥都一直调它」(本次修复的根因)。
+      故技能路由只看 request.message(当前这条干净问题)。"""
     # 全市场扫描类技能仲裁：不再「固定顺序 + 首个命中即短路」(会让上游劣质匹配抢走更合适的下游)，
     # 而是收集所有命中的候选、按特异性打分(命中的子类型越多越具体)，只跑最高分那个；
     # 打平时按声明顺序(股东→财报→事件)兜底。落选者不会触发各自昂贵的巨潮扫描(detect 是纯正则、零成本)。
@@ -8248,10 +9176,12 @@ async def _route_orchestrator_chat(
     #    正好交给 tool-agent 让模型自己决定调哪些工具。返回 None（未启用/工具不支持/失败）则落到既有路径。
     if research_intent and _tool_agent_enabled():
         try:
-            hint = (
+            stock_hint = (
                 f"当前标的：{(request.stock.name or '') if request.stock else ''}（{stock_symbol}）"
                 if stock_symbol else ""
             )
+            # 会话历史经 context_hint 传给 tool-agent(理解追问)，但路由已只看当前问题——历史不再污染技能命中。
+            hint = "\n\n".join(p for p in (context_prefix, stock_hint) if p)
             agent_result = await llm.run_tool_agent(
                 question=request.message, context_hint=hint, ifind_user=_ifind, timeout_seconds=tool_timeout
             )
@@ -8263,6 +9193,17 @@ async def _route_orchestrator_chat(
                     return attach_data_quality(mapped)
         except Exception:
             pass
+
+    # 兜底 LLM 路径(无独立 context_hint 形参)补回会话历史：用带前缀的 message 副本喂 LLM，
+    # 但技能路由 / research_intent / stock 判定全程只看干净的当前问题(request)，历史不参与路由。
+    request_for_llm = request
+    if context_prefix:
+        try:
+            request_for_llm = request.model_copy(
+                update={"message": f"{context_prefix}\n\n用户当前问题：{request.message}"}
+            )
+        except Exception:
+            request_for_llm = request
 
     # ② 有 stock 的研究意图：服务端预聚合跨模块数据 → 注入 → 合成（既有路径）。
     if stock_symbol and research_intent:
@@ -8277,11 +9218,11 @@ async def _route_orchestrator_chat(
                 include_trade=request.include_trade,
             )
             injection = build_injection_block(aggregated)
-            return attach_data_quality(await llm.orchestrator_chat_with_context(request, injection))
+            return attach_data_quality(await llm.orchestrator_chat_with_context(request_for_llm, injection))
         except Exception:
             pass
 
-    return attach_data_quality(await llm.orchestrator_chat(request))
+    return attach_data_quality(await llm.orchestrator_chat(request_for_llm))
 
 
 def make_weixin_orchestrator_agent_fn():
@@ -8291,16 +9232,19 @@ def make_weixin_orchestrator_agent_fn():
     _wx_timeout = float(os.getenv("DEEPFOCUS_WEIXIN_QA_TIMEOUT", "60") or 60)
 
     async def _agent(question: str, hint: str):
-        message = f"{hint}\n\n{question}" if hint else question
+        # ⚠️不要把会话历史(hint)拼进 message——message 会喂给确定性技能路由(detect_*)，历史里上一轮技能的
+        #   长答案(满是 增持/减持/股东/A股 等关键词)会让 detector 反复重命中，导致「某技能触发过一次后，
+        #   之后问啥都一直调它」。故 message 只放当前这条问题(供路由)，历史经 context_prefix 单独传给 LLM。
         # 闲聊/客服/计费类问题不强制走投研路径(否则被当投研取数 → 答非所问)；其余仍 force_research 兜住漏判。
         force_research = not _is_smalltalk_or_service(question)
         try:
             resp = await _route_orchestrator_chat(
-                OrchestratorChatRequest(message=message),
+                OrchestratorChatRequest(message=question),
                 _ifind=False,
                 tool_timeout=_wx_timeout,
                 force_research=force_research,
                 skip_professional=True,  # 微信无法上传PDF→跳过IC工作台技能,研报问落到 get_recent_research 读网站缓存
+                context_prefix=hint,     # 会话历史只作 LLM 追问上下文,绝不进技能路由
             )
         except Exception:
             return None

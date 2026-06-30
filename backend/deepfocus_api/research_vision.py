@@ -98,6 +98,7 @@ _SCHEMA_BLOCK = (
     '  "rating": "评级（买入/增持/中性/减持等，无则空串）",\n'
     '  "target_price": "目标价（含货币与单位，如 US$315 / 港币66元，无则空串）",\n'
     '  "takeaway": "一句话启示：这份研报最该记住的一点（客观陈述这份报告的看法，不替读者做决定、不构成投资建议）",\n'
+    '  "df_take": "【DeepFocus 视角】2-3句你自己的独立点评：这是你作为买方分析师在读完后给出的增量判断——报告没明说但值得提醒的点、需要打个问号的假设、放在当前市场环境下该怎么看、读者该重点盯什么。必须是你的原创分析增量，不是复述报告内容；用第三方口吻客观点评，不构成投资建议",\n'
     '  "confidence": 0.0到1.0之间的数字（你对解读可靠度的信心）\n'
     "}"
 )
@@ -109,7 +110,10 @@ _STYLE_RULE = (
     "④投资逻辑要讲清驱动的因果链，不要空泛套话；"
     "⑤只依据材料中真实出现的信息，没有的字段留空，绝不编造；"
     "⑥**综述/投资逻辑/利好利空等叙述里要点名报告重点提及的具体公司或标的（与 instruments 一致）**，"
-    "让读者一眼知道在说哪只票，不要用「某公司」「科技龙头」「头部厂商」这类泛称遮掉标的。"
+    "让读者一眼知道在说哪只票，不要用「某公司」「科技龙头」「头部厂商」这类泛称遮掉标的；"
+    "⑦**版权红线**：你的任务是「提炼观点与事实 + 给出独立点评」，绝不是复述或还原原文。"
+    "所有叙述都用你自己的话高度浓缩，整体篇幅必须远短于原文，严禁整段照搬或逐句复述原文措辞；"
+    "df_take 必须是你的原创判断增量（报告之外的视角），不得把报告原话换个说法塞进去。"
 )
 
 
@@ -214,6 +218,7 @@ def _normalize_result(data: Any, *, provider: str, pages: int, disclaimer: str) 
         "summary": summary or one_liner or (bullish[0] if bullish else ""),
         "core_logic": str(data.get("core_logic") or "").strip(),
         "takeaway": str(data.get("takeaway") or "").strip(),
+        "df_take": str(data.get("df_take") or "").strip(),  # DeepFocus 视角点评：我方原创增量判断（转化创作，版权安全）
         "bullish": bullish,
         "bearish": bearish,
         "instruments": _normalize_instruments(data.get("instruments")),
