@@ -1475,6 +1475,10 @@
 .bbt-ai-dftake-h b { color: var(--amber); font-size: 15px; font-weight: 800; letter-spacing: .5px; }
 .bbt-ai-dftake-badge { font-size: 10px; font-weight: 800; color: #1a0f00; background: linear-gradient(90deg, #ffe27a, #ffb02e); padding: 1px 8px; border-radius: 999px; letter-spacing: .5px; }
 .bbt-ai-dftake-body { color: var(--text-body); font-size: 15px; line-height: 1.85; white-space: pre-wrap; }
+/* 收起态：最多显示 5 行，超出渐隐（963 字深度点评默认收起，保持卡片清爽） */
+.bbt-ai-dftake-body--clip { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; -webkit-mask-image: linear-gradient(180deg, #000 62%, transparent); mask-image: linear-gradient(180deg, #000 62%, transparent); }
+.bbt-ai-dftake-more { margin-top: 8px; background: none; border: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700; color: var(--amber); padding: 2px 0; letter-spacing: .3px; }
+.bbt-ai-dftake-more:hover { text-decoration: underline; }
 .bbt-ai-foot { margin-top: 18px; color: var(--mute); font-size: 12px; line-height: 1.5; }
 
 /* AI 浮层：醒目关闭 + 复制 */
@@ -2332,4 +2336,9 @@
 
   /* —— 开启盯盘的选股 chip（新用户引导主操作）≥40px —— */
   .bbt-activate-chip { min-height: 40px; padding: 8px 13px; font-size: 17px; }
+}
+
+@keyframes bbt-pdf-bar {
+  0%   { transform: translateX(-60%); }
+  100% { transform: translateX(200%); }
 }

@@ -661,11 +661,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiReport, setAiReport] = useState<{ title?: string; date?: string } | null>(null);  // AI 解读对象（研报或文章）
   // 研报解读分享：非空=当前 AI 解读是「研报」（带机构/标的 + 原文 preview_url，可生成分享落地页）；null=文章解读
   const [aiReportMeta, setAiReportMeta] = useState<{ org?: string; symbol?: string; preview_url?: string } | null>(null);
+  const [pdfLoadingUrl, setPdfLoadingUrl] = useState<string | null>(null);  // 正在加载的研报原文 URL
   const [reportShareBusy, setReportShareBusy] = useState(false);
   const [shareModal, setShareModal] = useState<{ open: boolean; target: ShareTarget | null }>({ open: false, target: null });
   const aiRetryRef = useRef<null | (() => void)>(null);
   const [shareImgUrl, setShareImgUrl] = useState<string>('');  // 出图兜底预览（长按保存）
   const [aiResult, setAiResult] = useState<AiAnalysis | null>(null);
+  const [dfExpanded, setDfExpanded] = useState(false);  // DeepFocus 视角深度点评：长文默认收起，点「展开全文」看全
   const [aiLoading, setAiLoading] = useState(false);
   const [aiProgress, setAiProgress] = useState(0);  // AI 解读进度条（按耗时渐近爬升，完成即收）
   const [aiError, setAiError] = useState('');
@@ -1312,6 +1314,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     || membership?.tier === 'premium' || membership?.tier === 'lifetime'
     || isAdmin
   );
+  // 研报「原文」PDF 入口：仅白名单账号(lx199710)可见可用；其余账号一律隐藏入口。
+  // 复用 IFIND_USERS 单一真源（后端 wire-file 亦硬门 403，见 main.py：前端只控可见性、后端硬控）。
+  const canViewResearchOriginal = IFIND_USERS.has((authUser || '').toLowerCase());
   const [authOpen, setAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState('AI 解读');
   const pendingActionRef = useRef<null | (() => void)>(null);
@@ -1686,10 +1691,34 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     } catch { showToast('⚠️ 复制失败，请重试'); }
   }, [pingMetric, logAct, showToast]);
 
-  const closeAi = useCallback(() => { setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiError(''); setAiCopied(false); }, []);
+  const closeAi = useCallback(() => { setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiError(''); setAiCopied(false); setDfExpanded(false); }, []);
 
-  // 研报「原文」分发已退役（版权合规红线：去除第三方水印 + 换成我方水印 = 去版权管理信息 + 假冒，
-  // 著作权法53条/DMCA§1202）。价值改走 df_take 点评 + 不受版权保护的事实数据，水印只盖在我方原创创作上。
+  // 研报「原文」：带 JWT 头 fetch 取 PDF Blob → createObjectURL → 新标签打开（会员专享，402 → 升级弹窗）
+  const openResearchOriginal = useCallback(async (preview_url: string) => {
+    if (!canViewResearchOriginal) return;   // 白名单外不发起请求（入口本已隐藏，双保险）
+    if (!preview_url || pdfLoadingUrl) return;
+    setPdfLoadingUrl(preview_url);
+    try {
+      const blob = await apiGet<Blob>(preview_url, { responseType: 'blob', timeout: 90000 });
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank', 'noopener,noreferrer');
+      // 不主动 revoke：新标签页的 PDF 「查看 + 下载」都依赖该 blob 存活。过早 revoke（原 60s）会让用户
+      // 看一会儿再点下载时 blob 已失效 →「下载失败/请检查互联网连接」。blob 在该标签关闭时由浏览器自动回收。
+    } catch (e: any) {
+      const status = e?.status ?? e?.response?.status;
+      const detail = e?.detail ?? e?.response?.data?.detail;
+      if (status === 402) {
+        setUpgradeReason(detail || '研报原文是会员功能，开通会员即可阅读');
+        setUpgradeOpen(true);
+      } else if (status === 401) {
+        showToast('请先登录再查看研报原文');
+      } else {
+        showToast('原文加载失败，请稍后重试');
+      }
+    } finally {
+      setPdfLoadingUrl(null);
+    }
+  }, [showToast, pdfLoadingUrl, canViewResearchOriginal]);
 
   // 研报解读「分享」：把当前 AI 解读存成公开软墙落地页 → 拿到 URL → 打开极简分享弹窗（落地页登录看完整解读，引流转化）。
   const shareReportInsight = useCallback(async () => {
@@ -2595,6 +2624,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <span className="bbt-nact">
         <button className={'bbt-nbm' + (bookmarks.has(bmId(r)) ? ' on' : '')} aria-label="收藏" aria-pressed={bookmarks.has(bmId(r))} title={bookmarks.has(bmId(r)) ? '取消收藏' : '收藏'} onClick={e => { e.stopPropagation(); toggleBookmark(r, '研报'); }}>{bookmarks.has(bmId(r)) ? '★' : '☆'}</button>
         <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); runAiAnalysis(r); }}>AI 解读</button>
+        {r.preview_url && canViewResearchOriginal && <button className="bbt-nsrc" title="查看研报原文 PDF（会员）" disabled={pdfLoadingUrl === r.preview_url} onClick={e => { e.stopPropagation(); openResearchOriginal(r.preview_url); }}>{pdfLoadingUrl === r.preview_url ? '加载中…' : '原文'}</button>}
       </span>
     </div>
   );
@@ -2623,6 +2653,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             ? <button className="bbt-nsrc" title="复制" onClick={e => { e.stopPropagation(); copyNews(m); }}>{copiedNewsId === m.id ? '✓' : '复制'}</button>
             : <>
                 <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); kind === 'yb' ? runAiAnalysis(m) : runNewsAi(m); }}>AI 解读</button>
+                {kind === 'yb' && m.preview_url && canViewResearchOriginal && <button className="bbt-nsrc" title="查看研报原文 PDF（会员）" disabled={pdfLoadingUrl === m.preview_url} onClick={e => { e.stopPropagation(); openResearchOriginal(m.preview_url); }}>{pdfLoadingUrl === m.preview_url ? '加载中…' : '原文'}</button>}
                 {kind === 'wz' && (articleOriginalUrl(m)
                   ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
                   : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button> : null))}
@@ -2852,6 +2883,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   return (
     <div className="bbt">
+      {pdfLoadingUrl && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{background:'#141e30',border:'1px solid #263348',borderRadius:12,padding:'28px 40px',textAlign:'center',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>
+            <div style={{fontSize:28,marginBottom:10}}>📄</div>
+            <div style={{color:'#e2e8f0',fontSize:15,fontWeight:600}}>研报处理中…</div>
+            <div style={{color:'#64748b',fontSize:12,marginTop:6}}>首次加载约 3–8 秒，请稍候</div>
+            <div style={{marginTop:14,height:3,borderRadius:2,background:'#263348',overflow:'hidden'}}>
+              <div style={{height:'100%',width:'40%',background:'linear-gradient(90deg,#3b82f6,#60a5fa)',borderRadius:2,animation:'bbt-pdf-bar 1.2s ease-in-out infinite alternate'}}/>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="bbt-cmd">
         <span className="bbt-cmd-key">DEEPFOCUS</span>
         <span className="bbt-cmd-amber">金融终端</span>
@@ -3459,7 +3502,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   {bull.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bull">✅ 利好 · 看涨理由</div><ul className="bbt-ai-list bbt-ai-bull">{bull.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
                   {bear.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bear">⚠️ 利空 · 风险点</div><ul className="bbt-ai-list bbt-ai-risk">{bear.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
                   {aiResult.takeaway && <div className="bbt-ai-takeaway"><b>📌 一句话启示</b>{aiResult.takeaway}</div>}
-                  {aiResult.df_take && <div className="bbt-ai-dftake"><div className="bbt-ai-dftake-h"><b>DeepFocus 视角</b><span className="bbt-ai-dftake-badge">独家点评</span></div><div className="bbt-ai-dftake-body">{aiResult.df_take}</div></div>}
+                  {aiResult.df_take && (() => {
+                    const dft = aiResult.df_take!.trim();
+                    const long = dft.length > 220;
+                    const show = dfExpanded || !long;
+                    return (
+                      <div className="bbt-ai-dftake">
+                        <div className="bbt-ai-dftake-h"><b>DeepFocus 视角</b><span className="bbt-ai-dftake-badge">独家点评</span></div>
+                        <div className={`bbt-ai-dftake-body${show ? '' : ' bbt-ai-dftake-body--clip'}`}>{dft}</div>
+                        {long && <button className="bbt-ai-dftake-more" onClick={() => setDfExpanded(v => !v)}>{show ? '收起 ▴' : '展开全文 ▾'}</button>}
+                      </div>
+                    );
+                  })()}
                   <div className="bbt-ai-foot">{aiResult.provider || 'AI'} 解读 · 仅供参考、非投资建议、无逐句溯源{typeof aiResult.confidence === 'number' ? ` · 置信 ${Math.round((aiResult.confidence || 0) * 100)}%` : ''}{aiResult.source_note ? ` · ${aiResult.source_note}` : ''}</div>
                 </>
                 );
@@ -3469,8 +3523,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               <div className="bbt-ai-actions">
                 {aiResult && <button className="bbt-ai-btn bbt-ai-btn--img" onClick={shareAiImage} disabled={aiImgBusy}>{aiImgBusy ? '生成图片中…' : (aiCopied ? '✓ 已复制图片' : '🖼 复制为图片')}</button>}
                 {aiResult && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={copyAiResult}>{aiTextCopied ? '✓ 已复制文字' : '⧉ 复制为文字'}</button>}
-                {/* 研报解读才给「分享」；「原文」分发已退役（版权合规）。文章解读不给（文章走行内 /article 分享） */}
+                {/* 研报解读才给「分享」和「原文」；文章解读不给（文章走行内 /article 分享） */}
                 {aiResult && aiReportMeta && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={shareReportInsight} disabled={reportShareBusy}>{reportShareBusy ? '生成链接中…' : '🔗 分享解读'}</button>}
+                {aiReportMeta?.preview_url && canViewResearchOriginal && <button className="bbt-ai-btn bbt-ai-btn--src" onClick={() => openResearchOriginal(aiReportMeta!.preview_url!)} disabled={!!pdfLoadingUrl}>{pdfLoadingUrl === aiReportMeta.preview_url ? '加载中…' : '原文 ↗'}</button>}
                 {aiError && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={() => aiRetryRef.current?.()}>↻ 重试</button>}
                 <button className="bbt-ai-btn bbt-ai-btn--close" onClick={closeAi}>关闭</button>
               </div>

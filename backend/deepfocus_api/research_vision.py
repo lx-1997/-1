@@ -98,7 +98,7 @@ _SCHEMA_BLOCK = (
     '  "rating": "评级（买入/增持/中性/减持等，无则空串）",\n'
     '  "target_price": "目标价（含货币与单位，如 US$315 / 港币66元，无则空串）",\n'
     '  "takeaway": "一句话启示：这份研报最该记住的一点（客观陈述这份报告的看法，不替读者做决定、不构成投资建议）",\n'
-    '  "df_take": "【DeepFocus 视角】2-3句你自己的独立点评：这是你作为买方分析师在读完后给出的增量判断——报告没明说但值得提醒的点、需要打个问号的假设、放在当前市场环境下该怎么看、读者该重点盯什么。必须是你的原创分析增量，不是复述报告内容；用第三方口吻客观点评，不构成投资建议",\n'
+    '  "df_take": "【DeepFocus 视角 · 深度独家点评】你作为资深买方分析师给出的**极致详尽的原创分析**，尽可能充分展开、不惜篇幅（8-12句、可分段），逐个维度深挖：①核心投资逻辑成立的关键前提、隐含假设与最大变数；②报告可能低估、回避或未充分讨论的风险与反方/空头视角；③把它放进当前行业格局、竞争态势、产业周期与宏观/资金环境里，结论该怎么修正、可信度几何；④关键假设的敏感性——哪个变量一动，目标价/盈利预测就大幅变化；⑤与同业/上下游/历史可比案例的横向参照；⑥读者接下来该重点跟踪的具体指标、财报科目、行业数据、事件与催化剂时间线。要有信息量、有判断、有落点。这一切必须是你**基于事实的原创分析与延伸推理**（报告之外的独立增量），**绝不复述、翻译或还原报告原文段落**；客观专业，不构成投资建议",\n'
     '  "confidence": 0.0到1.0之间的数字（你对解读可靠度的信心）\n'
     "}"
 )
@@ -208,8 +208,8 @@ def _normalize_result(data: Any, *, provider: str, pages: int, disclaimer: str) 
     one_liner = str(data.get("one_liner") or "").strip()
     summary = str(data.get("summary") or "").strip()
     # 兼容旧字段：key_points→利好、risks→利空
-    bullish = _as_str_list(data.get("bullish") or data.get("key_points"), 6)
-    bearish = _as_str_list(data.get("bearish") or data.get("risks"), 5)
+    bullish = _as_str_list(data.get("bullish") or data.get("key_points"), 9)
+    bearish = _as_str_list(data.get("bearish") or data.get("risks"), 8)
     if not summary and not bullish and not one_liner:
         raise RuntimeError("模型未返回可用解读")
     return {
@@ -273,7 +273,7 @@ async def analyze_pdf_text(
         raise RuntimeError("当前为本地演示模型，无法做 AI 解读；请配置云端模型。")
 
     data = await llm.complete_json(
-        _build_text_prompt(title, symbol, text), max_tokens=2000, timeout_seconds=50,
+        _build_text_prompt(title, symbol, text), max_tokens=4000, timeout_seconds=75,
     )
     return _normalize_result(
         data, provider=llm.model, pages=min(max_pages, MAX_VISION_PAGES), disclaimer=_TEXT_DISCLAIMER,
@@ -382,7 +382,7 @@ async def analyze_news(title: Optional[str], content: str, url: Optional[str] = 
     if llm.provider == "mock":
         raise RuntimeError("当前为本地演示模型，无法做 AI 解读；请配置云端模型。")
     data = await llm.complete_json(
-        _build_news_prompt(title, body), max_tokens=1600, timeout_seconds=45,
+        _build_news_prompt(title, body), max_tokens=3600, timeout_seconds=70,
     )
     result = _normalize_result(data, provider=llm.model, pages=0, disclaimer=_TEXT_DISCLAIMER)
     if source_note:
@@ -438,7 +438,7 @@ async def analyze_pdf_vision(
             raise RuntimeError("所有页面均被视觉模型安全策略拦截，无法解读。")
         try:
             raw = await llm.complete_vision(
-                prompt, attempt_images, max_tokens=3600, timeout_seconds=160,
+                prompt, attempt_images, max_tokens=4200, timeout_seconds=180,
             )
             break
         except RuntimeError as exc:
