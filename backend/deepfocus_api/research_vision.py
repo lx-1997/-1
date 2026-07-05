@@ -20,6 +20,64 @@ from .llm import CloudResearchLLM, _extract_json
 
 _SENSITIVE_CONTENT_RE = re.compile(r"content\[(\d+)\]")
 
+
+def _escape_inner_quotes(s: str) -> str:
+    """转义 JSON 字符串值内未转义的裸双引号（如 "看多："新主承包商""）。
+    模型偶发输出这类嵌套引号 → 标准解析直接炸 → 整次(最贵的)视觉解读报废。
+    启发式：串内遇到 " 时看下一个非空白字符，是 , : } ] 或结尾才算真闭合，否则转义。"""
+    out: list[str] = []
+    in_str = False
+    escaped = False
+    n = len(s)
+    for i, ch in enumerate(s):
+        if not in_str:
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+            continue
+        if escaped:
+            out.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and s[j] in " \t\r\n":
+                j += 1
+            nxt = s[j] if j < n else ""
+            if nxt in ",:}]" or not nxt:
+                in_str = False
+                out.append(ch)
+            else:
+                out.append('\\"')
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _parse_model_json(raw: str) -> dict:
+    """解析模型返回的 JSON：先走标准 _extract_json，失败再做引号修复重试。失败返回 {}。"""
+    if not raw:
+        return {}
+    try:
+        data = _extract_json(raw)
+        return data if isinstance(data, dict) else {}
+    except ValueError:
+        pass
+    import json as _json
+
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        data = _json.loads(_escape_inner_quotes(raw[start : end + 1]))
+        return data if isinstance(data, dict) else {}
+    except ValueError:
+        return {}
+
 RENDER_DPI = 120  # 适度降低 DPI：渲染更快、图更小、推理更快（摘要场景足够清晰）
 MAX_VISION_PAGES = 14  # 厚 deck(如高盛十大产业主线 46 页)的重点标的在更深的页，读 6-8 页抽不到→读到 ~14 页才能抽出 NVDA/MSFT 等
 MIN_TEXT_CHARS = 400  # 文本层够多时走快速文本通道（~5-10s），否则回退视觉（~30-50s）
@@ -235,13 +293,41 @@ def _normalize_result(data: Any, *, provider: str, pages: int, disclaimer: str) 
     }
 
 
+# 我方品牌水印（pdf_brand 打的页眉 + 对角平铺 www.daocaijing.com）是真文字对象，
+# 会被 get_text 一并抽出。图片型研报（原文无文字层）打完品牌水印后，抽出的“文本”
+# 全是水印且轻松超过 MIN_TEXT_CHARS → 文本通道误判有正文，把纯水印喂给模型
+# （解读成“原文只有网址水印”），且不再回退视觉。这里在长度判定/喂模型前剥掉水印字样。
+# 注意：页边被裁切的斜排水印会以残缺片段进文本层（如 "ww.daocaijing.co"、"caijing"），
+# 整串正则匹配不到 → 按「token 是水印串的子串」判定片段。
+_BRAND_TEXT_RE = re.compile(r"www\.daocaijing\.com|更多投研内容|DeepFocus|深度焦点", re.I)
+_BRAND_URL = "www.daocaijing.com"
+_BRAND_HEADER = "更多投研内容|deepfocus深度焦点|www.daocaijing.com"
+_BRAND_PUNCT = "|｜·—- \t　"
+
+
+def _is_brand_fragment(token: str) -> bool:
+    t = token.strip(_BRAND_PUNCT).lower()
+    return (not t) or (t in _BRAND_URL) or (t in _BRAND_HEADER)
+
+
+def _strip_brand_text(text: str) -> str:
+    lines: list[str] = []
+    for line in (text or "").splitlines():
+        cleaned = _BRAND_TEXT_RE.sub("", line)  # 先剥完整水印串（含混进正文行的）
+        tokens = cleaned.split()
+        if all(_is_brand_fragment(tok) for tok in tokens):
+            continue  # 整行只剩水印片段/分隔符 → 丢弃
+        lines.append(cleaned)
+    return "\n".join(lines).strip()
+
+
 def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int = MAX_VISION_PAGES) -> str:
-    """抽取 PDF 前若干页文字层（图片型 PDF 会返回很短/空）。"""
+    """抽取 PDF 前若干页文字层（图片型 PDF 会返回很短/空）。已剥离我方品牌水印字样。"""
     parts: list[str] = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
         for index in range(min(max_pages, doc.page_count)):
             parts.append(doc.load_page(index).get_text("text"))
-    return "\n".join(parts).strip()
+    return _strip_brand_text("\n".join(parts))
 
 
 def _build_text_prompt(title: Optional[str], symbol: Optional[str], text: str) -> str:
@@ -451,11 +537,8 @@ async def analyze_pdf_vision(
                     continue
             raise
 
-    try:
-        data = _extract_json(raw) if raw else {}
-    except ValueError:
-        data = {}
-    if not isinstance(data, dict) or not data:
+    data = _parse_model_json(raw)
+    if not data:
         # 解析失败/空 → 重试一次：要求更短的严格 JSON（常见于输出被截断或格式坏）
         retry_prompt = prompt + (
             "\n\n注意：上次输出不是合法或完整的 JSON。请**只输出**更短的严格 JSON object，"
@@ -465,7 +548,7 @@ async def analyze_pdf_vision(
             raw2 = await llm.complete_vision(
                 retry_prompt, attempt_images, max_tokens=2200, timeout_seconds=160,
             )
-            data = _extract_json(raw2) if raw2 else {}
+            data = _parse_model_json(raw2)
         except Exception:  # noqa: BLE001
             data = {}
     try:
