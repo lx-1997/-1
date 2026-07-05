@@ -28,10 +28,24 @@ export const RECALL_PREFS_EVENT = 'dfx-recall-prefs-changed';
 
 export const DEFAULT_RECALL_PREFS: RecallPrefs = {
   browserEnabled: false,
-  severities: ['warning', 'critical'],
+  // 含 success：scope 默认 watchlist(只看自选)，自选股的利好快讯正是"盯盘"要的通知；
+  // info(中性资讯)刻意不进默认——热门股一天十几条会把通知权限惹到 denied(永久失去该通道)。
+  severities: ['success', 'warning', 'critical'],
   scope: 'watchlist',
   onlyWhenHidden: true,
 };
+
+/** 终端自选股的本地镜像（FinancialTerminal 写 bbt.watchlist）——订阅 Web Push 时兜底带上，
+ * 避免"空 symbols + scope=watchlist"= 什么都匹配不到的死订阅。 */
+export function readWatchlistFallback(): string[] {
+  try {
+    const raw = window.localStorage.getItem('bbt.watchlist');
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((s): s is string => typeof s === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 export function loadRecallPrefs(): RecallPrefs {
   try {
@@ -221,15 +235,30 @@ export async function subscribeWebPush(opts?: {
       });
     }
     const prefs = loadRecallPrefs();
+    const symbols = opts?.symbols && opts.symbols.length ? opts.symbols : readWatchlistFallback();
     await apiPost(WEBPUSH_SUB_PATH, {
       channel: 'webpush',
       address: JSON.stringify(sub),
-      symbols: opts?.symbols ?? [],
+      symbols,  // 不传/传空 → 用终端自选股兜底，杜绝 scope=watchlist 下的"死订阅"
       severities: opts?.severities ?? prefs.severities,
       scope: opts?.scope ?? prefs.scope,
       label: 'browser-webpush',
     });
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 一键用账号邮箱订阅召回（服务端从登录态直取邮箱+自选，前端零输入）。
+ * 国内 Chrome 的 Web Push 端点在 Google FCM、境内服务器送不到——邮箱是「开启盯盘」时
+ * 顺手能拿到的最可靠离线兜底通道。best-effort：未登录/无邮箱/失败都安静返回 false。
+ */
+export async function subscribeEmailRecall(): Promise<boolean> {
+  try {
+    const out = await apiPost<{ ok: boolean }>('/api/realtime/recall/subscribe-email', {});
+    return !!(out && out.ok);
   } catch {
     return false;
   }

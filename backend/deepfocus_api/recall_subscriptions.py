@@ -108,16 +108,49 @@ def init_recall_subscription_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_deliveries_created ON recall_deliveries(created_at)")
         conn.commit()
+    _dedupe_subscriptions_once()
+
+
+_DEDUPED = False
+
+
+def _dedupe_subscriptions_once() -> None:
+    """一次性清理历史重复订阅行（同 channel+address 只留最新）。
+
+    历史 bug：前端每次页面加载都 POST 订阅、后端无条件 INSERT 新行 → 同一浏览器 push endpoint
+    积累大量重复行 → dispatch_recall 扇出时同一条消息推 N 次。Web Push 上线首日就重复轰炸
+    会被用户拉黑（通知权限一旦 denied 永久失去该通道），所以点亮 VAPID 前必须先清。"""
+    global _DEDUPED
+    if _DEDUPED:
+        return
+    _DEDUPED = True
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM recall_subscriptions WHERE rowid NOT IN (
+                    SELECT MAX(rowid) FROM recall_subscriptions GROUP BY channel, address
+                )
+                """
+            )
+            conn.commit()
+    except Exception:  # noqa: BLE001 - 清理失败不阻塞主流程
+        pass
 
 
 def create_recall_subscription(request: RecallSubscriptionCreateRequest, user_id: Optional[str] = None) -> RecallSubscriptionRecord:
+    """按 (channel, address) upsert：同一浏览器/邮箱重复订阅 = 刷新 symbols/severities/scope，
+    绝不再插重复行（防同一消息扇出 N 次）；symbols 快照因此永远跟着最近一次上报走。"""
     init_recall_subscription_db()
     symbols = _normalize_symbols(request.symbols)
-    severities = list(request.severities) or ["warning", "critical"]
+    # 默认级别含 success：scope 默认 watchlist（只看自选），自选股的利好快讯正是"盯盘"要的通知；
+    # info（中性资讯）刻意不进默认，避免热门股一天十几条把通知权限惹到 denied。
+    severities = list(request.severities) or ["success", "warning", "critical"]
+    address = request.address.strip()
     record = {
         "id": str(uuid.uuid4()),
         "channel": request.channel,
-        "address": request.address.strip(),
+        "address": address,
         "symbols_json": json.dumps(symbols, ensure_ascii=False),
         "severities_json": json.dumps(severities, ensure_ascii=False),
         "scope": request.scope,
@@ -127,16 +160,34 @@ def create_recall_subscription(request: RecallSubscriptionCreateRequest, user_id
         "user_id": user_id,  # 归属人：登录则绑定，便于本人 list/delete；匿名为 None（仍正常投递，只是不可在 UI 管理）
     }
     with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO recall_subscriptions (
-                id, channel, address, symbols_json, severities_json, scope, label, active, created_at, user_id
-            ) VALUES (
-                :id, :channel, :address, :symbols_json, :severities_json, :scope, :label, :active, :created_at, :user_id
+        existing = conn.execute(
+            "SELECT id, user_id FROM recall_subscriptions WHERE channel = ? AND address = ?",
+            (request.channel, address),
+        ).fetchone()
+        if existing is not None:
+            row = dict(existing)
+            record["id"] = row["id"]
+            record["user_id"] = user_id or row.get("user_id")  # 不覆盖已知归属人为 None
+            conn.execute(
+                """
+                UPDATE recall_subscriptions
+                SET symbols_json = :symbols_json, severities_json = :severities_json,
+                    scope = :scope, label = :label, active = 1, created_at = :created_at, user_id = :user_id
+                WHERE id = :id
+                """,
+                record,
             )
-            """,
-            record,
-        )
+        else:
+            conn.execute(
+                """
+                INSERT INTO recall_subscriptions (
+                    id, channel, address, symbols_json, severities_json, scope, label, active, created_at, user_id
+                ) VALUES (
+                    :id, :channel, :address, :symbols_json, :severities_json, :scope, :label, :active, :created_at, :user_id
+                )
+                """,
+                record,
+            )
         conn.commit()
     return _row_to_subscription(record)
 
@@ -171,9 +222,9 @@ def delete_recall_subscription(subscription_id: str, user_id: Optional[str] = No
 
 def subscription_matches(subscription: RecallSubscriptionRecord, message: RealtimeMessageRecord) -> bool:
     """与前端 signalRecall.shouldRecall 同义：级别命中 + 范围/标的匹配。
-    例外：每日复盘是一日一次的策划摘要，对所有开了盯盘的人都是高价值「每日回访钩子」
+    例外：每日复盘/投研晨报是一日一次的策划摘要，对所有开了盯盘的人都是高价值「每日回访钩子」
     → 全员送达（不受 scope=watchlist / severities 收窄）。这是把流失用户拉回来的核心信号。"""
-    if (getattr(message, "topic", "") or "") == "复盘":
+    if (getattr(message, "topic", "") or "") in ("复盘", "晨报"):
         return True
     if message.severity not in subscription.severities:
         return False
@@ -335,15 +386,35 @@ def _deliver_webpush(
             },
             ensure_ascii=False,
         )
+        try:
+            subscription_info = json.loads(subscription.address)
+        except ValueError:
+            _deactivate_subscription(subscription.id)  # 地址都解析不了的订阅永远送不出去
+            return _result(subscription, "error", "推送失败：订阅地址损坏，已停用该订阅")
         webpush(
-            subscription_info=json.loads(subscription.address),
+            subscription_info=subscription_info,
             data=payload,
             vapid_private_key=vapid_private,
             vapid_claims={"sub": vapid_subject},
         )
         return _result(subscription, "sent", "已推送")
     except Exception as exc:
+        # 端点已注销（用户清缓存/撤销授权/换浏览器）→ 410/404 是永久失效，置 inactive 止损，
+        # 否则每轮群发都对死端点全量重试（prod 实测 696 error vs 16 sent），拖慢投递还可能被推送服务降权。
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (404, 410):
+            _deactivate_subscription(subscription.id)
+            return _result(subscription, "error", f"推送失败：端点已失效（{status}），已停用该订阅")
         return _result(subscription, "error", f"推送失败：{exc}"[:200])
+
+
+def _deactivate_subscription(subscription_id: str) -> None:
+    try:
+        with _connect() as conn:
+            conn.execute("UPDATE recall_subscriptions SET active = 0 WHERE id = ?", (subscription_id,))
+            conn.commit()
+    except Exception:  # 停用失败不影响本轮投递主链路
+        pass
 
 
 def _wechat_bridge_config() -> Optional[dict[str, Any]]:

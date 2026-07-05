@@ -77,6 +77,24 @@ def _daily_limit() -> int:
         return 60
 
 
+def _build_renewal_email(username: str, days_left: int) -> tuple[str, str]:
+    """付费用户续费提醒：语气是「感谢+无缝续期」，不是免费转付费的推销。"""
+    app = _app_base_url()
+    when = "今天" if days_left <= 0 else ("明天" if days_left == 1 else f"{days_left} 天后")
+    subject = f"【DeepFocus】你的会员{when}到期 · 续费无缝衔接"
+    body = (
+        f"{username}，您好：\n\n"
+        f"感谢你一直以来的支持。你的 DeepFocus 会员将于{when}到期，"
+        f"续费后到期时间自动顺延、权益不中断：{app}\n\n"
+        f"如已续费，请忽略本提醒。\n\n"
+        "—————————————————————\n"
+        "DeepFocus · 金融终端 daocaijing.com\n"
+        "本邮件由系统自动发送。内容仅供研究参考，不构成投资建议。\n"
+        "如不希望再收到此类邮件，回复「退订」即可。"
+    )
+    return subject, body
+
+
 def _build_email(username: str, days_left: int) -> tuple[str, str]:
     app = _app_base_url()
     when = "今天" if days_left <= 0 else ("明天" if days_left == 1 else f"{days_left} 天后")
@@ -97,43 +115,71 @@ def _build_email(username: str, days_left: int) -> tuple[str, str]:
     return subject, body
 
 
+def _renewal_candidates() -> list[tuple[dict, str]]:
+    """付费用户续费召回候选：到期前 7 天 / 1 天两档触达（churn 止血）。
+    去重键在 expiry_day 上带档位后缀（免表迁移）：同一到期日 7 天档与 1 天档各发一次。
+    返回 [(user, dedup_key)]。"""
+    out: list[tuple[dict, str]] = []
+    for u in users_expiring_within(7 * 24, paid=True):
+        day = u["expires_at"][:10]
+        days_left = int(u.get("days_left", 7))
+        stage = f"{day}#r1" if days_left <= 1 else f"{day}#r7"
+        if not _already(u["id"], stage):
+            out.append((u, stage))
+    return out
+
+
 def run_expiry_reminder_once(limit: Optional[int] = None) -> dict:
-    """执行一轮到期转化召回。返回 {candidates, sent, skipped, errors, deferred, detail[]}，绝不抛出。"""
-    summary: dict = {"candidates": 0, "sent": 0, "skipped": 0, "errors": 0, "deferred": 0, "detail": []}
+    """执行一轮到期召回（免费转化 + 付费续费两条线）。
+    返回 {candidates, sent, skipped, errors, deferred, renewal_candidates, renewal_sent, detail[]}，绝不抛出。"""
+    summary: dict = {"candidates": 0, "sent": 0, "skipped": 0, "errors": 0, "deferred": 0,
+                     "renewal_candidates": 0, "renewal_sent": 0, "detail": []}
     try:
         cands = [u for u in users_expiring_within(48) if not _already(u["id"], u["expires_at"][:10])]
     except Exception as exc:  # noqa: BLE001
         summary["detail"].append(f"候选筛选失败：{exc}"[:200])
         return summary
+    try:
+        renewals = _renewal_candidates()
+    except Exception as exc:  # noqa: BLE001
+        renewals = []
+        summary["detail"].append(f"续费候选筛选失败：{exc}"[:200])
     summary["candidates"] = len(cands)
+    summary["renewal_candidates"] = len(renewals)
     cap = _daily_limit() if limit is None else limit
     if cap > 0 and len(cands) > cap:
         summary["deferred"] = len(cands) - cap
         summary["detail"].append(f"超出本轮上限 {cap}，{summary['deferred']} 人留待下轮")
         cands = cands[:cap]
-    if not cands:
+    if not cands and not renewals:
         return summary
     config = _email_smtp_config()
     if config is None:
         # SMTP 未配置：本轮整体跳过、不逐人落库（到期提醒按 expiry_day 去重、下周期会自愈，
         # 但仍不写 skipped 行以免污染统计、并与 t1_recall 保持一致）。
-        summary["skipped"] = len(cands)
-        summary["detail"].append(f"SMTP 未配置，{len(cands)} 名候选本轮跳过（不落库）")
+        summary["skipped"] = len(cands) + len(renewals)
+        summary["detail"].append(f"SMTP 未配置，{len(cands) + len(renewals)} 名候选本轮跳过（不落库）")
         return summary
-    for u in cands:
-        day = u["expires_at"][:10]
-        subject, bdy = _build_email(u["username"], int(u.get("days_left", 1)))
+
+    def _send(u: dict, dedup_key: str, subject: str, bdy: str, counter: str) -> None:
         try:
             mime = MIMEText(bdy, "plain", "utf-8")
             mime["Subject"] = subject
             mime["From"] = config["sender"] or config["user"]
             mime["To"] = u["email"]
             _smtp_sendmail(config, [u["email"]], mime)
-            _record(u["id"], day, u["email"], "sent", subject)
-            summary["sent"] += 1
+            _record(u["id"], dedup_key, u["email"], "sent", subject)
+            summary[counter] += 1
         except Exception as exc:  # noqa: BLE001
-            _record(u["id"], day, u["email"], "error", str(exc))
+            _record(u["id"], dedup_key, u["email"], "error", str(exc))
             summary["errors"] += 1
+
+    for u in cands:
+        subject, bdy = _build_email(u["username"], int(u.get("days_left", 1)))
+        _send(u, u["expires_at"][:10], subject, bdy, "sent")
+    for u, stage in renewals:
+        subject, bdy = _build_renewal_email(u["username"], int(u.get("days_left", 7)))
+        _send(u, stage, subject, bdy, "renewal_sent")
     return summary
 
 

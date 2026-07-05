@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 import os
 import re
 import threading
@@ -43,23 +44,53 @@ _SEED_NAMES = frozenset({
     "三一重工", "万科A", "格力电器", "中国石油", "中国石化", "中国建筑", "中芯国际", "韦尔股份",
     "通威股份", "片仔癀", "海天味业", "中国中免", "兆易创新", "汇川技术", "迈瑞医疗", "顺丰控股",
 })
-# ≥3 字但属常用词、可能误命中的歧义名(先留空，发现一个补一个)。
-_DENY: frozenset = frozenset()
+# ≥3 字但属常用词/纯行业赛道词、与某只股名同形会误命中的歧义名 → 从名称表剔除(发现一个补一个)。
+# "机器人"=300024 新松机器人的股名，但更常作"机器人板块/赛道"被问 → 留着会把板块查询解析成单只个股(答错对象)。
+_DENY: frozenset = frozenset({"机器人"})
 
 _lock = threading.Lock()
 _names: frozenset = _SEED_NAMES
 _maxlen = _MAX_LEN
+_name_code: dict = {}   # 完整 name->code（供 SEO 全市场发现页 /stocks/all 枚举所有 /stock/{code} 内链）
 
 
 def _ingest(mapping: dict) -> int:
     """把 name->code 映射并入内存集合(与种子合并、过滤短名/歧义名)。返回最终名称数。"""
-    global _names, _maxlen
-    cleaned = {n for n in mapping if n and len(n) >= _MIN_LEN and n not in _DENY}
+    global _names, _maxlen, _name_code
+    norm = {_nfkc(n): c for n, c in mapping.items() if n}  # 全角→半角归一(京东方Ａ→京东方A)，让半角输入命中
+    cleaned = {n for n in norm if n and len(n) >= _MIN_LEN and n not in _DENY}
     merged = frozenset(cleaned | _SEED_NAMES)
     with _lock:
         _names = merged
         _maxlen = min(_MAX_LEN, max((len(n) for n in merged), default=_MAX_LEN))
+        _name_code = {n: str(c) for n, c in norm.items()
+                      if n and c and len(n) >= _MIN_LEN and n not in _DENY}
     return len(merged)
+
+
+def all_name_code() -> dict:
+    """全 A「名称→代码」映射快照（供 SEO 全市场发现页枚举；未加载则尝试磁盘缓存）。"""
+    if not _name_code:
+        _load_disk()
+    with _lock:
+        return dict(_name_code)
+
+
+def name_of_code(code: str) -> str:
+    """代码→中文名反查（速判卡/SEO 个股页 name 兜底；查不到返回空串）。
+
+    每次线性反查 O(n)（n≈5000），只在 name 缺失的兜底路径调用，不值得常驻反向索引。
+    """
+    c = str(code or "").strip()
+    if not c:
+        return ""
+    if not _name_code:
+        _load_disk()
+    with _lock:
+        for n, k in _name_code.items():
+            if k == c:
+                return n
+    return ""
 
 
 def _load_disk() -> bool:
@@ -126,6 +157,119 @@ async def refresh() -> int:
         return _ingest(mapping)
     _load_disk()
     return len(_names)
+
+
+# 东财在除权除息/风险警示日给名字加 XD/DR/N/*ST 等前缀(且可能截断，如「贵研铂业」当日显示「XD贵研铂」)，
+# 匹配前剥掉这些前缀，免得 ex-div 当日整批个股名对不上。
+_NAME_MARKER_RE = re.compile(r"^(?:XD|DR|N|U|W|V|C|\*?ST)+")
+
+
+def _strip_marker(name: str) -> str:
+    return _NAME_MARKER_RE.sub("", name or "")
+
+
+def _nfkc(s: str) -> str:
+    """全角→半角等兼容归一(京东方Ａ→京东方A、全角数字/空格→半角)，让半角输入也能命中全角存名。"""
+    return unicodedata.normalize("NFKC", s or "")
+
+
+# 这些后缀把「母公司A股名」延伸成【另一家上市主体】(多为港股子公司)：比亚迪→比亚迪电子(HK)、中国软件→中国软件国际(HK)。
+# 命中它们时绝不能把输入解析成母公司A股代码(会返回另一家公司的数据)。保守只列强信号后缀，避免误伤"中信证券股份"等同主体全名。
+_DISTINCT_ENTITY_SUFFIXES = ("国际", "电子", "微电子", "半导体")
+
+
+def _extends_to_distinct_entity(t: str, n: str) -> bool:
+    """t 中 n 之后紧跟 国际/电子/半导体 等后缀 → n 其实是更长的另一家主体名的前缀，不应解析成 n。"""
+    i = t.find(n)
+    if i < 0:
+        return False
+    after = t[i + len(n):]
+    return any(after.startswith(suf) for suf in _DISTINCT_ENTITY_SUFFIXES)
+
+
+def resolve_to_code(text: str) -> "str | None":
+    """把一段文本解析成 A 股 6 位代码：已含代码→直取；中文名→查名称表(精确→被包含→唯一前缀→去标记近似)。
+    ASCII(美/港股 ticker 如 AAPL/00700)→ None(交由原链按 ticker 处理)；解析不出→ None。
+    给 agent 工具层做"中文名→代码"自动归一，根除模型凭记忆猜错 A 股代码。"""
+    t = _nfkc((text or "").strip())   # 全角→半角归一，让"京东方A"命中"京东方Ａ"
+    if not t:
+        return None
+    m = _SPECIFIC_CODE_RE.search(t)
+    if m:
+        return m.group(0)
+    if t.isascii():  # 美/港股代码，不是 A 股中文名 → 不强转
+        return None
+    nc = all_name_code()
+    if not nc:
+        return None
+    if t in nc:                       # 精确名
+        return nc[t]
+    # 用户把名字裹在短语里(如"分析下长电科技这只票")→取被完整包含的最长名称；
+    # 同时纳入「去除权/风险标记后的名」(应对 ex-div 当日东财把名字加 XD 前缀并截断，如 600519 当日='XD贵州茅')。
+    contained: list[tuple[str, str]] = []
+    for n, c in nc.items():
+        if n in t:
+            contained.append((n, c))
+        else:
+            s = _strip_marker(n)
+            if s != n and len(s) >= 3 and s in t:
+                contained.append((s, c))
+    # 过滤"被延伸成另一家主体"的误命中：比亚迪电子→比亚迪、中国软件国际→中国软件(返回的是另一家公司数据)。
+    contained = [(n, c) for n, c in contained if not _extends_to_distinct_entity(t, n)]
+    if contained:
+        contained.sort(key=lambda x: len(x[0]), reverse=True)
+        return contained[0][1]
+    # 唯一前缀(如"宁德"→宁德时代)：只有唯一候选才认，歧义不猜
+    pref = [c for n, c in nc.items() if n.startswith(t)]
+    if len(set(pref)) == 1:
+        return pref[0]
+    # 去 XD/DR/*ST 标记后再近似：去标记精确 / 去标记名是用户输入的前缀(应对 ex-div 截断)，均要求唯一
+    stripped = {}
+    for n, c in nc.items():
+        s = _strip_marker(n)
+        if s and len(s) >= _MIN_LEN:
+            stripped.setdefault(s, c)
+    if t in stripped:
+        return stripped[t]
+    approx = [c for s, c in stripped.items()
+              if len(s) >= _MIN_LEN and (t.startswith(s) or s.startswith(t))
+              and not _extends_to_distinct_entity(t, s)]   # 同样挡住 比亚迪电子→比亚迪 这类延伸误判
+    if len(set(approx)) == 1:
+        return approx[0]
+    return None
+
+
+def search_names(query: str, limit: int = 8) -> list[dict]:
+    """按中文名/片段/代码搜 A 股候选(精确→前缀→子串)，供 resolve_symbol 工具消歧。返回 [{name,code,market}]。"""
+    q = (query or "").strip()
+    if not q:
+        return []
+    nc = all_name_code()
+    if not nc:
+        return []
+    m = _SPECIFIC_CODE_RE.search(q)
+    if m:
+        code = m.group(0)
+        name = next((n for n, c in nc.items() if c == code), "")
+        return [{"name": name or code, "code": code, "market": "CN"}]
+    out: list[dict] = []
+    seen: set = set()
+    def _add(n: str, c: str) -> None:
+        if c not in seen:
+            seen.add(c); out.append({"name": n, "code": c, "market": "CN"})
+    if q in nc:
+        _add(q, nc[q])
+    for n, c in nc.items():
+        if len(out) >= limit:
+            break
+        if n.startswith(q):
+            _add(n, c)
+    for n, c in nc.items():
+        if len(out) >= limit:
+            break
+        if q in n:
+            _add(n, c)
+    return out[:limit]
 
 
 def mentions_specific_code(text: str) -> bool:

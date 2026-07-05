@@ -67,6 +67,9 @@
 }
 .bbt-cmd-key { background: var(--accent); color: #000; padding: 1px 7px; border-radius: 2px; }
 .bbt-cmd-amber { color: var(--amber); letter-spacing: 1px; white-space: nowrap; flex: 0 0 auto; }
+/* 价值主张常驻品牌区（新用户 10 秒心智）；窄屏空间寸土寸金 → 隐藏 */
+.bbt-cmd-tagline { color: var(--mute2, #6b7782); font-size: 11px; font-weight: 400; white-space: nowrap; flex: 0 0 auto; letter-spacing: .5px; }
+@media (max-width: 1100px) { .bbt-cmd-tagline { display: none; } }
 .bbt-cmd-input { color: var(--blue); font-weight: 400; }
 .bbt-caret { animation: bbt-blink 1s step-end infinite; color: var(--amber); }
 @keyframes bbt-blink { 50% { opacity: 0; } }
@@ -200,8 +203,8 @@
   /* 手机：横幅压成单行细条（入口仍醒目，但不再吃掉两行高度） */
   .bbt-trial-banner { padding: 3px 10px; gap: 6px; }
   .bbt-trial-gift { font-size: 17px; }
-  .bbt-trial-text { font-size: 17px; }
-  .bbt-trial-btn { padding: 3px 11px; font-size: 17px; box-shadow: none; }
+  .bbt-trial-text { font-size: 12px; }  /* 辅助档：横幅说明文字(单行细条) */
+  .bbt-trial-btn { padding: 4px 12px; font-size: 12px; box-shadow: none; }
 }
 .bbt-ticker-track { display: inline-flex; gap: 28px; animation: bbt-marquee 40s linear infinite; padding-left: 100%; }
 @keyframes bbt-marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
@@ -1077,7 +1080,7 @@
   .bbt-review-entry { font-size: 17px; padding: 5px 10px; }
   .bbt-ifind-entry, .bbt-aiqa-entry { font-size: 0; gap: 0; padding: 6px 9px; }
   .bbt-ifind-entry::before  { font-size: 14px; content: "📡"; }   /* iFinD */
-  .bbt-aiqa-entry::before   { font-size: 14px; content: "💬"; }   /* AI 问答 */
+  .bbt-aiqa-entry::before   { font-size: 14px; content: "✨"; }   /* AI 问答（✨ 与交流群💬区分） */
   .bbt-cmd { gap: 10px; }
   .bbt-cmd-right { gap: 9px; }
 }
@@ -1144,7 +1147,7 @@
 @media (max-width: 600px) {
   .bbt-doc--group { max-width: 100%; }
   .bbt-grp-qr { width: 200px; height: 200px; }
-  .bbt-grp-hint { font-size: 17px; gap: 7px; padding: 7px 8px 7px 10px; }
+  .bbt-grp-hint { font-size: 12px; gap: 7px; padding: 7px 8px 7px 10px; }  /* 辅助档：发现气泡(回到 base 的 12px) */
 }
 
 .bbt-review-card {
@@ -1581,16 +1584,18 @@
    ============================================================ */
 @media (max-width: 820px) {
   /* 整体不再锁死视口高度，改为整页纵向滚动 */
+  /* 字号三档：正文/标题 15-16px、辅助(表头/状态栏/时间戳/meta) 12px、徽章 11px。
+     此前一刀切 17px 正文辅助倒挂、单屏信息量骤降。⚠️input/textarea 恒 ≥16px 防 iOS 聚焦缩放。 */
   .bbt {
     height: auto; min-height: 100vh; min-height: 100dvh; border: none; border-radius: 0;
-    font-size: 17px; letter-spacing: 0; -webkit-text-size-adjust: 100%;
+    font-size: 15px; letter-spacing: 0; -webkit-text-size-adjust: 100%;  /* 正文基准档 */
   }
 
   /* 命令栏：品牌一行，右侧控件统一成【等高 32px 图标钮】，搜索框单独占一行。
      统一尺寸/形状 = 视觉协调，换行也整齐，不再高矮参差堆满半屏。 */
   .bbt-cmd { flex-wrap: wrap; gap: 6px 7px; padding: 7px 10px; }
   .bbt-cmd-amber { display: none; }
-  .bbt-cmd-input { order: 5; flex: 1 1 100%; font-size: 17px; padding: 7px 10px; background: var(--input-bg); border-radius: 8px; }
+  .bbt-cmd-input { order: 5; flex: 1 1 100%; font-size: 16px; padding: 7px 10px; background: var(--input-bg); border-radius: 8px; }  /* input 恒 ≥16px 防 iOS 缩放 */
   .bbt-cmd-right { margin-left: auto; gap: 7px; row-gap: 7px; font-size: 12px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
   .bbt-cmd-right > button, .bbt-cmd-right > .bbt-acctwrap { flex-shrink: 0; }
   .bbt-clock, .bbt-mkt, .bbt-btn-txt { display: none; }
@@ -1608,15 +1613,41 @@
   /* 数据类入口/邀请/说明书：隐藏文字，用 ::before 给等大图标 */
   .bbt-cmd-right .bbt-review-entry, .bbt-cmd-right .bbt-ref-entry,
   .bbt-cmd-right .bbt-help-btn { font-size: 0; }
+  /* 入口钮改「图标+文字标签」两行：emoji 在上、9px 标签在下——触屏没有 hover/title,光靠图标猜不出功能。
+     高度 32→44px(顺带达标触控热区),宽度随标签自适应,顶栏容器本就 flex-wrap 不会溢出。 */
+  .bbt-cmd-right .bbt-review-entry, .bbt-cmd-right .bbt-ref-entry,
+  .bbt-cmd-right .bbt-help-btn {
+    flex-direction: column; width: auto; min-width: 36px; height: 44px;
+    padding: 3px 5px 2px; box-sizing: border-box; gap: 2px;
+  }
   .bbt-cmd-right .bbt-review-entry::before { content: "📊"; font-size: 16px; }   /* 复盘 */
   .bbt-cmd-right .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }   /* AI 模拟盘 */
   .bbt-cmd-right .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }  /* 名人观点 */
   .bbt-cmd-right .bbt-ifind-entry::before  { content: "📡"; font-size: 16px; }   /* iFinD */
-  .bbt-cmd-right .bbt-aiqa-entry::before   { content: "💬"; font-size: 16px; }   /* AI 问答 */
+  .bbt-cmd-right .bbt-aiqa-entry::before   { content: "✨"; font-size: 16px; }   /* AI 问答（✨ 与交流群💬区分） */
   .bbt-cmd-right .bbt-ref-entry::before    { content: "🎁"; font-size: 16px; }   /* 邀请 */
   .bbt-cmd-right .bbt-group-entry::before  { content: "💬"; font-size: 16px; }   /* 交流群 */
-  .bbt-cmd-right .bbt-manual-btn::before   { content: "📖"; font-size: 17px; }
-  .bbt-cmd-right .bbt-help-btn:not(.bbt-manual-btn)::before { content: "❔"; font-size: 17px; }
+  .bbt-cmd-right .bbt-manual-btn::before   { content: "📖"; font-size: 16px; }
+  .bbt-cmd-right .bbt-help-btn:not(.bbt-manual-btn)::before { content: "❔"; font-size: 16px; }
+  /* 文字标签(::after)：9px 次级文字色,居中排在 emoji 下方。
+     ⚠️此规则有意以更高特异性覆盖两个同名 ::after：①1105 行 .bbt-group-entry.pulse::after 红点(标签更重要)
+     ②2219 行 .bbt-help-btn::after 44px 透明热区圈(按钮实高已 44px,无需再外扩)。 */
+  .bbt-cmd-right .bbt-review-entry::after, .bbt-cmd-right .bbt-ref-entry::after,
+  .bbt-cmd-right .bbt-help-btn::after {
+    content: ""; display: block; position: static; width: auto; height: auto;
+    top: auto; left: auto; right: auto; transform: none; border-radius: 0; background: none; box-shadow: none;
+    font-size: 9px; line-height: 1.1; font-weight: 600; letter-spacing: 0;
+    color: var(--mute2); text-align: center; white-space: nowrap;
+  }
+  .bbt-cmd-right .bbt-review-entry::after { content: "复盘"; }
+  .bbt-cmd-right .bbt-aifund-entry::after { content: "模拟盘"; }
+  .bbt-cmd-right .bbt-celebrity-entry::after { content: "名人"; }
+  .bbt-cmd-right .bbt-ifind-entry::after  { content: "iFinD"; }
+  .bbt-cmd-right .bbt-aiqa-entry::after   { content: "问答"; }
+  .bbt-cmd-right .bbt-ref-entry::after    { content: "邀请"; }
+  .bbt-cmd-right .bbt-group-entry::after  { content: "交流群"; }
+  .bbt-cmd-right .bbt-manual-btn::after   { content: "说明书"; }
+  .bbt-cmd-right .bbt-help-btn:not(.bbt-manual-btn)::after { content: "帮助"; }
   .bbt-cmd-right .bbt-ref-entry-hot, .bbt-cmd-right .bbt-buy-cta-hot { display: none; }
   .bbt-cmd-right .bbt-ref-entry-badge { position: absolute; top: -5px; right: -5px; }
 
@@ -1632,42 +1663,51 @@
   .bbt-macro::-webkit-scrollbar { height: 0; }
   .bbt-detail { gap: 10px 14px; padding: 7px 10px; }
 
-  /* 网格 → 单列堆叠；每个面板给定高度，内部各自滚动 */
+  /* 网格 → 单列堆叠。⭐拆三层嵌套滚动陷阱（页面滚+面板内滚+列内滚，手指经常滚错容器）：
+     资讯面板去固定高度、内容自然铺开随页面滚动（自选面板默认折叠不冲突）；最大化时保持内滚。 */
   .bbt-grid { grid-template-columns: 1fr; height: auto; }
-  .bbt-panel { height: 74vh; height: 74dvh; }
+  .bbt-panel { height: auto; }
+  .bbt-panel .bbt-news { max-height: none; overflow: visible; }
   .bbt-grid--maxed .bbt-panel { height: calc(100vh - 60px); height: calc(100dvh - 60px); }
+  .bbt-grid--maxed .bbt-panel .bbt-news { max-height: none; overflow: auto; }
+  /* 选股后的三列：移动端解除 46vh 高度封顶，纵向自然铺开（横滑三列改为整页纵读） */
+  .bbt-stockcols { overflow: visible; max-height: none; }
+  .bbt-stockcol { max-height: none; }
+  .bbt-stockcol-body { max-height: none; overflow: visible; }
 
   /* 面板标题允许换行；研报搜索框独占一行 */
   .bbt-ph { flex-wrap: wrap; row-gap: 5px; padding: 7px 10px; font-size: 12px; }
   .bbt-res-search { order: 9; flex: 1 1 100%; margin-left: 0; }
-  .bbt-res-input { max-width: none; font-size: 17px; padding: 5px 9px; }
+  .bbt-res-input { max-width: none; font-size: 16px; padding: 5px 9px; }  /* input 恒 ≥16px */
   .bbt-filters { flex-wrap: wrap; gap: 5px; }
-  .bbt-chip { font-size: 17px; padding: 2px 9px; }
+  .bbt-chip { font-size: 12px; padding: 3px 10px; }  /* 辅助档：筛选 chip(与 ≤560 分支 12px 对齐) */
 
   /* 行情表：窄屏隐藏「日内区间」「量」两列，留 名称/最新/涨跌/涨幅% */
   .bbt-qhead, .bbt-qrow { grid-template-columns: minmax(0, 1.7fr) 0.9fr 0.85fr 0.9fr; gap: 8px; padding: 7px 10px; }
   .bbt-qhead > :nth-child(5), .bbt-qhead > :nth-child(6),
   .bbt-qrow > :nth-child(5), .bbt-qrow > :nth-child(6) { display: none; }
-  .bbt-qrow .c-name, .c-num { font-size: 17px; }
-  .bbt-qhead { font-size: 17px; }
+  .bbt-qrow .c-name, .c-num { font-size: 15px; }  /* 正文档：行情名称/数字 */
+  .bbt-qhead { font-size: 12px; }                 /* 辅助档：表头 */
+  .bbt-wlg-n { font-size: 11px; }                 /* 徽章档：自选分组计数徽章(base 是 17px,移动端压回微标) */
 
   /* 资讯 / 研报行：加大点按区域 */
   .bbt-nrow { padding: 7px 10px; gap: 7px; flex-wrap: wrap; }
-  .bbt-ntext { flex: 1 1 100%; font-size: 17px; line-height: 1.5; }
+  .bbt-ntext { flex: 1 1 100%; font-size: 15px; line-height: 1.5; }  /* 正文档：资讯正文 */
+  .bbt-ntopic { font-size: 12px; }  /* 辅助档：话题 meta 前缀(base 17px) */
   /* 研报行：标题占整行换行，日期 + AI 解读 在第二行 */
   .bbt-rrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px; }
   .bbt-rmid { flex: 1 1 100%; flex-wrap: wrap; gap: 5px 6px; overflow: visible; }
-  .bbt-rtitle { flex: 1 1 100%; font-size: 14px; line-height: 1.45; white-space: normal; }
+  .bbt-rtitle { flex: 1 1 100%; font-size: 15px; line-height: 1.45; white-space: normal; }  /* 正文档：研报标题(与资讯正文同级) */
   .bbt-rticks { flex: 1 1 100%; max-width: none; flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; }
   .bbt-rdate { order: 2; }
   .bbt-rrow .bbt-nact { order: 3; margin-left: auto; }
-  /* 资讯/研报行内按钮：手机上略放大但仍精致 */
-  .bbt-nai, .bbt-nsrc { font-size: 17px; padding: 3px 11px; }
+  /* 资讯/研报行内按钮：辅助档字号,内边距略增保住点按区(与 buy-cta/chip 的移动端 12px 惯例一致) */
+  .bbt-nai, .bbt-nsrc { font-size: 12px; padding: 5px 12px; }
   /* 研报搜索条输入框防 iOS 聚焦缩放 */
   .bbt-res-input { font-size: 16px; padding: 7px 10px; }
 
   /* 底部状态栏：换行、隐藏键盘操作提示 */
-  .bbt-status { gap: 10px 14px; flex-wrap: wrap; padding: 6px 10px; font-size: 17px; }
+  .bbt-status { gap: 10px 14px; flex-wrap: wrap; padding: 6px 10px; font-size: 12px; }  /* 辅助档：状态栏(含常驻免责声明) */
   .bbt-status-fn { display: none; }
 
   /* 浮层（研报原文 / 文章 / AI / 命令面板）：全屏。
@@ -1678,8 +1718,8 @@
     width: 100%; max-width: none; height: 100%; max-height: 100%; border-radius: 0; border: none;
   }
   .bbt-doc-bar { flex-wrap: wrap; row-gap: 6px; padding: 8px 10px; }
-  .bbt-doc-title { flex: 1 1 100%; white-space: normal; font-size: 17px; }
-  .bbt-doc-h { font-size: 17px; }
+  .bbt-doc-title { flex: 1 1 100%; white-space: normal; font-size: 16px; }  /* 标题档 */
+  .bbt-doc-h { font-size: 16px; }
   .bbt-doc-body, .bbt-ai-sum { font-size: 14px; }
   .bbt-palette-overlay { position: fixed; padding-top: 0; }
   .bbt-palette { width: 100%; max-width: none; border-radius: 0; height: 100%; }
@@ -1991,7 +2031,7 @@
 .bbt-acct-hint-ok { position: relative; background: rgba(42,26,0,.16); border: none; color: #2a1a00; font-weight: 800; font-size: 12px; border-radius: 6px; padding: 3px 9px; cursor: pointer; }
 .bbt-acct-hint-ok:hover { background: rgba(42,26,0,.28); }
 @keyframes bbt-hint-pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 820px) { .bbt-acct-hint-txt { font-size: 17px; } .bbt-acct-hint { gap: 7px; padding: 7px 8px 7px 10px; } }
+@media (max-width: 820px) { .bbt-acct-hint-txt { font-size: 12px; } .bbt-acct-hint { gap: 7px; padding: 7px 8px 7px 10px; } }  /* 辅助档：一次性提示气泡 */
 
 /* 默认头像：首字母色块（无自定义头像时的标准默认样式）；VIP 走金色 */
 .bbt-avatar {
@@ -2269,7 +2309,7 @@
   /* —— 顶栏紧凑：品牌+按钮+搜索尽量少占首屏，让资讯更早出现（用户要求压缩顶部）—— */
   .bbt-cmd { gap: 5px; padding: 4px 9px; row-gap: 4px; }
   .bbt-cmd-amber { display: none; }                     /* 隐藏「金融终端」副标题 */
-  .bbt-cmd-key { font-size: 17px; padding: 1px 5px; letter-spacing: 0; }  /* DEEPFOCUS 缩小 */
+  .bbt-cmd-key { font-size: 15px; padding: 1px 5px; letter-spacing: 0; }  /* DEEPFOCUS 缩小(随移动端 15px 基准) */
   .bbt-cmd-right { gap: 6px; row-gap: 5px; }
   .bbt-cmd-input { flex: 1 1 100%; min-width: 0; max-width: none; height: 34px; font-size: 14px; }
 
@@ -2294,22 +2334,22 @@
   .bbt-review-entry { border-radius: 8px; }
   .bbt-trial-banner { box-shadow: none; }
 
-  /* 顶栏再压一档(用户要求图标化)：复盘/AI模拟盘/邀请得会员 收成纯图标方块(保留 title 悬浮提示),
-     只保留 开通会员(主付费 CTA)+登录 文字 → 大众入口一行排开、更短更齐，不再"又大又乱"。 */
+  /* 顶栏再压一档(用户要求图标化)：复盘/AI模拟盘/邀请得会员 收成「图标+9px 标签」两行小钮(标签规则在 ≤820 分支),
+     只保留 开通会员(主付费 CTA)+登录 文字 → 大众入口一行排开、更短更齐，不再"又大又乱"。
+     ⚠️尺寸须与 ≤820 分支两行排布一致(44px 高、宽度自适应),不可再压回 32px 方块——否则标签溢出。 */
   .bbt-review-entry:not(.bbt-ifind-entry):not(.bbt-aiqa-entry),
-  .bbt-ref-entry { font-size: 0; gap: 0; width: 34px; min-width: 34px; height: 32px; min-height: 32px; padding: 0; box-sizing: border-box; justify-content: center; }
-  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-ifind-entry):not(.bbt-aiqa-entry):not(.bbt-group-entry):not(.bbt-celebrity-entry)::before { content: "📊"; font-size: 17px; }
-  .bbt-aifund-entry::before { content: "🤖"; font-size: 17px; }
-  .bbt-celebrity-entry::before { content: "🗣️"; font-size: 17px; }
-  .bbt-group-entry::before { content: "💬"; font-size: 17px; }
-  .bbt-ref-entry::before { content: "🎁"; font-size: 17px; }
-  /* 整排按钮统一 32px 等高、垂直居中——消除图标38/文字30/登录24 的参差,一行排得齐 */
+  .bbt-ref-entry { font-size: 0; gap: 2px; width: auto; min-width: 36px; height: 44px; min-height: 44px; padding: 3px 5px 2px; box-sizing: border-box; justify-content: center; }
+  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-ifind-entry):not(.bbt-aiqa-entry):not(.bbt-group-entry):not(.bbt-celebrity-entry)::before { content: "📊"; font-size: 16px; }
+  .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }
+  .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }
+  .bbt-group-entry::before { content: "💬"; font-size: 16px; }
+  .bbt-ref-entry::before { content: "🎁"; font-size: 16px; }
+  /* 纯文字钮统一 32px 等高垂直居中(顶栏 align-items:center,与 44px 图标钮同行不遮挡)；
+     说明书📖已改两行标签钮,不再参与 32px 统一(高度/宽度沿用 ≤820 分支的 44px 规则) */
   .bbt-cmd-right > .bbt-theme-btn,
   .bbt-cmd-right > .bbt-buy-cta,
-  .bbt-cmd-right > .bbt-manual-btn,
   .bbt-cmd-right .bbt-acct-in { height: 32px; min-height: 32px; box-sizing: border-box; align-items: center; }
-  .bbt-cmd-right > .bbt-theme-btn,
-  .bbt-cmd-right > .bbt-manual-btn { width: 34px; min-width: 34px; padding: 0; justify-content: center; }
+  .bbt-cmd-right > .bbt-theme-btn { width: 34px; min-width: 34px; padding: 0; justify-content: center; }
 
   /* —— 资讯筛选 chip：紧凑(仍≥32px 可点) —— */
   .bbt-filters { gap: 5px; }
@@ -2322,8 +2362,8 @@
 
   /* —— 资讯行：加高、放大字号行距，好读好点 —— */
   .bbt-nrow { padding: 9px 12px; gap: 8px; align-items: center; min-height: 44px; }
-  .bbt-ntext { font-size: 17px; line-height: 1.5; }
-  .bbt-ntime { font-size: 17px; }
+  .bbt-ntext { font-size: 15px; line-height: 1.5; }  /* 正文档 */
+  .bbt-ntime { font-size: 12px; }  /* 辅助档：时间戳 */
   .bbt-ntopic { font-size: 12px; }
   .bbt-ntag { font-size: 12px; padding: 1px 5px; }
 
@@ -2332,10 +2372,10 @@
   .bbt-qhead { padding: 5px 10px; }
 
   /* —— 资讯卡操作按钮（AI解读/复制/原文等）≥40px —— */
-  .bbt-news-btn { min-height: 40px; padding: 9px 15px; font-size: 17px; }
+  .bbt-news-btn { min-height: 40px; padding: 9px 15px; font-size: 15px; }  /* 正文档：主操作大按钮(40px 高不变) */
 
   /* —— 开启盯盘的选股 chip（新用户引导主操作）≥40px —— */
-  .bbt-activate-chip { min-height: 40px; padding: 8px 13px; font-size: 17px; }
+  .bbt-activate-chip { min-height: 40px; padding: 8px 13px; font-size: 15px; }  /* 正文档：新手引导主操作 */
 }
 
 @keyframes bbt-pdf-bar {

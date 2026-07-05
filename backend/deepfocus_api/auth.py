@@ -281,6 +281,27 @@ def membership_of_username(username: str) -> Optional[dict]:
         return membership_of(user) if user is not None else None
 
 
+def email_of_user(user_id: str) -> str:
+    """按用户 id 取邮箱（召回订阅用；无邮箱/用户不存在返回空串）。"""
+    uid = (user_id or "").strip()
+    if not uid:
+        return ""
+    with session_scope() as session:
+        user = session.get(User, uid)
+        return (user.email or "").strip() if user is not None else ""
+
+
+def user_id_of_username(username: str) -> Optional[str]:
+    """按用户名取 user.id（大小写不敏感）；不存在返回 None。
+    供 agent 工具层用：ContextVar 注入的是用户名，而 user_prefs 等按 user.id(JWT sub) 键控。"""
+    uname = (username or "").strip()
+    if not uname:
+        return None
+    with session_scope() as session:
+        user = session.scalar(select(User).where(func.lower(User.username) == uname.lower()))
+        return str(user.id) if user is not None else None
+
+
 def membership_source_of(username: str) -> Optional[str]:
     """按用户名取会员来源（paid/reward/trial/admin…）；用户不存在返回 None。"""
     uname = (username or "").strip()
@@ -314,9 +335,12 @@ def _to_out(user: User) -> AuthUserOut:
     )
 
 
-def users_expiring_within(hours: int = 48) -> list[dict]:
-    """会员将在 [now, now+hours] 内到期、留了邮箱、且非付费来源的用户——到期转化召回用。
-    返回 [{id, username, email, expires_at(iso), source, days_left}]，按到期先后。付费(paid)用户不打扰。"""
+def users_expiring_within(hours: int = 48, paid: bool = False) -> list[dict]:
+    """会员将在 [now, now+hours] 内到期、留了邮箱的用户，按到期先后。
+    返回 [{id, username, email, expires_at(iso), source, days_left}]。
+    paid=False（默认）：只要非付费来源——到期「转化」召回用；
+    paid=True：只要付费来源——到期「续费」召回用（churn 止血；续费是 LTV 第一变量）。
+    lifetime（到期日 >100 年）天然落不进窗口，无需特判。"""
     now = datetime.now(timezone.utc)
     until = now + timedelta(hours=max(1, int(hours)))
     out: list[dict] = []
@@ -329,8 +353,8 @@ def users_expiring_within(hours: int = 48) -> list[dict]:
             ).order_by(User.membership_expires_at)
         ).all()
         for u in rows:
-            if (u.membership_source or "") == "paid":
-                continue  # 付费用户的续费另走（不混入免费转化召回）
+            if ((u.membership_source or "") == "paid") != paid:
+                continue  # 付费/非付费两条召回线分开走，文案与节奏不同
             if not (u.email or "").strip():
                 continue
             exp = u.membership_expires_at
@@ -1008,6 +1032,10 @@ PUBLIC_EXACT = frozenset(
         "/api/themes/detail",      # 题材→受益股（顺藤摸瓜·免费）
         "/api/themes/stock",       # 个股→所属行业/板块（免费）
         "/api/themes/limit-up",    # 涨停天梯/连板梯队（免费引流）
+        "/api/dragon-tiger/daily", # 龙虎榜每日全榜（交易所公开事实，/lhb 公开页数据源）
+        "/api/calendar/cn",        # A股日历：解禁/新股/财报预约披露（确定性事实，免费回访理由）
+        "/api/search/universal",   # 统一搜索聚合（股票/资讯/研报/术语/板块，免费层）
+        "/api/glossary/index",     # 术语表索引（前端 termLinkify 词典，纯静态科普）
         "/api/headlines",           # AI 今日头条（免费引流位）
         "/api/news/reactions",      # 资讯聚合情绪（看多/看空计数）：匿名也可看，handler 内 mine 仅登录可见
         "/api/track-record",        # 「我们提前发现的」平台战绩：公开引流（登录附个人战绩）
@@ -1051,6 +1079,8 @@ PUBLIC_EXACT = frozenset(
         # /login → 重发该请求 → 再 401 → 无限刷新死循环。精确匹配仅命中本路径：GET（列表）handler 仍自带
         # require_current_user 守卫、DELETE 带 {id} 后缀不在此列，均不受影响。
         "/api/realtime/recall/subscriptions",
+        "/api/agents/feedback",     # AI 答案 👍👎 反馈（匿名也可投，handler 只落库不回敏感数据）——持续在线回归的数据源
+
         # 微信推送台：独立 HTML 页(?token=)+ 推送接口，handler 自校验 metrics token；与看板同款，故放行 JWT 网关。
         "/api/weixin/console",
         "/api/weixin/push-news",

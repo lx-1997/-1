@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -1369,6 +1370,8 @@ async def lifespan(app: FastAPI):
     ashare_review_task = asyncio.create_task(run_ashare_review())
     # 投研晨报：每个交易日盘前 08:30 推送「宏观×组合」晨会一句话 → 全员盯盘送达（每日盘前回访仪式）
     morning_briefing_task = asyncio.create_task(run_morning_briefing())
+    # 收盘自选巡检：每交易日 15:12 全体自选并集 × 确定性异动（|涨跌|≥5% / 龙虎榜）→「异动」聚合消息
+    watchlist_scan_task = asyncio.create_task(run_watchlist_scan())
     # 增长分析师：每日 16:20 自动计算 KPI（用户/留存/日活/付费转化）+ AI 改进建议 → 运营看板
     growth_analytics.init_growth_db()
     growth_analyst_task = asyncio.create_task(run_growth_analyst())
@@ -1391,13 +1394,15 @@ async def lifespan(app: FastAPI):
     seo_submit_task = asyncio.create_task(run_seo_submit())
     # SEO 预热：后台把热门个股速判卡提前 build 落库，让 sitemap 一开始就有真实优质页（不必等爬虫触发）
     seo_prewarm_task = asyncio.create_task(run_seo_prewarm())
+    # 资讯断供 watchdog：交易时段快讯 45min 无入库即告警（富投 token 静默失效已实证两次整天空转）
+    feed_watchdog_task = asyncio.create_task(run_feed_watchdog())
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
     _bg_tasks = (dao_bridge_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
-                 ashare_review_task, morning_briefing_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
-                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task)
+                 ashare_review_task, morning_briefing_task, watchlist_scan_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
+                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task)
     for _task in _bg_tasks:
         _task.cancel()
     try:
@@ -1508,7 +1513,22 @@ async def auth_register(payload: RegisterRequest, request: Request) -> TokenResp
                              ip=_client_ip(request))
     except Exception:  # noqa: BLE001
         pass
+    # ⭐注册即送 N 天完整体验会员（RevenueCat 2025：长试用转化 42.5% vs 短试用 25.5%，
+    # 55% 的取消发生在 Day0——第一天就给完整价值决定成败）。source=trial 不计 paid、
+    # 不触发邀请奖励；env DEEPFOCUS_TRIAL_DAYS=0 关闭。
+    try:
+        _trial_days = int(os.getenv("DEEPFOCUS_TRIAL_DAYS", "7") or 7)
+        if _trial_days > 0:
+            from .auth import grant_membership as _grant
+            _grant(str(user.username or ""), days=_trial_days, source="trial")
+    except Exception:  # noqa: BLE001 - 送礼失败不影响注册
+        pass
     sid = rotate_session(user.id)  # 单设备登录：注册即建立会话标识
+    # 重新读一次用户（带上刚发的会员态），前端首屏即显示"体验会员剩 N 天"
+    try:
+        user = get_user_out_by_id(str(user.id)) or user
+    except Exception:  # noqa: BLE001
+        pass
     return TokenResponse(access_token=create_access_token(user, sid=sid), user=user)
 
 
@@ -2135,9 +2155,27 @@ async def api_get_watchlist(request: Request) -> dict[str, Any]:
 
 @app.post("/api/me/watchlist")
 async def api_save_watchlist(request: Request, payload: WatchlistPayload) -> dict[str, Any]:
-    """整表保存当前账号的自选股（前端持全量，覆盖式写入）。"""
+    """整表保存当前账号的自选股（前端持全量，覆盖式写入）。
+
+    顺手同步微信推送范围：若该用户已绑定微信且 push_scope=watchlist（曾回复过「同步自选」），
+    把推送 symbols 刷成最新自选（代码+名称）——否则微信侧永远停留在同步那一刻的快照。"""
     claims = require_current_user(request)
-    return set_user_watchlist(str(claims.get("sub", "")), payload.symbols, payload.names)
+    uid = str(claims.get("sub", ""))
+    result = set_user_watchlist(uid, payload.symbols, payload.names)
+    try:
+        from . import weixin_bind as _wxbind
+        b = _wxbind.get_by_user(uid)
+        if b and b.get("active") and (b.get("push_scope") or "off") == "watchlist":
+            keys: list[str] = []
+            for s in payload.symbols:
+                keys.append(str(s))
+                n = str((payload.names or {}).get(s) or "").strip()
+                if n and n not in keys:
+                    keys.append(n)
+            _wxbind.set_push_config(uid, "watchlist", keys)
+    except Exception:  # noqa: BLE001 - 同步失败不影响自选保存本身
+        pass
+    return result
 
 
 # ===== 轻互动：资讯一键表态（看多/看空）+ 收藏 =====
@@ -2400,15 +2438,24 @@ async def ashare_structured_data(
 
 
 @app.get("/api/market/kline")
-async def market_kline(symbol: str, market: str = "", points: int = 160) -> dict:
-    """个股日线 K 线（OHLC+量）——A股新浪主源 + 东财兜底，港股东财；美股暂不接入（返回空）。
-    供终端蜡烛图。公开免费层（auth.PUBLIC_EXACT 精确放行）。失败优雅降级为空 candles。"""
+async def market_kline(symbol: str, market: str = "", points: int = 160, period: str = "") -> dict:
+    """个股 K 线——日线（默认，A股新浪主源+东财兜底）或当日分时（period=1m，东财 push2 trends2）。
+    分时是 A股散户交易时段的第一视图，此前缺位让终端在盘中不是"看盘工具"。
+    供终端蜡烛图/分时图。公开免费层（auth.PUBLIC_EXACT 精确放行）。失败优雅降级为空。"""
     import re as _re
-    from .eastmoney_data import _em_stock_secid, fetch_eastmoney_ohlc, fetch_sina_ohlc
+    from .eastmoney_data import _em_stock_secid, fetch_eastmoney_ohlc, fetch_intraday_trend, fetch_sina_ohlc
 
     sym = (symbol or "").strip().upper()
     if not sym:
         raise HTTPException(status_code=400, detail="symbol 不能为空")
+    if (period or "").strip() == "1m":
+        trend = await fetch_intraday_trend(sym, market or None)
+        if trend:
+            return {"symbol": sym, "market": (market or "").upper(), "period": "1m",
+                    "pre_close": trend.get("pre_close"), "points": trend.get("points") or [],
+                    "fetched_at": trend.get("fetched_at"), "source": "eastmoney", "is_realtime": True}
+        return {"symbol": sym, "market": (market or "").upper(), "period": "1m",
+                "pre_close": None, "points": [], "source": "unsupported", "is_realtime": False}
     pts = max(20, min(int(points or 160), 500))
     secid = _em_stock_secid(sym, market or None)
     candles: list = []
@@ -2728,6 +2775,7 @@ async def _build_stock_tear_sheet_core(
     )
     from .google_finance import fetch_google_finance_quote
     from .nasdaq_data import fetch_nasdaq_earnings, fetch_nasdaq_options
+    from . import stock_name_index
     from .consensus_source import fetch_analyst_consensus
     from .valuation_source import fetch_valuation
     from .yahoo_finance import fetch_yahoo_history, fetch_yahoo_quote
@@ -2829,7 +2877,7 @@ async def _build_stock_tear_sheet_core(
     _val = ifind_val or valuation_data  # iFinD 增强命中时，估值/规模维度用同花顺数据（provider=ifind → live）
     ts = build_tear_sheet(
         symbol=sym,
-        name=name or (constituent or {}).get("name") or sym,
+        name=name or (constituent or {}).get("name") or stock_name_index.name_of_code(sym) or sym,
         market_cap=market_cap or (_val or {}).get("market_cap") or (gquote.get("market_cap") if gquote else None),
         currency=(quote.currency if quote else "USD"),
         quote=quote,
@@ -2863,6 +2911,8 @@ async def _build_stock_tear_sheet_core(
                 "price": ts.price,
                 "change_percent": ts.change_percent,
                 "currency": ts.currency,
+                # 证据快照（精简：仅 key+signal）：问责页/评级演变回看「当时为什么」。
+                "dims": [{"key": d.key, "signal": d.signal} for d in ts.dimensions],
             },
             market=_mkt,
         )
@@ -2990,25 +3040,76 @@ _SYMBOL_MARKET_TOOL_PARAMS = {
 
 
 async def _tool_get_price_history(symbol: str, market: Optional[str] = None) -> Any:
-    """工具：近 ~6 个月价格走势摘要（首/末/高/低/区间涨跌幅）。"""
-    from .yahoo_finance import fetch_yahoo_history
+    """工具：价格走势摘要 + 确定性技术位（MA20/60 关系、250日区间位置、近20日振幅）。
 
-    series = await fetch_yahoo_history(symbol, market or None)
-    closes = [c for _, c in series] if series else []
+    A/港股走新浪→东财链——Yahoo 从生产机房被墙，原实现对 A 股恒返回 None，
+    「现在算高位吗/最近走势如何」这类高频问题模型拿到空数据只能干说；美股保留 Yahoo。
+    只回历史统计事实，不给点位预测（『支撑/压力』措辞沿用中性写法）。"""
+    import re as _re
+    sym = (symbol or "").strip().upper()
+    closes: list = []
+    dates: list = []
+    src = ""
+    if _re.fullmatch(r"\d{6}", sym) or (market or "").strip().upper() in ("CN", "HK"):
+        from .eastmoney_data import _em_stock_secid, fetch_eastmoney_ohlc, fetch_sina_ohlc
+        candles: list = []
+        if _re.fullmatch(r"\d{6}", sym):
+            try:
+                candles = await fetch_sina_ohlc(sym, points=260)
+            except Exception:  # noqa: BLE001
+                candles = []
+            if candles:
+                src = "sina"
+        if not candles:
+            secid = _em_stock_secid(sym, market or None)
+            if secid:
+                try:
+                    candles = await fetch_eastmoney_ohlc(secid, points=260)
+                except Exception:  # noqa: BLE001
+                    candles = []
+                if candles:
+                    src = "eastmoney"
+        closes = [c.get("c") for c in candles if isinstance(c, dict) and c.get("c") is not None]
+        dates = [c.get("d") for c in candles if isinstance(c, dict) and c.get("c") is not None]
+    else:
+        from .yahoo_finance import fetch_yahoo_history
+        series = await fetch_yahoo_history(symbol, market or None)
+        if series:
+            dates = [d for d, _ in series]
+            closes = [c for _, c in series]
+            src = "yahoo"
     if not closes:
         return None
     first, last = closes[0], closes[-1]
+
+    def _ma(n: int) -> Optional[float]:
+        window = closes[-n:]
+        return round(sum(window) / len(window), 3) if window else None
+
+    ma20, ma60 = _ma(20), _ma(60)
+    hi250, lo250 = max(closes[-250:]), min(closes[-250:])
+    recent20 = closes[-20:]
     return {
-        "symbol": (symbol or "").strip().upper(),
+        "symbol": sym,
         "points": len(closes),
-        "period_start": series[0][0],
-        "period_end": series[-1][0],
+        "period_start": dates[0] if dates else None,
+        "period_end": dates[-1] if dates else None,
         "first": first,
         "last": last,
         "high": max(closes),
         "low": min(closes),
         "change_pct": round((last - first) / first * 100, 2) if first else None,
-        "note": "近 ~6 个月日线收盘摘要（Yahoo，本环境可能受限）。",
+        "ma20": ma20,
+        "ma60": ma60,
+        "vs_ma20_pct": round((last - ma20) / ma20 * 100, 2) if ma20 else None,
+        "vs_ma60_pct": round((last - ma60) / ma60 * 100, 2) if ma60 else None,
+        "high_250d": hi250,
+        "low_250d": lo250,
+        "drawdown_from_250d_high_pct": round((last - hi250) / hi250 * 100, 2) if hi250 else None,
+        "range_position_pct": round((last - lo250) / (hi250 - lo250) * 100, 1) if hi250 > lo250 else None,  # 250日区间位置：0=最低点附近,100=最高点附近
+        "amplitude_20d_pct": round((max(recent20) - min(recent20)) / min(recent20) * 100, 2) if recent20 and min(recent20) else None,
+        "source": src,
+        "note": "日线收盘统计事实（均线关系/250日区间位置/近20日振幅），非点位预测。",
     }
 
 
@@ -3244,6 +3345,115 @@ async def briefing_today(symbols: str = "") -> BriefingResponse:
                 symbol_sectors[sym] = None
         briefing.watchlist = build_watchlist_summary(symbol_sectors, macro.overall_verdict)
     return await _enhance_briefing_headline(briefing)
+
+
+# ============================================================================ #
+# 个股面板薄 REST 端点（登录可见）：把原本只有 AI 工具能调的数据能力包给前端。
+# 统一契约：{"data": <结果 或 null>}——任何异常/无数据 → {"data": null}，绝不 500。
+# ============================================================================ #
+async def _stock_panel_safe(coro) -> Any:
+    """个股面板取数护栏：数据源任何异常一律吞掉返回 None（前端只看 data 是否为空）。"""
+    try:
+        return await coro
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@app.get("/api/stock/dragon-tiger")
+async def stock_panel_dragon_tiger(request: Request, symbol: str) -> dict:
+    """个股龙虎榜（东财确定性数据：上榜日期/席位买卖，非荐股）。登录可见。"""
+    require_current_user(request)
+    from .dragon_tiger import fetch_dragon_tiger
+
+    return {"data": await _stock_panel_safe(fetch_dragon_tiger(symbol))}
+
+
+@app.get("/api/stock/consensus")
+async def stock_panel_consensus(request: Request, symbol: str, market: str = "") -> dict:
+    """A股/港股卖方一致预期（评级分布/目标价区间/机构家数）。登录可见。
+
+    合规：一致预期是第三方券商观点的确定性聚合，响应恒带免责 note，前端须原样展示。"""
+    require_current_user(request)
+    from .cn_consensus import fetch_cn_consensus
+
+    return {
+        "data": await _stock_panel_safe(fetch_cn_consensus(symbol, market or None)),
+        "note": "券商一致预期，非本站观点，不构成投资建议",
+    }
+
+
+@app.get("/api/stock/dividends")
+async def stock_panel_dividends(request: Request, symbol: str, market: str = "") -> dict:
+    """A股分红送转历史（近 10 期，公告日倒序）。登录可见。非 A股/无数据 → data=null。"""
+    require_current_user(request)
+    from .dividend_history import fetch_dividend_history
+
+    return {"data": await _stock_panel_safe(fetch_dividend_history(symbol, market or None, limit=10))}
+
+
+@app.get("/api/stock/news")
+async def stock_panel_news(request: Request, symbol: str, market: str = "") -> dict:
+    """个股最新新闻/资讯（近 10 条，时间倒序）。登录可见。"""
+    require_current_user(request)
+    from .stock_news import fetch_stock_news
+
+    return {"data": await _stock_panel_safe(fetch_stock_news(symbol, market or None, limit=10))}
+
+
+@app.get("/api/stock/risk-check")
+async def stock_panel_risk_check(request: Request, symbol: str, market: str = "") -> dict:
+    """持仓风险体检（确定性统计，零 LLM）：支撑/阻力位、距 52 周高点回撤、大盘 vs 均线状态。
+
+    ⚠️合规红线：只陈述「价格相对历史统计位置」的事实 + 纪律通识，绝不输出
+    「建议止损/建议减仓」等任何针对持仓的操作结论。数据取不齐 → {"data": null}。"""
+    require_current_user(request)
+    try:
+        from . import bull_playbook
+        from .eastmoney_data import _em_stock_secid, fetch_eastmoney_index, fetch_eastmoney_kline
+
+        secid = _em_stock_secid(symbol, market or None)
+        if not secid:
+            return {"data": None}
+        kline = await fetch_eastmoney_kline(secid, points=280)  # 拉到 280 点让 MA250/52周高点可算
+        closes = [c for _, c in kline if isinstance(c, (int, float))]
+        if len(closes) < 20:
+            return {"data": None}
+        price = closes[-1]
+        sr = bull_playbook.support_resistance(closes)
+        tt = bull_playbook.trend_template(closes)
+        wk52_high = max(closes[-252:])
+        drawdown = round((price - wk52_high) / wk52_high * 100.0, 2) if wk52_high else None
+
+        # 大盘环境：A股 vs 沪深300、港股 vs 恒生（bull_playbook.market_regime：指数 vs MA60/MA120）。
+        is_hk = secid.startswith("116.")
+        idx_name = "恒生指数" if is_hk else "沪深300"
+        idx = await _stock_panel_safe(fetch_eastmoney_index("100.HSI" if is_hk else "1.000300", points=200)) or []
+        regime = bull_playbook.market_regime([c for _, c in idx if isinstance(c, (int, float))])
+        status = regime.get("regime") or "unknown"
+        # 只陈述均线位置事实，不给方向结论/操作含义。
+        if status == "unknown":
+            regime_note = f"{idx_name}日线数据不足，无法计算均线位置"
+        else:
+            pos = "上方" if regime.get("above_ma60") else "下方"
+            slope = "上行" if regime.get("ma60_rising") else "走平或下行"
+            regime_note = f"{idx_name}现处 60 日均线{pos}，60 日均线{slope}（仅为指数与均线相对位置的事实描述）"
+        return {
+            "data": {
+                "symbol": (symbol or "").strip().upper(),
+                "price": price,
+                "support": sr.get("support"),
+                "resistance": sr.get("resistance"),
+                "dist_support_pct": sr.get("support_gap"),
+                "dist_resistance_pct": sr.get("resistance_gap"),
+                "drawdown_from_52w_high_pct": drawdown,
+                "market_regime": {"status": status, "note": regime_note},
+                # 附加事实（趋势模板阶段分类，非结论）：advancing/topping/declining/basing。
+                "trend": {"stage": tt.get("stage"), "passed": tt.get("passed"), "total": tt.get("total")},
+                "note": "以上为历史统计事实与纪律科普，不构成操作建议",
+            }
+        }
+    except Exception:  # noqa: BLE001
+        return {"data": None}
 
 
 @app.get("/api/stock/compare", response_model=StockCompareResponse)
@@ -3649,6 +3859,16 @@ async def celebrity_more(request: Request, celeb_id: str, before: str = "", limi
     """加载该名人 before 时间点之前的更早观点（知识星球分页）。仅白名单可见。"""
     _require_celebrity_user(request)
     res = await celebrity_views.fetch_celebrity_more(celeb_id, before=before, limit=limit)
+    if res is None:
+        raise HTTPException(status_code=404, detail=f"未知名人：{celeb_id}")
+    return res
+
+
+@app.get("/api/celebrity/{celeb_id}/comments")
+async def celebrity_topic_comments(request: Request, celeb_id: str, topic: str = "", limit: int = 100) -> dict[str, Any]:
+    """某条帖子的全部评论（观点条目随帖只带前几条预览，这里按帖拉全）。仅白名单可见。"""
+    _require_celebrity_user(request)
+    res = await celebrity_views.fetch_topic_comments(celeb_id, topic, limit=limit)
     if res is None:
         raise HTTPException(status_code=404, detail=f"未知名人：{celeb_id}")
     return res
@@ -4758,11 +4978,15 @@ async def api_research_workbench_pdf(
     """内联返回抓取舱内的研报原文（终端研报面板「原文」按钮）。
 
     路径穿越由 _safe_workbench_file_path 防护；Content-Disposition 用 ASCII 文件名，
-    避免中文研报名破坏响应头编码。会员专享（trial 用户 402）。"""
+    避免中文研报名破坏响应头编码。版权合规：原文仅白名单账号可见（与 wire-file 同一单一真源），
+    对外一律引导看我方 AI 解读——绝不能用「开通会员即可阅读」招揽（会员买了也解不开=虚假宣传）。"""
     claims = require_current_user(request)
-    mem = membership_of_username(claims.get("username", ""))
-    if not mem or mem.get("tier") == "trial":
-        raise HTTPException(status_code=402, detail="研报原文是会员功能，开通会员即可阅读")
+    from . import ifind_api
+    if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
+        raise HTTPException(
+            status_code=403,
+            detail="应版权合规要求，研报原文暂不开放——可查看「DeepFocus 视角」AI 解读与要点。",
+        )
     path = _safe_workbench_file_path(out, filename)
     media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
     metrics_incr_research(filename, filename)  # 研报下载/打开计数（本地原文）
@@ -4843,13 +5067,20 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
 async def api_research_wire_file(request: Request, file_id: str, name: str = "") -> Response:
     """在线查看研报原文：经同机 Node 工作台解析在线下载链并返回 PDF 字节。
 
-    用于终端研报面板「原文」按钮（前端以带 JWT 头的 fetch 取 Blob 新标签预览）。
-    会员专享（trial 用户 402）。"""
+    版权合规红线：研报原文「去第三方水印 + 换我方水印」分发 = 去除版权管理信息(著作权法53条/DMCA§1202)
+    + 假冒，已退役。默认关闭；合规正路 = df_take 点评 + 不受版权保护的事实数据 + 外链原始发布方。
+    仅在取得授权后才可置 DEEPFOCUS_SERVE_RESEARCH_ORIGINAL=true 重新启用。"""
+    if os.getenv("DEEPFOCUS_SERVE_RESEARCH_ORIGINAL", "false").strip().lower() != "true":
+        raise HTTPException(
+            status_code=410,
+            detail="应版权合规要求，研报原文已不再提供在线查看。请查看我们的「DeepFocus 视角」AI 解读与要点（目标价 / 评级 / 盈利预测），或前往原始发布方获取原文。",
+        )
     claims = require_current_user(request)
-    is_admin = claims.get("role") == "admin" or claims.get("username") == "lx199710"
-    mem = membership_of_username(claims.get("username", ""))
-    if not is_admin and (not mem or mem.get("tier") == "trial"):
-        raise HTTPException(status_code=402, detail="研报原文是会员功能，开通会员即可阅读")
+    # 研报原文仅对白名单账号(lx199710)开放：其余账号一律 403（前端入口亦已隐藏）。
+    # 复用 iFinD 白名单单一真源（ifind_api.allowed_usernames，env DEEPFOCUS_IFIND_ALLOWED_USERS，默认 lx199710）。
+    from . import ifind_api
+    if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
+        raise HTTPException(status_code=403, detail="研报原文暂未对你的账号开放")
     safe_name = (name or f"{file_id}.pdf").strip()
     ext = safe_name[safe_name.rfind("."):].lower() if "." in safe_name else ".pdf"
     try:
@@ -5433,11 +5664,12 @@ async def run_morning_briefing() -> None:
             if not headline:
                 continue  # 数据不足/合成失败 → 当日不强发
             mlab = f"{now.month}月{now.day}日"
+            from .compliance import ai_label as _ai_label  # 晨报 headline 是 LLM 合成 → 显式 AI 标识(法规硬要求)
             create_realtime_message(RealtimeMessageCreateRequest(
                 title=f"🌅 投研晨报 · {mlab}",
-                content=headline + " · 点开看今日宏观与组合全貌。",
+                content=_ai_label(headline + " · 点开看今日宏观与组合全貌。", brief=True),
                 topic="晨报", severity="info", source_name="DeepFocus 投研晨报",
-                url="/",
+                url=f"/?briefing={today}",  # 回流落点：深链直开晨报（此前是裸首页，浪费召回点击）
             ))
             last_sent = today
             print(f"[briefing] 已推送 {today} 投研晨报")
@@ -5445,6 +5677,186 @@ async def run_morning_briefing() -> None:
             raise
         except Exception as exc:  # noqa: BLE001
             print(f"[briefing] 异常：{type(exc).__name__}")
+            await asyncio.sleep(300)
+
+
+def _watchlist_union_symbols(cap: int = 200) -> tuple[list[str], dict[str, str]]:
+    """全体用户自选并集（去重、cap 只数）+ 名称映射。直查 user_watchlist 全表解析 symbols json。"""
+    from .storage import session_scope as _sscope
+    from .user_prefs import UserWatchlist as _UW
+
+    symbols: list[str] = []
+    names: dict[str, str] = {}
+    seen: set[str] = set()
+    with _sscope() as session:
+        for row in session.query(_UW).all():
+            try:
+                syms = json.loads(row.symbols or "[]")
+                nms = json.loads(row.names or "{}")
+            except Exception:  # noqa: BLE001 —— 单账号脏数据不拖垮全并集
+                continue
+            for s in (syms or []):
+                sym = str(s).strip().upper()
+                if sym and sym not in seen:
+                    seen.add(sym)
+                    symbols.append(sym)
+            for k, v in (nms or {}).items():
+                key = str(k).strip().upper()
+                if key and key not in names:
+                    names[key] = str(v).strip()
+    return symbols[:cap], names
+
+
+async def _build_watchlist_scan_message(today: str) -> Optional[RealtimeMessageCreateRequest]:
+    """收盘自选巡检 → 聚合异动消息（纯确定性事实模板，零 LLM）。
+
+    确定性事件：|涨跌幅|≥5%、当日龙虎榜上榜（全榜一次拉取再交集，不逐只查）。
+    ⚠️合规：只陈述收盘事实，禁止任何方向性结论/「建议关注」；全文过 neutralize_text + 末尾免责。
+    无自选/无命中 → None（当日不发）。"""
+    symbols, names = await asyncio.to_thread(_watchlist_union_symbols, 200)
+    if not symbols:
+        return None
+
+    # 龙虎榜全榜一次拉取（当日）→ code 交集
+    from .dragon_tiger import fetch_daily_billboard
+    lhb_map: dict[str, dict] = {}
+    try:
+        billboard = await fetch_daily_billboard("")
+        if billboard and str(billboard.get("date") or "") == today:
+            for it in (billboard.get("items") or []):
+                lhb_map[str(it.get("code") or "")] = it
+    except Exception:  # noqa: BLE001 —— 龙虎榜失败只影响该维度
+        lhb_map = {}
+
+    hits: list[str] = []
+    for sym in symbols:
+        events: list[str] = []
+        pct = None
+        display = names.get(sym) or ""
+        try:
+            res = await fetch_market_quotes([sym])
+            quote = res.quotes[0] if res.quotes else None
+            if quote:
+                pct = quote.change_percent
+                display = display or (quote.name or "")
+        except Exception:  # noqa: BLE001 —— 单只取数失败跳过该维度
+            pass
+        if isinstance(pct, (int, float)) and abs(pct) >= 5.0:
+            events.append(f"收盘 {pct:+.1f}%")
+        code = re.sub(r"\D", "", sym)
+        hit = lhb_map.get(code) if len(code) == 6 else None
+        if hit:
+            net = hit.get("net")
+            net_txt = f"（净买 {net / 1e4:+.0f} 万元）" if isinstance(net, (int, float)) else ""
+            events.append(f"登上龙虎榜{net_txt}")
+            display = display or str(hit.get("name") or "")
+        if events:
+            hits.append(f"{display or sym}({sym}) " + "、".join(events))
+        await asyncio.sleep(0.3)  # 限流：串行 + 0.3s 间隔（东财并发突发会被限流）
+
+    if not hits:
+        return None
+    from .compliance import neutralize_text as _nz
+    lines = hits[:10]  # cap 10 行
+    content = _nz("\n".join(lines)) + "\n（不构成投资建议）"
+    return RealtimeMessageCreateRequest(
+        title=f"📈 自选股今日异动 · {len(hits)} 只",
+        content=content,
+        topic="异动", severity="info", source_name="DeepFocus 自选巡检",
+        url="/?feed=自选",  # 聚合消息：symbol 留空，落点自选 feed
+    )
+
+
+async def run_watchlist_scan() -> None:
+    """收盘自选巡检：每交易日 15:12（北京）扫全体用户自选并集 → 当日确定性异动事实
+    （|涨跌幅|≥5% / 龙虎榜上榜）→ 合成一条 topic=「异动」聚合消息（个人化每日回访理由，零 LLM）。
+    一日一次（in-memory date 去重 + sleep-until-next 天然不重发）。"""
+    await asyncio.sleep(60)
+    print("[watchlist-scan] 启动：每交易日 15:12 收盘自选巡检")
+    last_sent = ""
+    while True:
+        try:
+            now = datetime.now(ai_fund.BJ_TZ)
+            target = now.replace(hour=15, minute=12, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            await asyncio.sleep(max(30, (target - now).total_seconds()))
+            now = datetime.now(ai_fund.BJ_TZ)
+            today = now.strftime("%Y-%m-%d")
+            if last_sent == today:
+                continue  # 已发过（防同日重复）
+            if not ai_fund._is_trading_day(now):
+                continue  # 周末/法定节假日
+            msg = await _build_watchlist_scan_message(today)
+            if msg is None:
+                continue  # 无自选/无异动 → 当日不强发
+            create_realtime_message(msg)
+            last_sent = today
+            print(f"[watchlist-scan] 已推送 {today} 自选异动")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[watchlist-scan] 异常：{type(exc).__name__}")
+            await asyncio.sleep(300)
+
+
+_FEED_WATCHDOG_STATE: dict = {"last_news_at": "", "stale_minutes": None, "alerted_at": 0.0}
+_FEED_STALE_MINUTES = int(os.getenv("DEEPFOCUS_FEED_STALE_MINUTES", "45") or 45)
+
+
+async def run_feed_watchdog() -> None:
+    """资讯断供 watchdog：交易时段快讯超过 45 分钟无新入库 → 钉钉/webhook 告警 + 日志。
+
+    背景：上游富投 token 静默失效(过期不报 401)已实证发生过两次整天空转，MTTR 取决于用户何时抱怨。
+    这里把发现时间压到 10 分钟。告警去重：同一断供事件 2 小时内只报一次；恢复后自动复位。
+    webhook 用 env DEEPFOCUS_OPS_WEBHOOK（钉钉机器人格式），未配置则仅日志。"""
+    await asyncio.sleep(120)
+    print(f"[feed-watchdog] 启动：交易时段快讯 >{_FEED_STALE_MINUTES}min 无入库即告警")
+    while True:
+        try:
+            await asyncio.sleep(600)
+            now = datetime.now(ai_fund.BJ_TZ)
+            if not ai_fund._is_trading_day(now):
+                continue
+            hm = now.hour * 60 + now.minute
+            if not (9 * 60 + 15 <= hm <= 15 * 60 + 30):  # 只在盘中盯（快讯最密集、断供伤害最大的时段）
+                continue
+            rows = list_realtime_messages(topic="快讯", limit=1)
+            latest = rows[0] if rows else None
+            created = str(getattr(latest, "created_at", "") or "") if latest else ""
+            _FEED_WATCHDOG_STATE["last_news_at"] = created
+            stale_min = None
+            if created:
+                try:
+                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    stale_min = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+                except ValueError:
+                    stale_min = None
+            _FEED_WATCHDOG_STATE["stale_minutes"] = round(stale_min, 1) if stale_min is not None else None
+            is_stale = (stale_min is None) or (stale_min > _FEED_STALE_MINUTES)
+            if not is_stale:
+                _FEED_WATCHDOG_STATE["alerted_at"] = 0.0  # 恢复 → 复位去重
+                continue
+            if time.time() - float(_FEED_WATCHDOG_STATE.get("alerted_at") or 0.0) < 7200:
+                continue  # 同一事件 2h 内不重复吵
+            _FEED_WATCHDOG_STATE["alerted_at"] = time.time()
+            desc = f"{stale_min:.0f} 分钟" if stale_min is not None else "无法确认(空库/时间解析失败)"
+            msg = f"⚠️ DeepFocus 快讯断供告警：交易时段已 {desc} 无新快讯入库（阈值 {_FEED_STALE_MINUTES}min）。请检查上游 token/dao-realinfo 服务。最后一条：{created or '无'}"
+            print(f"[feed-watchdog] {msg}")
+            hook = (os.getenv("DEEPFOCUS_OPS_WEBHOOK") or "").strip()
+            if hook:
+                try:
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient(timeout=10, trust_env=False) as _c:
+                        await _c.post(hook, json={"msgtype": "text", "text": {"content": msg}})
+                except Exception as _hexc:  # noqa: BLE001
+                    print(f"[feed-watchdog] webhook 发送失败：{type(_hexc).__name__}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[feed-watchdog] 异常：{type(exc).__name__}")
             await asyncio.sleep(300)
 
 
@@ -6547,6 +6959,7 @@ def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] 
             return None
     free_limit = int(os.getenv("DEEPFOCUS_FREE_AI_READ", "1") or 1)
     label = "研报" if kind == "yb" else "文章"
+    hint = _upgrade_hint()
     if not user:
         # 匿名：未缓存不生成、直接引导登录；已缓存每天免费读 free_limit 次
         ip = _client_ip(request) if request is not None else "?"
@@ -6560,15 +6973,27 @@ def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] 
     uid = str(user.get("sub", ""))
     fkey = f"q:aifree:{uid}"
     if not cached:
-        raise HTTPException(status_code=402, detail=f"AI 解读是会员功能——开通会员即可无限解读{label}（点右上角头像 💬 联系管理员开通，或 🎁 邀请好友得会员）。")
+        raise HTTPException(status_code=402, detail=f"AI 解读是会员功能——开通会员即可无限解读{label}，{hint}")
     if metrics_get_daily(fkey) >= free_limit:
-        raise HTTPException(status_code=402, detail=f"今日免费 AI 解读已用完（非会员每天 {free_limit} 次）。开通会员畅享无限——点右上角头像 💬 联系管理员开通，或 🎁 邀请好友得会员。")
+        raise HTTPException(status_code=402, detail=f"今日免费 AI 解读已用完（非会员每天 {free_limit} 次）。开通会员畅享无限——{hint}")
     return fkey
+
+
+def _upgrade_hint() -> str:
+    """402 升级话术尾巴：只有配了自助发卡店铺（storefront_url）才承诺「自助下单、秒级开通」。
+    未配置时承诺落空 = 虚假宣传 + 退款纠纷种子；店铺在看板配好后本话术自动升级，零代码。"""
+    try:
+        from .payment_config import get_config as _pay_cfg
+        if (_pay_cfg().get("storefront_url") or "").strip():
+            return "支持自助下单、秒级开通。"
+    except Exception:  # noqa: BLE001
+        pass
+    return "点击「💎 开通会员」即可办理。"
 
 
 # AI 投研问答（tool-research）每日额度护栏：前端已对「所有登录用户」放开入口（让非会员也能尝到旗舰「哇时刻」），
 # 这里是后端真正的成本闸——会员/管理员无限，登录非会员每天 _AGENT_FREE_QA 次，匿名兜底防开放端点被滥用。
-_AGENT_FREE_QA = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA", "5") or 5)
+_AGENT_FREE_QA = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA", "10") or 10)  # 宽入口养习惯(问财免费200句/天)，深能力收费；env 可调回
 _AGENT_FREE_QA_ANON = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA_ANON", "1") or 1)
 
 
@@ -6586,7 +7011,7 @@ def _check_agent_quota(user: Optional[dict], request: Optional[Request] = None) 
             return None
         fkey = f"q:agentqa:{uid}"
         if metrics_get_daily(fkey) >= _AGENT_FREE_QA:
-            raise HTTPException(status_code=402, detail=f"今日免费 AI 问答已用完（非会员每天 {_AGENT_FREE_QA} 次）。开通会员畅享无限——点右上角头像 💬 联系管理员开通，或 🎁 邀请好友得会员。")
+            raise HTTPException(status_code=402, detail=f"今日免费 AI 问答已用完（非会员每天 {_AGENT_FREE_QA} 次）。开通会员畅享无限——{_upgrade_hint()}")
         return fkey
     ip = _client_ip(request) if request is not None else "?"
     fkey = f"q:agentqa:anon:{ip}"
@@ -6612,7 +7037,10 @@ async def api_research_vision_analyze(
     metrics_incr_ai_ref((request.file_id or request.workbench_filename or "").strip(), (request.title or "").strip())  # AI 解读榜
 
     def _build_response(result: dict[str, Any]) -> ResearchVisionAnalysisResponse:
-        from .compliance import neutralize_text as _nz  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)，结构化字段不动
+        from .compliance import neutralize_text as _nz, AI_CONTENT_NOTICE as _AI_NOTICE, has_ai_label as _has_ai  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)，结构化字段不动
+        _disc = _nz(result.get("disclaimer", "") or "").strip()
+        if not _has_ai(_disc):  # AI 生成内容显式标识(《标识办法》2025-09-01 施行)——含缓存读路径
+            _disc = (_disc + "；" if _disc else "") + _AI_NOTICE
         return ResearchVisionAnalysisResponse(
             title=title,
             symbol=request.symbol,
@@ -6633,10 +7061,10 @@ async def api_research_vision_analyze(
             confidence=result.get("confidence", 0.5),
             pages_analyzed=result.get("pages_analyzed", 0),
             provider=_AI_BRAND,  # 对外只露品牌，不暴露底层模型
-            disclaimer=result.get("disclaimer", ""),
+            disclaimer=_disc,
             data_quality=DataQuality(
-                level="degraded", label="AI 解读",
-                detail="AI 自动解读，非逐句溯源，请以原文为准", reasons=["ai-no-citation"],
+                level="degraded", label="AI 生成",
+                detail="内容由 AI 生成：自动解读、非逐句溯源，请以原文为准", reasons=["ai-no-citation"],
             ),
         )
 
@@ -6684,7 +7112,10 @@ async def api_news_ai_analyze(
         metrics_incr_news_heat("wz:" + _hashlib.sha1(title.encode("utf-8")).hexdigest()[:16], title)
 
     def _resp(result: dict[str, Any]) -> ResearchVisionAnalysisResponse:
-        from .compliance import neutralize_text as _nz  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)
+        from .compliance import neutralize_text as _nz, AI_CONTENT_NOTICE as _AI_NOTICE, has_ai_label as _has_ai  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)
+        _disc = _nz(result.get("disclaimer", "") or "").strip()
+        if not _has_ai(_disc):  # AI 生成内容显式标识(《标识办法》2025-09-01 施行)——含缓存读路径
+            _disc = (_disc + "；" if _disc else "") + _AI_NOTICE
         return ResearchVisionAnalysisResponse(
             title=title or "新闻解读", subject=_nz(result.get("subject", "")),
             one_liner=_nz(result.get("one_liner", "")), summary=_nz(result.get("summary", "")),
@@ -6695,11 +7126,11 @@ async def api_news_ai_analyze(
             instruments=result.get("instruments", []), market=result.get("market", ""),  # 提及个股，曾漏传
             rating=result.get("rating"), target_price=result.get("target_price"),
             confidence=result.get("confidence", 0.5), provider=_AI_BRAND,
-            disclaimer=result.get("disclaimer", ""),
+            disclaimer=_disc,
             source_note=result.get("source_note", ""),  # 取料充分度：已读全文/仅据标题，前端诚实展示
             data_quality=DataQuality(
-                level="degraded", label="AI 解读",
-                detail="AI 自动解读，仅供参考、非投资建议", reasons=["ai-no-citation"],
+                level="degraded", label="AI 生成",
+                detail="内容由 AI 生成：自动解读，仅供参考、非投资建议", reasons=["ai-no-citation"],
             ),
         )
 
@@ -6863,6 +7294,32 @@ async def api_list_recall_subscriptions(_user: dict = Depends(require_current_us
 async def api_delete_recall_subscription(subscription_id: str, _user: dict = Depends(require_current_user)) -> dict[str, bool]:
     # 只能删本人订阅——曾可删任何人(行无归属)
     return {"deleted": delete_recall_subscription(subscription_id, user_id=str(_user.get("sub")))}
+
+
+@app.post("/api/realtime/recall/subscribe-email")
+async def api_recall_subscribe_email(_user: dict = Depends(require_current_user)) -> dict[str, Any]:
+    """一键用账号邮箱订阅召回（服务端直取邮箱与自选，前端零输入）。
+
+    国内 Chrome 的 Web Push 端点在 Google FCM、境内服务器结构性送不到——邮箱是「开启盯盘」
+    时能顺手拿到的最可靠离线兜底通道。无邮箱→ok:false，前端静默不打扰。"""
+    from .auth import email_of_user
+    uid = str(_user.get("sub") or "")
+    email = email_of_user(uid)
+    if not email:
+        return {"ok": False, "reason": "no_email"}
+    try:
+        wl = get_user_watchlist(uid) or {}
+        symbols = [str(s) for s in (wl.get("symbols") or [])][:50]
+    except Exception:  # noqa: BLE001
+        symbols = []
+    create_recall_subscription(
+        RecallSubscriptionCreateRequest(
+            channel="email", address=email, symbols=symbols,
+            severities=["success", "warning", "critical"], scope="watchlist", label="account-email",
+        ),
+        user_id=uid,
+    )
+    return {"ok": True}
 
 
 @app.get("/api/realtime/recall/webpush-key")
@@ -7325,7 +7782,14 @@ async def public_review_page(date_str: str, request: Request) -> HTMLResponse:
     if not review:
         return HTMLResponse(render_not_found_html(), status_code=404)
     recent = ashare_review.list_reviews(limit=12)
-    return HTMLResponse(seo_pages.render_review_page_html(review, recent, page_url=_canonical_url(request)))
+    try:
+        return HTMLResponse(seo_pages.render_review_page_html(review, recent, page_url=_canonical_url(request)))
+    except Exception:  # noqa: BLE001 — 复盘页是 SEO 主入口+签到载体，渲染失败宁出摘要版不出 500
+        logging.getLogger(__name__).exception("review page render failed, serving fallback: %s", date_str)
+        try:
+            return HTMLResponse(seo_pages.render_review_fallback_html(review, page_url=_canonical_url(request)))
+        except Exception:  # noqa: BLE001
+            return HTMLResponse(render_not_found_html(), status_code=404)
 
 
 def _seo_related_stocks(symbol: str, market: str) -> list[dict[str, Any]]:
@@ -7399,9 +7863,12 @@ async def public_articles_hub() -> HTMLResponse:
 
 @app.get("/article/{article_id}", response_class=HTMLResponse, include_in_schema=False)
 async def public_article_page(article_id: str, request: Request) -> HTMLResponse:
-    """文章公开落地页（软墙）：标题+来源+短导语公开可分享/收录；全文需登录在 App 内看。"""
+    """文章/快讯公开落地页（软墙）：标题+来源+短导语公开可分享/收录；全文需登录在 App 内看。
+
+    快讯也放行：前端「复制快讯」的引流链接就是 /article/{id}（全站最大自然分发行为），
+    不放行=断头链接。软墙 _teaser 逻辑对两种 topic 通用（第三方全文不上公开页）。"""
     article = get_realtime_message(article_id)
-    if article is None or (article.topic or "") != "文章":
+    if article is None or (article.topic or "") not in ("文章", "快讯"):
         return HTMLResponse(render_not_found_html(), status_code=404)
     recent = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=12)]
     return HTMLResponse(
@@ -7425,6 +7892,169 @@ async def public_report_page(report_id: str, request: Request) -> HTMLResponse:
     return HTMLResponse(
         seo_pages.render_report_page_html(rec, recent, page_url=_canonical_url(request))
     )
+
+
+@app.get("/api/dragon-tiger/daily")
+async def api_dragon_tiger_daily(date: str = "") -> dict[str, Any]:
+    """某交易日 A股龙虎榜全榜单（date 空=最近交易日）。公开（PUBLIC_EXACT 精确放行）。
+
+    交易所公开事实数据；失败/无榜 → {"data": null}，绝不 500。"""
+    d = (date or "").strip()
+    if d and not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+        raise HTTPException(status_code=422, detail="日期格式需为 YYYY-MM-DD")
+    from .dragon_tiger import fetch_daily_billboard
+
+    return {
+        "data": await _stock_panel_safe(fetch_daily_billboard(d)),
+        "note": "交易所公开龙虎榜数据，仅为事实呈现，不构成投资建议",
+    }
+
+
+@app.get("/lhb", response_class=HTMLResponse, include_in_schema=False)
+async def public_lhb_page(request: Request) -> HTMLResponse:
+    """龙虎榜每日全榜公开页（SEO 大词、日更）：最近交易日全榜单。零 AI 叙述，只呈现榜单事实。"""
+    from .dragon_tiger import fetch_daily_billboard
+
+    data = await _stock_panel_safe(fetch_daily_billboard(""))
+    return HTMLResponse(seo_pages.render_lhb_page_html(data, page_url=_canonical_url(request)))
+
+
+@app.get("/lhb/{date_str}", response_class=HTMLResponse, include_in_schema=False)
+async def public_lhb_date_page(date_str: str, request: Request) -> HTMLResponse:
+    """某日龙虎榜全榜公开页。非法日期/该日无榜 → 404（防无限薄页）。"""
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str or ""):
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    from .dragon_tiger import fetch_daily_billboard
+
+    data = await _stock_panel_safe(fetch_daily_billboard(date_str))
+    if not data or not (data.get("items") or []):
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    return HTMLResponse(seo_pages.render_lhb_page_html(data, page_url=_canonical_url(request)))
+
+
+@app.get("/api/calendar/cn")
+async def api_calendar_cn(days: int = 7) -> dict[str, Any]:
+    """A股未来日历（限售解禁/新股申购与上市/财报预约披露）。公开（PUBLIC_EXACT）。
+
+    确定性交易所事实（零 AI 叙述）；各子项失败返 []，绝不 500。"""
+    from .cn_calendar import fetch_cn_calendar
+
+    return await fetch_cn_calendar(days=max(1, min(int(days or 7), 30)))
+
+
+def _glossary_brief(definition: str, limit: int = 60) -> str:
+    """术语定义 → 首句短简介（≤limit 字）。"""
+    flat = " ".join(str(definition or "").split())
+    first = re.split(r"[。！？]", flat)[0]
+    return first[:limit]
+
+
+@app.get("/api/glossary/index")
+async def api_glossary_index() -> dict[str, Any]:
+    """术语表索引（供前端 termLinkify 词典匹配）。公开（PUBLIC_EXACT）。纯静态数据。"""
+    from . import glossary
+
+    items = [
+        {
+            "slug": t["slug"],
+            "term": t["term"],
+            "aliases": list(t.get("aliases") or []),
+            "brief": _glossary_brief(t.get("definition") or ""),
+        }
+        for t in glossary.GLOSSARY
+    ]
+    return {"items": items, "count": len(items)}
+
+
+async def _usearch_stocks(query: str) -> list:
+    res = await search_market_symbols(query)
+    return [
+        {"symbol": c.symbol, "code": c.code, "name": c.name, "market": c.market}
+        for c in (res.candidates or [])[:5]
+    ]
+
+
+async def _usearch_news(query: str) -> list:
+    return [
+        {"id": m.id, "title": m.title, "topic": m.topic, "created_at": m.created_at}
+        for m in list_realtime_messages(anyq=query, limit=5)
+    ]
+
+
+async def _usearch_reports(query: str) -> list:
+    res = await api_research_search(query, page_size=3)
+    return [
+        {"id": it.id, "title": it.title, "org": it.org, "date": it.date, "symbol": it.symbol}
+        for it in (res.items or [])[:3]
+    ]
+
+
+async def _usearch_terms(query: str) -> list:
+    from . import glossary
+
+    ql = query.lower()
+    prefix: list = []
+    contains: list = []
+    for t in glossary.GLOSSARY:
+        names = [str(t.get("term") or "")] + [str(a) for a in (t.get("aliases") or [])]
+        low = [n.lower() for n in names if n]
+        if any(n.startswith(ql) or ql.startswith(n) for n in low):
+            prefix.append(t)
+        elif any(ql in n for n in low):
+            contains.append(t)
+    return [
+        {"slug": t["slug"], "term": t["term"], "brief": _glossary_brief(t.get("definition") or "")}
+        for t in (prefix + contains)[:3]
+    ]
+
+
+async def _usearch_boards(query: str) -> list:
+    from .theme_navigation import _board_name_pairs
+
+    ql = query.lower()
+    hits = [b for b in await _board_name_pairs() if ql and ql in (b.get("name") or "").lower()]
+    hits.sort(key=lambda b: len(b.get("name") or ""))  # 短名优先（白酒 优于 非白酒）
+    return [{"code": b["code"], "name": b["name"]} for b in hits[:3]]
+
+
+@app.get("/api/search/universal")
+async def api_universal_search(q: str = "") -> dict[str, Any]:
+    """统一搜索：股票/快讯文章/研报/术语/板块 并行聚合。公开（PUBLIC_EXACT）。
+
+    每路独立 try/except 失败为空；总超时 8s 兜底（慢源不拖垮整个搜索框）。"""
+    query = (q or "").strip()[:60]
+    empty: dict[str, Any] = {"q": query, "stocks": [], "news": [], "reports": [], "terms": [], "boards": []}
+    if not query:
+        return empty
+
+    async def _safe(coro) -> list:
+        try:
+            return await coro
+        except Exception:  # noqa: BLE001 —— 单路失败不拖垮聚合
+            return []
+
+    try:
+        stocks, news, reports, terms, boards = await asyncio.wait_for(
+            asyncio.gather(
+                _safe(_usearch_stocks(query)),
+                _safe(_usearch_news(query)),
+                _safe(_usearch_reports(query)),
+                _safe(_usearch_terms(query)),
+                _safe(_usearch_boards(query)),
+            ),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        return empty
+    return {"q": query, "stocks": stocks, "news": news, "reports": reports, "terms": terms, "boards": boards}
+
+
+@app.get("/track-record", response_class=HTMLResponse, include_in_schema=False)
+async def public_track_record_page(request: Request) -> HTMLResponse:
+    """「提前覆盖」战绩公开页：track_record 的确定性统计（每条可溯源），零 AI 叙述。
+    ⚠️只做「提前覆盖 N 次」事实表述，绝不出现命中率/准确率/收益归因（投顾红线）。"""
+    tr = track_record.platform_track_record(30, recent=30)
+    return HTMLResponse(seo_pages.render_track_record_page_html(tr, page_url=_canonical_url(request)))
 
 
 @app.get("/qa", response_class=HTMLResponse, include_in_schema=False)
@@ -8994,40 +9624,120 @@ def _sse_frame(event_type: str, payload: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _history_context_prefix(history: str) -> str:
+    """前端带来的最近几轮问答(JSON [[q,a],...]) → LLM 上下文前缀（镜像微信 _ctx_hint 机制）。
+
+    ⭐只作 LLM 上下文，绝不喂给技能路由的确定性 detect（粘滞技能 bug 的教训：历史里的关键词
+    会让 detect 每轮重命中）。截断每轮 300 字、最多 3 轮。解析失败安静返回空。"""
+    if not (history or "").strip():
+        return ""
+    try:
+        turns = json.loads(history)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(turns, list):
+        return ""
+    lines: list[str] = []
+    for t in turns[-3:]:
+        if not isinstance(t, (list, tuple)) or len(t) < 2:
+            continue
+        q, a = str(t[0] or "").strip()[:300], str(t[1] or "").strip()[:300]
+        if q:
+            lines.append(f"用户: {q}")
+        if a:
+            lines.append(f"助手: {a}")
+    if not lines:
+        return ""
+    return "【最近对话】\n" + "\n".join(lines) + "\n\n用户当前消息："
+
+
+def _agent_quota_left(quota_key: Optional[str]) -> Optional[int]:
+    """本次回答后的剩余免费次数（额度可见化：别让用户被 402 突袭）。会员/管理员 None=不限。"""
+    if not quota_key:
+        return None
+    limit = _AGENT_FREE_QA_ANON if ":anon:" in quota_key else _AGENT_FREE_QA
+    try:
+        return max(0, limit - metrics_get_daily(quota_key))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _followup_suggestions(question: str, tool_trace: list) -> list[str]:
+    """基于本次 tool_trace 反推「还没查的维度」→ 2-3 条确定性追问建议（零 token，10 行规则）。
+    措辞只用信息型问法（贵不贵/谁在买卖/分红如何），不用『要不要买』类诱导。"""
+    used = {str(t.get("tool") or "") for t in (tool_trace or []) if isinstance(t, dict)}
+    sugg: list[str] = []
+    stockish = bool(used & {"get_market_quote", "get_valuation", "get_financials", "resolve_symbol",
+                            "get_fund_flow", "get_stock_verdict", "get_price_history"})
+    if not stockish:
+        try:
+            from .stock_name_index import resolve_to_code as _rtc
+            stockish = bool(_rtc(question or ""))
+        except Exception:  # noqa: BLE001
+            stockish = False
+    if stockish:
+        if "get_valuation" not in used:
+            sugg.append("它现在估值贵不贵？")
+        if "get_dragon_tiger" not in used:
+            sugg.append("最近有没有上龙虎榜？")
+        if "get_fund_flow" not in used:
+            sugg.append("主力资金最近怎么流？")
+        if "get_dividend_history" not in used and len(sugg) < 3:
+            sugg.append("历年分红怎么样？")
+    else:
+        sugg = ["今天大盘怎么样？", "现在哪些板块最热？", "看看今日涨停天梯"]
+    return sugg[:3]
+
+
 @app.post("/api/agents/tool-research")
-async def tool_research(request: Request, message: str = "", symbol: str = "", name: str = "",
+async def tool_research(request: Request, message: str = "", symbol: str = "", name: str = "", history: str = "",
                         _user: Optional[dict] = Depends(optional_current_user)) -> dict[str, Any]:
-    """非流式 AI 原生 tool-use：一次 POST 返回 {ok, answer, tool_trace}。
+    """非流式 AI 原生 tool-use：一次 POST 返回 {ok, answer, tool_trace, suggestions}。
     与 /stream 同一 agent（iFinD 灰度 + 我们的快讯/研报/复盘工具），但走普通 JSON——经 nginx 比 SSE 稳。
-    参数走 query（与 /stream 一致，axios 以 params 传）。"""
+    参数走 query（与 /stream 一致，axios 以 params 传）。history=[[q,a],...] JSON，web 端多轮记忆。"""
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
     quota_key = _check_agent_quota(_user, request)  # 会员/管理员无限；非会员超额抛 402/403（前端转升级/登录）
     _ifind = ifind_enhance_enabled(request)
-    hint = f"当前标的：{name}（{symbol}）" if symbol.strip() else ""
+    hint_parts = [p for p in (_history_context_prefix(history),) if p]
+    if symbol.strip():
+        hint_parts.insert(0, f"当前标的：{name}（{symbol}）")
+    hint = "\n".join(hint_parts)
+    # 注入登录用户 → get_my_watchlist 在 web 端活过来（此前 ContextVar 只在微信入口 set，终端会员问"我的自选股"被让去登录）
+    from . import agent_tools as _agent_tools
+    _uname = str((_user or {}).get("username") or "").strip()
+    _tok = _agent_tools._BINDING_USER.set(_uname)
     try:
         result = await llm.run_tool_agent(question=message, context_hint=hint, ifind_user=_ifind)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "answer": "", "tool_trace": [], "error": str(exc)[:160]}
+    finally:
+        _agent_tools._BINDING_USER.reset(_tok)
     if result and (result.get("answer") or "").strip():
         if quota_key:
             metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败不扣）
-        return {"ok": True, "answer": result["answer"], "tool_trace": result.get("tool_trace", []), "rounds": result.get("rounds", 0)}
+        from .compliance import ai_label as _ai_label
+        return {"ok": True, "answer": _ai_label(result["answer"], brief=True), "tool_trace": result.get("tool_trace", []),
+                "rounds": result.get("rounds", 0),
+                "suggestions": _followup_suggestions(message, result.get("tool_trace", [])),
+                "quota_left": _agent_quota_left(quota_key)}
     return {"ok": False, "answer": "", "tool_trace": [], "reason": "tool-agent 未返回结果"}
 
 
 @app.post("/api/agents/tool-research/stream")
-async def tool_research_stream(request: Request, message: str = "", symbol: str = "", name: str = "",
+async def tool_research_stream(request: Request, message: str = "", symbol: str = "", name: str = "", history: str = "",
                                _user: Optional[dict] = Depends(optional_current_user)):
     """流式 AI 原生 tool-use：边调工具边把进度（tool_start / tool_result）实时推给前端，最后 final/error/fallback。
 
     打磨「研究类问题等 15-30 秒」的体验——让用户看到模型正在调哪些工具，而不是干等一个转圈。
     tool-agent 无答案（未启用 / 不支持）→ 发 fallback，前端回退到非流式 orchestrator-chat。
+    history=[[q,a],...] JSON：web 端多轮记忆（只作 LLM 上下文，不进确定性路由）。
     """
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
     quota_key = _check_agent_quota(_user, request)  # 会员/管理员无限；非会员超额抛 402/403（流前先拦，正常 HTTP 错误）
     _ifind = ifind_enhance_enabled(request)  # 仅白名单(lx199710) A股走 iFinD；匿名/失效 token → False(不抛)
+    _uname = str((_user or {}).get("username") or "").strip()  # 闭包捕获：run() 里注入 ContextVar
 
     async def event_generator() -> AsyncIterator[str]:
         queue: asyncio.Queue = asyncio.Queue()
@@ -9035,24 +9745,33 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
         async def emit(event_type: str, payload: dict) -> None:
             await queue.put(_sse_frame(event_type, payload))
 
-        hint = f"当前标的：{name}（{symbol}）" if symbol.strip() else ""
+        hint_parts = [p for p in (_history_context_prefix(history),) if p]
+        if symbol.strip():
+            hint_parts.insert(0, f"当前标的：{name}（{symbol}）")
+        hint = "\n".join(hint_parts)
 
         async def run() -> None:
+            from . import agent_tools as _agent_tools
+            _tok = _agent_tools._BINDING_USER.set(_uname)  # web 登录用户 → get_my_watchlist 可用
             try:
                 result = await llm.run_tool_agent(question=message, context_hint=hint, emit=emit, ifind_user=_ifind)
                 if result and (result.get("answer") or "").strip():
                     if quota_key:
                         metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败/fallback 不扣）
+                    from .compliance import ai_label as _ai_label
                     await queue.put(_sse_frame("final", {
-                        "answer": result["answer"],
+                        "answer": _ai_label(result["answer"], brief=True),
                         "tool_trace": result.get("tool_trace", []),
                         "rounds": result.get("rounds", 0),
+                        "suggestions": _followup_suggestions(message, result.get("tool_trace", [])),
+                        "quota_left": _agent_quota_left(quota_key),
                     }))
                 else:
                     await queue.put(_sse_frame("fallback", {"reason": "tool-agent 未返回结果"}))
             except Exception as exc:
                 await queue.put(_sse_frame("error", {"message": str(exc)[:200]}))
             finally:
+                _agent_tools._BINDING_USER.reset(_tok)
                 await queue.put(None)  # 哨兵：通知生成器结束
 
         task = asyncio.create_task(run())
@@ -9079,21 +9798,75 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
     )
 
 
-# ============================ 深度研判（多智能体辩论，灰度 lx199710）============================
+@app.post("/api/agents/feedback")
+async def api_agent_feedback(request: Request, _user: Optional[dict] = Depends(optional_current_user)) -> dict[str, Any]:
+    """AI 答案 👍👎 反馈闭环：落库(问题+答案摘要+工具轨迹+评价)，把数据准确性审计从
+    一次性大扫除变成持续在线回归。踩 → 顺带作废对应的跨用户答案缓存(微信/终端同一指纹体系)，
+    坏答案不再被复读。反馈进操作流水(action=qa_feedback)供看板查「被踩 Top」。"""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    q = str(body.get("question") or "").strip()[:300]
+    a = str(body.get("answer") or "").strip()[:500]
+    verdict = "down" if str(body.get("verdict") or "").strip().lower() == "down" else "up"
+    if not q:
+        raise HTTPException(status_code=400, detail="question 不能为空")
+    from . import data_store as _ds
+    from .weixin_channel import _qa_fingerprint as _wx_fp
+    fp = _wx_fp(q)
+    uname = str((_user or {}).get("username") or "").strip() or "anon"
+    try:
+        _ds.record("qa_feedback", fp or "misc", {
+            "q": q, "answer": a, "verdict": verdict, "user": uname,
+            "tool_trace": [str(t.get("tool") or "") for t in (body.get("tool_trace") or []) if isinstance(t, dict)][:10],
+        })
+        if verdict == "down" and fp:
+            # 作废共享缓存：data_store.latest 取最新一条，空答案会被缓存读取处的 strip() 判为未命中
+            _ds.record("wx_qa", fp, {"answer": "", "q": q, "invalidated_by": uname})
+        from . import metrics_store as _ms
+        _ms.log_activity(actor_kind="user", actor_id=uname, actor_name=uname,
+                         action=("qa_feedback_down" if verdict == "down" else "qa_feedback_up"),
+                         target=q, device="web")
+    except Exception:  # noqa: BLE001 - 反馈失败不打扰用户
+        pass
+    return {"ok": True}
+
+
+# ============================ 深度研判（多智能体辩论，会员开放）============================
 # TradingAgents 式范式跑在现有栈上：取证→多空立论→空头反驳+风控→投委会裁判。
 # 纯轮询（POST 起任务 + GET 拉进度），绝不用 SSE（生产 nginx HTTP/2 下 POST+SSE→444）。
-# 全功能仅灰度（_require_ifind_user 硬门 403），iFinD 衍生结论只活在内存任务表（见 deep_research.py）。
+# ⭐门控演进：原全站仅 lx199710 白名单（最强差异化资产休眠一年）→ 现开放给会员(premium/lifetime)：
+#   白名单/管理员不限次 + iFinD 取证；普通会员每日 DEEPFOCUS_DEEP_QUOTA 次(默认3) + 东财/新浪取证链
+#   (ifind_enhance_enabled 对非白名单恒 False，iFinD 数据合规隔离不变)；
+#   跨用户当日缓存（deep_research.seed_cached_task）让同一热门股全站每天最多烧一次 7 调用。
 from . import deep_research as dr  # noqa: E402
+
+_DEEP_QUOTA = int(os.getenv("DEEPFOCUS_DEEP_QUOTA", "3") or 3)  # 会员每日深研次数（白名单/管理员不限）
+
+
+def _require_deep_user(request: Request) -> tuple[dict, bool]:
+    """深度研判门：会员(premium/lifetime)/管理员/iFinD 白名单放行；否则 402（前端转升级弹窗）。
+    返回 (claims, unlimited)——白名单/管理员不限次，普通会员走每日配额。"""
+    from . import ifind_api
+    claims = require_current_user(request)
+    uname = str(claims.get("username") or "").strip().lower()
+    if uname in ifind_api.allowed_usernames() or str(claims.get("role") or "").strip().lower() == "admin":
+        return claims, True
+    mem = membership_of_username(uname)
+    if mem and mem.get("tier") in ("premium", "lifetime"):
+        return claims, False
+    raise HTTPException(status_code=402, detail=f"深度研判（多空辩论式 AI 深度报告）是会员专属功能——开通会员即可使用，{_upgrade_hint()}")
 
 
 @app.post("/api/agents/deep-research")
 async def deep_research_start(request: Request, symbol: str = "", name: str = "", market: str = "CN", force: int = 0) -> dict[str, Any]:
     """发起一次深度研判，返回 {task_id, status}。前端随后轮询 GET 端点。force=1 强制重跑（绕过复用）。"""
-    claims = _require_ifind_user(request)  # 登录+白名单否则 403（整功能仅灰度）
+    claims, unlimited = _require_deep_user(request)
     owner = str(claims.get("username") or "").strip().lower()
     if not symbol.strip():
         raise HTTPException(status_code=400, detail="symbol 不能为空")
-    ifind_used = ifind_enhance_enabled(request)  # 白名单恒 True，但仍走统一判定不裸传
+    ifind_used = ifind_enhance_enabled(request)  # 白名单 True；普通会员恒 False → 取证走东财/新浪链（iFinD 合规隔离）
 
     # 限流（1.8G 机器防 OOM）：同一用户已有研判在跑 → 复用；全局 in-flight 上限 → 429。
     existing = await dr.owner_running(owner)
@@ -9104,10 +9877,21 @@ async def deep_research_start(request: Request, symbol: str = "", name: str = ""
         cached = await dr.recent_done(owner, symbol, market)
         if cached:
             return {"task_id": cached, "status": "done", "reused": True}
+        # 跨用户当日缓存（非 iFinD 结果）：同股当天全站已有人跑过 → 0 token 直读，不计配额
+        if not ifind_used:
+            seeded = await dr.seed_cached_task(owner, symbol, name, market)
+            if seeded:
+                return {"task_id": seeded, "status": "done", "reused": True, "shared": True}
+    # 每日配额（普通会员）：只有真要烧 LLM 时才计；复用/缓存命中不扣
+    qkey = f"q:deep:{owner}"
+    if not unlimited and metrics_get_daily(qkey) >= _DEEP_QUOTA:
+        raise HTTPException(status_code=402, detail=f"今日深度研判次数已用完（会员每天 {_DEEP_QUOTA} 次，热门股当日结果全站共享不计次）。明天再来～")
     if await dr.in_flight_count() >= dr.GLOBAL_INFLIGHT_CAP:
         raise HTTPException(status_code=429, detail="深度研判排队中，请稍候再试")
 
     task = await dr.create_task(owner, ifind_used, symbol, name, market)
+    if not unlimited:
+        metrics_incr(qkey)
     asyncio.create_task(dr.run_deep_research(task.task_id, symbol, name, task.market, ifind_user=ifind_used))
     return {"task_id": task.task_id, "status": "pending"}
 
@@ -9115,7 +9899,7 @@ async def deep_research_start(request: Request, symbol: str = "", name: str = ""
 @app.get("/api/agents/deep-research/{task_id}")
 async def deep_research_poll(request: Request, task_id: str) -> dict[str, Any]:
     """轮询深度研判进度/结果。⭐此端点也必须门控（最易漏）+ owner 校验（非属主→404 不泄漏存在性）。"""
-    claims = _require_ifind_user(request)
+    claims, _unlimited = _require_deep_user(request)
     owner = str(claims.get("username") or "").strip().lower()
     task = await dr.get_task(task_id)
     if not task or task.owner != owner:
@@ -9528,3 +10312,18 @@ async def ashare_dashboard_analyze() -> DashboardAnalysisResponse:
         market_type="ashare",
     )
     return DashboardAnalysisResponse(**result)
+
+
+# ---- 自选股纪律体检(白名单内测·lx199710) ----
+@app.get("/api/watchlist/analysis")
+async def watchlist_discipline_analysis(request: Request, symbols: str = "") -> dict[str, Any]:
+    """自选股纪律体检:趋势状态机/开仓四道闸/风险参考线/估值旗标,中性表述+免责声明。
+    白名单同 iFinD 增强(默认 lx199710);symbols 可临时指定(逗号分隔,内测调试用)。"""
+    claims = require_current_user(request)
+    uname = str(claims.get("username") or claims.get("sub") or "").strip()
+    from . import ifind_api as _ifind_gate
+    if uname.lower() not in _ifind_gate.allowed_usernames():
+        raise HTTPException(status_code=403, detail="内测功能,暂未开放")
+    from . import watchlist_analysis as _wa
+    syms = [s.strip() for s in (symbols or "").split(",") if s.strip()]
+    return await _wa.analyze_for_user(uname, symbols_override=syms or None, user_id=str(claims.get("sub", "")))
