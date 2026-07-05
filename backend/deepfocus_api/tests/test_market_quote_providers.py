@@ -77,8 +77,13 @@ def test_china_providers_serve_only_cn_hk() -> None:
     # 东财美股源只服务美股
     assert by_key["eastmoney_us"].serves("AAPL") is True
     assert by_key["eastmoney_us"].serves("600519.SH") is False
-    # 全局源服务一切。
-    for k in ("finnhub", "alpha_vantage", "stooq", "eastmoney_fallback"):
+    # finnhub / alpha_vantage 是美股源(currency 写死 USD)，只服务美股——绝不能服务港/A股(否则把港股价标成美元)。
+    for k in ("finnhub", "alpha_vantage"):
+        assert by_key[k].serves("AAPL") is True
+        assert by_key[k].serves("600519.SH") is False
+        assert by_key[k].serves("00700.HK") is False
+    # stooq / eastmoney_fallback 仍是全局兜底源，服务一切。
+    for k in ("stooq", "eastmoney_fallback"):
         assert by_key[k].serves("AAPL") is True
         assert by_key[k].serves("600519.SH") is True
 

@@ -315,9 +315,10 @@ async def _gather_movers() -> dict:
     }
 
 
-async def _gather_sectors_breadth() -> tuple[dict, dict]:
-    """行业板块涨跌（领涨/领跌 + 主力净额 + 领涨股）+ 全市场涨跌家数。
-    涨跌家数 = 各行业板块成分股涨/跌家数(f104/f105/f106)汇总——一次请求拿全，免全量翻页（曾因翻页被限流）。"""
+async def _gather_sectors_breadth() -> tuple[dict, dict, dict]:
+    """行业板块涨跌（领涨/领跌 + 主力净额 + 领涨股）+ 全市场涨跌家数 + 全部板块 name→pct 映射。
+    涨跌家数 = 各行业板块成分股涨/跌家数(f104/f105/f106)汇总——一次请求拿全，免全量翻页（曾因翻页被限流）。
+    第三个返回值 board_pcts 供「昨日回看」对照昨日主线今日表现——复用同一响应，⚠️零新增东财请求。"""
     rows = await _em_clist(_BOARD_FS, "f12,f14,f3,f62,f104,f105,f106,f128", fid="f3", po="1", pz=90)
     boards: list[dict] = []
     adv = dec = flat = 0
@@ -341,7 +342,8 @@ async def _gather_sectors_breadth() -> tuple[dict, dict]:
         "advancers": adv or None, "decliners": dec or None,
         "flat": flat or None, "total": total or None,
     }
-    return sectors, breadth
+    board_pcts = {b["name"]: b["pct"] for b in boards if b.get("name")}
+    return sectors, breadth, board_pcts
 
 
 def _age_label(created_at: str, now: datetime) -> tuple[float, str]:
@@ -1255,6 +1257,87 @@ async def _critic_issues(narrative: dict, snap: dict) -> list[str]:
     return []
 
 
+# --------------------------------------------------------------------------- #
+# 昨日回看（问责闭环的后半环）：昨天复盘点名的板块主线，今天走成什么样。
+#   铁律（合规）：只做中性事实对照（延续/未延续/回落），说对说错都平铺直叙；
+#   禁止「精准预判/帮你赚了」式自夸、禁止对未来的引导；
+#   宁缺毋滥：无上一期复盘 / 板块对不上今日数据 → 整节省略，不硬找辩解。
+#   数据：昨日主线读 data_store 历史复盘、今日板块复用 _gather_sectors_breadth 已取的
+#   同一响应——⚠️零新增东财请求（该源已实证会限流）。
+# --------------------------------------------------------------------------- #
+_LOOKBACK_MAX = 5      # 最多回看上一期前 N 个领涨主线
+_LOOKBACK_CONT = 0.3   # 今日涨幅 ≥ +0.3% → 「延续」
+_LOOKBACK_FALL = -0.3  # 今日跌幅 ≤ -0.3% → 「回落」；其间 → 「未延续」（走平）
+
+
+def _prev_review_payload(today: str) -> Optional[dict]:
+    """今日之前、最近一期【取全】的复盘 payload（同日午盘/收盘不算——date 必须早于今日）。失败 → None。"""
+    if not today:
+        return None
+    try:
+        rows = data_store.history(_STORE_KIND, _STORE_SYM, limit=20)
+    except Exception:
+        return None
+    for r in rows:
+        p = r.get("payload") or {}
+        d = str(p.get("date") or "")
+        if d and d < today and is_complete(p):
+            return p
+    return None
+
+
+def _lookback_status(today_pct: float) -> str:
+    """中性事实标签：延续 / 回落 / 未延续（走平）。"""
+    if today_pct >= _LOOKBACK_CONT:
+        return "延续"
+    if today_pct <= _LOOKBACK_FALL:
+        return "回落"
+    return "未延续"
+
+
+def _build_yesterday_lookback(today: str, board_pcts: dict) -> Optional[dict]:
+    """「昨日回看」：上一期复盘的领涨板块主线 × 今日板块真实涨跌 对照。
+    返回 {date, session, items:[{name, prev_pct, today_pct, status}], text}；
+    无上一期 / 主线全对不上今日板块 → None（整节省略，宁缺毋滥）。"""
+    if not board_pcts:
+        return None
+    prev = _prev_review_payload(today)
+    if not prev:
+        return None
+    top = ((prev.get("sectors") or {}).get("top") or [])[:_LOOKBACK_MAX]
+    items: list[dict] = []
+    for b in top:
+        if not isinstance(b, dict):
+            continue
+        name = str(b.get("name") or "").strip()
+        today_pct = board_pcts.get(name)
+        if not name or not isinstance(today_pct, (int, float)):
+            continue  # 板块改名/今日缺数 → 该条跳过，不硬凑
+        prev_pct = b.get("pct")
+        items.append({
+            "name": name,
+            "prev_pct": round(float(prev_pct), 2) if isinstance(prev_pct, (int, float)) else None,
+            "today_pct": round(float(today_pct), 2),
+            "status": _lookback_status(float(today_pct)),
+        })
+    if not items:
+        return None
+    parts = "、".join(f"{it['name']}今日{it['today_pct']:+.2f}%{it['status']}" for it in items)
+    prev_label = prev.get("session_label") or session_label(prev.get("session") or "close")
+    text = f"昨日回看：上一期复盘（{prev.get('date')}{prev_label}）提到的领涨板块，{parts}。"
+    try:  # 沿用叙述出口的合规护栏（措辞本已确定性中性，此处双保险）
+        from .compliance import neutralize_text
+        text = neutralize_text(text)
+    except Exception:  # noqa: BLE001 - 护栏不可用不阻断（文本本身即中性事实）
+        pass
+    return {
+        "date": prev.get("date"),
+        "session": prev.get("session") or "close",
+        "items": items,
+        "text": text,
+    }
+
+
 async def build_review(date_str: Optional[str] = None) -> dict:
     """汇集数据 + 交叉比对 + 合成叙述，返回完整复盘 dict（不落库，由调用方决定）。"""
     now = cn_now()
@@ -1263,7 +1346,7 @@ async def build_review(date_str: Optional[str] = None) -> dict:
     # 顺序取数 + 间隔，温柔对待东财（曾因突发并发被限流）
     indices = await _gather_indices()
     await asyncio.sleep(0.4)
-    sectors, breadth = await _gather_sectors_breadth()
+    sectors, breadth, board_pcts = await _gather_sectors_breadth()
     await asyncio.sleep(0.4)
     movers = await _gather_movers()  # 仅用于大盘涨停/跌停家数（不展示个股榜）
     breadth["limit_up"] = movers.get("limit_up")
@@ -1327,6 +1410,16 @@ async def build_review(date_str: Optional[str] = None) -> dict:
         narrative["our_value"] = ""  # 无提前覆盖就整块不显示，绝不填「保持敏锐/持续跟踪」式空话
     snap["narrative"] = narrative or _template_narrative(snap)
     snap["narrative_provider"] = "ai" if narrative else "template"
+    # 昨日回看（问责闭环后半环）：上一期点名的板块主线今日走成什么样——中性事实对照。
+    # 结构化字段 yesterday_lookback + 在叙述「板块」段尾追加一句确定性文本（不经 LLM，不给它改写机会）；
+    # 无上一期/对不上 → 不挂字段、不加话，整节省略。
+    lookback = _build_yesterday_lookback(date_str, board_pcts)
+    if lookback:
+        snap["yesterday_lookback"] = lookback
+        nar = snap.get("narrative")
+        if isinstance(nar, dict) and lookback.get("text"):
+            sec_txt = str(nar.get("sectors") or "").rstrip()
+            nar["sectors"] = f"{sec_txt} {lookback['text']}".strip() if sec_txt else lookback["text"]
     return snap
 
 

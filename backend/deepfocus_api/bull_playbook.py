@@ -426,15 +426,18 @@ def earnings_quality(net_income: Optional[float] = None, ocf: Optional[float] = 
     parts: list[float] = []
     flags: list[str] = []
     detail: dict = {}
-    if net_income and ocf is not None:
-        cfo_ratio = ocf / net_income if net_income else None
-        if cfo_ratio is not None:
-            detail["cfo_ratio"] = round(cfo_ratio, 2)
-            parts.append(max(0.0, min(1.0, cfo_ratio)))    # >1 满分
-            if cfo_ratio < 0.5:
-                flags.append("利润含金量低(经营现金流<净利润半数)——纸上富贵")
-            elif cfo_ratio >= 1:
-                flags.append("利润含金量足(经营现金流≥净利润)")
+    # ⭐符号闸门：利润含金量(经营现金流÷净利润)只在【净利润>0 且 经营现金流>0】时才有意义。
+    # 否则负÷负得正比率，把"亏损+经营现金流为负"的垃圾股误判成"含金量足"，并经 good_business 的 ocf_to_ni(读本函数 cfo_ratio)连带污染牛股基因。
+    if net_income and net_income > 0 and ocf is not None and ocf > 0:
+        cfo_ratio = ocf / net_income
+        detail["cfo_ratio"] = round(cfo_ratio, 2)
+        parts.append(max(0.0, min(1.0, cfo_ratio)))    # >1 满分
+        if cfo_ratio < 0.5:
+            flags.append("利润含金量低(经营现金流<净利润半数)——纸上富贵")
+        elif cfo_ratio >= 1:
+            flags.append("利润含金量足(经营现金流≥净利润)")
+    elif (net_income is not None and net_income <= 0) or (ocf is not None and ocf <= 0):
+        flags.append("亏损或经营现金流为负，利润含金量口径不适用")
     if net_income and non_recurring is not None:
         core_ratio = (net_income - non_recurring) / net_income if net_income else None
         if core_ratio is not None:
@@ -458,6 +461,17 @@ def earnings_quality(net_income: Optional[float] = None, ocf: Optional[float] = 
                 flags.append("预收账款充足，未来业绩确定性强")
     score = round(sum(parts) / len(parts), 3) if parts else None
     return {"score": score, "flags": flags, "detail": detail, "n": len(parts)}
+
+
+def annualize_ratio(value: Optional[float], report_date: Optional[str] = None) -> Optional[float]:
+    """季报累计比率(ROE/营收占比等)按报告期年化，便于与年度阈值比较：Q1×4 / 半年×2 / Q3×4÷3 / 年报×1。
+    根因：东财 WEIGHTAVG_ROE 是累计期至今值，Q1 的成熟蓝筹(如茅台 ROE 10.57)直接喂阶段阈值会被误判过渡/初创。
+    无法判定报告期月份 → 原值返回(年报或缺日期都是 no-op)。"""
+    if value is None:
+        return None
+    m = (str(report_date) or "")[5:7]
+    factor = {"03": 4.0, "06": 2.0, "09": 4.0 / 3.0, "12": 1.0}.get(m)
+    return round(value * factor, 4) if factor else value
 
 
 def roe_stage(roe: Optional[float] = None, roe_prev: Optional[float] = None,

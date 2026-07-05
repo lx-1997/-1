@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator, Callable, Optional
 from fastapi import Request
 
 from .shared_utils import utc_now_iso
-from .news_filter import block_reason, scrub
+from .news_filter import discard_reason, scrub
 from .schemas import (
     DataSourceItemRecord,
     RealtimeMessageCreateRequest,
@@ -101,9 +101,9 @@ def init_realtime_message_db() -> None:
 
 
 def create_realtime_message(request: RealtimeMessageCreateRequest) -> Optional[RealtimeMessageRecord]:
-    # 内容过滤（两档）：①引流广告(竞品词+广告特征同现)直接拦下——不入库/不广播/不召回；
-    # ②正经内容夹带竞品域名(futoucaixin.cn)→抹掉域名/品牌后照常保留。
-    reason = block_reason(request.title or "", request.content or "")
+    # 内容过滤：①引流广告 ②垃圾/非新闻(反爬提示、域名喊话页) ③可见处出现竞品词(futou/斧头) → 整条拦下(不入库/不广播/不召回)；
+    # 只在结构化 url 里夹带竞品域名的正经研报不拦——由下方 scrub 抹域名后照常保留。
+    reason = discard_reason(request.title or "", request.content or "")
     if reason:
         print(f"[news-filter] 拦截入库 {reason} | {(request.title or '')[:60]}")
         return None

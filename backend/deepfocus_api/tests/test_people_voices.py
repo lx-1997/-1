@@ -5,6 +5,7 @@
 主题打标签、时效评分、档案与数据可信度组装。
 """
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from deepfocus_api.people_voices import (
     FIGURES_BY_ID,
@@ -26,13 +27,18 @@ def _rss(items_xml: str) -> str:
     )
 
 
+# 时效评分依赖真实墙钟：头条 pubDate 用「6 小时前」动态生成，测试不随日期推移而过期。
+_HUANG_PUB_DT = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=6)
+_HUANG_PUB_RFC822 = _HUANG_PUB_DT.strftime("%a, %d %b %Y %H:%M:%S GMT")
+_HUANG_PUB_DATE_CST = _HUANG_PUB_DT.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+
 _HUANG_ITEMS = _rss(
-    """
+    f"""
     <item>
       <title>黄仁勋刚抵韩就放“大招”：宣布HBM4均获认证 - 财联社</title>
       <link>https://news.google.com/rss/articles/HUANG1</link>
       <guid>HUANG1</guid>
-      <pubDate>Sat, 06 Jun 2026 07:55:37 GMT</pubDate>
+      <pubDate>{_HUANG_PUB_RFC822}</pubDate>
       <description>&lt;a href="x"&gt;相关报道&lt;/a&gt;</description>
       <source url="https://cls.cn">财联社</source>
     </item>
@@ -98,8 +104,8 @@ def test_recency_and_authority_scoring():
     assert items, "应至少解析出黄仁勋的相关条目"
     top = items[0]
     assert top.source_name == "财联社"
-    assert top.reported_date == "2026-06-06"  # GMT → +08:00 同日
-    assert top.importance_score >= 70  # 近期 + 权威源 + 热词加分
+    assert top.reported_date == _HUANG_PUB_DATE_CST  # GMT → +08:00 折算
+    assert top.importance_score >= 70  # 近期(≤1天+20) + 权威源(+10)
 
 
 def test_build_profile_quality_live_when_items_present():

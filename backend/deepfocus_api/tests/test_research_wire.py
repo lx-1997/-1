@@ -7,8 +7,14 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from deepfocus_api import main
+from deepfocus_api import ifind_api, main, research_archive
 from deepfocus_api import research_wire as rw
+
+
+@pytest.fixture(autouse=True)
+def _isolated_archive(tmp_path, monkeypatch):
+    """持久归档层指向临时空库：不读/不写真实 .research_archive.sqlite3，消除测试顺序依赖与数据污染。"""
+    monkeypatch.setattr(research_archive, "DB_PATH", tmp_path / "research_archive.sqlite3")
 
 
 def _seed_downloads(tmp_path: Path) -> Path:
@@ -129,21 +135,28 @@ def test_wire_endpoint_degraded_when_empty(monkeypatch, tmp_path):
     assert data["data_quality"]["label"] == "研报库未同步"
 
 
+def _login_as(monkeypatch, username: str):
+    """伪造已登录用户（端点内 require_current_user 直接回 claims），白名单固定为 lx199710。"""
+    monkeypatch.setattr(main, "require_current_user", lambda request: {"sub": "u-test", "username": username})
+    monkeypatch.setattr(ifind_api, "allowed_usernames", lambda: {"lx199710"})
+
+
 def test_research_file_download_gated_by_default(monkeypatch):
-    """默认未配 DEEPFOCUS_RESEARCH_FILE_DOWNLOAD → 原文文件下载端点一律 403（不开放原始文件，只给 AI 解读）。"""
-    monkeypatch.delenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", raising=False)
-    for call in (
-        lambda: main.api_research_workbench_pdf(filename="x.pdf"),
-        lambda: main.api_research_wire_file(file_id="abc"),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(call())
-        assert exc.value.status_code == 403
+    """研报原文默认锁死（版权合规）：wire-file 未配 DEEPFOCUS_SERVE_RESEARCH_ORIGINAL → 410 整体下线；
+    workbench-pdf 非白名单账号 → 403（原文仅白名单可见，其余只给「DeepFocus 视角」AI 解读）。"""
+    monkeypatch.delenv("DEEPFOCUS_SERVE_RESEARCH_ORIGINAL", raising=False)
+    _login_as(monkeypatch, "member-user")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(main.api_research_wire_file(_fake_request(), file_id="abc"))
+    assert exc.value.status_code == 410
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(main.api_research_workbench_pdf(_fake_request(), filename="x.pdf"))
+    assert exc.value.status_code == 403
 
 
 def test_workbench_pdf_blocks_path_traversal(monkeypatch):
-    # 即便开启文件下载，路径穿越仍被 _safe_workbench_file_path 拦截。
-    monkeypatch.setenv("DEEPFOCUS_RESEARCH_FILE_DOWNLOAD", "1")
+    # 白名单账号也过不了路径穿越：_safe_workbench_file_path 拦截。
+    _login_as(monkeypatch, "lx199710")
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(main.api_research_workbench_pdf(filename="../../../etc/passwd"))
+        asyncio.run(main.api_research_workbench_pdf(_fake_request(), filename="../../../etc/passwd"))
     assert exc.value.status_code in (400, 404)

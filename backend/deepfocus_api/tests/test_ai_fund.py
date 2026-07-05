@@ -18,6 +18,7 @@ def fund(monkeypatch, tmp_path):
                         lambda: {"regime": "bull", "above_ma60": True, "ma60_rising": True})  # 大盘多空不打外网
     monkeypatch.setattr(ai_fund, "_latest_wire", lambda limit=16: [])  # 脑内独白弹药库不打外网
     monkeypatch.setattr(ai_fund, "_diverse_ammo", lambda per_type=3: [])  # 多样化弹药不打外网
+    monkeypatch.setattr(ai_fund, "_free_quote", lambda symbol: None)  # 免费实时价兜底不打外网：未 _wire 的池内股票无行情
     monkeypatch.setattr(ai_fund, "_run_debate", lambda name, symbol, an, q: None)  # 多空辩论默认关(不打外网)
     monkeypatch.setattr(ai_fund, "_in_session", lambda now=None: True)  # 测试不受交易时段闸门影响
     ai_fund.init_ai_fund_db()

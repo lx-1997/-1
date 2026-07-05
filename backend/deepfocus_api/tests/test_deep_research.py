@@ -126,7 +126,10 @@ def test_run_deep_research_suppresses_all_persistence(store, monkeypatch):
 def test_finalize_neutralizes_buy_sell_words():
     raw = {"direction": "看多", "thesis": "强烈建议买入，目标价翻倍", "confidence": 0.9}
     out = dr._finalize_verdict(raw, ifind_used=False, gaps=[], degraded=[])
-    assert "买入" not in out["thesis"] and "目标价" not in out["thesis"] and "翻倍" not in out["thesis"]
+    # 荐股/承诺词仍被中性化（"建议买入"→"偏多关注"）
+    assert "建议买入" not in out["thesis"] and "买入" not in out["thesis"]
+    # 但客观财经描述词（目标价/翻倍）保留——无条件替换它们会篡改券商/财报事实+造残句（审计 rank12）
+    assert "目标价" in out["thesis"] and "翻倍" in out["thesis"]
 
 
 def test_finalize_direction_enum_validation():
@@ -268,10 +271,11 @@ def test_endpoints_block_anonymous(gated_client):
 
 
 def test_endpoint_blocks_non_whitelist(gated_client):
+    """深研已从白名单放开到会员：非会员非白名单 → 402（引导开通，前端转升级弹窗），不再是 403。"""
     client, tokens = gated_client
     h = {"Authorization": f"Bearer {tokens['outsider']}"}
-    assert client.post("/api/agents/deep-research?symbol=600519", headers=h).status_code == 403
-    assert client.get("/api/agents/deep-research/x", headers=h).status_code == 403
+    assert client.post("/api/agents/deep-research?symbol=600519", headers=h).status_code == 402
+    assert client.get("/api/agents/deep-research/x", headers=h).status_code == 402
 
 
 def test_whitelist_can_start_and_poll(gated_client):

@@ -472,10 +472,13 @@ def test_public_path_whitelist_classification():
     for path in free:
         assert auth.is_public_path(path) is True, f"{path} 应免登录可达"
 
+    # vision-analyze / news/ai-analyze 已刻意放进 PUBLIC_EXACT（2026-06-28 转化改造：
+    # 中间件放行到端点，由 _check_ai_quota 精细把关——非会员/匿名绝不触发新生成，仅缓存命中放行+每日免费额度）
+    for path in ("/api/research/vision-analyze", "/api/news/ai-analyze"):
+        assert auth.is_public_path(path) is True, f"{path} 应放行到端点（handler 内配额把关）"
+
     gated = [
         "/api/research/wire-file",        # 研报原文：绝不能被 /api/research/wire 误放行
-        "/api/research/vision-analyze",   # AI 多模态解读
-        "/api/news/ai-analyze",           # AI 快讯解读
         "/api/me/watchlist",              # 自选股（按账号）
         "/api/auth/users",                # 管理端
         "/api/agents/orchestrator-chat",  # AI 对话

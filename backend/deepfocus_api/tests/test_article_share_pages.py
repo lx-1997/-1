@@ -89,9 +89,10 @@ def test_article_route_serves_soft_wall(client):
 
 
 def test_article_route_404_for_nonarticle_and_missing(client):
-    flash = rm.create_realtime_message(RealtimeMessageCreateRequest(
-        title="一条快讯", content="x", topic="快讯", severity="info", tags=["快讯"]))
-    assert client.get(f"/article/{flash.id}").status_code == 404   # 快讯不是文章
+    # 快讯自 2026-07 起放行（复制快讯的引流链接就是 /article/{id}），其它 topic 仍 404。
+    other = rm.create_realtime_message(RealtimeMessageCreateRequest(
+        title="一条晨报", content="x", topic="晨报", severity="info", tags=["晨报"]))
+    assert client.get(f"/article/{other.id}").status_code == 404   # 非 文章/快讯 topic 不放行
     assert client.get("/article/does-not-exist").status_code == 404
 
 

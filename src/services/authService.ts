@@ -248,7 +248,7 @@ export async function fetchCheckinStatus(): Promise<CheckinStatus | null> {
 
 // 购买/收款配置（套餐价格 + 收款码是否就绪）
 export interface PayPackage { key: string; label: string; days: number; price: number; orig?: number; }
-export interface PaymentConfig { enabled: boolean; note: string; packages: PayPackage[]; wechat: boolean; alipay: boolean; pkg_qr?: Record<string, { wechat: boolean; alipay: boolean }>; }
+export interface PaymentConfig { enabled: boolean; note: string; packages: PayPackage[]; wechat: boolean; alipay: boolean; pkg_qr?: Record<string, { wechat: boolean; alipay: boolean }>; storefront_url?: string; }
 export async function fetchPaymentConfig(): Promise<PaymentConfig | null> {
   try { return await apiGet<PaymentConfig>('/api/payment-config'); } catch { return null; }
 }

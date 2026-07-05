@@ -448,14 +448,36 @@ export function runGeneralChatStream(
 // AI 原生 tool-use（非流式 JSON）：一次返回答案 + 用了哪些工具。走 apiClient(axios)——自动带 Authorization
 // (iFinD 灰度靠它识别 lx199710)、有同源回退，比 SSE 流式经 nginx 稳。这是终端 AI 问答采用的可靠通道。
 export interface ToolTraceItem { tool: string; ok?: boolean; summary?: string; args?: any; }
-export interface ToolResearchResult { ok: boolean; answer: string; tool_trace: ToolTraceItem[]; rounds?: number; reason?: string; error?: string; }
-export async function runToolResearch(message: string, symbol = '', name = ''): Promise<ToolResearchResult> {
-  const qs = new URLSearchParams({ message, symbol, name }).toString();
+export interface ToolResearchResult {
+  ok: boolean; answer: string; tool_trace: ToolTraceItem[]; rounds?: number; reason?: string; error?: string; status?: number;
+  suggestions?: string[];       // 基于本次工具轨迹的确定性追问建议（零 token）
+  quota_left?: number | null;   // 本次回答后剩余免费次数；null=会员不限
+}
+export async function runToolResearch(
+  message: string, symbol = '', name = '',
+  history: Array<[string, string]> = [],   // 最近几轮 [问,答]——web 端多轮记忆（后端只喂 LLM，不进确定性路由）
+): Promise<ToolResearchResult> {
+  const params: Record<string, string> = { message, symbol, name };
+  if (history.length) {
+    try { params.history = JSON.stringify(history.slice(-3)); } catch { /* 序列化失败就当无历史 */ }
+  }
+  const qs = new URLSearchParams(params).toString();
   try {
     return await apiPost<ToolResearchResult>(`/api/agents/tool-research?${qs}`, {});
   } catch (e: any) {
-    return { ok: false, answer: '', tool_trace: [], error: e?.response?.data?.detail || e?.message || '请求失败' };
+    // 带上 HTTP 状态码：402(非会员额度用完→升级)/403(匿名→登录)，前端据此分流
+    return { ok: false, answer: '', tool_trace: [], error: e?.response?.data?.detail || e?.message || '请求失败', status: e?.response?.status };
   }
+}
+
+/** AI 答案 👍👎 反馈（fire-and-forget）：落后端 qa_feedback，踩会作废共享答案缓存。 */
+export function sendAgentFeedback(question: string, answer: string, verdict: 'up' | 'down', toolTrace: ToolTraceItem[] = []): void {
+  apiPost('/api/agents/feedback', {
+    question: question.slice(0, 300),
+    answer: answer.slice(0, 500),
+    verdict,
+    tool_trace: toolTrace.slice(0, 10),
+  }).catch(() => { /* 反馈失败不打扰用户 */ });
 }
 
 // 深度研判（多智能体辩论，灰度 lx199710）：POST 起任务返回 task_id → 每 2s 轮询进度/结果。

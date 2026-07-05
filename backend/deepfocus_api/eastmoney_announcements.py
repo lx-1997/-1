@@ -77,6 +77,96 @@ async def query_eastmoney_announcements(
     return rows[:limit], total, warnings
 
 
+async def fetch_stock_announcements(symbol: str, days: int = 30, limit: int = 12) -> Optional[dict[str, Any]]:
+    """个股近 N 天公告清单（标题/类型/日期/链接）——回答『XX最近有什么公告/有没有回购增发减持』。
+
+    同一 np-anotice 接口按 stock_list 查个股（全市场扫描技能早已在用该网关，可达性已验证）。
+    失败/非 A 股 6 位代码 → None（优雅降级，模型转答『无法核验』）。纯交易所公开事实，合规安全。"""
+    import re as _re
+    from datetime import timedelta
+
+    code = _re.sub(r"\D", "", symbol or "")
+    if len(code) != 6:
+        return None
+    end = date.today()
+    start = end - timedelta(days=max(1, min(int(days or 30), 90)))
+    params = {
+        "sr": "-1",
+        "page_size": str(min(50, max(5, int(limit or 12)))),
+        "page_index": "1",
+        "ann_type": "A",
+        "client_source": "web",
+        "stock_list": code,
+        "begin_time": start.isoformat(),
+        "end_time": end.isoformat(),
+    }
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            r = await client.get(EASTMONEY_NOTICE_URL, params=params, headers=EASTMONEY_HEADERS)
+            r.raise_for_status()
+            data = (r.json() or {}).get("data") or {}
+    except Exception:  # noqa: BLE001
+        return None
+    rows2 = data.get("list") if isinstance(data, dict) else None
+    items: list[dict[str, Any]] = []
+    for it in (rows2 or [])[: int(limit or 12)]:
+        if not isinstance(it, dict):
+            continue
+        art_code = str(it.get("art_code") or "").strip()
+        columns = it.get("columns") if isinstance(it.get("columns"), list) else []
+        items.append({
+            "title": str(it.get("title_ch") or it.get("title") or "").strip(),
+            "type": ",".join(_column_names(columns)),
+            "date": str(it.get("notice_date") or it.get("display_time") or "").strip()[:10],
+            "url": eastmoney_detail_url(code, art_code),
+        })
+    return {
+        "symbol": code,
+        "days": int(days or 30),
+        "count": len(items),
+        "items": items,
+        "note": "交易所公开公告，以原文为准" if items else f"近 {int(days or 30)} 天无公告",
+    }
+
+
+async def fetch_next_disclosure(symbol: str) -> Optional[dict[str, Any]]:
+    """个股财报预约披露日期（东财 datacenter RPT_PUBLIC_BS_APPOIN，名字天生少个 T）——回答『什么时候出年报/季报』。
+    失败/查不到 → None。确定性日期事实。"""
+    import re as _re
+
+    code = _re.sub(r"\D", "", symbol or "")
+    if len(code) != 6:
+        return None
+    url = (
+        "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        # ⚠️东财真实报表名就是 RPT_PUBLIC_BS_APPOIN（少个 T）——RPT_PUBLIC_BS_APPOINT 实测"报表配置不存在"
+        "?reportName=RPT_PUBLIC_BS_APPOIN&columns=ALL&pageSize=4"
+        "&sortColumns=REPORT_DATE&sortTypes=-1"
+        f"&filter=(SECURITY_CODE%3D%22{code}%22)"
+    )
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            r = await client.get(url, headers=EASTMONEY_HEADERS)
+            if r.status_code != 200:
+                return None
+            rows2 = ((r.json().get("result") or {}).get("data")) or []
+    except Exception:  # noqa: BLE001
+        return None
+    items: list[dict[str, Any]] = []
+    for row in rows2:
+        if not isinstance(row, dict):
+            continue
+        items.append({
+            "report_period": str(row.get("REPORT_DATE") or "")[:10],       # 报告期(如 2026-06-30=中报)
+            "appointed": str(row.get("APPOINT_PUBLISH_DATE") or "")[:10],  # 预约披露日
+            "actual": str(row.get("ACTUAL_PUBLISH_DATE") or "")[:10],      # 实际披露日(未披露为空)
+            "name": str(row.get("SECURITY_NAME_ABBR") or ""),
+        })
+    if not items:
+        return None
+    return {"symbol": code, "disclosures": items, "note": "以交易所/公司正式公告为准"}
+
+
 def to_cninfo_like_row(item: dict[str, Any]) -> dict[str, Any]:
     code_info = _primary_code(item)
     art_code = str(item.get("art_code") or "").strip()

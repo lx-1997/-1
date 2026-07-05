@@ -188,6 +188,16 @@
   #poster .pb{display:flex;gap:10px}#poster .pb button{font-size:13px;font-weight:700;padding:9px 18px;border-radius:12px;border:none;cursor:pointer}
   #poster .pb .dl{background:var(--grad);color:#fff}#poster .pb .cl{background:rgba(255,255,255,.2);color:#fff}#poster .ph{color:#fff;font-size:13px;opacity:.85}
 
+  /* 桌面短屏(笔记本 1366×768 等,可视高 < ~820px):详情仪表盘原 height:100dvh 锁死视口、三列各自内部滚动,
+     视口不够高时头部(收益/KPI/解说)吃掉上半屏、网格被压到几乎不可滚 → 滑轮"无法下滑"。
+     短屏改为整页滚动(列随内容铺开、页面整体滚动);align-items:start 防中栏被最高的右栏拉高致 K 线巨幅化。
+     大屏(≥820px 高)不命中,原"一屏仪表盘+列内滚动"完全保留。 */
+  @media (min-width:1024px) and (max-height:820px){
+    .app{height:auto;min-height:100dvh}
+    .grid{align-items:start}
+    .col{overflow:visible}
+  }
+
   @media(max-width:1023px){
     .app{height:auto;min-height:100dvh;padding:9px 10px 14px}.tabs{display:flex;position:sticky;top:0;z-index:50;background:var(--bg);padding:4px 0}
     .grid{grid-template-columns:1fr}.col{display:none;overflow:visible;min-height:0}
@@ -236,6 +246,47 @@
   .stswitch{display:flex;gap:6px;flex-wrap:wrap}
   .stchip{font-size:12px;font-weight:700;padding:5px 11px;border-radius:12px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;white-space:nowrap}
   .stchip.on{background:#fff;color:var(--purple);border-color:#fff}
+  /* ===== 竞技场：今日分歧(跨智能体共识/分歧) + 多空辩论回放 ===== */
+  .dvcard,.dbcard{padding:14px 16px}
+  .dv-cons{font-size:12px;color:var(--ink2);background:#f7f8fc;border-radius:10px;padding:7px 11px;margin-bottom:10px;line-height:1.7}
+  .dv-cons b{color:var(--ink)}
+  .dv-it{border:1px solid var(--line);border-radius:14px;padding:11px 13px;margin-bottom:9px;background:#fcfcff}
+  .dv-it:last-child{margin-bottom:0}
+  .dv-hd{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .dv-hd .nm{font-size:14px;font-weight:800}.dv-hd .cd{font-size:11px;color:var(--ink3)}
+  .dv-hd .sp{margin-left:auto;font-size:10px;font-weight:800;color:var(--purple);background:rgba(124,58,237,.1);padding:2px 8px;border-radius:8px;white-space:nowrap}
+  .dv-cols{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .dv-side{border-radius:11px;padding:8px 10px;font-size:12px;line-height:1.55}
+  .dv-side.bull{background:var(--upbg)}.dv-side.bear{background:var(--downbg)}   /* 本站涨跌色：多=绿 空=红(彭博式) */
+  .dv-side .st{font-size:11px;font-weight:800;margin-bottom:5px}
+  .dv-side.bull .st{color:var(--up)}.dv-side.bear .st{color:var(--down)}
+  .dv-ag{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;background:rgba(255,255,255,.72);border-radius:7px;padding:1px 7px;margin:0 4px 4px 0}
+  .dv-q{color:var(--ink);font-weight:500;margin-top:4px}
+  .dv-q.mute2{color:var(--ink3);font-weight:400;font-size:11px}
+  .dbcard summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;font-weight:800}
+  .dbcard summary::-webkit-details-marker{display:none}
+  .db-nm{font-weight:900}
+  .db-meta{font-weight:600;color:var(--ink3);font-size:11px}
+  .dbcard .ar{margin-left:auto;font-size:11px;color:var(--purple);font-weight:800;white-space:nowrap}
+  .dbcard .ar .op{display:none}
+  .dbcard details[open] .ar .op{display:inline}.dbcard details[open] .ar .cl2{display:none}
+  .dbcard .ar .tri{display:inline-block;transition:.15s}.dbcard details[open] .ar .tri{transform:rotate(90deg)}
+  .db-body{margin-top:11px;display:flex;flex-direction:column;gap:9px}
+  .db-sec{border-radius:12px;padding:10px 12px;font-size:12px;line-height:1.6;border:1px solid var(--line)}
+  .db-sec.bull{background:var(--upbg);border-color:rgba(22,199,132,.25)}
+  .db-sec.bear{background:var(--downbg);border-color:rgba(246,70,93,.22)}
+  .db-sec.judge{background:#faf7ff;border-color:#e7e0fb}
+  .db-t{font-size:12px;font-weight:800;margin-bottom:5px}
+  .db-sec.bull .db-t{color:var(--up)}.db-sec.bear .db-t{color:var(--down)}.db-sec.judge .db-t{color:var(--purple)}
+  .db-li{display:flex;gap:6px;margin-top:4px;align-items:flex-start}
+  .db-li .vd{flex:0 0 auto;font-size:10px;font-weight:800;border-radius:6px;padding:1px 6px;margin-top:1px}
+  .vd.win{color:var(--down);background:rgba(246,70,93,.13)}.vd.soft{color:var(--amber);background:rgba(245,158,11,.13)}.vd.ok{color:var(--up);background:rgba(22,199,132,.13)}
+  .db-ref{color:var(--ink3);font-size:11px}
+  .db-stop{margin-top:7px;font-size:12px;background:rgba(245,158,11,.1);border:1px dashed rgba(245,158,11,.5);border-radius:9px;padding:6px 9px;line-height:1.55}
+  .db-stop b{color:#b45309}
+  .db-stop .cav{font-size:10px;color:var(--ink3);margin-top:2px}
+  .db-disc{margin-top:9px;font-size:10px;color:var(--ink3);text-align:center}
+  @media(max-width:640px){.dv-cols{grid-template-columns:1fr}}
   @media(max-width:1023px){.arena{padding:9px 10px 14px}.lbgrid{grid-template-columns:1fr}.lbret{font-size:26px}
     .arena-top{flex-direction:column;align-items:stretch;gap:9px;padding:12px 14px}
     .arena-top .at-ttl{font-size:17px}.arena-top .at-sub{font-size:11px}
@@ -643,7 +694,72 @@ function renderArena(d){
     '<div class="at-right"><div class="at-banner">'+esc(banner)+'</div>'+bb+'</div></div>';
   const cards='<div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div>';
   const foot='<div class="arena-foot">虚拟资金·模拟交易 · 不构成投资建议 · 历史不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">登录终端解锁同款快讯/研报/速判卡 →</a></div>';
-  el.innerHTML=head+cards+foot;
+  el.innerHTML=head+cards+divergenceCard(d)+'<div id="debateBox"></div>'+foot;
+  renderDebateBox();
+}
+/* ===== 今日分歧(get_arena 的 consensus/divergence) + 多空辩论回放(snapshot 的 latest_debate) ===== */
+function agChip(a){a=a||{};return '<span class="dv-ag">'+esc(a.emoji||'🤖')+' '+esc(a.name||'')+'</span>';}
+function dvSide(cls,title,agents,quote,by){
+  const q=quote?'<div class="dv-q">“'+esc(quote)+'”'+(by?' <span class="db-ref">— '+esc(by)+'</span>':'')+'</div>'
+    :'<div class="dv-q mute2">立场来自其当前持仓/最新观点；两派解说生成后在此展示。</div>';
+  return '<div class="dv-side '+cls+'"><div class="st">'+title+'</div>'+(agents||[]).map(agChip).join('')+q+'</div>';
+}
+function divergenceCard(d){
+  const div=(d&&Array.isArray(d.divergence))?d.divergence:[],cons=(d&&Array.isArray(d.consensus))?d.consensus:[];
+  const consHtml=cons.length?'<div class="dv-cons">🤝 <b>共识持仓</b>（≥2 位 AI 同时在拿）：'+cons.slice(0,5).map(c=>esc(c.name||c.symbol||'')+' <span style="color:var(--ink3);font-size:11px">'+esc(c.symbol||'')+'</span> ×'+(Number(c.hold_count)||0)).join('　·　')+'</div>':'';
+  const items=div.slice(0,5).map(v=>{
+    const bulls=Array.isArray(v.bulls)?v.bulls:[],bears=Array.isArray(v.bears)?v.bears:[];
+    const tk=(v.debate&&typeof v.debate==='object')?v.debate:{};
+    return '<div class="dv-it"><div class="dv-hd"><span class="nm">'+esc(v.name||v.symbol||'')+'</span><span class="cd">'+esc(v.symbol||'')+'</span><span class="sp">'+bulls.length+' 多 vs '+bears.length+' 空</span></div>'+
+      '<div class="dv-cols">'+
+      dvSide('bull','▲ 看多 / 在拿',bulls,tk.bull,tk.bull_agent&&tk.bull_agent.name)+
+      dvSide('bear','▼ 看空 / 在躲',bears,tk.bear,tk.bear_agent&&tk.bear_agent.name)+
+      '</div></div>';
+  }).join('');
+  const body=items||'<div class="empty" style="padding:12px">今日各派暂无分歧 —— 出现「有人拿·有人躲」的票时，两派理由会在这里并排展示。</div>';
+  return '<div class="card dvcard"><div class="sec-h">⚔️ 今日分歧 <small>同一只票·有人拿有人躲 · AI 模拟盘·虚拟资金·不构成投资建议</small></div>'+consHtml+body+'</div>';
+}
+function vdCls(v){return v==='驳倒'?'win':v==='削弱'?'soft':'ok';}
+function renderDebateBox(){
+  const box=document.getElementById('debateBox');if(!box)return;
+  const hd='<div class="sec-h">🎭 多空辩论回放 <small>建仓前推演：多头立论 → 空头逐条审视 → 裁判裁决 · AI 模拟盘·不构成投资建议</small></div>';
+  const ld=S.mainDebate;
+  if(ld===undefined){box.innerHTML='<div class="card dbcard">'+hd+'<div class="empty" style="padding:10px">辩论回放拉取中…</div></div>';return;}
+  const db=(ld&&ld.debate&&typeof ld.debate==='object')?ld.debate:null;
+  if(!db){box.innerHTML='<div class="card dbcard">'+hd+'<div class="empty" style="padding:10px">暂无辩论记录 —— 下一笔建仓前，多头/空头/裁判的完整对辩会在这里回放。</div></div>';return;}
+  const bull=(db.bull&&typeof db.bull==='object')?db.bull:{},reb=(db.rebuttal&&typeof db.rebuttal==='object')?db.rebuttal:{},vd=(db.verdict&&typeof db.verdict==='object')?db.verdict:{};
+  const args=(Array.isArray(bull.key_args)?bull.key_args:[]).slice(0,5).map(a=>{const p=(a&&typeof a==='object')?a:{point:a};
+    return '<div class="db-li"><span>•</span><span>'+esc(p.point||'')+(p.evidence_ref?' <span class="db-ref">〔'+esc(p.evidence_ref)+'〕</span>':'')+'</span></div>';}).join('');
+  const bconf=(typeof bull.confidence==='number'&&isFinite(bull.confidence))?' · 信心 '+Math.round(bull.confidence*100)+'%':'';
+  const rebs=(Array.isArray(reb.rebuttals)?reb.rebuttals:[]).slice(0,5).map(r=>{const p=(r&&typeof r==='object')?r:{reasoning:r};
+    return '<div class="db-li"><span class="vd '+vdCls(p.verdict)+'">'+esc(p.verdict||'审视')+'</span><span>'+esc(p.targets_bull_point||'')+(p.reasoning?' <span class="db-ref">— '+esc(p.reasoning)+'</span>':'')+'</span></div>';}).join('');
+  const conc=(Array.isArray(reb.bear_concessions)?reb.bear_concessions:[]).filter(Boolean).slice(0,2).map(x=>esc(typeof x==='string'?x:JSON.stringify(x))).join('；');
+  const conv=(typeof vd.conviction==='number'&&isFinite(vd.conviction))?' · 信心 '+Math.round(vd.conviction*100)+'%':'';
+  const lean=reb.net_lean||'';
+  box.innerHTML='<div class="card dbcard"><details id="debateFold"'+(S.debateOpen?' open':'')+'>'+
+    '<summary>🎭 多空辩论回放 <span class="db-nm">'+esc(ld.name||ld.symbol||'')+'</span><span class="db-meta">'+esc(ld.symbol||'')+' · '+tt(ld.ts)+' · 建仓前推演 · 模拟交易不构成投资建议</span><span class="ar"><span class="op">收起</span><span class="cl2">展开回放</span> <span class="tri">›</span></span></summary>'+
+    '<div class="db-body">'+
+    '<div class="db-sec bull"><div class="db-t">▲ 多头立论'+(bull.thesis?'：'+esc(bull.thesis):'')+bconf+'</div>'+(args||'<span class="db-ref">（无逐条论点记录）</span>')+'</div>'+
+    '<div class="db-sec bear"><div class="db-t">▼ 空头逐条审视'+(lean?' · 辩后净倾向：'+esc(lean):'')+'</div>'+(rebs||'<span class="db-ref">（无逐条审视记录）</span>')+
+      (reb.strongest_bear_point?'<div class="db-ref" style="margin-top:4px">空头最硬一击：'+esc(reb.strongest_bear_point)+'</div>':'')+
+      (conc?'<div class="db-ref">空头也承认：'+conc+'</div>':'')+'</div>'+
+    '<div class="db-sec judge"><div class="db-t">⚖️ 裁判裁决：'+esc(vd.decision||'—')+(vd.net_lean?' · '+esc(vd.net_lean):'')+conv+'</div>'+
+      (vd.thesis?'<div>'+esc(vd.thesis)+'</div>':'')+
+      (vd.edge_reason?'<div class="db-ref" style="margin-top:3px">为什么是它：'+esc(vd.edge_reason)+'</div>':'')+
+      (vd.key_risk?'<div class="db-ref" style="margin-top:3px">最大风险：'+esc(vd.key_risk)+'</div>':'')+
+      (vd.invalidation?'<div class="db-stop"><b>🧯 止损/认错条件</b>：'+esc(vd.invalidation)+'<div class="cav">※ 上述止损位为模拟盘内部纪律，非操作建议</div></div>':'')+
+    '</div></div>'+
+    '<div class="db-disc">AI 模拟盘为投研能力演示 · 虚拟资金 · 模拟交易，不构成投资建议 · 历史不代表未来</div>'+
+    '</details></div>';
+  const dt=document.getElementById('debateFold');
+  if(dt)dt.addEventListener('toggle',()=>{S.debateOpen=dt.open;});
+}
+async function loadDebate(){
+  try{const r=await fetch('/api/ai-fund/snapshot?strategy=main&w='+QRW,{cache:'no-store',headers:{'Accept':'application/json'}});
+    if(r.ok){const d=await r.json();S.mainDebate=(d&&d.latest_debate)||null;}
+    else if(S.mainDebate===undefined)S.mainDebate=null;
+  }catch(e){if(S.mainDebate===undefined)S.mainDebate=null;}
+  if(S.mode==='arena')renderDebateBox();
 }
 function showStSwitch(){
   const sts=(S.arena&&S.arena.strategies)||[];const el=document.getElementById('stswitch');if(!el)return;
@@ -665,6 +781,7 @@ async function loadArena(){
       if(S.mode==='arena'){S.fund='main';setMode('detail');await load();}
       return;}
     S.arena=d;if(S.mode==='arena')renderArena(d);showStSwitch();
+    loadDebate();  // 多空辩论回放：取主账户 snapshot 顶层 latest_debate(与竞技场同节奏刷新)
   }catch(e){ // 竞技场端点不存在/报错 → 回退单账户主视图，保证页面始终可用
     netFail();
     if(!S.arena&&S.mode==='arena'){S.fund='main';setMode('detail');await load();}

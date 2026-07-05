@@ -109,3 +109,74 @@ async def test_scan_skill_arbitration_prefers_more_specific(monkeypatch):
     )
     assert resp is not None
     assert "cn.earnings.scan" in resp.chips
+
+
+# ── 4. 会话历史不污染技能路由(「粘滞技能」bug 回归) ───────────────────
+
+# 上一轮 shareholder.change.scan 的回答头部(增持/减持/A股 等关键词密集、无具体个股)——
+# _ctx_hint 在生产中会把历史答案截断到 160 字，恰好留下这段会"粘住"路由的关键词头。
+_PREV_SCAN_ANSWER = (
+    "已调用 skill：shareholder.change.scan\n"
+    "范围：A股 2026-05-29 至 2026-06-27，方向：增减持。共命中 407 条 A股增减持相关披露；"
+    "其中增持 168 条、减持 239 条、同时涉及增减持 0 条，高风险 194 条。"
+)
+# 用生产同款 _ctx_hint 拼上下文前缀(含 160 字截断 + "用户当前消息：" 结尾哨兵)，确保测试与线上一致。
+from deepfocus_api.weixin_channel import _ctx_hint  # noqa: E402
+
+_PREV_CTX_PREFIX = _ctx_hint([{"q": "列出全A最近30天股东增减持", "a": _PREV_SCAN_ANSWER}])
+
+
+def test_root_cause_history_baked_into_message_would_re_trigger():
+    """根因留档：若把会话历史(生产 _ctx_hint 的 160 字截断头)拼进 message(旧行为)，detector 会被历史里的
+    增持/减持/A股 关键词带偏而**误命中**；而仅看当前这句干净问题则不命中——这正是修复「路由只看当前问题」要消除的。"""
+    current = "总结下近期研报"
+    assert detect_shareholder_change_request(current) is None                     # 干净问题:不该命中
+    assert detect_shareholder_change_request(_PREV_CTX_PREFIX + current) is not None  # 旧行为:被历史污染→误命中
+
+
+@pytest.mark.asyncio
+async def test_history_via_context_prefix_does_not_re_trigger_scan_skill(monkeypatch):
+    """粘滞技能 bug 回归：上一轮股东扫描的长答案作为会话历史经 context_prefix 传入时，
+    本轮「总结下近期研报」**不得**再命中任何全市场扫描技能；历史只应进入 LLM 上下文(tool-agent 的 context_hint)。"""
+    from deepfocus_api import main
+    from deepfocus_api.schemas import OrchestratorChatResponse
+
+    current_question = "总结下近期研报"  # 与股东增减持无关
+
+    async def fail_scan(*a, **k):  # 任一扫描技能被调用 = 路由被历史污染 = bug 复现
+        raise AssertionError("会话历史污染了技能路由——粘滞技能 bug 复现")
+
+    monkeypatch.setattr(main, "scan_shareholder_changes", fail_scan)
+    monkeypatch.setattr(main, "scan_cn_earnings", fail_scan)
+    monkeypatch.setattr(main, "scan_major_events", fail_scan)
+
+    captured: dict = {}
+
+    async def fake_tool_agent(*, question, context_hint="", ifind_user=False, timeout_seconds=30.0, **k):
+        captured["question"] = question
+        captured["context_hint"] = context_hint
+        return {"answer": "近期研报要点：……", "tool_trace": [], "rounds": 1}
+
+    def fake_map(agent_result, request, provider, model):
+        return OrchestratorChatResponse(
+            provider=provider, model=model, generated_at=datetime.now(timezone.utc),
+            title="研报要点", content=agent_result.get("answer", ""), chips=["tool-agent"],
+        )
+
+    monkeypatch.setattr(main.llm, "run_tool_agent", fake_tool_agent)
+    monkeypatch.setattr(main, "tool_agent_to_orchestrator_response", fake_map)
+
+    resp = await main._route_orchestrator_chat(
+        OrchestratorChatRequest(message=current_question),
+        _ifind=False,
+        force_research=True,        # 微信场景:非闲聊即强制研究
+        skip_professional=True,
+        context_prefix=_PREV_CTX_PREFIX,
+    )
+
+    assert isinstance(resp, OrchestratorChatResponse)
+    # ① 技能路由只看了当前这句干净问题(tool-agent 收到的 question 即它,绝不含历史)
+    assert captured["question"] == current_question
+    # ② 但历史确实作为 LLM 上下文一并下传(多轮追问仍能接上)——只是不进确定性路由
+    assert "shareholder.change.scan" in captured["context_hint"]
+    assert captured["context_hint"] == _PREV_CTX_PREFIX

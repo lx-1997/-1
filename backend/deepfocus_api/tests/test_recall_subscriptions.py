@@ -69,12 +69,25 @@ def _review_msg():
     )
 
 
+def _briefing_msg():
+    return RealtimeMessageRecord(
+        id="brief-1", title="🌅 投研晨报 · 6月27日", content="市场情绪中性，组合当前空仓。",
+        topic="晨报", severity="info", symbol="", created_at="2026-06-27T00:30:00Z",
+    )
+
+
 def test_daily_review_broadcasts_to_all_subscribers():
     # 每日复盘(topic=复盘, severity=info, 无个股)即便默认 watchlist 订阅也要送达——每日回访钩子
     sub = _sub()  # 默认 scope=watchlist, severities=[warning,critical]
     assert recall.subscription_matches(sub, _review_msg()) is True
     # 同样无个股的普通 info 仍不送(无回归)
     assert recall.subscription_matches(sub, _msg("", "info")) is False
+
+
+def test_morning_briefing_broadcasts_to_all_subscribers():
+    # 投研晨报(topic=晨报, severity=info, 无个股)同复盘一样全员盘前送达——每日盘前回访仪式
+    sub = _sub()  # 默认 scope=watchlist, severities=[warning,critical]
+    assert recall.subscription_matches(sub, _briefing_msg()) is True
 
 
 def test_subscription_matches_scope_and_severity():
@@ -122,6 +135,36 @@ def test_dispatch_webpush_degrades_without_vapid(tmp_path, monkeypatch):
     assert result.matched == 1
     assert result.deliveries[0].status == "skipped"
     assert "Web Push" in result.deliveries[0].detail
+
+
+def test_webpush_payload_separates_deeplink_and_tracker(tmp_path, monkeypatch):
+    # Web Push 载荷必须分离两个 URL：
+    #   url   = App 深链 → SW 聚焦/新开后直接落地应用内；
+    #   track = 可追踪点击端点 → SW 用 fetch 信标命中即记 CTR(不导航到它)。
+    # 防回归到「url=追踪端点」——那会把已打开的标签页停在 /api/.../click 上。
+    import json as _json
+    import sys
+    import types
+
+    _use_temp_db(tmp_path)
+    monkeypatch.setenv("DEEPFOCUS_APP_BASE_URL", "http://localhost:3000")
+    monkeypatch.setenv("DEEPFOCUS_PUBLIC_BASE_URL", "http://localhost:8300")
+    monkeypatch.setenv("DEEPFOCUS_VAPID_PRIVATE_KEY", "k")
+    monkeypatch.setenv("DEEPFOCUS_VAPID_SUBJECT", "mailto:ops@example.com")
+
+    captured = {}
+    fake_mod = types.ModuleType("pywebpush")
+    fake_mod.webpush = lambda **kwargs: captured.update(data=kwargs["data"])
+    monkeypatch.setitem(sys.modules, "pywebpush", fake_mod)
+
+    _subscribe_all(channel="webpush", address="{}")
+    result = recall.dispatch_recall(_msg("TSLA", "warning"))
+    assert result.deliveries[0].status == "sent"
+
+    payload = _json.loads(captured["data"])
+    assert payload["url"] == "http://localhost:3000/?signal=m-TSLA-warning"          # 导航 → App 深链
+    assert payload["track"].startswith("http://localhost:8300/api/realtime/recall/click/")  # 信标 → 追踪端点
+    assert payload["url"] != payload["track"]  # 关键：导航目标 ≠ 追踪端点
 
 
 # === 投递闭环：落库 / 点击回流 / 度量 ===

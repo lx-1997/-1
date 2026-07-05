@@ -33,9 +33,60 @@
     <meta name="twitter:title" content="DEEPFOCUS 金融终端 · AI 研报速读 + 实时快讯" />
     <meta name="twitter:description" content="华尔街视角 AI 今日头条 · 海外投行研报一键 AI 解读 · 实时快讯滚动。" />
     <meta name="twitter:image" content="https://daocaijing.com/og-cover.png" />
+    <link rel="canonical" href="https://daocaijing.com/" />
+    <meta property="og:locale" content="zh_CN" />
+    <!-- 站点验证占位：从 百度站长/Google Search Console/Bing Webmaster 拿到 code 后取消注释并填入（首页是静态文件，改后需前端 rebuild） -->
+    <!-- <meta name="baidu-site-verification" content="codeva-XXXXXXXX" /> -->
+    <!-- <meta name="google-site-verification" content="XXXXXXXXXXXXXXXX" /> -->
+    <!-- <meta name="msvalidate.01" content="XXXXXXXXXXXXXXXX" /> -->
+    <!-- 站级实体根（GEO 归因骨架）：Organization + WebSite(SearchAction)，与后端 SEO 落地页的 @id 一致 -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://daocaijing.com/#org",
+            "name": "DeepFocus 投研工作台",
+            "url": "https://daocaijing.com/",
+            "logo": { "@type": "ImageObject", "url": "https://daocaijing.com/logo512.png" }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://daocaijing.com/#website",
+            "url": "https://daocaijing.com/",
+            "name": "DeepFocus 投研工作台",
+            "inLanguage": "zh-CN",
+            "publisher": { "@id": "https://daocaijing.com/#org" },
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": { "@type": "EntryPoint", "urlTemplate": "https://daocaijing.com/stock/{search_term_string}" },
+              "query-input": "required name=search_term_string"
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
-    <noscript>您需要启用 JavaScript 来运行此应用程序。</noscript>
+    <!-- 站内导航入链（视觉隐藏，仅供爬虫发现 SEO 落地页子树；首页是空 SPA 壳，这是爬虫进入内容的唯一入口） -->
+    <nav aria-label="站点导航" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap">
+      <a href="/">DeepFocus 投研工作台</a>
+      <a href="/review">A股每日复盘</a>
+      <a href="/stocks">热门个股多维证据速判</a>
+      <a href="/articles">财经资讯</a>
+    </nav>
+    <noscript>
+      <h1>DeepFocus 投研工作台 · 金融终端</h1>
+      <p>彭博风格全球行情、实时快讯、海外投行研报一键 AI 解读，以及每个交易日自动生成的 A 股收盘复盘与个股多维证据速判。</p>
+      <p>浏览公开内容（无需 JavaScript）：</p>
+      <ul>
+        <li><a href="/review">A股每日复盘归档</a></li>
+        <li><a href="/stocks">热门个股多维证据速判</a></li>
+        <li><a href="/articles">财经资讯文章</a></li>
+      </ul>
+      <p>启用 JavaScript 可使用完整的实时终端。本站内容仅供研究参考，不构成任何投资建议。</p>
+    </noscript>
     <div id="root"></div>
     <script>
       if ('serviceWorker' in navigator) {

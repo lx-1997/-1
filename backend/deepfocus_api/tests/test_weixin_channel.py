@@ -50,7 +50,9 @@ def test_handle_batch_replies_with_agent_answer(tmp_path, monkeypatch):
     asyncio.run(mgr._handle_batch("botX@im.bot", msgs))
 
     assert agent_calls == [("茅台怎么样", "用户u1")]
-    assert sent["to"] == "wxU@im.wechat" and sent["ctx"] == "CTX1" and sent["text"] == "答:茅台怎么样"
+    # 答案后会追加确定性追问引导 + AI 生成显式标识（《标识办法》硬要求）→ 断言前缀与标识
+    assert sent["to"] == "wxU@im.wechat" and sent["ctx"] == "CTX1" and sent["text"].startswith("答:茅台怎么样")
+    assert "AI 生成" in sent["text"]
     assert bind.get_by_bot("botX@im.bot")["context_token"] == "CTX1"  # 缓存已刷新
 
 
@@ -103,8 +105,9 @@ def test_handle_batch_greeting_skips_agent(tmp_path, monkeypatch):
     assert "投研助手" in sent["text"]
 
 
-def test_handle_batch_expired_member_no_agent(tmp_path, monkeypatch):
-    """会员过期/降级：AI 问答不调 agent(不耗 token)，回续费引导（推送仍可用）。"""
+def test_handle_batch_expired_member_tasting_then_quota(tmp_path, monkeypatch):
+    """非会员试吃：每天 _WX_FREE_QA 次现算问答（微信是最好的转化面，一刀切拒绝=锁死在墙内）；
+    超额后不再触发 agent，回复带自助购买链接的升级提示。"""
     _use_temp_db(tmp_path, monkeypatch)
     _member(monkeypatch, tier="trial")  # 已降级/过期 → 非 premium/lifetime
     bind.upsert_binding("u2", "botY@im.bot", "tok", "base", "wxV", username="somemember")
@@ -125,8 +128,18 @@ def test_handle_batch_expired_member_no_agent(tmp_path, monkeypatch):
     mgr = ch.WeixinChannelManager(agent_fn=agent)
     msgs = [{"message_type": 1, "from_user_id": "wxV", "context_token": "C3", "item_list": [{"type": 1, "text_item": {"text": "茅台怎么样"}}]}]
     asyncio.run(mgr._handle_batch("botY@im.bot", msgs))
-    assert agent_calls == []  # 过期会员不触发 agent → 不耗 token
-    assert sent.get("called") and sent["text"] == ch._EXPIRED_REPLY
+    assert agent_calls == ["茅台怎么样"]  # 试吃第一问触发 agent 正常回答
+    assert sent.get("called") and sent["text"].startswith("答")
+    # 把当日试吃额度打满 → 不再触发 agent，回自助购买引导
+    qkey = "q:wxfree:somemember"
+    while metrics_store.get_daily(qkey) < ch._WX_FREE_QA:
+        metrics_store.incr(qkey)
+    agent_calls.clear()
+    msgs2 = [{"message_type": 1, "from_user_id": "wxV", "context_token": "C3", "item_list": [{"type": 1, "text_item": {"text": "宁德时代怎么样"}}]}]
+    asyncio.run(mgr._handle_batch("botY@im.bot", msgs2))
+    assert agent_calls == []  # 超额不触发 agent → 不耗 token
+    assert sent["text"] == ch._NONMEMBER_QUOTA_REPLY
+    assert "daocaijing" in ch._NONMEMBER_QUOTA_REPLY  # 超额提示带自助购买链接
 
 
 def test_member_can_push_gates_on_membership(tmp_path, monkeypatch):

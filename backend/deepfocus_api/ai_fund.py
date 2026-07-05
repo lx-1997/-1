@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -54,6 +55,11 @@ MUSING_KEEP = 60                 # 脑内独白滚动保留条数(独立于观�
 DEBATE = os.getenv("DEEPFOCUS_AIFUND_DEBATE", "1") != "0"  # 多空辩论总开关(可关，省 token)
 DEBATE_MAX_PER_TICK = 1          # 每轮最多对几笔买入跑辩论(控成本；取信心最高的)
 DEBATE_DEDUP_H = 24.0            # 同股辩论去重窗口(小时)：近 24h 已辩过则复用、不重复烧 token
+# 赛马分歧票多视角解说：对「有人多有人空」的票生成两派一句话对话——只在后台 tick 后预生成并缓存,
+# get_arena 请求路径只读缓存(零 LLM、零延迟)。env DEEPFOCUS_AIFUND_DIV_TAKES=0 可关。
+DIV_TAKES = os.getenv("DEEPFOCUS_AIFUND_DIV_TAKES", "1") != "0"
+DIV_TAKES_MAX_STOCKS = int(os.getenv("DEEPFOCUS_AIFUND_DIV_TAKES_MAX", "2"))  # 每轮最多给几只分歧票生成(控成本)
+DIV_TAKES_TTL = float(os.getenv("DEEPFOCUS_AIFUND_DIV_TAKES_TTL_H", "12")) * 3600  # 同阵营组合不变就复用
 DEBATE_KEEP = 40                 # 辩论记录滚动保留条数
 
 PERSONA_NAME = "阿尔法"
@@ -1591,6 +1597,10 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                               json.dumps(an.get("scores", {}), ensure_ascii=False), "",
                               json.dumps(an.get("catalyst_ref"), ensure_ascii=False) if an.get("catalyst_ref") else None,
                               an.get("score"), reason))
+                # 卖出也写穿公共数据层(与买入侧对称)：卖因(硬止损/移动止盈/破位…)+落袋盈亏，供跨模块历史复用
+                data_store.record("simulation_trade", code, {"side": "sell", "price": price,
+                                  "pnl_pct": round(pnl * 100, 2) if isinstance(pnl, (int, float)) else None,
+                                  "reason": reason or "", "agent": fund_id}, market="A")
                 held.pop(code, None); sold_now.add(code)
                 decisions.append({"tid": tid, "side": "sell", "symbol": code, "name": pos["name"], "qty": qty,
                                   "price": price, "pnl": pnl*100, "an": {**an, "thinking": think}})
@@ -1679,6 +1689,10 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                                       json.dumps(wan.get("scores", {}), ensure_ascii=False), "",
                                       json.dumps(wan.get("catalyst_ref"), ensure_ascii=False) if wan.get("catalyst_ref") else None,
                                       wan.get("score"), rtxt))
+                        # 换仓卖出同样写穿公共数据层(与买入/止损卖出侧字段一致)
+                        data_store.record("simulation_trade", weakest, {"side": "sell", "price": wp,
+                                          "pnl_pct": round(wpnl * 100, 2) if isinstance(wpnl, (int, float)) else None,
+                                          "reason": rtxt or "", "agent": fund_id}, market="A")
                         decisions.append({"tid": tid, "side": "sell", "symbol": weakest, "name": wpos["name"], "qty": float(wpos["qty"]), "price": wp, "pnl": wpnl*100, "an": {**wan, "thinking": think}})
                         traded.append({"side": "sell", "symbol": weakest, "name": wpos["name"], "qty": float(wpos["qty"]), "price": wp, "reason": rtxt})
                         held.pop(weakest, None); _do_buy(code, an)
@@ -2304,7 +2318,111 @@ def _arena_consensus(conn) -> dict:
                                "split": len(bulls) + len(bears)})
     consensus.sort(key=lambda c: c["hold_count"], reverse=True)
     divergence.sort(key=lambda c: c["split"], reverse=True)
-    return {"consensus": consensus[:5], "divergence": divergence[:5]}
+    top_div = divergence[:5]
+    _attach_divergence_takes(top_div)   # 只读缓存挂上多空对话(无则不挂)，零请求路径开销
+    return {"consensus": consensus[:5], "divergence": top_div}
+
+
+# --------------------------------------------------------------------------- #
+# 赛马分歧票·多空对话（后台预生成 + 请求路径只读缓存）
+#   分歧票=「有人拿有人躲」最有看点：给代表性的多头与空头各生成一句人设解说，
+#   让用户看到『同一只票,不同打法的人怎么想』。生成只在后台 tick 后跑、缓存复用,
+#   get_arena 永远只读缓存——绝不在公开轮询接口里烧 token / 拖延迟。
+# --------------------------------------------------------------------------- #
+
+def _divergence_fp(div_item: dict) -> str:
+    """分歧票指纹=票 + 多空两阵营 fund_id 组合。同阵营组合不变就复用缓存,变了才重算。"""
+    bulls = "+".join(sorted(f["fund_id"] for f in div_item.get("bulls", [])))
+    bears = "+".join(sorted(f["fund_id"] for f in div_item.get("bears", [])))
+    return hashlib.md5(f"{div_item.get('symbol')}|{bulls}|{bears}".encode("utf-8")).hexdigest()
+
+
+def _attach_divergence_takes(divergence: list[dict]) -> None:
+    """给分歧票挂上已缓存的多空对话(只读 data_store,零 LLM)。无缓存则不挂,前端自然降级。"""
+    if not DIV_TAKES:
+        return
+    for d in divergence:
+        try:
+            cached = data_store.latest("aif_div", _divergence_fp(d), max_age_seconds=DIV_TAKES_TTL)
+            if isinstance(cached, dict) and (cached.get("bull") or cached.get("bear")):
+                d["debate"] = cached
+        except Exception:  # noqa: BLE001
+            continue
+
+
+def _latest_thesis_title(conn, fund_id: str, symbol: str) -> str:
+    """某 agent 对某股最新 thesis 的标题——给分歧解说当事实锚点(不让 LLM 臆造理由)。"""
+    try:
+        r = conn.execute("SELECT title FROM aif_memory WHERE fund_id=? AND symbol=? AND mem_type='thesis' "
+                         "ORDER BY updated_at DESC LIMIT 1", (fund_id, symbol)).fetchone()
+        return (r["title"] if r else "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _gen_divergence_take(div_item: dict) -> Optional[dict]:
+    """给一只分歧票生成多空对话：代表性多头 + 空头各一句人设解说(锚定各自 thesis、不臆造)。"""
+    bulls = sorted((div_item.get("bulls") or []), key=lambda f: f["fund_id"])
+    bears = sorted((div_item.get("bears") or []), key=lambda f: f["fund_id"])
+    if not bulls or not bears:
+        return None
+    bf, rf = bulls[0]["fund_id"], bears[0]["fund_id"]
+    bull_cfg, bear_cfg = cfg_for(bf), cfg_for(rf)
+    sym = div_item.get("symbol"); name = div_item.get("name") or sym
+    with _connect() as conn:
+        bull_thesis = _latest_thesis_title(conn, bf, sym)
+        bear_thesis = _latest_thesis_title(conn, rf, sym)
+    prompt = (
+        f"同一只 A 股【{name}({sym})】，DeepFocus 终端里两个虚拟操盘智能体看法相反，给他们各写一句"
+        "第一人称、口语、有锐度的解说，让用户秒懂『同一只票为什么不同打法的人分歧』：\n"
+        f"· 多头「{bull_cfg.name}」打法『{bull_cfg.blurb}』"
+        f"{('，它的观点锚点：' + bull_thesis) if bull_thesis else ''}——讲它为什么看多/在拿；\n"
+        f"· 空头「{bear_cfg.name}」打法『{bear_cfg.blurb}』"
+        f"{('，它的观点锚点：' + bear_thesis) if bear_thesis else ''}——讲它为什么看空/在躲；\n"
+        "要求：各自从自己打法出发讲明白分歧点,别编锚点里没有的数字,别喊『推荐买/卖』,每句≤40字。"
+        '只返回 JSON：{"bull":"多头那句","bear":"空头那句"}。'
+    )
+    try:
+        from .compliance import neutralize_text
+        from .llm import CloudResearchLLM
+        data = asyncio.run(CloudResearchLLM().complete_json(prompt, max_tokens=500, timeout_seconds=25))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, dict):
+        return None
+    bull = neutralize_text(str(data.get("bull") or "")[:80]).strip()
+    bear = neutralize_text(str(data.get("bear") or "")[:80]).strip()
+    if not (bull or bear):
+        return None
+    return {"bull": bull, "bear": bear,
+            "bull_agent": {"fund_id": bf, "name": bull_cfg.name, "emoji": bull_cfg.emoji},
+            "bear_agent": {"fund_id": rf, "name": bear_cfg.name, "emoji": bear_cfg.emoji}}
+
+
+def refresh_divergence_takes(max_stocks: int = DIV_TAKES_MAX_STOCKS) -> int:
+    """后台预生成分歧票多空对话并缓存。只在后台 tick 之后调用(在线程里跑,容 asyncio.run)。
+    同阵营组合已有新鲜缓存则跳过(不重复烧 token)。返回本轮新生成条数；任何异常都安全吞掉。"""
+    if not (TONE and DIV_TAKES):
+        return 0
+    try:
+        init_ai_fund_db()
+        with _connect() as conn:
+            div = _arena_consensus(conn).get("divergence", [])
+    except Exception:  # noqa: BLE001
+        return 0
+    made = 0
+    for d in div[:max_stocks]:
+        try:
+            fp = _divergence_fp(d)
+            if isinstance(data_store.latest("aif_div", fp, max_age_seconds=DIV_TAKES_TTL), dict):
+                continue
+            take = _gen_divergence_take(d)
+            if take:
+                data_store.record("aif_div", fp, take)
+                made += 1
+        except Exception:  # noqa: BLE001
+            continue
+    return made
 
 
 def _nav_history(conn, fund_id: str, started_nav: float, points: int = 40) -> list[dict]:

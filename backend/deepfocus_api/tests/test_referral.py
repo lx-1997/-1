@@ -22,16 +22,17 @@ def _mk(username, code=None, ip=None):
 
 
 def test_earned_math():
-    # 里程碑(激活有效邀请)：1→3天 2→周 4→月 7→季 10→年(¥698) 20→永久；付费 1→季 2→年 5→永久
+    # 里程碑(激活有效邀请)：1→3天 3→周 8→月 16→季 30→年(¥698)，永久档已取消；付费 2→季 4→年
     e = referral._earned
     assert e(0, 0)["month"] == 0 and e(0, 0)["year"] == 0
-    assert e(4, 0)["month"] == 1 and e(4, 0)["quarter"] == 0
-    assert e(7, 0)["quarter"] == 1 and e(7, 0)["year"] == 0
-    assert e(10, 0)["year"] == 1 and e(10, 0)["month"] == 1 and e(10, 0)["quarter"] == 1
-    assert e(20, 0)["lifetime"] == 1
-    assert e(0, 1)["quarter"] == 1 and e(0, 1)["year"] == 0     # 1 付费 → 季卡
-    assert e(0, 2)["year"] == 1                                 # 2 付费 → 年卡
-    assert e(0, 5)["lifetime"] == 1                             # 5 付费 → 永久
+    assert e(8, 0)["month"] == 1 and e(8, 0)["quarter"] == 0
+    assert e(16, 0)["quarter"] == 1 and e(16, 0)["year"] == 0
+    assert e(30, 0)["year"] == 1 and e(30, 0)["month"] == 1 and e(30, 0)["quarter"] == 1
+    assert e(99, 0)["lifetime"] == 0                            # 注册档无永久
+    assert e(0, 1)["quarter"] == 0                              # 1 付费尚不解锁
+    assert e(0, 2)["quarter"] == 1 and e(0, 2)["year"] == 0     # 2 付费 → 季卡
+    assert e(0, 4)["year"] == 1                                 # 4 付费 → 年卡
+    assert e(0, 99)["lifetime"] == 0                            # 付费档无永久
 
 
 def test_reg_track_qualify_and_self_redeem(fresh, monkeypatch):
@@ -56,13 +57,13 @@ def test_reg_track_qualify_and_self_redeem(fresh, monkeypatch):
 def test_paid_track(fresh, monkeypatch):
     inviter = _mk("inviterB")
     code = auth.get_invite_overview(inviter.id).code
-    invitees = [_mk(f"b{i}", code=code, ip=f"10.1.0.{i}") for i in range(3)]
+    invitees = [_mk(f"b{i}", code=code, ip=f"10.1.0.{i}") for i in range(4)]
     monkeypatch.setattr(referral, "_activity_last_seen", lambda: {u.id: "2099-01-01T00:00:00+00:00" for u in invitees})
-    for i in range(3):
-        auth.grant_membership(f"b{i}", 400, source="paid")   # 3 个年费付费用户
+    for i in range(4):
+        auth.grant_membership(f"b{i}", 400, source="paid")   # 4 个年费付费用户 → 触 2→季 与 4→年 双档
 
     data = referral.overview(inviter.id)
-    assert data["qualified_paid"] == 3
+    assert data["qualified_paid"] == 4
     assert data["earned"]["year"] == 1 and data["earned"]["quarter"] == 1
 
 

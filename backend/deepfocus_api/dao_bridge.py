@@ -21,8 +21,12 @@ import requests
 
 import time
 
+from . import news_translate
 from .realtime_messages import create_realtime_message, update_realtime_message_fields
 from .schemas import RealtimeMessageCreateRequest
+
+# 英文快讯入库前直译成中文（默认开；设 0 关闭回到原行为）。
+_TRANSLATE_ENABLED = os.getenv("DEEPFOCUS_NEWS_TRANSLATE", "1").strip().lower() in ("1", "true", "yes", "on")
 
 def _bridge_config() -> dict:
     """运行时读取环境变量（必须在 load_dotenv() 之后，否则 .env 不生效）。
@@ -150,6 +154,21 @@ def _severity(text: str, etype: str = "") -> str:
     return "info"
 
 
+def _resolve_symbol(title: str, content: str) -> "str | None":
+    """给消息盖股票代码戳：自选股召回（前端本地通知 shouldRecall + 后端离线召回 subscription_matches）
+    都要求 message.symbol 命中，而上游事件从不带代码 → 快讯恒不触发个股级召回（Day-1 激活卡
+    承诺的"自选有动静通知你"在架构上无法兑现）。用名称索引解析：标题优先，正文只看前 120 字
+    （降低长文误命中）；解析不出保持 None，不硬猜。"""
+    try:
+        from . import stock_name_index
+        sym = stock_name_index.resolve_to_code(title or "")
+        if not sym and content:
+            sym = stock_name_index.resolve_to_code(content[:120])
+        return sym
+    except Exception:  # noqa: BLE001 - 索引加载失败等一律不阻塞入库
+        return None
+
+
 def _to_request(event: dict) -> RealtimeMessageCreateRequest:
     etype = str(event.get("type") or "").strip()
     meta = _TYPE_META.get(etype, {"topic": "资讯", "source_type": "dao", "tag": etype or "资讯"})
@@ -175,12 +194,32 @@ def _to_request(event: dict) -> RealtimeMessageCreateRequest:
         source_id=str(event.get("source_id") or event.get("id") or ""),
         source_name="DAO财经",
         source_type=meta["source_type"],
+        symbol=_resolve_symbol(title, content),  # 个股级召回的地基：命中自选股才有"盯盘=回访"
         topic=meta["topic"],
         severity=severity,  # type: ignore[arg-type]
         url=(str(event.get("url") or "").strip() or None),
         tags=[meta["tag"]],
         metadata=metadata,
     )
+
+
+async def _maybe_translate(req: RealtimeMessageCreateRequest) -> RealtimeMessageCreateRequest:
+    """英文快讯 → 中文：译文进 title/content（全链路中文），英文原文留 metadata 备查。
+    不需译/超时/失败 → 原样返回，绝不丢消息、绝不阻塞主链路超过 LLM 超时。"""
+    if not _TRANSLATE_ENABLED:
+        return req
+    try:
+        zh = await news_translate.translate_news(req.title or "", req.content or "")
+    except Exception:
+        zh = None
+    if not zh:
+        return req
+    meta = dict(req.metadata or {})
+    meta["original_title"] = req.title
+    if req.content:
+        meta["original_content"] = req.content
+    meta["translated"] = True
+    return req.model_copy(update={"title": zh["title"], "content": zh["content"], "metadata": meta})
 
 
 def _headers(token: str) -> dict:
@@ -281,7 +320,8 @@ async def run_dao_bridge() -> None:
                 events = await loop.run_in_executor(None, _fetch_events_sync, url, token, after_id)
             for ev in events:
                 try:
-                    msg = create_realtime_message(_to_request(ev))
+                    req = await _maybe_translate(_to_request(ev))
+                    msg = create_realtime_message(req)
                     # 快讯秒发时 AI 情绪常未就绪 → 记入待回填表，AI 结果落库后更新同条消息
                     # msg 为 None 表示命中内容过滤(斧头/futou)被拦下，跳过回填登记
                     if (

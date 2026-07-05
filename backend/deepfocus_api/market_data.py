@@ -135,11 +135,13 @@ QUOTE_PROVIDERS: list[QuoteProvider] = [
         "finnhub", "Finnhub",
         lambda c, s, k: _fetch_finnhub_quotes(c, s, k),
         api_key=_finnhub_api_key, requires_key=True,
+        serves=lambda sym: _infer_market(sym) == "US",  # 美股源：currency 写死 USD，绝不能服务港/A股(否则把港股标成美元)
     ),
     QuoteProvider(
         "alpha_vantage", "Alpha Vantage",
         lambda c, s, k: _fetch_alpha_vantage_quotes(c, s, k),
         api_key=_alpha_vantage_api_key, requires_key=True,
+        serves=lambda sym: _infer_market(sym) == "US",
     ),
     QuoteProvider(
         "eastmoney_cn", "东方财富公共行情",
@@ -347,7 +349,7 @@ async def _fetch_finnhub_quotes(
             provider_name="Finnhub",
             market_time=_timestamp_to_iso(payload.get("t")),
             fetched_at=utc_now_iso(),
-            is_realtime=True,
+            is_realtime=False,  # 免费档美股为延迟行情，别标"实时"误导前端徽标
             delay_note="Finnhub quote endpoint; exchange entitlement may still affect delay.",
         )
 
@@ -430,7 +432,7 @@ async def _fetch_eastmoney_quotes(
                 "https://push2.eastmoney.com/api/qt/stock/get",
                 params={
                     "secid": secid,
-                    "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170,f152",
+                    "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170,f152,f174,f175",
                 },
             )
             response.raise_for_status()
@@ -454,6 +456,7 @@ async def _fetch_eastmoney_quotes(
 
         return MarketQuote(
             symbol=symbol,
+            name=(str(data.get("f58")).strip() or None) if data.get("f58") is not None else None,
             price=price,
             change=change,
             change_percent=change_percent,
@@ -469,6 +472,8 @@ async def _fetch_eastmoney_quotes(
             fetched_at=utc_now_iso(),
             is_realtime=False,
             delay_note=f"免费公共行情快照，覆盖{market}市场；稳定性依赖公开接口可用性。",
+            wk52_high=_scaled_number(data.get("f174"), price_divisor),  # 52周最高(原A股恒None但描述承诺过)
+            wk52_low=_scaled_number(data.get("f175"), price_divisor),   # 52周最低
         )
 
     results = await asyncio.gather(*(fetch_one(symbol) for symbol in symbols))
@@ -491,11 +496,14 @@ async def _fetch_eastmoney_us_quotes(
     quotes: dict[str, MarketQuote] = {}
     remaining = [s.strip().upper().replace(".US", "") for s in us]
     # trust_env=False：东财直连绕过沙箱出网代理（代理会断连东财，与 DAO 桥接同坑）
+    # 东财美股 secid 用下划线表 share-class（BRK.B/BRK-B → 106.BRK_B）；建规范化码→用户原始写法映射，回包后还原。
+    norm_to_orig = {re.sub(r"[.\-]", "_", c): c for c in remaining}
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers={"User-Agent": "DeepFocus/0.1 market-data"}, trust_env=False) as direct:
         for prefix in ("105", "106", "107"):
             if not remaining:
                 break
-            secids = ",".join(f"{prefix}.{code}" for code in remaining)
+            norm_codes = [re.sub(r"[.\-]", "_", code) for code in remaining]
+            secids = ",".join(f"{prefix}.{nc}" for nc in norm_codes)
             try:
                 response = await direct.get(
                     "https://push2.eastmoney.com/api/qt/ulist.np/get",
@@ -512,8 +520,10 @@ async def _fetch_eastmoney_us_quotes(
                 price = to_float(row.get("f2"))
                 if not code or price is None or price <= 0:
                     continue
-                quotes[code] = MarketQuote(
-                    symbol=code,
+                orig = norm_to_orig.get(code, code)  # BRK_B → 用户原写法 BRK.B
+                quotes[orig] = MarketQuote(
+                    symbol=orig,
+                    name=(str(row.get("f14")).strip() or None) if row.get("f14") is not None else None,
                     price=price,
                     change=to_float(row.get("f4")),
                     change_percent=to_float(row.get("f3")),
@@ -529,7 +539,7 @@ async def _fetch_eastmoney_us_quotes(
                     is_realtime=False,
                     delay_note="美股免费公共行情快照（东财），稳定性依赖公开接口。",
                 )
-                found.add(code)
+                found.add(orig)
             remaining = [code for code in remaining if code not in found]
     if not quotes:
         warnings.append("Eastmoney US public quote returned no usable quotes.")
@@ -963,22 +973,51 @@ def _infer_market(symbol: str) -> str:
     base = value.split(".")[0]
     if value.endswith((".SH", ".SZ", ".BJ")) or re.fullmatch(r"\d{6}", base):
         return "CN"
-    if value.endswith(".HK") or re.fullmatch(r"\d{5}", base):
+    if value.endswith(".HK") or re.fullmatch(r"\d{1,5}", base):
         return "HK"
     if re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", value.replace(".US", "")):
         return "US"
     return "OTHER"
 
 
+def _cn_market_prefix(code: str) -> Optional[tuple[str, str]]:
+    """6 位裸 A 股代码 → (东财 secid 前缀, 交易所标签 SH/SZ/BJ)。覆盖股票+ETF/LOF基金+北交所。
+    沪市(secid 1.)：6 开头(主板/科创)、5 开头(ETF/LOF)、90 开头(沪B)。
+    深市(secid 0.)：0/3 开头(主板/创业)、1 开头(ETF/基金如15/16/18)、2 开头(深B)。
+    北交所(secid 0.)：4/8 开头、92 开头(920xxx)。
+    ⚠️ 9 开头有歧义：90xxxx=沪B(1.)、92xxxx=北交所(0.)——必须先判北交所再判沪。"""
+    if not re.fullmatch(r"\d{6}", code or ""):
+        return None
+    f, c2 = code[0], code[:2]
+    if f in ("4", "8") or c2 == "92":          # 北交所
+        return "0.", "BJ"
+    if f == "6" or f == "5" or c2 == "90":      # 沪市 A/科创 / ETF·LOF / 沪B
+        return "1.", "SH"
+    if f in ("0", "1", "2", "3"):               # 深市 A/创业 / ETF·基金 / 深B
+        return "0.", "SZ"
+    return "1.", "SH"                            # 其余 9xxxx 兜底沪
+
+
 def _eastmoney_security(symbol: str) -> Optional[tuple[str, str, str, str, float]]:
     value = symbol.strip().upper()
     code = value.split(".")[0]
-    if value.endswith(".SH") or (re.fullmatch(r"\d{6}", code) and code.startswith("6")):
-        return f"1.{code}", f"{code}.SH", "A股", "CNY", 100
-    if value.endswith(".SZ") or value.endswith(".BJ") or re.fullmatch(r"[03]\d{5}", code):
-        suffix = "BJ" if value.endswith(".BJ") else "SZ"
-        return f"0.{code}", f"{code}.{suffix}", "A股", "CNY", 100
-    if value.endswith(".HK") or re.fullmatch(r"\d{5}", code):
+    # ETF/LOF 基金价格 3 位小数(东财 f43 ×1000)，股票 2 位(×100)：沪基金 5 开头、深基金 1 开头。
+    _div = 1000.0 if code[:1] in ("5", "1") else 100.0
+
+    def _cn(prefix: str, exch: str) -> tuple[str, str, str, str, float]:
+        return f"{prefix}{code}", f"{code}.{exch}", "A股", "CNY", _div
+
+    # 显式后缀优先(000001.SH=上证指数 vs 000001=平安银行)，再按裸码段位映射。
+    if value.endswith(".SH"):
+        return _cn("1.", "SH")
+    if value.endswith(".SZ"):
+        return _cn("0.", "SZ")
+    if value.endswith(".BJ"):
+        return _cn("0.", "BJ")
+    p = _cn_market_prefix(code)
+    if p:
+        return _cn(p[0], p[1])
+    if value.endswith(".HK") or re.fullmatch(r"\d{1,5}", code):  # 港股口语简写(700/3690)也认，补零成5位
         hk_code = code.zfill(5)
         return f"116.{hk_code}", f"{hk_code}.HK", "港股", "HKD", 1000
     if re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", value.replace(".US", "")):
@@ -987,16 +1026,22 @@ def _eastmoney_security(symbol: str) -> Optional[tuple[str, str, str, str, float
     return None
 
 
+_CN_EXCH_LOWER = {"SH": "sh", "SZ": "sz", "BJ": "bj"}
+
+
 def _sina_symbol(symbol: str) -> Optional[tuple[str, str, str, str]]:
     value = symbol.strip().upper()
     code = value.split(".")[0]
-    if value.endswith(".SH") or (re.fullmatch(r"\d{6}", code) and code.startswith("6")):
+    if value.endswith(".SH"):
         return symbol, f"sh{code}", "A股", "CNY"
-    if value.endswith(".SZ") or re.fullmatch(r"[03]\d{5}", code):
+    if value.endswith(".SZ"):
         return symbol, f"sz{code}", "A股", "CNY"
     if value.endswith(".BJ"):
         return symbol, f"bj{code}", "A股", "CNY"
-    if value.endswith(".HK") or re.fullmatch(r"\d{5}", code):
+    p = _cn_market_prefix(code)
+    if p:
+        return symbol, f"{_CN_EXCH_LOWER[p[1]]}{code}", "A股", "CNY"
+    if value.endswith(".HK") or re.fullmatch(r"\d{1,5}", code):  # 港股口语简写(700/3690)也认，补零成5位
         return symbol, f"hk{code.zfill(5)}", "港股", "HKD"
     if re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", value.replace(".US", "")):
         return symbol, f"gb_{value.replace('.US', '').lower()}", "美股", "USD"
@@ -1006,11 +1051,14 @@ def _sina_symbol(symbol: str) -> Optional[tuple[str, str, str, str]]:
 def _tencent_symbol(symbol: str) -> Optional[tuple[str, str, str, str]]:
     value = symbol.strip().upper()
     code = value.split(".")[0]
-    if value.endswith(".SH") or (re.fullmatch(r"\d{6}", code) and code.startswith("6")):
+    if value.endswith(".SH"):
         return symbol, f"sh{code}", "A股", "CNY"
-    if value.endswith(".SZ") or re.fullmatch(r"[03]\d{5}", code):
-        return symbol, f"sz{code}", "A股", "CNY"
-    if value.endswith(".HK") or re.fullmatch(r"\d{5}", code):
+    if value.endswith(".SZ") or value.endswith(".BJ"):
+        return symbol, f"{'bj' if value.endswith('.BJ') else 'sz'}{code}", "A股", "CNY"
+    p = _cn_market_prefix(code)
+    if p:
+        return symbol, f"{_CN_EXCH_LOWER[p[1]]}{code}", "A股", "CNY"
+    if value.endswith(".HK") or re.fullmatch(r"\d{1,5}", code):  # 港股口语简写(700/3690)也认，补零成5位
         return symbol, f"hk{code.zfill(5)}", "港股", "HKD"
     return None
 

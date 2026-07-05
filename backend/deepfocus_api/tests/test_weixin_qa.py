@@ -102,10 +102,12 @@ def test_member_question_calls_agent_counts_and_caches(env):
     asyncio.run(mgr._handle_batch("bot-alice", [_msg("贵州茅台怎么样")]))
 
     assert calls == ["贵州茅台怎么样"]                       # agent 被调一次
-    assert env["sent"][-1] == "贵州茅台的研究观点"            # 回了答案
+    # 答案后追加确定性追问引导 + AI 生成显式标识（法规要求）→ 断言前缀与标识
+    assert env["sent"][-1].startswith("贵州茅台的研究观点")   # 回了答案
+    assert "AI 生成" in env["sent"][-1]
     assert metrics_store.get_daily("q:wxqa:alice") == 1      # 现算计 1 次
     fp = wc._qa_fingerprint("贵州茅台怎么样")
-    assert data_store.latest("wx_qa", fp)["answer"] == "贵州茅台的研究观点"  # 已写缓存
+    assert data_store.latest("wx_qa", fp)["answer"].startswith("贵州茅台的研究观点")  # 已写缓存
 
 
 # ---------- 缓存跨用户复用：命中即回、不调 agent、不计次 ----------
@@ -122,7 +124,7 @@ def test_cache_hit_is_cross_user_and_free(env):
     asyncio.run(mgr._handle_batch("bot-alice", [_msg("今天大盘怎么样")]))
 
     assert len(calls) == 1                                   # agent 没有被再次调用（0 token）
-    assert env["sent"][-1] == "大盘综述"                      # 仍回了答案
+    assert env["sent"][-1].startswith("大盘综述")             # 仍回了答案（尾部带 AI 标识）
     assert metrics_store.get_daily("q:wxqa:bob") == 0        # 命中缓存不计次
 
 
@@ -164,14 +166,22 @@ def test_help_is_free(env):
     assert metrics_store.get_daily("q:wxqa:alice") == 0
 
 
-def test_expired_member_blocked(env):
+def test_expired_member_tasting_quota(env):
+    """非会员试吃：每天 _WX_FREE_QA 次现算；超额回自助购买引导（微信是最好的转化面）。"""
     env["mp"].setattr(auth, "membership_of_username", lambda u: {"tier": "trial"})
     calls: list = []
-    mgr = _mgr(calls=calls)
+    mgr = _mgr(answer="试吃答案", calls=calls)
     asyncio.run(mgr._handle_batch("bot-alice", [_msg("茅台怎么样")]))
-    assert calls == []                                       # 过期会员不触发 agent
-    assert env["sent"][-1] == wc._EXPIRED_REPLY
-    assert metrics_store.get_daily("q:wxqa:alice") == 0
+    assert calls == ["茅台怎么样"]                            # 试吃第一问触发 agent
+    assert env["sent"][-1].startswith("试吃答案")
+    assert metrics_store.get_daily("q:wxfree:alice") >= 1    # 计入试吃额度而非会员额度
+    # 打满试吃额度 → 不再触发 agent，回自助购买引导
+    while metrics_store.get_daily("q:wxfree:alice") < wc._WX_FREE_QA:
+        metrics_store.incr("q:wxfree:alice")
+    calls.clear()
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("宁德时代怎么样")]))
+    assert calls == []
+    assert env["sent"][-1] == wc._NONMEMBER_QUOTA_REPLY
 
 
 # ---------- 出口合规中性化 ----------
@@ -180,7 +190,7 @@ def test_answer_goes_through_compliance(env):
     env["mp"].setattr(compliance, "neutralize_text", lambda s: "NZ:" + s)
     mgr = _mgr(answer="原始答案")
     asyncio.run(mgr._handle_batch("bot-alice", [_msg("某新问题")]))
-    assert env["sent"][-1] == "NZ:原始答案"
+    assert env["sent"][-1].startswith("NZ:原始答案")  # 尾部还有 AI 生成标识（也是出口链路的一环）
 
 
 # ---------- make_agent_fn 传放宽后的超时（个股多轮取数不被 30s 默认超时掐死） ----------
@@ -208,9 +218,10 @@ def test_weixin_orchestrator_agent_fn(monkeypatch):
 
     captured: dict = {}
 
-    async def fake_route(request, _ifind, tool_timeout=30.0, force_research=False, skip_professional=False):
+    async def fake_route(request, _ifind, tool_timeout=30.0, force_research=False,
+                         skip_professional=False, context_prefix=""):
         captured.update(msg=request.message, ifind=_ifind, timeout=tool_timeout,
-                        force=force_research, skip=skip_professional)
+                        force=force_research, skip=skip_professional, ctx=context_prefix)
         return _Resp()
 
     monkeypatch.setattr(main, "_route_orchestrator_chat", fake_route)
@@ -221,6 +232,14 @@ def test_weixin_orchestrator_agent_fn(monkeypatch):
     assert captured["timeout"] >= 60                   # tool-agent 超时已放宽
     assert captured["ifind"] is False
     assert captured["msg"] == "茅台怎么样"
+    assert captured["ctx"] == ""                        # 无历史时 context_prefix 为空
+
+    # ⭐粘滞技能 bug 回归：带会话历史(hint)时，message 仍只放当前问题(供技能路由)，历史经 context_prefix 单独下传。
+    history_hint = "【最近对话】\n用户: 列出全A最近30天股东增减持\n助手: 已调用 skill：shareholder.change.scan……\n\n用户当前消息："
+    out2 = asyncio.run(main.make_weixin_orchestrator_agent_fn()("总结下近期研报", history_hint))
+    assert out2 == "路由后的答案"
+    assert captured["msg"] == "总结下近期研报"           # message 不含历史 → detector 不会被历史关键词再触发
+    assert captured["ctx"] == history_hint              # 历史只作 LLM 上下文
 
 
 # ---------- 大盘/复盘高频问：今日复盘直出(0 token)，隔夜则落实时 agent ----------
@@ -250,7 +269,7 @@ def test_market_overview_falls_through_when_stale(env, monkeypatch):
     mgr = _mgr(answer="实时agent答案", calls=calls)
     asyncio.run(mgr._handle_batch("bot-alice", [_msg("今天大盘怎么样")]))
     assert calls == ["今天大盘怎么样"]                        # 隔夜复盘 → 落到实时 agent
-    assert env["sent"][-1] == "实时agent答案"
+    assert env["sent"][-1].startswith("实时agent答案")
 
 
 def test_is_market_overview_q_heuristic():
@@ -319,3 +338,44 @@ def test_empty_answer_falls_back_and_not_cached(env):
     assert env["sent"][-1] == wc._FALLBACK_REPLY
     assert data_store.latest("wx_qa", wc._qa_fingerprint("冷门问题")) is None  # 空答不缓存
     assert metrics_store.get_daily("q:wxqa:alice") == 1                       # 现算已计次
+
+
+# ---------- 慢回复即时安抚：超阈值先发「正在查询」，快答不发（不 double 消息） ----------
+
+def test_slow_answer_sends_thinking_interstitial(env):
+    env["mp"].setattr(wc, "_WX_THINKING_DELAY", 0.05)  # 阈值压到 50ms 便于测试
+
+    async def _slow_agent(question, hint):
+        await asyncio.sleep(0.15)  # 慢于阈值 → 触发安抚
+        return "贵州茅台深度研究观点"
+
+    mgr = wc.WeixinChannelManager(agent_fn=_slow_agent)
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("贵州茅台能不能买")]))
+
+    sent = env["sent"]
+    assert any("🤔" in s for s in sent)                 # 发了安抚语
+    assert sent[-1].startswith("贵州茅台深度研究观点")   # 安抚之后仍发了正式答案
+    first_thinking = next(i for i, s in enumerate(sent) if "🤔" in s)
+    assert first_thinking < len(sent) - 1               # 安抚在正式答案之前
+
+
+def test_fast_answer_no_interstitial(env):
+    env["mp"].setattr(wc, "_WX_THINKING_DELAY", 5.0)  # 阈值远大于即时返回 → 不应安抚
+    mgr = _mgr(answer="快答")
+    asyncio.run(mgr._handle_batch("bot-alice", [_msg("贵州茅台怎么样")]))
+    assert len(env["sent"]) == 1 and env["sent"][0].startswith("快答")  # 只发了答案、没有安抚（不 double）
+    assert all("🤔" not in s for s in env["sent"])
+
+
+# ---------- 放开次数：默认不限次（_QA_DAILY_LIMIT<=0），多问也不被拦 ----------
+
+def test_unlimited_by_default_never_blocks(env):
+    env["mp"].setattr(wc, "_QA_DAILY_LIMIT", 0)  # 默认放开
+    calls: list = []
+    mgr = _mgr(answer="研究观点", calls=calls)
+    for i in range(12):  # 远超旧上限 10
+        asyncio.run(mgr._handle_batch("bot-alice", [_msg(f"第{i}个不同的问题")]))
+    assert len(calls) == 12                                   # 12 条都进了 agent，无配额拦截
+    assert all(s.startswith("研究观点") for s in env["sent"])  # 没有任何一条回配额话术（尾部带 AI 标识）
+    assert wc._QUOTA_REPLY not in env["sent"]
+    assert metrics_store.get_daily("q:wxqa:alice") == 12      # 计数照常打点（观测仍在）

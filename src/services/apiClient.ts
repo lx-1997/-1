@@ -44,17 +44,33 @@ axios.interceptors.response.use(
           return Promise.reject(new Error('登录已过期，请重新登录'));
         }
         if (!isAuthAttempt) {
+          // 后台/可选请求（离线召回补订阅、自选同步等）对未登录或令牌失效回 401 时，绝不能整页跳 /login：
+          // 终端在任意路径都内联渲染登录入口，而 window.location.href='/login' 的整页 reload 会让刚 401 的
+          // 那个后台请求随新页面重新发起 → 再 401 → 再 reload → 无限刷新死循环（线上实测每秒数次、500+ 请求）。
+          const hadToken = !!localStorage.getItem('auth_token');
           localStorage.removeItem('auth_token');
-          window.location.href = '/login';
+          if (hadToken) {
+            // 确有令牌却被拒 = 登录确实过期：软清登录态 + 广播事件（页面据此切未登录态并提示），不刷新。
+            try { window.dispatchEvent(new CustomEvent('df:auth-kicked', { detail: '登录已过期，请重新登录' })); } catch { /* */ }
+          }
+          // 匿名（无 token）命中受保护端点的 401 属预期：静默拒绝即可，不提示、不跳转、不刷新。
           return Promise.reject(new Error('登录已过期，请重新登录'));
         }
         // 落到下方统一抽取后端 detail（如「用户名或密码错误」）。
       }
-      const message = error.response?.data?.detail
+      const status = error.response?.status;
+      const detail = (error.response?.data as any)?.detail;
+      const message = detail
         || error.response?.data?.error
         || error.response?.data?.message
-        || `请求失败 (${error.response?.status || '网络错误'})`;
-      return Promise.reject(new Error(message));
+        || `请求失败 (${status || '网络错误'})`;
+      // ⭐保留 status/detail 到 Error 上：否则非 401 错误被拍平成纯 new Error(message)，调用方 e.response.status 全失效——
+      // AI 解读的 402(非会员→升级弹窗) / 403(匿名→登录注册弹窗) 一直没触发，只能掉到 setAiError 显示一行死提示。
+      const err = new Error(message) as Error & { status?: number; detail?: unknown; response?: unknown };
+      err.status = status;
+      err.detail = detail;
+      err.response = error.response;  // 保留原始 response → 全站 e.response.status / e.response.data.detail 的判断继续可用
+      return Promise.reject(err);
     }
     return Promise.reject(error);
   }

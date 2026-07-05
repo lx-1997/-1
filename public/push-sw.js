@@ -17,31 +17,52 @@ self.addEventListener('push', (event) => {
     badge: '/logo192.png',
     tag: data.tag || 'dfx-recall',
     renotify: true,
-    data: { url: data.url || '/' },
+    // url=App 深链(点击后导航/落地的真实页面)；track=可追踪点击端点(SW fetch 命中即记 CTR，绝不导航到它)。
+    data: { url: data.url || '/', track: data.track || '' },
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/';
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+  const data = event.notification.data || {};
+  const url = data.url || '/';      // App 深链：聚焦/新开后真正落地的页面
+  const track = data.track || '';   // 可追踪点击端点：命中即记录回流(CTR)，但绝不导航到它
+
+  // 点击回流信标：fire-and-forget 命中可追踪端点即记 CTR。
+  // redirect:'manual' → 服务端在响应前已记录点击，无需跟随 302 再下载一遍 App；
+  // keepalive → SW 被回收也能送达；失败一律吞掉，绝不阻断把用户带回 App。
+  const beacon = track
+    ? fetch(track, {
+        method: 'GET',
+        keepalive: true,
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'manual',
+      }).catch(() => undefined)
+    : Promise.resolve();
+
+  const route = self.clients
+    .matchAll({ type: 'window', includeUncontrolled: true })
+    .then((clients) => {
       for (const client of clients) {
         if ('focus' in client) {
+          // 已有打开的标签页：聚焦并导航到 App 深链(而非可追踪端点，避免把标签页停在 /api/.../click 上)。
           client.focus();
           if (url && url !== '/' && 'navigate' in client) {
-            client.navigate(url);
+            return client.navigate(url).catch(() => undefined);
           }
           return undefined;
         }
       }
+      // 无打开标签页：直接开到 App 深链(不再经 302 中转)。
       if (self.clients.openWindow) {
         return self.clients.openWindow(url);
       }
       return undefined;
-    })
-  );
+    });
+
+  event.waitUntil(Promise.all([beacon, route]));
 });
 
 // 立即接管，无需等到下次加载；不缓存任何资源。

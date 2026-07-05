@@ -296,6 +296,32 @@ export async function getRealtimeMessageById(id: string): Promise<RealtimeMessag
   }
 }
 
+// ===== 研报「AI 解读」分享（软墙落地页，分享我们自己的解读、不外露第三方原文）=====
+export interface ReportShareRecord {
+  id: string;
+  title: string;
+  summary: string;
+  source_name?: string;
+  symbol?: string;
+  created_at?: string;
+}
+
+/** 把当前研报的 AI 解读存成可分享记录 → 返回公开落地页 {id, url}（须登录）。 */
+export async function createReportShare(payload: {
+  title: string; summary: string; source_name?: string; symbol?: string;
+}): Promise<{ id: string; url: string }> {
+  return apiPost<{ id: string; url: string }>('/api/report/share', payload);
+}
+
+/** 按 id 取一条研报解读分享记录（深链 ?report={id} 登录后定位用）；不存在返回 null。 */
+export async function getReportShareById(id: string): Promise<ReportShareRecord | null> {
+  try {
+    return await apiGet<ReportShareRecord>(`/api/report/view/${encodeURIComponent(id)}`);
+  } catch {
+    return null;
+  }
+}
+
 export function getRealtimeStreamUrl(): string {
   return `${getApiBaseUrls()[0]}/api/realtime/messages/stream`;
 }

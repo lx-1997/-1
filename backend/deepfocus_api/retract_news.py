@@ -18,7 +18,7 @@ import shutil
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from .news_filter import block_reason, scrub
+from .news_filter import discard_reason, scrub
 from .realtime_messages import DB_PATH
 
 
@@ -48,7 +48,7 @@ def find_blocked(days: int | None = None) -> list[dict]:
         ).fetchall()
     hits = []
     for r in rows:
-        reason = block_reason(r["title"] or "", r["content"] or "")
+        reason = discard_reason(r["title"] or "", r["content"] or "")
         if reason:
             hits.append({
                 "id": r["id"], "created_at": r["created_at"], "topic": r["topic"],
@@ -73,8 +73,8 @@ def find_scrubbable(days: int | None = None) -> list[dict]:
         ).fetchall()
     out = []
     for r in rows:
-        if block_reason(r["title"] or "", r["content"] or ""):
-            continue  # 广告归 find_blocked 删除，不在此抹
+        if discard_reason(r["title"] or "", r["content"] or ""):
+            continue  # 广告/垃圾/竞品可见 归 find_blocked 删除，不在此抹
         nt, nc, nu, changed = scrub(r["title"] or "", r["content"] or "", r["url"] or "")
         if changed:
             out.append({"id": r["id"], "created_at": r["created_at"], "topic": r["topic"],

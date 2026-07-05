@@ -34,10 +34,8 @@ NEUTRALIZE_MAP: list[tuple[str, str]] = [
     ("躺赚", "存在机会"),
     ("一夜暴富", "市场有风险"),
     ("保本保息", "不保证本息"),
-    ("翻倍", "弹性较大"),
-    ("暴涨", "明显上行"),
-    ("暴跌", "明显下行"),
-    ("目标价", "观察价位"),
+    # ⚠️ 已移除「翻倍/暴涨/暴跌/目标价」——它们是客观财经描述/研报措辞(如"营收同比翻倍""中金目标价200元")，
+    # 无条件子串替换会篡改事实+造出残句；这里只保留真正的承诺/促销/荐股词。若要约束这些词，应基于语境(与"必/稳赚/建议买入"同句)而非裸替换。
 ]
 
 
@@ -61,3 +59,42 @@ def neutralize_deep(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: neutralize_deep(v) for k, v in value.items()}
     return value
+
+
+# ---------------------------------------------------------------------------
+# AI 生成内容显式标识（《人工智能生成合成内容标识办法》2025-09-01 施行）
+# 要求：AI 生成文本须在起始/末尾/界面附加可感知的显式标识；对外分发页面另需隐式元数据标识。
+# 用法：所有面向用户的 AI 叙述出口（df_take/晨报/复盘/深研/微信 AI 回复/公开落地页）在
+# 落地前过一遍 ai_label()；HTML 页面 head 里加 AI_META_TAG、正文加 AI_BADGE_HTML。
+# ---------------------------------------------------------------------------
+
+# 判定「已带标识」的关键短语（幂等去重用，兼容历史上手写过的变体）
+_AI_LABEL_MARKERS = ("AI 生成", "AI生成", "AI 辅助生成")
+
+AI_CONTENT_NOTICE = "本内容由 AI 生成，仅供参考，不构成投资建议"
+
+# 公开 HTML 落地页用：可见徽标 + 隐式元数据标识
+AI_BADGE_HTML = (
+    '<p class="ai-label" style="color:#8a8f98;font-size:12px;margin:8px 0 0">'
+    "🤖 本内容由 AI 生成，仅供参考，不构成投资建议</p>"
+)
+AI_META_TAG = '<meta name="ai-generated" content="true">'
+
+
+def has_ai_label(s: str) -> bool:
+    """文本是否已带 AI 生成标识（幂等判定）。"""
+    if not s:
+        return False
+    return any(m in s for m in _AI_LABEL_MARKERS)
+
+
+def ai_label(s: str, brief: bool = False) -> str:
+    """给 AI 生成的用户可见文本追加显式标识（幂等：已带标识不重复追加）。
+
+    brief=True 用于微信/推送等寸土寸金的短文本出口，追加单行短标识；
+    默认追加完整声明。只对自由文本叙述使用，不要对结构化字段套用。
+    """
+    if not s or has_ai_label(s):
+        return s
+    tail = "（AI 生成，仅供参考）" if brief else f"\n\n（{AI_CONTENT_NOTICE}）"
+    return s.rstrip() + tail

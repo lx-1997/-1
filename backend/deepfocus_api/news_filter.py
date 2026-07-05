@@ -115,3 +115,73 @@ def scrub(title: str, content: str = "", url: str = "") -> Tuple[str, str, str, 
 
 def should_block(title: str, content: str = "") -> bool:
     return block_reason(title, content) is not None
+
+
+# ── 垃圾 / 非新闻内容（反爬提示、上游误抓进来的域名喊话页等，非真实文章）─────────────
+# 均为特征短语，正规财经快讯/文章几乎不会命中；可用 env DEEPFOCUS_NEWS_JUNK_MARKERS 追加。
+_DEFAULT_JUNK_MARKERS: Tuple[str, ...] = (
+    # 爬虫/抓取类（"爬虫" 裸词覆盖 停止爬虫/禁止爬虫/反爬虫/爬虫协议… 一切含"爬虫"的）——用户点名：带"爬虫"字眼一律拦
+    "爬虫", "禁止抓取", "停止抓取", "抓取频率", "robots.txt",
+    # 反爬/限流/错误页类（上游误抓的非文章页本身；⚠️刻意不放"网络攻击/ddos/黑客"这类**正经新闻话题词**——
+    # 那些是真实财经/时政新闻，误删=漏发新闻；针对"我方"的攻击由下方 self-attack(品牌+敌意词)兜住）
+    "访问过于频繁", "请求过于频繁", "访问频率过高", "该网站已被",
+    "stop crawling", "stop scraping", "access denied", "403 forbidden",
+)
+_DOMAIN_RE = re.compile(r"[\w-]+\.(?:com|cn|net|org|io|co)(?![a-z0-9-])", re.I)  # 裸域名（TLD 后不接 ASCII 字母数字；兼容后接中文/标点）
+_IMPERATIVE_RE = re.compile(r"(请|停止|禁止|勿|警告|谢绝)")               # 祈使/喊话
+_SELF_BRAND_RE = re.compile(r"daocaijing|道财经", re.I)                   # 我方域名/品牌（攻击目标）
+# 明确敌意词（**刻意不含"请"等中性祈使**，避免误伤我方"请关注 daocaijing.com"这类正常文案）
+_HOSTILE_RE = re.compile(r"(停止|禁止|警告|攻击|滚蛋|骗子|骗人|盗版|侵权|举报|封禁|封号|黑客|恶意|爬虫|抓取|抄袭|山寨|假冒)")
+
+
+def junk_markers() -> list:
+    out: list = []
+    for w in [*(d.lower() for d in _DEFAULT_JUNK_MARKERS), *_env_terms("DEEPFOCUS_NEWS_JUNK_MARKERS")]:
+        if w and w not in out:
+            out.append(w)
+    return out
+
+
+def junk_reason(title: str, content: str = "") -> Optional[str]:
+    """非新闻 / 垃圾内容（反爬提示、上游误抓的域名喊话页）→ 整条丢弃。返回原因或 None。
+    仅用「特征短语」+「短标题=裸域名+祈使」两条稳妥规则，避免误伤正常财经内容。"""
+    hay = f"{title or ''}\n{content or ''}".lower()
+    if not hay.strip():
+        return "empty"
+    hay_ns = _WS_RE.sub("", hay)
+    for w in junk_markers():
+        if w in hay or _WS_RE.sub("", w) in hay_ns:
+            return f"junk:{w}"
+    # 针对我方的恶意 / 骚扰内容（反爬页、攻击喊话、辱骂等）：可见文字里同时出现「我方品牌/域名」+「敌意/祈使词」。
+    # 第三方财经新闻的可见正文几乎不会出现我方域名，出现且带敌意 → 判为攻击/自指垃圾。
+    if _SELF_BRAND_RE.search(hay) and _HOSTILE_RE.search(hay):
+        return "junk:self-attack"
+    # 标题本身就是「裸域名 + 祈使喊话」（如 example.com请停止…）：短标题、含域名、含祈使动词，
+    # 且**去掉域名+祈使词后所剩无几**——即标题本体就是"域名+喊话"（攻击），而非"正常句子恰好带个域名+请"。
+    t_ns = _WS_RE.sub("", (title or "").strip())
+    if 0 < len(t_ns) <= 40 and _DOMAIN_RE.search(t_ns) and _IMPERATIVE_RE.search(t_ns):
+        rest = _IMPERATIVE_RE.sub("", _DOMAIN_RE.sub("", t_ns))
+        rest = re.sub(r"[^\w一-鿿]", "", rest)      # 去标点/符号
+        if len(rest) <= 5:
+            return "junk:domain-plea"
+    return None
+
+
+def discard_reason(title: str, content: str = "") -> Optional[str]:
+    """统一「是否整条丢弃」口径，create_realtime_message 入库前 + retract_news 撤回存量共用（避免两套标准）：
+      ① 引流广告（竞品词+广告特征同现）
+      ② 垃圾/非新闻（反爬提示、域名喊话页）
+      ③ 竞品词（futou/斧头）出现在**用户可见**的标题/正文里
+    注意：只夹带竞品域名在结构化 `url` 里的正经研报不在此列（由 scrub 抹域名保留，不误删存量）。"""
+    r = block_reason(title, content)
+    if r:
+        return r
+    r = junk_reason(title, content)
+    if r:
+        return r
+    hay = f"{title or ''}\n{content or ''}".lower()
+    hay_ns = _WS_RE.sub("", hay)
+    comp = _contains_any(hay, hay_ns, banned_terms())
+    if comp:
+        return f"competitor-visible:{comp}"
+    return None

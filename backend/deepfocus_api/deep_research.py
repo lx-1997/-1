@@ -264,10 +264,14 @@ def _finalize_verdict(raw: Dict[str, Any], *, ifind_used: bool, gaps: List[str],
         verdict["confidence"] = max(0.0, min(1.0, conf))
     except (TypeError, ValueError):
         verdict["confidence"] = None
-    # 强制免责
+    # 强制免责 + AI 生成显式标识（《人工智能生成合成内容标识办法》2025-09-01 施行的硬要求）
+    from .compliance import AI_CONTENT_NOTICE as _AI_NOTICE, has_ai_label as _has_ai
     disc = str(verdict.get("disclaimer") or "").strip()
     if not disc:
-        verdict["disclaimer"] = _DISCLAIMER
+        disc = _DISCLAIMER
+    if not _has_ai(disc):
+        disc = disc + "；" + _AI_NOTICE
+    verdict["disclaimer"] = disc
     # 数据质量标注（ifind_used 只标"用了"这个事实，不放裸数值）
     dq = verdict.get("data_quality")
     if not isinstance(dq, dict):
@@ -527,8 +531,13 @@ async def _pipeline(task_id: str, symbol: str, name: str, market: str, ifind_use
 
 
 async def run_deep_research(task_id: str, symbol: str, name: str, market: str, ifind_user: bool = False) -> None:
-    """对外入口：跑完整 5 阶段管线。全程抑制持久化（防 iFinD 泄漏）+ 150s 硬超时 + 熔断。"""
-    token = data_store.DEEP_NO_PERSIST.set(True)
+    """对外入口：跑完整 5 阶段管线。150s 硬超时 + 熔断。
+
+    持久化闸门收窄：DEEP_NO_PERSIST 本意只防 iFinD 衍生结论泄漏进共享库，
+    原实现对所有任务无差别抑制 → 非 iFinD 任务的结果无法跨用户复用，同一只热门股
+    每个会员都要重烧 7 次 LLM。现在仅 ifind_user=True 时抑制；非 iFinD 任务成功后
+    按 symbol+交易日落库，第二人起 0 token 直读（见 seed_cached_task）。"""
+    token = data_store.DEEP_NO_PERSIST.set(True) if ifind_user else None
     try:
         try:
             await asyncio.wait_for(
@@ -541,4 +550,46 @@ async def run_deep_research(task_id: str, symbol: str, name: str, market: str, i
         except Exception as exc:  # noqa: BLE001
             await _patch(task_id, status="error", error=f"研判异常：{_trim(str(exc), 120)}")
     finally:
-        data_store.DEEP_NO_PERSIST.reset(token)
+        if token is not None:
+            data_store.DEEP_NO_PERSIST.reset(token)
+    # 跨用户当日缓存（非 iFinD 任务专用）：成功结果按 symbol+市场落库，同股当天全站最多烧一次
+    if not ifind_user:
+        t = _DEEP_TASKS.get(task_id)
+        if t and t.status == "done" and isinstance(t.result, dict):
+            try:
+                from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                data_store.record("deep_research", f"{t.symbol}:{t.market}", {
+                    "verdict": t.result,
+                    "name": t.name,
+                    "symbol": t.symbol,
+                    "market": t.market,
+                    "date": _dt.now(_tz(_td(hours=8))).strftime("%Y-%m-%d"),
+                })
+            except Exception:  # noqa: BLE001 - 缓存落库失败不影响本次结果
+                pass
+
+
+async def seed_cached_task(owner: str, symbol: str, name: str, market: str) -> Optional[str]:
+    """跨用户当日缓存命中 → 给该 owner 铸一个已完成任务（0 次 LLM），返回 task_id；未命中 None。
+
+    只缓存非 iFinD 结果（落库侧已保证），结果本身已过 _finalize_verdict 合规化；
+    轮询端点按 owner 校验，铸出的任务归属提问者本人。"""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    sym = (symbol or "").strip()
+    mkt = (market or "CN").strip().upper() or "CN"
+    try:
+        cached = data_store.latest("deep_research", f"{sym}:{mkt}", max_age_seconds=86400.0)
+    except Exception:  # noqa: BLE001
+        cached = None
+    today = _dt.now(_tz(_td(hours=8))).strftime("%Y-%m-%d")
+    if not (isinstance(cached, dict) and cached.get("date") == today and isinstance(cached.get("verdict"), dict)):
+        return None
+    task = await create_task(owner, False, sym, (name or str(cached.get("name") or "")), mkt)
+    task.status = "done"
+    task.progress = 100
+    task.current_stage = "finalized"
+    task.result = dict(cached["verdict"])
+    for st in task.stages:
+        st.status = "done"
+    task.updated_ts = _now()
+    return task.task_id

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -11,6 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from . import weixin_bind as bind
 from . import weixin_ilink as ilink
 from .shared_utils import utc_now_iso
+from .stock_name_index import mentions_specific_stock
 
 logger = logging.getLogger("deepfocus.weixin_channel")
 
@@ -29,6 +31,16 @@ agent_fn / context_hint_fn 注入，便于脱离真 LLM 单测；主程序用 ma
 AgentFn = Callable[[str, str], Awaitable[Optional[str]]]
 # context_hint_fn(binding) -> hint string
 HintFn = Callable[[Dict[str, Any]], str]
+# multiview_fn(question, base_answer) -> 多空深度档文本 or None（争议个股第二条分阶段推送）
+MultiviewFn = Callable[[str, str], Awaitable[Optional[str]]]
+
+# 争议个股「多空深度档」：默认关，灰度时置 1 开启。基础答案先到，深度档作为第二条追加推送，
+# 不顶撞微信单条响应超时；只对【锁定具体个股 + 决策/争议措辞】的独立提问触发(预计 5-8%)，控成本。
+_MULTIVIEW_ENABLED = os.getenv("DEEPFOCUS_WEIXIN_MULTIVIEW", "0") not in ("0", "false", "False", "no")
+_MULTIVIEW_DECISION_RE = re.compile(
+    r"能不能买|能买|可以买|值不值|值得|要不要|该不该|怎么看|前景|后市|还能(拿|持|涨|追)|"
+    r"加仓|减仓|清仓|抄底|上车|看多|看空|多还是空|分歧|争议|是涨是跌|会涨|会跌|风险大不大"
+)
 
 _MIN_BACKOFF = 2.0
 _MAX_BACKOFF = 30.0
@@ -46,10 +58,17 @@ _GREETINGS = {
     "在吗", "在不在", "在", "在么", "在嘛", "有人吗", "早", "早上好", "中午好", "下午好", "晚上好", "你是谁",
 }
 # ⭐ 会员 AI 问答（已对所有在效会员开放，去掉了原 lx199710 白名单灰度）。
-# 省 token 三板斧：①答案缓存跨用户复用（命中 0 token、不计次）②每日"现算"配额上限 ③推荐问题引导（把流量收敛到高命中问题）。
-_QA_DAILY_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_QA_DAILY", "10") or 10)            # 每会员每天"现算"问答上限（缓存命中不计入）
+# 省 token 两板斧：①答案缓存跨用户复用（命中 0 token、不计次）②推荐问题引导（把流量收敛到高命中问题）。
+# 每日"现算"配额已放开（_QA_DAILY_LIMIT<=0 = 不限次）：会员是付费用户、与终端 AI 问答口径一致；缓存仍兜大头成本，
+# 真遇滥用可随时设 env DEEPFOCUS_WEIXIN_QA_DAILY=N 重新封顶（计数照常打点，看 wxqa:fresh）。
+_QA_DAILY_LIMIT = int(os.getenv("DEEPFOCUS_WEIXIN_QA_DAILY", "0") or 0)              # 每会员每天"现算"问答上限；<=0 = 不限次（默认放开）。缓存命中本就不计入
+_QA_UNLIMITED = _QA_DAILY_LIMIT <= 0
 _QA_CACHE_TTL = float(os.getenv("DEEPFOCUS_WEIXIN_QA_CACHE_TTL", "1800") or 1800)    # 答案缓存有效期（秒），默认 30min 兼顾行情时效
 _QA_AGENT_TIMEOUT = float(os.getenv("DEEPFOCUS_WEIXIN_QA_TIMEOUT", "60") or 60)      # run_tool_agent 每轮 LLM 超时(秒)；个股问答需多轮取数，默认30s 易超时返空→回兜底，放宽到 60s
+# ⭐慢回复即时安抚（前沿对话体验：别让用户对着空白等十几秒）：现算可能要多轮取数，超过该阈值仍没结果，
+# 就先秒回一条「正在查询，请稍候」让用户安心，答案算好再发正式回复。阈值内返回的快答不发安抚（不 double 消息），
+# 只在真的慢时才安抚——既消解等待焦虑、又不刷屏。
+_WX_THINKING_DELAY = float(os.getenv("DEEPFOCUS_WEIXIN_THINKING_DELAY", "4.5") or 4.5)
 # 轻量会话上下文：每用户记最近几轮(短窗口)，让"反问→追答"能接上、像真助手。窗口内的追问绕开跨用户缓存(答案跟上文相关)。
 _WX_CTX_TTL = float(os.getenv("DEEPFOCUS_WEIXIN_CTX_TTL", "600") or 600)             # 会话上下文窗口(秒)，默认 10min；超时即视作新对话
 _WX_CTX_TURNS = int(os.getenv("DEEPFOCUS_WEIXIN_CTX_TURNS", "3") or 3)               # 记忆最近几轮(问+答)
@@ -65,7 +84,9 @@ _HELP_TRIGGERS = {
 _HELP_REPLY = (
     "我是 DeepFocus 投研助手 🤖 可以问我：\n"
     f"{_RECOMMEND_LIST}\n"
-    f"（会员每天 {_QA_DAILY_LIMIT} 条 AI 问答；常见问题命中缓存时不计次 😉）"
+    "💡 回复「同步自选」把终端自选股设为推送范围（只推你的股）\n"
+    + ("（会员畅聊不限次，常见问题秒回 😉）" if _QA_UNLIMITED
+       else f"（会员每天 {_QA_DAILY_LIMIT} 条 AI 问答；常见问题命中缓存时不计次 😉）")
 )
 _QUOTA_REPLY = (
     f"今天的 AI 问答额度（{_QA_DAILY_LIMIT} 条/天）已经用完啦，明天再来 🙏\n"
@@ -77,9 +98,32 @@ _EXPIRED_REPLY = (
     "AI 问答是会员专享功能～你的会员可能已到期。\n"
     "续费后即可继续畅聊投研问题；快讯推送仍可正常使用。"
 )
+_PUBLIC_SITE = (os.getenv("DEEPFOCUS_PUBLIC_BASE_URL", "https://daocaijing.com") or "https://daocaijing.com").rstrip("/")
+# ⭐非会员试吃：微信是唯一能天天触达免费用户的自有渠道，一刀切拒绝把最好的转化面锁死在墙内。
+# 每天 _WX_FREE_QA 次现算问答(缓存命中不计次、0成本放行)；超额回复带自助购买链接——
+# "额度用完"是发生在聊天窗里的天然升级时机。env 设 0 回到会员专享。
+_WX_FREE_QA = int(os.getenv("DEEPFOCUS_WEIXIN_FREE_QA", "2") or 2)
+_NONMEMBER_QUOTA_REPLY = (
+    f"今天的免费 AI 问答（{_WX_FREE_QA} 次/天）用完啦 🙏\n"
+    f"开通会员：AI 问答不限次 + 全量快讯推送 + 每日复盘\n"
+    f"👉 {_PUBLIC_SITE}（支持自助下单、秒级开通）"
+)
+_NONTEXT_REPLY = (
+    "我暂时只能看懂文字消息～\n"
+    "请打字告诉我你想问哪只股票或什么事 😊（如：贵州茅台怎么样）"
+)
+_EXPIRED_NOTICE = (
+    "你的 DeepFocus 会员已到期，快讯推送已暂停 🙏\n"
+    f"续费即恢复全量推送与 AI 问答不限次 👉 {_PUBLIC_SITE}（支持自助下单、秒级开通）\n"
+    "（本条为服务状态通知，不构成投资建议）"
+)
+# 行情类提问识别：盘中命中 → 缓存 TTL 收紧到 120s + 答案带"截至 HH:MM"，
+# 防止微信盘中把 29 分钟前别人触发的旧价格当现价发出去（渠道层自己造的"数据不准"）。
+_MARKET_Q_RE = re.compile(r"现价|多少钱|报价|股价|价格|涨了|跌了|涨没|跌没|涨幅|跌幅|涨多少|跌多少|多少点")
 _GREETING_REPLY = (
     "你好 👋 我是 DeepFocus 投研助手。\n"
     "✅ 快讯推送已激活，有重要快讯我会主动推给你。\n"
+    "💡 回复「同步自选」把终端自选股设为推送范围（只推你的股）\n"
     "想问点啥都行，比如：\n"
     f"{_RECOMMEND_LIST}"
 )
@@ -211,6 +255,85 @@ def _member_can_push(b: Dict[str, Any]) -> bool:
     return bool(m and m.get("tier") in ("premium", "lifetime"))
 
 
+def _sync_watchlist_to_push(b: Dict[str, Any]) -> str:
+    """「同步自选」指令：把终端自选股（服务端 user_prefs）设为该绑定的推送范围。
+    push_symbols 同时写入 代码+名称（匹配逻辑是代码精确 OR 关键词命中标题/正文，快讯标题里是名称）。"""
+    uid = (b.get("deepfocus_user_id") or "").strip()
+    if not uid:
+        return "未找到绑定的终端账号，请在网站重新绑定后再试"
+    try:
+        from . import user_prefs
+        wl = user_prefs.get_watchlist(uid) or {}
+    except Exception:  # noqa: BLE001
+        wl = {}
+    symbols = list(wl.get("symbols") or [])
+    names = wl.get("names") or {}
+    if not symbols:
+        return f"你的终端自选股还是空的——先去 {_PUBLIC_SITE} 添加自选，再回复「同步自选」即可"
+    keys: List[str] = []
+    for s in symbols:
+        keys.append(str(s))
+        n = str(names.get(s) or "").strip()
+        if n and n not in keys:
+            keys.append(n)
+    bind.set_push_config(uid, "watchlist", keys)
+    show = "、".join(str(names.get(s) or s) for s in symbols[:8])
+    more = f" 等 {len(symbols)} 只" if len(symbols) > 8 else ""
+    return (f"✅ 已把你的自选股设为推送范围：{show}{more}\n"
+            "之后只推与它们相关的快讯；回复「推送全部」改回全量，回复「关闭推送」暂停。")
+
+
+# ⭐会员状态转移检测（到期断流通知）：推送停止的瞬间是用户对产品价值感知最清晰的时刻，
+# 静默断流=静默流失。用 JSON 状态文件记录每个绑定上一轮的会员判定，true→false 即发一次性
+# 服务状态通知（发送成功才落状态，token 冷则下轮重试）。
+_MEMBER_STATE_FILE = Path(os.getenv("DEEPFOCUS_WX_MEMBER_STATE_FILE",
+                                    str(Path(__file__).resolve().parents[1] / ".wx_member_state.json")))
+
+
+def _load_member_state() -> Dict[str, bool]:
+    try:
+        if _MEMBER_STATE_FILE.exists():
+            data = json.loads(_MEMBER_STATE_FILE.read_text(encoding="utf-8") or "{}")
+            if isinstance(data, dict):
+                return {str(k): bool(v) for k, v in data.items()}
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+def _save_member_state(state: Dict[str, bool]) -> None:
+    try:
+        _MEMBER_STATE_FILE.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _in_cn_session_now() -> bool:
+    """A股盘中(北京时间 工作日 09:15-15:05)。轻量判定，不判节假日——误判成盘中只是缓存短一点，无正确性代价。"""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    now = _dt.now(_tz(_td(hours=8)))
+    if now.weekday() >= 5:
+        return False
+    hm = now.hour * 60 + now.minute
+    return 9 * 60 + 15 <= hm <= 15 * 60 + 5
+
+
+def _qa_cache_ttl(question: str) -> float:
+    """行情类提问盘中缓存收紧到 120s（防旧价格当现价）；其余/休市维持默认（收盘价不动，缓存收益最大）。"""
+    if _MARKET_Q_RE.search(question or "") and _in_cn_session_now():
+        return min(_QA_CACHE_TTL, 120.0)
+    return _QA_CACHE_TTL
+
+
+def _format_daily(m: Any) -> str:
+    """晨报/复盘的微信推送文本：标题+正文+深链。内容生成侧已带 AI 标识与中性化。"""
+    title = (getattr(m, "title", "") or "").strip()
+    content = (getattr(m, "content", "") or "").strip()
+    url = (getattr(m, "url", "") or "").strip()
+    link = (_PUBLIC_SITE + url) if url.startswith("/") else (url or _PUBLIC_SITE)
+    return f"{title}\n{content}\n👉 {link}\n（内容不构成投资建议）"
+
+
 def _qa_fingerprint(question: str) -> str:
     """归一化问题 → MD5 指纹（答案缓存键）：去首尾/压缩内部空白、去尾部标点、小写。空问题→''（不缓存）。
     ⭐微信问答无个人上下文（hint 恒空，见 main.py 构造处不传 context_hint_fn），故同一问题跨用户可安全共享答案。"""
@@ -254,7 +377,7 @@ def _ctx_hint(turns: list) -> str:
         if (t.get("q") or "").strip():
             lines.append(f"用户: {t['q']}")
         if (t.get("a") or "").strip():
-            lines.append(f"助手: {str(t['a'])[:160]}")
+            lines.append(f"助手: {str(t['a'])[:300]}")
     if not lines:
         return ""
     return ("【最近对话(仅用于理解用户当前这条追问的上下文;不要重复回答历史问题)】\n"
@@ -373,20 +496,53 @@ def _market_overview_reply() -> Optional[str]:
         return None
 
 
+def _is_controversial_stock_q(question: str) -> bool:
+    """是否「锁定具体个股 + 决策/争议措辞」——这类独立提问才值得多花一轮多空深度档。"""
+    q = question or ""
+    return bool(mentions_specific_stock(q)) and bool(_MULTIVIEW_DECISION_RE.search(q))
+
+
+def _thinking_message(question: str) -> str:
+    """回复较慢时先秒回的「正在处理」安抚语；按问题类型给更贴切的措辞，让用户知道我们正在为他真取数。"""
+    q = question or ""
+    if mentions_specific_stock(q):
+        return "🤔 收到，正在为你调取这只票的实时行情和最新动态，稍等十几秒…"
+    if any(k in q for k in _MARKET_Q_KEYS):
+        return "🤔 收到，正在汇总最新盘面 / 快讯，请稍候…"
+    return "🤔 收到，正在为你深度分析，请稍候片刻…"
+
+
+# 微信问答多给几轮工具：个股研判常需 resolve_symbol(解析代码)→行情→估值→财报→收敛，4 轮易截断；
+# 6 轮留足"先解析代码再逐项取数"的空间(慢回复有即时安抚兜着，不怕多花十几秒)。
+_QA_MAX_ROUNDS = int(os.getenv("DEEPFOCUS_WEIXIN_QA_MAX_ROUNDS", "6") or 6)
+
+
 def make_agent_fn(llm: Any) -> AgentFn:
     """把 CloudResearchLLM.run_tool_agent 适配成 AgentFn（返回 answer 文本或 None）。"""
     async def _agent(question: str, hint: str) -> Optional[str]:
-        result = await llm.run_tool_agent(question=question, context_hint=hint, timeout_seconds=_QA_AGENT_TIMEOUT)
+        result = await llm.run_tool_agent(
+            question=question, context_hint=hint,
+            timeout_seconds=_QA_AGENT_TIMEOUT, max_rounds=_QA_MAX_ROUNDS,
+        )
         if result and (result.get("answer") or "").strip():
             return result["answer"]
         return None
     return _agent
 
 
+def make_multiview_fn(llm: Any) -> MultiviewFn:
+    """把 CloudResearchLLM.synthesize_multiview 适配成 MultiviewFn（返回深度档文本或 None）。"""
+    async def _mv(question: str, base_answer: str) -> Optional[str]:
+        return await llm.synthesize_multiview(question, base_answer)
+    return _mv
+
+
 class WeixinChannelManager:
-    def __init__(self, agent_fn: AgentFn, context_hint_fn: Optional[HintFn] = None) -> None:
+    def __init__(self, agent_fn: AgentFn, context_hint_fn: Optional[HintFn] = None,
+                 multiview_fn: Optional[MultiviewFn] = None) -> None:
         self._agent_fn = agent_fn
         self._context_hint_fn = context_hint_fn
+        self._multiview_fn = multiview_fn   # 争议个股多空深度档（None=不深化；灰度开启时注入）
         self._tasks: Dict[str, asyncio.Task] = {}
         self._running = False
         self._wake: Optional[asyncio.Event] = None      # 新快讯事件触发（事件驱动，近实时）
@@ -516,48 +672,102 @@ class WeixinChannelManager:
                 logger.warning("[weixin] auto-push loop err: %s", exc)
 
     async def _run_push_pass(self, cursor: str) -> str:
-        """扫一次新快讯→按各绑定订阅匹配→错峰批量推。返回推进后的 cursor。"""
+        """扫一次新消息→按各绑定订阅匹配→错峰批量推。返回推进后的 cursor。
+
+        覆盖三类 topic：快讯（会员、按订阅范围）、晨报（全体绑定含非会员——非会员试吃层的每日一条）、
+        复盘（会员）。晨报/复盘是一日一次的策划摘要，"每天早 8:30 / 下午 3:35 准时见"的仪式感是
+        微信通道从碎片快讯升级成每日回访钩子的关键，内容已生成、零边际成本。"""
         from .realtime_messages import list_realtime_messages
-        # 仅推：开了推送范围(≠off) 且 会员仍有效(premium/lifetime)。过期会员自动停推。
-        actives = [b for b in bind.list_active()
-                   if (b.get("push_scope") or "off") != "off" and _member_can_push(b)]
-        if not actives:
+        opened = [b for b in bind.list_active() if (b.get("push_scope") or "off") != "off"]
+        if not opened:
             return cursor
+        # 到期断流通知：上一轮有推送资格、本轮失格 → 发一次性服务状态通知（续费意愿最高的时刻）
+        try:
+            await self._notify_lapsed(opened)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[weixin] lapsed notify err: %s", exc)
+        actives = [b for b in opened if _member_can_push(b)]
         msgs = list_realtime_messages(topic="快讯", since=cursor, limit=50)
         new_msgs = [m for m in msgs if getattr(m, "created_at", "") > cursor]
-        if not new_msgs:
+        specials: List[Any] = []  # 晨报/复盘/异动（低频，每 topic 最多几条）
+        for _topic in ("晨报", "复盘", "异动"):
+            try:
+                for m in list_realtime_messages(topic=_topic, since=cursor, limit=3):
+                    if getattr(m, "created_at", "") > cursor:
+                        specials.append(m)
+            except Exception:  # noqa: BLE001
+                pass
+        if not new_msgs and not specials:
             return cursor
-        cursor = max(getattr(m, "created_at", "") for m in new_msgs)
+        cursor = max(getattr(m, "created_at", "") for m in (new_msgs + specials))
         new_msgs.sort(key=lambda m: getattr(m, "created_at", ""))  # 时间正序便于阅读
+        specials.sort(key=lambda m: getattr(m, "created_at", ""))
 
         # —— 组装待发任务（复用）——
         # scope=all 的推送文本对所有人完全相同 → 只格式化一次、全员复用；
         # watchlist 各自命中不同 → 按命中集合分别格式化（同命中集合的文本天然相同）。
         all_text: Optional[str] = None
         jobs: List[tuple] = []  # (binding, to, ctx, text)
-        for b in actives:
+        for b in opened:
+            is_member = b in actives
             scope = b.get("push_scope") or "off"
             ctx = b.get("context_token")
             to = b.get("wechat_user_id")
             if not ctx or not to:
-                # 冷用户：有新快讯却推不出去 → 记一条"漏推"，让"断联"有据可查（cursor 仍前进，这批对冷用户即丢失）。
-                bind.log_push_event("push", "skipped", b.get("ilink_bot_id") or "", b.get("username") or "",
-                                    f"token冷/无ctx，漏推 {len(new_msgs)} 条新快讯（待用户发消息重新激活）")
+                if new_msgs and is_member:
+                    # 冷用户：有新快讯却推不出去 → 记一条"漏推"，让"断联"有据可查（cursor 仍前进，这批对冷用户即丢失）。
+                    bind.log_push_event("push", "skipped", b.get("ilink_bot_id") or "", b.get("username") or "",
+                                        f"token冷/无ctx，漏推 {len(new_msgs)} 条新快讯（待用户发消息重新激活）")
                 continue
-            if scope == "all":
-                if all_text is None:
-                    all_text = _format_push(new_msgs)  # 全量推送：一次格式化，所有人共用
-                text = all_text
-            else:
-                matched = [m for m in new_msgs if _matches_binding(m, scope, b.get("push_symbols") or [])]
-                if not matched:
+            # ① 快讯：会员按订阅范围
+            if new_msgs and is_member:
+                if scope == "all":
+                    if all_text is None:
+                        all_text = _format_push(new_msgs)  # 全量推送：一次格式化，所有人共用
+                    jobs.append((b, to, ctx, all_text))
+                else:
+                    matched = [m for m in new_msgs if _matches_binding(m, scope, b.get("push_symbols") or [])]
+                    if matched:
+                        jobs.append((b, to, ctx, _format_push(matched)))
+            # ② 晨报（全体绑定，非会员也推——试吃层的每日价值锚）/ 复盘·异动（会员）
+            for m in specials:
+                topic = getattr(m, "topic", "") or ""
+                if topic in ("复盘", "异动") and not is_member:
                     continue
-                text = _format_push(matched)
-            jobs.append((b, to, ctx, text))
+                jobs.append((b, to, ctx, _format_daily(m)))
 
         if jobs:
             await self._dispatch_push(jobs)
         return cursor
+
+    async def _notify_lapsed(self, opened: List[Dict[str, Any]]) -> None:
+        """会员 true→false 状态转移 → 发一次性到期断流通知。发送成功才落状态（token 冷下轮重试）。"""
+        state = _load_member_state()
+        changed = False
+        for b in opened:
+            uname = (b.get("username") or "").strip().lower()
+            if not uname:
+                continue
+            cur = _member_can_push(b)
+            prev = state.get(uname)
+            if prev is None or cur:  # 首见 / 仍是会员：只记录
+                if state.get(uname) != cur:
+                    state[uname] = cur
+                    changed = True
+                continue
+            if prev and not cur:  # 有资格→失格：通知一次
+                ctx = b.get("context_token")
+                to = b.get("wechat_user_id")
+                if not ctx or not to:
+                    continue  # token 冷：状态不动，下轮再试
+                ok, _ret = await _send_retry(b, to, ctx, _EXPIRED_NOTICE,
+                                             lock=self._lock_for(b.get("ilink_bot_id") or ""))
+                if ok:
+                    state[uname] = False
+                    changed = True
+                    bind.log_push_event("push", "delivered", b.get("ilink_bot_id") or "", uname, "会员到期断流通知")
+        if changed:
+            _save_member_state(state)
 
     async def _dispatch_push(self, jobs: List[tuple]) -> None:
         """批量错峰发送：整批共用一条 keep-alive 连接（复用）；相邻 send 之间留间隔（错峰），
@@ -653,6 +863,7 @@ class WeixinChannelManager:
         to_user: Optional[str] = None
         ctx: Optional[str] = None
         any_ctx: Optional[str] = None   # 尽量保活：从【任意】事件(含 type!=1 的 bot 回显/系统事件)捡 token 刷新
+        saw_nontext = False             # 用户发了语音/图片等非文本(提取不出文字)
         for m in msgs:
             if m.get("context_token"):
                 any_ctx = m["context_token"]
@@ -666,10 +877,19 @@ class WeixinChannelManager:
             t = ilink.extract_inbound_text(m)
             if t:
                 texts.append(t)
+            else:
+                saw_nontext = True
         # 刷新缓存 token：优先用户消息的，其次任意事件里捡到的（白捡的保活机会）
         if ctx or any_ctx:
             bind.update_context_token(bot_id, ctx or any_ctx)
         if not texts or not to_user or not ctx:
+            # 语音/图片被静默吞掉是聊天机器人最差的失败模式(用户会判定"这个号是死的")→给一句兜底(不计次、不进缓存)
+            if saw_nontext and to_user and ctx:
+                try:
+                    async with self._lock_for(bot_id):
+                        await ilink.send_text(b["token"], b["base_url"], to_user, ctx, _NONTEXT_REPLY)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[weixin] nontext reply err %s: %s", bot_id[:8], exc)
             return
         question = "\n".join(texts)
         # —— 会员 AI 问答（已去 lx199710 白名单，所有在效会员可用）——
@@ -677,8 +897,8 @@ class WeixinChannelManager:
         from . import compliance, data_store, metrics_store, privacy_guard
 
         def _clean(text: str) -> str:
-            # 出口双护栏:先合规中性化(荐股措辞)→再泄密扫描(剥数据源/工具名/密钥)
-            return privacy_guard.scrub_internal_text(compliance.neutralize_text(text))
+            # 出口三护栏:合规中性化(荐股措辞)→泄密扫描(剥数据源/工具名/密钥)→AI 生成显式标识(《标识办法》硬要求,幂等)
+            return compliance.ai_label(privacy_guard.scrub_internal_text(compliance.neutralize_text(text)), brief=True)
 
         async def _reply(text: str) -> None:
             chunks = _split_for_wechat(text) or [text]
@@ -692,16 +912,38 @@ class WeixinChannelManager:
                 logger.warning("[weixin] reply err %s: %s", bot_id[:8], exc)
 
         q_norm = question.strip().lower()
-        # ① 会员校验：AI 问答会员专享；会员过期只保留推送、问答引导续费（不耗 token）
-        if not _member_can_push(b):
-            await _reply(_EXPIRED_REPLY)
+        # ⓪ 确定性指令（不耗 token、对全体绑定用户开放）：推送范围管理
+        if q_norm in ("同步自选", "同步自选股"):
+            await _reply(_sync_watchlist_to_push(b))
             return
-        # ② 纯寒暄（兼推送激活确认）/ ③ 帮助菜单：友好引导，不触发 agent、不计次
+        if q_norm in ("推送全部", "全部推送"):
+            uid0 = (b.get("deepfocus_user_id") or "").strip()
+            if uid0:
+                bind.set_push_config(uid0, "all", [])
+                await _reply("✅ 已切换为全量快讯推送。回复「同步自选」可只推自选相关。")
+            else:
+                await _reply("未找到绑定的终端账号，请在网站重新绑定后再试")
+            return
+        if q_norm in ("关闭推送", "停止推送", "取消推送"):
+            uid0 = (b.get("deepfocus_user_id") or "").strip()
+            if uid0:
+                bind.set_push_config(uid0, "off", list(b.get("push_symbols") or []))
+                await _reply("✅ 已暂停推送。回复「推送全部」或「同步自选」随时恢复。")
+            else:
+                await _reply("未找到绑定的终端账号，请在网站重新绑定后再试")
+            return
+        # ② 纯寒暄（兼推送激活确认）/ ③ 帮助菜单：友好引导，不触发 agent、不计次（对非会员也开放）
         if q_norm in _GREETINGS:
             await _reply(_GREETING_REPLY)
             return
         if q_norm in _HELP_TRIGGERS:
             await _reply(_HELP_REPLY)
+            return
+        # ① 会员/试吃闸：非会员每天 _WX_FREE_QA 次现算试吃（缓存命中不计次），超额引导自助开通；
+        #    env DEEPFOCUS_WEIXIN_FREE_QA=0 回到会员专享一刀切。
+        is_member = _member_can_push(b)
+        if not is_member and _WX_FREE_QA <= 0:
+            await _reply(_EXPIRED_REPLY)
             return
 
         # 收集真实提问到运营看板(/api/metrics/dashboard「操作流水」:谁/何时/问了什么),失败不影响主流程
@@ -731,19 +973,27 @@ class WeixinChannelManager:
         # ⚠️仅【无会话上下文】才用共享缓存：多轮追问的答案跟个人上文相关,不能给别人(也不该被别人的缓存覆盖)。
         fp = _qa_fingerprint(question)
         if fp and not has_ctx:
-            cached = data_store.latest("wx_qa", fp, max_age_seconds=_QA_CACHE_TTL)
+            # 行情类提问盘中只认 120s 内的缓存（防把 29 分钟前别人触发的旧价格当现价发出去）
+            cached = data_store.latest("wx_qa", fp, max_age_seconds=_qa_cache_ttl(question))
             if isinstance(cached, dict) and (cached.get("answer") or "").strip():
                 metrics_store.incr("wxqa:cache_hit")  # 观测:缓存命中(0 token)
                 await _reply(_clean(cached["answer"].strip()))  # 缓存答案也过出口护栏(防旧缓存泄密)
                 _remember(cid, question, cached["answer"].strip())
                 return
 
-        # ⑤ 每日"现算"配额：仅缓存未命中才计次；超额 → 引导明天 / 问推荐问题，不耗 token
+        # ⑤ 每日"现算"配额：仅缓存未命中才计次。会员已放开(_QA_UNLIMITED)→不拦截仅观测；
+        #    非会员走试吃配额（_WX_FREE_QA 次/天），超额回复带自助购买链接（聊天窗里的天然升级时机）。
         uname = (b.get("username") or "").strip().lower()
-        qkey = f"q:wxqa:{uname}" if uname else f"q:wxqa:bot:{bot_id}"
-        if metrics_store.get_daily(qkey) >= _QA_DAILY_LIMIT:
-            await _reply(_QUOTA_REPLY)
-            return
+        if is_member:
+            qkey = f"q:wxqa:{uname}" if uname else f"q:wxqa:bot:{bot_id}"
+            if _QA_DAILY_LIMIT > 0 and metrics_store.get_daily(qkey) >= _QA_DAILY_LIMIT:
+                await _reply(_QUOTA_REPLY)
+                return
+        else:
+            qkey = f"q:wxfree:{uname}" if uname else f"q:wxfree:bot:{bot_id}"
+            if metrics_store.get_daily(qkey) >= _WX_FREE_QA:
+                await _reply(_NONMEMBER_QUOTA_REPLY)
+                return
 
         # ⑥ 现算：计次 → 调 agent（耗 token）→ 合规中性化 → 回 → 写缓存供后续复用
         metrics_store.incr(qkey)
@@ -755,17 +1005,64 @@ class WeixinChannelManager:
                 hint = self._context_hint_fn(b) or ""
             except Exception:  # noqa: BLE001
                 hint = ""
+        # 慢回复即时安抚：起 agent 任务，若 _WX_THINKING_DELAY 秒内还没出结果，先秒回一条「正在查询」让用户安心，
+        # 再继续等真正的答案（asyncio.wait 超时不取消任务，agent 继续在后台跑）。安抚发送失败不影响正式回复。
+        answer = None
+        # 把当前用户名注入 ContextVar，让 get_my_watchlist 能读"本人自选股"(任务在此上下文创建即捕获)。
+        from . import agent_tools as _agent_tools
+        _bind_tok = _agent_tools._BINDING_USER.set((b.get("username") or "").strip())
         try:
-            answer = await self._agent_fn(question, hint)
+            agent_task = asyncio.ensure_future(self._agent_fn(question, hint))
+            done, _pending = await asyncio.wait({agent_task}, timeout=_WX_THINKING_DELAY)
+            if not done:
+                try:
+                    await _reply(_thinking_message(question))
+                    metrics_store.incr("wxqa:thinking_sent")  # 观测：安抚发送次数（配 wxqa:fresh 看慢回复占比）
+                except Exception:  # noqa: BLE001  安抚失败不影响主流程
+                    pass
+            answer = await agent_task
         except Exception as exc:  # noqa: BLE001
             logger.warning("[weixin] agent err for %s: %s", bot_id[:8], exc)
             answer = None
+        finally:
+            _agent_tools._BINDING_USER.reset(_bind_tok)
         ans = (answer or "").strip()
+        if ans and _MARKET_Q_RE.search(question):
+            # 行情类答案打时间戳：现算时刻即数据时刻，缓存回放也带着原始时间——诚实标注新鲜度
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            ans += f"\n（行情数据截至 {_dt.now(_tz(_td(hours=8))).strftime('%H:%M')} 北京时间）"
+        if ans and not has_ctx:
+            # 确定性追问引导（零 token）：把单发问答变成多轮研究会话，顺带展示更深的工具面
+            try:
+                from .stock_name_index import resolve_to_code as _rtc
+                if _rtc(question):
+                    ans += "\n\n还可以问我：它现在估值贵不贵？· 最近有没有上龙虎榜？· 历年分红怎么样？"
+            except Exception:  # noqa: BLE001
+                pass
         if ans and fp and not has_ctx:  # 只把【独立问题】的答案写进跨用户共享缓存;带上下文的答案是个人化的,不共享
             data_store.record("wx_qa", fp, {"answer": ans, "q": question[:200]})
         if ans:
             _remember(cid, question, ans)  # 记进会话(含 agent 的反问),下一条追问才接得上
         await _reply(_clean(ans) if ans else _FALLBACK_REPLY)
+        # 非会员试吃的最后一次：答完顺带预告（成功时刻转化位——刚被答爽时付费意愿最高）
+        if not is_member and ans and metrics_store.get_daily(qkey) >= _WX_FREE_QA:
+            try:
+                await _reply(f"（今天 {_WX_FREE_QA} 次免费问答已用完；开通会员不限次 👉 {_PUBLIC_SITE}）")
+            except Exception:  # noqa: BLE001
+                pass
+
+        # ⑦ 争议个股「多空深度档」(灰度·可选·会员专属——多一轮 LLM 成本)：基础答案已先到，对【锁定个股+决策措辞】的独立提问
+        #    再多花一轮生成多头/空头/投委裁决，作为第二条分阶段推送——不顶撞单条响应超时。
+        #    失败/不合格/超时一律静默(只发了基础答案)，绝不影响主流程。
+        if (_MULTIVIEW_ENABLED and self._multiview_fn and ans and not has_ctx and is_member
+                and _is_controversial_stock_q(question)):
+            try:
+                deep = await self._multiview_fn(question, ans)
+                if deep and deep.strip():
+                    metrics_store.incr("wxqa:multiview")  # 观测:深度档触发次数
+                    await _reply(_clean(deep.strip()))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[weixin] multiview err %s: %s", bot_id[:8], exc)
 
     # ---- 准推送：best-effort flush ----
 

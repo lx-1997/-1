@@ -5,12 +5,8 @@ import {
   WechatOutlined,
   WeiboOutlined,
   QqOutlined,
-  TwitterOutlined,
   LinkOutlined,
-  CopyOutlined,
-  FacebookOutlined,
-  LinkedinOutlined,
-  MailOutlined
+  CopyOutlined
 } from '@ant-design/icons';
 import { createShareSnapshot } from '../services/shareService';
 
@@ -25,6 +21,8 @@ export interface ShareTarget {
   byline?: string;
   /** 可选的可访问链接；缺省时隐藏链接相关入口，社交按钮退化为「复制文案」。 */
   url?: string;
+  /** 内容类型；'article' 时分享文案走「📰 文章」勾人格式（标识+钩子+点这看全文 CTA）。 */
+  kind?: string;
 }
 
 interface LegacyPost {
@@ -48,14 +46,29 @@ interface ShareModalProps {
   simple?: boolean;
 }
 
-function postToTarget(post: LegacyPost): ShareTarget {
-  return {
-    title: post.title,
-    summary: post.summary,
-    byline: `作者：${post.author.username}`,
-    url: `https://deepfocus.com/post/${post.id}`,
-  };
-}
+// 终端暗色皮肤：Modal 走 portal 挂在 body 下、拿不到 .bbt 作用域里的变量，
+// 故每个 var() 都带上与 FinancialTerminal.css 同值的回退色（终端琥珀黑板）。
+const DARK_MODAL_CSS = `
+.df-share-modal-dark .ant-modal-content{background:var(--elevated,#0a0d12);border:1px solid var(--line-2,#1c2530);color:var(--text-body,#e8ddc0);}
+.df-share-modal-dark .ant-modal-header{background:transparent;}
+.df-share-modal-dark .ant-modal-title{color:var(--amber,#ffb000);}
+.df-share-modal-dark .ant-modal-close{color:var(--mute2,#9aa6b2);}
+.df-share-modal-dark .ant-modal-close:hover{color:var(--text-strong,#ffffff);background:rgba(255,255,255,.08);}
+.df-share-modal-dark .ant-typography{color:var(--text-body,#e8ddc0);}
+.df-share-modal-dark h5.ant-typography{color:var(--amber-2,#ffce72);}
+.df-share-modal-dark .ant-typography.ant-typography-secondary{color:var(--mute2,#9aa6b2);}
+.df-share-modal-dark .ant-input,.df-share-modal-dark textarea.ant-input{background:var(--input-bg,#0c0d12);border-color:var(--line-2,#1c2530);color:var(--text-body,#e8ddc0);}
+.df-share-modal-dark .ant-input::placeholder{color:var(--mute2,#9aa6b2);opacity:.8;}
+.df-share-modal-dark .ant-input-affix-wrapper{background:var(--input-bg,#0c0d12);border-color:var(--line-2,#1c2530);}
+.df-share-modal-dark .ant-input-affix-wrapper .ant-input{background:transparent;}
+.df-share-modal-dark .ant-btn-default{background:transparent;border-color:var(--line-3,#2a3340);color:var(--text-soft,#cfd3da);}
+.df-share-modal-dark .ant-btn-default:not(:disabled):hover{border-color:var(--amber,#ffb000);color:var(--amber,#ffb000);}
+.df-share-modal-dark .ant-btn-primary{background:var(--accent,#ffb000);border-color:var(--accent,#ffb000);color:#000;}
+.df-share-modal-dark .ant-btn-primary:not(:disabled):hover{background:var(--amber-2,#ffce72);border-color:var(--amber-2,#ffce72);color:#000;}
+.df-share-modal-dark .ant-card{background:var(--panel,#07090d);border-color:var(--line-2,#1c2530);}
+.df-share-modal-dark .ant-divider{border-color:var(--line-2,#1c2530);}
+.df-share-modal-dark a{color:var(--blue,#6ab0ff);}
+`;
 
 const ShareModal: React.FC<ShareModalProps> = ({
   visible,
@@ -65,7 +78,9 @@ const ShareModal: React.FC<ShareModalProps> = ({
   modalTitle,
   simple,
 }) => {
-  const target: ShareTarget = content ?? (post ? postToTarget(post) : { title: '', summary: '' });
+  // 旧调用方（社区帖子）按需转换；不再伪造 https://deepfocus.com/post/ 链接（历史死代码，域名是错的）。
+  const target: ShareTarget = content
+    ?? (post ? { title: post.title, summary: post.summary, byline: `作者：${post.author.username}` } : { title: '', summary: '' });
 
   const [customMessage, setCustomMessage] = useState('');
   const [shareUrl, setShareUrl] = useState(target.url ?? '');
@@ -105,20 +120,30 @@ const ShareModal: React.FC<ShareModalProps> = ({
       .join('\n\n');
     const link = hasUrl ? shareUrl : '';
 
+    // 文章分享：📰 文章标识 + 正文钩子(有则带) + 明确「点这看全文」CTA + 品牌脚注——
+    // 让人一眼知道是文章、且勾起点开欲望。各平台统一用这套（文章分享主要走微信/复制）。
+    if (target.kind === 'article') {
+      const parts = [`📰 ${target.title}`];
+      if ((target.summary || '').trim()) parts.push(target.summary.trim());
+      parts.push('👉 点这看全文 · DeepFocus 金融数据');
+      return `${parts.join('\n\n')}${link ? `\n${link}` : ''}`;
+    }
+
+    // 研报解读分享：📑 标识 + 一句话钩子 + 「登录看完整解读」CTA + 品牌脚注。分享的是我们的 AI 解读，非第三方原文。
+    if (target.kind === 'report') {
+      const parts = [`📑 研报速读丨${target.title}`];
+      if ((target.summary || '').trim()) parts.push(target.summary.trim());
+      parts.push('👉 登录看完整 AI 解读 · DeepFocus 金融数据');
+      return `${parts.join('\n\n')}${link ? `\n${link}` : ''}`;
+    }
+
     switch (platform) {
       case 'wechat':
-        return `${baseContent}\n\n来自 DeepFocus 投研工作台${link ? `\n${link}` : ''}`;
+        return `${baseContent}\n\n来自 DeepFocus 金融数据${link ? `\n${link}` : ''}`;
       case 'weibo':
         return `${baseContent}\n\n#DeepFocus# #投研#${link ? ` ${link}` : ''}`;
       case 'qq':
         return `${baseContent}\n\n分享自 DeepFocus${link ? `：${link}` : ''}`;
-      case 'twitter':
-        return `${baseContent}\n\nFrom DeepFocus${link ? `\n${link}` : ''}`;
-      case 'facebook':
-      case 'linkedin':
-        return `${baseContent}\n\nShared from DeepFocus${link ? `\n${link}` : ''}`;
-      case 'email':
-        return `主题：${target.title}\n\n内容：${target.summary || target.title}${target.byline ? `\n\n${target.byline}` : ''}${link ? `\n\n查看完整内容：${link}` : ''}`;
       default:
         return `${baseContent}${link ? `\n\n${link}` : ''}`.trim();
     }
@@ -165,45 +190,6 @@ const ShareModal: React.FC<ShareModalProps> = ({
     message.success('正在跳转到QQ分享页面');
   };
 
-  // 分享到Twitter（文本即可，无需链接）
-  const shareToTwitter = () => {
-    const content = generateShareContent('twitter');
-    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(content)}`;
-    window.open(twitterUrl, '_blank');
-    message.success('正在跳转到 Twitter 分享页面');
-  };
-
-  // 分享到Facebook
-  const shareToFacebook = () => {
-    if (!hasUrl) {
-      copyToClipboard(generateShareContent('facebook'), '已复制文案，可直接粘贴分享');
-      return;
-    }
-    const content = generateShareContent('facebook');
-    const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}&quote=${encodeURIComponent(content)}`;
-    window.open(facebookUrl, '_blank');
-    message.success('正在跳转到 Facebook 分享页面');
-  };
-
-  // 分享到LinkedIn
-  const shareToLinkedIn = () => {
-    if (!hasUrl) {
-      copyToClipboard(generateShareContent('linkedin'), '已复制文案，可直接粘贴分享');
-      return;
-    }
-    const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}&title=${encodeURIComponent(target.title)}&summary=${encodeURIComponent(target.summary)}`;
-    window.open(linkedinUrl, '_blank');
-    message.success('正在跳转到 LinkedIn 分享页面');
-  };
-
-  // 分享到邮箱（mailto 携带文本即可）
-  const shareToEmail = () => {
-    const content = generateShareContent('email');
-    const emailUrl = `mailto:?subject=${encodeURIComponent(target.title)}&body=${encodeURIComponent(content)}`;
-    window.open(emailUrl);
-    message.success('正在打开邮件客户端');
-  };
-
   // 复制链接
   const copyLink = () => {
     copyToClipboard(shareUrl, '链接已复制到剪贴板');
@@ -235,42 +221,15 @@ const ShareModal: React.FC<ShareModalProps> = ({
       icon: <QqOutlined style={{ color: '#12b7f5' }} />,
       color: '#12b7f5',
       action: shareToQQ
-    },
-    {
-      key: 'twitter',
-      name: 'Twitter',
-      icon: <TwitterOutlined style={{ color: '#1da1f2' }} />,
-      color: '#1da1f2',
-      action: shareToTwitter
-    },
-    {
-      key: 'facebook',
-      name: 'Facebook',
-      icon: <FacebookOutlined style={{ color: '#1877f2' }} />,
-      color: '#1877f2',
-      action: shareToFacebook
-    },
-    {
-      key: 'linkedin',
-      name: 'LinkedIn',
-      icon: <LinkedinOutlined style={{ color: '#0077b5' }} />,
-      color: '#0077b5',
-      action: shareToLinkedIn
-    },
-    {
-      key: 'email',
-      name: '邮件',
-      icon: <MailOutlined style={{ color: 'var(--text-muted)' }} />,
-      color: 'var(--text-muted)',
-      action: shareToEmail
     }
   ];
 
   return (
     <Modal
+      className="df-share-modal-dark"
       title={
         <Space>
-          <ShareAltOutlined style={{ color: '#1890ff' }} />
+          <ShareAltOutlined style={{ color: 'var(--amber, #ffb000)' }} />
           <span>{modalTitle || '分享'}</span>
         </Space>
       }
@@ -283,9 +242,10 @@ const ShareModal: React.FC<ShareModalProps> = ({
         </Button>
       ]}
     >
+      <style>{DARK_MODAL_CSS}</style>
       <div style={{ padding: '16px 0' }}>
         {simple ? (
-          /* 极简模式：可复制文案 + 可跳转链接 */
+          /* 极简模式：三动作收敛——复制文案 / 复制链接 /（生成分享图待接终端出图链路，先隐藏） */
           <div>
             <Title level={5} style={{ marginTop: 0 }}>分享文案</Title>
             <TextArea
@@ -294,18 +254,21 @@ const ShareModal: React.FC<ShareModalProps> = ({
               onChange={(e) => setCustomMessage(e.target.value)}
               style={{ marginBottom: 10 }}
             />
-            <Button type="primary" icon={<CopyOutlined />} onClick={copyContent} block>
-              复制文案
-            </Button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button type="primary" icon={<CopyOutlined />} onClick={copyContent} style={{ flex: 1 }}>
+                复制文案
+              </Button>
+              {hasUrl && (
+                <Button icon={<LinkOutlined />} onClick={copyLink} style={{ flex: 1 }}>
+                  复制链接
+                </Button>
+              )}
+            </div>
             {hasUrl && (
-              <div style={{ marginTop: 20 }}>
-                <Title level={5}>链接</Title>
-                <Space.Compact style={{ width: '100%' }}>
-                  <Input value={shareUrl} readOnly prefix={<LinkOutlined style={{ color: 'var(--text-muted)' }} />} />
-                  <Button icon={<CopyOutlined />} onClick={copyLink}>复制</Button>
-                </Space.Compact>
-                <a href={shareUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 8, fontSize: 13 }}>
-                  打开链接 ↗
+              <div style={{ marginTop: 10, fontSize: 12, color: 'var(--mute2, #9aa6b2)', wordBreak: 'break-all' }}>
+                {shareUrl}
+                <a href={shareUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 8, whiteSpace: 'nowrap' }}>
+                  打开 ↗
                 </a>
               </div>
             )}
@@ -438,7 +401,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
             ) : (
               <>
                 • 微信 / QQ 等无 Web 入口的平台会复制文案，直接粘贴即可<br/>
-                • 微博 / Twitter / 邮件会带文案跳转对应入口<br/>
+                • 微博会带文案跳转分享页<br/>
                 • 文案默认包含结论摘要与来源，可自行编辑<br/>
                 • 留空自定义文案时使用上方默认文本
               </>

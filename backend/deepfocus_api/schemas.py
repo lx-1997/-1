@@ -818,6 +818,17 @@ class PersonDigestResponse(BaseModel):
     data_quality: DataQuality = Field(default_factory=DataQuality)
 
 
+class CelebrityViewComment(BaseModel):
+    """帖子下的一条评论（星球成员/作者的跟评）。text 已解码富文本实体，为纯文字。"""
+
+    author: str = ""
+    text: str = ""
+    create_time: str = ""
+    likes_count: int = 0
+    sticky: bool = False  # 帖主置顶的评论
+    reply_to: str = ""    # 楼中楼：被回复人的名字（顶层评论为空）
+
+
 class CelebrityViewItem(BaseModel):
     """一条名人观点：标题 + 正文(文字) + 图片 + 可播放语音 + 出处/时间。
 
@@ -838,6 +849,9 @@ class CelebrityViewItem(BaseModel):
     reported_date: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
     importance_score: int = Field(default=55, ge=0, le=100)
+    topic_id: str = ""                                        # 上游帖子 ID（拉全部评论用；非 zsxq 源为空）
+    comments: list[CelebrityViewComment] = Field(default_factory=list)  # 随帖预览评论(上游最多带前8~9条)
+    comments_count: int = 0                                   # 评论总数；> len(comments) 时前端可「加载全部」
 
 
 class CelebrityProfile(BaseModel):

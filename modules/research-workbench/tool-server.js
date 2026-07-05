@@ -954,12 +954,19 @@ async function resolveAuth(payload) {
   return { cookie: "", aduid: String(payload.aduid || process.env.ZSXQ_ADUID || "") };
 }
 
+// 知识星球的 topic_id/comment_id 是 17 位整数，超出 JS Number 的 53 位安全范围，
+// 直接 JSON.parse 会抹掉末几位（实测一页 20 帖里 17 帖 ID 损坏 → 原文链接指向不存在的帖、
+// 按坏 ID 查评论报「主题已经被删除」）。解析前把这些 ID 加引号转成字符串，全程按字符串用。
+function quoteBigIntIds(text) {
+  return String(text || "").replace(/"(topic_id|comment_id|parent_comment_id)":\s*(\d+)/g, '"$1":"$2"');
+}
+
 async function apiGet(auth, url) {
   const response = await fetch(url, { headers: signedHeaders(url, auth.aduid, auth.cookie), redirect: "follow" });
   const text = await response.text();
   let payload;
   try {
-    payload = JSON.parse(text);
+    payload = JSON.parse(quoteBigIntIds(text));
   } catch {
     throw new Error(`接口返回不是 JSON：HTTP ${response.status}`);
   }
@@ -1615,6 +1622,182 @@ async function searchFiles(payload) {
     hashtags: hashtags.length ? hashtags : result.hashtag ? [result.hashtag] : [],
     keyword: String(payload.keyword || "").trim(),
     count: result.items.length,
+  };
+}
+
+// ===== 名人观点：按星球检索「帖子(topics)」——正文 + 图片(已签名URL) + 作者/时间 =====
+// 与 searchFiles(研报 PDF)不同：这里取的是帖子动态本身的文字与配图，供「名人观点」模块消费。
+// 知识星球正文里的富文本实体 <e type="web|hashtag|mention" title="<URL编码>" .../>
+// → 用其 title(URL 解码)替换，否则前端会显示成一坨原始标签。
+function decodeZsxqText(raw) {
+  let s = String(raw || "");
+  s = s.replace(/<e\b[^>]*?\/>/g, (tag) => {
+    const m = tag.match(/\btitle="([^"]*)"/);
+    if (!m) return "";
+    try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+  });
+  return s.replace(/[ \t]+\n/g, "\n").trim();
+}
+
+function extractTopicText(topic) {
+  const type = topic?.type || "";
+  const typed = topic?.[type] || topic?.talk || {};
+  const parts = [];
+  if (topic.question?.text) parts.push(`问：${decodeZsxqText(topic.question.text)}`);
+  if (topic.answer?.text) parts.push(`答：${decodeZsxqText(topic.answer.text)}`);
+  if (typed.text) parts.push(decodeZsxqText(typed.text));
+  if (typed.article?.title) parts.push(decodeZsxqText(typed.article.title));
+  const seen = new Set();
+  return parts.filter((p) => p && !seen.has(p) && seen.add(p)).join("\n").trim();
+}
+
+function extractTopicImages(topic) {
+  const type = topic?.type || "";
+  const typed = topic?.[type] || topic?.talk || {};
+  const images = typed.images || topic.images || [];
+  const thumbs = [];   // 列表里小图(large，省流)
+  const fulls = [];    // 点开放大用原图(original，全分辨率)
+  for (const im of images) {
+    const thumb = im?.large?.url || im?.thumbnail?.url || im?.original?.url || "";
+    const full = im?.original?.url || im?.large?.url || im?.thumbnail?.url || "";
+    if (thumb) { thumbs.push(thumb); fulls.push(full || thumb); }
+  }
+  return { thumbs, fulls };
+}
+
+// 一条评论 → 轻量结构（作者/文字/时间/点赞/置顶）。正文同帖子一样含 <e> 富文本实体，需解码。
+function commentToItem(comment, replyTo = "") {
+  return {
+    comment_id: String(comment?.comment_id || ""),
+    author: comment?.owner?.name || "",
+    text: decodeZsxqText(comment?.text || ""),
+    create_time: comment?.create_time || "",
+    likes_count: Number(comment?.likes_count || 0),
+    sticky: Boolean(comment?.sticky),
+    reply_to: replyTo,  // 楼中楼：被回复人的名字（顶层评论为空）
+  };
+}
+
+// 顶层评论 + 其楼中楼回复(replied_comments) 拍平成一串，回复紧跟父评论、带 reply_to。
+function flattenComment(comment) {
+  const parent = commentToItem(comment);
+  const replies = (comment?.replied_comments || []).map((r) => commentToItem(r, parent.author));
+  return [parent, ...replies];
+}
+
+function topicToViewItem(topic) {
+  const type = topic?.type || "";
+  const typed = topic?.[type] || topic?.talk || {};
+  const id = String(topic.topic_id || topic.topicId || "");
+  const imgs = extractTopicImages(topic);
+  // show_comments = 随帖预览评论(上游最多带 8~9 条)；评论更多时消费方经 /api/topic-comments 拉全。
+  const comments = (topic.show_comments || []).flatMap(flattenComment).filter((c) => c.text || c.author);
+  return {
+    topicId: id,
+    type,
+    text: extractTopicText(topic),
+    images: imgs.thumbs,
+    image_fulls: imgs.fulls,
+    create_time: topic.create_time || "",
+    author: typed.owner?.name || topic.owner?.name || "",
+    digested: Boolean(topic.digested),
+    likes_count: Number(topic.likes_count || 0),
+    comments_count: Number(topic.comments_count || 0),
+    comments,
+    url: id ? `${WEB_ORIGIN}/topic/${id}` : "",
+  };
+}
+
+// ===== 名人观点：某帖的全部评论。列表接口的 show_comments 只带前几条，热帖(评论数百条)在此拉全。
+// 翻页实测：sort=asc + begin_time=<上页最末评论的 create_time> 为游标（边界那条会重复，按 comment_id 去重）。
+async function fetchTopicComments(payload) {
+  const auth = await resolveAuth(payload);
+  if (!auth.cookie) throw new Error("缺少 Cookie。请配置星球登录态后再拉取评论。");
+  const topicId = String(payload.topicId || payload.topic_id || "").trim();
+  if (!/^\d+$/.test(topicId)) throw new Error("缺少合法的帖子 topicId。");
+  const limit = Math.max(1, Math.min(Number(payload.limit) || 100, 300));
+  const count = 30;
+  const seen = new Set();
+  const comments = [];
+  let beginTime = "";
+  let hasMore = false;
+  for (let page = 1; page <= 12; page += 1) {
+    const url = new URL(`${API_BASE}/topics/${topicId}/comments`);
+    url.searchParams.set("count", String(count));
+    url.searchParams.set("sort", "asc");
+    if (beginTime) url.searchParams.set("begin_time", beginTime);
+    const data = await apiGet(auth, url.toString());
+    const batch = data.comments || [];
+    let fresh = 0;
+    for (const raw of batch) {
+      for (const item of flattenComment(raw)) {
+        if (!item.comment_id || seen.has(item.comment_id)) continue;
+        seen.add(item.comment_id);
+        comments.push(item);
+        fresh += 1;
+      }
+    }
+    const last = batch[batch.length - 1];
+    if (!batch.length || batch.length < count) { hasMore = false; break; }  // 上游已无更多
+    if (comments.length >= limit) { hasMore = true; break; }                 // 够数提前停
+    if (!fresh || !last?.create_time || last.create_time === beginTime) { hasMore = false; break; }  // 游标卡住
+    beginTime = last.create_time;
+  }
+  return { topicId, comments: comments.slice(0, limit), count: Math.min(comments.length, limit), hasMore };
+}
+
+async function searchGroupTopics(payload) {
+  const auth = await resolveAuth(payload);
+  if (!auth.cookie) throw new Error("缺少 Cookie。请配置星球登录态后再检索名人观点。");
+  const group = String(payload.group || "").trim();
+  if (!group) throw new Error("缺少星球 group。");
+  const keyword = String(payload.keyword || "").trim();
+  const resultLimit = normalizeSearchResultLimit(payload.resultLimit || payload.count || 20);
+  const pageLimit = normalizeSearchPageLimit(payload.searchPages ?? payload.maxPages, DEFAULT_SEARCH_PAGES);
+  const count = 20;
+  const seen = new Set();
+  const items = [];
+  // endTime 作「游标」：payload.endTime 给定 → 从该时间点往更早翻（「加载更早」）；否则从最新开始。
+  let endTime = String(payload.endTime || payload.before || "").trim();
+  let hasMore = false;
+  for (let page = 1; page <= pageLimit; page += 1) {
+    const previousEndTime = endTime;
+    // 有关键词 → 搜索接口(order_by=time)；无关键词 → 该星球最新帖子(by_create_time)
+    const url = keyword
+      ? new URL(`${API_BASE}/search/groups/${group}/topics`)
+      : new URL(`${API_BASE}/groups/${group}/topics`);
+    url.searchParams.set("count", String(count));
+    if (keyword) {
+      url.searchParams.set("keyword", keyword);
+      url.searchParams.set("order_by", "time");
+    } else {
+      url.searchParams.set("scope", "all");
+      url.searchParams.set("sort", "by_create_time");
+    }
+    if (endTime) url.searchParams.set("end_time", endTime);
+    const data = await apiGet(auth, url.toString());
+    const topics = data.topics || [];
+    for (const topic of topics) {
+      const item = topicToViewItem(topic);
+      if (!item.topicId || seen.has(item.topicId)) continue;
+      if (!item.text && !item.images.length) continue; // 跳过纯空帖
+      seen.add(item.topicId);
+      items.push(item);
+    }
+    const last = topics[topics.length - 1];
+    endTime = last?.create_time || endTime;  // 游标推进到本页最老一条(含被跳过的空帖)
+    if (!topics.length || topics.length < count) { hasMore = false; break; }       // 上游已无更多
+    if (hasReachedResultLimit(items, resultLimit)) { hasMore = true; break; }        // 够数提前停，更早仍有
+    if (endTime && endTime === previousEndTime) { hasMore = false; break; }          // 游标卡住，防死循环
+    hasMore = true;  // 整页满 → 继续翻
+  }
+  return {
+    items: resultLimit > 0 ? items.slice(0, resultLimit) : items,
+    group,
+    keyword,
+    count: items.length,
+    nextEndTime: endTime,   // 下次「加载更早」传回此游标
+    hasMore,
   };
 }
 
@@ -2403,6 +2586,26 @@ async function route(req, res) {
     try {
       const payload = await parseJson(req);
       send(res, 200, await searchFiles(payload));
+    } catch (error) {
+      send(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/search-topics") {
+    try {
+      const payload = await parseJson(req);
+      send(res, 200, await searchGroupTopics(payload));
+    } catch (error) {
+      send(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/topic-comments") {
+    try {
+      const payload = await parseJson(req);
+      send(res, 200, await fetchTopicComments(payload));
     } catch (error) {
       send(res, 400, { error: error.message });
     }
