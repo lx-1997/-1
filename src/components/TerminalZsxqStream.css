@@ -85,6 +85,13 @@
 .tzs-disclaimer { font-size: 11px; color: var(--mute, #9a957a); border-top: 1px dashed var(--line, #1b1d12); padding-top: 9px; }
 
 /* 图片灯箱 */
-.tzs-lightbox { position: fixed; inset: 0; z-index: 1300; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center; padding: 28px; }
-.tzs-lightbox-img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 16px 60px rgba(0,0,0,.7); }
-.tzs-lightbox-x { position: absolute; top: 14px; right: 16px; background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+.tzs-lightbox { position: fixed; inset: 0; z-index: 1300; background: rgba(0,0,0,.88); display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px 60px; }
+/* 默认:铺满宽度、可竖向滚动看清长图(表格/图表竖长图不再被压成一屏糊掉) */
+.tzs-lightbox-scroll { max-width: 960px; width: 100%; max-height: 100%; overflow: auto; border-radius: 8px; -webkit-overflow-scrolling: touch; }
+.tzs-lightbox-scroll.fit { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.tzs-lightbox-img { display: block; width: 100%; height: auto; border-radius: 8px; box-shadow: 0 16px 60px rgba(0,0,0,.7); cursor: zoom-in; }
+.tzs-lightbox-img.fit { width: auto; height: auto; max-width: 100%; max-height: calc(100vh - 100px); cursor: zoom-out; }
+.tzs-lightbox-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; display: flex; gap: 10px; z-index: 1; }
+.tzs-lightbox-btn { display: inline-flex; align-items: center; font-size: 13px; color: #e6e8eb; background: rgba(20,22,16,.92); border: 1px solid rgba(255,255,255,.22); border-radius: 20px; padding: 7px 16px; cursor: pointer; text-decoration: none; }
+.tzs-lightbox-btn:hover { border-color: #c4b5fd; color: #c4b5fd; }
+.tzs-lightbox-x { position: fixed; top: 14px; right: 18px; background: none; border: none; color: #fff; font-size: 22px; cursor: pointer; z-index: 1; }

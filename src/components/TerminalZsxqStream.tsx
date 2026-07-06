@@ -10,6 +10,11 @@ import {
 import ShareButton from './common/ShareButton';
 import './TerminalZsxqStream.css';
 
+// 知识星球图走后端代理：绕客户端防盗链/token 失效，让长图能高清放大 + 下载成可查看的图片文件。
+// dl=1 → 附件下载。仅对 zsxq 图床 URL 生效（后端 host 白名单）。
+const zsxqImg = (url: string, dl = false): string =>
+  `/api/zsxq/image?u=${encodeURIComponent(url)}${dl ? '&dl=1' : ''}`;
+
 // 机构纪要分享钩子：只取标题 + ≤100 字导语（第三方付费内容不外泄全文）。落地页 /note/{id} 同口径 noindex 软墙。
 const noteShareTarget = (item: ZsxqTopic) => {
   const flat = (item.text || '').replace(/\s+/g, ' ').trim();
@@ -177,6 +182,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
   const [zoom, setZoom] = useState<string | null>(null);
+  const [fitWin, setFitWin] = useState(false);   // 灯箱:false=铺满宽度可竖向滚动看清长图(默认)/true=整图适应窗口
   const cursorRef = useRef('');
   const hasMoreRef = useRef(false);
 
@@ -246,7 +252,15 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
 
   const lightbox = zoom && (
     <div className="tzs-lightbox" onMouseDown={() => setZoom(null)} role="dialog" aria-label="查看图片">
-      <img className="tzs-lightbox-img" src={zoom} alt="" referrerPolicy="no-referrer" />
+      {/* 长图默认铺满宽度、可竖向滚动看清；点图切换「适应窗口」整图 */}
+      <div className={'tzs-lightbox-scroll' + (fitWin ? ' fit' : '')} onMouseDown={e => e.stopPropagation()}>
+        <img className={'tzs-lightbox-img' + (fitWin ? ' fit' : '')} src={zsxqImg(zoom)} alt=""
+             onClick={() => setFitWin(v => !v)} title={fitWin ? '点击放大阅读' : '点击适应窗口'} />
+      </div>
+      <div className="tzs-lightbox-bar" onMouseDown={e => e.stopPropagation()}>
+        <button className="tzs-lightbox-btn" onClick={() => setFitWin(v => !v)}>{fitWin ? '🔍 放大阅读' : '⤢ 适应窗口'}</button>
+        <a className="tzs-lightbox-btn" href={zsxqImg(zoom, true)} download target="_blank" rel="noreferrer">⬇ 下载原图</a>
+      </div>
       <button className="tzs-lightbox-x" onClick={() => setZoom(null)} aria-label="关闭">✕</button>
     </div>
   );
@@ -289,7 +303,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
 
         {pool.length > 0 && (
           <div className="tzs-list">
-            {pool.map(it => <TopicRow key={it.id} item={it} onZoom={setZoom} />)}
+            {pool.map(it => <TopicRow key={it.id} item={it} onZoom={u => { setFitWin(false); setZoom(u); }} />)}
           </div>
         )}
 

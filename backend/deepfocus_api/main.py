@@ -3911,6 +3911,43 @@ async def api_zsxq_topic_comments(request: Request, topic_id: str = "", limit: i
     return await fetch_comments(topic_id, limit=limit)
 
 
+_ZSXQ_IMG_HOSTS = {"images.zsxq.com"}  # ⚠️SSRF 白名单：只准代理知识星球图床，绝不做开放代理
+_ZSXQ_IMG_MAX = 25 * 1024 * 1024       # 单图上限 25MB，防超大响应打爆 1.8G 内存
+
+
+@app.get("/api/zsxq/image")
+async def api_zsxq_image(request: Request, u: str = "", dl: int = 0) -> Response:
+    """机构纪要图片代理：服务端取知识星球图（绕客户端防盗链/token 失效），流式返回真实字节，
+    让长图能在网页高清放大、也能下载成可查看的图片文件（群友反馈：直接存图是带防盗链的星球图打不开）。
+    ⚠️仅允许 images.zsxq.com（防 SSRF 被当开放代理）。所有人可见（机构纪要已公开）。dl=1 走附件下载。"""
+    from urllib.parse import urlparse, unquote  # noqa: PLC0415
+    url = unquote((u or "").strip())
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        host = ""
+    if not (url.startswith("https://") and host in _ZSXQ_IMG_HOSTS):
+        raise HTTPException(status_code=400, detail="不支持的图片地址")
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=30.0, follow_redirects=True) as client:
+            # Referer 置空绕防盗链；服务端取不受客户端 no-referrer 限制
+            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": ""})
+            r.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="图片获取失败") from exc
+    content = r.content
+    if len(content) > _ZSXQ_IMG_MAX:
+        raise HTTPException(status_code=413, detail="图片过大")
+    ct = r.headers.get("content-type") or "image/jpeg"
+    if not ct.lower().startswith("image/"):  # 只回图片，别被诱导代理非图内容
+        raise HTTPException(status_code=400, detail="非图片内容")
+    headers = {"Cache-Control": "public, max-age=86400"}  # 浏览器缓存一天，省我们带宽
+    if dl:
+        ext = "png" if "png" in ct.lower() else "jpg"
+        headers["Content-Disposition"] = f'attachment; filename="deepfocus-note.{ext}"'
+    return Response(content=content, media_type=ct, headers=headers)
+
+
 @app.post("/api/admin/celebrity/config")
 async def admin_celebrity_config(request: Request) -> dict[str, Any]:
     """改名人观点配置（启用/数据源/星球ID/免责/名人花名册与观点条目）。管理端，需令牌。"""
