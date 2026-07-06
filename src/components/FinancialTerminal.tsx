@@ -2783,12 +2783,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const isResearch = feedFilter === '研报';        // 研报标签：信息流面板切换为研报视图
   // 名人观点：仅白名单(lx199710)在资讯流加一个「名人观点」标签（研报旁），切到内联名人观点视图。
   const isCelebUser = IFIND_USERS.has((authUser || '').toLowerCase());
-  // 白名单账号:机构纪要作为内容分类插在 文章 之后、研报 之前(与快讯/文章/研报平级);名人观点缀尾。
-  const feedFilters = isCelebUser
-    ? [...FEED_FILTERS.slice(0, 4), { key: '机构纪要', label: '机构纪要' }, ...FEED_FILTERS.slice(4), { key: '名人观点', label: '名人观点' }]
-    : FEED_FILTERS;
+  // 机构纪要：用户拍板放开给所有登录用户(2026-07-06)——登录即可见(仍需登录墙，不对匿名开放)；名人观点仍限白名单。
+  const canViewZsxq = !!authUser;
+  // 机构纪要插在 文章 之后、研报 之前(与快讯/文章/研报平级)；名人观点(白名单)缀尾。
+  const feedFilters = (() => {
+    let arr = [...FEED_FILTERS];
+    if (canViewZsxq) arr = [...arr.slice(0, 4), { key: '机构纪要', label: '机构纪要' }, ...arr.slice(4)];
+    if (isCelebUser) arr = [...arr, { key: '名人观点', label: '名人观点' }];
+    return arr;
+  })();
   const isCelebrity = isCelebUser && feedFilter === '名人观点';  // 非白名单恒 false（防 localStorage 残留越权）
-  const isZsxqStream = isCelebUser && feedFilter === '机构纪要'; // 机构调研纪要帖子流，同白名单口径
+  const isZsxqStream = canViewZsxq && feedFilter === '机构纪要'; // 机构调研纪要帖子流（所有登录用户）
 
   // ⭐已取消「A股 / 港美股」分市场:研报标题中英混杂、源头无市场字段,classifyMarket 启发式误分多,
   // 与其分错不如不分——统一一个列表(用户决策)。resFiltered 即全量 reportFeed。

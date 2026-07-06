@@ -3879,12 +3879,9 @@ async def celebrity_topic_comments(request: Request, celeb_id: str, topic: str =
 
 
 def _require_star_stream_user(request: Request) -> dict:
-    """星球纪要（知识星球帖子流）仅白名单（复用 iFinD 白名单）：第三方付费社群内容，不对外。"""
-    from . import ifind_api  # noqa: PLC0415
-    claims = require_current_user(request)
-    if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
-        raise HTTPException(status_code=403, detail="机构纪要暂未对你的账号开放")
-    return claims
+    """机构纪要（知识星球帖子流）：用户拍板放开给所有登录用户（2026-07-06）——仅需登录，去白名单。
+    ⚠️仍保留登录墙：不对匿名/爬虫开放、不进 SEO（第三方付费社群内容，收录风险最高，见 zsxq_stream 头注）。"""
+    return require_current_user(request)
 
 
 @app.get("/api/zsxq/stream")

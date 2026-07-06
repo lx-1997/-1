@@ -21,8 +21,9 @@ const noteShareTarget = (item: ZsxqTopic) => {
 /**
  * 星球纪要——知识星球普通帖子的独立信息流（调研会议纪要 / 个股动态点评 / 组合观点）。
  * 「研报」标签只覆盖星球【文件】(PDF)；星球里大量高价值内容是【普通帖子】，在此独立展示。
- * 仅白名单账号可见（前端控入口可见性，后端 /api/zsxq/* 硬门控 401/403）。
- * ⚠️ 第三方付费社群内容：仅内部研究参考，不进公开流 / 分享面，不构成投资建议。
+ * 可见范围：所有登录用户（用户拍板放开 2026-07-06，去白名单）——后端 /api/zsxq/* 仍需登录（匿名 401），
+ * 不对匿名/爬虫开放、不进 SEO（第三方付费内容收录风险最高）。单条可分享成 /note/{id} noindex 软墙落地页。
+ * ⚠️ 第三方付费社群内容：仅供研究参考，不构成投资建议。
  */
 
 const fmtDate = (v?: string | null): string => {
@@ -299,7 +300,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
         )}
 
         {pool.length > 0 && (
-          <div className="tzs-disclaimer">⚠ 机构调研纪要聚合，仅内部研究参考，不构成投资建议。</div>
+          <div className="tzs-disclaimer">⚠ 机构调研纪要聚合，仅供研究参考，不构成投资建议。</div>
         )}
       </div>
 
