@@ -2767,8 +2767,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const isResearch = feedFilter === '研报';        // 研报标签：信息流面板切换为研报视图
   // 名人观点：仅白名单(lx199710)在资讯流加一个「名人观点」标签（研报旁），切到内联名人观点视图。
   const isCelebUser = IFIND_USERS.has((authUser || '').toLowerCase());
+  // 白名单账号:星球纪要作为内容分类插在 文章 之后、研报 之前(与快讯/文章/研报平级);名人观点缀尾。
   const feedFilters = isCelebUser
-    ? [...FEED_FILTERS, { key: '名人观点', label: '名人观点' }, { key: '星球纪要', label: '星球纪要' }]
+    ? [...FEED_FILTERS.slice(0, 4), { key: '星球纪要', label: '星球纪要' }, ...FEED_FILTERS.slice(4), { key: '名人观点', label: '名人观点' }]
     : FEED_FILTERS;
   const isCelebrity = isCelebUser && feedFilter === '名人观点';  // 非白名单恒 false（防 localStorage 残留越权）
   const isZsxqStream = isCelebUser && feedFilter === '星球纪要'; // 星球普通帖子流（调研纪要），同白名单口径
