@@ -1,0 +1,90 @@
+/* 星球纪要：知识星球帖子流内联面板。复用终端暗色变量(--up/--warn/--line/--mute/--elevated/--panel/--text)，自成 tzs- 命名。 */
+
+.tzs-inline { display: flex; flex-direction: column; min-height: 0; flex: 1; height: 100%; }
+.tzs-wrap { display: flex; flex-direction: column; min-height: 0; }
+
+/* 工具条：星球切换 + 搜索 + 刷新 */
+.tzs-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line, #1b1d12); }
+.tzs-groups { display: flex; gap: 6px; flex: 0 0 auto; }
+.tzs-gchip { background: none; border: 1px solid var(--line, #1b1d12); color: var(--mute, #9a957a); font-size: 11px;
+  cursor: pointer; padding: 3px 10px; border-radius: 10px; white-space: nowrap; }
+.tzs-gchip.on { color: var(--text, #e8e6df); border-color: #6d5aa8; background: rgba(109,90,168,.14); }
+.tzs-search { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
+.tzs-input { width: 100%; background: var(--elevated, #0a0d12); border: 1px solid var(--line, #1b1d12); color: var(--text, #e8e6df);
+  font-size: 12px; padding: 5px 26px 5px 9px; border-radius: 8px; outline: none; }
+.tzs-input:focus { border-color: #6d5aa8; }
+.tzs-clear { position: absolute; right: 4px; background: none; border: none; color: var(--mute, #9a957a); cursor: pointer; font-size: 12px; padding: 2px 5px; }
+.tzs-clear:hover { color: var(--text, #e8e6df); }
+.tzs-refresh { background: none; border: 1px solid var(--line, #1b1d12); color: var(--mute, #9a957a); font-size: 12px;
+  cursor: pointer; padding: 3px 9px; border-radius: 8px; white-space: nowrap; }
+.tzs-refresh:hover:not(:disabled) { color: var(--text, #e8e6df); border-color: var(--mute, #9a957a); }
+.tzs-refresh:disabled { opacity: .6; cursor: default; }
+
+.tzs-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 11px; }
+.tzs-loading, .tzs-error, .tzs-empty { color: var(--mute, #9a957a); font-size: 13px; padding: 18px; text-align: center; }
+.tzs-error { color: var(--warn, #f0a020); }
+.tzs-muted { color: var(--mute, #9a957a); font-size: 12px; font-weight: 400; }
+
+/* 帖子卡片 */
+.tzs-list { display: flex; flex-direction: column; gap: 11px; }
+.tzs-item { background: var(--elevated, #0a0d12); border: 1px solid var(--line, #1b1d12); border-left: 3px solid #6d5aa8;
+  border-radius: 11px; padding: 11px 13px; display: flex; flex-direction: column; gap: 8px; }
+.tzs-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tzs-item-author { font-size: 12.5px; font-weight: 700; color: var(--text, #e8e6df); }
+.tzs-item-badge { font-size: 10px; color: #f7c948; background: rgba(247,201,72,.12); border: 1px solid rgba(247,201,72,.4);
+  border-radius: 8px; padding: 1px 7px; }
+.tzs-item-date { font-size: 11px; color: var(--mute, #9a957a); }
+.tzs-item-likes { font-size: 11px; color: var(--mute, #9a957a); margin-left: auto; }
+
+/* 正文 */
+.tzs-item-body { display: flex; flex-direction: column; gap: 7px; }
+.tzs-h { font-size: 12.5px; font-weight: 700; color: #c4b5fd; margin-top: 2px; }
+.tzs-para { margin: 0; font-size: 12.5px; line-height: 1.62; color: var(--text, #e8e6df); white-space: pre-wrap; word-break: break-word; }
+.tzs-qa { display: flex; gap: 7px; align-items: flex-start; }
+.tzs-qa-tag { flex: 0 0 auto; font-size: 10px; font-weight: 800; border-radius: 6px; padding: 2px 6px; margin-top: 2px; }
+.tzs-q .tzs-qa-tag { color: #4ea3ff; background: rgba(78,163,255,.13); }
+.tzs-a .tzs-qa-tag { color: var(--up, #2bd96a); background: rgba(43,217,106,.12); }
+.tzs-qa-text { font-size: 12.5px; line-height: 1.6; color: var(--text, #e8e6df); word-break: break-word; }
+.tzs-expand { align-self: flex-start; background: none; border: none; color: #4ea3ff; font-size: 12px; cursor: pointer; padding: 0; }
+.tzs-expand:hover { text-decoration: underline; }
+
+/* 图片（知识星球图床防盗链：no-referrer 由 img 属性负责） */
+.tzs-imgs { display: flex; flex-wrap: wrap; gap: 7px; }
+.tzs-img-btn { background: none; border: 1px solid var(--line, #1b1d12); border-radius: 9px; padding: 0; cursor: zoom-in; overflow: hidden; }
+.tzs-img { display: block; width: 132px; height: 132px; object-fit: cover; }
+
+/* 评论 */
+.tzs-cmts-toggle { align-self: flex-start; background: none; border: 1px dashed var(--line, #1b1d12); color: var(--mute, #9a957a);
+  font-size: 11.5px; cursor: pointer; padding: 3px 10px; border-radius: 9px; }
+.tzs-cmts-toggle:hover { color: var(--text, #e8e6df); border-color: var(--mute, #9a957a); }
+.tzs-cmts { border-top: 1px dashed var(--line, #1b1d12); padding-top: 8px; display: flex; flex-direction: column; gap: 7px; }
+.tzs-cmts-h { font-size: 12px; font-weight: 700; color: var(--text, #e8e6df); display: flex; align-items: center; gap: 7px; }
+.tzs-cmts-fold { margin-left: auto; background: none; border: none; color: var(--mute, #9a957a); font-size: 11px; cursor: pointer; }
+.tzs-cmts-fold:hover { color: var(--text, #e8e6df); }
+.tzs-cmt { border-left: 2px solid var(--line, #1b1d12); padding-left: 9px; }
+.tzs-cmt--reply { margin-left: 16px; }
+.tzs-cmt-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.tzs-cmt-author { font-size: 11.5px; font-weight: 700; color: #9ecbff; }
+.tzs-cmt-replyto { font-size: 11px; color: var(--mute, #9a957a); }
+.tzs-cmt-pin { font-size: 10px; color: #f7c948; border: 1px solid rgba(247,201,72,.4); border-radius: 7px; padding: 0 6px; }
+.tzs-cmt-date, .tzs-cmt-likes { font-size: 10.5px; color: var(--mute, #9a957a); }
+.tzs-cmt-text { font-size: 12px; line-height: 1.55; color: var(--text, #e8e6df); white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+.tzs-cmts-more { align-self: flex-start; background: none; border: 1px solid var(--line, #1b1d12); color: var(--mute, #9a957a);
+  font-size: 11.5px; cursor: pointer; padding: 3px 10px; border-radius: 9px; }
+.tzs-cmts-more:hover:not(:disabled) { color: var(--text, #e8e6df); border-color: var(--mute, #9a957a); }
+.tzs-cmt-err { font-size: 11.5px; color: var(--warn, #f0a020); }
+
+/* 出处 / 加载更早 / 免责 */
+.tzs-item-meta { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--mute, #9a957a); }
+.tzs-src { color: #4ea3ff; text-decoration: none; }
+.tzs-src:hover { text-decoration: underline; }
+.tzs-more { background: none; border: 1px solid var(--line, #1b1d12); color: var(--mute, #9a957a); font-size: 12px;
+  cursor: pointer; padding: 6px; border-radius: 9px; }
+.tzs-more:hover:not(:disabled) { color: var(--text, #e8e6df); border-color: var(--mute, #9a957a); }
+.tzs-more:disabled { opacity: .6; cursor: default; }
+.tzs-disclaimer { font-size: 11px; color: var(--mute, #9a957a); border-top: 1px dashed var(--line, #1b1d12); padding-top: 9px; }
+
+/* 图片灯箱 */
+.tzs-lightbox { position: fixed; inset: 0; z-index: 1300; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center; padding: 28px; }
+.tzs-lightbox-img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 16px 60px rgba(0,0,0,.7); }
+.tzs-lightbox-x { position: absolute; top: 14px; right: 16px; background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }

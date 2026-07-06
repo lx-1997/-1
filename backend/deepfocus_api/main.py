@@ -3874,6 +3874,39 @@ async def celebrity_topic_comments(request: Request, celeb_id: str, topic: str =
     return res
 
 
+def _require_star_stream_user(request: Request) -> dict:
+    """星球纪要（知识星球帖子流）仅白名单（复用 iFinD 白名单）：第三方付费社群内容，不对外。"""
+    from . import ifind_api  # noqa: PLC0415
+    claims = require_current_user(request)
+    if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
+        raise HTTPException(status_code=403, detail="星球纪要暂未对你的账号开放")
+    return claims
+
+
+@app.get("/api/zsxq/stream")
+async def api_zsxq_stream(
+    request: Request, group: str = "", q: str = "", before: str = "", limit: int = 20, refresh: bool = False,
+) -> dict[str, Any]:
+    """星球纪要：知识星球普通帖子的独立信息流（调研纪要 / 动态点评；研报标签只覆盖星球文件）。
+    before=上一页 next_before 游标（「加载更早」）；q=关键词搜索。仅白名单可见。"""
+    _require_star_stream_user(request)
+    from .zsxq_stream import fetch_stream  # noqa: PLC0415
+    try:
+        return await fetch_stream(group=group, keyword=q, limit=limit, end_time=before, use_cache=not refresh)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"星球纪要拉取失败：{str(exc)[:100]}") from exc
+
+
+@app.get("/api/zsxq/topic-comments")
+async def api_zsxq_topic_comments(request: Request, topic_id: str = "", limit: int = 100) -> dict[str, Any]:
+    """星球纪要某帖的完整评论（列表随帖只带前几条预览）。仅白名单可见。"""
+    _require_star_stream_user(request)
+    from .zsxq_stream import fetch_comments  # noqa: PLC0415
+    return await fetch_comments(topic_id, limit=limit)
+
+
 @app.post("/api/admin/celebrity/config")
 async def admin_celebrity_config(request: Request) -> dict[str, Any]:
     """改名人观点配置（启用/数据源/星球ID/免责/名人花名册与观点条目）。管理端，需令牌。"""

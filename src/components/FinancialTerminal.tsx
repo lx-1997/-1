@@ -25,6 +25,7 @@ import TerminalHelp from './TerminalHelp';
 import TerminalReferral from './TerminalReferral';
 import TerminalAiFund from './TerminalAiFund';
 import TerminalCelebrityViews from './TerminalCelebrityViews';
+import TerminalZsxqStream from './TerminalZsxqStream';
 import TerminalWeixinBind from './TerminalWeixinBind';
 import TerminalKline from './TerminalKline';
 import TerminalStockPanel from './TerminalStockPanel';
@@ -2766,8 +2767,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const isResearch = feedFilter === '研报';        // 研报标签：信息流面板切换为研报视图
   // 名人观点：仅白名单(lx199710)在资讯流加一个「名人观点」标签（研报旁），切到内联名人观点视图。
   const isCelebUser = IFIND_USERS.has((authUser || '').toLowerCase());
-  const feedFilters = isCelebUser ? [...FEED_FILTERS, { key: '名人观点', label: '名人观点' }] : FEED_FILTERS;
+  const feedFilters = isCelebUser
+    ? [...FEED_FILTERS, { key: '名人观点', label: '名人观点' }, { key: '星球纪要', label: '星球纪要' }]
+    : FEED_FILTERS;
   const isCelebrity = isCelebUser && feedFilter === '名人观点';  // 非白名单恒 false（防 localStorage 残留越权）
+  const isZsxqStream = isCelebUser && feedFilter === '星球纪要'; // 星球普通帖子流（调研纪要），同白名单口径
 
   // ⭐已取消「A股 / 港美股」分市场:研报标题中英混杂、源头无市场字段,classifyMarket 启发式误分多,
   // 与其分错不如不分——统一一个列表(用户决策)。resFiltered 即全量 reportFeed。
@@ -3377,7 +3381,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section className={`bbt-panel${maxed && maxed !== 'news' ? ' bbt-hide' : ''}${collapsed.news ? ' bbt-panel--collapsed' : ''}`}>
           <div className="bbt-ph">
             <button className="bbt-collapse-btn" aria-label="实时资讯" aria-expanded={!collapsed.news} title={collapsed.news ? '展开' : '收起'} onClick={() => toggleCollapse('news')}>{collapsed.news ? '▸' : '▾'}</button>
-            {isCelebrity ? 'VOICES · 名人观点' : isResearch ? 'RESEARCH · 研报' : 'NEWS WIRE · 实时资讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
+            {isCelebrity ? 'VOICES · 名人观点' : isZsxqStream ? 'NOTES · 星球纪要' : isResearch ? 'RESEARCH · 研报' : 'NEWS WIRE · 实时资讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
             <span className="bbt-filters" role="tablist" aria-label="资讯分类">{feedFilters.map(f => (
               <button key={f.key} role="tab" aria-selected={feedFilter === f.key} data-cat={f.key}
                 className={`bbt-chip ${feedFilter === f.key ? 'on' : ''}`}
@@ -3399,7 +3403,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </div>
           )}
 
-          {!isResearch && !isCelebrity && (
+          {!isResearch && !isCelebrity && !isZsxqStream && (
             <div className="bbt-res-bar">
               <span className="bbt-res-search">
                 <input className="bbt-res-input" value={newsQuery} placeholder="🔍 搜快讯 / 文章（关键词，可空格多词）…" onChange={e => setNewsQuery(e.target.value)} />
@@ -3411,6 +3415,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
           {isCelebrity ? (
             <TerminalCelebrityViews inline />
+          ) : isZsxqStream ? (
+            <TerminalZsxqStream inline />
           ) : isResearch ? (
             <div className="bbt-res">
               {resFiltered.length === 0 && (
