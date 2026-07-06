@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -169,11 +170,47 @@ def _resolve_symbol(title: str, content: str) -> "str | None":
         return None
 
 
+_BRACKET_HEAD_RE = re.compile(r"^\s*【([^】]{1,60})】")
+_SENT_END = "。！？!?\n"
+
+
+def _clean_title(title: str, content: str) -> str:
+    """修复上游标题退化：lxaa 快讯源常把正文截前 120 字塞进 title（与正文重复且截断），
+    导致卡片/复制/分享把标题+正文各显示一次 = "重复且都不全"。
+
+    ⭐先判『标题是否退化』再重建——退化=title 是正文的同源前缀，或 title 过长(≥60)。
+    只有退化标题才重建（①正文以【标题】开头→取括号标题；②否则取正文首句）；独立编辑标题
+    （如文章"美光3QFY26业绩点评"，与正文开头的机构署名【中泰非银】无前缀关系）一律不动。幂等。"""
+    title = (title or "").strip()
+    content = (content or "").strip()
+    if not content:
+        return title or "(无标题)"
+    # 退化判定：title 是正文的同源前缀『且正文严格更长』（=标题被截断、后面还有内容），或 title 极长(≥100)。
+    # 关键：正文不比标题长 → title 就是这条完整快讯本身(如"南向资金净买额达100亿元。")，绝不重建，否则
+    # 会把完整短标题截成半句或只删个句号=无谓churn；独立编辑标题(文章)也因非前缀而不动。
+    truncated_prefix = (
+        len(title) >= 12
+        and len(content) > len(title)
+        and content.startswith(title[: min(len(title), 20)])
+    )
+    if not (truncated_prefix or len(title) >= 100):
+        return title or "(无标题)"
+    m = _BRACKET_HEAD_RE.match(content)
+    if m and m.group(1).strip():
+        return f"【{m.group(1).strip()}】"
+    body = content.lstrip()
+    cut = next((i for i, ch in enumerate(body[:60]) if ch in _SENT_END), None)
+    if cut is not None and cut >= 6:
+        return body[:cut].strip()
+    return (body[:30].strip() + "…") if len(body) > 30 else (body.strip() or "(无标题)")
+
+
 def _to_request(event: dict) -> RealtimeMessageCreateRequest:
     etype = str(event.get("type") or "").strip()
     meta = _TYPE_META.get(etype, {"topic": "资讯", "source_type": "dao", "tag": etype or "资讯"})
-    title = str(event.get("title") or "").strip() or "(无标题)"
     content = str(event.get("content") or "").strip()
+    # 标题归一化：上游(尤其 lxaa 源)约 24% 快讯的 title = 正文截前120字 → 用正文重建干净短标题
+    title = _clean_title(str(event.get("title") or ""), content) or "(无标题)"
     # 情绪标签：AI 判定优先（DAO 采集端 MiniMax 结构化分析），关键词只做兜底
     ai_sent = str(event.get("ai_sentiment") or "").strip()
     ai_impact = str(event.get("ai_impact") or "").strip()

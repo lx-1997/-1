@@ -289,6 +289,21 @@ function stripUrls(text?: string | null): string {
     .replace(/[ \t　]{2,}/g, ' ')
     .trim();
 }
+// 快讯「标题=正文前缀」老问题：上游(尤其 lxaa 源)把正文截前 120 字塞进标题，或正文重复标题开头
+// → 卡片/复制/分享把标题和正文各显示一次，看起来"重复且都不全"。取正文里【标题之后】的部分作展示正文，
+// 与标题重复的公共前缀一律剥掉。返回空串=正文与标题无实质增量（只显示标题即可）。
+function newsBodyTail(title?: string | null, content?: string | null): string {
+  const t = (title || '').trim();
+  const c = (content || '').trim();
+  if (!c) return '';
+  if (!t) return c;
+  let i = 0; const n = Math.min(t.length, c.length);
+  while (i < n && t[i] === c[i]) i += 1;
+  if (i >= Math.min(8, t.length)) {          // 有实质公共前缀才剥（避免首字符偶合误伤）
+    return c.slice(i).replace(/^[\s。，、；：·・\-—|　]+/, '').trim();
+  }
+  return c !== t ? c : '';
+}
 // 文章「原文」链接：优先 url 字段；有些文章(如飞书纪要/外部 doc)把链接存在 content 正文里 → 兜底抽出首个链接。
 function articleOriginalUrl(m?: { url?: string | null; content?: string | null } | null): string {
   if (!m) return '';
@@ -1770,7 +1785,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     // 头条:「DeepFocus快讯丨6月24日讯，<原文标题>。」标题已带句末标点则不再补
     const lead = `DeepFocus快讯${dateLabel ? `丨${dateLabel}讯，` : '丨'}${headline}${/[。！？!?…」』）)\.]$/.test(headline) ? '' : '。'}`;
     const parts: string[] = [lead];
-    if (m.content && m.content !== m.title) parts.push('', m.content);   // 正文(有更详内容才带,空行分隔)
+    const bodyTail = newsBodyTail(m.title, m.content);   // 正文里标题之后的增量(剥掉与标题重复的前缀,避免复制文本里标题出现两遍)
+    if (bodyTail) parts.push('', bodyTail);
     if (m.url && !isOwnHosted(m)) parts.push('', `原文：${m.url}`);        // 竞品域名(futoucaixin)原文链接不外泄
     // 引流链接带追踪：已登录用户带本人邀请码(?ref=)→ 复制传播即计入邀请归因。
     // ⭐链接从裸首页改为【这条快讯的落地页】：复制文本已含全文，收信人需要一个文本里没有的东西
@@ -2257,7 +2273,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       catch { return ''; }
     })();
     const titleLines = wrap(m.title || '', F(20, '700'), maxW);
-    const bodyRaw = (m.content && m.content !== m.title) ? m.content : '';
+    const bodyRaw = newsBodyTail(m.title, m.content);   // 剥掉与标题重复的前缀,分享图里正文不再复述标题
     const bodyLines = bodyRaw ? wrap(bodyRaw, F(15), maxW).slice(0, 16) : [];
     const qrSize = qr ? 92 : 0;
     let h = PAD + 26 + 10 + titleLines.length * 30 + (bodyLines.length ? 10 + bodyLines.length * 25 : 0);
@@ -2849,11 +2865,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                         logAct('share_click', '文章分享·头条');
                         const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
                         const t = stripUrls(m.title) || m.title;
-                        const body = stripUrls(m.content);
+                        const tail = newsBodyTail(t, stripUrls(m.content));
                         return {
                           kind: 'article',
                           title: t,
-                          summary: body && body !== t ? (body.length > 80 ? body.slice(0, 80) + '…' : body) : '',
+                          summary: tail ? (tail.length > 80 ? tail.slice(0, 80) + '…' : tail) : '',
                           url: `${site}/article/${m.id}`,
                         };
                       }}
@@ -2911,7 +2927,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           >{SEV_TAG[m.severity]}</span>
         )}
         <span className="bbt-ntopic">{`{${m.topic || '资讯'}}`}</span>
-        {(() => { const t = stripUrls(m.title) || m.title; const body = stripUrls(m.content); return <span className="bbt-ntext">{t}{body && body !== t ? `　${body.slice(0, 100)}` : ''}</span>; })()}
+        {(() => { const t = stripUrls(m.title) || m.title; const tail = newsBodyTail(t, stripUrls(m.content)); return <span className="bbt-ntext">{t}{tail ? `　${tail.slice(0, 100)}` : ''}</span>; })()}
         <span className="bbt-nact">
           {canBookmark && <button className={'bbt-nbm' + (isBm ? ' on' : '')} aria-label="收藏" aria-pressed={isBm} title={isBm ? '取消收藏' : '收藏'} onClick={e => { e.stopPropagation(); toggleBookmark(m); }}>{isBm ? '★' : '☆'}</button>}
           {isFlash ? (
@@ -2943,12 +2959,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       logAct('share_click', '文章分享');
                       const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
                       const t = stripUrls(m.title) || m.title;
-                      const body = stripUrls(m.content);
-                      // 正文与标题不同才作摘要(钩子,超 80 字带省略号),避免标题重复;不带来源 byline(品牌归属由文案脚注承担,且不外露内部聚合源名)
+                      const tail = newsBodyTail(t, stripUrls(m.content));
+                      // 正文里标题之后的增量作摘要(钩子,超 80 字带省略号),避免标题重复;不带来源 byline(品牌归属由文案脚注承担,且不外露内部聚合源名)
                       return {
                         kind: 'article',
                         title: t,
-                        summary: body && body !== t ? (body.length > 80 ? body.slice(0, 80) + '…' : body) : '',
+                        summary: tail ? (tail.length > 80 ? tail.slice(0, 80) + '…' : tail) : '',
                         url: `${site}/article/${m.id}`,
                       };
                     }}
