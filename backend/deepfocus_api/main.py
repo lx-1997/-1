@@ -8029,6 +8029,24 @@ async def public_sitemap() -> Response:
         article_ids.append(m.id)
         if getattr(m, "created_at", None):
             lastmod[f"{base}/article/{m.id}"] = str(m.created_at)
+    # 快讯：也走 /article/{id} 落地页，纳入 sitemap（用户要求可被百度/谷歌/AI 搜到）。滤掉过短的薄快讯。
+    flash_ids: list[str] = []
+    for m in list_realtime_messages(topic="快讯", limit=300):
+        if len((m.content or m.title or "").strip()) < 30:
+            continue
+        flash_ids.append(m.id)
+        if getattr(m, "created_at", None):
+            lastmod[f"{base}/article/{m.id}"] = str(m.created_at)
+    # 机构纪要：/note/{id}（用户拍板放开 SEO 收录 2026-07-06）
+    from . import zsxq_stream
+    note_ids: list[str] = []
+    for it in zsxq_stream.recent_share_topics(200):
+        nid = str(it.get("id") or "")
+        if not nid:
+            continue
+        note_ids.append(nid)
+        if it.get("date"):
+            lastmod[f"{base}/note/{nid}"] = str(it["date"])
     qa_slugs = [it["slug"] for it in _public_qa_items(200)]  # C3：投研问答页
     report_ids: list[str] = []
     for rid in report_share.all_ids(300):  # 研报解读分享页（软墙引流，发现通道）
@@ -8040,7 +8058,8 @@ async def public_sitemap() -> Response:
             lastmod[f"{base}/report/{rid}"] = str(rec["created_at"])
     return Response(
         seo_pages.render_sitemap_xml(dates, symbols, article_ids, lastmod_map=lastmod,
-                                     qa_slugs=qa_slugs, report_ids=report_ids),
+                                     qa_slugs=qa_slugs, report_ids=report_ids,
+                                     flash_ids=flash_ids, note_ids=note_ids),
         media_type="application/xml",
     )
 
@@ -8150,6 +8169,13 @@ async def public_article_page(article_id: str, request: Request) -> HTMLResponse
     return HTMLResponse(
         seo_pages.render_article_page_html(article.model_dump(mode="json"), recent, page_url=_canonical_url(request))
     )
+
+
+@app.get("/notes", response_class=HTMLResponse, include_in_schema=False)
+async def public_notes_hub() -> HTMLResponse:
+    """机构纪要公开列表页：给搜索/AI 引擎一条发现入口 + 内链到每条 /note/{id}（用户拍板放开收录 2026-07-06）。"""
+    from . import zsxq_stream
+    return HTMLResponse(seo_pages.render_notes_hub_html(zsxq_stream.recent_share_topics(200)))
 
 
 @app.get("/note/{note_id}", response_class=HTMLResponse, include_in_schema=False)

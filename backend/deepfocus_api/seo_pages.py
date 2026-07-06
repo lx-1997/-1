@@ -847,7 +847,21 @@ def render_note_page_html(topic: dict[str, Any], page_url: str = "") -> str:
         '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>与每日 A 股收盘复盘</li>'
         '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 打开即用</p></div>'
     )
-    trail = [("首页", f"{BASE_URL}/"), ("机构纪要", f"{BASE_URL}/note/{nid}")]
+    trail = [("首页", f"{BASE_URL}/"), ("机构纪要", f"{BASE_URL}/notes"), (title[:30], canonical)]
+    published = _iso(when)
+    article = {  # GEO：给搜索/AI 引擎结构化的可抽取实体（仅 teaser，非全文）
+        "@type": "Article",
+        "headline": title[:110],
+        "description": lead[:200],
+        "inLanguage": "zh-CN",
+        "articleSection": "机构纪要",
+        "image": DEFAULT_OG_IMAGE,
+        "author": {"@id": ORG_ID},
+        "publisher": {"@id": ORG_ID},
+        "isAccessibleForFree": True,
+        **({"datePublished": published, "dateModified": published} if published else {}),
+        **({"mainEntityOfPage": canonical} if canonical else {}),
+    }
     return _page(
         title=title,
         description=lead or f"{title} · DeepFocus 机构纪要。",
@@ -855,9 +869,31 @@ def render_note_page_html(topic: dict[str, Any], page_url: str = "") -> str:
         canonical=canonical,
         cta_href=APP_URL,
         cta_text="打开 DeepFocus 看完整机构纪要 →",   # 用户拍板放开匿名可见→CTA 不再要求登录
-        graph=_graph(_breadcrumb_node(trail)),
+        graph=_graph(_breadcrumb_node(trail), article),
         # 用户拍板放开 SEO 收录（2026-07-06）：落地页仅标题+≤100字导语钩子（全文在 SPA 不入 HTML→
         # 搜索引擎只收录 teaser 非全文）；noindex 已去除。⚠️第三方付费内容收录风险已知并接受。
+    )
+
+
+def render_notes_hub_html(items: list[dict[str, Any]]) -> str:
+    """机构纪要公开列表页（/notes）：给搜索/AI 引擎一条发现全部机构纪要的入口 + 内链到每条 /note/{id}。"""
+    rows = "".join(
+        f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
+        f'href="{_esc(BASE_URL)}/note/{_esc(it.get("id"))}">{_esc((it.get("title") or "机构纪要")[:56])}</a></div>'
+        f'<ul><li>{_esc(str(it.get("date") or ""))} · {_esc((it.get("lead") or "")[:70])}</li></ul></div>'
+        for it in items if it.get("id")
+    ) or "<p>暂无机构纪要。</p>"
+    body = (
+        "<h1>机构纪要</h1>"
+        '<div class="meta">机构调研纪要 / 个股动态点评聚合，仅供研究参考，不构成投资建议。打开 DeepFocus 看完整内容。</div>' + rows
+    )
+    trail = [("首页", f"{BASE_URL}/"), ("机构纪要", f"{BASE_URL}/notes")]
+    return _page(
+        title="机构纪要 · 机构调研纪要与个股动态点评",
+        description="DeepFocus 机构纪要：机构调研会议纪要、个股动态点评聚合。每条含标题与摘要，打开 App 看完整内容。仅供研究参考，不构成投资建议。",
+        body=body,
+        canonical=f"{BASE_URL}/notes",
+        graph=_graph(_breadcrumb_node(trail)),
     )
 
 
@@ -1268,6 +1304,8 @@ def render_sitemap_xml(
     lastmod_map: Optional[dict[str, str]] = None,
     qa_slugs: Optional[list[str]] = None,
     report_ids: Optional[list[str]] = None,
+    flash_ids: Optional[list[str]] = None,
+    note_ids: Optional[list[str]] = None,
 ) -> str:
     """站点地图：静态页固定优先级，内容页带真实 lastmod（lastmod_map 按完整 URL 提供时间戳）。"""
     lm = lastmod_map or {}
@@ -1281,6 +1319,7 @@ def render_sitemap_xml(
         _sitemap_url(f"{BASE_URL}/reports", changefreq="daily", priority="0.7"),
         _sitemap_url(f"{BASE_URL}/track-record", changefreq="daily", priority="0.7"),
         _sitemap_url(f"{BASE_URL}/lhb", changefreq="daily", priority="0.7"),
+        _sitemap_url(f"{BASE_URL}/notes", changefreq="hourly", priority="0.7"),
     ]
     for slug in (qa_slugs or []):
         u = f"{BASE_URL}/qa/{slug}"
@@ -1297,6 +1336,12 @@ def render_sitemap_xml(
         entries.append(_sitemap_url(u, lastmod=lm.get(u), changefreq="daily", priority="0.6"))
     for a in (article_ids or []):
         u = f"{BASE_URL}/article/{a}"
+        entries.append(_sitemap_url(u, lastmod=lm.get(u), changefreq="weekly", priority="0.5"))
+    for fid in (flash_ids or []):        # 快讯：同 /article/{id} 落地页，时效性高→hourly/低优先级
+        u = f"{BASE_URL}/article/{fid}"
+        entries.append(_sitemap_url(u, lastmod=lm.get(u), changefreq="hourly", priority="0.4"))
+    for nid in (note_ids or []):         # 机构纪要 → /note/{id}
+        u = f"{BASE_URL}/note/{nid}"
         entries.append(_sitemap_url(u, lastmod=lm.get(u), changefreq="weekly", priority="0.5"))
     for rid in (report_ids or []):
         u = f"{BASE_URL}/report/{rid}"
@@ -1347,9 +1392,12 @@ def render_llms_txt() -> str:
 - [投研问答]({BASE_URL}/qa)：用户高频股票 / 市场问题的 AI 多维取数解答，answer-first + FAQ 结构，每问一页。
 - [财经术语科普]({BASE_URL}/learn)：市盈率 / 换手率 / ROE / MACD / 杯柄形态等常用概念一文看懂（纯科普）。
 - [财经资讯文章]({BASE_URL}/articles)：聚合财经资讯（公开为标题 + 来源 + 摘要，全文需登录）。
+- [实时快讯]({BASE_URL}/articles)：A股实时财经快讯，比券商 App 早一步。每条快讯见 {BASE_URL}/article/{{id}}（标题 + 摘要公开可引用）。
+- [机构纪要]({BASE_URL}/notes)：机构调研会议纪要 / 个股动态点评聚合，每条含标题与摘要。单条见 {BASE_URL}/note/{{id}}。
 
 ## 站点地图
 - {BASE_URL}/sitemap.xml
+- {BASE_URL}/feed.xml（RSS 增量）
 
 ## 引用规范
 - 来源请注明 DeepFocus（{BASE_URL}）。

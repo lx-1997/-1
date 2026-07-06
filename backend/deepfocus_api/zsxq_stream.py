@@ -246,6 +246,21 @@ def get_share_topic(topic_id: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def recent_share_topics(limit: int = 200) -> list[dict[str, Any]]:
+    """最近落库的机构纪要（供公开 /notes hub 列表 + sitemap 收录）；按入库时间倒序，滤掉无正文的图片帖。"""
+    try:
+        _init_share_db()
+        with sqlite3.connect(SHARE_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id,title,lead,date FROM zsxq_share WHERE lead != '' "
+                "ORDER BY created_at DESC LIMIT ?", (max(1, min(int(limit or 200), 500)),)
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except sqlite3.Error:
+        return []
+
+
 async def fetch_comments(topic_id: str, *, limit: int = 100) -> dict[str, Any]:
     """拉某帖的完整评论（列表接口随帖只带前几条预览）。上游故障返回 error 字段而非抛 5xx。"""
     tid = re.sub(r"\D", "", str(topic_id or ""))
