@@ -5,15 +5,19 @@
 独立标签展示：复用同机 Node 工作台 /api/search-topics（与名人观点同一条链路），
 默认拉 ZSXQ_GROUP（水木调研纪要-2.0）最新帖子，支持关键词搜索与「加载更早」游标翻页。
 
-⚠️ 第三方付费社群内容：仅白名单账号可见（与 iFinD / 研报原文同口径），
-不进公开信息流 / SEO / 分享面，main.py 端点侧硬门控。
+⚠️ 第三方付费社群内容：站内信息流仅白名单账号可见（与 iFinD / 研报原文同口径），main.py 端点侧硬门控。
+分享=用户拍板可对外（2026-07-06）：白名单用户可把单条纪要分享成 /note/{id} 公开软墙页，但只出
+**标题+≤100字导语钩子**（不放全文、不透星球来源、noindex+不进 sitemap，仅可链接转发不做搜索收录），
+全文仍锁在站内白名单后。持久化见 _persist_share_topics/get_share_topic。
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import sqlite3
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -168,7 +172,78 @@ async def fetch_stream(
         _CACHE[ckey] = (now, out)
         while len(_CACHE) > _CACHE_MAX:
             _CACHE.pop(min(_CACHE.items(), key=lambda kv: kv[1][0])[0], None)
+    _persist_share_topics(items)  # 只落 id/标题/短导语/日期，供 /note/{id} 分享落地页（不存全文）
     return out
+
+
+# --------------------------------------------------------------------------- #
+# 分享落地页持久化：白名单用户分享机构纪要 → /note/{id} 公开软墙页（标题+短导语钩子，
+# 不放全文/不透来源/noindex）。只存构建钩子所需的最小字段，不存全文——降低第三方内容留存面。
+# --------------------------------------------------------------------------- #
+SHARE_DB = Path(
+    os.getenv(
+        "DEEPFOCUS_ZSXQ_SHARE_DB_PATH",
+        str(Path(__file__).resolve().parents[1] / ".zsxq_share.sqlite3"),
+    )
+)
+_SHARE_MAX = 8000        # 行数上限，滚动裁剪（1.8G 机器守内存/磁盘）
+_SHARE_LEAD_LEN = 100    # 公开导语长度：够钩子、远不够全文
+
+
+def _init_share_db() -> None:
+    SHARE_DB.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(SHARE_DB) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS zsxq_share "
+            "(id TEXT PRIMARY KEY, title TEXT NOT NULL, lead TEXT NOT NULL, date TEXT, created_at REAL NOT NULL)"
+        )
+        conn.commit()
+
+
+def _persist_share_topics(items: list[dict[str, Any]]) -> None:
+    """把本次拉到的帖子的 id/标题/短导语落库（幂等 upsert）。失败不阻塞主流程。"""
+    rows = []
+    for it in items or []:
+        tid = str(it.get("id") or "").strip()
+        if not tid:
+            continue
+        title = str(it.get("title") or "").strip()[:120]
+        flat = " ".join(str(it.get("text") or "").split())
+        lead = flat[:_SHARE_LEAD_LEN] + ("…" if len(flat) > _SHARE_LEAD_LEN else "")
+        rows.append((tid, title, lead, str(it.get("date") or ""), time.time()))
+    if not rows:
+        return
+    try:
+        _init_share_db()
+        with sqlite3.connect(SHARE_DB) as conn:
+            conn.executemany(
+                "INSERT INTO zsxq_share (id,title,lead,date,created_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET title=excluded.title, lead=excluded.lead, date=excluded.date",
+                rows,
+            )
+            conn.execute(
+                "DELETE FROM zsxq_share WHERE id NOT IN "
+                "(SELECT id FROM zsxq_share ORDER BY created_at DESC LIMIT ?)",
+                (_SHARE_MAX,),
+            )
+            conn.commit()
+    except sqlite3.Error:
+        pass
+
+
+def get_share_topic(topic_id: str) -> Optional[dict[str, Any]]:
+    """按 id 取分享落地页所需字段（title/lead/date）；不存在返回 None。公开路由用，不需鉴权。"""
+    tid = re.sub(r"\D", "", str(topic_id or ""))
+    if not tid:
+        return None
+    try:
+        _init_share_db()
+        with sqlite3.connect(SHARE_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT id,title,lead,date FROM zsxq_share WHERE id=?", (tid,)).fetchone()
+        return dict(row) if row else None
+    except sqlite3.Error:
+        return None
 
 
 async def fetch_comments(topic_id: str, *, limit: int = 100) -> dict[str, Any]:

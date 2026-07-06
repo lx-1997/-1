@@ -5837,6 +5837,9 @@ async def run_watchlist_scan() -> None:
             await asyncio.sleep(300)
 
 
+_SCHED_BROADCAST_GAP = float(os.getenv("DEEPFOCUS_WEIXIN_SCHED_BROADCAST_GAP", "0.8") or 0.8)  # 群发相邻发送错峰间隔(秒)，防并发尖峰触反垃圾
+
+
 def _wx_sched_guard(text: str) -> str:
     """定时推送出站安全网：合规中性化(荐股措辞)+泄密扫描(剥数据源/工具名/密钥)。
     内容为确定性事实/运营文案(非 LLM 生成)→ 不加「AI 生成」标识(与晨报/复盘 headline 的 AI 标识区别对待)。"""
@@ -5913,26 +5916,41 @@ async def _render_personal_content(uid: str, s: dict) -> Optional[str]:
     return header + "\n".join(lines) + "\n（数据仅供参考，不构成投资建议）"
 
 
-async def _fire_wechat_schedule(mgr, s: dict) -> None:
-    """触发一条定时计划：群发→quasi_push(全体活跃)；个性化→push_to_user(单人)。出站过合规/泄密护栏。"""
+async def _fire_wechat_schedule(mgr, s: dict) -> bool:
+    """触发一条定时计划：群发→quasi_push(全体活跃)；个性化→push_to_user(单人)。出站过合规/泄密护栏。
+
+    返回 done：True=当日已了结(标记去重、不再重试)；False=本次瞬时无人可达(如群发时全员 token 冷)，
+    应留待补发窗口内(≤15min)的下个 tick 重试——把"某一分钟恰好全冷"从"当日永久丢失"救回来。"""
     kind = s.get("kind")
     if kind == "broadcast":
         text = await _render_broadcast_content(s)
         if not text:
             print(f"[weixin-sched] 群发#{s.get('id')} 无内容，跳过")
-            return
-        res = await mgr.quasi_push(_wx_sched_guard(text))
+            return True  # 无内容=当日无话可说，了结（不重试）
+        # 群发错峰：quasi_push 逐个发，传 gap 让相邻发送留间隔（避免一次性对全体活跃绑定并发尖峰触反垃圾）
+        res = await mgr.quasi_push(_wx_sched_guard(text), gap_seconds=_SCHED_BROADCAST_GAP)
         print(f"[weixin-sched] 群发#{s.get('id')} {s.get('content_type')}: {res}")
-    elif kind == "personal":
+        # 送达≥1=了结；全 0(全员 token 冷，瞬时态)=不标记，窗口内下 tick 再试，等有人回暖
+        return int(res.get("delivered") or 0) > 0
+    if kind == "personal":
         uid = (s.get("owner_user_id") or "").strip()
         if not uid:
-            return
+            return True
+        # 触发时(而非仅订阅时)校验会员：会员过期即停推，与自动推「过期自动断流」一致；顺带短路省掉非会员的行情取数
+        from . import weixin_bind as _wb, weixin_channel as _wc
+        _b = _wb.get_by_user(uid)
+        if not _b or not _b.get("active") or not _wc._member_can_push(_b):
+            print(f"[weixin-sched] 个性化#{s.get('id')} 用户非会员/未绑定，跳过（会员过期自动断流）")
+            return True  # 非会员=当日了结（不重试）
         text = await _render_personal_content(uid, s)
         if not text:
             print(f"[weixin-sched] 个性化#{s.get('id')} 无内容(自选空/无命中/取数失败)，跳过")
-            return
+            return True  # 无自选/无命中=当日了结
         ok = await mgr.push_to_user(uid, _wx_sched_guard(text))
         print(f"[weixin-sched] 个性化#{s.get('id')} {s.get('content_type')} → {uid[:12]}: {'sent' if ok else 'skip/fail'}")
+        # 个性化：无论送达与否都了结（token 冷则待用户重新激活，不在窗口内反复空推刷投递日志——与自动推冷跳过一致）
+        return True
+    return True
 
 
 async def run_wechat_scheduled_push() -> None:
@@ -5960,11 +5978,13 @@ async def run_wechat_scheduled_push() -> None:
                     await asyncio.to_thread(wsched.mark_fired, sid, today)  # 非交易日：标记免复扫，次日自然重置
                     continue
                 try:
-                    await _fire_wechat_schedule(mgr, s)
+                    done = await _fire_wechat_schedule(mgr, s)
                 except Exception as exc:  # noqa: BLE001 —— 单条计划失败不拖垮其它
                     print(f"[weixin-sched] 计划#{sid} 触发异常：{type(exc).__name__}")
-                finally:
-                    await asyncio.to_thread(wsched.mark_fired, sid, today)  # 无论成败当日只触发一次（失败不重试刷屏）
+                    done = True  # 异常 → 标记，避免同分钟窗口内重试风暴
+                if done:
+                    await asyncio.to_thread(wsched.mark_fired, sid, today)
+                # done=False（仅群发全员冷这一种）→ 不标记，补发窗口内(≤15min)下 tick 重试；超窗后 due_schedules 不再返回=当日放弃
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -7666,7 +7686,8 @@ async def api_weixin_schedules_create(request: Request, _admin: dict = Depends(r
 async def api_weixin_schedules_update(schedule_id: int, request: Request, _admin: dict = Depends(require_admin)) -> dict:
     """改一条计划（管理端）：title/content/content_type/hour/minute/day_mode/enabled 任意子集。"""
     from . import weixin_schedule as wsched
-    if not wsched.get_schedule(schedule_id):
+    cur = wsched.get_schedule(schedule_id)
+    if not cur:
         raise HTTPException(status_code=404, detail="计划不存在")
     try:
         body = await request.json()
@@ -7674,8 +7695,12 @@ async def api_weixin_schedules_update(schedule_id: int, request: Request, _admin
         body = {}
     fields = {k: v for k, v in body.items()
               if k in ("title", "content", "content_type", "hour", "minute", "day_mode", "enabled")}
-    if "content_type" in fields and fields["content_type"] not in ("text", "news"):
-        raise HTTPException(status_code=400, detail="content_type 仅支持 text / news")
+    # content_type 须与该计划的 kind 匹配：群发=text/news，个性化=watchlist_quote/watchlist_news；
+    # 否则会存下一个渲染层不认的类型（个性化会静默退化成行情快照），列表视图也误导。
+    if "content_type" in fields:
+        allowed_types = ("watchlist_quote", "watchlist_news") if cur.get("kind") == "personal" else ("text", "news")
+        if fields["content_type"] not in allowed_types:
+            raise HTTPException(status_code=400, detail=f"content_type 与计划类型不符，仅支持 {'/'.join(allowed_types)}")
     if isinstance(fields.get("content"), (dict, list)):
         fields["content"] = json.dumps(fields["content"], ensure_ascii=False)
     return {"ok": True, "schedule": wsched.update_schedule(schedule_id, **fields)}
@@ -8125,6 +8150,19 @@ async def public_article_page(article_id: str, request: Request) -> HTMLResponse
     return HTMLResponse(
         seo_pages.render_article_page_html(article.model_dump(mode="json"), recent, page_url=_canonical_url(request))
     )
+
+
+@app.get("/note/{note_id}", response_class=HTMLResponse, include_in_schema=False)
+async def public_note_page(note_id: str, request: Request) -> HTMLResponse:
+    """机构纪要分享落地页（软墙 + noindex）：白名单用户对外分享单条纪要（用户拍板 2026-07-06）。
+
+    ⚠️第三方付费社群内容：只出标题+≤100字导语钩子，不放全文/不透来源/noindex 不进 sitemap；
+    全文仍锁站内白名单。id 未被分享过(未落库)→404，避免枚举探测整个星球。"""
+    from . import zsxq_stream
+    topic = zsxq_stream.get_share_topic(note_id)
+    if not topic:
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    return HTMLResponse(seo_pages.render_note_page_html(topic, page_url=_canonical_url(request)))
 
 
 @app.get("/reports", response_class=HTMLResponse, include_in_schema=False)

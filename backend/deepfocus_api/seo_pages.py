@@ -822,6 +822,43 @@ def render_articles_hub_html(items: list[dict[str, Any]]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 机构纪要分享落地页（/note/{id}）：白名单用户可对外分享单条机构纪要（用户拍板 2026-07-06）。
+# ⚠️第三方付费社群内容合规护栏：①只出标题+≤100字导语钩子,绝不放全文;②不透星球来源(与站内一致);
+# ③noindex+不进 sitemap——仅可链接转发,绝不做搜索引擎收录(收录第三方付费内容是最高风险项);
+# ④全文仍锁站内白名单,故 CTA 是品牌引流「看更多市场纪要」而非承诺本条全文(注册也是白名单外看不到)。
+# --------------------------------------------------------------------------- #
+def render_note_page_html(topic: dict[str, Any], page_url: str = "") -> str:
+    nid = str(topic.get("id") or "")
+    title = str(topic.get("title") or "机构纪要").strip()
+    lead = str(topic.get("lead") or "").strip()
+    when = str(topic.get("date") or "")[:10]
+    canonical = page_url or f"{BASE_URL}/note/{nid}"
+
+    meta_bits = ["机构纪要"]
+    if when:
+        meta_bits.append(_esc(when))
+    parts = [f"<h1>{_esc(title)}</h1>", f'<div class="meta">{" · ".join(meta_bits)}</div>']
+    if lead and lead.strip() != title.strip():
+        parts.append(f'<h2>摘要</h2><div class="lead">{_esc(lead)}</div>')
+    parts.append(
+        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+        '<li>盘中<strong>机构调研纪要 / 个股动态点评</strong>持续更新</li>'
+        '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
+        '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>与每日 A 股收盘复盘</li>'
+        '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 打开即用</p></div>'
+    )
+    return _page(
+        title=title,
+        description=lead or f"{title} · DeepFocus 机构纪要。",
+        body="".join(parts),
+        canonical=canonical,
+        cta_href=APP_URL,
+        cta_text="打开 DeepFocus 看更多市场纪要 →",
+        noindex=True,   # 第三方付费内容：可转发不可收录（合规红线）
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 研报「AI 解读」可分享落地页（软墙）：分享的是我们自己的解读（增值内容），不外露第三方研报原文/PDF。
 # 与文章页同构：标题 + 机构 + 解读导语公开可收录/转发，完整解读需登录在 App 内看（[[report_share]]）。
 # --------------------------------------------------------------------------- #

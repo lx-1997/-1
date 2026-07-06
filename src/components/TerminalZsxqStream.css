@@ -35,6 +35,9 @@
 .tzs-item-badge { font-size: 10px; color: #f7c948; background: rgba(247,201,72,.12); border: 1px solid rgba(247,201,72,.4);
   border-radius: 8px; padding: 1px 7px; }
 .tzs-item-date { font-size: 11px; color: var(--mute, #9a957a); }
+.tzs-share { margin-left: auto; font-size: 11px; color: #9a957a; background: transparent;
+  border: 1px solid rgba(154,149,122,.35); border-radius: 8px; padding: 1px 9px; cursor: pointer; line-height: 1.7; }
+.tzs-share:hover { color: #c4b5fd; border-color: rgba(109,90,168,.55); }
 
 /* 正文 */
 .tzs-item-body { display: flex; flex-direction: column; gap: 7px; }

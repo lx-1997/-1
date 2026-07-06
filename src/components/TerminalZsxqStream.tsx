@@ -7,7 +7,16 @@ import {
   getZsxqStream,
   getZsxqTopicComments,
 } from '../services/zsxqStreamService';
+import ShareButton from './common/ShareButton';
 import './TerminalZsxqStream.css';
+
+// 机构纪要分享钩子：只取标题 + ≤100 字导语（第三方付费内容不外泄全文）。落地页 /note/{id} 同口径 noindex 软墙。
+const noteShareTarget = (item: ZsxqTopic) => {
+  const flat = (item.text || '').replace(/\s+/g, ' ').trim();
+  const lead = flat.length > 100 ? flat.slice(0, 100) + '…' : flat;
+  const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
+  return { kind: 'article', title: (item.title || '机构纪要').trim(), summary: lead, url: `${site}/note/${item.id}` };
+};
 
 /**
  * 星球纪要——知识星球普通帖子的独立信息流（调研会议纪要 / 个股动态点评 / 组合观点）。
@@ -121,6 +130,16 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = (
         <span className="tzs-item-kind">机构纪要</span>
         {item.digested && <span className="tzs-item-badge">精华</span>}
         <span className="tzs-item-date">{fmtDate(item.date || item.create_time)}</span>
+        {item.id && (item.text || '').trim() && (
+          // 纯图片动态无正文→落地页会空,不给分享钮(且不外泄第三方图床)
+          <ShareButton
+            className="tzs-share"
+            modalTitle="分享机构纪要"
+            tooltip="分享这条机构纪要（仅标题+摘要，落地页不含全文）"
+            simple
+            target={() => noteShareTarget(item)}
+          >分享</ShareButton>
+        )}
       </div>
 
       {item.text && <div className="tzs-item-body">{renderBody(bodyText)}</div>}
