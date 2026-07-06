@@ -10,7 +10,7 @@ from deepfocus_api import zsxq_stream as zs
 def test_stream_groups_default_is_research_group():
     groups = zs.stream_groups()
     assert groups and groups[0]["id"]
-    assert groups[0]["name"] == "水木调研纪要"
+    assert groups[0]["name"] == "机构纪要"
 
 
 def test_stream_groups_env_override(monkeypatch):
@@ -24,7 +24,7 @@ def test_stream_groups_env_override(monkeypatch):
 
 def test_stream_groups_bad_env_falls_back(monkeypatch):
     monkeypatch.setenv("DEEPFOCUS_ZSXQ_STREAM_GROUPS", "not-json")
-    assert zs.stream_groups()[0]["name"] == "水木调研纪要"
+    assert zs.stream_groups()[0]["name"] == "机构纪要"
 
 
 def test_norm_topic_full_and_empty():
@@ -41,6 +41,7 @@ def test_norm_topic_full_and_empty():
     assert it["image_fulls"] == ["http://a/1.jpg"]  # 缺原图回退小图
     assert it["comments"][0]["author"] == "张三"
     assert it["comments_count"] == 5
+    assert "author" not in it and "url" not in it  # ⭐不透出星球来源与原文链接
     assert zs._norm_topic({"topicId": "9", "text": "", "images": []}) is None  # 空帖丢弃
     assert zs._norm_topic("junk") is None
 

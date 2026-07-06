@@ -30,7 +30,8 @@
 .tzs-item { background: var(--elevated, #0a0d12); border: 1px solid var(--line, #1b1d12); border-left: 3px solid #6d5aa8;
   border-radius: 11px; padding: 11px 13px; display: flex; flex-direction: column; gap: 8px; }
 .tzs-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.tzs-item-author { font-size: 12.5px; font-weight: 700; color: var(--text, #e8e6df); }
+.tzs-item-kind { font-size: 11px; font-weight: 700; color: #c4b5fd; background: rgba(109,90,168,.14);
+  border: 1px solid rgba(109,90,168,.45); border-radius: 8px; padding: 1px 8px; }
 .tzs-item-badge { font-size: 10px; color: #f7c948; background: rgba(247,201,72,.12); border: 1px solid rgba(247,201,72,.4);
   border-radius: 8px; padding: 1px 7px; }
 .tzs-item-date { font-size: 11px; color: var(--mute, #9a957a); }
@@ -74,10 +75,7 @@
 .tzs-cmts-more:hover:not(:disabled) { color: var(--text, #e8e6df); border-color: var(--mute, #9a957a); }
 .tzs-cmt-err { font-size: 11.5px; color: var(--warn, #f0a020); }
 
-/* 出处 / 加载更早 / 免责 */
-.tzs-item-meta { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--mute, #9a957a); }
-.tzs-src { color: #4ea3ff; text-decoration: none; }
-.tzs-src:hover { text-decoration: underline; }
+/* 加载更早 / 免责 */
 .tzs-more { background: none; border: 1px solid var(--line, #1b1d12); color: var(--mute, #9a957a); font-size: 12px;
   cursor: pointer; padding: 6px; border-radius: 9px; }
 .tzs-more:hover:not(:disabled) { color: var(--text, #e8e6df); border-color: var(--mute, #9a957a); }

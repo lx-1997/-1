@@ -45,7 +45,7 @@ def stream_groups() -> list[dict[str, str]]:
             pass
     from .research_wire import ZSXQ_GROUP  # 局部引入避免循环导入
 
-    return [{"id": ZSXQ_GROUP, "name": "水木调研纪要"}]
+    return [{"id": ZSXQ_GROUP, "name": "机构纪要"}]
 
 
 def _norm_comment(c: Any) -> Optional[dict[str, Any]]:
@@ -77,20 +77,20 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
     ct = str(t.get("create_time") or "").strip()
     comments = [m for m in (_norm_comment(c) for c in (t.get("comments") or [])[:10]) if m]
     first_line = (text.split("\n", 1)[0]).strip()
+    # ⭐不透出来源:响应里刻意不带 author(星球号名)与 url(星球帖子链接)——
+    # 展示面不体现具体星球来源,也不提供跳回原文的入口(用户拍板)。
     return {
         "id": str(t.get("topicId") or "").strip(),
         "title": (first_line[:80] + ("…" if len(first_line) > 80 else "")) or "图片动态",
         "text": text,
         "images": images,
         "image_fulls": image_fulls or images,  # 缺原图回退小图
-        "author": str(t.get("author") or "星球主理人").strip()[:40],
         "create_time": ct,
         "date": ct[:10],
         "digested": bool(t.get("digested")),
         "likes_count": max(0, int(t.get("likes_count") or 0)),
         "comments_count": max(int(t.get("comments_count") or 0), len(comments)),
         "comments": comments,
-        "url": str(t.get("url") or "").strip(),
     }
 
 

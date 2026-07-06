@@ -1324,6 +1324,8 @@ async def lifespan(app: FastAPI):
     init_recall_subscription_db()
     from .weixin_bind import init_weixin_bind_db as _init_weixin_bind_db
     _init_weixin_bind_db()  # 微信 iLink 绑定表（账号↔bot 多租户「扫码即问」）
+    from .weixin_schedule import init_schedule_db as _init_weixin_schedule_db
+    _init_weixin_schedule_db()  # 微信定时推送计划表（群发 + 个性化）
     # 微信 iLink 渠道（扫码即问 + 准推送）——灰色地基/有封号风险，默认关；DEEPFOCUS_WEIXIN_CHANNEL=1 显式开
     global _WEIXIN_MGR
     if os.getenv("DEEPFOCUS_WEIXIN_CHANNEL", "0") == "1":
@@ -1396,13 +1398,15 @@ async def lifespan(app: FastAPI):
     seo_prewarm_task = asyncio.create_task(run_seo_prewarm())
     # 资讯断供 watchdog：交易时段快讯 45min 无入库即告警（富投 token 静默失效已实证两次整天空转）
     feed_watchdog_task = asyncio.create_task(run_feed_watchdog())
+    # 微信定时推送：每 30s 扫到点的定时计划（群发 quasi_push / 个性化 push_to_user）——仅渠道开启时实际发
+    weixin_sched_task = asyncio.create_task(run_wechat_scheduled_push())
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
     _bg_tasks = (dao_bridge_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
                  ashare_review_task, morning_briefing_task, watchlist_scan_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
-                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task)
+                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task)
     for _task in _bg_tasks:
         _task.cancel()
     try:
@@ -3879,7 +3883,7 @@ def _require_star_stream_user(request: Request) -> dict:
     from . import ifind_api  # noqa: PLC0415
     claims = require_current_user(request)
     if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
-        raise HTTPException(status_code=403, detail="星球纪要暂未对你的账号开放")
+        raise HTTPException(status_code=403, detail="机构纪要暂未对你的账号开放")
     return claims
 
 
@@ -3896,7 +3900,7 @@ async def api_zsxq_stream(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"星球纪要拉取失败：{str(exc)[:100]}") from exc
+        raise HTTPException(status_code=502, detail=f"机构纪要拉取失败：{str(exc)[:100]}") from exc
 
 
 @app.get("/api/zsxq/topic-comments")
@@ -5833,6 +5837,141 @@ async def run_watchlist_scan() -> None:
             await asyncio.sleep(300)
 
 
+def _wx_sched_guard(text: str) -> str:
+    """定时推送出站安全网：合规中性化(荐股措辞)+泄密扫描(剥数据源/工具名/密钥)。
+    内容为确定性事实/运营文案(非 LLM 生成)→ 不加「AI 生成」标识(与晨报/复盘 headline 的 AI 标识区别对待)。"""
+    try:
+        from .compliance import neutralize_text as _nz
+        from . import privacy_guard
+        return privacy_guard.scrub_internal_text(_nz(text))
+    except Exception:  # noqa: BLE001 —— 护栏异常绝不阻断推送主链路
+        return text
+
+
+async def _render_broadcast_content(s: dict) -> Optional[str]:
+    """群发内容渲染：text=运营静态文案；news=最新 N 条快讯摘要(默认 5，上限 10)。无内容→None。"""
+    ctype = s.get("content_type")
+    if ctype == "text":
+        return (s.get("content") or "").strip() or None
+    if ctype == "news":
+        from .realtime_messages import list_realtime_messages
+        from . import weixin_ilink
+        n = 5
+        try:
+            n = int((json.loads(s.get("content") or "{}") or {}).get("count") or 5)
+        except Exception:  # noqa: BLE001 —— content 非 JSON 时用默认条数
+            n = 5
+        msgs = list_realtime_messages(topic="快讯", limit=max(1, min(n, 10)))
+        return weixin_ilink.format_news_push(msgs) if msgs else None
+    return None
+
+
+async def _render_personal_content(uid: str, s: dict) -> Optional[str]:
+    """个性化内容渲染：watchlist_quote=我的自选行情快照；watchlist_news=我的自选相关快讯。
+    自选空/无命中/取数全失败→None(当次不发)。"""
+    ctype = s.get("content_type")
+    from . import user_prefs
+    wl = user_prefs.get_watchlist(uid) or {}
+    symbols = [str(x).strip() for x in (wl.get("symbols") or []) if str(x).strip()]
+    names = wl.get("names") or {}
+    if not symbols:
+        return None
+    now = datetime.now(ai_fund.BJ_TZ)
+    if ctype == "watchlist_news":
+        from .realtime_messages import list_realtime_messages
+        from . import weixin_channel as _wc
+        from . import weixin_ilink
+        keys: list[str] = []
+        for sym in symbols:
+            keys.append(sym)
+            nm = str(names.get(sym) or names.get(sym.upper()) or "").strip()
+            if nm:
+                keys.append(nm)
+        msgs = list_realtime_messages(topic="快讯", limit=60)
+        matched = [m for m in msgs if _wc._matches_binding(m, "watchlist", keys)][:8]
+        if not matched:
+            return None
+        return f"📰 你的自选相关快讯 · {now.month}月{now.day}日\n" + weixin_ilink.format_news_push(matched)
+    # 默认 watchlist_quote：自选行情快照（串行 + 0.2s 错峰，防东财并发限流）
+    lines: list[str] = []
+    for sym in symbols[:10]:
+        try:
+            res = await fetch_market_quotes([sym])
+            q = res.quotes[0] if res.quotes else None
+        except Exception:  # noqa: BLE001 —— 单只取数失败跳过
+            q = None
+        if not q:
+            continue
+        nm = str(names.get(sym) or names.get(sym.upper()) or (q.name or sym)).strip()
+        pct = q.change_percent
+        pct_txt = f"{pct:+.2f}%" if isinstance(pct, (int, float)) else "—"
+        lines.append(f"{nm}  {q.price:.2f}  {pct_txt}")
+        await asyncio.sleep(0.2)
+    if not lines:
+        return None
+    header = f"📊 你的自选行情 · {now.month}月{now.day}日 {now.strftime('%H:%M')}\n"
+    return header + "\n".join(lines) + "\n（数据仅供参考，不构成投资建议）"
+
+
+async def _fire_wechat_schedule(mgr, s: dict) -> None:
+    """触发一条定时计划：群发→quasi_push(全体活跃)；个性化→push_to_user(单人)。出站过合规/泄密护栏。"""
+    kind = s.get("kind")
+    if kind == "broadcast":
+        text = await _render_broadcast_content(s)
+        if not text:
+            print(f"[weixin-sched] 群发#{s.get('id')} 无内容，跳过")
+            return
+        res = await mgr.quasi_push(_wx_sched_guard(text))
+        print(f"[weixin-sched] 群发#{s.get('id')} {s.get('content_type')}: {res}")
+    elif kind == "personal":
+        uid = (s.get("owner_user_id") or "").strip()
+        if not uid:
+            return
+        text = await _render_personal_content(uid, s)
+        if not text:
+            print(f"[weixin-sched] 个性化#{s.get('id')} 无内容(自选空/无命中/取数失败)，跳过")
+            return
+        ok = await mgr.push_to_user(uid, _wx_sched_guard(text))
+        print(f"[weixin-sched] 个性化#{s.get('id')} {s.get('content_type')} → {uid[:12]}: {'sent' if ok else 'skip/fail'}")
+
+
+async def run_wechat_scheduled_push() -> None:
+    """微信定时推送扫描器：每 30s 巡检到点的定时计划(群发/个性化) → 渲染并发。
+    仅在 iLink 渠道开启(_WEIXIN_MGR 存在)时实际发送；未开则空转。北京时区；一日一次去重(last_fired_date)；
+    day_mode=trading 的计划仅交易日发。计划天然日级低频，quasi_push/push_to_user 内部已错峰+失效清冷。"""
+    from . import weixin_schedule as wsched
+    await asyncio.sleep(50)
+    print("[weixin-sched] 启动：定时群发/个性化推送扫描器（每 30s 巡检）")
+    while True:
+        try:
+            await asyncio.sleep(30)
+            mgr = _WEIXIN_MGR
+            if mgr is None:
+                continue  # 渠道未开：不发（计划仍可被管理端/微信端创建，开启渠道后自动生效）
+            now = datetime.now(ai_fund.BJ_TZ)
+            today = now.strftime("%Y-%m-%d")
+            due = await asyncio.to_thread(wsched.due_schedules, now.hour, now.minute, today)
+            if not due:
+                continue
+            is_trading = ai_fund._is_trading_day(now)
+            for s in due:
+                sid = int(s["id"])
+                if s.get("day_mode") == "trading" and not is_trading:
+                    await asyncio.to_thread(wsched.mark_fired, sid, today)  # 非交易日：标记免复扫，次日自然重置
+                    continue
+                try:
+                    await _fire_wechat_schedule(mgr, s)
+                except Exception as exc:  # noqa: BLE001 —— 单条计划失败不拖垮其它
+                    print(f"[weixin-sched] 计划#{sid} 触发异常：{type(exc).__name__}")
+                finally:
+                    await asyncio.to_thread(wsched.mark_fired, sid, today)  # 无论成败当日只触发一次（失败不重试刷屏）
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[weixin-sched] 异常：{type(exc).__name__}")
+            await asyncio.sleep(120)
+
+
 _FEED_WATCHDOG_STATE: dict = {"last_news_at": "", "stale_minutes": None, "alerted_at": 0.0}
 _FEED_STALE_MINUTES = int(os.getenv("DEEPFOCUS_FEED_STALE_MINUTES", "45") or 45)
 
@@ -7481,6 +7620,85 @@ async def api_weixin_push(text: str = "", fresh_minutes: int = 0, _admin: dict =
     fresh = fresh_minutes * 60 if fresh_minutes and fresh_minutes > 0 else None
     res = await mgr.quasi_push(text.strip(), fresh_within_seconds=fresh)
     return {"ok": True, **res}
+
+
+# ---- 微信定时推送计划（群发）管理端 CRUD。个性化计划由会员在微信里一句话订阅，不走这里 ----
+@app.get("/api/weixin/schedules")
+async def api_weixin_schedules_list(kind: str = "", _admin: dict = Depends(require_admin)) -> dict:
+    """列出定时推送计划（管理端）。kind 可选 broadcast/personal 过滤；含个性化计划便于运营观测。"""
+    from . import weixin_schedule as wsched
+    return {"ok": True, "schedules": wsched.list_schedules(kind=(kind or None))}
+
+
+@app.post("/api/weixin/schedules")
+async def api_weixin_schedules_create(request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    """新建群发定时计划（管理端）。body:{content_type(text|news), hour, minute, title?, content?, day_mode?(daily|trading), enabled?}。
+    text：content=运营文案；news：content 可选 {"count":N}（默认 5、上限 10 条最新快讯）。北京时间，一日一次。"""
+    from . import weixin_schedule as wsched
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    ctype = str(body.get("content_type") or "text")
+    if ctype not in ("text", "news"):
+        raise HTTPException(status_code=400, detail="content_type 仅支持 text / news")
+    try:
+        hour = int(body.get("hour"))
+        minute = int(body.get("minute"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="hour/minute 必填且为整数")
+    content = body.get("content")
+    if ctype == "text" and not str(content or "").strip():
+        raise HTTPException(status_code=400, detail="text 计划必须提供 content 文案")
+    if isinstance(content, (dict, list)):
+        content = json.dumps(content, ensure_ascii=False)
+    rec = wsched.create_schedule(
+        "broadcast", ctype, hour, minute,
+        title=str(body.get("title") or ""),
+        content=str(content or ""),
+        day_mode=str(body.get("day_mode") or "daily"),
+        enabled=bool(body.get("enabled", True)),
+    )
+    return {"ok": True, "schedule": rec}
+
+
+@app.post("/api/weixin/schedules/{schedule_id}")
+async def api_weixin_schedules_update(schedule_id: int, request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    """改一条计划（管理端）：title/content/content_type/hour/minute/day_mode/enabled 任意子集。"""
+    from . import weixin_schedule as wsched
+    if not wsched.get_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="计划不存在")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    fields = {k: v for k, v in body.items()
+              if k in ("title", "content", "content_type", "hour", "minute", "day_mode", "enabled")}
+    if "content_type" in fields and fields["content_type"] not in ("text", "news"):
+        raise HTTPException(status_code=400, detail="content_type 仅支持 text / news")
+    if isinstance(fields.get("content"), (dict, list)):
+        fields["content"] = json.dumps(fields["content"], ensure_ascii=False)
+    return {"ok": True, "schedule": wsched.update_schedule(schedule_id, **fields)}
+
+
+@app.delete("/api/weixin/schedules/{schedule_id}")
+async def api_weixin_schedules_delete(schedule_id: int, _admin: dict = Depends(require_admin)) -> dict:
+    """删一条计划（管理端）。"""
+    from . import weixin_schedule as wsched
+    return {"ok": wsched.delete_schedule(schedule_id)}
+
+
+@app.post("/api/weixin/schedules/{schedule_id}/fire")
+async def api_weixin_schedules_fire(schedule_id: int, _admin: dict = Depends(require_admin)) -> dict:
+    """立即触发一次（管理端自测）：不改去重状态、按当前内容真发。渠道未开则 409。"""
+    from . import weixin_schedule as wsched
+    s = wsched.get_schedule(schedule_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="计划不存在")
+    if _WEIXIN_MGR is None:
+        raise HTTPException(status_code=409, detail="微信渠道未开启（DEEPFOCUS_WEIXIN_CHANNEL=1）")
+    await _fire_wechat_schedule(_WEIXIN_MGR, s)
+    return {"ok": True}
 
 
 def _format_news_for_push(msgs: list) -> str:

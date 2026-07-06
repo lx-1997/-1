@@ -118,7 +118,7 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = (
   return (
     <div className="tzs-item">
       <div className="tzs-item-head">
-        <span className="tzs-item-author">{item.author}</span>
+        <span className="tzs-item-kind">机构纪要</span>
         {item.digested && <span className="tzs-item-badge">精华</span>}
         <span className="tzs-item-date">{fmtDate(item.date || item.create_time)}</span>
         {(item.likes_count || 0) > 0 && <span className="tzs-item-likes">👍{item.likes_count}</span>}
@@ -143,10 +143,6 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = (
       )}
 
       <CommentsBlock item={item} />
-
-      <div className="tzs-item-meta">
-        {item.url && <a className="tzs-src" href={item.url} target="_blank" rel="noreferrer">原文 ↗</a>}
-      </div>
     </div>
   );
 };
@@ -178,7 +174,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
       hasMoreRef.current = Boolean(res.has_more);
     } catch (e: any) {
       const status = e?.response?.status;
-      setErr(status === 403 ? '星球纪要暂未对你的账号开放' : '星球纪要加载失败，请稍后重试。');
+      setErr(status === 403 ? '机构纪要暂未对你的账号开放' : '机构纪要加载失败，请稍后重试。');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -228,7 +224,6 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
   }, [zoom]);
 
   const groups = data?.groups || [];
-  const groupName = groups.find(g => g.id === group)?.name || '星球';
 
   const lightbox = zoom && (
     <div className="tzs-lightbox" onMouseDown={() => setZoom(null)} role="dialog" aria-label="查看图片">
@@ -253,7 +248,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
           <input
             className="tzs-input"
             value={query}
-            placeholder={`🔍 搜「${groupName}」帖子（回车检索）…`}
+            placeholder="🔍 搜机构纪要（回车检索）…"
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') applySearch(query); }}
           />
@@ -286,7 +281,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
         )}
 
         {pool.length > 0 && (
-          <div className="tzs-disclaimer">⚠ 第三方社群内容聚合，仅内部研究参考，不构成投资建议。</div>
+          <div className="tzs-disclaimer">⚠ 机构调研纪要聚合，仅内部研究参考，不构成投资建议。</div>
         )}
       </div>
 

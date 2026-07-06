@@ -11,20 +11,19 @@ export interface ZsxqComment {
   reply_to?: string;
 }
 
+// ⭐后端刻意不返回 author(星球号名)与 url(星球帖子链接):展示面不体现来源、无原文跳转。
 export interface ZsxqTopic {
   id: string;
   title: string;
   text: string;
   images: string[];
   image_fulls: string[];
-  author: string;
   create_time: string;
   date: string;
   digested: boolean;
   likes_count: number;
   comments_count: number;
   comments: ZsxqComment[];
-  url: string;
 }
 
 export interface ZsxqGroup { id: string; name: string }
