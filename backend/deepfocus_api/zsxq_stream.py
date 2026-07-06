@@ -48,6 +48,21 @@ def stream_groups() -> list[dict[str, str]]:
     return [{"id": ZSXQ_GROUP, "name": "机构纪要"}]
 
 
+# 星球上传【文件】(研报 PDF / 会议音频等)时会自动生成一条"纯标签"占位帖，正文就是
+# 「#海外投行报告#」「#会议音频#」这类 hashtag，无正文、无图。这些文件本体已经在「研报」
+# 标签里；机构纪要只要真正的调研纪要正文，故把纯标签占位帖过滤掉（用户反馈）。
+_HASHTAG_RE = re.compile(r"#[^#\n]{1,40}#")
+_STRIP_RESIDUE_RE = re.compile(r"[\s　·|｜—\-：:、,，。.]+")
+
+
+def _is_file_marker_only(text: str, images: list) -> bool:
+    """判断是否为"文件上传占位帖"：剥掉 hashtag 与分隔残渣后无任何正文，且无图片。"""
+    if images:
+        return False  # 图片型纪要（如"公募加仓行业图"）保留
+    prose = _STRIP_RESIDUE_RE.sub("", _HASHTAG_RE.sub("", text or ""))
+    return len(prose) == 0
+
+
 def _norm_comment(c: Any) -> Optional[dict[str, Any]]:
     if not isinstance(c, dict):
         return None
@@ -74,6 +89,8 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
     image_fulls = [str(u).strip() for u in (t.get("image_fulls") or []) if str(u).strip()][:9]
     if not text and not images:
         return None
+    if _is_file_marker_only(text, images):
+        return None  # 文件上传占位帖（研报 PDF 等，已在「研报」标签）→ 不进机构纪要
     ct = str(t.get("create_time") or "").strip()
     comments = [m for m in (_norm_comment(c) for c in (t.get("comments") or [])[:10]) if m]
     first_line = (text.split("\n", 1)[0]).strip()

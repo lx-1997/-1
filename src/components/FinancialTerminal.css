@@ -508,6 +508,7 @@
 .bbt-chip[data-cat="快讯"] { color: var(--red-text); }
 .bbt-chip[data-cat="文章"] { color: var(--blue); }
 .bbt-chip[data-cat="研报"] { color: var(--purple); }
+.bbt-chip[data-cat="机构纪要"] { color: var(--amber-2); }
 .bbt-chip[data-cat="名人观点"] { color: var(--green-2); }
 .bbt-chip:hover { background: rgba(255,255,255,.06); }
 .bbt-chip.on[data-cat="all"] { background: var(--accent); color: #000; }
@@ -515,6 +516,7 @@
 .bbt-chip.on[data-cat="快讯"] { background: var(--red-text); color: #1a0807; }
 .bbt-chip.on[data-cat="文章"] { background: var(--blue); color: #04121f; }
 .bbt-chip.on[data-cat="研报"] { background: var(--purple); color: #160f2e; }
+.bbt-chip.on[data-cat="机构纪要"] { background: var(--amber-2); color: #2a1c00; }
 .bbt-chip.on[data-cat="名人观点"] { background: var(--green-2); color: #04210f; }
 .bbt-chip-n { font-size: 11px; font-weight: 800; line-height: 1.5; min-width: 15px; text-align: center; padding: 0 4px; border-radius: 999px; background: rgba(255,255,255,.1); }
 .bbt-chip.on .bbt-chip-n { background: rgba(0,0,0,.2); }

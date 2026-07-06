@@ -46,6 +46,19 @@ def test_norm_topic_full_and_empty():
     assert zs._norm_topic("junk") is None
 
 
+def test_file_marker_posts_are_dropped():
+    # 文件上传占位帖（研报本体，已在「研报」标签）：纯 hashtag、无正文、无图 → 丢弃
+    assert zs._norm_topic({"topicId": "1", "text": "#海外投行报告#", "images": []}) is None
+    assert zs._norm_topic({"topicId": "2", "text": "#会议音频#", "images": []}) is None
+    assert zs._norm_topic({"topicId": "3", "text": "#纪要&报告#  ", "images": []}) is None
+    # 真纪要保留：hashtag 之外有正文
+    keep = zs._norm_topic({"topicId": "4", "text": "#出处未知#  950Q3满产已完全不够用", "images": []})
+    assert keep is not None and "950Q3" in keep["text"]
+    # 纯 hashtag 但带图（图片型纪要）→ 保留
+    img = zs._norm_topic({"topicId": "5", "text": "#公募加仓#", "images": ["http://a/1.jpg"]})
+    assert img is not None
+
+
 def test_fetch_stream_rejects_unknown_group():
     with pytest.raises(ValueError):
         asyncio.run(zs.fetch_stream(group="999999999"))
