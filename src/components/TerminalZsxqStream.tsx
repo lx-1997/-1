@@ -37,6 +37,14 @@ const fmtDate = (v?: string | null): string => {
   return s.length >= 10 ? s.slice(0, 10) : s;
 };
 
+// 机构纪要卡头带到「时:分:秒」：星球 create_time 形如 2026-07-06T15:01:11.583+0800（已是北京时间）
+// → 直接切，不做时区换算；无时间部分则回退纯日期。
+const fmtDateTime = (v?: string | null): string => {
+  if (!v) return '';
+  const m = String(v).match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  return m ? `${m[1]} ${m[2]}` : fmtDate(v);
+};
+
 // 正文分段渲染：`# xxx` 行作小节标题（星球纪要惯用），「问：/答：」拆问答块，其余普通段落。
 const renderBody = (text: string): React.ReactNode => {
   const blocks = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
@@ -135,7 +143,7 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = (
       <div className="tzs-item-head">
         <span className="tzs-item-kind">机构纪要</span>
         {item.digested && <span className="tzs-item-badge">精华</span>}
-        <span className="tzs-item-date">{fmtDate(item.date || item.create_time)}</span>
+        <span className="tzs-item-date">{fmtDateTime(item.create_time || item.date)}</span>
         {item.id && (item.text || '').trim() && (
           // 纯图片动态无正文→落地页会空,不给分享钮(且不外泄第三方图床)
           <ShareButton
