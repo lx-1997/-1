@@ -12,8 +12,9 @@ import './TerminalZsxqStream.css';
 
 // 知识星球图走后端代理：绕客户端防盗链/token 失效，让长图能高清放大 + 下载成可查看的图片文件。
 // dl=1 → 附件下载。仅对 zsxq 图床 URL 生效（后端 host 白名单）。
+// v 版本号:图片处理策略变更时 +1，强制浏览器绕过 24h 缓存拉新版（v2=底部品牌栏替代原叠加水印）
 const zsxqImg = (url: string, dl = false): string =>
-  `/api/zsxq/image?u=${encodeURIComponent(url)}${dl ? '&dl=1' : ''}`;
+  `/api/zsxq/image?u=${encodeURIComponent(url)}&v=2${dl ? '&dl=1' : ''}`;
 
 // 机构纪要分享钩子：只取标题 + ≤100 字导语（第三方付费内容不外泄全文）。落地页 /note/{id} 同口径 noindex 软墙。
 const noteShareTarget = (item: ZsxqTopic) => {

@@ -3913,41 +3913,63 @@ async def api_zsxq_topic_comments(request: Request, topic_id: str = "", limit: i
 
 _ZSXQ_IMG_HOSTS = {"images.zsxq.com"}  # ⚠️SSRF 白名单：只准代理知识星球图床，绝不做开放代理
 _ZSXQ_IMG_MAX = 25 * 1024 * 1024       # 单图上限 25MB，防超大响应打爆 1.8G 内存
-_ZSXQ_WM_TEXT = "DeepFocus · daocaijing.com"
-_ZSXQ_WM_CACHE: "dict[str, tuple[bytes, str]]" = {}   # url→(带水印字节, content-type)，view/download 复用
+_ZSXQ_WM_CACHE: "dict[str, tuple[bytes, str]]" = {}   # url→(带品牌栏字节, content-type)，view/download 复用
 _ZSXQ_WM_CACHE_MAX = 24
 
 
-def _watermark_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
-    """给机构纪要图叠加半透明 DeepFocus 署名水印（长图每隔一段重复，任意截屏都带品牌）。
-    ⚠️只『叠加』，绝不去除图上已有的任何水印/署名（避开『去除版权管理信息』红线）。失败原样返回。"""
+def _brand_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
+    """在机构纪要图【底部拼接 DeepFocus 品牌栏】（不遮盖内容）：logo + 一句话定位 + 网址 + 可扫二维码。
+    比叠在内容上的水印更形象、能引导「扫码看更多」，且不影响原图阅读。⚠️只在下方加自有品牌栏，
+    绝不改动/去除原图任何像素与已有水印。失败原样返回。"""
     try:
         import io  # noqa: PLC0415
+        import os  # noqa: PLC0415
         from PIL import Image, ImageDraw  # noqa: PLC0415
         from .og_image import _font  # noqa: PLC0415
-        im = Image.open(io.BytesIO(raw)).convert("RGBA")
+        im = Image.open(io.BytesIO(raw)).convert("RGB")
         w, h = im.size
-        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(overlay)
-        fs = max(13, w // 36)
-        font = _font(fs)
-        tw = d.textlength(_ZSXQ_WM_TEXT, font=font)
-        pad = max(8, fs // 2)
-        step = max(int(w * 1.3), fs * 8)      # 每隔约 1.3 倍宽重复一次，长图截屏也带
-        ys, yy = [], h - fs - pad
-        while yy > pad:
-            ys.append(yy); yy -= step
-        for y in (ys or [max(pad, h - fs - pad)]):
-            d.text((w - tw - pad, y), _ZSXQ_WM_TEXT, font=font, fill=(255, 255, 255, 120),
-                   stroke_width=max(1, fs // 14), stroke_fill=(0, 0, 0, 90))
-        out = Image.alpha_composite(im, overlay)
+        bar_h = max(112, min(int(w * 0.155), 190))
+        pad = int(bar_h * 0.20)
+        inner = bar_h - 2 * pad
+        canvas = Image.new("RGB", (w, h + bar_h), (13, 17, 25))       # 深色品牌栏 #0d1119
+        canvas.paste(im, (0, 0))
+        d = ImageDraw.Draw(canvas)
+        d.rectangle([0, h, w, h + 3], fill=(227, 169, 79))            # 顶部 amber 分隔线
+        top = h + pad
+        x = pad
+        for cand in (os.getenv("DEEPFOCUS_LOGO", "").strip(), "/var/www/deepfocus/logo512.png",
+                     str(Path(__file__).resolve().parents[2] / "public" / "logo512.png")):
+            if cand and os.path.exists(cand):
+                try:
+                    canvas.paste(Image.open(cand).convert("RGB").resize((inner, inner)), (x, top))
+                    x += inner + int(pad * 1.1)
+                    break
+                except Exception:  # noqa: BLE001
+                    pass
+        y = top
+        d.text((x, y), "DeepFocus", font=_font(int(bar_h * 0.32)), fill=(255, 255, 255),
+               stroke_width=1, stroke_fill=(255, 255, 255))
+        y += int(bar_h * 0.36)
+        d.text((x, y), "比券商早一步的 A股快讯 · AI 投研终端", font=_font(int(bar_h * 0.185)), fill=(227, 169, 79))
+        y += int(bar_h * 0.245)
+        d.text((x, y), "daocaijing.com  |  扫码看更多机构纪要 →", font=_font(int(bar_h * 0.155)), fill=(150, 160, 175))
+        try:
+            import qrcode  # noqa: PLC0415
+            q = qrcode.QRCode(border=1, error_correction=qrcode.constants.ERROR_CORRECT_M)
+            q.add_data("https://daocaijing.com/?utm_source=note_img"); q.make()
+            qr = q.make_image(fill_color=(13, 17, 25), back_color="white").convert("RGB").resize((inner, inner))
+            frame = Image.new("RGB", (inner + 8, inner + 8), (255, 255, 255))
+            frame.paste(qr, (4, 4))
+            canvas.paste(frame, (w - pad - inner - 8, top - 4))
+        except Exception:  # noqa: BLE001 — 无 qrcode 库时仅少二维码，品牌栏照出
+            pass
         buf = io.BytesIO()
         if "png" in content_type.lower():
-            out.save(buf, format="PNG", optimize=True)
+            canvas.save(buf, format="PNG", optimize=True)
             return buf.getvalue(), "image/png"
-        out.convert("RGB").save(buf, format="JPEG", quality=86)
+        canvas.save(buf, format="JPEG", quality=88)
         return buf.getvalue(), "image/jpeg"
-    except Exception:  # noqa: BLE001 — 水印失败不该让图打不开
+    except Exception:  # noqa: BLE001 — 加栏失败不该让图打不开
         return raw, content_type
 
 
@@ -3980,7 +4002,7 @@ async def api_zsxq_image(request: Request, u: str = "", dl: int = 0) -> Response
         ct = r.headers.get("content-type") or "image/jpeg"
         if not ct.lower().startswith("image/"):  # 只回图片，别被诱导代理非图内容
             raise HTTPException(status_code=400, detail="非图片内容")
-        content, ct = await asyncio.to_thread(_watermark_zsxq_image, r.content, ct)  # PIL 阻塞→线程池
+        content, ct = await asyncio.to_thread(_brand_zsxq_image, r.content, ct)  # PIL 阻塞→线程池
         _ZSXQ_WM_CACHE[url] = (content, ct)
         while len(_ZSXQ_WM_CACHE) > _ZSXQ_WM_CACHE_MAX:
             _ZSXQ_WM_CACHE.pop(next(iter(_ZSXQ_WM_CACHE)), None)
