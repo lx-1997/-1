@@ -3913,12 +3913,48 @@ async def api_zsxq_topic_comments(request: Request, topic_id: str = "", limit: i
 
 _ZSXQ_IMG_HOSTS = {"images.zsxq.com"}  # ⚠️SSRF 白名单：只准代理知识星球图床，绝不做开放代理
 _ZSXQ_IMG_MAX = 25 * 1024 * 1024       # 单图上限 25MB，防超大响应打爆 1.8G 内存
+_ZSXQ_WM_TEXT = "DeepFocus · daocaijing.com"
+_ZSXQ_WM_CACHE: "dict[str, tuple[bytes, str]]" = {}   # url→(带水印字节, content-type)，view/download 复用
+_ZSXQ_WM_CACHE_MAX = 24
+
+
+def _watermark_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
+    """给机构纪要图叠加半透明 DeepFocus 署名水印（长图每隔一段重复，任意截屏都带品牌）。
+    ⚠️只『叠加』，绝不去除图上已有的任何水印/署名（避开『去除版权管理信息』红线）。失败原样返回。"""
+    try:
+        import io  # noqa: PLC0415
+        from PIL import Image, ImageDraw  # noqa: PLC0415
+        from .og_image import _font  # noqa: PLC0415
+        im = Image.open(io.BytesIO(raw)).convert("RGBA")
+        w, h = im.size
+        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(overlay)
+        fs = max(13, w // 36)
+        font = _font(fs)
+        tw = d.textlength(_ZSXQ_WM_TEXT, font=font)
+        pad = max(8, fs // 2)
+        step = max(int(w * 1.3), fs * 8)      # 每隔约 1.3 倍宽重复一次，长图截屏也带
+        ys, yy = [], h - fs - pad
+        while yy > pad:
+            ys.append(yy); yy -= step
+        for y in (ys or [max(pad, h - fs - pad)]):
+            d.text((w - tw - pad, y), _ZSXQ_WM_TEXT, font=font, fill=(255, 255, 255, 120),
+                   stroke_width=max(1, fs // 14), stroke_fill=(0, 0, 0, 90))
+        out = Image.alpha_composite(im, overlay)
+        buf = io.BytesIO()
+        if "png" in content_type.lower():
+            out.save(buf, format="PNG", optimize=True)
+            return buf.getvalue(), "image/png"
+        out.convert("RGB").save(buf, format="JPEG", quality=86)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:  # noqa: BLE001 — 水印失败不该让图打不开
+        return raw, content_type
 
 
 @app.get("/api/zsxq/image")
 async def api_zsxq_image(request: Request, u: str = "", dl: int = 0) -> Response:
-    """机构纪要图片代理：服务端取知识星球图（绕客户端防盗链/token 失效），流式返回真实字节，
-    让长图能在网页高清放大、也能下载成可查看的图片文件（群友反馈：直接存图是带防盗链的星球图打不开）。
+    """机构纪要图片代理：服务端取知识星球图（绕客户端防盗链/token 失效），叠加 DeepFocus 品牌水印后返回，
+    让长图能在网页高清放大、也能下载成带我方水印的可查看图片（群友反馈：直接存图是带防盗链的星球图打不开）。
     ⚠️仅允许 images.zsxq.com（防 SSRF 被当开放代理）。所有人可见（机构纪要已公开）。dl=1 走附件下载。"""
     from urllib.parse import urlparse, unquote  # noqa: PLC0415
     url = unquote((u or "").strip())
@@ -3928,19 +3964,26 @@ async def api_zsxq_image(request: Request, u: str = "", dl: int = 0) -> Response
         host = ""
     if not (url.startswith("https://") and host in _ZSXQ_IMG_HOSTS):
         raise HTTPException(status_code=400, detail="不支持的图片地址")
-    try:
-        async with httpx.AsyncClient(trust_env=False, timeout=30.0, follow_redirects=True) as client:
-            # Referer 置空绕防盗链；服务端取不受客户端 no-referrer 限制
-            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": ""})
-            r.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail="图片获取失败") from exc
-    content = r.content
-    if len(content) > _ZSXQ_IMG_MAX:
-        raise HTTPException(status_code=413, detail="图片过大")
-    ct = r.headers.get("content-type") or "image/jpeg"
-    if not ct.lower().startswith("image/"):  # 只回图片，别被诱导代理非图内容
-        raise HTTPException(status_code=400, detail="非图片内容")
+    cached = _ZSXQ_WM_CACHE.get(url)
+    if cached:
+        content, ct = cached
+    else:
+        try:
+            async with httpx.AsyncClient(trust_env=False, timeout=30.0, follow_redirects=True) as client:
+                # Referer 置空绕防盗链；服务端取不受客户端 no-referrer 限制
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": ""})
+                r.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail="图片获取失败") from exc
+        if len(r.content) > _ZSXQ_IMG_MAX:
+            raise HTTPException(status_code=413, detail="图片过大")
+        ct = r.headers.get("content-type") or "image/jpeg"
+        if not ct.lower().startswith("image/"):  # 只回图片，别被诱导代理非图内容
+            raise HTTPException(status_code=400, detail="非图片内容")
+        content, ct = await asyncio.to_thread(_watermark_zsxq_image, r.content, ct)  # PIL 阻塞→线程池
+        _ZSXQ_WM_CACHE[url] = (content, ct)
+        while len(_ZSXQ_WM_CACHE) > _ZSXQ_WM_CACHE_MAX:
+            _ZSXQ_WM_CACHE.pop(next(iter(_ZSXQ_WM_CACHE)), None)
     headers = {"Cache-Control": "public, max-age=86400"}  # 浏览器缓存一天，省我们带宽
     if dl:
         ext = "png" if "png" in ct.lower() else "jpg"
