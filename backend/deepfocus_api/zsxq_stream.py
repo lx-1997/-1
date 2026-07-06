@@ -105,7 +105,6 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
         "create_time": ct,
         "date": ct[:10],
         "digested": bool(t.get("digested")),
-        "likes_count": max(0, int(t.get("likes_count") or 0)),
         "comments_count": max(int(t.get("comments_count") or 0), len(comments)),
         "comments": comments,
     }

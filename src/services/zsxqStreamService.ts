@@ -21,7 +21,6 @@ export interface ZsxqTopic {
   create_time: string;
   date: string;
   digested: boolean;
-  likes_count: number;
   comments_count: number;
   comments: ZsxqComment[];
 }

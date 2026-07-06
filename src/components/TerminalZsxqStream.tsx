@@ -121,7 +121,6 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = (
         <span className="tzs-item-kind">机构纪要</span>
         {item.digested && <span className="tzs-item-badge">精华</span>}
         <span className="tzs-item-date">{fmtDate(item.date || item.create_time)}</span>
-        {(item.likes_count || 0) > 0 && <span className="tzs-item-likes">👍{item.likes_count}</span>}
       </div>
 
       {item.text && <div className="tzs-item-body">{renderBody(bodyText)}</div>}

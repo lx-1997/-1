@@ -41,7 +41,8 @@ def test_norm_topic_full_and_empty():
     assert it["image_fulls"] == ["http://a/1.jpg"]  # 缺原图回退小图
     assert it["comments"][0]["author"] == "张三"
     assert it["comments_count"] == 5
-    assert "author" not in it and "url" not in it  # ⭐不透出星球来源与原文链接
+    # ⭐不透出星球来源(author)、原文链接(url)、帖子点赞数(likes_count)
+    assert "author" not in it and "url" not in it and "likes_count" not in it
     assert zs._norm_topic({"topicId": "9", "text": "", "images": []}) is None  # 空帖丢弃
     assert zs._norm_topic("junk") is None
 
