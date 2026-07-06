@@ -1006,6 +1006,7 @@ PUBLIC_PREFIXES = (
     "/api/realtime/messages",      # 实时快讯列表 + /stream SSE：免登录免费看（终端公开页核心体验）
     "/api/report/view/",           # 研报解读分享记录按 id 读（深链 ?report={id} 登录前先取标题/导语）；POST /api/report/share 不在此列、仍须登录
     "/api/review/",                # A股收盘复盘：免登录可看（信息价值引流位）；/api/admin/review/* 仍受保护
+    "/api/zsxq/",                  # 机构纪要：用户拍板放开给所有人含匿名（2026-07-06）；匿名负载在 handler 限为缓存首页
     "/research-workbench",
     # 管理端点（会员管理 / 看板私信）：无用户 JWT，由各 handler 自校验 DEEPFOCUS_MEMBERSHIP_TOKEN /
     # METRICS_TOKEN（与 /api/metrics 看板同款）；中间件放行才能在 AUTH_REQUIRED=true 时正常用 curl/看板。

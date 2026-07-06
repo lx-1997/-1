@@ -2783,8 +2783,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const isResearch = feedFilter === '研报';        // 研报标签：信息流面板切换为研报视图
   // 名人观点：仅白名单(lx199710)在资讯流加一个「名人观点」标签（研报旁），切到内联名人观点视图。
   const isCelebUser = IFIND_USERS.has((authUser || '').toLowerCase());
-  // 机构纪要：用户拍板放开给所有登录用户(2026-07-06)——登录即可见(仍需登录墙，不对匿名开放)；名人观点仍限白名单。
-  const canViewZsxq = !!authUser;
+  // 机构纪要：用户拍板放开给所有人含匿名(2026-07-06)——不需登录即可见；名人观点仍限白名单。
+  // (后端匿名只给缓存首页护共享星球 cookie；登录用户完整搜索/翻页)
+  const canViewZsxq = true;
   // 机构纪要插在 文章 之后、研报 之前(与快讯/文章/研报平级)；名人观点(白名单)缀尾。
   const feedFilters = (() => {
     let arr = [...FEED_FILTERS];
@@ -3124,7 +3125,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-cmd-key">DEEPFOCUS</span>
         <span className="bbt-cmd-amber">金融终端</span>
         {/* 价值主张常驻品牌区：新用户 10 秒内知道"这是干嘛的"（窄屏由 CSS 隐藏） */}
-        <span className="bbt-cmd-tagline" title="A股快讯 + AI 解读，比券商 App 早一步">快讯早一步 · AI 帮研判</span>
+        <span className="bbt-cmd-tagline" title="A股·港股·美股快讯 + AI 解读，比券商 App 早一步">快讯早一步 · AI 帮研判</span>
         <span className="bbt-cmd-input" onClick={() => { setPaletteOpen(true); setPq(''); }} title="搜索股票 / 命令（点击，或按 /）"><span className="bbt-cmd-mag">🔍</span>{active ? <b>{active} {activeName}</b> : <span className="bbt-cmd-ph">搜索股票 / 命令</span>}<span className="bbt-cmd-kbd">/</span></span>
         <span className="bbt-cmd-right">
           {/* 今日早报按钮已按需求隐藏 */}
@@ -3277,7 +3278,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       ) : (
         <div className="bbt-trial-banner" onClick={onClaimTrial} role="button" title="登录即享体验会员，邀好友得 ¥698 年度会员">
           <span className="bbt-trial-gift">📡</span>
-          <span className="bbt-trial-text">比券商 App 早一步的 A股快讯 + AI 解读终端 · 登录领<b>体验会员</b></span>
+          <span className="bbt-trial-text">比券商 App 早一步的 A股·港股·美股快讯 + AI 解读终端 · 登录领<b>体验会员</b></span>
           <button className="bbt-trial-btn" disabled={trialClaiming} onClick={e => { e.stopPropagation(); onClaimTrial(); }}>
             {trialClaiming ? '处理中…' : '登录'}
           </button>

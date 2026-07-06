@@ -3878,19 +3878,22 @@ async def celebrity_topic_comments(request: Request, celeb_id: str, topic: str =
     return res
 
 
-def _require_star_stream_user(request: Request) -> dict:
-    """机构纪要（知识星球帖子流）：用户拍板放开给所有登录用户（2026-07-06）——仅需登录，去白名单。
-    ⚠️仍保留登录墙：不对匿名/爬虫开放、不进 SEO（第三方付费社群内容，收录风险最高，见 zsxq_stream 头注）。"""
-    return require_current_user(request)
+def _maybe_star_stream_user(request: Request) -> Optional[dict]:
+    """机构纪要（知识星球帖子流）：用户拍板放开给所有人含匿名（2026-07-06）——不再 401/403。
+    登录返回 claims，匿名返回 None。⚠️匿名的星球 API 负载在 stream 端点限为『缓存首页』（防未登录
+    访客/爬虫无上限触发星球接口拖垮共享 cookie——该 cookie 同供研报/名人观点/机构纪要三处）。"""
+    return getattr(request.state, "auth_claims", None)
 
 
 @app.get("/api/zsxq/stream")
 async def api_zsxq_stream(
     request: Request, group: str = "", q: str = "", before: str = "", limit: int = 20, refresh: bool = False,
 ) -> dict[str, Any]:
-    """星球纪要：知识星球普通帖子的独立信息流（调研纪要 / 动态点评；研报标签只覆盖星球文件）。
-    before=上一页 next_before 游标（「加载更早」）；q=关键词搜索。仅白名单可见。"""
-    _require_star_stream_user(request)
+    """机构纪要：知识星球普通帖子的独立信息流（调研纪要 / 动态点评；研报标签只覆盖星球文件）。
+    before=上一页 next_before 游标（「加载更早」）；q=关键词搜索。所有人可见（匿名仅缓存首页）。"""
+    claims = _maybe_star_stream_user(request)
+    if claims is None:      # 匿名：只给缓存最新首页，忽略搜索/翻页/强刷（护共享星球 cookie，见 _maybe 注释）
+        q, before, refresh = "", "", False
     from .zsxq_stream import fetch_stream  # noqa: PLC0415
     try:
         return await fetch_stream(group=group, keyword=q, limit=limit, end_time=before, use_cache=not refresh)
@@ -3902,8 +3905,8 @@ async def api_zsxq_stream(
 
 @app.get("/api/zsxq/topic-comments")
 async def api_zsxq_topic_comments(request: Request, topic_id: str = "", limit: int = 100) -> dict[str, Any]:
-    """星球纪要某帖的完整评论（列表随帖只带前几条预览）。仅白名单可见。"""
-    _require_star_stream_user(request)
+    """机构纪要某帖的完整评论（列表随帖只带前几条预览）。所有人可见。"""
+    _maybe_star_stream_user(request)
     from .zsxq_stream import fetch_comments  # noqa: PLC0415
     return await fetch_comments(topic_id, limit=limit)
 

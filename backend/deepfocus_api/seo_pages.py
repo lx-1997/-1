@@ -847,14 +847,17 @@ def render_note_page_html(topic: dict[str, Any], page_url: str = "") -> str:
         '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>与每日 A 股收盘复盘</li>'
         '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 打开即用</p></div>'
     )
+    trail = [("首页", f"{BASE_URL}/"), ("机构纪要", f"{BASE_URL}/note/{nid}")]
     return _page(
         title=title,
         description=lead or f"{title} · DeepFocus 机构纪要。",
         body="".join(parts),
         canonical=canonical,
         cta_href=APP_URL,
-        cta_text="打开 DeepFocus 看更多市场纪要 →",
-        noindex=True,   # 第三方付费内容：可转发不可收录（合规红线）
+        cta_text="打开 DeepFocus 看完整机构纪要 →",   # 用户拍板放开匿名可见→CTA 不再要求登录
+        graph=_graph(_breadcrumb_node(trail)),
+        # 用户拍板放开 SEO 收录（2026-07-06）：落地页仅标题+≤100字导语钩子（全文在 SPA 不入 HTML→
+        # 搜索引擎只收录 teaser 非全文）；noindex 已去除。⚠️第三方付费内容收录风险已知并接受。
     )
 
 
