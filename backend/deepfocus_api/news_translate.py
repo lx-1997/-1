@@ -149,9 +149,13 @@ async def translate_news(title: str, content: str) -> Optional[dict]:
         return {"title": cached["title"], "content": cached.get("content") or ""}
 
     llm = CloudResearchLLM()
+    # ⭐固定 1200 token 预算是按「一句话快讯」估的；上游偶尔会把整篇长文（如彭博社通稿）当
+    # 快讯灌进来，译文一旦超预算就被硬切断——JSON 仍合法（模型收尾闭合了括号），下游解析
+    # 不报错，于是一条断在句子中间的译文就这么静默上线了。按原文长度动态给预算，兜住长文。
+    budget = min(4000, max(1200, int(len(blob) * 1.3) + 300))
     try:
         data = await llm.complete_json(
-            _build_prompt(title, content), max_tokens=1200, timeout_seconds=20
+            _build_prompt(title, content), max_tokens=budget, timeout_seconds=25
         )
     except Exception:
         return None
