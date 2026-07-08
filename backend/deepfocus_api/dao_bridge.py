@@ -212,9 +212,12 @@ def _to_request(event: dict) -> RealtimeMessageCreateRequest:
     # 标题归一化：上游(尤其 lxaa 源)约 24% 快讯的 title = 正文截前120字 → 用正文重建干净短标题
     title = _clean_title(str(event.get("title") or ""), content) or "(无标题)"
     # 情绪标签：AI 判定优先（DAO 采集端 MiniMax 结构化分析），关键词只做兜底
+    # ⭐关键词兜底只扫 title，不扫 content——文章类正文动辄上千字，只要正文任意角落提一句
+    # "战争"/"熔断"之类的话题词就会被判定 critical，跟这篇文章本身是否真突发无关（快讯类 title
+    # 本就是全部内容，不受影响）。
     ai_sent = str(event.get("ai_sentiment") or "").strip()
     ai_impact = str(event.get("ai_impact") or "").strip()
-    severity = _ai_severity(ai_sent, ai_impact) or _severity(f"{title} {content}", etype)
+    severity = _ai_severity(ai_sent, ai_impact) or _severity(title, etype)
     metadata = {
         "dao_event_id": event.get("id"),
         "dao_type": etype,
