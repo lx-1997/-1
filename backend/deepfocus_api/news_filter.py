@@ -32,6 +32,10 @@ _AD_TITLES: Tuple[str, ...] = ("微信群", "加群", "进群", "客服微信")
 _WS_RE = re.compile(r"\s+")
 # 竞品域名 URL（带/不带 scheme），整段抹除
 _URL_RE = re.compile(r"(https?://)?[\w.-]*futoucaixin\.cn[^\s)）」』】\]]*", re.I)
+# 上游内容里的第三方品牌字样（用户点名全局不得出现），抹词保留文章本身。
+# TradeAlpha 兼容 Trade Alpha / trade-alpha / trade_alpha 变体；顺带吃掉紧随的一个空格，
+# 避免 "TradeAlpha 财经新闻专题" 抹词后残留行首/串中双空格（不吃换行）。
+_BRAND_SCRUB_RE = re.compile(r"trade[\s\-_]?alpha[ \t]?", re.I)
 
 
 def _env_terms(var: str) -> list:
@@ -107,6 +111,7 @@ def scrub(title: str, content: str = "", url: str = "") -> Tuple[str, str, str, 
         out = _URL_RE.sub("", s)  # 竞品链接直接删掉,不留「[链接已隐藏]」占位符(用户不想看到这种提示)
         for w in ("futoucaixin", "斧头财信", "斧头财经"):
             out = re.sub(re.escape(w), "", out, flags=re.I)
+        out = _BRAND_SCRUB_RE.sub("", out)  # 第三方品牌字样(TradeAlpha 等)抹词保留文章
         return _tidy(out) if out != s else s
     nt, nc = _clean(title or ""), _clean(content or "")
     changed = (nt != (title or "")) or (nc != (content or ""))
@@ -126,6 +131,10 @@ _DEFAULT_JUNK_MARKERS: Tuple[str, ...] = (
     # 那些是真实财经/时政新闻，误删=漏发新闻；针对"我方"的攻击由下方 self-attack(品牌+敌意词)兜住）
     "访问过于频繁", "请求过于频繁", "访问频率过高", "该网站已被",
     "stop crawling", "stop scraping", "access denied", "403 forbidden",
+    # 直播导流类伪快讯（上游聚合源混入的第三方直播间/分析师推广钩子，标题像新闻实则无信息量，
+    # 目的是导流去看直播/找分析师——用固定营销短语识别，不匹配人名（多变）；正规快讯不会用这类措辞。
+    "正在直播中", "直播预告", "扫码观看直播", "识别二维码观看直播", "点击马上看", "点击立即观看",
+    "戳我观看", "马上看直播", "正在多角度解析中", "正在为您解析",
 )
 _DOMAIN_RE = re.compile(r"[\w-]+\.(?:com|cn|net|org|io|co)(?![a-z0-9-])", re.I)  # 裸域名（TLD 后不接 ASCII 字母数字；兼容后接中文/标点）
 _IMPERATIVE_RE = re.compile(r"(请|停止|禁止|勿|警告|谢绝)")               # 祈使/喊话

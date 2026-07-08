@@ -66,3 +66,28 @@ def test_env_extends_terms(monkeypatch):
     monkeypatch.setenv("DEEPFOCUS_NEWS_AD_MARKERS", "私聊")
     assert nf.block_reason("标题", "来 newrival 私聊咨询") is not None
     assert not nf.should_block("贵州茅台一季报", "营收创新高")  # 不误伤
+
+
+def test_tradealpha_brand_scrubbed_not_discarded():
+    """TradeAlpha 品牌字样(用户点名全局不得出现):抹词保留文章,不整条丢弃。"""
+    title = "全球局势风云变幻：美伊停火与油价转折"
+    content = "TradeAlpha AI 财经新闻专题 | 2026-07-05\n\n  导读摘要\n\n  伊朗权力交接迷雾牵动全球能源市场。"
+    assert nf.discard_reason(title, content) is None  # 正经专题不丢
+    nt, nc, nu, changed = nf.scrub(title, content, "")
+    assert changed and "tradealpha" not in nc.lower()
+    assert nc.startswith("AI 财经新闻专题")            # 抹词后不残留行首空格
+    assert "伊朗权力交接" in nc                        # 正文保留
+    # 变体也抹:Trade Alpha / trade-alpha / trade_alpha
+    for v in ("Trade Alpha", "trade-alpha", "TRADE_ALPHA"):
+        _, c2, _, ch2 = nf.scrub("t", f"由 {v} 出品的报告")
+        assert ch2 and "alpha" not in c2.lower()
+
+
+def test_livestream_promo_discarded():
+    """直播导流伪快讯(用户点名):标题像新闻实则是拉去看直播的钩子,无信息量→整条丢弃。"""
+    title = "【正在直播中 】国际黄金再遭遇抛售，是否意味上行动能已消失？"
+    content = "什么条件下才能迎来转机？研究员Nancy正在多角度解析中，点击马上看！"
+    reason = nf.discard_reason(title, content)
+    assert reason is not None and reason.startswith("junk:")
+    # 真实黄金快讯(无直播导流措辞)不误伤
+    assert nf.discard_reason("国际金价周三下跌逾1%", "受美元走强及美债收益率上升影响，现货黄金跌破每盎司2300美元关口。") is None
