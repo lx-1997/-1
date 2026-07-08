@@ -1533,5 +1533,5 @@ html {
 @media (min-width: 1600px) { .terminal-only-root .bbt { --z: 1.2; } }
 @media (min-width: 2200px) { .terminal-only-root .bbt { --z: 1.35; } }
 @media (max-width: 820px) {
-  .terminal-only-root .bbt { width: 100%; height: auto; }
+  .terminal-only-root .bbt { width: 100%; height: auto; overflow: visible; }
 }

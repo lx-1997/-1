@@ -180,7 +180,7 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = (
   );
 };
 
-const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) => {
+const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onRequireLogin?: () => void }> = ({ inline = false, loggedIn = false, onRequireLogin }) => {
   const [data, setData] = useState<ZsxqStreamResponse | null>(null);
   const [pool, setPool] = useState<ZsxqTopic[]>([]);
   const [group, setGroup] = useState('');
@@ -235,15 +235,17 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
     if (more || !hasMoreRef.current) return;
     setMore(true);
     try {
-      const res = await getZsxqStream({
-        group, q: applied || undefined, limit: 20,
-        before: cursorRef.current || pool[pool.length - 1]?.create_time || '',
-      });
+      const beforeCursor = cursorRef.current || pool[pool.length - 1]?.create_time || '';
+      const res = await getZsxqStream({ group, q: applied || undefined, limit: 20, before: beforeCursor });
       const known = new Set(pool.map(i => i.id));
       const fresh = res.items.filter(i => !known.has(i.id));
       if (fresh.length) setPool(prev => [...prev, ...fresh]);
-      cursorRef.current = res.next_before || cursorRef.current;
-      hasMoreRef.current = Boolean(res.has_more) && (fresh.length > 0 || Boolean(res.next_before));
+      const nextCursor = res.next_before || '';
+      // 游标没推进（如匿名态被后端忽略 before、退化成重复首页）→ 判定已到头，别让按钮无限空转
+      // （之前的隐患：hasMore 只看 next_before 是否非空，游标原地不动时会一直"能点却什么都不加载"）。
+      const stuck = !fresh.length && (!nextCursor || nextCursor === beforeCursor);
+      cursorRef.current = nextCursor || cursorRef.current;
+      hasMoreRef.current = Boolean(res.has_more) && !stuck;
     } catch {
       /* 失败保持现状，可重试 */
     } finally {
@@ -316,10 +318,18 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean }> = ({ inline = false }) 
           </div>
         )}
 
+        {/* 匿名只给缓存首页（护共享星球 cookie），翻页参数后端会被忽略——按钮照常点会一直拿回同一页、
+            靠去重悄悄吞掉，用户只会觉得「点不出来」。登录用户之外先引导登录，别让按钮空转。 */}
         {pool.length > 0 && hasMoreRef.current && (
-          <button type="button" className="tzs-more" onClick={loadEarlier} disabled={more}>
-            {more ? '加载中…' : '加载更早 ▾'}
-          </button>
+          loggedIn ? (
+            <button type="button" className="tzs-more" onClick={loadEarlier} disabled={more}>
+              {more ? '加载中…' : '加载更早 ▾'}
+            </button>
+          ) : (
+            <button type="button" className="tzs-more" onClick={onRequireLogin}>
+              登录查看更早 →
+            </button>
+          )
         )}
 
         {pool.length > 0 && (

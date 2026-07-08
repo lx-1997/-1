@@ -485,6 +485,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 新手引导显隐状态（自动触发逻辑在各弹窗 state 声明之后，避免 TDZ）
   const [showOnb, setShowOnb] = useState(false);
   const [showHelp, setShowHelp] = useState(false);  // 产品说明书弹层
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false);  // 帮助下拉：说明书+新手引导合并入口（用户反馈顶栏太乱）
   const [showReferral, setShowReferral] = useState(false);  // 邀请得会员弹层
   const [showAiFund, setShowAiFund] = useState(false);      // AI 模拟盘弹层
   const [showWeixinBind, setShowWeixinBind] = useState(false);  // 微信扫码绑定（扫码即问 DeepFocus）
@@ -2933,7 +2934,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           >{SEV_TAG[m.severity]}</span>
         )}
         <span className="bbt-ntopic">{`{${m.topic || '资讯'}}`}</span>
-        {(() => { const t = stripUrls(m.title) || m.title; const tail = newsBodyTail(t, stripUrls(m.content)); return <span className="bbt-ntext">{t}{tail ? `　${tail.slice(0, 100)}` : ''}</span>; })()}
+        {(() => {
+          const t = stripUrls(m.title) || m.title;
+          const tail = newsBodyTail(t, stripUrls(m.content));
+          // 快讯没有「全文/AI解读」按钮兜底，这条预览就是唯一能读到内容的地方 → 全量显示，不截断；
+          // 文章/研报已有按钮可展开全文，这里仍截断省版面，但要带省略号，别让人误以为内容就到此为止。
+          const shown = isFlash || tail.length <= 100 ? tail : tail.slice(0, 100) + '…';
+          return <span className="bbt-ntext">{t}{shown ? `　${shown}` : ''}</span>;
+        })()}
         <span className="bbt-nact">
           {canBookmark && <button className={'bbt-nbm' + (isBm ? ' on' : '')} aria-label="收藏" aria-pressed={isBm} title={isBm ? '取消收藏' : '收藏'} onClick={e => { e.stopPropagation(); toggleBookmark(m); }}>{isBm ? '★' : '☆'}</button>}
           {isFlash ? (
@@ -3107,6 +3115,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   ];
   const paletteActiveClamped = Math.max(0, Math.min(paletteActive, paletteItems.length - 1));
 
+  // ⭐同一时刻只允许一个顶栏 CTA 在跳动/发光（用户反馈"好几个按钮一起闪，像博彩网站"）：
+  // 优先级 交流群(原唯一无限循环跳动，最该先收) > 开通会员 > 邀请得会员；排不到当值的仍保留静态发光（.bbt-cta-calm），不裸奔也不抢戏。
+  const wantsGroupAttract = groupCfg?.enabled !== false && !groupSeen;
+  const wantsBuyAttract = membership?.tier !== 'lifetime'
+    && !(membership?.tier === 'premium' && !isNewUser && Date.now() >= FOUNDING_PROMO_END);
+  const wantsRefAttract = !refOpened;
+  const primaryAttract: 'group' | 'buy' | 'ref' | null =
+    wantsGroupAttract ? 'group' : wantsBuyAttract ? 'buy' : wantsRefAttract ? 'ref' : null;
+
   return (
     <div className="bbt">
       {pdfLoadingUrl && (
@@ -3152,7 +3169,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <button className="bbt-review-entry bbt-aifund-entry" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }} title="AI 模拟盘：阿尔法直播操盘（K线/五维打分/操盘解说）· 点击进入独立页">🤖 AI 模拟盘</button>
           {groupCfg?.enabled !== false && (
             <span className="bbt-grp-wrap">
-              <button className={'bbt-review-entry bbt-group-entry' + (groupSeen ? '' : ' pulse')} onClick={openGroup} aria-label="加入用户交流群" title="DeepFocus 用户交流群 · 免费开放给所有人，聊行情/追快讯/唠复盘">💬 交流群{!groupSeen && <span className="bbt-group-hot">免费</span>}</button>
+              <button className={'bbt-review-entry bbt-group-entry' + (groupSeen ? '' : (primaryAttract === 'group' ? ' pulse' : ' bbt-cta-calm'))} onClick={openGroup} aria-label="加入用户交流群" title="DeepFocus 用户交流群 · 免费开放给所有人，聊行情/追快讯/唠复盘">💬 交流群{!groupSeen && <span className="bbt-group-hot">免费</span>}</button>
               {!groupSeen && !groupHintSess && !groupOpen && (
                 <span className="bbt-grp-hint" role="note">
                   <span className="bbt-grp-hint-txt">👋 免费进官方交流群 · 聊行情 / 抢第一手快讯</span>
@@ -3176,7 +3193,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             // 角标优先级：新人(注册前3天)专享 > 限时福利期 > 默认
             const hot = isNewUser ? '🎁新人福利' : promoActive ? '⏳限时福利' : (isMember ? '提前续' : '解锁全部');
             return (
-              <button className={'bbt-buy-cta' + ((isMember && !isNewUser && !promoActive) ? '' : ' attract')}
+              <button className={'bbt-buy-cta' + ((isMember && !isNewUser && !promoActive) ? '' : (primaryAttract === 'buy' ? ' attract' : ' bbt-cta-calm'))}
                       onClick={() => { logAct('open_buy', isMember ? '顶部续费CTA' : '顶部开通会员CTA'); requireLogin(openBuy, isMember ? '续费会员' : '开通会员'); }}
                       aria-label={isMember ? '续费会员' : '开通尊享会员'}
                       title={isNewUser ? '新人限时福利：低至4折 + 年卡加赠1个月/半年卡加赠15天' : (isMember ? '限时福利期·提前续费更划算' : '开通尊享会员 · 限时低至4折 · 解锁 AI 无限解读/微信快讯推送/文章全文')}>
@@ -3184,9 +3201,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               </button>
             );
           })()}
-          <button className={'bbt-ref-entry' + (refOpened ? '' : ' attract')} onClick={() => { logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }} aria-label="邀请好友得会员" title="邀请好友 · 累计解锁会员卡，最高免费拿 ¥698 年卡">🎁 邀请得会员<span className="bbt-ref-entry-hot">免费拿年卡</span>{refAvail > 0 && <span className="bbt-ref-entry-badge">{refAvail}</span>}</button>
-          <button className="bbt-help-btn bbt-manual-btn" onClick={() => setShowHelp(true)} aria-label="产品说明书" title="产品说明书">📖</button>
-          <button className="bbt-help-btn" onClick={() => setShowOnb(true)} aria-label="新手引导" title="新手引导">❔</button>
+          <button className={'bbt-ref-entry' + (refOpened ? '' : (primaryAttract === 'ref' ? ' attract' : ' bbt-cta-calm'))} onClick={() => { logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }} aria-label="邀请好友得会员" title="邀请好友 · 累计解锁会员卡，最高免费拿 ¥698 年卡">🎁 邀请得会员<span className="bbt-ref-entry-hot">免费拿年卡</span>{refAvail > 0 && <span className="bbt-ref-entry-badge">{refAvail}</span>}</button>
+          {/* 说明书+新手引导合并成一个帮助下拉（原两个常驻图标，用户反馈顶栏太乱）：复用账号菜单同款 acctwrap/pop 交互 */}
+          <span className="bbt-acctwrap">
+            <button className="bbt-help-btn bbt-manual-btn" onClick={() => setHelpMenuOpen(v => !v)} aria-haspopup="true" aria-expanded={helpMenuOpen} aria-label="帮助" title="帮助">📖</button>
+            {helpMenuOpen && (
+              <>
+                <div className="bbt-acct-mask" onClick={() => setHelpMenuOpen(false)} />
+                <div className="bbt-acct-pop" onClick={e => e.stopPropagation()}>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setShowHelp(true); }}>📖 产品说明书</button>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setShowOnb(true); }}>❔ 新手引导</button>
+                </div>
+              </>
+            )}
+          </span>
           {authUser
             ? (() => {
                 const isLifetime = membership?.tier === 'lifetime';
@@ -3439,7 +3467,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           {isCelebrity ? (
             <TerminalCelebrityViews inline />
           ) : isZsxqStream ? (
-            <TerminalZsxqStream inline />
+            <TerminalZsxqStream inline loggedIn={!!authUser} onRequireLogin={() => requireLogin(() => {}, '登录查看更早机构纪要')} />
           ) : isResearch ? (
             <div className="bbt-res">
               {resFiltered.length === 0 && (
@@ -3556,6 +3584,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   : searchLoading ? '检索中…'
                     : newsQuery.trim() ? `无「${newsQuery.trim()}」相关快讯/文章`
                       : active ? `无 ${activeName} 相关快讯/文章` : '暂无最新资讯 · 开市后实时滚动更新'}</div>}
+              {/* ⭐内容优先：真实资讯头条放在本区最上面(用户反馈"把大家关注的新闻放在最上面")，
+                  运营/激活类卡片(开启盯盘/复盘)统一挪到本区末尾，见下方 */}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && renderHeads([...heads.kx.map((m: any) => headlineRow('kx', m)), ...heads.wz.map((m: any) => headlineRow('wz', m)), ...heads.yb.map((m: any) => headlineRow('yb', m))])}
+              {/* 自选相关已独立成「自选」tab，ALL 里不再内嵌 */}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === '快讯' && renderHeads(heads.kx.map((m: any) => headlineRow('kx', m)))}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === '文章' && renderHeads(heads.wz.map((m: any) => headlineRow('wz', m)))}
               {/* 回访首屏「我的」视角：3 秒看到"与我有关"的变化（数据全现成：quotes+watchlistFeed），点击直切自选 tab */}
               {authUser && watchlist.length > 0 && newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && (() => {
                 let up = 0, down = 0;
@@ -3568,44 +3602,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   </div>
                 );
               })()}
-              {!activateDone && newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && (
-                <div className="bbt-activate">
-                  <button className="bbt-activate-x" title="稍后" onClick={dismissActivate}>✕</button>
-                  <div className="bbt-activate-h">🔔 开启盯盘 · 别错过你关心的行情</div>
-                  <div className="bbt-activate-sub">开启后，你自选的股票一出快讯 / 异动，我们第一时间把你叫回来{watchlist.length ? `（你已自选 ${watchlist.length} 只）` : ''}。也可再加几只关心的：</div>
-                  <div className="bbt-activate-picks">
-                    {ACTIVATE_PICKS.slice(0, 8).map(p => {
-                      const inWl = watchlist.includes(p.code);
-                      return (
-                        <button key={p.code} className={'bbt-activate-chip' + (inWl ? ' on' : '')} disabled={inWl}
-                          onClick={() => requireLogin(() => addSymbol(p.code, p.name, false), '添加自选股票')}>{inWl ? '✓ 已加' : '＋ ' + p.name}</button>
-                      );
-                    })}
-                    <button className="bbt-activate-chip bbt-activate-chip--more" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 搜索添加</button>
-                  </div>
-                  <div className="bbt-activate-foot">
-                    <button className="bbt-activate-go" onClick={() => requireLogin(armRecall, '开启盯盘提醒')}>开启盯盘提醒</button>
-                    <button className="bbt-activate-skip" onClick={dismissActivate}>稍后再说</button>
-                  </div>
-                </div>
-              )}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && reviewToday && (() => {
-                const rIsToday = reviewToday.date === new Date().toLocaleDateString('en-CA');  // 仅当复盘日=真今天才叫「今日」（周末/节假日显示最近交易日，不误标）
-                return (
-                <div className="bbt-review-card" onClick={() => openReview()} role="button" title={`查看 A股${reviewToday.session_label || '复盘'} · ${reviewToday.date}`}>
-                  <span className="bbt-review-card-ico">📊</span>
-                  <div className="bbt-review-card-main">
-                    <div className="bbt-review-card-t">{rIsToday ? '今日 ' : ''}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}{(reviewToday.our_edge || []).length > 0 ? <span className="bbt-review-card-edge">含「DeepFocus 提前发现」{(reviewToday.our_edge || []).length} 条</span> : null}</div>
-                    <div className="bbt-review-card-sub">{(reviewToday.narrative || {}).one_liner || '点击查看大盘·板块·个股 × 我们的资讯复盘'}</div>
-                  </div>
-                  <span className="bbt-review-card-go">查看 →</span>
-                </div>
-                );
-              })()}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && renderHeads([...heads.kx.map((m: any) => headlineRow('kx', m)), ...heads.wz.map((m: any) => headlineRow('wz', m)), ...heads.yb.map((m: any) => headlineRow('yb', m))])}
-              {/* 自选相关已独立成「自选」tab，ALL 里不再内嵌 */}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === '快讯' && renderHeads(heads.kx.map((m: any) => headlineRow('kx', m)))}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === '文章' && renderHeads(heads.wz.map((m: any) => headlineRow('wz', m)))}
               {feedFilter === '自选' && watchlist.length > 0 && wlGroups.every(g => g.total === 0) && (
                 <div className="bbt-empty">{searchLoading ? '检索中…' : '自选股暂无相关快讯 / 文章 / 研报'}</div>
               )}
@@ -3683,6 +3679,41 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   {shown.map(m => renderNewsRow(m, false, undefined))}
                   <Pager page={newsPageCur} total={pagedRows.length} pageSize={pageSize} onPage={goNewsPage} onSize={setPageSize} busy={histLoading} hasMore={hasMore} />
                 </>);
+              })()}
+              {/* 运营/激活类卡片挪到内容之后（用户反馈"新闻放最上面"）：看完头条再看到这些，不再抢首屏 */}
+              {!activateDone && newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && (
+                <div className="bbt-activate">
+                  <button className="bbt-activate-x" title="稍后" onClick={dismissActivate}>✕</button>
+                  <div className="bbt-activate-h">🔔 开启盯盘 · 别错过你关心的行情</div>
+                  <div className="bbt-activate-sub">开启后，你自选的股票一出快讯 / 异动，我们第一时间把你叫回来{watchlist.length ? `（你已自选 ${watchlist.length} 只）` : ''}。也可再加几只关心的：</div>
+                  <div className="bbt-activate-picks">
+                    {ACTIVATE_PICKS.slice(0, 8).map(p => {
+                      const inWl = watchlist.includes(p.code);
+                      return (
+                        <button key={p.code} className={'bbt-activate-chip' + (inWl ? ' on' : '')} disabled={inWl}
+                          onClick={() => requireLogin(() => addSymbol(p.code, p.name, false), '添加自选股票')}>{inWl ? '✓ 已加' : '＋ ' + p.name}</button>
+                      );
+                    })}
+                    <button className="bbt-activate-chip bbt-activate-chip--more" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 搜索添加</button>
+                  </div>
+                  <div className="bbt-activate-foot">
+                    <button className="bbt-activate-go" onClick={() => requireLogin(armRecall, '开启盯盘提醒')}>开启盯盘提醒</button>
+                    <button className="bbt-activate-skip" onClick={dismissActivate}>稍后再说</button>
+                  </div>
+                </div>
+              )}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && reviewToday && (() => {
+                const rIsToday = reviewToday.date === new Date().toLocaleDateString('en-CA');  // 仅当复盘日=真今天才叫「今日」（周末/节假日显示最近交易日，不误标）
+                return (
+                <div className="bbt-review-card" onClick={() => openReview()} role="button" title={`查看 A股${reviewToday.session_label || '复盘'} · ${reviewToday.date}`}>
+                  <span className="bbt-review-card-ico">📊</span>
+                  <div className="bbt-review-card-main">
+                    <div className="bbt-review-card-t">{rIsToday ? '今日 ' : ''}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}{(reviewToday.our_edge || []).length > 0 ? <span className="bbt-review-card-edge">含「DeepFocus 提前发现」{(reviewToday.our_edge || []).length} 条</span> : null}</div>
+                    <div className="bbt-review-card-sub">{(reviewToday.narrative || {}).one_liner || '点击查看大盘·板块·个股 × 我们的资讯复盘'}</div>
+                  </div>
+                  <span className="bbt-review-card-go">查看 →</span>
+                </div>
+                );
               })()}
             </div>
           )}
@@ -4318,6 +4349,33 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     🔬 深度研判 <span className="bbt-deep-seg-beta">🔒会员</span></button>
                 </div>
               )}
+              {/* 非会员看不到深度研判长什么样 → 从没试过就不会想买。放一份贴着真实输出结构的示例
+                  （明确标"示例"+虚构股票走势，不冒充实时研判），让"这功能到底有没有用"从抽象文案变成可评估的样子。 */}
+              {!canDeep && (
+                <div className="bbt-deep-verdict bbt-deep-sample">
+                  <div className="bbt-deep-sample-tag">示例效果 · 并非实时数据</div>
+                  <div className="bbt-deep-vhead">
+                    <span className="bbt-deep-dir bbt-deep-dir--up">看多</span>
+                    <span className="bbt-deep-conf">置信 72%</span>
+                    <span className="bbt-deep-ifind">贵州茅台 600519（示例）</span>
+                  </div>
+                  <div className="bbt-deep-thesis">消费复苏预期升温，渠道库存去化接近尾声，估值处于近三年中枢下沿——多空分歧收窄，短期驱动力偏多。</div>
+                  <div className="bbt-ai-h bbt-ai-h--bull">🔑 核心依据</div>
+                  <ul className="bbt-ai-list">
+                    <li>渠道调研：批价企稳回升，经销商回款进度快于去年同期</li>
+                    <li>估值：PE(TTM) 处于近 3 年 30 分位附近，安全边际较高</li>
+                  </ul>
+                  <div className="bbt-ai-h bbt-ai-h--bear">⚠️ 关键风险</div>
+                  <ul className="bbt-ai-list bbt-ai-risk">
+                    <li>终端消费复苏斜率仍待验证<span className="bbt-deep-sev">中等</span></li>
+                  </ul>
+                  <div className="bbt-ai-foot">真实研判会针对你输入的股票，取证→多空辩论→风控→投委会裁决全流程生成 · 仅供研究参考，不构成投资建议</div>
+                  <button className="bbt-review-act bbt-review-act--hero" style={{ marginTop: 10 }}
+                    onClick={() => { setUpgradeReason('🔬 深度研判（取证→多空辩论→风控→投委会裁决的 AI 深度报告）是会员专属功能，开通即用。'); setUpgradeOpen(true); }}>
+                    🔓 解锁真实研判 · 换成你关注的股票
+                  </button>
+                </div>
+              )}
               {deepMode ? (
               <>
               <div className="bbt-ifind-search">
@@ -4532,6 +4590,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <span className="bbt-buy-amount-sub">{buySel.label} · {buySel.days} 天{selBonus ? ` ＋赠 ${selBonus.days} 天` : ''}</span>
                 {!!(buySel.orig && buySel.orig > buySel.price) && <span className="bbt-buy-amount-save">较定价省 ¥{buySel.orig - buySel.price}</span>}
                 {selBonus && <span className="bbt-buy-amount-bonus">🎁 新人加赠 {selBonus.days} 天，共 {buySel.days + selBonus.days} 天</span>}
+              </div>
+            )}
+            {/* 价值锚点：openBuy 可直接从顶部/账号面板打开，跳过了 upgradeOpen 弹窗的权益话术——
+                此处补一份「这价格包含什么」，别让用户只看到价格数字就要做付费决定 */}
+            {buySel && (
+              <div className="bbt-buy-value">
+                <span className="bbt-buy-value-t">这份价格里包含</span>
+                <span className="bbt-buy-value-i">AI 投研问答不限次</span>
+                <span className="bbt-buy-value-i">🔬 深度研判（多空辩论式）</span>
+                <span className="bbt-buy-value-i">研报 / 文章全文</span>
+                <span className="bbt-buy-value-i">微信快讯推送</span>
+                <span className="bbt-buy-value-i">日均 ¥{(buySel.price / buySel.days).toFixed(2)}</span>
               </div>
             )}
             {payCfg?.storefront_url && (
