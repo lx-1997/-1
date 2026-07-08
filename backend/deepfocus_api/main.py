@@ -5632,6 +5632,18 @@ async def api_v1_research(request: Request, q: str = "", limit: int = 60) -> dic
     return {"count": len(items), "items": items}
 
 
+@app.get("/api/v1/openclaw/digest")
+async def api_v1_openclaw_digest(request: Request, hours: int = 12) -> dict[str, Any]:
+    """OpenClaw/飞书定时摘要：过去 N 小时快讯+研报+机构纪要+文章，给外部定时任务（飞书机器人）拉取后
+    自己组织人话摘要再推送。鉴权同合作方开放 API（X-API-Key，去 /api/admin/partner-keys 签发一把专用 key）。
+    只读缓存，不在这里触发新的 AI 解读/新的 ZSXQ 下载——见 openclaw_digest 模块头注。"""
+    rec = _require_api_key(request)
+    from .openclaw_digest import build_digest
+    data = await build_digest(hours=max(1, min(int(hours or 12), 48)))
+    _count_v1_success(rec, request)
+    return data
+
+
 # --- 合作方 API Key 管理（管理员，需 metrics 令牌）---
 def _check_metrics_token(request: Request, token: str) -> None:
     expected = (os.getenv("DEEPFOCUS_METRICS_TOKEN") or "").strip()
