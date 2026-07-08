@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from . import weixin_bind as bind
 from . import weixin_ilink as ilink
+from . import weixin_schedule as wsched
 from .shared_utils import utc_now_iso
 from .stock_name_index import mentions_specific_stock
 
@@ -281,6 +282,112 @@ def _sync_watchlist_to_push(b: Dict[str, Any]) -> str:
     more = f" 等 {len(symbols)} 只" if len(symbols) > 8 else ""
     return (f"✅ 已把你的自选股设为推送范围：{show}{more}\n"
             "之后只推与它们相关的快讯；回复「推送全部」改回全量，回复「关闭推送」暂停。")
+
+
+# ---- 个性化定时推送：微信里一句话订阅（会员专属、确定性解析、不耗 token）----
+# 与上面「按快讯事件触发」的自动推送正交：这里是「每天固定时刻」的定时推送。
+_SCHED_OFF_HINTS = ("关闭定时", "取消定时", "停止定时", "关闭每日推送", "取消每日推送",
+                    "关闭定时推送", "取消定时推送", "停止定时推送", "关闭每日定时", "取消每日定时")
+_SCHED_STATUS_HINTS = ("我的定时", "定时状态", "查看定时", "定时推送状态", "定时推送情况")
+_SCHED_SUBJECT = ("自选", "行情", "快讯", "资讯", "新闻", "推送", "订阅", "盯盘")
+_SCHED_NEWS_WORDS = ("快讯", "资讯", "新闻", "消息")
+# 疑问词：出现即判为「在问功能」而非「下指令」，不建计划（几点=问时间；能不能/可不可以=问能力）
+_SCHED_QUESTION_WORDS = ("怎么", "如何", "什么", "为什么", "为啥", "啥", "几点", "多少", "能不能", "可不可以", "是不是")
+_SCHED_DEFAULT_HOUR = 8
+_SCHED_DEFAULT_MINUTE = 40
+
+
+def _parse_bj_time(text: str) -> Optional[tuple]:
+    """从中文口令抽「几点几分」(北京时间)。支持 8点/8:30/8点半/8点30分/8点三刻/8点3刻/下午3点/晚上8点。
+    ⚠️「点」后的裸数字只有跟「分/刻」才算分钟——否则「8点8只自选」会被误读成 08:08。抽不到→None。"""
+    pm = any(k in text for k in ("下午", "晚上", "傍晚", "夜里", "深夜"))
+    am = any(k in text for k in ("早上", "早晨", "上午", "清晨", "凌晨"))
+    minute = 0
+    m = re.search(r"(\d{1,2})\s*[:：]\s*(\d{1,2})", text)
+    if m:
+        hour, minute = int(m.group(1)), int(m.group(2))
+    else:
+        mh = re.search(r"(\d{1,2})\s*点", text)
+        if not mh:
+            return None
+        hour = int(mh.group(1))
+        if re.search(r"点\s*半", text):
+            minute = 30
+        elif re.search(r"点\s*一刻", text):
+            minute = 15
+        elif re.search(r"点\s*三刻", text):
+            minute = 45
+        else:
+            mk = re.search(r"点\s*(\d{1,2})\s*刻", text)   # N刻 = N×15
+            mf = re.search(r"点\s*(\d{1,2})\s*分", text)   # N分
+            if mk:
+                minute = min(45, int(mk.group(1)) * 15)
+            elif mf:
+                minute = int(mf.group(1))
+            # 其余（如「8点8只」「8点推自选」）：点后裸数字不当分钟，minute 保持 0
+    # 12 点归一：凌晨/夜里/深夜 12 点 = 0 点；下午/晚上 N(<12) 点 +12
+    if hour == 12 and any(k in text for k in ("凌晨", "夜里", "深夜")):
+        hour = 0
+    elif pm and hour < 12:
+        hour += 12
+    elif am and hour == 12:
+        hour = 0
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
+def _fmt_hm(h: int, m: int) -> str:
+    return f"{int(h):02d}:{int(m):02d}"
+
+
+def _schedule_command_reply(question: str, b: Dict[str, Any]) -> Optional[str]:
+    """个性化定时推送口令解析。命中(开启/关闭/查看)→返回回复文本；非定时口令→None(交回主流程)。"""
+    q = (question or "").strip()
+    uid = (b.get("deepfocus_user_id") or "").strip()
+    # —— 关闭（先于开启判断：关闭定时 也含"定时"）——
+    if any(k in q for k in _SCHED_OFF_HINTS):
+        if not uid:
+            return "未找到绑定的终端账号，请在网站重新绑定后再试"
+        n = wsched.disable_personal(uid)
+        return "✅ 已关闭你的定时推送。回复「定时推送」随时恢复。" if n else "你当前没有开启定时推送。"
+    # —— 查看状态 ——
+    if any(k in q for k in _SCHED_STATUS_HINTS):
+        if not uid:
+            return "未找到绑定的终端账号，请在网站重新绑定后再试"
+        rows = [r for r in wsched.list_personal(uid) if r.get("enabled")]
+        if not rows:
+            return "你还没开启定时推送。回复「定时推送」即可每个交易日定时收到自选行情。"
+        r = rows[0]
+        what = "自选行情快照" if r["content_type"] == "watchlist_quote" else "自选相关快讯"
+        return f"⏰ 你的定时推送：每个交易日 {_fmt_hm(r['hour'], r['minute'])} 推「{what}」。回复「关闭定时」可暂停。"
+    # —— 开启/修改 ——
+    # 疑问句(怎么/什么/几点…)= 在问功能不是下指令 → 交回 agent 回答，别静默建计划（防「怎么订阅推送」被误当命令）
+    if any(k in q for k in _SCHED_QUESTION_WORDS):
+        return None
+    subject = any(k in q for k in _SCHED_SUBJECT)
+    tm = _parse_bj_time(q)
+    # 调度信号：必须有明确的「定时/每天/每日/每个交易日/具体时刻」之一；光有「订阅/推送」不算(那多半是在问功能)。
+    # 不再要求特定动词——「每天早上把我的自选发给我」(发)与「每天推自选」(推) 一视同仁。
+    schedule_signal = ("定时" in q) or any(k in q for k in ("每天", "每日", "每个交易日")) or (tm is not None)
+    if not (subject and schedule_signal):
+        return None
+    if not uid:
+        return "未找到绑定的终端账号，请在网站重新绑定后再试"
+    if not _member_can_push(b):
+        return f"定时推送是会员专属功能。开通会员后即可每个交易日定时收到你的自选行情 👉 {_PUBLIC_SITE}"
+    ctype = "watchlist_news" if any(k in q for k in _SCHED_NEWS_WORDS) else "watchlist_quote"
+    hour, minute = tm if tm else (_SCHED_DEFAULT_HOUR, _SCHED_DEFAULT_MINUTE)
+    wsched.set_personal(uid, ctype, hour, minute, day_mode="trading")
+    what = "自选相关快讯" if ctype == "watchlist_news" else "自选股行情快照"
+    other = "行情" if ctype == "watchlist_news" else "快讯"
+    return (
+        f"✅ 已设定：每个交易日 {_fmt_hm(hour, minute)}（北京时间）推送你的{what}。\n"
+        "· 换时间：回复「每天9点推自选」\n"
+        f"· 换内容：回复「定时推自选{other}」\n"
+        "· 关闭：回复「关闭定时」\n"
+        "（需自选非空 + 微信近期活跃；数据仅供参考，不构成投资建议）"
+    )
 
 
 # ⭐会员状态转移检测（到期断流通知）：推送停止的瞬间是用户对产品价值感知最清晰的时刻，
@@ -932,6 +1039,11 @@ class WeixinChannelManager:
             else:
                 await _reply("未找到绑定的终端账号，请在网站重新绑定后再试")
             return
+        # ⓪b 个性化定时推送（每天固定时刻，会员专属）：开启/换时间换内容/关闭/查看——确定性口令，不耗 token
+        _sched_reply = _schedule_command_reply(question, b)
+        if _sched_reply is not None:
+            await _reply(_sched_reply)
+            return
         # ② 纯寒暄（兼推送激活确认）/ ③ 帮助菜单：友好引导，不触发 agent、不计次（对非会员也开放）
         if q_norm in _GREETINGS:
             await _reply(_GREETING_REPLY)
@@ -1066,12 +1178,15 @@ class WeixinChannelManager:
 
     # ---- 准推送：best-effort flush ----
 
-    async def quasi_push(self, text: str, fresh_within_seconds: Optional[int] = None) -> Dict[str, int]:
+    async def quasi_push(self, text: str, fresh_within_seconds: Optional[int] = None,
+                         gap_seconds: float = 0.0) -> Dict[str, int]:
         """对 active 绑定用各自缓存的 context_token 主动发一条。
         token 失效/无 ctx → 跳过（不报错）；fresh_within_seconds 可只推近期活跃者。
+        gap_seconds>0 时相邻【实发】之间留间隔（错峰，定时群发用，避免并发尖峰触反垃圾）。
         返回 {delivered, skipped, failed}。⚠️ 低频用，高频群发触反垃圾红线。"""
         delivered = skipped = failed = 0
         now = utc_now_iso()
+        sent_any = False
         for b in bind.list_active():
             ctx = b.get("context_token")
             to = b.get("wechat_user_id")
@@ -1081,6 +1196,9 @@ class WeixinChannelManager:
             if fresh_within_seconds is not None and not _within(b.get("context_token_at"), now, fresh_within_seconds):
                 skipped += 1
                 continue
+            if gap_seconds and sent_any:
+                await asyncio.sleep(gap_seconds)  # 错峰：仅在【实发】之间插间隔，跳过的绑定不拖慢
+            sent_any = True
             ok, ret = await _send_retry(b, to, ctx, text, lock=self._lock_for(b.get("ilink_bot_id") or ""))  # 重试+退避+串行锁
             if ok:
                 delivered += 1
@@ -1089,6 +1207,31 @@ class WeixinChannelManager:
                 if ret in _SEND_DEAD_RETS:  # 手动推也遇 token 失效 → 清冷，与自动推一致
                     bind.clear_context_token(b.get("ilink_bot_id") or "")
         return {"delivered": delivered, "skipped": skipped, "failed": failed}
+
+    async def push_to_user(self, deepfocus_user_id: str, text: str) -> bool:
+        """给【单个】绑定用户主动发一条（个性化定时推送用）。
+        token 冷/无 ctx/未绑定 → False（不报错，落一条 skipped 日志）；发送遇 dead ret 清冷。返回是否送达。"""
+        if not (deepfocus_user_id or "").strip() or not (text or "").strip():
+            return False
+        b = bind.get_by_user(deepfocus_user_id.strip())
+        if not b or not b.get("active"):
+            return False
+        bot_id = b.get("ilink_bot_id") or ""
+        uname = b.get("username") or ""
+        ctx = b.get("context_token")
+        to = b.get("wechat_user_id")
+        if not ctx or not to:
+            bind.log_push_event("push", "skipped", bot_id, uname, "个性化定时:token冷/无ctx→跳过(待用户发消息重新激活)")
+            return False
+        ok, ret = await _send_retry(b, to, ctx, text, lock=self._lock_for(bot_id))  # 重试+退避+串行锁
+        if ok:
+            bind.log_push_event("push", "delivered", bot_id, uname, f"个性化定时 {len(text)}字")
+        elif ret in _SEND_DEAD_RETS:  # sendmessage 确定性拒绝=token 对发送失效 → 清冷止损
+            bind.clear_context_token(bot_id)
+            bind.log_push_event("push", "dead", bot_id, uname, f"个性化定时 sendmessage ret={ret}→清冷，待用户重发激活")
+        else:
+            bind.log_push_event("push", "failed", bot_id, uname, f"个性化定时 发送失败(ret={ret})，暂不清token待观察")
+        return ok
 
 
 def _within(then_iso: Optional[str], now_iso: str, seconds: int) -> bool:
