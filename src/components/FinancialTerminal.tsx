@@ -335,6 +335,11 @@ function fmtVol(v?: number | null): string {
   if (v >= 1e4) return (v / 1e4).toFixed(1) + '万';
   return String(Math.round(v));
 }
+// 市场分类单一口径：A股=6位数字，港股=3~5位数字（含4位不带前导零的常见写法），其余=美股。
+// 此前详情条另有一份只认 5 位的实现，3~4 位港股代码（如 700）会被误判成美股。
+function classifyMarket(sym: string): 'A' | 'HK' | 'US' {
+  return /^\d{6}$/.test(sym) ? 'A' : /^\d{3,5}$/.test(sym) ? 'HK' : 'US';
+}
 function fmtReportDate(iso: string): string {
   const s = (iso || '').slice(0, 10);
   return s ? s.slice(5) : '--'; // MM-DD
@@ -2896,7 +2901,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <div className="bbt-heads">
         <div className="bbt-heads-h" onClick={() => setHeadsHidden(v => !v)} title={headsHidden ? '展开头条' : '收起头条'}>
           <button className="bbt-collapse-btn" aria-label="今日头条" aria-expanded={!headsHidden} title={headsHidden ? '展开头条' : '收起头条'} onClick={e => { e.stopPropagation(); setHeadsHidden(v => !v); }}>{headsHidden ? '▸' : '▾'}</button>
-          🔥 今日头条 · {rows.length} 条{headsHidden ? '（已收起）' : ''}
+          {/* 🔥 被签到streak/限时福利复用，这里改 📌 不再抢紧迫感信号（那两处的 🔥 保留） */}
+          📌 今日头条 · {rows.length} 条{headsHidden ? '（已收起）' : ''}
         </div>
         {!headsHidden && rows}
       </div>
@@ -2916,7 +2922,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const renderNewsRow = (m: RealtimeMessageRecord, pinned = false, wlSyms?: string[]) => {
     const isFlash = (m.topic || '') === '快讯';
-    const canBookmark = (m.topic || '') === '文章' || (m.topic || '') === '研报';  // 快讯不收藏（用户拍板）
+    const canBookmark = (m.topic || '') === '文章';  // 快讯不收藏（用户拍板）；研报走独立的 renderResearchRow，不会传入这里
     const isBm = bookmarks.has(bmId(m));
     return (
       <div key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}`}
@@ -2953,14 +2959,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           ) : (
             <>
               <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); runNewsAi(m); }}>AI 解读</button>
-              {/* 研报：原文按钮（会员专享 PDF）。文章：有外链→"原文"新标签；无外链→"全文"站内阅读器(文章始终显示，内容空时至少能看标题)。 */}
-              {m.topic === '研报'
-                ? null
-                : (articleOriginalUrl(m)
-                  ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
-                  : (m.topic === '文章'
-                    ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button>
-                    : null))}
+              {/* 文章：有外链→"原文"新标签；无外链→"全文"站内阅读器(文章始终显示，内容空时至少能看标题)。研报走独立的 renderResearchRow，不会传入这里 */}
+              {articleOriginalUrl(m)
+                ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
+                : (m.topic === '文章'
+                  ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button>
+                  : null)}
               {/* 文章分享：链接指向公开落地页 /article/{id}（软墙，登录看全文）。span 兜住冒泡，不触发整行的 AI 解读 */}
               {m.topic === '文章' && (
                 <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
@@ -3007,9 +3011,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => { navRef.current = displayList; }, [displayList]);
   // 自选按市场分组(A股/港股/美股)——更清晰、专业；组内沿用当前排序/顺序
   const groupedWatch = useMemo(() => {
-    const mkt = (s: string): 'A' | 'HK' | 'US' => /^\d{6}$/.test(s) ? 'A' : /^\d{3,5}$/.test(s) ? 'HK' : 'US';
     const g: Record<string, string[]> = { A: [], HK: [], US: [] };
-    displayList.forEach(s => { g[mkt(s)].push(s); });
+    displayList.forEach(s => { g[classifyMarket(s)].push(s); });
     const LABEL: Record<string, string> = { A: 'A股', HK: '港股', US: '美股' };
     return (['A', 'HK', 'US'] as const).map(k => ({ key: k, label: LABEL[k], syms: g[k] })).filter(x => x.syms.length);
   }, [displayList]);
@@ -3124,6 +3127,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const primaryAttract: 'group' | 'buy' | 'ref' | null =
     wantsGroupAttract ? 'group' : wantsBuyAttract ? 'buy' : wantsRefAttract ? 'ref' : null;
 
+  // ⭐登录态横幅同样只显一条（此前 4 条各自独立渲染，条件叠加时会同屏出现两条，如"到期提醒"撞上"客服回复"）：
+  // 优先级 管理员未读私信 > 客服回复 > 会员到期提醒 > 体验会员待领。匿名态战绩/试用二选一已在下方各自 ternary 处理，不受此影响。
+  const wantsExpiryBanner = authUser && membership?.tier === 'premium' && typeof memDaysLeft === 'number' && memDaysLeft <= 2 && !expiryDismissed;
+  const primaryBanner: 'admin-unread' | 'support-reply' | 'expiry' | 'trial-claim' | null =
+    (isAdmin && adminUnread > 0) ? 'admin-unread'
+    : (authUser && supportUnread > 0) ? 'support-reply'
+    : wantsExpiryBanner ? 'expiry'
+    : (authUser && trialClaimable) ? 'trial-claim'
+    : null;
+
   return (
     <div className="bbt">
       {pdfLoadingUrl && (
@@ -3157,9 +3170,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </button>
           )}
           <button className="bbt-review-entry" onClick={() => openReview()} title="A股每日收盘复盘 · DeepFocus 提前发现">📊 复盘</button>
-          {/* 连续签到 streak 常驻可见：损失厌恶是最强次日回访钩子（引擎/奖励早已建成，此前只藏在复盘弹层标题栏） */}
+          {/* 连续签到 streak 常驻可见：损失厌恶是最强次日回访钩子（引擎/奖励早已建成，此前只藏在复盘弹层标题栏）。
+              ⚠️专属 bbt-checkin-entry 类 + data-ico/data-label：手机端「复盘」按钮会被折叠成图标+短标签(见 css ≤820/≤560 分支)，
+              此前两者共用 bbt-review-entry 且无区分类，折叠规则统一按「复盘」渲染，streak 天数在手机上完全看不见。 */}
           {authUser && checkin && checkin.streak > 0 && (
-            <button className="bbt-review-entry" onClick={() => openReview()}
+            <button className="bbt-review-entry bbt-checkin-entry" onClick={() => openReview()}
+              data-ico={checkin.checked_today ? '🔥' : '⏳'} data-label={`连签${checkin.streak}天`}
               title={checkin.checked_today
                 ? `已连续看盘 ${checkin.streak} 天${checkin.days_to_next ? ` · 再坚持 ${checkin.days_to_next} 天送 ${checkin.next_reward_days ?? ''} 天会员` : ''}`
                 : `今天还没看复盘——连续 ${checkin.streak} 天的记录今晚就断了！`}>
@@ -3184,9 +3200,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           )}
           {/* hidden→locked：旗舰入口对匿名访客也可见，点击才要登录——登录墙挂在"我想问 AI"这个高意向动作上，
               比挂在被动浏览上转化率高得多（pendingActionRef 登录后自动续做） */}
+          {/* ✨ 而不是 🤖：宽屏下与「🤖 AI 模拟盘」共用一个图标容易看串，窄屏折叠态早就换成 ✨ 了，这里补齐一致 */}
           <button className="bbt-review-entry bbt-aiqa-entry"
             onClick={() => (canAskAi ? openAi() : requireLogin(openAi, 'AI 投研问答'))}
-            title="AI 投研问答：自动调行情/估值 + 检索我们的快讯/研报/复盘">🤖 AI 问答</button>
+            title="AI 投研问答：自动调行情/估值 + 检索我们的快讯/研报/复盘">✨ AI 问答</button>
           {membership?.tier !== 'lifetime' && (() => {
             const isMember = membership?.tier === 'premium';   // 已是尊享会员 → 显示「续费」（可能提前续期），永久会员不显示
             const promoActive = Date.now() < FOUNDING_PROMO_END;  // 限时福利进行中
@@ -3258,14 +3275,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                               : <><div className="bbt-mcard-t"><span className="bbt-mcard-ico">🎟️</span>体验期</div>
                                   <div className="bbt-mcard-sub">体验全部功能 · 升级尊享会员解锁更多权益</div></>}
                           </div>
-                          <button className="bbt-acct-row hl" onClick={openBuy}>💎 开通 / 续费会员</button>
+                          {/* 永久会员已「永久有效」，续费按钮会自相矛盾 → 只对非永久会员显示 */}
+                          {!isLifetime && <button className="bbt-acct-row hl" onClick={openBuy}>💎 开通 / 续费会员</button>}
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); setRedeemInput(''); setRedeemOpen(true); }}>🎟️ 兑换会员码</button>
                           <button className="bbt-acct-row" onClick={openBookmarks}>⭐ 我的收藏</button>
                           {/* 微信是唯一能天天触达免费用户的自有渠道——绑定入口对全体登录用户开放(非会员绑后有每日晨报+试吃问答，聊天窗里天然升级) */}
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); logAct('weixin_bind'); setShowWeixinBind(true); }}>🟢 绑定微信 · 收快讯{isVip || isAdmin ? '' : '（免费试用）'}</button>
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); openInvite(); }}>🎁 我的邀请</button>
                           {authUser === 'lx199710' && <button className="bbt-acct-row" onClick={openDashboard}>📊 运营看板</button>}
-                          <button className="bbt-acct-row" onClick={openSupport}>💬 联系管理员{supportUnread > 0 && <span className="bbt-acct-badge">{supportUnread}</span>}</button>
+                          {/* 未读数已经在头像红点(被动)+顶部横幅(主动)出现过，这里不再重复第三次 */}
+                          <button className="bbt-acct-row" onClick={openSupport}>💬 联系管理员</button>
                           <button className="bbt-acct-row danger" onClick={onLogout}>↩ 退出登录</button>
                         </div>
                       </>
@@ -3278,15 +3297,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       </div>
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}
-      {isAdmin && adminUnread > 0 && (
+      {primaryBanner === 'admin-unread' && (
         <div className="bbt-support-banner bbt-support-banner--admin" onClick={openDashboard} role="button" title="打开运营看板回复用户">
           <span className="bbt-support-banner-ico">📨</span>
           <span className="bbt-support-banner-text">有 <b>{adminUnread}</b> 条用户私信待回复 · 点击打开看板处理</span>
           <button className="bbt-support-banner-btn" onClick={e => { e.stopPropagation(); openDashboard(); }}>去处理</button>
         </div>
       )}
-      {/* 管理员回复未读：最高优先级横幅（用户直接相关），点击直达私信 */}
-      {authUser && supportUnread > 0 && (
+      {/* 管理员回复未读：登录态横幅次优先级（用户直接相关），点击直达私信 */}
+      {primaryBanner === 'support-reply' && (
         <div className="bbt-support-banner" onClick={openSupport} role="button" title="查看管理员回复">
           <span className="bbt-support-banner-ico">💬</span>
           <span className="bbt-support-banner-text">管理员回复了你（<b>{supportUnread}</b> 条未读）· 点击查看</span>
@@ -3312,7 +3331,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           </button>
         </div>
       ))}
-      {authUser && trialClaimable && (
+      {primaryBanner === 'trial-claim' && (
         <div className="bbt-trial-banner" onClick={onClaimTrial} role="button" title="领取体验会员，邀好友得 ¥698 年度会员">
           <span className="bbt-trial-gift">👑</span>
           <span className="bbt-trial-text"><b>3 天会员</b>待领 · 邀友得 <b>¥698 年卡</b></span>
@@ -3322,7 +3341,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
       {/* 到期转化：尊享会员剩 ≤2 天 → 醒目续费条（最高意向时刻），可本次关闭 */}
-      {authUser && membership?.tier === 'premium' && typeof memDaysLeft === 'number' && memDaysLeft <= 2 && !expiryDismissed && (
+      {primaryBanner === 'expiry' && typeof memDaysLeft === 'number' && (
         <div className="bbt-expiry-banner" onClick={openBuy} role="button" title="续费会员，不中断 AI 解读 / 复盘 / 微信推送">
           <span className="bbt-expiry-ico">⏰</span>
           <span className="bbt-expiry-text">
@@ -3335,7 +3354,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       )}
 
       <div className={'bbt-macro' + (macroOpen ? '' : ' closed')}>
-        <span className="bbt-macro-tag" role="button" onClick={() => setMacroOpen(v => !v)} title={macroOpen ? '收起宏观指标' : '展开宏观指标'}>MACRO{macroOpen ? '' : ' ▸'}</span>
+        {/* 收起态（默认，手机上几乎总是这个态）此前只是个看着没内容的纯文字标签；带一个实时数值提示这里点开有数据 */}
+        <span className="bbt-macro-tag" role="button" onClick={() => setMacroOpen(v => !v)} title={macroOpen ? '收起宏观指标' : '展开宏观指标'}>MACRO{!macroOpen && macro.vix?.value ? ` · VIX ${macro.vix.value}` : ''}{macroOpen ? '' : ' ▸'}</span>
         {macroOpen && [{ k: 'vix', l: 'VIX' }, { k: 'ten_year', l: 'US10Y' }, { k: 'dxy', l: 'DXY' }, { k: 'gold', l: '黄金' }, { k: 'oil', l: 'WTI' }, { k: 'bitcoin', l: 'BTC' }, { k: 'spx', l: '标普' }].map(m => {
           const ind = macro[m.k];
           if (!ind || !ind.value) return null;
@@ -3358,7 +3378,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const aq = quotes[active];
         const pc = Number(aq.change_percent || 0);
         const dir = pc > 0 ? 'up' : pc < 0 ? 'down' : 'flat';
-        const mkt = /^\d{6}$/.test(active) ? 'A股' : /^\d{5}$/.test(active) ? '港股' : '美股';
+        const mkt = { A: 'A股', HK: '港股', US: '美股' }[classifyMarket(active)];
         const lo = Number(aq.low || 0), hi = Number(aq.high || 0);
         const pos = hi > lo ? Math.max(0, Math.min(1, (aq.price - lo) / (hi - lo))) : 0.5;
         return (
@@ -3369,8 +3389,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <span className="bbt-detail-f">高 {aq.high ?? '-'}</span>
             <span className="bbt-detail-f">低 {aq.low ?? '-'}</span>
             <span className="bbt-detail-f">昨 {aq.previous_close ?? '-'}</span>
-            <span className="bbt-detail-f">量 {fmtVol(aq.volume)}</span>
-            <span className="bbt-detail-range" title={`低 ${lo} · 高 ${hi}`}><span className="bbt-range"><span className={`bbt-range-mark bbt-${dir}-bg`} style={{ left: `${pos * 100}%` }} /></span></span>
+            {/* 自选面板拖宽后，成交量/振幅条已经在行内(eq-extra 列)显示了，这里不重复；窄列态行内隐藏这两项时才补在这里 */}
+            {eqNarrow && <span className="bbt-detail-f">量 {fmtVol(aq.volume)}</span>}
+            {eqNarrow && <span className="bbt-detail-range" title={`低 ${lo} · 高 ${hi}`}><span className="bbt-range"><span className={`bbt-range-mark bbt-${dir}-bg`} style={{ left: `${pos * 100}%` }} /></span></span>}
             {/* 行情新鲜度：源挂掉价格静默冻结是信任毁灭级破绽——真拿到价才刷新时间戳，超 90s 显式提示 */}
             {(() => {
               const at = quoteAtRef.current[active];
@@ -3381,7 +3402,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             {/* 查股→结论一步直达：AI 解读是产品的"哇时刻"，此前离主路径隔 3 步+重复输入 */}
             <button className="bbt-nai" title="让 AI 综合行情/估值/资金/研报速判这只股"
               onClick={() => { openAi(); const q = `${nameOf(active) || active}(${active}) 现在怎么样？`; setAiInput(q); void askAi(q); }}>⚡ AI 速判</button>
-            <button className="bbt-clear bbt-detail-x" onClick={() => setActive(null)}>✕ 取消</button>
+            {/* 取消选中已有两条路（资讯面板筛选 chip 上的 ✕、再点一次已选中的自选行），这里不再放第三个重复按钮 */}
           </div>
         );
       })()}
@@ -3413,14 +3434,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             {quotesError && Object.keys(quotes).length === 0 && watchlist.length > 0 && (
               <div className="bbt-quotes-warn">⚠ 行情源暂时不可用，正在自动重试…</div>
             )}
-            {displayList.length === 0 && <div className="bbt-empty">自选为空 · 点下方「＋ 添加自选」搜索标的</div>}
+            {/* 提示指向头部常驻「＋」，而不是再放一个重复的"添加自选"按钮（此前两个入口做同一件事，点法完全一样） */}
+            {displayList.length === 0 && <div className="bbt-empty">自选为空 · 点上方「＋」搜索标的</div>}
             {groupedWatch.map(grp => (
               <React.Fragment key={grp.key}>
                 {groupedWatch.length > 1 && <div className="bbt-qgroup">{grp.label}<span className="bbt-qgroup-n">{grp.syms.length}</span></div>}
                 {grp.syms.map(renderQRow)}
               </React.Fragment>
             ))}
-            {watchlist.length > 0 && <button className="bbt-qadd" onClick={() => { setPaletteOpen(true); setPq(''); }}>＋ 添加自选</button>}
           </div>
           <div className="bbt-pf">东财/新浪/Google · A股港股近实时·美股约延迟 · 开盘5s刷新 · 点行选标的 · 表头排序 · 点 ✕ 删除(需确认)</div>
         </section>
@@ -3723,8 +3744,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
       <div className="bbt-status">
         <span className="bbt-status-disc">⚠ 仅供研究与教育用途，不构成投资建议，据此操作风险自负</span>
-        <span className={`bbt-conn c-${status}`}>● {STATUS_LABEL[status]}</span>
-        <span className="bbt-status-counts">NEWS {feed.length} · RES {reports.length} · EQ {Object.keys(quotes).length}/{watchlist.length} <b className="bbt-up">{breadthUp}▲</b>/<b className="bbt-down">{breadthDown}▼</b></span>
+        <span className={`bbt-conn c-${status}`} title="快讯实时推送连接状态">● {STATUS_LABEL[status]}</span>
+        {/* 自选面板被"最大化其它面板"挤没时，这里是唯一还能看到涨跌家数的地方；平时已在自选面板头部显示过，不重复。
+            右侧原始的 NEWS/RES/EQ 计数是内部调试信息，对用户无意义，去掉。 */}
+        {maxed && maxed !== 'eq' && (
+          <span className="bbt-status-counts"><b className="bbt-up">{breadthUp}▲</b>/<b className="bbt-down">{breadthDown}▼</b></span>
+        )}
         <span className="bbt-status-fn">／ 搜标的 · ↑↓ 切换 · ESC 取消</span>
       </div>
 
