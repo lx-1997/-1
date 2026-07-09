@@ -3056,7 +3056,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             {q.pb != null && <span>PB <b>{q.pb.toFixed(2)}</b></span>}
             {q.total_capital != null && <span>市值 <b>{fundCap(q.total_capital)}</b></span>}
             {q.turnover_ratio != null && <span>换手 <b>{q.turnover_ratio.toFixed(2)}%</b></span>}
-            <span className="bbt-qrow-fund-src">iFinD</span>
           </div>
         )}
       </React.Fragment>
@@ -3195,9 +3194,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               )}
             </span>
           )}
-          {IFIND_USERS.has((authUser || '').toLowerCase()) && (
-            <button className="bbt-review-entry bbt-ifind-entry" onClick={openIfind} title="同花顺 iFinD A股实时行情+基本面（专业数据）">📡 iFinD</button>
-          )}
           {/* hidden→locked：旗舰入口对匿名访客也可见，点击才要登录——登录墙挂在"我想问 AI"这个高意向动作上，
               比挂在被动浏览上转化率高得多（pendingActionRef 登录后自动续做） */}
           {/* ✨ 而不是 🤖：宽屏下与「🤖 AI 模拟盘」共用一个图标容易看串，窄屏折叠态早就换成 ✨ 了，这里补齐一致 */}
@@ -3209,8 +3205,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             const promoActive = Date.now() < FOUNDING_PROMO_END;  // 限时福利进行中
             // 角标优先级：新人(注册前3天)专享 > 限时福利期 > 默认
             const hot = isNewUser ? '🎁新人福利' : promoActive ? '⏳限时福利' : (isMember ? '提前续' : '解锁全部');
+            // 到期横幅出现时(primaryBanner==='expiry')顶栏CTA不再跟着一起跳动——同一件事没必要喊两遍，横幅已经够醒目
             return (
-              <button className={'bbt-buy-cta' + ((isMember && !isNewUser && !promoActive) ? '' : (primaryAttract === 'buy' ? ' attract' : ' bbt-cta-calm'))}
+              <button className={'bbt-buy-cta' + ((isMember && !isNewUser && !promoActive) ? '' : (primaryAttract === 'buy' && primaryBanner !== 'expiry' ? ' attract' : ' bbt-cta-calm'))}
                       onClick={() => { logAct('open_buy', isMember ? '顶部续费CTA' : '顶部开通会员CTA'); requireLogin(openBuy, isMember ? '续费会员' : '开通会员'); }}
                       aria-label={isMember ? '续费会员' : '开通尊享会员'}
                       title={isNewUser ? '新人限时福利：低至4折 + 年卡加赠1个月/半年卡加赠15天' : (isMember ? '限时福利期·提前续费更划算' : '开通尊享会员 · 限时低至4折 · 解锁 AI 无限解读/微信快讯推送/文章全文')}>
@@ -3283,6 +3280,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); logAct('weixin_bind'); setShowWeixinBind(true); }}>🟢 绑定微信 · 收快讯{isVip || isAdmin ? '' : '（免费试用）'}</button>
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); openInvite(); }}>🎁 我的邀请</button>
                           {authUser === 'lx199710' && <button className="bbt-acct-row" onClick={openDashboard}>📊 运营看板</button>}
+                          {/* iFinD 专业数据白名单仅2个账号可见，从常驻顶栏挪进账号菜单(与运营看板同款条件项)：
+                              顶栏11个入口太挤，这个受众最窄，收进一层不影响这2个账号的可用性 */}
+                          {IFIND_USERS.has((authUser || '').toLowerCase()) && <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); openIfind(); }}>📡 iFinD 专业数据</button>}
                           {/* 未读数已经在头像红点(被动)+顶部横幅(主动)出现过，这里不再重复第三次 */}
                           <button className="bbt-acct-row" onClick={openSupport}>💬 联系管理员</button>
                           <button className="bbt-acct-row danger" onClick={onLogout}>↩ 退出登录</button>
@@ -3433,6 +3433,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <div className="bbt-qbody">
             {quotesError && Object.keys(quotes).length === 0 && watchlist.length > 0 && (
               <div className="bbt-quotes-warn">⚠ 行情源暂时不可用，正在自动重试…</div>
+            )}
+            {/* 行下方 PE/PB/市值/换手 的来源说明：此前每一行各带一个「iFinD」小徽章重复刷屏，
+                收敛成面板顶部一句话，行内只留数字本身(不同、有用，不去重) */}
+            {Object.values(quotes).some((q: any) => q.pe_ttm != null || q.pb != null || q.total_capital != null) && (
+              <div className="bbt-qrow-fund-note">基本面数据来源 <b>同花顺 iFinD</b></div>
             )}
             {/* 提示指向头部常驻「＋」，而不是再放一个重复的"添加自选"按钮（此前两个入口做同一件事，点法完全一样） */}
             {displayList.length === 0 && <div className="bbt-empty">自选为空 · 点上方「＋」搜索标的</div>}

@@ -453,7 +453,9 @@
 /* iFinD 实时基本面行（仅白名单 A股行渲染）：紧贴行情行下方的一条细信息条 */
 .bbt-qrow-fund { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 2px 10px 5px; font-size: 17px; color: var(--mute2, #8a93a3); border-bottom: 1px solid var(--line-row); }
 .bbt-qrow-fund b { color: var(--text-body, #cfd6df); font-weight: 600; font-variant-numeric: tabular-nums; }
-.bbt-qrow-fund-src { margin-left: auto; font-size: 11px; letter-spacing: .5px; color: #ff8a3c; border: 1px solid rgba(255,138,60,.4); border-radius: 3px; padding: 0 4px; }
+/* 数据来源说明：原来逐行重复一个「iFinD」徽章，收敛成面板顶部这一条 */
+.bbt-qrow-fund-note { padding: 4px 10px; font-size: 11px; letter-spacing: .3px; color: #ff8a3c; text-align: right; }
+.bbt-qrow-fund-note b { font-weight: 700; }
 .bbt-qrow.active { background: var(--amber-bg); box-shadow: inset 2px 0 0 var(--accent); }
 
 /* 日内区间 bar */
@@ -1001,10 +1003,9 @@
 /* 顶部工具栏防溢出：仅在【真正窄】(≤960px)时才把入口按钮收成图标——常见笔记本宽度(>960)保留文字标签，
    让用户看得懂每个按钮干啥；各按钮给独立图标，避免收起后图标撞成一样。 */
 @media (max-width: 960px) {
-  /* 大众入口（复盘 / AI 模拟盘）保留文字标签——看得懂；只把【管理员专属】iFinD/AI问答 收成图标省地方 */
+  /* 大众入口（复盘 / AI 模拟盘）保留文字标签——看得懂；只把【管理员专属】AI问答 收成图标省地方(iFinD 已挪进账号菜单，不再是顶栏项) */
   .bbt-review-entry { font-size: 17px; padding: 5px 10px; }
-  .bbt-ifind-entry, .bbt-aiqa-entry { font-size: 0; gap: 0; padding: 6px 9px; }
-  .bbt-ifind-entry::before  { font-size: 14px; content: "📡"; }   /* iFinD */
+  .bbt-aiqa-entry { font-size: 0; gap: 0; padding: 6px 9px; }
   .bbt-aiqa-entry::before   { font-size: 14px; content: "✨"; }   /* AI 问答（✨ 与交流群💬区分） */
   .bbt-cmd { gap: 10px; }
   .bbt-cmd-right { gap: 9px; }
@@ -1523,7 +1524,6 @@
   .bbt-cmd-right .bbt-checkin-entry::before { content: attr(data-ico); font-size: 16px; }   /* 连续签到：图标随"今天是否已看"变化，不与复盘撞图标 */
   .bbt-cmd-right .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }   /* AI 模拟盘 */
   .bbt-cmd-right .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }  /* 名人观点 */
-  .bbt-cmd-right .bbt-ifind-entry::before  { content: "📡"; font-size: 16px; }   /* iFinD */
   .bbt-cmd-right .bbt-aiqa-entry::before   { content: "✨"; font-size: 16px; }   /* AI 问答（✨ 与交流群💬区分） */
   .bbt-cmd-right .bbt-ref-entry::before    { content: "🎁"; font-size: 16px; }   /* 邀请 */
   .bbt-cmd-right .bbt-group-entry::before  { content: "💬"; font-size: 16px; }   /* 交流群 */
@@ -1542,7 +1542,6 @@
   .bbt-cmd-right .bbt-checkin-entry::after { content: attr(data-label); }   /* 连续签到天数，不再被"复盘"字样吞掉 */
   .bbt-cmd-right .bbt-aifund-entry::after { content: "模拟盘"; }
   .bbt-cmd-right .bbt-celebrity-entry::after { content: "名人"; }
-  .bbt-cmd-right .bbt-ifind-entry::after  { content: "iFinD"; }
   .bbt-cmd-right .bbt-aiqa-entry::after   { content: "问答"; }
   .bbt-cmd-right .bbt-ref-entry::after    { content: "邀请"; }
   .bbt-cmd-right .bbt-group-entry::after  { content: "交流群"; }
@@ -2222,7 +2221,7 @@
   .bbt-review-entry, .bbt-buy-cta, .bbt-ref-entry, .bbt-theme-btn {
     min-height: 30px; padding: 4px 9px; display: inline-flex; align-items: center; justify-content: center;
   }
-  .bbt-ifind-entry, .bbt-aiqa-entry { min-width: 32px; padding: 4px 7px; }  /* 管理员专属纯图标：方块 */
+  .bbt-aiqa-entry { min-width: 32px; padding: 4px 7px; }  /* 管理员专属纯图标：方块 */
   .bbt-tts-btn { display: none; }                       /* 快讯语音播报：移动端隐藏(niche) */
 
   /* —— 降营销感(用户反馈手机端"太花太营销")：会员/邀请 CTA 从高饱和渐变+发光 → 克制扁平暖色边框，
@@ -2241,9 +2240,9 @@
   /* 顶栏再压一档(用户要求图标化)：复盘/AI模拟盘/邀请得会员 收成「图标+9px 标签」两行小钮(标签规则在 ≤820 分支),
      只保留 开通会员(主付费 CTA)+登录 文字 → 大众入口一行排开、更短更齐，不再"又大又乱"。
      ⚠️尺寸须与 ≤820 分支两行排布一致(44px 高、宽度自适应),不可再压回 32px 方块——否则标签溢出。 */
-  .bbt-review-entry:not(.bbt-ifind-entry):not(.bbt-aiqa-entry),
+  .bbt-review-entry:not(.bbt-aiqa-entry),
   .bbt-ref-entry { font-size: 0; gap: 2px; width: auto; min-width: 36px; height: 44px; min-height: 44px; padding: 3px 5px 2px; box-sizing: border-box; justify-content: center; }
-  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-ifind-entry):not(.bbt-aiqa-entry):not(.bbt-group-entry):not(.bbt-celebrity-entry):not(.bbt-checkin-entry)::before { content: "📊"; font-size: 16px; }
+  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-aiqa-entry):not(.bbt-group-entry):not(.bbt-celebrity-entry):not(.bbt-checkin-entry)::before { content: "📊"; font-size: 16px; }
   .bbt-checkin-entry::before { content: attr(data-ico); font-size: 16px; }
   .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }
   .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }
