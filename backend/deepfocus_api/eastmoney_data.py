@@ -252,12 +252,17 @@ def _em_stock_secid(symbol: str, market: Optional[str] = None) -> Optional[str]:
     return None
 
 
-async def fetch_eastmoney_kline(secid: str, points: int = 160) -> list:
-    """东财个股日线 [(date, close)]（前复权 fqt=1）。直连绕代理 + Referer + 重试。缓存 盘中15min/休市6h。失败 []。"""
+async def fetch_eastmoney_kline(secid: str, points: int = 160, *, force_fresh: bool = False) -> list:
+    """东财个股日线 [(date, close)]（前复权 fqt=1）。直连绕代理 + Referer + 重试。缓存 盘中15min/休市6h。失败 []。
+
+    force_fresh=True：跳过缓存读取、强制现拉——战绩闭环结算取价专用。14:50 被速判卡等链路预热的
+    盘中半根K线，15:40 会被休市 6h TTL 放行当收盘终值写死台账；结算两端必须同出这一次新取的
+    前复权序列。结果仍写回缓存（新鲜数据对其它读者只会更好）。"""
     key = f"kline:{secid}"
-    hit = _CACHE.get(key)
-    if hit and (time.time() - hit[0]) < _market_ttl():
-        return hit[1]
+    if not force_fresh:
+        hit = _CACHE.get(key)
+        if hit and (time.time() - hit[0]) < _market_ttl():
+            return hit[1]
     url = (
         f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
         f"&fields1=f1&fields2=f51,f53&klt=101&fqt=1&end=20500101&lmt={points}"

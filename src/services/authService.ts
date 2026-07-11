@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './apiClient';
+import { apiDelete, apiGet, apiPost } from './apiClient';
 import { User } from '../types';
 
 /**
@@ -184,6 +184,65 @@ export async function toggleBookmark(m: { message_id: string; title?: string; to
 }
 export async function fetchBookmarks(): Promise<BookmarkItem[]> {
   try { const r = await apiGet<{ items: BookmarkItem[] }>('/api/me/bookmarks'); return r.items || []; } catch { return []; }
+}
+
+// ===== 战绩闭环：个股判断表态（call）=====
+// 一键看多/看空 → 后端按 entry 交易日收盘价起算、horizon 个交易日后自动兑现打分。
+// 与上面的 reactNews（按快讯 message_id 表态）不同构：这里按 symbol 建模、有状态机与兑现结果，不复用。
+// 白名单内测（前端 CALLS_USERS 只控可见性，后端 DEEPFOCUS_CALLS_ALLOWED_USERS 硬门 403）。
+export type CallDirection = 'bull' | 'bear';
+export type CallStatus = 'open' | 'settled' | 'void' | 'canceled' | 'error';
+export interface StockCall {
+  id: number;
+  symbol: string;
+  direction: CallDirection;
+  conviction: number;
+  horizon_days: number;
+  note?: string | null;
+  created_at: string;            // UTC ISO（60min 撤销窗按它算）
+  entry_date?: string | null;    // 北京交易日：收盘价起算日（盘后/周末表态归一到下一交易日）
+  entry_price?: number | null;   // ⚠️ 仅防篡改证据锚（实时快照），不是打分入场价——UI 绝不当「入场价」展示
+  status: CallStatus;
+  settle_date?: string | null;
+  exit_price?: number | null;
+  ret_pct?: number | null;       // 方向化收益（结算后有值）
+  outcome?: 'hit' | 'miss' | 'flat' | null;
+  call_score?: number | null;
+  unseen?: boolean;              // settled 且 seen_at 空 → 站内红点/toast
+  is_test?: boolean;
+  [k: string]: any;              // 后端加字段（days_left 等）前端容错直读
+}
+export interface CallStats { settled: number; hit: number; miss: number; flat: number; avg_move_pct: number; }
+export interface CallSummary {
+  total?: CallStats;      // 全量（排除 is_test 自测单）
+  month?: CallStats;      // 本月（按兑现月），与微信 digest 月度战绩同源
+  month_key?: string;
+  disclaimer?: string;
+  [k: string]: any;
+}
+// 表态：created=false 表示幂等命中已有 open 单（含反向单，堵骑墙）；
+// 失败由 apiClient 抛出（含后端 detail 文案：非白名单 403/非A股 422/每日上限 429/快照失败 503），调用方 catch 显示
+export async function createCall(p: { symbol: string; direction: CallDirection; horizon_days?: number; conviction?: number; note?: string }): Promise<{ call: StockCall; created: boolean; message?: string }> {
+  const r = await apiPost<{ call: StockCall; created: boolean; message?: string }>('/api/calls', p);
+  return { call: (r as any)?.call || (r as any), created: (r as any)?.created !== false, message: (r as any)?.message };
+}
+// 撤销：仅 open 且创建 ≤60min 且价格未异动（后端 fail-closed），失败抛出后端理由
+export async function cancelCall(id: number): Promise<{ ok: boolean; message?: string }> {
+  return apiDelete<{ ok: boolean; message?: string }>(`/api/calls/${id}`);
+}
+// 我的表态列表；markSeen=true 时请求带 mark_seen=1（打开「我的战绩」弹层即回写 seen_at）
+export async function fetchMyCalls(status?: string, markSeen?: boolean): Promise<StockCall[]> {
+  try {
+    const params: Record<string, string | number> = {};
+    if (status) params.status = status;
+    if (markSeen) params.mark_seen = 1;
+    const r = await apiGet<{ items?: StockCall[]; calls?: StockCall[] }>('/api/calls/mine', { params });
+    return r.items || r.calls || [];
+  } catch { return []; }
+}
+// 汇总（即时 SQL 聚合，排除 is_test；展示铁律=永远带样本量）
+export async function fetchCallSummary(): Promise<CallSummary | null> {
+  try { return await apiGet<CallSummary>('/api/calls/summary'); } catch { return null; }
 }
 
 // ===== 「我们提前发现的」量化战绩 =====

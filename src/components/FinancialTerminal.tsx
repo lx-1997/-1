@@ -28,7 +28,7 @@ import TerminalCelebrityViews from './TerminalCelebrityViews';
 import TerminalZsxqStream from './TerminalZsxqStream';
 import TerminalWeixinBind from './TerminalWeixinBind';
 import TerminalKline from './TerminalKline';
-import TerminalStockPanel from './TerminalStockPanel';
+import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 
@@ -558,6 +558,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [bookmarkList, setBookmarkList] = useState<authService.BookmarkItem[]>([]);
+  // 战绩闭环镜像层：「🎯 我的战绩」弹层 + 未读红点（settled 且未看过）+ 进站一次性 toast。
+  // 白名单与捕获入口（个股面板「我的判断」tab）同一套 callsUserAllowed——能表态就能看到自己的档案。
+  const [callsOpen, setCallsOpen] = useState(false);
+  const [callsList, setCallsList] = useState<authService.StockCall[]>([]);
+  const [callsSummary, setCallsSummary] = useState<authService.CallSummary | null>(null);
+  const [callsUnseen, setCallsUnseen] = useState(0);
+  const callsToastRef = useRef(false);   // 进站兑现 toast 每次页面加载至多一次
   const onbShownRef = useRef(false);
   const [onbTick, setOnbTick] = useState(0);
   const [messages, setMessages] = useState<RealtimeMessageRecord[]>([]);
@@ -856,7 +863,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     let src = '';
     try {
       const q = new URLSearchParams(window.location.search);
-      const utm = ['utm_source', 'utm_medium', 'utm_campaign'].map(k => q.get(k)).filter(Boolean).join('/');
+      // 短参 utm=（微信推送 CTA 用 ?review=1&utm=wxsettle，链接越短点击越高）与标准 utm_* 同链路归因
+      const utm = ['utm_source', 'utm_medium', 'utm_campaign', 'utm'].map(k => q.get(k)).filter(Boolean).join('/');
       const ref = document.referrer && !document.referrer.includes(window.location.hostname) ? new URL(document.referrer).hostname : '';
       src = [utm, ref].filter(Boolean).join(' · ');
     } catch { /* 来源解析失败不影响打点 */ }
@@ -1442,6 +1450,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setAcctOpen(false); setBookmarksOpen(true);
     try { const items = await authService.fetchBookmarks(); setBookmarkList(items); setBookmarks(new Set(items.map(i => i.message_id))); } catch { /* */ }
   }, []);
+  // 「🎯 我的战绩」：打开弹层即回写 seen_at（mark_seen），红点当场清零；数字与微信 digest 同源（都出台账）
+  const openCalls = useCallback(async () => {
+    setAcctOpen(false); setCallsOpen(true);
+    logAct('call_view', '我的战绩');
+    const [list, sum] = await Promise.all([authService.fetchMyCalls(undefined, true), authService.fetchCallSummary()]);
+    setCallsList(list); setCallsSummary(sum); setCallsUnseen(0);
+  }, [logAct]);
   // 站长内置看板：按登录态向后端取看板直达 URL（令牌不入前端包），新标签打开运营看板
   const openDashboard = useCallback(async () => {
     setAcctOpen(false);
@@ -1508,6 +1523,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (authUser) { authService.fetchBookmarks().then(items => setBookmarks(new Set(items.map(i => i.message_id)))).catch(() => {}); }
     else { setBookmarks(new Set()); }
   }, [authUser]);
+  // 登录态变化：拉战绩未读（settled 且未看）→ 菜单行红点 + 进站一次性 toast。
+  // 站内触达是 100% 的地板：微信 token 冷推不到时，兑现时刻在这里等用户自然回访。
+  useEffect(() => {
+    if (!callsUserAllowed(authUser)) { setCallsUnseen(0); setCallsList([]); setCallsSummary(null); return; }
+    let dead = false;
+    (async () => {
+      const [list, sum] = await Promise.all([authService.fetchMyCalls(), authService.fetchCallSummary()]);
+      if (dead) return;
+      setCallsList(list); setCallsSummary(sum);
+      const n = list.filter(c => c.unseen).length;
+      setCallsUnseen(n);
+      if (n > 0 && !callsToastRef.current) {
+        callsToastRef.current = true;
+        showToast(`🎯 你有 ${n} 笔判断已兑现 · 点头像「我的战绩」查看`);
+      }
+    })();
+    return () => { dead = true; };
+  }, [authUser, showToast]);
   const onAuthed = useCallback((username: string, isNew?: boolean) => {
     setAuthUser(username);
     authUserRef.current = username;
@@ -1592,6 +1625,23 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       } catch { /* 晨报拉取失败就落在首页，与旧行为一致 */ }
     })();
   }, []);
+  // 复盘深链 ?review=1（或 ?review=YYYY-MM-DD）：微信兑现回访 CTA（?review=1&utm=wxsettle）落地——
+  // 自动开复盘弹层；openReview 内已含「打开复盘=签到」，一条推送同时驱动召回 + 签到两个回路。
+  // 参数在 pageview 归因（上方 effect 先跑）读走后再清，刷新不重弹。
+  const reviewDeepDone = useRef(false);
+  useEffect(() => {
+    if (reviewDeepDone.current) return;
+    let rv = '';
+    try { rv = new URLSearchParams(window.location.search).get('review') || ''; } catch { /* */ }
+    if (!rv) return;
+    reviewDeepDone.current = true;
+    try {
+      const url = new URL(window.location.href);
+      ['review', 'utm'].forEach(k => url.searchParams.delete(k));
+      window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : '') + url.hash);
+    } catch { /* */ }
+    void openReview(/^\d{4}-\d{2}-\d{2}$/.test(rv) ? rv : undefined);
+  }, [openReview]);
   // 领取「登录送 3 天体验会员」：未登录先弹登录，登录后自动领取；每账号仅一次
   const onClaimTrial = useCallback(() => {
     requireLogin(async () => {
@@ -3114,6 +3164,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       run: () => { try { window.open(`/learn/${t.slug}`, '_blank', 'noopener'); } catch { /* */ } },
     })),
     ...paletteCmds.map((c): PItem => ({ key: 'c' + c.id, type: 'cmd', label: c.label, run: c.run })),
+    // AI 原生兜底：任何非平凡查询都能一键升级成 AI 提问——命令面板即万能 AI 入口(Cmd+K 输入→回车问 AI)。
+    // 恒在列表末位，不与精确股票/命令匹配抢头位；gating 交给 askAi。
+    ...(pq.trim().length >= 2 ? [{
+      key: 'askai', type: 'uni' as const, label: `✨ 问 AI：${pq.trim().slice(0, 40)}`,
+      run: () => { const q = pq.trim(); logAct('ai_palette_ask', q.slice(0, 40)); openAi(); setAiInput(q); void askAi(q); },
+    }] : []),
   ];
   const paletteActiveClamped = Math.max(0, Math.min(paletteActive, paletteItems.length - 1));
 
@@ -3276,6 +3332,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                           {!isLifetime && <button className="bbt-acct-row hl" onClick={openBuy}>💎 开通 / 续费会员</button>}
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); setRedeemInput(''); setRedeemOpen(true); }}>🎟️ 兑换会员码</button>
                           <button className="bbt-acct-row" onClick={openBookmarks}>⭐ 我的收藏</button>
+                          {/* 战绩闭环（白名单内测，与个股面板「我的判断」tab 同套门槛）：不占顶栏（11入口红线），收进账号菜单 */}
+                          {callsUserAllowed(authUser) && (
+                            <button className="bbt-acct-row" onClick={openCalls}>
+                              🎯 我的战绩{callsUnseen > 0 && <span className="bbt-calls-dot">{callsUnseen}</span>}
+                            </button>
+                          )}
                           {/* 微信是唯一能天天触达免费用户的自有渠道——绑定入口对全体登录用户开放(非会员绑后有每日晨报+试吃问答，聊天窗里天然升级) */}
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); logAct('weixin_bind'); setShowWeixinBind(true); }}>🟢 绑定微信 · 收快讯{isVip || isAdmin ? '' : '（免费试用）'}</button>
                           <button className="bbt-acct-row" onClick={() => { setAcctOpen(false); openInvite(); }}>🎁 我的邀请</button>
@@ -3409,7 +3471,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
       {active && <TerminalKline symbol={active} name={nameOf(active)} />}
       {/* 个股面板：速判卡9维+龙虎榜/一致预期/分红/新闻——把只有 AI 能调的数据能力接到用户主路径 */}
-      {active && <TerminalStockPanel symbol={active} name={nameOf(active)} loggedIn={!!authUser}
+      {active && <TerminalStockPanel symbol={active} name={nameOf(active)} loggedIn={!!authUser} username={authUser} onLog={logAct}
         onRequireLogin={why => requireLogin(() => { /* 登录后用户再点一次展开 */ }, why)} />}
 
       <div ref={gridRef} className={`bbt-grid${maxed ? ' bbt-grid--maxed' : ''}`} style={{ ['--eqw' as any]: `${eqW}px` }}>
@@ -3418,6 +3480,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <div className="bbt-ph" onClick={e => { if ((e.target as HTMLElement).closest('button')) return; if (window.innerWidth <= 820) toggleCollapse('eq'); }}>
             <button className="bbt-collapse-btn" aria-label="自选股票" aria-expanded={!collapsed.eq} title={collapsed.eq ? '展开' : '收起'} onClick={() => toggleCollapse('eq')}>{collapsed.eq ? '▸' : '▾'}</button>
 <span className="bbt-eq-en">WATCHLIST · </span>自选股票 <span className="bbt-breadth"><b className="bbt-up">{breadthUp}▲</b> <b className="bbt-down">{breadthDown}▼</b></span>
+            {watchlist.length > 0 && (
+              /* AI 原生：自选旁一键体检——把整份自选喂给 AI 逐只判多空，复用现成 get_stock_verdict/get_my_watchlist 工具，后端零改动。
+                 gating 交给 askAi(未登录/额度用尽自会引导)，与 ⚡AI速判 同范式。 */
+              <button className="bbt-max-btn bbt-eq-checkup" title="AI 体检：逐只判断自选股多空 + 关键理由"
+                onClick={() => {
+                  const syms = watchlist.slice(0, 12);
+                  const q = `帮我体检这些自选股，逐只给出看多/看空/中性的判断和一句话关键理由，最后指出最需要重点关注的 1-2 只：${syms.map(s => `${nameOf(s)}(${s})`).join('、')}`;
+                  logAct('ai_watchlist_checkup', `自选体检×${syms.length}`);
+                  openAi(); setAiInput(q); void askAi(q);
+                }}>🩺</button>
+            )}
             <button className="bbt-max-btn" title={eqNarrow ? '加宽（显示全部列）' : '收窄'} onClick={() => setEqW(eqNarrow ? 460 : 260)}>{eqNarrow ? '⇥' : '⇤'}</button>
             <button className="bbt-max-btn" title="搜索/添加标的" onClick={() => { setPaletteOpen(true); setPq(''); }}>＋</button>
             <button className="bbt-max-btn" title={maxed === 'eq' ? '还原' : '最大化'} onClick={() => setMaxed(maxed === 'eq' ? null : 'eq')}>{maxed === 'eq' ? '⤡' : '⤢'}</button>
@@ -3921,7 +3994,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <div className="bbt-palette-list">
               {paletteItems.map((it, i) => {
                 const prevType = i > 0 ? paletteItems[i - 1].type : null;
-                const header = it.type !== prevType
+                const header = it.key === 'askai'
+                  ? 'AI · 直接提问'   // 强制独立分组，AI 兜底项永远自成一档，不被并进「相关」
+                  : it.type !== prevType
                   ? (it.type === 'go' ? '自选 · 跳转' : it.type === 'add' ? '搜索结果 · 回车直接查看 · ＋加自选' : it.type === 'uni' ? '相关 · 板块/快讯/研报/学堂' : '命令 · COMMANDS')
                   : null;
                 const isActive = i === paletteActiveClamped;
@@ -4298,6 +4373,102 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   })}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 🎯 我的战绩（战绩闭环镜像层，白名单内测）：汇总永远带样本量、赢亏全量如实——「不可篡改的档案」是这个产品的信任根基 */}
+      {callsOpen && (
+        <div className="bbt-doc-overlay" onMouseDown={() => setCallsOpen(false)}>
+          <div className="bbt-doc bbt-doc--review bbt-doc--calls" role="dialog" aria-modal="true" aria-label="我的战绩" onMouseDown={e => e.stopPropagation()}>
+            <div className="bbt-doc-bar">
+              <span className="bbt-doc-tag bbt-review-tag">🎯 我的战绩</span>
+              <span className="bbt-doc-title">按收盘价自动兑现 · 已兑现记录不可修改</span>
+              <button className="bbt-doc-close" onClick={() => setCallsOpen(false)}>✕ 关闭</button>
+            </div>
+            <div className="bbt-calls-body">
+              {(() => {
+                const dirTxt = (d: string) => (d === 'bull' ? '▲ 看多' : '▼ 看空');
+                const retTxt = (v?: number | null) => (v == null ? '' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`);
+                const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+                const opens = callsList.filter(c => c.status === 'open');
+                const settled = callsList.filter(c => c.status === 'settled')
+                  .sort((a, b) => String(b.settle_date || b.created_at || '').localeCompare(String(a.settle_date || a.created_at || '')));
+                const others = callsList.filter(c => c.status === 'void' || c.status === 'error');
+                const tot = callsSummary?.total;   // 后端即时 SQL 聚合（排除 is_test），缺则从列表兜底算
+                const nSettled = tot?.settled ?? settled.length;
+                const nHit = tot?.hit ?? settled.filter(c => c.outcome === 'hit').length;
+                const nMiss = tot?.miss ?? settled.filter(c => c.outcome === 'miss').length;
+                const nFlat = tot?.flat ?? settled.filter(c => c.outcome === 'flat').length;
+                const avg = tot ? tot.avg_move_pct : null;
+                const mon = callsSummary?.month;   // 本月战绩：与微信兑现 digest 的月度数字同源
+                // 距兑现倒计时：优先后端交易日字段，缺则用自然日粗估（标「约」，结算以后端交易日历为准）
+                const leftTxt = (c: authService.StockCall) => {
+                  const dl = (c as any).days_left ?? (c as any).remaining_days;
+                  if (typeof dl === 'number') return `距兑现还剩 ${Math.max(0, dl)} 个交易日`;
+                  if (!c.entry_date || c.entry_date > today) return `将按 ${c.entry_date || '下一交易日'} 收盘价起算 · ${c.horizon_days} 个交易日后兑现`;
+                  const elapsed = Math.max(0, Math.floor((Date.parse(today) - Date.parse(c.entry_date)) / 86400000));
+                  return `距兑现还剩约 ${Math.max(0, (c.horizon_days || 0) - elapsed)} 个交易日`;
+                };
+                return (
+                  <>
+                    {/* 汇总：带样本量 + 赢亏如实；样本少时如实标注，不装战绩 */}
+                    <div className="bbt-calls-sum">
+                      {nSettled > 0 ? (
+                        <>
+                          已兑现 <b>{nSettled}</b> 笔：命中 <b className="bbt-up">{nHit}</b> · 未中 <b className="bbt-down">{nMiss}</b>{nFlat > 0 && <> · 持平 <b>{nFlat}</b></>}
+                          {avg != null && <> · 平均 <b className={Number(avg) >= 0 ? 'bbt-up' : 'bbt-down'}>{retTxt(Number(avg))}</b></>}
+                          <span className="bbt-calls-sum-note">（样本 {nSettled} 笔{nSettled < 10 ? '，样本仍少、仅供自我参考' : ''}）</span>
+                          {mon && mon.settled > 0 && (
+                            <div className="bbt-calls-sum-note">本月（{callsSummary?.month_key || ''}）：兑现 {mon.settled} 笔 · 命中 {mon.hit} · 未中 {mon.miss} · 平均 {retTxt(mon.avg_move_pct)}</div>
+                          )}
+                        </>
+                      ) : (
+                        <>还没有已兑现的判断——在个股面板「🎯 我的判断」表态，到期自动按收盘价兑现打分</>
+                      )}
+                    </div>
+                    {opens.length > 0 && (
+                      <div className="bbt-calls-sec">
+                        <div className="bbt-calls-sec-t">⏳ 跟踪中（{opens.length} 笔）</div>
+                        {opens.map(c => (
+                          <div key={c.id} className="bbt-calls-row">
+                            <b>{nameOf(c.symbol) !== c.symbol ? `${nameOf(c.symbol)} ${c.symbol}` : c.symbol}</b>
+                            <span className={c.direction === 'bull' ? 'bbt-up' : 'bbt-down'}>{dirTxt(c.direction)}</span>
+                            <span className="bbt-calls-row-sub">{leftTxt(c)}</span>
+                            {c.note && <span className="bbt-calls-row-note" title={c.note}>「{c.note.slice(0, 20)}{c.note.length > 20 ? '…' : ''}」</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {settled.length > 0 && (
+                      <div className="bbt-calls-sec">
+                        <div className="bbt-calls-sec-t">📜 已兑现时间轴</div>
+                        {settled.map(c => (
+                          <div key={c.id} className="bbt-calls-row">
+                            <span className="bbt-calls-row-sub">{(c.settle_date || '').slice(0, 10)}</span>
+                            <b>{nameOf(c.symbol) !== c.symbol ? `${nameOf(c.symbol)} ${c.symbol}` : c.symbol}</b>
+                            <span className={c.direction === 'bull' ? 'bbt-up' : 'bbt-down'}>{dirTxt(c.direction)}</span>
+                            <span>{c.outcome === 'hit' ? '✅ 命中' : c.outcome === 'miss' ? '❌ 未中' : '⚪ 持平'}</span>
+                            {c.ret_pct != null && <b className={Number(c.ret_pct) >= 0 ? 'bbt-up' : 'bbt-down'}>{retTxt(c.ret_pct)}</b>}
+                            {c.note && <span className="bbt-calls-row-note" title={c.note}>「{c.note.slice(0, 20)}{c.note.length > 20 ? '…' : ''}」</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {others.length > 0 && (
+                      <div className="bbt-calls-sec">
+                        {others.map(c => (
+                          <div key={c.id} className="bbt-calls-row bbt-calls-row--dim">
+                            <b>{c.symbol}</b><span>{dirTxt(c.direction)}</span>
+                            <span className="bbt-calls-row-sub">{c.status === 'void' ? '⚫ 无效（起算日停牌）' : '⚠️ 结算异常，自动重试中'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="bbt-calls-foot">个人判断记录（内测）· 结算以交易日收盘价为准 · 仅供自我复盘，不构成投资建议</div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

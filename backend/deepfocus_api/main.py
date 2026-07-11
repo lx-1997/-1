@@ -443,6 +443,7 @@ async function load(){
       '<a href="#g-today">📊 概览明细 ▸</a>'+
       '<a href="#g-ai">🤖 AI增长 ▸</a>'+
       '<a href="#g-growth">📈 增长明细 ▸</a>'+
+      '<a href="#g-mkt">📣 自动营销 ▸</a>'+
       '<a href="#g-use">🔥 使用·内容 ▸</a>'+
     '</div>'+
     // ===== 第一屏：北极星 6 大指标（重心）=====
@@ -485,6 +486,9 @@ async function load(){
     acctHtml+
     invHtml+
     '</details>'+
+    // ===== 自动营销（折叠）=====
+    grpD('g-mkt','📣 自动营销','点开 · 分群 / 召回邮件 / 触达效果 / 手动试跑')+
+    '<div id="marketing"><div class="sub">营销数据加载中…</div></div></details>'+
     // ===== 会员·收入（业务核心） =====
     grp('g-biz','👑 会员 · 收入','付费会员 / 到期续费 / 收款 / 兑换码 / 邀请奖励')+
     '<div id="members"><div class="sub">会员数据加载中…</div></div>'+
@@ -517,6 +521,7 @@ async function load(){
     '<div id="rq"><div class="panel"><h2>🤖 复盘 AI 质量</h2><div class="sub">加载中…</div></div></div>'+
     '<div class="ft">DEEPFOCUS 金融终端 · 内部数据，请勿外传</div>';
   loadGrowth();
+  loadMarketing();
   loadActivity('');
   loadReferrals();
   loadSystem();
@@ -581,6 +586,52 @@ async function loadGrowth(){
   var rg=$('#growthRegen'); if(rg) rg.onclick=async function(){ rg.disabled=true; rg.textContent='分析中…(约30秒)';
     try{ const r=await fetch('/api/admin/growth-analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token})}); if(!r.ok) throw new Error(r.status); loadGrowth(); }
     catch(e){ alert('分析失败：'+e.message); rg.disabled=false; rg.textContent='↻ 重新分析'; } };
+}
+// ===== 自动营销：通道状态 + 分群规模 + campaign 效果 + 试跑/执行 =====
+async function loadMarketing(){
+  let d;
+  try{ const r=await fetch('/api/metrics/marketing?token='+encodeURIComponent(token)); if(!r.ok) throw new Error(r.status); d=await r.json(); }
+  catch(e){ const el=$('#marketing'); if(el) el.innerHTML='<div class="err">营销数据读取失败('+e.message+')</div>'; return; }
+  const seg=d.segments||{}; const camps=d.campaigns||[]; const recent=d.recent||[];
+  const chip=(ok,on,off)=>'<span style="display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;margin-right:8px;background:'+(ok?'rgba(43,217,106,.14)':'rgba(127,140,160,.12)')+';color:'+(ok?'#2bd96a':'#8a94a3')+'">'+(ok?on:off)+'</span>';
+  const status='<div class="panel"><h2>📣 自动营销 · 通道与总闸</h2><div style="margin-bottom:8px">'+
+    chip(d.master_enabled,'总闸 已启用','总闸 空转 (env=0)')+
+    chip(d.smtp_configured,'邮件SMTP 已配','邮件SMTP 未配')+
+    chip(d.weixin_channel_on,'微信通道 开','微信通道 关')+
+    '</div><div class="sub">每用户冷却 '+(d.user_cooldown_days||7)+' 天 · 全引擎日总量上限 '+(d.daily_total_cap||40)+' 封 · 每日 16:50 自动跑一轮（主闸空转时只做预览、不真发）</div></div>';
+  const segCards='<div class="grid">'+
+    card('习惯断挡 d7',seg.d7_slipping||0,'amber','注册4-14天·回访过·近72h没来')+
+    card('沉睡用户',seg.dormant||0,'blue','注册>14天·活跃过·近14天没来')+
+    card('高活跃免费',seg.power_free||0,'up','非会员·近7天活跃≥4天(转化种子)')+
+    card('7天内到期',seg.expiring||0,'purple','由「会员到期提醒」承接')+
+    '</div>';
+  const crows=camps.map(function(c){ return '<tr>'+
+    '<td class="t">'+esc(c.title||c.key)+'<div class="sub" style="font-weight:400">'+esc(c.key)+'</div></td>'+
+    '<td>'+(c.enabled?'<span class="up">● 启用</span>':'<span style="color:#8a94a3">○ 停用</span>')+'</td>'+
+    '<td class="c">'+(c.daily_cap||0)+'</td>'+
+    '<td class="c">'+(c.sent||0)+'</td>'+
+    '<td class="c">'+(c.ctr_pct==null?'—':c.ctr_pct+'%')+'</td>'+
+    '<td class="c">'+(c.return_pct==null?'—':c.return_pct+'%')+'</td>'+
+    '<td><button class="refresh mkt-toggle" data-key="'+esc(c.key)+'" data-en="'+(c.enabled?'0':'1')+'">'+(c.enabled?'停用':'启用')+'</button></td>'+
+    '</tr>'; }).join('') || '<tr><td colspan=7 class="sub" style="padding:12px">暂无 campaign</td></tr>';
+  const campTable='<div class="panel"><h2>🎯 Campaign · 近14日效果 <button class="refresh" id="mktDry">🧪 试跑</button> <button class="refresh" id="mktRun">▶ 执行一轮</button></h2>'+
+    '<table><thead><tr><th>名称</th><th>状态</th><th>日上限</th><th>已发</th><th>CTR</th><th>回访率</th><th>操作</th></tr></thead><tbody>'+crows+'</tbody></table>'+
+    '<div class="sub" style="margin-top:8px">CTR=点击/发送 · 回访率=发信后72h内回站/发送 · 默认全部停用，逐个启用即灰度</div></div>';
+  const rrows=recent.map(function(t){ return '<tr><td class="t">'+esc(t.campaign_key||'')+'</td><td>'+esc(t.username||'')+'</td><td>'+esc(t.status||'')+'</td><td>'+(t.clicked_at?'<span class="up">✓</span>':'—')+'</td><td>'+(t.returned_at?'<span class="up">✓</span>':'—')+'</td><td class="c" style="color:#7f8a96;font-weight:400">'+esc((t.sent_at||'').replace('T',' ').slice(0,16))+'</td></tr>'; }).join('') || '<tr><td colspan=6 class="sub" style="padding:12px">暂无触达记录</td></tr>';
+  const recentTable='<div class="panel"><h2>📨 最近触达（20条）</h2><table><thead><tr><th>Campaign</th><th>用户</th><th>状态</th><th>点击</th><th>回访</th><th>时间</th></tr></thead><tbody>'+rrows+'</tbody></table></div>';
+  $('#marketing').innerHTML=status+segCards+campTable+recentTable;
+  document.querySelectorAll('.mkt-toggle').forEach(function(b){ b.onclick=async function(){ b.disabled=true;
+    try{ const r=await fetch('/api/admin/marketing/campaign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token,key:b.dataset.key,enabled:b.dataset.en==='1'})}); if(!r.ok) throw new Error(r.status); loadMarketing(); }
+    catch(e){ alert('操作失败：'+e.message); b.disabled=false; } }; });
+  const runMkt=async function(dry){ const btn=dry?$('#mktDry'):$('#mktRun'); if(!dry && !confirm('立即执行一轮营销触达？主闸空转时只做预览、不真发。')) return;
+    btn.disabled=true; const old=btn.textContent; btn.textContent='执行中…';
+    try{ const r=await fetch('/api/admin/marketing/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token,dry_run:dry})}); if(!r.ok) throw new Error(r.status); const o=await r.json();
+      const pv=(o.preview||[]).slice(0,30).map(function(p){ return '· ['+p.campaign+'] '+p.user+' <'+p.email+'>'; }).join('\\n');
+      alert((o.dry_run?'🧪 试跑结果（未发送）':'▶ 执行结果')+'\\n发送 '+o.sent+' · 跳过 '+o.skipped+' · 失败 '+o.errors+(o.master_enabled?'':'\\n⚠️ 主闸空转，已强制 dry-run')+(pv?'\\n\\n将发给：\\n'+pv:'')); loadMarketing(); }
+    catch(e){ alert('执行失败：'+e.message); }
+    finally{ btn.disabled=false; btn.textContent=old; } };
+  var bd=$('#mktDry'); if(bd) bd.onclick=function(){ runMkt(true); };
+  var br=$('#mktRun'); if(br) br.onclick=function(){ runMkt(false); };
 }
 // ===== 收款设置：套餐价格 + 收款码上传 =====
 async function loadPay(){
@@ -967,7 +1018,7 @@ async function saveCookie(){
     setTimeout(loadZsxq,800);
   }catch(e){ $('#zmsg').innerHTML='<span style="color:#ff5a52">✗ '+esc(e.message)+'</span>'; }
 }
-const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'兑换会员码',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关'};
+const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'兑换会员码',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
 function alabel(a){return ACT_LABEL[a]||a;}
 function tshort(s){
   if(!s) return '';
@@ -1374,6 +1425,8 @@ async def lifespan(app: FastAPI):
     morning_briefing_task = asyncio.create_task(run_morning_briefing())
     # 收盘自选巡检：每交易日 15:12 全体自选并集 × 确定性异动（|涨跌|≥5% / 龙虎榜）→「异动」聚合消息
     watchlist_scan_task = asyncio.create_task(run_watchlist_scan())
+    # 战绩闭环:每交易日 15:40 自动兑现到期表态(env 总闸 DEEPFOCUS_CALLS_ENABLED 默认关=纯空转)
+    call_settle_task = asyncio.create_task(run_call_settlement())
     # 增长分析师：每日 16:20 自动计算 KPI（用户/留存/日活/付费转化）+ AI 改进建议 → 运营看板
     growth_analytics.init_growth_db()
     growth_analyst_task = asyncio.create_task(run_growth_analyst())
@@ -1400,13 +1453,21 @@ async def lifespan(app: FastAPI):
     feed_watchdog_task = asyncio.create_task(run_feed_watchdog())
     # 微信定时推送：每 30s 扫到点的定时计划（群发 quasi_push / 个性化 push_to_user）——仅渠道开启时实际发
     weixin_sched_task = asyncio.create_task(run_wechat_scheduled_push())
+    # 自动营销引擎：每日 16:50（增长报告 16:20 之后）对流失/沉睡/高活跃免费用户做分群召回邮件——
+    # 主闸 DEEPFOCUS_MARKETING_ENABLED 默认关=纯空转，看板里灰度开启 campaign 后才真发（部署与启用解耦）
+    try:
+        from .marketing_engine import init_marketing_db
+        init_marketing_db()
+    except Exception as _mkt_exc:  # noqa: BLE001 - 建表失败不阻断启动
+        print(f"[marketing] init 跳过：{type(_mkt_exc).__name__}")
+    marketing_task = asyncio.create_task(run_marketing_engine())
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
     _bg_tasks = (dao_bridge_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
-                 ashare_review_task, morning_briefing_task, watchlist_scan_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
-                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task)
+                 ashare_review_task, morning_briefing_task, watchlist_scan_task, call_settle_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
+                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task, marketing_task)
     for _task in _bg_tasks:
         _task.cancel()
     try:
@@ -5951,6 +6012,237 @@ async def run_watchlist_scan() -> None:
             await asyncio.sleep(300)
 
 
+# ===== 战绩闭环:表态结算扫描器(设计: docs/战绩闭环-数据飞轮设计.md §3/§6) =====
+
+def _call_due_date(entry_date: str, horizon: int) -> str:
+    """入场日后第 horizon 个交易日(=应兑现日)。日历未覆盖 → CalendarCoverageError 上抛。"""
+    from . import stock_call as _sc
+    d = datetime.strptime(entry_date, "%Y-%m-%d")
+    for _ in range(horizon * 3 + 40):  # 交易日/自然日 ≈ 5/7,余量给长假
+        d += timedelta(days=1)
+        if _sc.trading_days_between(entry_date, d.strftime("%Y-%m-%d")) >= horizon:
+            return d.strftime("%Y-%m-%d")
+    raise ValueError(f"自 {entry_date} 起找不到第 {horizon} 个交易日,日历疑似损坏")
+
+
+async def _send_settlement_digests(events_by_user: dict, now_bj: datetime) -> tuple[int, int]:
+    """结算尾部微信触达:按用户聚合当日全部兑现为【一条】digest(严禁逐笔推)→ 合规/泄密护栏 →
+    ★直调 push_to_user(不挂 weixin_schedule personal——MAX_PERSONAL_PER_USER=1 会把订阅了
+    自选推送的最活跃用户被自己的订阅挤出,首要召回对象反而收不到,见设计文档 §6 批注)。
+
+    双闸:DEEPFOCUS_WEIXIN_CHANNEL(总闸,_WEIXIN_MGR 仅在=1时创建)+ DEEPFOCUS_CALL_SETTLE_PUSH。
+    settle_push_log 一日一条铁律;静默时段(08:00-21:00外)不发不记——扫描器 15:40 跑正常不触发,
+    settle-now 深夜自测时靠站内红点兜底。token 冷(push_to_user 返 False)→只站内未读,
+    ★不走 dispatch_recall(按 symbol 订阅扇出会把个人兑现推给所有订阅该股的人,隐私泄露)。
+    返回 (delivered, cold_skip)。"""
+    from . import stock_call as _sc
+    if not events_by_user:
+        return 0, 0
+    mgr = _WEIXIN_MGR
+    if mgr is None or os.getenv("DEEPFOCUS_CALL_SETTLE_PUSH", "0") != "1":
+        return 0, 0  # 微信位关闭:站内未读红点(mine 接口 unseen)就是 100% 触达地板
+    delivered = cold = 0
+    day = now_bj.strftime("%Y-%m-%d")
+    month = day[:7]
+    for uid, items in events_by_user.items():
+        try:
+            if _sc.has_pushed(uid, day):
+                continue  # 一日一条铁律(同日 settle-now 再跑也不重发)
+            if _sc.quiet_hours(now_bj):
+                continue  # 静默时段:不打扰,红点兜底
+            month_summary = _sc.summary_for_user(uid, month=month)
+            total = _sc.summary_for_user(uid)
+            real_new = sum(1 for it in items if not it.get("is_test"))
+            # 首笔兑现:该用户全部非自测已兑现都来自本轮 → 专属文案(「第一笔判断兑现了」)
+            first = real_new > 0 and total.get("settled") == real_new
+            digest = _sc.render_settlement_digest(items, month_summary=month_summary,
+                                                  first_settlement=first, day=day)
+            # ★CTA 指向 SPA(?review=1 自动弹复盘=签到,喂既有 streak;不用公开 SEO /review 页——
+            #   零埋点/零签到触发/微信 webview 登出态);utm=wxsettle 走既有 pageview UTM 归因
+            digest += "\n查看完整战绩与今日复盘 👉 https://daocaijing.com/?review=1&utm=wxsettle"
+            text = _wx_sched_guard(digest)  # 合规中性化 + 泄密扫描出站护栏
+            if not _sc.log_push(uid, day):
+                continue  # 先记后发(唯一索引兜底并发):宁可漏发不可双发
+            if await mgr.push_to_user(uid, text):
+                delivered += 1
+                metrics_incr("call:settle_push_delivered")
+            else:
+                cold += 1  # token 冷→只站内(红点是地板、微信是加成;不重试,待用户自然回访)
+                metrics_incr("call:settle_push_cold_skip")
+        except Exception as exc:  # noqa: BLE001 —— 单人发送失败不拖垮其他用户
+            print(f"[call-settle] digest→{uid[:12]} 发送异常:{type(exc).__name__}")
+    return delivered, cold
+
+
+async def _settle_open_calls(now_bj: datetime, *, force: bool = False, mark_test: bool = False) -> dict[str, Any]:
+    """结算一遍全部 open 表态。force=True(settle-now 自测)忽略 horizon/新鲜度校验,按末根 bar 立即兑现。
+
+    ★取价铁律(两份评审第一优先级 must_fix):强制绕过 _market_ttl 缓存现拉前复权日线,
+    且(非 force)校验末根 bar 日期==当日、取数时刻>15:00——否则 14:50 预热的盘中半根K线会被
+    休市 6h TTL 放行当收盘终值写死台账。entry/exit 两端同出这一次拉取的同一条前复权序列
+    (fqt=1,除权除息自动抹平);fetch_market_quotes 快照 entry_price 仅作证据锚,绝不参与打分。"""
+    from . import stock_call as _sc
+    from .eastmoney_data import _em_stock_secid, fetch_eastmoney_kline
+    today = now_bj.strftime("%Y-%m-%d")
+    after_close = (now_bj.hour, now_bj.minute) >= _sc.MARKET_CLOSE_HM
+    stats = {"scanned": 0, "settled": 0, "voided": 0, "deferred": 0, "failed": 0}
+    kline_cache: dict[str, list] = {}  # 一轮内同标的只拉一次(多人表态同一票)
+    events_by_user: dict[str, list[dict]] = {}
+    for c in _sc.list_open_calls():
+        stats["scanned"] += 1
+        cid = int(c["id"])
+        try:
+            horizon = int(c["horizon_days"])
+            elapsed = _sc.trading_days_between(str(c["entry_date"]), today)
+            if not force and elapsed < horizon:
+                continue  # 未到期
+            secid = _em_stock_secid(str(c["symbol"]), "CN")
+            if not secid:
+                _sc.void_call(cid)  # 台账里不该有非A股,防御性 void
+                stats["voided"] += 1
+                continue
+            bars = kline_cache.get(secid)
+            if bars is None:
+                bars = await fetch_eastmoney_kline(secid, points=max(80, elapsed + 40), force_fresh=True)
+                kline_cache[secid] = bars or []
+                await asyncio.sleep(0.3)  # 限流:串行 + 间隔(同 watchlist_scan,东财并发突发会被限流)
+            if not bars:
+                _sc.bump_settle_fail(cid)  # 失败计数,超 SETTLE_FAIL_MAX 转 error 可见——禁静默空转
+                stats["failed"] += 1
+                continue
+            bar_map = dict(bars)
+            entry_close = bar_map.get(str(c["entry_date"]))
+            if entry_close is None and bars[0][0] > str(c["entry_date"]):
+                # 取数窗口没盖住入场日(极老单)→加大窗口重拉一次
+                bars = await fetch_eastmoney_kline(secid, points=500, force_fresh=True)
+                kline_cache[secid] = bars or []
+                bar_map = dict(bars)
+                entry_close = bar_map.get(str(c["entry_date"]))
+            if entry_close is None:
+                _sc.void_call(cid)  # 表态日无bar=当日停牌/退市 → void 不计(防挑停牌股钻空)
+                stats["voided"] += 1
+                continue
+            if not force:
+                # ★新鲜度校验:末根 bar 必须是当日且已过 15:00 收盘——末根≠当日 = 当日停牌(顺延)
+                #   或数据源未更新(下轮重试),两种都不能拿旧价写死台账(fail-closed)
+                if bars[-1][0] != today or not after_close:
+                    if elapsed > horizon + _sc.SUSPEND_GRACE_DAYS:
+                        _sc.void_call(cid)  # 超宽限(horizon+10交易日)仍无当日价 → void
+                        stats["voided"] += 1
+                    else:
+                        stats["deferred"] += 1  # 顺延,下一交易日再试
+                    continue
+                due = _call_due_date(str(c["entry_date"]), horizon)
+                cand = [(d, v) for d, v in bars if d >= due]
+                if not cand:
+                    # 应兑现日起无成交bar(停牌中)→顺延;超宽限 void
+                    if elapsed > horizon + _sc.SUSPEND_GRACE_DAYS:
+                        _sc.void_call(cid)
+                        stats["voided"] += 1
+                    else:
+                        stats["deferred"] += 1
+                    continue
+                settle_date, settle_close = cand[0]  # 停牌顺延=到期后第一个有bar的交易日
+            else:
+                settle_date, settle_close = bars[-1]  # 自测:按末根 bar 立即兑现(可能与入场同日→flat)
+            g = _sc.grade(entry_close, settle_close, str(c["direction"]), int(c["conviction"]))
+            if not _sc.settle_call(cid, settle_date=settle_date, exit_price=settle_close,
+                                   ret_pct=g["ret_pct"], outcome=g["outcome"],
+                                   call_score=g["call_score"], grade_ver=g["grade_ver"]):
+                continue  # 并发被别人先结算,跳过
+            is_test = bool(c.get("is_test")) or mark_test
+            if mark_test:
+                _sc.mark_call_test(cid)  # ★settle-now 结算的一律强制 is_test(B1 must_fix)
+            stats["settled"] += 1
+            events_by_user.setdefault(str(c["user_id"]), []).append({
+                # digest item schema 冻结(见 stock_call.render_settlement_digest + 设计文档附录A)
+                "symbol": c["symbol"], "direction": c["direction"], "entry_date": c["entry_date"],
+                "entry_close": entry_close, "settle_close": settle_close, "move_pct": g["move_pct"],
+                "verdict": g["outcome"], "conviction": int(c["conviction"]), "horizon": horizon,
+                "is_test": is_test,
+            })
+        except _sc.CalendarCoverageError as exc:
+            print(f"[call-settle] #{cid} 日历缺失拒算:{exc}")  # 已 warning 落日志,这里失败计数可见化
+            _sc.bump_settle_fail(cid)
+            stats["failed"] += 1
+        except Exception as exc:  # noqa: BLE001 —— 单条失败跳过,绝不阻断整轮
+            print(f"[call-settle] #{cid} 结算异常:{type(exc).__name__}")
+            try:
+                _sc.bump_settle_fail(cid)
+            except Exception:  # noqa: BLE001
+                pass
+            stats["failed"] += 1
+    pushed, cold = await _send_settlement_digests(events_by_user, now_bj)
+    stats["push_delivered"], stats["push_cold_skip"] = pushed, cold
+    return stats
+
+
+async def run_call_settlement() -> None:
+    """战绩闭环·结算扫描器:每交易日 15:40(北京)兑现到期表态(骨架同 run_watchlist_scan)。
+    env 总闸 DEEPFOCUS_CALLS_ENABLED 默认关(关=纯空转不取数,open 单原地保留);
+    整轮 try/except,绝不拖垮 lifespan。"""
+    await asyncio.sleep(70)
+    print("[call-settle] 启动:每交易日 15:40 表态自动兑现")
+    last_run = ""
+    while True:
+        try:
+            from . import stock_call as _sc
+            now = datetime.now(ai_fund.BJ_TZ)
+            target = now.replace(hour=15, minute=40, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            await asyncio.sleep(max(30, (target - now).total_seconds()))
+            now = datetime.now(ai_fund.BJ_TZ)
+            today = now.strftime("%Y-%m-%d")
+            if last_run == today:
+                continue  # 已跑过(防同日重复)
+            if not _sc.calls_enabled():
+                continue  # 总闸默认关
+            if not ai_fund._is_trading_day(now):
+                continue  # 周末/法定节假日
+            stats = await _settle_open_calls(now)
+            last_run = today
+            print(f"[call-settle] {today} 完成:{stats}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[call-settle] 异常:{type(exc).__name__}")
+            await asyncio.sleep(300)
+
+
+async def run_marketing_engine() -> None:
+    """自动营销引擎:每日 16:50(北京,增长报告 16:20 之后)对流失/沉睡/高活跃免费用户做分群召回邮件。
+    骨架同 run_call_settlement:sleep-until-next 自然天去重、错峰 sleep(105 独占)、lazy import、整轮 try/except。
+    主闸 DEEPFOCUS_MARKETING_ENABLED 默认关(关=强制 dry_run 空转);阻塞 IO(SMTP/全表扫描)一律 to_thread。
+    刻意不做「启动补跑」:推送类任务重启补跑=可能重复打扰用户(与 growth_analyst 的幂等报告不同)。"""
+    await asyncio.sleep(105)
+    print("[marketing] 启动:每日 16:50 分群召回(主闸 DEEPFOCUS_MARKETING_ENABLED,默认关=空转)")
+    last_run = ""
+    while True:
+        try:
+            from . import marketing_engine as _me
+            now = datetime.now(ai_fund.BJ_TZ)
+            target = now.replace(hour=16, minute=50, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            await asyncio.sleep(max(30, (target - now).total_seconds()))
+            now = datetime.now(ai_fund.BJ_TZ)
+            today = now.strftime("%Y-%m-%d")
+            if last_run == today:
+                continue  # 已跑过(防同日重复)
+            # 归因回填(把上一批触达的点击/回访对齐)——即使主闸关也做,是纯读写自有表的无害操作
+            await asyncio.to_thread(_me.attribute_returns)
+            summary = await asyncio.to_thread(_me.run_marketing_once, False, None)
+            last_run = today
+            print(f"[marketing] {today} 完成:sent={summary.get('sent')} skipped={summary.get('skipped')} "
+                  f"dry={summary.get('dry_run')} master={summary.get('master_enabled')}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[marketing] 异常:{type(exc).__name__}")
+            await asyncio.sleep(300)
+
+
 _SCHED_BROADCAST_GAP = float(os.getenv("DEEPFOCUS_WEIXIN_SCHED_BROADCAST_GAP", "0.8") or 0.8)  # 群发相邻发送错峰间隔(秒)，防并发尖峰触反垃圾
 
 
@@ -6402,6 +6694,71 @@ async def api_t1_recall_stats(request: Request, token: str = "") -> dict[str, An
         raise HTTPException(status_code=403, detail="需要有效的 metrics 令牌")
     from .t1_recall import t1_recall_stats
     return t1_recall_stats()
+
+
+# ===== 自动营销引擎 API（看板「📣 自动营销」区块，设计: marketing_engine.py 模块 docstring）=====
+@app.get("/api/metrics/marketing")
+async def api_metrics_marketing(request: Request, token: str = "") -> dict[str, Any]:
+    """自动营销总览（管理员，需 metrics 令牌）：通道状态 + 分群规模 + 各 campaign 触达效果 + 最近触达
+    + 顺带带上 T+1/到期两条既有召回管道的 stats（同屏看全部自动触达）。"""
+    _require_metrics_token(request, token)
+    from . import marketing_engine as _me
+    out = await asyncio.to_thread(_me.marketing_stats)
+    try:
+        from .t1_recall import t1_recall_stats
+        out["t1_recall"] = t1_recall_stats()
+    except Exception:  # noqa: BLE001
+        out["t1_recall"] = {}
+    try:
+        from .expiry_reminder import expiry_reminder_stats
+        out["expiry"] = expiry_reminder_stats()
+    except Exception:  # noqa: BLE001
+        out["expiry"] = {}
+    return out
+
+
+@app.post("/api/admin/marketing/run")
+async def api_admin_marketing_run(request: Request, payload: Optional[dict] = None) -> dict[str, Any]:
+    """手动触发一轮营销（管理员）。默认 dry_run=true 只预览「会发给谁」；主闸关时强制 dry。"""
+    body = payload or {}
+    if not _admin_token_ok(request, str(body.get("token") or "")):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    from . import marketing_engine as _me
+    dry = body.get("dry_run", True)
+    dry = True if dry is None else bool(dry)
+    limit = body.get("limit")
+    limit = int(limit) if isinstance(limit, (int, float)) else None
+    return await asyncio.to_thread(_me.run_marketing_once, dry, limit)
+
+
+@app.post("/api/admin/marketing/campaign")
+async def api_admin_marketing_campaign(request: Request, payload: Optional[dict] = None) -> dict[str, Any]:
+    """改一条 campaign 的启停 / 日上限 / 冷却（管理员）。"""
+    body = payload or {}
+    if not _admin_token_ok(request, str(body.get("token") or "")):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    key = str(body.get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="缺少 campaign key")
+    from . import marketing_engine as _me
+    row = _me.campaign_set(
+        key,
+        enabled=body.get("enabled") if "enabled" in body else None,
+        daily_cap=body.get("daily_cap") if "daily_cap" in body else None,
+        cooldown_days=body.get("cooldown_days") if "cooldown_days" in body else None,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="campaign 不存在")
+    return row
+
+
+@app.get("/api/marketing/click/{touch_id}")
+async def api_marketing_click(touch_id: int) -> Any:
+    """营销邮件点击追踪（无鉴权）：回填 clicked_at 后 302 跳首页（带 utm）。无效 id 也跳首页不 404。"""
+    from fastapi.responses import RedirectResponse
+    from . import marketing_engine as _me
+    url = await asyncio.to_thread(_me.mark_clicked, touch_id)
+    return RedirectResponse(url=url, status_code=302)
 
 
 async def run_expiry_reminder() -> None:
@@ -10756,3 +11113,181 @@ async def watchlist_discipline_analysis(request: Request, symbols: str = "") -> 
     from . import watchlist_analysis as _wa
     syms = [s.strip() for s in (symbols or "").split(",") if s.strip()]
     return await _wa.analyze_for_user(uname, symbols_override=syms or None, user_id=str(claims.get("sub", "")))
+
+
+# ---- 战绩闭环·表态台账 API(白名单内测,设计: docs/战绩闭环-数据飞轮设计.md §2/§8) ----
+
+_CALL_SYMBOL_RE = re.compile(r"^(?:SH|SZ|BJ)?(\d{6})(?:\.(?:SH|SZ|BJ))?$")  # 仅A股:6位代码±市场前后缀
+
+
+def _require_call_user(request: Request) -> tuple[str, str]:
+    """calls 双硬闸:env 总闸 DEEPFOCUS_CALLS_ENABLED(默认关)+ 白名单 DEEPFOCUS_CALLS_ALLOWED_USERS
+    (默认 lx199710)。★后端硬闸——前端白名单只是遮罩,防绕前端直刷台账(B2 must_fix,仿 iFinD 门控写法)。
+    返回 (user_id=JWT sub, username);台账 user_id 用 sub(uuid),白名单按 username 比对。"""
+    from . import stock_call as _sc
+    if not _sc.calls_enabled():
+        raise HTTPException(status_code=403, detail="内测功能,暂未开放")
+    claims = require_current_user(request)
+    # JWT sub=用户id、用户名在 username claim(同 watchlist_analysis 双键回退读法)
+    uname = str(claims.get("username") or claims.get("sub") or "").strip()
+    if uname.lower() not in {u.lower() for u in _sc.allowed_call_users()}:
+        raise HTTPException(status_code=403, detail="内测功能,暂未对当前账号开放")
+    uid = str(claims.get("sub") or "").strip() or uname
+    return uid, uname
+
+
+def _log_call_act(request: Request, uid: str, uname: str, action: str, target: str) -> None:
+    """表态动作落操作流水(服务端直记,端点即动作,不依赖前端埋点)。失败不影响主流程。"""
+    try:
+        ua = request.headers.get("user-agent") or ""
+        metrics_log_activity(
+            actor_kind="user", actor_id=f"u:{uid}", actor_name=uname or uid, action=action,
+            target=target, ip=_client_ip(request), device=("mobile" if _MOBILE_UA_RE.search(ua) else "pc"),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.post("/api/calls")
+async def api_call_create(request: Request) -> dict[str, Any]:
+    """表态开单:一键=一条完整 call(服务端 fetch_market_quotes 快照 entry_price/entry_date 仅作证据锚,
+    打分用结算时的前复权序列)。默认 horizon=5 交易日/conviction=2;仅A股(HK/US 无日历直接 422);
+    同用户同标的唯一 open 幂等(重复点=「已在跟踪」,含反向单——堵骑墙);每日新建上限 20(撤销不返还)。
+    body: {symbol, direction, horizon_days?=5, conviction?=2, target_price?, note?, source_ref?}"""
+    uid, uname = _require_call_user(request)
+    from . import stock_call as _sc
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    direction = str(body.get("direction") or "").strip().lower()
+    if direction not in ("bull", "bear"):
+        raise HTTPException(status_code=422, detail="direction 须为 bull(看多)/bear(看空)")
+    m = _CALL_SYMBOL_RE.match(str(body.get("symbol") or "").strip().upper().replace(" ", ""))
+    if not m:
+        raise HTTPException(status_code=422, detail="P0 仅支持A股 6 位代码(港股/美股暂不支持)")
+    code = m.group(1)
+    try:
+        conviction = int(body.get("conviction") or _sc.DEFAULT_CONVICTION)
+        horizon = int(body.get("horizon_days") or _sc.DEFAULT_HORIZON)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="conviction/horizon_days 须为整数")
+    if conviction not in _sc.CONVICTION_MULT or horizon not in _sc.HORIZON_CHOICES:
+        raise HTTPException(status_code=422, detail=f"conviction 须为 1/2/3,horizon_days 须为 {'/'.join(map(str, _sc.HORIZON_CHOICES))}")
+    target_price: Optional[float] = None
+    if body.get("target_price") is not None:
+        try:
+            target_price = float(body["target_price"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="target_price 须为数字")
+    now_bj = datetime.now(ai_fund.BJ_TZ)
+    if _sc.count_created_on_bj_day(uid, now_bj.strftime("%Y-%m-%d")) >= _sc.DAILY_CREATE_LIMIT:
+        raise HTTPException(status_code=429, detail=f"今日表态已达上限 {_sc.DAILY_CREATE_LIMIT} 条(防海量撒网)")
+    # 服务端快照(客户端传价一律不信):取不到行情=拒绝开单,台账不能有无锚的单
+    quote = None
+    try:
+        res = await fetch_market_quotes([code])
+        quote = res.quotes[0] if res.quotes else None
+    except Exception:  # noqa: BLE001
+        quote = None
+    price = getattr(quote, "price", None)
+    if not isinstance(price, (int, float)) or price <= 0:
+        raise HTTPException(status_code=503, detail="行情快照获取失败,稍后再试")
+    try:
+        entry_date = _sc.normalize_entry_date(now_bj)  # 盘中→当日收盘/盘后周末节假日→下一交易日收盘
+    except _sc.CalendarCoverageError:
+        raise HTTPException(status_code=503, detail="交易日历未覆盖目标年份,暂不能表态(请联系管理员更新日历)")
+    rec, created = _sc.create_call(
+        uid, code, direction, entry_date=entry_date, entry_price=float(price),
+        conviction=conviction, horizon_days=horizon, target_price=target_price,
+        source_ref=(str(body.get("source_ref") or "").strip()[:80] or None),
+        note=(str(body.get("note") or "").strip() or None),
+    )
+    if created:
+        _log_call_act(request, uid, uname, "call_create", f"{code} {direction} h{horizon}")
+    return {"call": rec, "created": created, "message": ("已开始跟踪,到期自动兑现" if created else "已在跟踪(同标的仅一条进行中表态)")}
+
+
+@app.delete("/api/calls/{call_id}")
+async def api_call_cancel(request: Request, call_id: int) -> dict[str, Any]:
+    """撤销表态:仅 open 且创建≤60min 且 |现价−入场快照|<1.5%(防「亏了就撤」)。
+    ★行情取数失败=拒绝撤销(fail-closed,防「财报前表态、不利即撤」钻空)。撤销不返还当日额度。"""
+    uid, uname = _require_call_user(request)
+    from . import stock_call as _sc
+    c = _sc.get_call(int(call_id))
+    if not c or str(c.get("user_id")) != uid:
+        raise HTTPException(status_code=404, detail="表态不存在")
+    if c.get("status") != "open":
+        raise HTTPException(status_code=409, detail="仅进行中的表态可撤销")
+    try:
+        created = datetime.fromisoformat(str(c["created_at"]).replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_min = (datetime.now(timezone.utc) - created).total_seconds() / 60.0
+    except Exception:  # noqa: BLE001 —— 时间解析失败也 fail-closed
+        raise HTTPException(status_code=409, detail="撤销校验失败,暂不能撤销")
+    if age_min > _sc.CANCEL_WINDOW_MIN:
+        raise HTTPException(status_code=403, detail=f"超过 {_sc.CANCEL_WINDOW_MIN} 分钟撤销窗口,表态将按期自动兑现")
+    price = None
+    try:
+        res = await fetch_market_quotes([str(c["symbol"])])
+        price = getattr(res.quotes[0], "price", None) if res.quotes else None
+    except Exception:  # noqa: BLE001
+        price = None
+    if not isinstance(price, (int, float)) or price <= 0:
+        # ★fail-closed:行情验证不了异动就不放行撤销,宁可让用户稍后再试
+        raise HTTPException(status_code=409, detail="行情校验失败,暂不能撤销(稍后再试)")
+    drift = abs(float(price) - float(c["entry_price"])) / float(c["entry_price"]) * 100.0
+    if drift >= _sc.CANCEL_MAX_DRIFT_PCT:
+        raise HTTPException(status_code=403, detail="标的已显著异动,不可撤销(表态将按期自动兑现)")
+    if not _sc.cancel_call(int(call_id)):
+        raise HTTPException(status_code=409, detail="撤销失败(可能已被结算)")
+    _log_call_act(request, uid, uname, "call_cancel", str(c.get("symbol") or ""))
+    return {"ok": True, "call": _sc.get_call(int(call_id))}
+
+
+@app.get("/api/calls/mine")
+async def api_calls_mine(request: Request, status: str = "", mark_seen: int = 0) -> dict[str, Any]:
+    """我的表态(新→旧),每条带 unseen(=已兑现未读)——站内红点/进站 toast 的数据面,
+    100% 触达地板(token 热窗约 48h 而 horizon≥3 交易日,结算时微信 token 多半已冷)。
+    mark_seen=1 顺手回写 seen_at 清红点(返回的本批 unseen 标记仍如实)。"""
+    uid, _uname = _require_call_user(request)
+    from . import stock_call as _sc
+    st = (status or "").strip().lower() or None
+    if st and st not in ("open", "settled", "void", "canceled", "error"):
+        raise HTTPException(status_code=422, detail="status 须为 open/settled/void/canceled/error")
+    items = _sc.list_user_calls(uid, status=st)
+    unseen = sum(1 for it in _sc.list_user_calls(uid, status="settled") if it.get("unseen"))
+    if mark_seen:
+        _sc.mark_calls_seen(uid)
+    return {"items": items, "count": len(items), "unseen": unseen}
+
+
+@app.get("/api/calls/summary")
+async def api_calls_summary(request: Request) -> dict[str, Any]:
+    """我的战绩即时 SQL 聚合(总计+本月),★排除 is_test 自测单;不建 user_reputation 表
+    (声誉公式 P1 有真实样本后再上)。展示铁律:永远带样本量(settled),命中/未中/持平全量如实。"""
+    uid, _uname = _require_call_user(request)
+    from . import stock_call as _sc
+    month = datetime.now(ai_fund.BJ_TZ).strftime("%Y-%m")
+    return {
+        "total": _sc.summary_for_user(uid),
+        "month": _sc.summary_for_user(uid, month=month),
+        "month_key": month,
+        "disclaimer": _sc.DIGEST_DISCLAIMER,
+    }
+
+
+@app.post("/api/admin/calls/settle-now")
+async def admin_calls_settle_now(request: Request, token: str = "") -> dict[str, Any]:
+    """立即结算全部 open 表态(管理端自测,需管理令牌,仿 campaign/settle):忽略 horizon,
+    按末根 bar 立即兑现,走与 15:40 扫描器同一条结算+digest 发送链路(settle_push_log 去重同样生效)。
+    ★经它结算的 call 一律强制 is_test:summary/北极星指标默认排除——保台账从 D0 的真实性(B1 must_fix)。
+    例:curl -X POST '.../api/admin/calls/settle-now?token=XXX'"""
+    if not _admin_token_ok(request, token):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    from . import stock_call as _sc
+    if not _sc.calls_enabled():
+        raise HTTPException(status_code=403, detail="DEEPFOCUS_CALLS_ENABLED 未开启")
+    stats = await _settle_open_calls(datetime.now(ai_fund.BJ_TZ), force=True, mark_test=True)
+    return {"ok": True, **stats}

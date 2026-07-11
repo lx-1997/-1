@@ -1003,6 +1003,7 @@ PUBLIC_PREFIXES = (
     "/share",
     "/api/share",
     "/api/realtime/recall/click",  # 邮件/推送点击回流：用户无 JWT 也要能点回
+    "/api/marketing/click",        # 自动营销邮件点击回流：用户无 JWT 也要能点回站（同 recall/click）
     "/api/realtime/messages",      # 实时快讯列表 + /stream SSE：免登录免费看（终端公开页核心体验）
     "/api/report/view/",           # 研报解读分享记录按 id 读（深链 ?report={id} 登录前先取标题/导语）；POST /api/report/share 不在此列、仍须登录
     "/api/review/",                # A股收盘复盘：免登录可看（信息价值引流位）；/api/admin/review/* 仍受保护
@@ -1059,6 +1060,7 @@ PUBLIC_EXACT = frozenset(
         "/api/metrics/activity",
         "/api/metrics/review-quality",
         "/api/metrics/growth",      # 增长分析看板数据（handler 自校验 metrics token）
+        "/api/metrics/marketing",   # 自动营销看板数据（handler 自校验 metrics token，同 growth）
         "/api/metrics/system",      # 系统连接/句柄容量监控（handler 自校验 metrics token）
         "/api/research/auth-status",
         "/api/research/auth",

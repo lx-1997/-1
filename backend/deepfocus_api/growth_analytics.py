@@ -192,6 +192,59 @@ def _spread_funnel(days: int) -> dict[str, int]:
     return out
 
 
+def _calls_funnel(days: int) -> dict[str, Any]:
+    """战绩闭环漏斗(P0 灰度)：表态动作(call_create 去重人数/次数 + call_cancel/call_view 次数)
+    + 结算触达(metric_daily: call:settle_push_delivered / cold_skip)+ 微信兑现推送回站
+    (pageview utm=wxsettle 落地 UV，前缀匹配同 _spread_funnel)。
+    白名单期样本极小只作方向参考，不据此做放量决策；相位过线门见 docs/战绩闭环-数据飞轮设计.md §13。
+    失败返回空不拖垮 KPI 主体。"""
+    out: dict[str, Any] = {"create_users": 0, "create_n": 0, "cancel_n": 0, "view_n": 0,
+                           "settle_push_delivered": 0, "settle_push_cold_skip": 0,
+                           "wxsettle_landing_uv": 0}
+    try:
+        since = (datetime.now(BJ_TZ) - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+        day_floor = (datetime.now(BJ_TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
+        with _metrics_connect() as conn:
+            rows = conn.execute(
+                "SELECT action, COUNT(*) AS n, COUNT(DISTINCT actor_id) AS u FROM activity_log"
+                " WHERE ts >= ? AND action IN ('call_create','call_cancel','call_view') GROUP BY action",
+                (since,),
+            ).fetchall()
+            for r in rows:
+                if r["action"] == "call_create":
+                    out["create_users"], out["create_n"] = int(r["u"]), int(r["n"])
+                elif r["action"] == "call_cancel":
+                    out["cancel_n"] = int(r["n"])
+                else:
+                    out["view_n"] = int(r["n"])
+            for key, field in (("call:settle_push_delivered", "settle_push_delivered"),
+                               ("call:settle_push_cold_skip", "settle_push_cold_skip")):
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(count),0) AS n FROM metric_daily WHERE key = ? AND day >= ?",
+                    (key, day_floor),
+                ).fetchone()
+                out[field] = int(row["n"] or 0)
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT actor_id) AS n FROM activity_log"
+                " WHERE ts >= ? AND action = 'pageview' AND target LIKE 'wxsettle%'",
+                (since,),
+            ).fetchone()
+            out["wxsettle_landing_uv"] = int(row["n"] or 0)
+    except Exception:  # noqa: BLE001 - 表态埋点/计数缺失时 KPI 主体照常出
+        pass
+    return out
+
+
+def _marketing_funnel(days: int) -> dict[str, Any]:
+    """自动营销漏斗：sent → clicked → returned（回访率）。直读 marketing_engine，缺表返回零不拖垮 KPI。
+    挂进 growth_loops 后，16:20 的 LLM 报告 prompt 自动看到营销效果，AI 建议里能对营销做调优（诊断→行动闭环）。"""
+    try:
+        from . import marketing_engine
+        return marketing_engine.marketing_funnel(days)
+    except Exception:  # noqa: BLE001 - 营销模块未就绪/缺表时 KPI 主体照常出
+        return {"sent": 0, "clicked": 0, "returned": 0, "ctr_pct": None, "return_pct": None}
+
+
 def _recall_funnel(days: int) -> dict[str, Any]:
     """召回漏斗：delivered → clicked（CTR）。直读 recall_deliveries，失败返回空不拖垮 KPI。"""
     out: dict[str, Any] = {"delivered": 0, "clicked": 0, "ctr_pct": None}
@@ -315,6 +368,8 @@ def compute_kpis(days: int = 14) -> dict[str, Any]:
             "spread": _spread_funnel(days),                       # 复制→落地（全站最大自然分发行为）
             "invited": {"signups": len(invited), "d1_returned": invited_d1},  # 邀请质量（激活口径的地基）
             "recall": _recall_funnel(days),                       # 召回 delivered→CTR
+            "calls": _calls_funnel(days),                         # 战绩闭环:表态→兑现推送→回站(P0 灰度)
+            "marketing": _marketing_funnel(days),                 # 自动营销:分群召回 sent→clicked→回访(默认关,灰度)
         },
     }
 

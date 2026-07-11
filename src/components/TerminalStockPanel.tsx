@@ -1,5 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet } from '../services/apiClient';
+import { createCall, cancelCall, fetchMyCalls, StockCall, CallDirection } from '../services/authService';
+
+// 战绩闭环白名单（单一真源，FinancialTerminal 的「我的战绩」菜单行/弹层同套引用——捕获与镜像同进退）：
+// 前端只控可见性，后端 DEEPFOCUS_CALLS_ALLOWED_USERS 硬门 403。内测过线（表态率达标）再放量。
+export const CALLS_USERS = new Set(['lx199710']);
+export const callsUserAllowed = (username?: string | null) => !!username && CALLS_USERS.has(username.toLowerCase());
 
 // ===== 术语悬浮释义（termLinkify 轻量版）=====
 // 证据链里的「Put/Call 量比」「杯柄形态」对新手是天书——glossary 名词学堂早已建成，
@@ -60,9 +66,11 @@ interface Props {
   name: string;
   loggedIn: boolean;
   onRequireLogin: (why: string) => void;
+  username?: string | null;                            // 战绩闭环白名单判定用（未传/非白名单 → 「我的判断」tab 整体不渲染）
+  onLog?: (action: string, target?: string) => void;   // 埋点（call_create / call_cancel），复用 FinancialTerminal.logAct
 }
 
-type TabKey = 'verdict' | 'lhb' | 'consensus' | 'dividends' | 'news';
+type TabKey = 'verdict' | 'lhb' | 'consensus' | 'dividends' | 'news' | 'calls';
 
 const TABS: Array<[TabKey, string]> = [
   ['verdict', '⚡ 速判卡'],
@@ -95,7 +103,46 @@ function Sparkline({ points }: { points: Array<{ verdict?: string; price?: numbe
   );
 }
 
-export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLogin }: Props) {
+// ===== 战绩闭环 · 我的判断（表态即笔记，按收盘价自动兑现打分） =====
+const CALL_DIR_TXT: Record<CallDirection, string> = { bull: '▲ 看多', bear: '▼ 看空' };
+const CALL_OUTCOME_TXT: Record<string, string> = { hit: '✅ 命中', miss: '❌ 未中', flat: '⚪ 持平' };
+const fmtRet = (v?: number | null) => (v == null ? '' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`);
+const fmtMD = (d?: string | null) => {
+  const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${Number(m[2])}月${Number(m[3])}日` : (d || '');
+};
+// 北京时区今天（YYYY-MM-DD）：判断 entry 是否已起算 / 跟踪第几天
+const bjToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+const callStatusTxt = (c: StockCall) =>
+  c.status === 'open' ? '跟踪中'
+    : c.status === 'settled' ? `${CALL_OUTCOME_TXT[c.outcome || ''] || '已兑现'} ${fmtRet(c.ret_pct)}`
+      : c.status === 'void' ? '⚫ 无效（起算日停牌）'
+        : c.status === 'canceled' ? '已撤销'
+          : '⚠️ 结算异常，重试中';
+
+// 历次表态时间轴：改造自上面的评级演变 Sparkline——色块=方向（沿用绿涨红跌单一真源），
+// 未中降透明度、open 描边，tooltip 带日期/方向/兑现结果。判断从瞬间变成可回看的轨迹。
+function CallTimeline({ items }: { items: StockCall[] }) {
+  if (!items.length) return null;
+  const seq = items.slice().sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  return (
+    <div title="我的历次表态：由旧到新（已兑现结果不可篡改，全量可回看）" style={{ display: 'flex', gap: 2, alignItems: 'center', margin: '6px 0 2px' }}>
+      <span style={dim}>历次表态</span>
+      {seq.slice(-24).map((c, i) => (
+        <span key={c.id ?? i}
+          title={`${(c.entry_date || c.created_at || '').slice(0, 10)} ${CALL_DIR_TXT[c.direction] || c.direction} · ${callStatusTxt(c)}${c.note ? `\n${c.note}` : ''}`}
+          style={{
+            width: 8, height: 14, borderRadius: 2,
+            background: c.direction === 'bull' ? 'var(--up,#10b981)' : 'var(--down,#ef4444)',
+            opacity: c.status === 'canceled' || c.status === 'void' ? 0.25 : c.status === 'settled' && c.outcome === 'miss' ? 0.45 : c.status === 'open' ? 0.85 : 1,
+            outline: c.status === 'open' ? '1px solid rgba(255,255,255,.55)' : 'none',
+          }} />
+      ))}
+    </div>
+  );
+}
+
+export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLogin, username, onLog }: Props) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<TabKey>('verdict');
   const [busy, setBusy] = useState(false);
@@ -103,7 +150,21 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
   const [, force] = useState(0);
   const bump = () => force(v => v + 1);
 
-  useEffect(() => { setOpen(false); setTab('verdict'); }, [symbol]);   // 换股复位
+  // 「🎯 我的判断」tab 可见性：仅A股（HK/US 无结算日历，后端 422 的防呆前置）+ 白名单（后端同样硬门 403）
+  const isCn = /^\d{6}$/.test((symbol || '').trim());
+  const showCalls = isCn && callsUserAllowed(username);
+  const [calls, setCalls] = useState<StockCall[] | null>(null);          // 本 symbol 我的历次表态；null=未加载
+  const [callBusy, setCallBusy] = useState(false);
+  const [callMsg, setCallMsg] = useState('');                            // 表态/撤销的行内反馈（含后端拒绝理由）
+  const [justCreated, setJustCreated] = useState<StockCall | null>(null); // 刚表态成功 → 确认卡（即时反馈是这个入口的生死线）
+  const [callHorizon, setCallHorizon] = useState<3 | 5 | 20>(5);
+  const [callNote, setCallNote] = useState('');
+  const [callMore, setCallMore] = useState(false);                       // 展开区：改期限 + 一句话理由（收起不增噪）
+
+  useEffect(() => {   // 换股复位（含表态区状态；calls 置 null 触发重拉）
+    setOpen(false); setTab('verdict');
+    setCalls(null); setCallMsg(''); setJustCreated(null); setCallMore(false); setCallNote(''); setCallHorizon(5);
+  }, [symbol]);
 
   const load = useCallback(async (t: TabKey) => {
     const key = `${symbol}:${t}`;
@@ -133,7 +194,51 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
     setOpen(true); void load('verdict');
   }, [loggedIn, onRequireLogin, load]);
 
-  const switchTab = useCallback((t: TabKey) => { setTab(t); void load(t); }, [load]);
+  // 我的表态（本 symbol）：不走 cache——表态/撤销后必须立刻反映，会话缓存会给用户看陈旧状态
+  const loadCalls = useCallback(async () => {
+    setBusy(true);
+    try {
+      const sym = (symbol || '').trim();
+      const all = await fetchMyCalls();
+      setCalls(all.filter(c => String(c.symbol || '').trim() === sym));
+    } finally { setBusy(false); }
+  }, [symbol]);
+
+  const submitCall = useCallback(async (direction: CallDirection) => {
+    if (callBusy) return;
+    setCallBusy(true); setCallMsg('');
+    try {
+      const r = await createCall({ symbol: (symbol || '').trim(), direction, horizon_days: callHorizon, note: callNote.trim() || undefined });
+      if (r.created) onLog?.('call_create', `${symbol} ${direction} ${callHorizon}d`);
+      else setCallMsg(r.message || '已在跟踪（同一标的同时只跟踪一笔，可先撤销再改判）');   // 幂等命中已有单（含反向单）
+      setJustCreated(r.created ? r.call : null);
+      setCalls(prev => [r.call, ...(prev || []).filter(c => c.id !== r.call.id)]);
+      setCallNote(''); setCallMore(false);
+    } catch (e: any) {
+      setCallMsg(e?.message || '表态失败，请稍后再试');   // 后端 detail 原样透出（已在跟踪/每日上限/非白名单等）
+    } finally { setCallBusy(false); }
+  }, [symbol, callBusy, callHorizon, callNote, onLog]);
+
+  const doCancelCall = useCallback(async (id: number) => {
+    if (callBusy) return;
+    setCallBusy(true); setCallMsg('');
+    try {
+      await cancelCall(id);
+      onLog?.('call_cancel', symbol);
+      setJustCreated(null);
+      setCalls(prev => (prev || []).map(c => (c.id === id ? { ...c, status: 'canceled' as const } : c)));
+      setCallMsg('已撤销，这笔判断不会进入战绩');
+    } catch (e: any) {
+      // fail-closed：超时/价格异动/行情取数失败都拒绝撤销（防「不利即撤」），如实告知
+      setCallMsg(e?.message || '撤销失败：超过 60 分钟、价格已异动（>1.5%）或行情暂不可用时不可撤销');
+    } finally { setCallBusy(false); }
+  }, [symbol, callBusy, onLog]);
+
+  const switchTab = useCallback((t: TabKey) => {
+    setTab(t);
+    if (t === 'calls') { void loadCalls(); return; }
+    void load(t);
+  }, [load, loadCalls]);
 
   if (!open) {
     return (
@@ -149,7 +254,7 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
   return (
     <div style={{ ...box, margin: '6px 0 10px' }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-        {TABS.map(([k, label]) => (
+        {(showCalls ? [...TABS, ['calls', '🎯 我的判断'] as [TabKey, string]] : TABS).map(([k, label]) => (
           <button key={k} className={'bbt-chip' + (tab === k ? ' on' : '')} onClick={() => switchTab(k)}>{label}</button>
         ))}
         <button className="bbt-clear" style={{ marginLeft: 'auto' }} onClick={() => setOpen(false)}>收起 ▴</button>
@@ -251,6 +356,100 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
             ))}
           </div>
         ) : <div className="bbt-empty">暂无个股新闻</div>
+      )}
+
+      {/* 🎯 我的判断：一键即完整 call（默认 5 个交易日/信念档默认档），按收盘价起算自动兑现。
+          ⚠️ 全程不展示实时快照价——「入场价」只有 entry 交易日收盘价一个口径（客观兑现的信任底线）。 */}
+      {tab === 'calls' && showCalls && (
+        <div style={{ marginTop: 8 }}>
+          {/* 加载态由上方通用 busy 指示器负责（calls 无会话缓存，d 恒 undefined 正好命中它） */}
+          {calls === null ? null : (() => {
+            const list = calls;
+            const openCall = list.find(c => c.status === 'open') || null;
+            const today = bjToday();
+            const entryPassed = !!(openCall?.entry_date && openCall.entry_date <= today);
+            const trackDay = openCall?.entry_date ? Math.max(1, Math.floor((Date.parse(today) - Date.parse(openCall.entry_date)) / 86400000) + 1) : 1;
+            const cancelLeftMin = openCall?.created_at ? Math.max(0, Math.ceil((3600000 - (Date.now() - Date.parse(openCall.created_at))) / 60000)) : 0;
+            const history = list.filter(c => c.status !== 'open')
+              .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+            return (
+              <>
+                {openCall && justCreated && justCreated.id === openCall.id ? (
+                  /* 表态成功确认卡：即时反馈——说清起算口径与兑现节拍（旧▲▼按钮零反馈被下线的教训） */
+                  <div style={{ ...box, borderColor: 'rgba(255,176,46,.5)' }}>
+                    <b>✅ 已记录你的判断：{name || symbol} <span className={openCall.direction === 'bull' ? 'bbt-up' : 'bbt-down'}>{CALL_DIR_TXT[openCall.direction]}</span></b>
+                    <div style={{ fontSize: 13, margin: '6px 0 2px', lineHeight: 1.7 }}>
+                      将按 <b>{fmtMD(openCall.entry_date)} 收盘价</b> 起算，<b>{openCall.horizon_days}</b> 个交易日后自动按收盘价兑现打分——结果好坏都会如实记入头像菜单「🎯 我的战绩」，不可修改。
+                    </div>
+                    {openCall.note && <div style={dim}>理由：{openCall.note}</div>}
+                    {cancelLeftMin > 0 && (
+                      <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button className="bbt-clear" disabled={callBusy} onClick={() => void doCancelCall(openCall.id)}>撤销这笔判断</button>
+                        <span style={dim}>60 分钟内可撤（剩约 {cancelLeftMin} 分钟）</span>
+                      </div>
+                    )}
+                  </div>
+                ) : openCall ? (
+                  /* 跟踪中卡：第X天按自然日粗计（结算按交易日，以后端为准）；不显示任何盘中价 */
+                  <div style={box}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <b className={openCall.direction === 'bull' ? 'bbt-up' : 'bbt-down'}>{CALL_DIR_TXT[openCall.direction]}</b>
+                      <span style={{ fontSize: 13 }}>{entryPassed ? `跟踪中 · 第 ${trackDay} 天` : `待起算 · 将按 ${fmtMD(openCall.entry_date)} 收盘价起算`}</span>
+                      <span style={dim}>{openCall.horizon_days} 个交易日后按收盘价自动兑现</span>
+                    </div>
+                    {openCall.note && <div style={{ ...dim, marginTop: 4 }}>理由：{openCall.note}</div>}
+                    {cancelLeftMin > 0 && (
+                      <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button className="bbt-clear" disabled={callBusy} onClick={() => void doCancelCall(openCall.id)}>撤销这笔判断</button>
+                        <span style={dim}>表态后 60 分钟内可撤（剩约 {cancelLeftMin} 分钟；价格异动超 1.5% 后不可撤）</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* 表态区：▲/▼ 大按钮一键即完整 call；期限/理由收在展开区不增噪 */
+                  <div style={box}>
+                    <div style={{ fontSize: 13, marginBottom: 8, lineHeight: 1.6 }}>
+                      对 <b>{name || symbol}</b> 未来 <b>{callHorizon}</b> 个交易日怎么看？按 <b>收盘价</b> 起算、到期自动兑现打分，好坏都记档。
+                    </div>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <button disabled={callBusy} onClick={() => void submitCall('bull')}
+                        style={{ flex: 1, fontFamily: 'inherit', fontSize: 15, fontWeight: 700, padding: '9px 0', borderRadius: 8, cursor: 'pointer', color: 'var(--up,#10b981)', background: 'rgba(16,185,129,.10)', border: '1px solid rgba(16,185,129,.35)' }}>▲ 看多</button>
+                      <button disabled={callBusy} onClick={() => void submitCall('bear')}
+                        style={{ flex: 1, fontFamily: 'inherit', fontSize: 15, fontWeight: 700, padding: '9px 0', borderRadius: 8, cursor: 'pointer', color: 'var(--down,#ef4444)', background: 'rgba(239,68,68,.10)', border: '1px solid rgba(239,68,68,.35)' }}>▼ 看空</button>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <button className="bbt-clear" onClick={() => setCallMore(v => !v)}>{callMore ? '收起 ▴' : '改期限 / 写理由 ▾'}</button>
+                      {callMore && (
+                        <div style={{ marginTop: 6 }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={dim}>兑现期限</span>
+                            {([3, 5, 20] as const).map(h => (
+                              <button key={h} className={'bbt-chip' + (callHorizon === h ? ' on' : '')} onClick={() => setCallHorizon(h)}>{h} 个交易日</button>
+                            ))}
+                          </div>
+                          <input value={callNote} maxLength={140} onChange={e => setCallNote(e.target.value)}
+                            placeholder="一句话理由（可选，≤140字）——表态即笔记，兑现时回看"
+                            style={{ marginTop: 6, width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid var(--line-2,#233039)', borderRadius: 6, padding: '6px 9px', color: 'inherit', fontFamily: 'inherit', fontSize: 13 }} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {callMsg && <div style={{ fontSize: 13, color: 'var(--warn,#f0a020)', margin: '6px 0' }}>{callMsg}</div>}
+                <CallTimeline items={list} />
+                {history.slice(0, 8).map(c => (
+                  <div key={c.id} style={{ fontSize: 13, lineHeight: 1.8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={dim}>{(c.entry_date || c.created_at || '').slice(0, 10)}</span>
+                    <span className={c.direction === 'bull' ? 'bbt-up' : 'bbt-down'}>{CALL_DIR_TXT[c.direction] || c.direction}</span>
+                    <span>{callStatusTxt(c)}</span>
+                    {c.note && <span style={dim} title={c.note}>「{c.note.slice(0, 24)}{c.note.length > 24 ? '…' : ''}」</span>}
+                  </div>
+                ))}
+                <div style={dim}>个人判断记录（内测）· 按收盘价自动兑现，非实时盈亏 · 仅供自我复盘，不构成投资建议</div>
+              </>
+            );
+          })()}
+        </div>
       )}
     </div>
   );
