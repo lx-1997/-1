@@ -995,6 +995,150 @@ def render_reports_hub_html(items: list[dict[str, Any]]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 研报 AI 解读「博客」：把已预热的研报解读渲染成**可读全文**文章流（与上面 /reports 软墙钓鱼页
+# 互补——这里是全文公开、机器每天自动生产的常青博客）。数据由 [[research_blog]] 供给，
+# post/item 里的 title/org 已清洗；解读字段抽取 + 中性化在这里做。红线：不外露原文/PDF。
+# --------------------------------------------------------------------------- #
+def _blog_extract(interp: dict[str, Any]) -> dict[str, Any]:
+    """从 research_vision 解读 dict 抽出博客要用的字段，逐一过中性化护栏。"""
+    def nz(v: Any) -> str:
+        return neutralize_text(str(v or "").strip())
+
+    def lst(*keys: str) -> list[str]:
+        for k in keys:
+            v = interp.get(k)
+            if isinstance(v, list) and v:
+                return [nz(x) for x in v if str(x).strip()]
+        return []
+
+    return {
+        "one_liner": nz(interp.get("one_liner")),
+        "df_take": nz(interp.get("df_take")),      # 视觉通道才有：原创独家点评（版权最安全，优先打头）
+        "summary": nz(interp.get("summary")),
+        "key_points": lst("key_points"),
+        "bullish": lst("bullish"),
+        "bearish": lst("bearish", "risks"),
+        "rating": nz(interp.get("rating")),
+        "target": nz(interp.get("target_price")),
+        "confidence": interp.get("confidence"),
+    }
+
+
+def render_research_blog_post_html(post: dict[str, Any], recent: list[dict[str, Any]], page_url: str = "") -> str:
+    """单篇研报 AI 解读博客文章（全文公开可读）。post={fid,title(已清洗),org(已署名),date,interp}。"""
+    fid = str(post.get("fid") or "")
+    topic = str(post.get("title") or "研报速读")
+    org = str(post.get("org") or "DeepFocus")
+    date = str(post.get("date") or "")[:10]
+    canonical = page_url or f"{BASE_URL}/research/{fid}"
+    d = _blog_extract(post.get("interp") or {})
+
+    parts: list[str] = [f"<h1>{_esc(topic)}</h1>"]
+    meta_bits = ["DeepFocus AI 研报速读", f"来源：{_esc(org)}"] + ([_esc(date)] if date else [])
+    parts.append(f'<div class="meta">{" · ".join(meta_bits)}</div>')
+
+    if d["one_liner"]:
+        parts.append(f'<div class="tldr"><b>一句话看懂</b>：{_esc(d["one_liner"])}</div>')
+    if d["df_take"]:  # 有原创点评则打头——「AI 解读博客」最核心、版权最安全的原创增量
+        parts.append(f'<h2>DeepFocus 视角</h2><div class="lead">{_esc(d["df_take"])}</div>')
+    if d["summary"]:
+        parts.append(f'<h2>解读综述</h2><p>{_esc(d["summary"])}</p>')
+
+    highlights = d["key_points"] or d["bullish"]
+    if highlights:
+        lis = "".join(f"<li>{_esc(k)}</li>" for k in highlights[:4])
+        parts.append(f'<h2>速读 · 核心要点</h2><div class="dim"><ul style="margin:0;padding-left:18px">{lis}</ul></div>')
+
+    if d["bearish"]:  # 风险/分歧另一面，保持客观平衡（合规上比单边看多更稳）
+        lis = "".join(f"<li>{_esc(b)}</li>" for b in d["bearish"][:3])
+        parts.append('<h2>风险与需要留意的地方</h2>'
+                     '<div class="dim" style="border-left:3px solid #ef4444">'
+                     f'<ul style="margin:0;padding-left:18px;color:#c7ccd1">{lis}</ul></div>')
+
+    if d["rating"] or d["target"]:
+        rows = ""
+        if d["rating"]:
+            rows += f'<tr><td style="color:#8b939b;width:96px">机构评级</td><td>{_esc(d["rating"])}</td></tr>'
+        if d["target"]:
+            rows += f'<tr><td style="color:#8b939b">目标价</td><td>{_esc(d["target"])}</td></tr>'
+        parts.append(f'<h2>机构评级与目标价</h2><table>{rows}</table>')
+
+    conf = d["confidence"]
+    conf_txt = f" · 解读置信度 {conf:.0%}" if isinstance(conf, (int, float)) else ""
+    parts.append(
+        f'<p class="meta" style="margin-top:20px">本文为 DeepFocus 对{_esc(org)}公开研报的 AI 解读与整理'
+        f'{conf_txt}，不含研报原文；完整跟踪与实时行情请在 DeepFocus 终端查看。</p>'
+    )
+
+    others = [r for r in recent if r.get("fid") and r.get("fid") != fid][:8]
+    if others:
+        cards = "".join(
+            f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
+            f'href="{BASE_URL}/research/{_esc(o.get("fid"))}">{_esc(str(o.get("title") or "")[:44])}</a></div>'
+            f'<ul><li>{_esc(neutralize_text(str((o.get("interp") or {}).get("one_liner") or ""))[:56])}</li></ul></div>'
+            for o in others
+        )
+        parts.append(f'<h2>更多研报解读</h2>{cards}')
+
+    published = _iso(f"{date}T09:00:00+0800" if date else None)
+    article = {
+        "@type": "Article",
+        "headline": topic[:110],
+        "description": (d["one_liner"] or d["summary"])[:200],
+        "inLanguage": "zh-CN",
+        "datePublished": published,
+        "dateModified": published,
+        "image": DEFAULT_OG_IMAGE,
+        "author": {"@id": ORG_ID},
+        "publisher": {"@id": ORG_ID},
+        "isAccessibleForFree": True,      # 博客：全文公开可读（与 /report 软墙钓鱼页相反）
+        "mainEntityOfPage": canonical,
+    }
+    trail = [("首页", f"{BASE_URL}/"), ("研报解读", f"{BASE_URL}/research"), (topic[:30], canonical)]
+    return _page(
+        title=f"{topic} · 研报 AI 解读",
+        description=d["one_liner"] or d["summary"] or f"{topic} · DeepFocus AI 研报速读。",
+        body="".join(parts),
+        canonical=canonical,
+        graph=_graph(_breadcrumb_node(trail), article),
+        ai_generated=True,
+        cta_href=APP_URL,
+        cta_text="在 DeepFocus 终端看实时行情与更多解读 →",
+    )
+
+
+def render_research_blog_index_html(items: list[dict[str, Any]]) -> str:
+    """研报 AI 解读博客首页（文章流）。items 为 research_blog.list_blog_posts() 输出。"""
+    cards = ""
+    for it in items:
+        interp = it.get("interp") or {}
+        topic = str(it.get("title") or "")
+        one = neutralize_text(str(interp.get("one_liner") or interp.get("summary") or ""))
+        org = str(it.get("org") or "DeepFocus")
+        date = str(it.get("date") or "")[:10]
+        cards += (
+            f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none;font-size:16px" '
+            f'href="{BASE_URL}/research/{_esc(it.get("fid"))}">{_esc(topic[:52])}</a></div>'
+            f'<ul><li>{_esc(one[:96])}</li></ul>'
+            f'<div class="meta" style="margin:4px 0 0">{_esc(org)} · {_esc(date)} · AI 解读</div></div>'
+        )
+    body = (
+        "<h1>研报 AI 解读</h1>"
+        '<div class="tldr" style="margin-top:6px">DeepFocus 每天把券商 / 海外投行研报，'
+        "用 AI 拆成「一句话结论 + 多空要点 + 机构评级」的速读文章。免费阅读，登录解锁实时行情与自选盯盘。</div>"
+        + (cards or "<p>暂无解读。</p>")
+    )
+    trail = [("首页", f"{BASE_URL}/"), ("研报解读", f"{BASE_URL}/research")]
+    return _page(
+        title="研报 AI 解读 · 每日更新",
+        description="DeepFocus 研报 AI 解读博客：券商与海外投行研报的 AI 速读，一句话结论 + 多空要点 + 机构评级，免费阅读。",
+        body=body,
+        canonical=f"{BASE_URL}/research",
+        graph=_graph(_breadcrumb_node(trail)),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 「提前覆盖」战绩公开页：确定性统计（零 AI 叙述），只做事实表述。
 # ⚠️措辞铁律：只用「提前覆盖 N 次」类事实表述——绝不出现命中率/准确率/收益归因
 # （帮你抓住 X% 涨幅等），那是变相宣传预测能力（无牌照投顾红线）。
@@ -1306,8 +1450,12 @@ def render_sitemap_xml(
     report_ids: Optional[list[str]] = None,
     flash_ids: Optional[list[str]] = None,
     note_ids: Optional[list[str]] = None,
+    research_fids: Optional[list[str]] = None,
 ) -> str:
-    """站点地图：静态页固定优先级，内容页带真实 lastmod（lastmod_map 按完整 URL 提供时间戳）。"""
+    """站点地图：静态页固定优先级，内容页带真实 lastmod（lastmod_map 按完整 URL 提供时间戳）。
+
+    research_fids 非空 → 收录研报 AI 解读博客（/research 首页 + 各 /research/{fid}）；
+    空/None（灰度关）→ 完全不出现在 sitemap（对齐路由 404，不给爬虫死链）。"""
     lm = lastmod_map or {}
     entries: list[str] = [
         _sitemap_url(f"{BASE_URL}/", changefreq="daily", priority="1.0"),
@@ -1346,6 +1494,11 @@ def render_sitemap_xml(
     for rid in (report_ids or []):
         u = f"{BASE_URL}/report/{rid}"
         entries.append(_sitemap_url(u, lastmod=lm.get(u), changefreq="weekly", priority="0.5"))
+    if research_fids:  # 研报 AI 解读博客（灰度开才收录）：首页 daily 高优先级 + 各文章
+        entries.append(_sitemap_url(f"{BASE_URL}/research", changefreq="daily", priority="0.8"))
+        for fid in research_fids:
+            u = f"{BASE_URL}/research/{fid}"
+            entries.append(_sitemap_url(u, lastmod=lm.get(u), changefreq="weekly", priority="0.6"))
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + "".join(entries) + "</urlset>"

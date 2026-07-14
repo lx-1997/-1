@@ -8527,10 +8527,18 @@ async def public_sitemap() -> Response:
         report_ids.append(rid)
         if rec.get("created_at"):
             lastmod[f"{base}/report/{rid}"] = str(rec["created_at"])
+    research_fids: list[str] = []
+    from . import research_blog  # 研报 AI 解读博客（灰度开才收录，关时留空=不进 sitemap）
+    if research_blog.blog_enabled():
+        for p in research_blog.list_blog_posts(200):
+            research_fids.append(p["fid"])
+            if p.get("date"):
+                lastmod[f"{base}/research/{p['fid']}"] = str(p["date"])
     return Response(
         seo_pages.render_sitemap_xml(dates, symbols, article_ids, lastmod_map=lastmod,
                                      qa_slugs=qa_slugs, report_ids=report_ids,
-                                     flash_ids=flash_ids, note_ids=note_ids),
+                                     flash_ids=flash_ids, note_ids=note_ids,
+                                     research_fids=research_fids),
         media_type="application/xml",
     )
 
@@ -8677,6 +8685,30 @@ async def public_report_page(report_id: str, request: Request) -> HTMLResponse:
     recent = report_share.recent_shares(12)
     return HTMLResponse(
         seo_pages.render_report_page_html(rec, recent, page_url=_canonical_url(request))
+    )
+
+
+@app.get("/research", response_class=HTMLResponse, include_in_schema=False)
+async def public_research_blog_hub() -> HTMLResponse:
+    """研报 AI 解读「博客」首页（全文可读文章流，机器每天自动生产）。灰度关时 404。"""
+    from . import research_blog
+    if not research_blog.blog_enabled():
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    return HTMLResponse(seo_pages.render_research_blog_index_html(research_blog.list_blog_posts(40)))
+
+
+@app.get("/research/{fid}", response_class=HTMLResponse, include_in_schema=False)
+async def public_research_blog_post(fid: str, request: Request) -> HTMLResponse:
+    """单篇研报 AI 解读博客文章（全文公开）。只渲染已预热解读，无缓存/不够格 → 404。灰度关时 404。"""
+    from . import research_blog
+    if not research_blog.blog_enabled():
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    post = research_blog.get_blog_post(fid)
+    if post is None:
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    recent = research_blog.list_blog_posts(12)
+    return HTMLResponse(
+        seo_pages.render_research_blog_post_html(post, recent, page_url=_canonical_url(request))
     )
 
 
