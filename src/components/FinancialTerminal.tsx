@@ -1937,8 +1937,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const refCode = inviteCodeRef.current;
     const q = `${refCode ? `ref=${encodeURIComponent(refCode)}&` : ''}utm_source=copy`;
     const link = m.id ? `${site}/article/${encodeURIComponent(m.id)}?${q}` : `${site}/?${q}`;
-    parts.push('', `🔗 看这条快讯的 AI 解读与后续追踪 → ${link}`);
-    if (refCode) parts.push('注册即领体验会员，解锁 AI 完整解读');         // 带邀请码 → 来访者钩子，转化+归因双赢
+    // 引导词一行、链接单独成行(微信里能生成链接卡,不跟箭头文字挤一行折行乱)、CTA 空行分开不显挤
+    parts.push('', '📱 AI 解读 & 后续追踪', link);
+    if (refCode) parts.push('', '注册即领体验会员，解锁完整解读');         // 带邀请码 → 来访者钩子，转化+归因双赢
     const text = parts.join('\n');
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
