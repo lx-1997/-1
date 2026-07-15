@@ -19,6 +19,7 @@ from __future__ import annotations
 import html
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from .compliance import neutralize_text
@@ -88,6 +89,20 @@ def _iso(value: Any) -> str:
     if len(s) == 10 and s[4] == "-" and s[7] == "-":
         return f"{s}T00:00:00Z"
     return s
+
+
+def _beijing_time(value: Any) -> str:
+    """UTC 时间戳 → 北京时间 'YYYY-MM-DD HH:MM'(不标 UTC，中国用户直读)。解析失败回退原始前16位。"""
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return s[:16].replace("T", " ")
 
 
 def _compact(value: Any) -> Any:
@@ -245,6 +260,7 @@ def _page(
   .cta {{ display:inline-block; margin-top:26px; padding:11px 20px; border-radius:10px; background:#10b981; color:#04130d; font-weight:600; text-decoration:none; }}
   footer {{ margin-top:36px; padding-top:16px; border-top:1px solid #20262c; color:#6b7782; font-size:12px; }}
   footer a {{ color:#6b7782; }}
+  @media (max-width:480px) {{ .wrap {{ padding:30px 16px 48px; }} h1 {{ font-size:22px; }} h2 {{ margin:22px 0 8px; }} }}
 </style>
 </head>
 <body>
@@ -514,7 +530,7 @@ def render_stock_page_html(ts: dict[str, Any], related: list[dict[str, Any]], pa
     parts = [f"<h1>{_esc(title)}</h1>"]
     parts.append(
         f'<div class="meta">{_esc(price_bit)} · 综合分 {_esc(ts.get("overall_score"))} · {_esc(conf_txt)}'
-        f' · 生成于 {_esc(str(ts.get("generated_at") or "")[:16].replace("T", " "))}（UTC）</div>'
+        f' · 生成于 {_esc(_beijing_time(ts.get("generated_at")))}</div>'
     )
     # answer-first TL;DR：自带日期与研判，便于 AI 引擎整段引用。
     if not thin:
@@ -740,12 +756,13 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     aid = str(article.get("id") or "")
     title = str(article.get("title") or "资讯文章").strip()
     source = _public_source(article.get("source_name") or "")
-    when = str(article.get("created_at") or "")[:16].replace("T", " ")
+    when = _beijing_time(article.get("created_at"))
     teaser = _teaser(article.get("content") or "", 300)
     symbol = str(article.get("symbol") or "").strip()
     canonical = page_url or f"{BASE_URL}/article/{aid}"
 
-    meta_bits = [_esc(source), f"{_esc(when)}（UTC）", "资讯文章"]
+    # 顶部已有「◆ DeepFocus 金融数据」品牌行，来源同为 DeepFocus 属重复 → meta 只留时间+类型，减噪
+    meta_bits = [_esc(when), "资讯文章"]
     if symbol:
         meta_bits.append(_esc(symbol))
     parts = [f"<h1>{_esc(title)}</h1>", f'<div class="meta">{" · ".join(meta_bits)}</div>']
@@ -763,7 +780,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
         '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 登录即用</p></div>'
     )
 
-    others = [r for r in recent if r.get("id") and r.get("id") != aid][:12]
+    others = [r for r in recent if r.get("id") and r.get("id") != aid][:6]  # 移动端 12 条太长显乱，收敛到 6
     if others:
         cards = ""
         for r in others:
@@ -912,12 +929,12 @@ def render_report_page_html(report: dict[str, Any], recent: list[dict[str, Any]]
     rid = str(report.get("id") or "")
     title = str(report.get("title") or "研报解读").strip()
     source = _public_source(report.get("source_name") or "")
-    when = str(report.get("created_at") or "")[:16].replace("T", " ")
+    when = _beijing_time(report.get("created_at"))
     teaser = _teaser(report.get("summary") or "", 300)
     symbol = str(report.get("symbol") or "").strip()
     canonical = page_url or f"{BASE_URL}/report/{rid}"
 
-    meta_bits = [_esc(source), f"{_esc(when)}（UTC）", "研报 AI 解读"]
+    meta_bits = [_esc(source), _esc(when), "研报 AI 解读"]
     if symbol:
         meta_bits.append(_esc(symbol))
     parts = [f"<h1>{_esc(title)}</h1>", f'<div class="meta">{" · ".join(meta_bits)}</div>']
