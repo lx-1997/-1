@@ -738,6 +738,13 @@ def _app_article_url(article_id: str) -> str:
     return f"{base}{sep}article={_esc(article_id)}"
 
 
+def _app_note_url(note_id: str) -> str:
+    """打开终端并定位到机构纪要模块的这条纪要(前端 ?note= 深链→切机构纪要 tab + 高亮该条)。"""
+    base = APP_URL if APP_URL.startswith("http") else f"{BASE_URL}{APP_URL}"
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}note={_esc(note_id)}"
+
+
 def _teaser(content: str, limit: int = 120) -> str:
     """从正文取一段短导语（仅预览，第三方全文不上公开页）。"""
     flat = " ".join(str(content or "").split())
@@ -884,7 +891,7 @@ def render_note_page_html(topic: dict[str, Any], page_url: str = "") -> str:
         description=lead or f"{title} · DeepFocus 机构纪要。",
         body="".join(parts),
         canonical=canonical,
-        cta_href=APP_URL,
+        cta_href=_app_note_url(nid),                   # 深链定位到机构纪要模块的这条,而非裸开首页
         cta_text="打开 DeepFocus 看完整机构纪要 →",   # 用户拍板放开匿名可见→CTA 不再要求登录
         graph=_graph(_breadcrumb_node(trail), article),
         # 用户拍板放开 SEO 收录（2026-07-06）：落地页仅标题+≤100字导语钩子（全文在 SPA 不入 HTML→

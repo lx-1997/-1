@@ -135,12 +135,12 @@ const CommentsBlock: React.FC<{ item: ZsxqTopic }> = ({ item }) => {
 const COLLAPSE_CHARS = 420; // 长帖默认折叠的字符阈值
 
 // 单条帖子卡片：作者/日期/精华 + 正文(长帖折叠) + 图片(可放大) + 评论 + 原文出处。
-const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = ({ item, onZoom }) => {
+const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void; focused?: boolean }> = ({ item, onZoom, focused = false }) => {
   const [expanded, setExpanded] = useState(false);
   const long = (item.text || '').length > COLLAPSE_CHARS;
   const bodyText = !long || expanded ? item.text : item.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…';
   return (
-    <div className="tzs-item">
+    <div className={'tzs-item' + (focused ? ' tzs-item--focus' : '')} id={item.id ? `zsxq-${item.id}` : undefined}>
       <div className="tzs-item-head">
         <span className="tzs-item-kind">机构纪要</span>
         {item.digested && <span className="tzs-item-badge">精华</span>}
@@ -180,7 +180,7 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void }> = (
   );
 };
 
-const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onRequireLogin?: () => void }> = ({ inline = false, loggedIn = false, onRequireLogin }) => {
+const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onRequireLogin?: () => void; focusId?: string }> = ({ inline = false, loggedIn = false, onRequireLogin, focusId }) => {
   const [data, setData] = useState<ZsxqStreamResponse | null>(null);
   const [pool, setPool] = useState<ZsxqTopic[]>([]);
   const [group, setGroup] = useState('');
@@ -216,6 +216,17 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
   }, []);
 
   useEffect(() => { void load({}); }, [load]);
+
+  // 分享深链定位:切到本模块后,若目标纪要在已加载池内→滚动居中+短暂高亮;不在池内则只落在模块(已达「跳到对应模块」)
+  const [activeFocus, setActiveFocus] = useState('');
+  useEffect(() => { if (focusId) setActiveFocus(focusId); }, [focusId]);
+  useEffect(() => {
+    if (!activeFocus || !pool.some(i => i.id === activeFocus)) return;
+    const el = typeof document !== 'undefined' ? document.getElementById(`zsxq-${activeFocus}`) : null;
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => setActiveFocus(''), 3000);
+    return () => clearTimeout(t);
+  }, [activeFocus, pool]);
 
   const applySearch = useCallback((q: string) => {
     const kw = q.trim();
@@ -314,7 +325,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
 
         {pool.length > 0 && (
           <div className="tzs-list">
-            {pool.map(it => <TopicRow key={it.id} item={it} onZoom={u => { setFitWin(false); setZoom(u); }} />)}
+            {pool.map(it => <TopicRow key={it.id} item={it} focused={it.id === activeFocus} onZoom={u => { setFitWin(false); setZoom(u); }} />)}
           </div>
         )}
 

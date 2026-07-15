@@ -1671,6 +1671,21 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       requireLogin(() => setNewsPreview(article), '登录查看文章全文');
     })();
   }, [requireLogin, logAct, showToast, authUser]);
+  // 机构纪要分享深链 ?note={id}：/note/{id} 落地页「打开看完整」→ 切到机构纪要模块，并高亮/滚动定位该条(在已加载池内)。
+  // 之前落地页 CTA 只开裸 App 首页，收信人点进来落不到对应模块——这是用户反馈的「跳转后到不了对应消息模块」。
+  const noteDeepDone = useRef(false);
+  const [zsxqFocusId, setZsxqFocusId] = useState('');
+  useEffect(() => {
+    if (noteDeepDone.current) return;
+    let noteId = '';
+    try { noteId = new URLSearchParams(window.location.search).get('note') || ''; } catch { /* */ }
+    if (!noteId) return;
+    noteDeepDone.current = true;
+    setFeedFilter('机构纪要');
+    setZsxqFocusId(noteId);
+    logAct('open_news', `机构纪要深链·${noteId}`);
+    try { window.history.replaceState({}, '', window.location.pathname + window.location.hash); } catch { /* */ }
+  }, [logAct]);
   // 研报解读分享深链：?report={id} → 同款「先展示后要账」；解读是我方 AI 原创内容，匿名同样只给导语。
   const reportDeepLinkDone = useRef(false);
   useEffect(() => {
@@ -3655,7 +3670,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           {isCelebrity ? (
             <TerminalCelebrityViews inline />
           ) : isZsxqStream ? (
-            <TerminalZsxqStream inline loggedIn={!!authUser} onRequireLogin={() => requireLogin(() => {}, '登录查看更早机构纪要')} />
+            <TerminalZsxqStream inline loggedIn={!!authUser} focusId={zsxqFocusId} onRequireLogin={() => requireLogin(() => {}, '登录查看更早机构纪要')} />
           ) : isResearch ? (
             <div className="bbt-res">
               {resFiltered.length === 0 && (

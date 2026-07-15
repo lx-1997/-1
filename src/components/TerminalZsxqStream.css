@@ -28,7 +28,9 @@
 /* 帖子卡片 */
 .tzs-list { display: flex; flex-direction: column; gap: 11px; }
 .tzs-item { background: var(--elevated, #0a0d12); border: 1px solid var(--line, #1b1d12); border-left: 3px solid #6d5aa8;
-  border-radius: 11px; padding: 11px 13px; display: flex; flex-direction: column; gap: 8px; }
+  border-radius: 11px; padding: 11px 13px; display: flex; flex-direction: column; gap: 8px; transition: box-shadow .25s ease, border-color .25s ease; }
+/* 分享深链定位到的那条:短暂高亮环,让收信人一眼看到「就是这条」 */
+.tzs-item--focus { border-color: #8b7bd8; box-shadow: 0 0 0 2px rgba(139,123,216,.55), 0 0 18px rgba(139,123,216,.3); }
 .tzs-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tzs-item-kind { font-size: 11px; font-weight: 700; color: #c4b5fd; background: rgba(109,90,168,.14);
   border: 1px solid rgba(109,90,168,.45); border-radius: 8px; padding: 1px 8px; }
