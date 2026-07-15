@@ -286,6 +286,11 @@ function stripUrls(text?: string | null): string {
     .replace(/https?:\/\/\S+/gi, '')
     .replace(/\s*请下载\s*PDF\s*查看\s*[:：]?\s*$/i, '')
     .replace(/[【\[（(]?\s*(知识星球|水木调研纪要|水木调研|水木纪要|调研纪要)\s*[】\]）)]?[\s:：\-—|·]*/g, '')
+    .replace(/查看原文\s*[（(]\s*[）)]/g, '')                       // 富投单条 HTML 转文本残留的空链接引导「查看原文 ( )」
+    .replace(/[（(]\s*[）)]/g, '')                                  // 删链后残留的空括号对
+    .replace(/(来源[:：]\s*[^\n]{1,24})(?:\s*\n\s*\1)+/g, '$1')     // 上游重复的「来源：X\n来源：X」去重
+    .replace(/[ \t　]+\n/g, '\n')                                  // 行尾空格
+    .replace(/\n[ \t　]*\n[ \t　]*(\n[ \t　]*)+/g, '\n\n')          // 删链后多余空行收拢为一个空行
     .replace(/[ \t　]{2,}/g, ' ')
     .trim();
 }
@@ -310,6 +315,88 @@ function articleOriginalUrl(m?: { url?: string | null; content?: string | null }
   if (m.url) return m.url;
   const mt = (m.content || '').match(/https?:\/\/\S+/i);
   return mt ? mt[0] : '';
+}
+// ── 「财经新闻专题」聚合稿结构化 ────────────────────────────────────────────
+// 上游把整篇聚合稿(样板头 + 导读摘要N条 + N段子文章)塞进 content 纯文本，行间夹大量「只含空格的空行」：
+// 列表行会把整坨样板头(财经新闻专题|日期 / 全球财经新闻专题 / 📅新闻时间范围 / 📰导读摘要)怼进预览、
+// 全文弹层里参差错落=「没结构化很乱」。这里解析成结构块，前端自己排版(绝不注入 HTML，防 XSS)。
+type DigestBlock =
+  | { kind: 'range'; text: string }
+  | { kind: 'summary'; items: string[] }
+  | { kind: 'h'; text: string }
+  | { kind: 'p'; text: string };
+const DG_LEAD = /^[\s|·•▪–—←-➿⬀-⯿️\u{1f000}-\u{1faff}]+/u;  // 行首 emoji/项目符/竖线/破折号
+const DG_DATE_RANGE = /\d{4}[-/]\d{1,2}[-/]\d{1,2}[^～~]*[～~][^\n]*?\d{1,2}[:：]\d{2}/;
+const DG_BOILER = /^(全球)?[一-鿿·|\s]{0,12}财经[一-鿿·|\s]{0,12}新闻专题(报告)?$/;  // 样板标题行(正文另有独立标题)
+function isDigestArticle(m?: { topic?: string | null; content?: string | null } | null): boolean {
+  if (!m || (m.topic || '') !== '文章') return false;
+  const c = m.content || '';
+  return /财经新闻专题|财经晨报|财经早报|财经晚报/.test(c.slice(0, 40)) || (/导读摘要/.test(c) && /新闻时间范围/.test(c));
+}
+function parseDigest(content?: string | null): DigestBlock[] {
+  const lines = (content || '').replace(/\r/g, '').split('\n');
+  const blocks: DigestBlock[] = [];
+  let mode: 'pre' | 'summary' | 'body' = 'pre';
+  let summary: string[] = [];
+  const flush = () => { if (summary.length) { blocks.push({ kind: 'summary', items: summary }); summary = []; } };
+  for (const raw of lines) {
+    const ln = stripUrls(raw.replace(DG_LEAD, '')).trim();
+    if (!ln) continue;
+    if (/^导读摘要/.test(ln) && ln.length <= 8) { flush(); mode = 'summary'; continue; }  // 摘要区起点(emoji 已剥)
+    if (!blocks.some(b => b.kind === 'range') && DG_DATE_RANGE.test(ln) && ln.length <= 70) {
+      const mm = ln.match(DG_DATE_RANGE); blocks.push({ kind: 'range', text: (mm ? mm[0] : ln).trim() }); continue;  // 只取日期段，甩掉「财经新闻专题|」前缀
+    }
+    if (DG_BOILER.test(ln) && ln.length <= 24) continue;  // 样板标题行丢弃
+    if (mode === 'pre') continue;                          // 导读摘要之前除日期段外皆样板头/副标题/标签 → 丢弃
+    const endsHard = /[。！？!?；;][’”"'）)\]」』]*$/.test(ln);
+    const endsColon = /[：:]\s*$/.test(ln);
+    const innerStop = /[。！？]/.test(ln.slice(0, -1));    // 句中含句末标点=完整句(多为8000字截断处的残句)，非标题
+    const headingLike = !endsHard && !endsColon && !innerStop && ln.length <= 46;
+    if (mode === 'summary') {
+      if (endsHard && !headingLike) { summary.push(ln); continue; }  // 摘要要点=整句陈述
+      flush(); mode = 'body';                                        // 冒出非要点行(首篇子文章标题)→ 摘要结束，落到正文
+    }
+    blocks.push({ kind: headingLike ? 'h' : 'p', text: ln });
+  }
+  flush();
+  return blocks;
+}
+// 列表行/分享摘要用的干净导读：优先导读摘要首条，否则正文首段(不露样板头)
+function digestLede(content?: string | null): string {
+  const blocks = parseDigest(content);
+  const sum = blocks.find(b => b.kind === 'summary') as { items: string[] } | undefined;
+  if (sum && sum.items.length) return sum.items[0];
+  const p = blocks.find(b => b.kind === 'p') as { text: string } | undefined;
+  return p ? p.text : '';
+}
+// 全文弹层：把专题聚合稿排成 日期胶囊 + 看点卡 + 分节正文(绝不注入 HTML)
+function renderDigestBody(content?: string | null): React.ReactNode {
+  const blocks = parseDigest(content);
+  const body = blocks.filter(b => b.kind === 'h' || b.kind === 'p') as { kind: 'h' | 'p'; text: string }[];
+  if (!body.length) return <div className="bbt-doc-body">{stripUrls(content) || '（暂无正文，点「✦ AI 解读」获取要点）'}</div>;
+  const range = blocks.find(b => b.kind === 'range') as { text: string } | undefined;
+  const summary = blocks.find(b => b.kind === 'summary') as { items: string[] } | undefined;
+  return (
+    <div className="bbt-dg">
+      {range && <div className="bbt-dg-range">🕐 {range.text}</div>}
+      {summary && summary.items.length > 0 && (
+        <div className="bbt-dg-sum">
+          <div className="bbt-dg-sum-h">导读摘要 · {summary.items.length} 个看点</div>
+          <ol className="bbt-dg-sum-list">
+            {summary.items.map((it, i) => {
+              const mm = it.match(/^([^：:，。！？]{2,12})[：:]([\s\S]+)$/);
+              return <li key={i}>{mm ? <><b>{mm[1]}</b> {mm[2].trim()}</> : it}</li>;
+            })}
+          </ol>
+        </div>
+      )}
+      <div className="bbt-dg-body">
+        {body.map((b, i) => b.kind === 'h'
+          ? <h4 key={i} className="bbt-dg-h">{b.text}</h4>
+          : <p key={i} className="bbt-dg-p">{b.text}</p>)}
+      </div>
+    </div>
+  );
 }
 function fmtTime(iso: string): string {
   try { return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(iso)); } catch { return ''; }
@@ -2927,7 +3014,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                         logAct('share_click', '文章分享·头条');
                         const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
                         const t = stripUrls(m.title) || m.title;
-                        const tail = newsBodyTail(t, stripUrls(m.content));
+                        const tail = isDigestArticle(m) ? digestLede(m.content) : newsBodyTail(t, stripUrls(m.content));
                         return {
                           kind: 'article',
                           title: t,
@@ -2992,7 +3079,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-ntopic">{`{${m.topic || '资讯'}}`}</span>
         {(() => {
           const t = stripUrls(m.title) || m.title;
-          const tail = newsBodyTail(t, stripUrls(m.content));
+          // 专题聚合稿：正文以样板头(财经新闻专题|日期/导读摘要…)开场，直接接在标题后=一坨噪音 → 取导读首条当预览
+          const tail = isDigestArticle(m) ? digestLede(m.content) : newsBodyTail(t, stripUrls(m.content));
           // 快讯没有「全文/AI解读」按钮兜底，这条预览就是唯一能读到内容的地方 → 全量显示，不截断；
           // 文章/研报已有按钮可展开全文，这里仍截断省版面，但要带省略号，别让人误以为内容就到此为止。
           const shown = isFlash || tail.length <= 100 ? tail : tail.slice(0, 100) + '…';
@@ -3027,7 +3115,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       logAct('share_click', '文章分享');
                       const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
                       const t = stripUrls(m.title) || m.title;
-                      const tail = newsBodyTail(t, stripUrls(m.content));
+                      const tail = isDigestArticle(m) ? digestLede(m.content) : newsBodyTail(t, stripUrls(m.content));
                       // 正文里标题之后的增量作摘要(钩子,超 80 字带省略号),避免标题重复;不带来源 byline(品牌归属由文案脚注承担,且不外露内部聚合源名)
                       return {
                         kind: 'article',
@@ -3856,7 +3944,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             ) : (
               <div className="bbt-doc-text">
                 <h3 className="bbt-doc-h">{stripUrls(newsPreview.title) || newsPreview.title}</h3>
-                <div className="bbt-doc-body">{stripUrls(newsPreview.content) || '（暂无正文，点「✦ AI 解读」获取要点）'}</div>
+                {isDigestArticle(newsPreview)
+                  ? renderDigestBody(newsPreview.content)
+                  : <div className="bbt-doc-body">{stripUrls(newsPreview.content) || '（暂无正文，点「✦ AI 解读」获取要点）'}</div>}
                 {stripUrls(newsPreview.source_name) && <div className="bbt-doc-src">来源 · {stripUrls(newsPreview.source_name)}</div>}
               </div>
             )}
