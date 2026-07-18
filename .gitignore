@@ -122,3 +122,9 @@ upstream/
 # 编辑器 / AI 助手配置
 .cursor/
 .trae/
+
+# 会员兑换码（明文密钥，绝不入库）
+会员兑换码-*.txt
+
+# pdf 去水印工具的生成态测试样本（可由 create_test_pdfs.py 复现，不入库）
+tools/pdf_watermark_remover/*.pdf
