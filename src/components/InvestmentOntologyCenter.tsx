@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApartmentOutlined,
   AuditOutlined,
@@ -25,6 +25,10 @@ import {
   OntologyNode,
   recordOntologyDemoAction,
 } from '../services/ontologyService';
+import {
+  listRealtimeMessages,
+  RealtimeMessageRecord,
+} from '../services/eventService';
 import './InvestmentOntologyCenter.css';
 
 const NODE_META: Record<OntologyEntityType, {
@@ -63,12 +67,6 @@ const NODE_EXPLANATIONS: Record<OntologyEntityType, string> = {
   Portfolio: '这是对整个组合的影响，用来判断单只股票的变化是否需要转化为整体行动。',
 };
 
-const toneColor: Record<string, string> = {
-  positive: 'green',
-  warning: 'gold',
-  neutral: 'blue',
-};
-
 const ATTRIBUTE_LABELS: Record<string, string> = {
   ticker: '股票代码',
   exchange: '交易所',
@@ -87,6 +85,55 @@ const ATTRIBUTE_LABELS: Record<string, string> = {
   pnl_pct: '浮动盈亏',
   name: '名称',
 };
+
+type LiveEvidenceTone = 'positive' | 'risk' | 'neutral';
+type LiveEvidenceFilter = 'all' | LiveEvidenceTone;
+
+const POSITIVE_TERMS = [
+  '增长', '回购', '增持', '上调', '突破', '中标', '改善', '看好', '机会',
+  '盈利企稳', '超预期', '创新高', '政策支持', '成本回落', '份额提升',
+];
+
+const RISK_TERMS = [
+  '风险', '承压', '减持', '下调', '处罚', '诉讼', '亏损', '低于预期',
+  '下滑', '疲弱', '警示', '违约', '监管', '不确定', '尚需等待', '未临',
+];
+
+function liveEvidenceTone(item: RealtimeMessageRecord): LiveEvidenceTone {
+  if (item.severity === 'critical' || item.severity === 'warning') return 'risk';
+  const text = `${item.title} ${item.content}`;
+  const positiveHits = POSITIVE_TERMS.filter(term => text.includes(term)).length;
+  const riskHits = RISK_TERMS.filter(term => text.includes(term)).length;
+  if (riskHits > positiveHits) return 'risk';
+  if (positiveHits > riskHits) return 'positive';
+  return 'neutral';
+}
+
+function cleanEvidenceText(value: string): string {
+  return value
+    .replace(/\*+/g, '')
+    .replace(/#+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function liveEvidenceTitle(item: RealtimeMessageRecord): string {
+  const title = cleanEvidenceText(item.title);
+  if (title && !/^【?(研报)?快讯】?$/.test(title)) return title;
+  const contentLine = item.content
+    .split(/\n+/)
+    .map(cleanEvidenceText)
+    .find(line => line.length > 8);
+  return contentLine || title || 'DAO财经相关信息';
+}
+
+function liveEvidenceSummary(item: RealtimeMessageRecord): string {
+  const title = liveEvidenceTitle(item);
+  const content = cleanEvidenceText(item.content);
+  const withoutTitle = content.startsWith(title) ? content.slice(title.length).trim() : content;
+  const summary = withoutTitle || content;
+  return summary.length > 150 ? `${summary.slice(0, 150)}…` : summary;
+}
 
 function percentage(value: unknown): string {
   const numberValue = Number(value);
@@ -127,24 +174,60 @@ const InvestmentOntologyCenter: React.FC = () => {
   const [snapshot, setSnapshot] = useState<OntologyDemoSnapshot | null>(null);
   const [selectedSecurityId, setSelectedSecurityId] = useState<string>();
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const [liveEvidence, setLiveEvidence] = useState<RealtimeMessageRecord[]>([]);
+  const [liveEvidenceLoading, setLiveEvidenceLoading] = useState(false);
+  const [liveEvidenceError, setLiveEvidenceError] = useState<string | null>(null);
+  const [liveEvidenceFilter, setLiveEvidenceFilter] = useState<LiveEvidenceFilter>('all');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionPulseId, setActionPulseId] = useState<string>();
   const [apiMessage, contextHolder] = message.useMessage();
+  const loadSequence = useRef(0);
 
   const load = useCallback(async (securityId?: string, quiet = false) => {
+    const sequence = ++loadSequence.current;
     if (!quiet) setLoading(true);
     setError(null);
+    setLiveEvidenceLoading(true);
+    setLiveEvidenceError(null);
+    setLiveEvidenceFilter('all');
     try {
       const result = await fetchOntologyDemo(securityId);
+      if (sequence !== loadSequence.current) return;
       setSnapshot(result);
       setSelectedSecurityId(result.selected_security_id);
       setSelectedNodeId(undefined);
+      const selectedAsset = result.assets.find(asset => asset.security_id === result.selected_security_id);
+      const ticker = selectedAsset?.canonical_key.split('.')[0] || '';
+      const aliases = [
+        selectedAsset?.label,
+        selectedAsset?.canonical_key,
+        ticker,
+      ].filter(Boolean).join(',');
+      try {
+        const messages = await listRealtimeMessages({ anyq: aliases, limit: 80 });
+        if (sequence === loadSequence.current) {
+          const unique = messages.filter((item, index, all) => (
+            all.findIndex(candidate => candidate.id === item.id) === index
+          ));
+          setLiveEvidence(unique);
+        }
+      } catch (liveError) {
+        if (sequence === loadSequence.current) {
+          setLiveEvidence([]);
+          setLiveEvidenceError(liveError instanceof Error ? liveError.message : 'DAO财经信息读取失败');
+        }
+      }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '本体快照加载失败');
+      if (sequence === loadSequence.current) {
+        setError(loadError instanceof Error ? loadError.message : '本体快照加载失败');
+      }
     } finally {
-      if (!quiet) setLoading(false);
+      if (sequence === loadSequence.current) {
+        if (!quiet) setLoading(false);
+        setLiveEvidenceLoading(false);
+      }
     }
   }, []);
 
@@ -267,19 +350,54 @@ const InvestmentOntologyCenter: React.FC = () => {
 
   const actions = snapshot?.actions || [];
   const decision = snapshot?.decision;
-  const positionAttrs = decision?.position.attributes || {};
   const thesisAttrs = decision?.thesis.attributes || {};
-  const beginnerHeadline = decision?.tone === 'warning'
-    ? '先控制风险，不急着加仓'
-    : decision?.tone === 'positive'
-      ? '信号正在变好，可以继续关注'
-      : '暂时不需要调整';
+  const annotatedLiveEvidence = useMemo(
+    () => liveEvidence.map(item => ({ item, tone: liveEvidenceTone(item) })),
+    [liveEvidence],
+  );
+  const liveEvidenceStats = useMemo(() => {
+    const positive = annotatedLiveEvidence.filter(entry => entry.tone === 'positive').length;
+    const risk = annotatedLiveEvidence.filter(entry => entry.tone === 'risk').length;
+    const neutral = annotatedLiveEvidence.length - positive - risk;
+    const sources = new Set(
+      annotatedLiveEvidence.map(entry => entry.item.source_name || 'DAO财经').filter(Boolean),
+    ).size;
+    return { positive, risk, neutral, sources, total: annotatedLiveEvidence.length };
+  }, [annotatedLiveEvidence]);
+  const filteredLiveEvidence = useMemo(
+    () => annotatedLiveEvidence.filter(
+      entry => liveEvidenceFilter === 'all' || entry.tone === liveEvidenceFilter,
+    ).slice(0, 8),
+    [annotatedLiveEvidence, liveEvidenceFilter],
+  );
+  const liveSignalTone: LiveEvidenceTone = liveEvidenceStats.risk > 0
+    ? 'risk'
+    : liveEvidenceStats.positive > 0
+      ? 'positive'
+      : 'neutral';
+  const liveHeadline = liveEvidenceLoading
+    ? '正在读取 DAO 财经的相关信息…'
+    : liveEvidenceStats.total === 0
+      ? '暂时没有足够的新信息，不强行给结论'
+      : liveSignalTone === 'risk'
+        ? `发现 ${liveEvidenceStats.risk} 条风险线索，先核对再决定是否行动`
+        : liveSignalTone === 'positive'
+          ? `发现 ${liveEvidenceStats.positive} 条积极线索，但仍要逐条验证来源`
+          : '多空信息没有形成一致方向，保持观察';
+  const liveAction = liveEvidenceStats.total === 0
+    ? '等待新的快讯、文章或研报进入 DAO 财经信息库。'
+    : liveSignalTone === 'risk'
+      ? `先看下面 ${liveEvidenceStats.risk} 条风险线索，确认是否真的破坏原有投资逻辑。`
+      : liveSignalTone === 'positive'
+        ? `先看下面 ${liveEvidenceStats.positive} 条积极线索，确认它们是否已经兑现到经营数据。`
+        : '把相互矛盾的证据放在一起看，不因为单条新闻追涨杀跌。';
+  const selectedAsset = snapshot?.assets.find(asset => asset.security_id === selectedSecurityId);
 
   return (
     <CenterShell
-      eyebrow="持仓决策助手"
-      title="今天该怎么做？"
-      subtitle="告诉你哪条信息变了、影响哪笔持仓、为什么要调整"
+      eyebrow="DAO财经 · 决策关联"
+      title="这只股票最近发生了什么？"
+      subtitle="把 DAO 财经已有的快讯、文章和研报自动归到同一只股票，再判断哪些值得你先看"
       icon={<NodeIndexOutlined />}
       className="ontology-center"
       error={error}
@@ -305,118 +423,192 @@ const InvestmentOntologyCenter: React.FC = () => {
       {contextHolder}
       {snapshot && decision && (
         <div className="ontology-layout">
-          <section className="ontology-decision-brief">
-            <div className="ontology-brief-main">
-              <div className="ontology-brief-status">
-                <Tag color={toneColor[decision.tone]}>{decision.verdict}</Tag>
-                <span>{snapshot.identity.security.label} · {snapshot.identity.security.canonical_key}</span>
+          <section className={`ontology-live-brief ${liveSignalTone}`}>
+            <div className="ontology-live-main">
+              <div className="ontology-live-status">
+                <Tag color={liveSignalTone === 'risk' ? 'red' : liveSignalTone === 'positive' ? 'green' : 'blue'}>
+                  {liveEvidenceLoading ? '正在关联' : 'DAO财经实时数据'}
+                </Tag>
+                <span>{selectedAsset?.label} · {selectedAsset?.canonical_key}</span>
               </div>
-              <span className="ontology-brief-label">一句话结论</span>
-              <h2>{beginnerHeadline}</h2>
-              <p className="ontology-brief-action">{decision.recommended_action}</p>
-              <p>{decision.recommended_reason}</p>
-              <div className={`ontology-change-line ${decision.tone}`}>
-                <span>为什么这样建议</span>
-                <strong>{decision.change_summary}</strong>
+              <span className="ontology-live-label">基于网站当前已有信息</span>
+              <h2>{liveHeadline}</h2>
+              <p className="ontology-live-action">{liveAction}</p>
+              <div className="ontology-live-proof">
+                <span>不是演示数据</span>
+                <strong>
+                  已从 DAO 财经信息流命中 {liveEvidenceStats.total} 条相关内容，
+                  包括快讯、文章与研报摘要；每条都能回到原始内容。
+                </strong>
               </div>
               <div className="ontology-action-row">
                 <Button
                   type="primary"
-                  icon={<CheckCircleOutlined />}
-                  loading={actionLoading}
-                  onClick={() => void recordAction(
-                    decision.recommended_action_type,
-                    decision.recommended_reason,
-                  )}
+                  icon={<FileSearchOutlined />}
+                  href="#ontology-live-evidence"
+                  onClick={() => setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all')}
                 >
-                  记为待执行计划
+                  {liveEvidenceStats.risk ? '先看风险证据' : '查看关联证据'}
                 </Button>
                 <Button
-                  icon={<FileSearchOutlined />}
-                  disabled={actionLoading}
+                  icon={<CheckCircleOutlined />}
+                  loading={actionLoading}
+                  disabled={liveEvidenceStats.total === 0}
                   onClick={() => void recordAction(
                     'request_research',
-                    `补证任务：${decision.change_summary}`,
+                    `${selectedAsset?.label || '当前标的'}：DAO财经命中 ${liveEvidenceStats.total} 条，风险 ${liveEvidenceStats.risk} 条，积极 ${liveEvidenceStats.positive} 条`,
                   )}
                 >
-                  让系统继续找证据
+                  加入补证清单
                 </Button>
               </div>
             </div>
 
-            <aside className="ontology-brief-evidence" aria-label="决策依据">
-              <div className="ontology-brief-evidence-head">
-                <span>这次判断靠什么</span>
-                <small>每项都可追溯</small>
+            <aside className="ontology-live-summary" aria-label="DAO财经关联结果">
+              <div className="ontology-live-summary-head">
+                <span>信息关联结果</span>
+                <small>{liveEvidenceLoading ? '读取中' : '来自现有内容库'}</small>
               </div>
               <dl>
-                <div>
-                  <dt>投资逻辑可信度</dt>
-                  <dd>{percentage(thesisAttrs.confidence)}</dd>
-                </div>
-                <div>
-                  <dt>我现在持有</dt>
-                  <dd>{numberText(positionAttrs.weight_pct, '%')}</dd>
-                </div>
                 <div className="risk">
-                  <dt>建议仓位上限</dt>
-                  <dd>{numberText(positionAttrs.risk_budget_pct, '%')}</dd>
+                  <dt>风险线索</dt>
+                  <dd>{liveEvidenceStats.risk}</dd>
+                </div>
+                <div className="positive">
+                  <dt>积极线索</dt>
+                  <dd>{liveEvidenceStats.positive}</dd>
                 </div>
                 <div>
-                  <dt>有利 / 不利信号</dt>
-                  <dd>
-                    <b className="positive">{decision.supporting_paths}</b>
-                    <em>/</em>
-                    <b className="negative">{decision.contradicting_paths}</b>
-                  </dd>
+                  <dt>中性信息</dt>
+                  <dd>{liveEvidenceStats.neutral}</dd>
+                </div>
+                <div>
+                  <dt>来源数量</dt>
+                  <dd>{liveEvidenceStats.sources}</dd>
                 </div>
               </dl>
-              <div className="ontology-invalidation">
-                <span>什么情况下原来的投资逻辑不成立？</span>
-                <p>{String(thesisAttrs.invalidation || '未设置')}</p>
+              <div className="ontology-live-latest">
+                <span>最近更新</span>
+                {annotatedLiveEvidence.slice(0, 2).map(({ item, tone }) => (
+                  <a
+                    key={item.id}
+                    className={tone}
+                    href={item.url || `/?article=${encodeURIComponent(item.id)}`}
+                    target={item.url ? '_blank' : undefined}
+                    rel={item.url ? 'noreferrer' : undefined}
+                  >
+                    <i />
+                    <strong>{liveEvidenceTitle(item)}</strong>
+                    <small>{formatTimestamp(item.created_at)}</small>
+                  </a>
+                ))}
+                {!liveEvidenceLoading && !annotatedLiveEvidence.length && (
+                  <em>当前标的暂无可关联信息</em>
+                )}
               </div>
               <div className="ontology-brief-guardrail">
                 <SafetyCertificateOutlined />
-                <span>仅写入决策审计，不连接券商</span>
+                <span>系统只做信息关联和风险提示，不自动下单</span>
               </div>
             </aside>
           </section>
 
-          <section className="ontology-power-note">
-            <span className="ontology-power-mark">本体在背后做的事</span>
-            <strong>任何新消息进来，系统都会自动找到它影响的投资逻辑、持仓和风险规则。</strong>
-            <p>你不需要自己翻新闻、研报和持仓表拼答案，也能知道结论从哪里来。</p>
+          <section id="ontology-live-evidence" className="ontology-live-evidence">
+            <header className="ontology-live-evidence-head">
+              <div>
+                <span>真正用到的 DAO 财经信息</span>
+                <h3>为什么今天先看这些？</h3>
+                <p>系统用股票名称和统一代码检索现有信息库，再把偏风险、偏积极和中性内容分开。</p>
+              </div>
+              <div className="ontology-live-filters" role="group" aria-label="筛选关联证据">
+                {([
+                  ['all', `全部 ${liveEvidenceStats.total}`],
+                  ['risk', `风险 ${liveEvidenceStats.risk}`],
+                  ['positive', `积极 ${liveEvidenceStats.positive}`],
+                  ['neutral', `中性 ${liveEvidenceStats.neutral}`],
+                ] as Array<[LiveEvidenceFilter, string]>).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={liveEvidenceFilter === value ? 'active' : ''}
+                    onClick={() => setLiveEvidenceFilter(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </header>
+
+            {liveEvidenceLoading ? (
+              <div className="ontology-live-empty">正在从 DAO 财经信息库关联快讯、文章和研报…</div>
+            ) : liveEvidenceError ? (
+              <div className="ontology-live-empty error">
+                <strong>实时信息暂时读取失败</strong>
+                <span>{liveEvidenceError}</span>
+              </div>
+            ) : filteredLiveEvidence.length ? (
+              <div className="ontology-live-list">
+                {filteredLiveEvidence.map(({ item, tone }) => (
+                  <article key={item.id} className={tone}>
+                    <i className="ontology-live-tone" />
+                    <div className="ontology-live-item-copy">
+                      <div>
+                        <span>{item.topic || '资讯'}</span>
+                        <em>{item.source_name || 'DAO财经'}</em>
+                        <small>{formatTimestamp(item.created_at)}</small>
+                      </div>
+                      <h4>{liveEvidenceTitle(item)}</h4>
+                      <p>{liveEvidenceSummary(item)}</p>
+                      <footer>
+                        <span>
+                          关联原因：命中 {selectedAsset?.label} / {selectedAsset?.canonical_key.split('.')[0]}
+                        </span>
+                        <a
+                          href={item.url || `/?article=${encodeURIComponent(item.id)}`}
+                          target={item.url ? '_blank' : undefined}
+                          rel={item.url ? 'noreferrer' : undefined}
+                        >
+                          查看原始内容 <LinkOutlined />
+                        </a>
+                      </footer>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="ontology-live-empty">
+                当前筛选下没有信息。可以切换“全部”，或刷新等待新内容进入信息库。
+              </div>
+            )}
           </section>
 
           <section className="ontology-simple-chain" aria-label="本次判断的四步推导">
             <header className="ontology-section-heading">
-              <span>一眼看懂</span>
-              <h3>这次判断是怎样得出的？</h3>
+              <span>本体真正做了什么</span>
+              <h3>一条网站信息如何变成可执行的核对任务？</h3>
             </header>
             <div className="ontology-chain-grid">
               <article>
                 <b>1</b>
-                <span>新信息</span>
-                <strong>{decision.change_summary}</strong>
+                <span>找到真实信息</span>
+                <strong>DAO 财经命中 {liveEvidenceStats.total} 条与 {selectedAsset?.label} 相关的内容</strong>
               </article>
               <article>
                 <b>2</b>
-                <span>影响投资逻辑</span>
-                <strong>{decision.thesis.label}</strong>
-                <small>目前可信度 {percentage(thesisAttrs.confidence)}</small>
+                <span>先分方向</span>
+                <strong>{liveEvidenceStats.risk} 条偏风险，{liveEvidenceStats.positive} 条偏积极</strong>
+                <small>这是信息筛选，不是买卖预测</small>
               </article>
               <article>
                 <b>3</b>
-                <span>检查我的持仓</span>
-                <strong>
-                  当前 {numberText(positionAttrs.weight_pct, '%')}，建议上限 {numberText(positionAttrs.risk_budget_pct, '%')}
-                </strong>
-                <small>系统发现仓位超过了预设边界</small>
+                <span>对照投资逻辑</span>
+                <strong>{decision.thesis.label}</strong>
+                <small>试点规则：失效条件为“{String(thesisAttrs.invalidation || '未设置')}”</small>
               </article>
               <article>
                 <b>4</b>
-                <span>得到行动建议</span>
-                <strong>{decision.recommended_action}</strong>
+                <span>变成下一步</span>
+                <strong>{liveAction}</strong>
               </article>
             </div>
           </section>
@@ -424,10 +616,10 @@ const InvestmentOntologyCenter: React.FC = () => {
           <details className="ontology-expert-details">
             <summary>
               <span>
-                <strong>查看完整证据关系图</strong>
-                <small>适合想核对每条证据和推导关系的用户</small>
+                <strong>查看本体关系试验区</strong>
+                <small>上面是真实 DAO 财经信息；下面仍是用于验证关系模型的示例规则</small>
               </span>
-              <em>{snapshot.graph.nodes.length} 个对象 · {snapshot.graph.edges.length} 条关系</em>
+              <em>试点 · {snapshot.graph.nodes.length} 个对象 · {snapshot.graph.edges.length} 条关系</em>
             </summary>
             <section className="ontology-main-grid">
             <article className="ontology-panel ontology-graph-panel">
@@ -442,6 +634,11 @@ const InvestmentOntologyCenter: React.FC = () => {
                   <span><i className="neutral" />结构关系</span>
                 </div>
               </header>
+
+              <div className="ontology-sandbox-note">
+                <SafetyCertificateOutlined />
+                这里用示例投资逻辑验证关系推导，不作为实时投资建议；真实 DAO 财经信息在上方。
+              </div>
 
               <div className="ontology-graph-guidance">
                 <span>从左向右看：原始信息如何一步步影响到你的组合</span>
