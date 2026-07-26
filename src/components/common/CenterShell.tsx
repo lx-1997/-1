@@ -69,7 +69,8 @@ const CenterShell: React.FC<CenterShellProps> = ({
     <div className="center-shell-body">
       {loading ? (
         <div className="center-shell-loading">
-          <Spin tip={loadingText} />
+          <Spin />
+          {loadingText && <span>{loadingText}</span>}
         </div>
       ) : (
         children

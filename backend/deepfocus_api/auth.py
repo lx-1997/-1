@@ -1043,6 +1043,8 @@ PUBLIC_EXACT = frozenset(
         "/api/track-record",        # 「我们提前发现的」平台战绩：公开引流（登录附个人战绩）
         "/api/ai-fund/snapshot",    # AI 模拟盘快照：公开展示位（净值/持仓/决策日志），/api/ai-fund/tick 仍受管理员保护
         "/api/ai-fund/arena",       # AI 策略竞技场排行榜：公开展示位（各派收益/排名/观点 + 沪深300）
+        "/api/ontology/demo",        # 投资本体驾驶舱 Demo（只读快照）
+        "/api/ontology/resolve",     # Canonical Security 别名解析 Demo
         "/api/research/wire",        # 海外投行研报「列表」（标题/来源/日期），原文(wire-file)仍须登录
         # AI 解读(研报/资讯)：放行到端点，由 _check_ai_quota 精细把关——**非会员/匿名绝不触发新生成（省 token）**，
         # 仅当结果已缓存才放行、每天免费 1 次（匿名按 IP），未缓存/超额 → 403(匿名引导登录)/402(非会员引导开通)。

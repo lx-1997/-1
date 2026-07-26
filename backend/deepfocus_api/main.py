@@ -80,6 +80,14 @@ from . import payment_config
 from . import community_config
 from . import ashare_review
 from . import ai_fund
+from .investment_ontology import (
+    OntologyDemoActionRecord,
+    OntologyDemoActionRequest,
+    create_demo_action,
+    get_demo_snapshot,
+    init_ontology_db,
+    resolve_alias as resolve_ontology_alias,
+)
 from . import research_archive
 from . import engagement
 from . import track_record
@@ -1433,6 +1441,7 @@ async def lifespan(app: FastAPI):
     from .checkin import init_checkin_db
     init_checkin_db()  # 连续看复盘签到表
     ai_fund.init_ai_fund_db()  # A股 AI 模拟盘（虚拟基金）账户表
+    init_ontology_db()  # 投资本体 MVP：实体/别名/关系/演示动作审计
     # AI 模拟盘交易员：A股交易时段内每 30min 跑一轮多因子决策（自动模拟买卖），展示给大家看
     ai_fund_task = asyncio.create_task(run_ai_fund_trader())
     from .partner_api import init_partner_db
@@ -1510,6 +1519,37 @@ async def health() -> dict:
         "provider": llm.provider_name,
         "model": llm.model,
     }
+
+
+@app.get("/api/ontology/demo")
+async def ontology_demo_snapshot(security_id: str = "security:cn:600519.SH") -> dict[str, Any]:
+    """投资本体决策驾驶舱 Demo：返回规范身份、影响路径、论点、持仓与动作审计。"""
+    try:
+        return get_demo_snapshot(security_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/ontology/resolve")
+async def ontology_resolve_alias(alias: str, market: str = "") -> dict[str, Any]:
+    """把供应商代码、裸 ticker 或公司简称解析为同一 Canonical Security。"""
+    resolved = resolve_ontology_alias(alias, market)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="未找到匹配的本体对象")
+    return resolved
+
+
+@app.post("/api/ontology/demo/actions", response_model=OntologyDemoActionRecord)
+async def ontology_demo_action(
+    payload: OntologyDemoActionRequest,
+    user: Optional[dict] = Depends(optional_current_user),
+) -> OntologyDemoActionRecord:
+    """记录演示动作。仅写本体审计台账，不连接券商、不产生真实订单。"""
+    actor = str((user or {}).get("username") or "demo-user")
+    try:
+        return create_demo_action(payload, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 async def _verify_turnstile(token: str, ip: str) -> bool:

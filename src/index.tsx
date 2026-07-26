@@ -10,6 +10,8 @@ import './index.css';
 const TERMINAL_ONLY = process.env.REACT_APP_TERMINAL_ONLY === 'true';
 // 完整版外壳（antd + i18n + 整站 App）代码分割：终端版永不加载它 → antd/i18n 不进终端主包，首屏更快。
 const AppShell = React.lazy(() => import('./AppShell'));
+const OntologyStandalone = React.lazy(() => import('./components/OntologyStandalone'));
+const ONTOLOGY_PATH = window.location.pathname.replace(/\/+$/, '') === '/ontology';
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
@@ -20,7 +22,11 @@ root.render(
     <BrowserRouter>
       <ThemeProvider>
         <ErrorBoundary>
-          {TERMINAL_ONLY ? (
+          {TERMINAL_ONLY && ONTOLOGY_PATH ? (
+            <React.Suspense fallback={null}>
+              <OntologyStandalone />
+            </React.Suspense>
+          ) : TERMINAL_ONLY ? (
             <div className="terminal-only-root">
               <FinancialTerminal />
             </div>

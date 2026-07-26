@@ -3342,6 +3342,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </button>
           )}
           <button className="bbt-review-entry bbt-aifund-entry" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }} title="AI 模拟盘：阿尔法直播操盘（K线/五维打分/操盘解说）· 点击进入独立页">🤖 AI 模拟盘</button>
+          <button className="bbt-review-entry bbt-ontology-entry" onClick={() => { logAct('open_ontology', '投资本体'); window.location.href = '/ontology'; }} title="投资本体：从证据、事件和论点追溯到持仓影响与建议动作">🧬 决策本体</button>
           {groupCfg?.enabled !== false && (
             <span className="bbt-grp-wrap">
               <button className={'bbt-review-entry bbt-group-entry' + (groupSeen ? '' : (primaryAttract === 'group' ? ' pulse' : ' bbt-cta-calm'))} onClick={openGroup} aria-label="加入用户交流群" title="DeepFocus 用户交流群 · 免费开放给所有人，聊行情/追快讯/唠复盘">💬 交流群{!groupSeen && <span className="bbt-group-hot">免费</span>}</button>

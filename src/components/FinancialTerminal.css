@@ -1574,6 +1574,7 @@
   .bbt-cmd-right .bbt-review-entry::before { content: "📊"; font-size: 16px; }   /* 复盘 */
   .bbt-cmd-right .bbt-checkin-entry::before { content: attr(data-ico); font-size: 16px; }   /* 连续签到：图标随"今天是否已看"变化，不与复盘撞图标 */
   .bbt-cmd-right .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }   /* AI 模拟盘 */
+  .bbt-cmd-right .bbt-ontology-entry::before { content: "🧬"; font-size: 16px; }   /* 投资本体 */
   .bbt-cmd-right .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }  /* 名人观点 */
   .bbt-cmd-right .bbt-aiqa-entry::before   { content: "✨"; font-size: 16px; }   /* AI 问答（✨ 与交流群💬区分） */
   .bbt-cmd-right .bbt-ref-entry::before    { content: "🎁"; font-size: 16px; }   /* 邀请 */
@@ -1592,6 +1593,7 @@
   .bbt-cmd-right .bbt-review-entry::after { content: "复盘"; }
   .bbt-cmd-right .bbt-checkin-entry::after { content: attr(data-label); }   /* 连续签到天数，不再被"复盘"字样吞掉 */
   .bbt-cmd-right .bbt-aifund-entry::after { content: "模拟盘"; }
+  .bbt-cmd-right .bbt-ontology-entry::after { content: "本体"; }
   .bbt-cmd-right .bbt-celebrity-entry::after { content: "名人"; }
   .bbt-cmd-right .bbt-aiqa-entry::after   { content: "问答"; }
   .bbt-cmd-right .bbt-ref-entry::after    { content: "邀请"; }
@@ -2298,9 +2300,10 @@
      ⚠️尺寸须与 ≤820 分支两行排布一致(44px 高、宽度自适应),不可再压回 32px 方块——否则标签溢出。 */
   .bbt-review-entry:not(.bbt-aiqa-entry),
   .bbt-ref-entry { font-size: 0; gap: 2px; width: auto; min-width: 36px; height: 44px; min-height: 44px; padding: 3px 5px 2px; box-sizing: border-box; justify-content: center; }
-  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-aiqa-entry):not(.bbt-group-entry):not(.bbt-celebrity-entry):not(.bbt-checkin-entry)::before { content: "📊"; font-size: 16px; }
+  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-ontology-entry):not(.bbt-aiqa-entry):not(.bbt-group-entry):not(.bbt-celebrity-entry):not(.bbt-checkin-entry)::before { content: "📊"; font-size: 16px; }
   .bbt-checkin-entry::before { content: attr(data-ico); font-size: 16px; }
   .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }
+  .bbt-ontology-entry::before { content: "🧬"; font-size: 16px; }
   .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }
   .bbt-group-entry::before { content: "💬"; font-size: 16px; }
   .bbt-ref-entry::before { content: "🎁"; font-size: 16px; }

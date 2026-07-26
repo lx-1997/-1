@@ -47,6 +47,7 @@ const PremarketOpportunityCenter = lazyWithPreload(() => import('./PremarketOppo
 const RiskDashboard = lazyWithPreload(() => import('./RiskDashboard'));
 const PositionMonitor = lazyWithPreload(() => import('./PositionMonitor'));
 const MacroDashboard = lazyWithPreload(() => import('./MacroDashboard'));
+const InvestmentOntologyCenter = lazyWithPreload(() => import('./InvestmentOntologyCenter'));
 
 // 空闲时优先预热的核心工作区（按 view key）。
 const IDLE_PRELOAD_VIEWS: ViewType[] = ['stocks', 'ai-research'];
@@ -183,6 +184,10 @@ const renderWorkspaceSection = (props: MainContentProps, content: React.ReactEle
 };
 
 const VIEW_RENDER_CONFIG: Record<ViewType, ViewConfig> = {
+  'investment-ontology': {
+    component: InvestmentOntologyCenter,
+    render: () => <InvestmentOntologyCenter />,
+  },
   'product-detail': {
     component: ProductDetail,
     condition: (props) => !!props.appState.selectedProduct,

@@ -209,7 +209,7 @@ export interface ShippingAddress {
 }
 
 // 视图类型
-export type ViewType = 'home' | 'stocks' | 'a-share-market' | 'global-market' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders' | 'ai-research' | 'agent-center' | 'dulus-agent' | 'data-sources' | 'research-workbench' | 'realtime-messages' | 'cctv-news' | 'people-spotlight' | 'mcp-center' | 'skills' | 'earnings-calendar' | 'cn-earnings' | 'shareholder-changes' | 'major-events' | 'multi-market-decision' | 'premarket-opportunity' | 'ai-supply-chain' | 'customs-trade' | 'options-signal' | 'risk-dashboard' | 'position-monitor' | 'market-dashboard' | 'backtest-center' | 'stock-tear-sheet' | 'portfolio-review' | 'macro-review' | 'briefing' | 'stock-compare' | 'financial-terminal';
+export type ViewType = 'home' | 'stocks' | 'a-share-market' | 'global-market' | 'stock-detail' | 'stock-community' | 'post-detail' | 'profile' | 'create-post' | 'shop' | 'product-detail' | 'cart' | 'orders' | 'investment-ontology' | 'ai-research' | 'agent-center' | 'dulus-agent' | 'data-sources' | 'research-workbench' | 'realtime-messages' | 'cctv-news' | 'people-spotlight' | 'mcp-center' | 'skills' | 'earnings-calendar' | 'cn-earnings' | 'shareholder-changes' | 'major-events' | 'multi-market-decision' | 'premarket-opportunity' | 'ai-supply-chain' | 'customs-trade' | 'options-signal' | 'risk-dashboard' | 'position-monitor' | 'market-dashboard' | 'backtest-center' | 'stock-tear-sheet' | 'portfolio-review' | 'macro-review' | 'briefing' | 'stock-compare' | 'financial-terminal';
 
 // 应用状态
 export interface AppState {
