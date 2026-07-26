@@ -593,30 +593,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     } catch { /* 隐私模式无 localStorage */ }
     apiPost('/api/activity', { action, target: (target || '').slice(0, 180), session: sess }).catch(() => { /* 失败忽略 */ });
   }, []);
-  // 邀请入口「醒目→点开即安静」：点开过一次写 localStorage，跨刷新不再骚扰；目的=拉来第一次点击
-  const [refOpened, setRefOpened] = useState<boolean>(() => { try { return localStorage.getItem('bbt_ref_opened') === '1'; } catch { return false; } });
   const openReferral = useCallback(() => {
     setShowReferral(true);
-    setRefOpened(true);
     try { localStorage.setItem('bbt_ref_opened', '1'); } catch { /* 隐私模式忽略 */ }
   }, []);
-  // 用户交流群（面向【所有用户】，含未登录 / 非会员）：入口按钮 + 弹层 + 首次一次性发现气泡。
+  // 用户交流群（面向所有用户，含未登录 / 非会员）：入口收纳在「更多」，点击后打开弹层。
   // 配置走公开端点（活码：群码每周后台换、客服名片码兜底），不入鉴权链路。
   const [groupCfg, setGroupCfg] = useState<any>(null);   // 后端 /api/community/group 配置（含 enabled / 文案 / 失效日 / 客服号）
   const [groupOpen, setGroupOpen] = useState(false);
-  // 发现气泡 + 入口高亮：让「每个用户都注意到并想进群」。两级关闭——
-  //  · groupSeen(永久,localStorage)：真点开过弹层才置位 → 入口冷却、气泡永不再弹；
-  //  · groupHintSess(本会话,sessionStorage)：点气泡✕只本次隐藏，下次访问继续温和提醒（没进群就一直提醒）。
   const [groupSeen, setGroupSeen] = useState<boolean>(() => { try { return localStorage.getItem('df_group_seen') === '1'; } catch { return true; } });
-  const [groupHintSess, setGroupHintSess] = useState<boolean>(() => { try { return sessionStorage.getItem('df_group_hint_sess') === '1'; } catch { return false; } });
-  const dismissGroupHint = useCallback(() => { setGroupHintSess(true); try { sessionStorage.setItem('df_group_hint_sess', '1'); } catch { /* */ } }, []);
   const openGroup = useCallback(() => {
     setGroupOpen(true);
     setGroupSeen(true);
     try { localStorage.setItem('df_group_seen', '1'); } catch { /* */ }
     logAct('open_community', '用户交流群');
   }, [logAct]);
-  useEffect(() => {  // 挂载即拉群配置（公开、轻量）：决定是否显示入口 + 一次性气泡
+  useEffect(() => {  // 挂载即拉群配置（公开、轻量）：决定「更多」里是否显示入口
     apiGet<any>('/api/community/group').then(setGroupCfg).catch(() => { /* 失败静默：入口不显示 */ });
   }, []);
   // A股收盘复盘
@@ -743,8 +735,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     (): Record<string, boolean> => (typeof window !== 'undefined' && window.innerWidth <= 820) ? { eq: true } : {}
   );
   const toggleCollapse = useCallback((k: string) => setCollapsed(p => ({ ...p, [k]: !p[k] })), []);
-  const [headsHidden, setHeadsHidden] = useState<boolean>(() => LS.read('bbt.heads_hidden', false));  // 头条折叠态：默认展开
-  useEffect(() => { LS.write('bbt.heads_hidden', headsHidden); }, [headsHidden]);
+  const [headsHidden, setHeadsHidden] = useState<boolean>(() => LS.read('bbt.heads_hidden_v2', true));  // v2 重置旧偏好：新版先让实时流成为首屏主角
+  useEffect(() => { LS.write('bbt.heads_hidden_v2', headsHidden); }, [headsHidden]);
   // 行情监视列宽（px）可拖拽，记 localStorage；过窄自动隐藏附加列
   const [eqW, setEqW] = useState<number>(() => Math.max(EQ_MIN, Math.min(EQ_MAX, LS.read('bbt.eqw', 330))));
   useEffect(() => { LS.write('bbt.eqw', eqW); }, [eqW]);
@@ -3277,15 +3269,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   ];
   const paletteActiveClamped = Math.max(0, Math.min(paletteActive, paletteItems.length - 1));
 
-  // ⭐同一时刻只允许一个顶栏 CTA 在跳动/发光（用户反馈"好几个按钮一起闪，像博彩网站"）：
-  // 优先级 交流群(原唯一无限循环跳动，最该先收) > 开通会员 > 邀请得会员；排不到当值的仍保留静态发光（.bbt-cta-calm），不裸奔也不抢戏。
-  const wantsGroupAttract = groupCfg?.enabled !== false && !groupSeen;
-  const wantsBuyAttract = membership?.tier !== 'lifetime'
-    && !(membership?.tier === 'premium' && !isNewUser && Date.now() >= FOUNDING_PROMO_END);
-  const wantsRefAttract = !refOpened;
-  const primaryAttract: 'group' | 'buy' | 'ref' | null =
-    wantsGroupAttract ? 'group' : wantsBuyAttract ? 'buy' : wantsRefAttract ? 'ref' : null;
-
   // ⭐登录态横幅同样只显一条（此前 4 条各自独立渲染，条件叠加时会同屏出现两条，如"到期提醒"撞上"客服回复"）：
   // 优先级 管理员未读私信 > 客服回复 > 会员到期提醒 > 体验会员待领。匿名态战绩/试用二选一已在下方各自 ternary 处理，不受此影响。
   const wantsExpiryBanner = authUser && membership?.tier === 'premium' && typeof memDaysLeft === 'number' && memDaysLeft <= 2 && !expiryDismissed;
@@ -3311,64 +3294,23 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
       <div className="bbt-cmd">
-        <span className="bbt-cmd-key">DEEPFOCUS</span>
-        <span className="bbt-cmd-amber">金融终端</span>
-        {/* 价值主张常驻品牌区：新用户 10 秒内知道"这是干嘛的"（窄屏由 CSS 隐藏） */}
-        <span className="bbt-cmd-tagline" title="A股·港股·美股快讯 + AI 解读，比券商 App 早一步">快讯早一步 · AI 帮研判</span>
-        <span className="bbt-cmd-input" onClick={() => { setPaletteOpen(true); setPq(''); }} title="搜索股票 / 命令（点击，或按 /）"><span className="bbt-cmd-mag">🔍</span>{active ? <b>{active} {activeName}</b> : <span className="bbt-cmd-ph">搜索股票 / 命令</span>}<span className="bbt-cmd-kbd">/</span></span>
+        <span className="bbt-brand">
+          <span className="bbt-cmd-key">DEEPFOCUS</span>
+          <span className="bbt-cmd-amber">金融终端</span>
+          <span className="bbt-cmd-tagline" title="实时快讯、自选盯盘与 AI 研判">实时快讯 · 自选盯盘 · AI 研判</span>
+        </span>
+        <span className="bbt-cmd-input" onClick={() => { setPaletteOpen(true); setPq(''); }} title="搜索股票、行业或资讯（点击，或按 /）"><span className="bbt-cmd-mag" aria-hidden="true">⌕</span>{active ? <b>{active} {activeName}</b> : <span className="bbt-cmd-ph">搜索股票、行业或资讯</span>}<span className="bbt-cmd-kbd">/</span></span>
         <span className="bbt-cmd-right">
-          {/* 今日早报按钮已按需求隐藏 */}
-          <button className="bbt-theme-btn" onClick={() => { logAct('theme', theme === 'dark' ? 'light' : 'dark'); toggleTheme(); }} aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'} title={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}>
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          {ttsSupported && (
-            <button className={'bbt-tts-btn' + (ttsOn ? ' on' : '')} onClick={toggleTts}
-                    aria-label={ttsOn ? '快讯语音播报：开，点击关闭' : '快讯语音播报：关，点击开启'} aria-pressed={ttsOn}
-                    title={ttsOn ? '快讯语音播报：开（点击关闭）' : '快讯语音播报：关（点击开启）'}>
-              {ttsOn ? '🔊' : '🔈'}
-            </button>
-          )}
-          <button className="bbt-review-entry" onClick={() => openReview()} title="A股每日收盘复盘 · DeepFocus 提前发现">📊 复盘</button>
-          {/* 连续签到 streak 常驻可见：损失厌恶是最强次日回访钩子（引擎/奖励早已建成，此前只藏在复盘弹层标题栏）。
-              ⚠️专属 bbt-checkin-entry 类 + data-ico/data-label：手机端「复盘」按钮会被折叠成图标+短标签(见 css ≤820/≤560 分支)，
-              此前两者共用 bbt-review-entry 且无区分类，折叠规则统一按「复盘」渲染，streak 天数在手机上完全看不见。 */}
-          {authUser && checkin && checkin.streak > 0 && (
-            <button className="bbt-review-entry bbt-checkin-entry" onClick={() => openReview()}
-              data-ico={checkin.checked_today ? '🔥' : '⏳'} data-label={`连签${checkin.streak}天`}
-              title={checkin.checked_today
-                ? `已连续看盘 ${checkin.streak} 天${checkin.days_to_next ? ` · 再坚持 ${checkin.days_to_next} 天送 ${checkin.next_reward_days ?? ''} 天会员` : ''}`
-                : `今天还没看复盘——连续 ${checkin.streak} 天的记录今晚就断了！`}>
-              {checkin.checked_today ? `🔥${checkin.streak}天` : `⏳${checkin.streak}天`}
-            </button>
-          )}
-          <button className="bbt-review-entry bbt-aifund-entry" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }} title="AI 模拟盘：阿尔法直播操盘（K线/五维打分/操盘解说）· 点击进入独立页">🤖 AI 模拟盘</button>
-          <button className="bbt-review-entry bbt-ontology-entry" onClick={() => { logAct('open_ontology', '投资本体'); window.location.href = '/ontology'; }} title="投资本体：从证据、事件和论点追溯到持仓影响与建议动作">🧬 决策本体</button>
-          {groupCfg?.enabled !== false && (
-            <span className="bbt-grp-wrap">
-              <button className={'bbt-review-entry bbt-group-entry' + (groupSeen ? '' : (primaryAttract === 'group' ? ' pulse' : ' bbt-cta-calm'))} onClick={openGroup} aria-label="加入用户交流群" title="DeepFocus 用户交流群 · 免费开放给所有人，聊行情/追快讯/唠复盘">💬 交流群{!groupSeen && <span className="bbt-group-hot">免费</span>}</button>
-              {!groupSeen && !groupHintSess && !groupOpen && (
-                <span className="bbt-grp-hint" role="note">
-                  <span className="bbt-grp-hint-txt">👋 免费进官方交流群 · 聊行情 / 抢第一手快讯</span>
-                  <button className="bbt-grp-hint-go" onClick={openGroup}>立即进群</button>
-                  <button className="bbt-grp-hint-x" onClick={dismissGroupHint} aria-label="关闭">✕</button>
-                </span>
-              )}
-            </span>
-          )}
-          {/* hidden→locked：旗舰入口对匿名访客也可见，点击才要登录——登录墙挂在"我想问 AI"这个高意向动作上，
-              比挂在被动浏览上转化率高得多（pendingActionRef 登录后自动续做） */}
-          {/* ✨ 而不是 🤖：宽屏下与「🤖 AI 模拟盘」共用一个图标容易看串，窄屏折叠态早就换成 ✨ 了，这里补齐一致 */}
-          <button className="bbt-review-entry bbt-aiqa-entry"
+          <button className="bbt-review-entry bbt-aiqa-entry bbt-primary-action"
             onClick={() => (canAskAi ? openAi() : requireLogin(openAi, 'AI 投研问答'))}
-            title="AI 投研问答：自动调行情/估值 + 检索我们的快讯/研报/复盘">✨ AI 问答</button>
+            title="AI 投研问答：自动调行情、估值、快讯、研报和复盘">✨ 问 AI</button>
           {membership?.tier !== 'lifetime' && (() => {
             const isMember = membership?.tier === 'premium';   // 已是尊享会员 → 显示「续费」（可能提前续期），永久会员不显示
             const promoActive = Date.now() < FOUNDING_PROMO_END;  // 限时福利进行中
             // 角标优先级：新人(注册前3天)专享 > 限时福利期 > 默认
             const hot = isNewUser ? '🎁新人福利' : promoActive ? '⏳限时福利' : (isMember ? '提前续' : '解锁全部');
-            // 到期横幅出现时(primaryBanner==='expiry')顶栏CTA不再跟着一起跳动——同一件事没必要喊两遍，横幅已经够醒目
             return (
-              <button className={'bbt-buy-cta' + ((isMember && !isNewUser && !promoActive) ? '' : (primaryAttract === 'buy' && primaryBanner !== 'expiry' ? ' attract' : ' bbt-cta-calm'))}
+              <button className="bbt-buy-cta"
                       onClick={() => { logAct('open_buy', isMember ? '顶部续费CTA' : '顶部开通会员CTA'); requireLogin(openBuy, isMember ? '续费会员' : '开通会员'); }}
                       aria-label={isMember ? '续费会员' : '开通尊享会员'}
                       title={isNewUser ? '新人限时福利：低至4折 + 年卡加赠1个月/半年卡加赠15天' : (isMember ? '限时福利期·提前续费更划算' : '开通尊享会员 · 限时低至4折 · 解锁 AI 无限解读/微信快讯推送/文章全文')}>
@@ -3376,14 +3318,21 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               </button>
             );
           })()}
-          <button className={'bbt-ref-entry' + (refOpened ? '' : (primaryAttract === 'ref' ? ' attract' : ' bbt-cta-calm'))} onClick={() => { logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }} aria-label="邀请好友得会员" title="邀请好友 · 累计解锁会员卡，最高免费拿 ¥698 年卡">🎁 邀请得会员<span className="bbt-ref-entry-hot">免费拿年卡</span>{refAvail > 0 && <span className="bbt-ref-entry-badge">{refAvail}</span>}</button>
-          {/* 说明书+新手引导合并成一个帮助下拉（原两个常驻图标，用户反馈顶栏太乱）：复用账号菜单同款 acctwrap/pop 交互 */}
           <span className="bbt-acctwrap">
-            <button className="bbt-help-btn bbt-manual-btn" onClick={() => setHelpMenuOpen(v => !v)} aria-haspopup="true" aria-expanded={helpMenuOpen} aria-label="帮助" title="帮助">📖</button>
+            <button className="bbt-more-btn" onClick={() => setHelpMenuOpen(v => !v)} aria-haspopup="true" aria-expanded={helpMenuOpen}>更多 <span aria-hidden="true">▾</span></button>
             {helpMenuOpen && (
               <>
                 <div className="bbt-acct-mask" onClick={() => setHelpMenuOpen(false)} />
-                <div className="bbt-acct-pop" onClick={e => e.stopPropagation()}>
+                <div className="bbt-acct-pop bbt-more-pop" onClick={e => e.stopPropagation()}>
+                  <div className="bbt-more-section">研究工具</div>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openReview(); }}>📊 A股收盘复盘{authUser && checkin && checkin.streak > 0 ? ` · 连续 ${checkin.streak} 天` : ''}</button>
+                  <button className="bbt-acct-row" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }}>🤖 AI 模拟盘</button>
+                  <button className="bbt-acct-row" onClick={() => { logAct('open_ontology', '投资本体'); window.location.href = '/ontology'; }}>🧬 决策本体</button>
+                  {groupCfg?.enabled !== false && <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openGroup(); }}>💬 用户交流群{!groupSeen ? ' · 免费' : ''}</button>}
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }}>🎁 邀请好友{refAvail > 0 ? ` · ${refAvail} 份奖励` : ''}</button>
+                  <div className="bbt-more-section">偏好与帮助</div>
+                  {ttsSupported && <button className="bbt-acct-row" onClick={toggleTts}>{ttsOn ? '🔊 关闭快讯语音播报' : '🔈 开启快讯语音播报'}</button>}
+                  <button className="bbt-acct-row" onClick={() => { logAct('theme', theme === 'dark' ? 'light' : 'dark'); toggleTheme(); }}>{theme === 'dark' ? '☀️ 切换到浅色主题' : '🌙 切换到深色主题'}</button>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setShowHelp(true); }}>📖 产品说明书</button>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setShowOnb(true); }}>❔ 新手引导</button>
                 </div>
@@ -3490,11 +3439,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <button className="bbt-tr-hero-btn" onClick={e => { e.stopPropagation(); logAct('tr_hero_cta', '首屏战绩按钮'); openReview(); }}>看今天的复盘 →</button>
         </div>
       ) : (
-        <div className="bbt-trial-banner" onClick={onClaimTrial} role="button" title="登录即享体验会员，邀好友得 ¥698 年度会员">
-          <span className="bbt-trial-gift">📡</span>
-          <span className="bbt-trial-text">比券商 App 早一步的 A股·港股·美股快讯 + AI 解读终端 · 登录领<b>体验会员</b></span>
+        <div className="bbt-trial-banner" onClick={onClaimTrial} role="button" title="登录后保存自选、开启盯盘并使用 AI 研判">
+          <span className="bbt-trial-gift">新手入口</span>
+          <span className="bbt-trial-text">登录后可保存自选、开启盯盘，并使用 <b>AI 研判</b></span>
           <button className="bbt-trial-btn" disabled={trialClaiming} onClick={e => { e.stopPropagation(); onClaimTrial(); }}>
-            {trialClaiming ? '处理中…' : '登录'}
+            {trialClaiming ? '处理中…' : '登录体验'}
           </button>
         </div>
       ))}
@@ -3522,7 +3471,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
       <div className={'bbt-macro' + (macroOpen ? '' : ' closed')}>
         {/* 收起态（默认，手机上几乎总是这个态）此前只是个看着没内容的纯文字标签；带一个实时数值提示这里点开有数据 */}
-        <span className="bbt-macro-tag" role="button" onClick={() => setMacroOpen(v => !v)} title={macroOpen ? '收起宏观指标' : '展开宏观指标'}>MACRO{!macroOpen && macro.vix?.value ? ` · VIX ${macro.vix.value}` : ''}{macroOpen ? '' : ' ▸'}</span>
+        <span className="bbt-macro-tag" role="button" onClick={() => setMacroOpen(v => !v)} title={macroOpen ? '收起市场指标' : '展开市场指标'}>全球市场{!macroOpen && macro.vix?.value ? ` · VIX ${macro.vix.value}` : ''}{macroOpen ? '' : ' ▸'}</span>
         {macroOpen && [{ k: 'vix', l: 'VIX' }, { k: 'ten_year', l: 'US10Y' }, { k: 'dxy', l: 'DXY' }, { k: 'gold', l: '黄金' }, { k: 'oil', l: 'WTI' }, { k: 'bitcoin', l: 'BTC' }, { k: 'spx', l: '标普' }].map(m => {
           const ind = macro[m.k];
           if (!ind || !ind.value) return null;
