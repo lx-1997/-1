@@ -498,6 +498,7 @@
 /* 资讯分类 = 分段控件：容器底色 + 每类自己的颜色 + 数量角标，让「快讯/文章/研报」一眼像可切换的内容分类 */
 .bbt-filters { display: inline-flex; gap: 2px; margin-left: auto; padding: 2px; background: var(--panel-2); border: 1px solid var(--line-amber); border-radius: 6px; }
 .bbt-chip { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid transparent; font-family: inherit; font-size: 13px; font-weight: 700; padding: 3px 10px; cursor: pointer; border-radius: 6px; letter-spacing: .3px; transition: background .12s ease, color .12s ease; }
+.bbt-chip[data-cat="精选"] { color: var(--cyan); }
 .bbt-chip[data-cat="all"] { color: var(--amber-dim); }
 .bbt-chip[data-cat="自选"] { color: var(--cyan); }
 .bbt-chip[data-cat="快讯"] { color: var(--red-text); }
@@ -506,6 +507,7 @@
 .bbt-chip[data-cat="机构纪要"] { color: var(--amber-2); }
 .bbt-chip[data-cat="名人观点"] { color: var(--green-2); }
 .bbt-chip:hover { background: rgba(255,255,255,.06); }
+.bbt-chip.on[data-cat="精选"] { background: var(--cyan); color: #04121f; }
 .bbt-chip.on[data-cat="all"] { background: var(--accent); color: #000; }
 .bbt-chip.on[data-cat="自选"] { background: var(--cyan); color: #04121f; }
 .bbt-chip.on[data-cat="快讯"] { background: var(--red-text); color: #1a0807; }
@@ -515,6 +517,32 @@
 .bbt-chip.on[data-cat="名人观点"] { background: var(--green-2); color: #04210f; }
 .bbt-chip-n { font-size: 11px; font-weight: 800; line-height: 1.5; min-width: 15px; text-align: center; padding: 0 4px; border-radius: 999px; background: rgba(255,255,255,.1); }
 .bbt-chip.on .bbt-chip-n { background: rgba(0,0,0,.2); }
+
+/* 「为你」：把全量信息先压缩成少量高相关内容，用户随时可回到完整资讯。 */
+.bbt-personal {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 9px 12px; border-bottom: 1px solid var(--line);
+  background: linear-gradient(90deg, rgba(79,208,230,.12), rgba(79,208,230,.025) 62%, transparent);
+}
+.bbt-personal-main { display: flex; align-items: center; gap: 9px; min-width: 220px; flex: 1 1 320px; }
+.bbt-personal-mark { width: 28px; height: 28px; flex: 0 0 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; color: #04121f; background: var(--cyan); font-size: 15px; }
+.bbt-personal-title { color: var(--text-strong); font-size: 13px; font-weight: 800; }
+.bbt-personal-sub { margin-top: 2px; color: var(--mute); font-size: 11.5px; line-height: 1.4; }
+.bbt-personal-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.bbt-personal-btn { border: 1px solid var(--line-3); border-radius: 7px; padding: 5px 9px; background: var(--panel-2); color: var(--text-soft); font: inherit; font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.bbt-personal-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+.bbt-personal-btn.primary { color: #04121f; border-color: var(--cyan); background: var(--cyan); font-weight: 700; }
+.bbt-personal-prefs { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 8px; border-top: 1px dashed rgba(79,208,230,.25); }
+.bbt-personal-prefs-label { color: var(--text-soft); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.bbt-personal-topics { display: flex; flex: 1 1 420px; gap: 6px; flex-wrap: wrap; }
+.bbt-personal-topic { border: 1px solid var(--line-3); border-radius: 999px; padding: 4px 9px; background: transparent; color: var(--mute); font: inherit; font-size: 11.5px; cursor: pointer; }
+.bbt-personal-topic:hover { border-color: var(--cyan); color: var(--cyan); }
+.bbt-personal-topic.on { border-color: rgba(79,208,230,.55); background: rgba(79,208,230,.13); color: var(--cyan); }
+.bbt-personal-reset { margin-left: auto; border: 0; background: transparent; color: var(--mute); font: inherit; font-size: 11px; cursor: pointer; }
+.bbt-personal-reset:hover { color: var(--text-soft); text-decoration: underline; }
+.bbt-personal-why { flex: 0 0 auto; align-self: center; border: 1px solid rgba(79,208,230,.3); border-radius: 999px; padding: 0 6px; color: var(--cyan); background: rgba(79,208,230,.07); font-size: 10.5px; white-space: nowrap; }
+.bbt-personal-more { width: calc(100% - 20px); margin: 10px; padding: 8px 12px; border: 1px dashed rgba(79,208,230,.34); border-radius: 8px; background: rgba(79,208,230,.045); color: var(--cyan); font: inherit; font-size: 12px; cursor: pointer; }
+.bbt-personal-more:hover { border-style: solid; background: rgba(79,208,230,.09); }
 .bbt-nrow {
   display: flex; align-items: baseline; gap: 9px;
   padding: 5px 12px; border-bottom: 1px solid var(--line-row);
@@ -2636,4 +2664,15 @@
   .bbt-trial-gift { display: none; }
   .bbt-trial-text { font-size: 11px; }
   .bbt-trial-btn { padding: 4px 9px; }
+}
+
+@media (max-width: 820px) {
+  .bbt-personal { gap: 8px; padding: 9px 10px; }
+  .bbt-personal-main { flex-basis: 100%; }
+  .bbt-personal-actions { width: 100%; margin-left: 37px; }
+  .bbt-personal-btn { min-height: 34px; }
+  .bbt-personal-prefs { align-items: flex-start; }
+  .bbt-personal-prefs-label { width: 100%; }
+  .bbt-personal-reset { margin-left: 0; }
+  .bbt-personal-why { order: 5; }
 }

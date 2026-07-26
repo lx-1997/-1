@@ -146,7 +146,33 @@ function aiAnalysisToText(r: AiAnalysis, title: string): string {
 const SEV_TAG: Record<RealtimeMessageSeverity, string> = { critical: '紧急', warning: '利空', success: '利好', info: '资讯' };
 const STATUS_LABEL: Record<StreamConnectionStatus, string> = { connecting: 'CONNECTING', live: 'LIVE', reconnecting: 'RECONNECTING', closed: 'OFFLINE', error: 'ERROR' };
 // 统一信息流：快讯 / 文章 走 DAO 推送；「研报」标签切到海外投行研报视图（在线搜索 + AI 总结）
-const FEED_FILTERS = [{ key: 'all', label: '全部' }, { key: '自选', label: '★自选' }, { key: '快讯', label: '快讯' }, { key: '文章', label: '文章' }, { key: '研报', label: '研报' }];
+const FEED_FILTERS = [
+  { key: '精选', label: '为你' },
+  { key: '自选', label: '★自选' },
+  { key: '快讯', label: '快讯' },
+  { key: '文章', label: '深度' },
+  { key: '研报', label: '研报' },
+  { key: 'all', label: '全部' },
+];
+type InterestKey = '宏观政策' | 'AI科技' | '新能源' | '医药' | '消费' | '金融地产' | '港美市场' | '商品周期';
+const INTEREST_OPTIONS: { key: InterestKey; label: string; re: RegExp }[] = [
+  { key: '宏观政策', label: '宏观政策', re: /(宏观|政策|央行|利率|通胀|GDP|PMI|财政|货币|监管|美联储|降息|加息)/i },
+  { key: 'AI科技', label: 'AI 科技', re: /(人工智能|AI|算力|芯片|半导体|机器人|软件|数据中心|光模块|英伟达|腾讯|阿里|苹果|微软)/i },
+  { key: '新能源', label: '新能源', re: /(新能源|锂电|电池|光伏|储能|风电|充电桩|宁德时代|比亚迪|特斯拉)/i },
+  { key: '医药', label: '医药健康', re: /(医药|创新药|医疗|生物|疫苗|医院|药品|减肥药|恒瑞|迈瑞)/i },
+  { key: '消费', label: '消费', re: /(消费|白酒|食品|饮料|零售|旅游|酒店|家电|汽车|茅台|五粮液|美团)/i },
+  { key: '金融地产', label: '金融地产', re: /(银行|保险|券商|金融|地产|房地产|房价|信贷|招商银行)/i },
+  { key: '港美市场', label: '港美市场', re: /(港股|恒生|美股|纳指|标普|道指|中概股|美元|华尔街|NASDAQ|S&P)/i },
+  { key: '商品周期', label: '商品周期', re: /(黄金|白银|原油|有色|铜|铝|煤炭|钢铁|化工|航运|商品|期货)/i },
+];
+const PERSONAL_FEED_LIMIT = 12;
+const MARKET_RELEVANCE_RE = /(股票|股价|公司|财报|营收|利润|估值|市场|指数|基金|债券|利率|通胀|汇率|央行|政策|监管|行业|产能|订单|投资|融资|资本|商品|期货|黄金|原油|芯片|算力|电池|光伏|AI|经济|贸易)/i;
+const LIFESTYLE_NOISE_RE = /(跨性别|谋杀父母|出生率|文明变得富裕|终结了许多伟大文明|娱乐八卦|网红|绯闻|婚恋|星座|著作的信息)/i;
+const interestKeysOf = (m: { title?: string | null; content?: string | null }): InterestKey[] => {
+  const hay = `${m.title || ''} ${m.content || ''}`;
+  return INTEREST_OPTIONS.filter(option => option.re.test(hay)).map(option => option.key);
+};
+const interestLabel = (key: InterestKey): string => INTEREST_OPTIONS.find(option => option.key === key)?.label || key;
 // iFinD 专业数据：目前只对白名单账号开放（后端 DEEPFOCUS_IFIND_ALLOWED_USERS 同步硬控，前端只控入口可见性）
 const IFIND_USERS = new Set(['lx199710']);
 
@@ -724,8 +750,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [searchMsgs, setSearchMsgs] = useState<RealtimeMessageRecord[]>([]);  // 选股/搜索时：服务端全量历史检索结果
   const [searchLoading, setSearchLoading] = useState(false);
   const [status, setStatus] = useState<StreamConnectionStatus>('connecting');
-  // 回访恢复上次的浏览视角（「自选」tab 用户天天手动点一次=浪费已投入的自选沉没成本）；写入见下方 effect
-  const [feedFilter, setFeedFilter] = useState<string>(() => { try { return LS.read('bbt.feedFilter', 'all'); } catch { return 'all'; } });
+  // v3 默认进入「为你」：先看少量高相关内容；用户显式切到其它标签后仍记住选择。
+  const [feedFilter, setFeedFilter] = useState<string>(() => { try { return LS.read('bbt.feedFilter.v3', '精选'); } catch { return '精选'; } });
+  const [personalPrefsOpen, setPersonalPrefsOpen] = useState(false);
+  const [personalInterests, setPersonalInterests] = useState<InterestKey[]>(() => LS.read<InterestKey[]>('bbt.personal.interests.v1', []));
+  const [interestSignals, setInterestSignals] = useState<Partial<Record<InterestKey, number>>>(() => LS.read('bbt.personal.signals.v1', {}));
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [flash, setFlash] = useState<Record<string, 'up' | 'down'>>({});
   const [active, setActive] = useState<string | null>(null);
@@ -877,7 +906,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setFeedFilter('all'); setNewsQuery(''); setResQuery('');
   }, [logAct]);
 
-  useEffect(() => { LS.write('bbt.feedFilter', feedFilter); }, [feedFilter]);
+  useEffect(() => { LS.write('bbt.feedFilter.v3', feedFilter); }, [feedFilter]);
+  useEffect(() => { LS.write('bbt.personal.interests.v1', personalInterests); }, [personalInterests]);
+  useEffect(() => { LS.write('bbt.personal.signals.v1', interestSignals); }, [interestSignals]);
 
   const addSymbol = useCallback(async (code: string, name?: string, activate = true) => {
     const sym = (code || '').trim();
@@ -2588,6 +2619,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     prevFeedFilterRef.current = feedFilter;
   }, [feedFilter, wlMarkAllRead]);
 
+  // ===== 「为你」信息降噪层 =====
+  // 不另造一套重型推荐后端：用用户已经给出的自选、收藏、明确兴趣，再叠加本机点击形成的主题权重。
+  // 原始资讯一条不删；这里只从同一池子里挑少量高相关内容，「全部」标签仍可完整回看。
+  const learnFromMessage = useCallback((m: RealtimeMessageRecord) => {
+    const keys = interestKeysOf(m);
+    if (!keys.length) return;
+    setInterestSignals(prev => {
+      const next = { ...prev };
+      keys.forEach(key => { next[key] = Math.min(20, Number(next[key] || 0) + 1); });
+      return next;
+    });
+  }, []);
+  const togglePersonalInterest = useCallback((key: InterestKey) => {
+    setPersonalInterests(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]);
+    logAct('personal_interest', key);
+  }, [logAct]);
   // 今日市场早报：关键指标 + AI 头条 → 一张可转发的图（带二维码）
   const [briefBusy, setBriefBusy] = useState(false);
   const drawBriefCard = useCallback(async (): Promise<Blob | null> => {
@@ -2800,6 +2847,79 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     return () => window.clearInterval(t);
   }, [loadArticles]);
 
+  const personalization = useMemo(() => {
+    const pool = dedupeMessages([...dedupedMessages, ...articles])
+      .filter(m => m.topic !== '信号' && m.source_type !== 'dao-signal' && m.topic !== '研报');
+    const wlMap = new Map(matchWatchlist(pool).map(({ m, syms }) => [m.id, syms]));
+    const now = Date.now();
+    const ranked = pool.map(m => {
+      const hay = `${m.title || ''} ${m.content || ''}`;
+      const keys = interestKeysOf(m);
+      const explicit = keys.filter(key => personalInterests.includes(key));
+      const learned = keys
+        .map(key => ({ key, value: Number(interestSignals[key] || 0) }))
+        .filter(x => x.value > 0)
+        .sort((a, b) => b.value - a.value);
+      const wl = wlMap.get(m.id) || [];
+      const saved = bookmarks.has(String(m.id || ''));
+      const createdAt = Date.parse(m.created_at || '');
+      const ageHours = Number.isFinite(createdAt) ? Math.max(0, (now - createdAt) / 3600000) : 999;
+      let score = ageHours <= 2 ? 10 : ageHours <= 8 ? 7 : ageHours <= 24 ? 4 : ageHours <= 72 ? 1 : 0;
+      if (m.severity === 'critical') score += 20;
+      else if (m.severity === 'warning' || m.severity === 'success') score += 7;
+      if (pinnedIds.has(m.id)) score += 18;
+      if (wl.length) score += 32;
+      if (saved) score += 22;
+      score += Math.min(30, explicit.length * 15);
+      score += Math.min(16, learned.reduce((sum, x) => sum + x.value * 1.6, 0));
+      if ((m.topic || '') === '文章') score += 3; // 避免高频快讯完全淹没深度内容
+      // 人名/品牌别名会偶尔命中纯社会话题；只在「为你」里降权，不影响完整信息流。
+      if (LIFESTYLE_NOISE_RE.test(hay) && !MARKET_RELEVANCE_RE.test(hay)) score -= 45;
+      const why = wl.length
+        ? `自选相关${wl.length > 1 ? ` · ${wl.length} 只` : ''}${explicit.length ? ` · ${interestLabel(explicit[0])}` : ''}`
+        : saved
+          ? '你收藏过'
+          : explicit.length
+            ? `关注 · ${interestLabel(explicit[0])}`
+            : learned[0]?.value >= 2
+              ? `常看 · ${interestLabel(learned[0].key)}`
+              : m.severity === 'critical' || pinnedIds.has(m.id)
+                ? '市场必看'
+                : keys.length
+                  ? interestLabel(keys[0])
+                  : '市场精选';
+      return { m, score, why, primary: wl[0] ? `自选:${wl[0]}` : explicit[0] || learned[0]?.key || keys[0] || '市场' };
+    }).sort((a, b) => b.score - a.score || ((a.m.created_at || '') < (b.m.created_at || '') ? 1 : -1));
+
+    // 主题和内容形态都做上限，防止某一热点/高频快讯重新形成另一种信息风暴。
+    const chosen: typeof ranked = [];
+    const byTheme = new Map<string, number>();
+    const byTopic = new Map<string, number>();
+    for (const item of ranked) {
+      const themeN = byTheme.get(item.primary) || 0;
+      const topic = item.m.topic || '资讯';
+      const topicN = byTopic.get(topic) || 0;
+      if (themeN >= 4 || (topic === '快讯' && topicN >= 8) || (topic === '文章' && topicN >= 5)) continue;
+      chosen.push(item);
+      byTheme.set(item.primary, themeN + 1);
+      byTopic.set(topic, topicN + 1);
+      if (chosen.length >= PERSONAL_FEED_LIMIT) break;
+    }
+    // 极端情况下分类上限过严，用下一批高分项补足，但仍绝不超过 12 条。
+    if (chosen.length < Math.min(8, ranked.length)) {
+      const picked = new Set(chosen.map(x => x.m.id));
+      for (const item of ranked) {
+        if (!picked.has(item.m.id)) { chosen.push(item); picked.add(item.m.id); }
+        if (chosen.length >= Math.min(PERSONAL_FEED_LIMIT, ranked.length)) break;
+      }
+    }
+    return {
+      items: chosen.map(x => x.m),
+      reasons: new Map(chosen.map(x => [x.m.id, x.why])),
+      total: pool.length,
+    };
+  }, [dedupedMessages, articles, matchWatchlist, personalInterests, interestSignals, bookmarks, pinnedIds]);
+
   useEffect(() => { if (messages.length) latestTsRef.current = messages[0].created_at || latestTsRef.current; }, [messages]);
 
   // 实时兜底：SSE 断线/切后台时，每 5s 增量轮询(只取更新的，响应极小)+ 回前台/网络恢复立即拉取。
@@ -2859,10 +2979,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const feed = useMemo(() => {
     if (feedFilter === '自选') return watchlistFeed;   // 自选 tab：匹配自选股的快讯/文章，时间倒序
+    if (feedFilter === '精选' && !newsSearching) return personalization.items;
     // 服务端取数态用服务端结果；常态(ALL/快讯)用实时流已加载消息
     let base = (useServerFeed ? dedupeMessages(searchMsgs) : dedupedMessages)
       .filter(m => m.topic !== '信号' && m.source_type !== 'dao-signal' && m.topic !== '研报');
-    if (feedFilter === 'all') {
+    if (feedFilter === 'all' || feedFilter === '精选') {
       // 「全部」浏览态 = 实时流(快讯+文章) ∪ 全量文章（文章在窗口里稀疏，并入后口径一致）。
       // ⚠ 搜索/选股态绝不并入：searchMsgs 已是服务端按关键词过滤的结果，再混入未过滤的全量文章
       //    会让搜索结果里出现大量无关条目（如搜「红利」却列出最新所有文章）。
@@ -2873,11 +2994,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       base = base.filter(m => m.topic === feedFilter);
     }
     return base;
-  }, [dedupedMessages, searchMsgs, useServerFeed, feedFilter, watchlistFeed, articles, newsSearching]);
+  }, [dedupedMessages, searchMsgs, useServerFeed, feedFilter, watchlistFeed, articles, newsSearching, personalization.items]);
 
   // 资讯列表（ALL/快讯/文章 排除已置顶头条；自选 tab 与选股/搜索态显示全部命中）
   const newsRows = useMemo(
-    () => (feedFilter === '自选' || active || newsQuery.trim()) ? feed : feed.filter(m => !pinnedIds.has(m.id)),
+    () => (feedFilter === '精选' || feedFilter === '自选' || active || newsQuery.trim()) ? feed : feed.filter(m => !pinnedIds.has(m.id)),
     [feed, feedFilter, active, newsQuery, pinnedIds]
   );
   // 翻页实际数据源：实时流(全部/快讯)在第 2 页起按锚点冻结(剔除比锚点更新的新到快讯),分页稳定不前移;
@@ -2937,7 +3058,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 机构纪要：用户拍板放开给所有人含匿名(2026-07-06)——不需登录即可见；名人观点仍限白名单。
   // (后端匿名只给缓存首页护共享星球 cookie；登录用户完整搜索/翻页)
   const canViewZsxq = true;
-  // 机构纪要插在 文章 之后、研报 之前(与快讯/文章/研报平级)；名人观点(白名单)缀尾。
+  // 主路径按「为你→自选→快讯→深度→纪要→研报」渐进深入；「全部」放最后作为完整兜底。
   const feedFilters = (() => {
     let arr = [...FEED_FILTERS];
     if (canViewZsxq) arr = [...arr.slice(0, 4), { key: '机构纪要', label: '机构纪要' }, ...arr.slice(4)];
@@ -3065,13 +3186,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     }, '开通会员即可读全文原文');
   };
 
-  const renderNewsRow = (m: RealtimeMessageRecord, pinned = false, wlSyms?: string[]) => {
+  const renderNewsRow = (m: RealtimeMessageRecord, pinned = false, wlSyms?: string[], personalWhy?: string) => {
     const isFlash = (m.topic || '') === '快讯';
     const canBookmark = (m.topic || '') === '文章';  // 快讯不收藏（用户拍板）；研报走独立的 renderResearchRow，不会传入这里
     const isBm = bookmarks.has(bmId(m));
     return (
       <div key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}`}
-        onClick={() => isFlash ? copyNews(m) : runNewsAi(m)}
+        onClick={() => { learnFromMessage(m); return isFlash ? copyNews(m) : runNewsAi(m); }}
         title={isFlash ? '点击复制' : '点开 AI 解读'}>
         {pinned && <span className="bbt-pin-badge">★ 头条</span>}
         {wlSyms && wlSyms.length > 0 && <span className="bbt-wl-badge" title={`点击查看 ${nameOf(wlSyms[0])}`} onClick={e => { e.stopPropagation(); selectStock(wlSyms[0]); }}>★ 自选 {wlSyms.slice(0, 2).map(s => nameOf(s)).join('·')}{wlSyms.length > 2 ? ` +${wlSyms.length - 2}` : ''}</span>}
@@ -3085,6 +3206,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           >{SEV_TAG[m.severity]}</span>
         )}
         <span className="bbt-ntopic">{`{${m.topic || '资讯'}}`}</span>
+        {personalWhy && <span className="bbt-personal-why">{personalWhy}</span>}
         {(() => {
           const t = stripUrls(m.title) || m.title;
           // 专题聚合稿：正文以样板头(财经新闻专题|日期/导读摘要…)开场，直接接在标题后=一坨噪音 → 取导读首条当预览
@@ -3585,7 +3707,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section className={`bbt-panel${maxed && maxed !== 'news' ? ' bbt-hide' : ''}${collapsed.news ? ' bbt-panel--collapsed' : ''}`}>
           <div className="bbt-ph">
             <button className="bbt-collapse-btn" aria-label="实时资讯" aria-expanded={!collapsed.news} title={collapsed.news ? '展开' : '收起'} onClick={() => toggleCollapse('news')}>{collapsed.news ? '▸' : '▾'}</button>
-            {isCelebrity ? 'VOICES · 名人观点' : isZsxqStream ? 'NOTES · 机构纪要' : isResearch ? 'RESEARCH · 研报' : 'NEWS WIRE · 实时资讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
+            {isCelebrity ? 'VOICES · 名人观点' : isZsxqStream ? 'NOTES · 机构纪要' : isResearch ? 'RESEARCH · 研报' : feedFilter === '精选' ? 'FOR YOU · 为你精选' : 'NEWS WIRE · 实时资讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
             <span className="bbt-filters" role="tablist" aria-label="资讯分类">{feedFilters.map(f => (
               <button key={f.key} role="tab" aria-selected={feedFilter === f.key} data-cat={f.key}
                 className={`bbt-chip ${feedFilter === f.key ? 'on' : ''}`}
@@ -3595,6 +3717,42 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             ))}</span>
             <button className="bbt-max-btn" title={maxed === 'news' ? '还原' : '最大化'} onClick={() => setMaxed(maxed === 'news' ? null : 'news')}>{maxed === 'news' ? '⤡' : '⤢'}</button>
           </div>
+
+          {feedFilter === '精选' && !active && !newsQuery.trim() && (
+            <div className="bbt-personal">
+              <div className="bbt-personal-main">
+                <span className="bbt-personal-mark" aria-hidden="true">✦</span>
+                <div>
+                  <div className="bbt-personal-title">今天先看 {personalization.items.length} 条</div>
+                  <div className="bbt-personal-sub">
+                    已从 {personalization.total} 条资讯中降噪
+                    {watchlist.length ? ` · 结合 ${watchlist.length} 只自选` : ''}
+                    {personalInterests.length ? ` · ${personalInterests.map(interestLabel).join('、')}` : ' · 会随阅读逐渐贴合'}
+                  </div>
+                </div>
+              </div>
+              <div className="bbt-personal-actions">
+                <button className="bbt-personal-btn" aria-expanded={personalPrefsOpen} onClick={() => setPersonalPrefsOpen(v => !v)}>调整兴趣 {personalPrefsOpen ? '▴' : '▾'}</button>
+                <button className="bbt-personal-btn primary" onClick={() => setFeedFilter('all')}>查看全部 {personalization.total} 条</button>
+              </div>
+              {personalPrefsOpen && (
+                <div className="bbt-personal-prefs">
+                  <span className="bbt-personal-prefs-label">我重点关注</span>
+                  <div className="bbt-personal-topics">
+                    {INTEREST_OPTIONS.map(option => (
+                      <button key={option.key} className={'bbt-personal-topic' + (personalInterests.includes(option.key) ? ' on' : '')}
+                        aria-pressed={personalInterests.includes(option.key)} onClick={() => togglePersonalInterest(option.key)}>
+                        {personalInterests.includes(option.key) ? '✓ ' : '＋ '}{option.label}
+                      </button>
+                    ))}
+                  </div>
+                  {Object.keys(interestSignals).length > 0 && (
+                    <button className="bbt-personal-reset" onClick={() => { setInterestSignals({}); logAct('personal_reset', 'click_history'); }}>重置阅读偏好</button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {isResearch && (
             <div className="bbt-res-bar">
@@ -3826,6 +3984,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   );
                 })
               ) : (() => {
+                if (feedFilter === '精选' && !newsSearching) {
+                  const hidden = Math.max(0, personalization.total - personalization.items.length);
+                  return (<>
+                    {personalization.items.map(m => renderNewsRow(m, false, undefined, personalization.reasons.get(m.id)))}
+                    {hidden > 0 && (
+                      <button className="bbt-personal-more" onClick={() => { logAct('personal_show_all', String(hidden)); setFeedFilter('all'); }}>
+                        其余 {hidden} 条已收好　查看全部资讯 →
+                      </button>
+                    )}
+                  </>);
+                }
                 const hasMore = !useServerFeed && !histDone;  // 实时流态(ALL/快讯)：服务器可能还有更旧历史可翻
                 const shown = pagedRows.slice((newsPageCur - 1) * pageSize, newsPageCur * pageSize);
                 return (<>
