@@ -16,6 +16,7 @@ export interface ZsxqTopic {
   id: string;
   title: string;
   text: string;
+  links: Array<{ label: string; url: string }>;
   images: string[];
   image_fulls: string[];
   create_time: string;

@@ -16,12 +16,19 @@ import './TerminalZsxqStream.css';
 const zsxqImg = (url: string, dl = false): string =>
   `/api/zsxq/image?u=${encodeURIComponent(url)}&v=2${dl ? '&dl=1' : ''}`;
 
+const cleanSourceBrand = (value: string): string =>
+  String(value || '')
+    .replace(/知识星球(?:\s*[-—|·]\s*安全中心)?/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
 // 机构纪要分享钩子：只取标题 + ≤100 字导语（第三方付费内容不外泄全文）。落地页 /note/{id} 同口径 noindex 软墙。
 const noteShareTarget = (item: ZsxqTopic) => {
-  const flat = (item.text || '').replace(/\s+/g, ' ').trim();
+  const flat = cleanSourceBrand(item.text || '').replace(/\s+/g, ' ').trim();
   const lead = flat.length > 100 ? flat.slice(0, 100) + '…' : flat;
   const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-  return { kind: 'article', title: (item.title || '机构纪要').trim(), summary: lead, url: `${site}/note/${item.id}` };
+  return { kind: 'article', title: cleanSourceBrand(item.title || '机构纪要'), summary: lead, url: `${site}/note/${item.id}` };
 };
 
 /**
@@ -47,7 +54,13 @@ const fmtDateTime = (v?: string | null): string => {
 };
 
 // 正文分段渲染：`# xxx` 行作小节标题（星球纪要惯用），「问：/答：」拆问答块，其余普通段落。
-const renderBody = (text: string): React.ReactNode => {
+const renderBody = (text: string, links: ZsxqTopic['links'] = []): React.ReactNode => {
+  const linkByLabel = new Map(
+    (links || [])
+      .filter(link => /^https?:\/\//i.test(link.url || ''))
+      .map(link => [cleanSourceBrand(link.label), link.url] as const)
+      .filter(([label]) => Boolean(label))
+  );
   const blocks = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
   return blocks.map((b, i) => {
     const h = /^#\s*/.test(b);
@@ -60,6 +73,16 @@ const renderBody = (text: string): React.ReactNode => {
           <span className="tzs-qa-tag">{q ? '问' : '答'}</span>
           <span className="tzs-qa-text">{b.replace(/^[问答]\s*[:：]\s*/, '')}</span>
         </div>
+      );
+    }
+    const href = linkByLabel.get(cleanSourceBrand(b));
+    if (href) {
+      return (
+        <p className="tzs-para" key={i}>
+          <a className="tzs-web-link" href={href} target="_blank" rel="noreferrer nofollow">
+            {cleanSourceBrand(b)} <span aria-hidden="true">↗</span>
+          </a>
+        </p>
       );
     }
     return <p className="tzs-para" key={i}>{b}</p>;
@@ -137,8 +160,9 @@ const COLLAPSE_CHARS = 420; // 长帖默认折叠的字符阈值
 // 单条帖子卡片：作者/日期/精华 + 正文(长帖折叠) + 图片(可放大) + 评论 + 原文出处。
 const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void; focused?: boolean }> = ({ item, onZoom, focused = false }) => {
   const [expanded, setExpanded] = useState(false);
-  const long = (item.text || '').length > COLLAPSE_CHARS;
-  const bodyText = !long || expanded ? item.text : item.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…';
+  const cleanText = cleanSourceBrand(item.text || '');
+  const long = cleanText.length > COLLAPSE_CHARS;
+  const bodyText = !long || expanded ? cleanText : cleanText.slice(0, COLLAPSE_CHARS).trimEnd() + '…';
   return (
     <div className={'tzs-item' + (focused ? ' tzs-item--focus' : '')} id={item.id ? `zsxq-${item.id}` : undefined}>
       <div className="tzs-item-head">
@@ -157,7 +181,7 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void; focus
         )}
       </div>
 
-      {item.text && <div className="tzs-item-body">{renderBody(bodyText)}</div>}
+      {cleanText && <div className="tzs-item-body">{renderBody(bodyText, item.links)}</div>}
       {long && (
         <button type="button" className="tzs-expand" onClick={() => setExpanded(v => !v)}>
           {expanded ? '收起 ▴' : '展开全文 ▾'}

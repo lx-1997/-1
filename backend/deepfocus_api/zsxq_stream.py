@@ -97,6 +97,17 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
         return None  # 文件上传占位帖（研报 PDF 等，已在「研报」标签）→ 不进机构纪要
     ct = str(t.get("create_time") or "").strip()
     comments = [m for m in (_norm_comment(c) for c in (t.get("comments") or [])[:10]) if m]
+    links: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for link in (t.get("links") or [])[:12]:
+        if not isinstance(link, dict):
+            continue
+        url = str(link.get("url") or "").strip()
+        if not re.match(r"^https?://", url, re.I) or url in seen_urls:
+            continue
+        label = re.sub(r"知识星球(?:\s*[-—|·]\s*安全中心)?", "", str(link.get("label") or "")).strip()
+        links.append({"label": (label or "查看网页")[:120], "url": url[:1200]})
+        seen_urls.add(url)
     first_line = (text.split("\n", 1)[0]).strip()
     # ⭐不透出来源:响应里刻意不带 author(星球号名)与 url(星球帖子链接)——
     # 展示面不体现具体星球来源,也不提供跳回原文的入口(用户拍板)。
@@ -104,6 +115,7 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
         "id": str(t.get("topicId") or "").strip(),
         "title": (first_line[:80] + ("…" if len(first_line) > 80 else "")) or "图片动态",
         "text": text,
+        "links": links,
         "images": images,
         "image_fulls": image_fulls or images,  # 缺原图回退小图
         "create_time": ct,

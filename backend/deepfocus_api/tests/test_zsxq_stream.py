@@ -31,6 +31,10 @@ def test_norm_topic_full_and_empty():
     t = {
         "topicId": "123", "text": "【广发机械】银轮股份\n# 液冷：核心低位资产",
         "images": ["http://a/1.jpg"], "image_fulls": [], "author": "水木调研纪要",
+        "links": [
+            {"label": "锂电池材料价格周报", "url": "https://share.note.youdao.com/a"},
+            {"label": "知识星球-安全中心", "url": "javascript:alert(1)"},
+        ],
         "create_time": "2026-07-06T11:18:00.000+0800", "digested": True,
         "likes_count": 3, "comments_count": 5,
         "comments": [{"author": "张三", "text": "赞", "likes_count": 1}],
@@ -39,6 +43,7 @@ def test_norm_topic_full_and_empty():
     assert it is not None
     assert it["id"] == "123" and it["digested"] and it["date"] == "2026-07-06"
     assert it["image_fulls"] == ["http://a/1.jpg"]  # 缺原图回退小图
+    assert it["links"] == [{"label": "锂电池材料价格周报", "url": "https://share.note.youdao.com/a"}]
     assert it["comments"][0]["author"] == "张三"
     assert it["comments_count"] == 5
     # ⭐不透出星球来源(author)、原文链接(url)、帖子点赞数(likes_count)

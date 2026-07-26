@@ -1628,27 +1628,90 @@ async function searchFiles(payload) {
 // ===== 名人观点：按星球检索「帖子(topics)」——正文 + 图片(已签名URL) + 作者/时间 =====
 // 与 searchFiles(研报 PDF)不同：这里取的是帖子动态本身的文字与配图，供「名人观点」模块消费。
 // 知识星球正文里的富文本实体 <e type="web|hashtag|mention" title="<URL编码>" .../>
-// → 用其 title(URL 解码)替换，否则前端会显示成一坨原始标签。
+// → 普通实体用 title(URL 解码)替换；网页实体另行提取 href，避免把「知识星球-安全中心」
+// 这种中转页标题当正文展示、同时保住真正的目标网页链接。
+function decodeZsxqAttr(tag, name) {
+  const match = String(tag || "").match(new RegExp(`\\b${name}="([^"]*)"`));
+  if (!match) return "";
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
+function cleanZsxqWebTitle(value) {
+  return String(value || "")
+    .replace(/知识星球(?:\s*[-—|·]\s*安全中心)?/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function unwrapZsxqWebUrl(value) {
+  const decoded = String(value || "").trim();
+  if (!/^https?:\/\//i.test(decoded)) return "";
+  try {
+    const parsed = new URL(decoded);
+    if (parsed.hostname === "wx.zsxq.com" && /\/external_link\.html$/i.test(parsed.pathname)) {
+      const target = parsed.searchParams.get("target") || "";
+      if (/^https?:\/\//i.test(target)) return target;
+    }
+  } catch {
+    return "";
+  }
+  return decoded;
+}
+
 function decodeZsxqText(raw) {
   let s = String(raw || "");
   s = s.replace(/<e\b[^>]*?\/>/g, (tag) => {
-    const m = tag.match(/\btitle="([^"]*)"/);
-    if (!m) return "";
-    try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+    const title = decodeZsxqAttr(tag, "title");
+    return decodeZsxqAttr(tag, "type") === "web" ? cleanZsxqWebTitle(title) : title;
   });
-  return s.replace(/[ \t]+\n/g, "\n").trim();
+  return s
+    .replace(/知识星球(?:\s*[-—|·]\s*安全中心)?/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-function extractTopicText(topic) {
+function extractZsxqLinks(raw) {
+  const source = String(raw || "");
+  const links = [];
+  const entityRe = /<e\b[^>]*?\/>/g;
+  let match;
+  while ((match = entityRe.exec(source))) {
+    const tag = match[0];
+    if (decodeZsxqAttr(tag, "type") !== "web") continue;
+    const url = unwrapZsxqWebUrl(decodeZsxqAttr(tag, "href"));
+    if (!url) continue;
+    const beforeLines = source.slice(0, match.index).split("\n").map((line) => line.trim()).filter(Boolean);
+    const before = beforeLines[beforeLines.length - 1] || "";
+    const label = cleanZsxqWebTitle(decodeZsxqText(before))
+      || cleanZsxqWebTitle(decodeZsxqAttr(tag, "title"))
+      || "查看网页";
+    links.push({ label: label.slice(0, 120), url });
+  }
+  return links;
+}
+
+function extractTopicContent(topic) {
   const type = topic?.type || "";
   const typed = topic?.[type] || topic?.talk || {};
   const parts = [];
-  if (topic.question?.text) parts.push(`问：${decodeZsxqText(topic.question.text)}`);
-  if (topic.answer?.text) parts.push(`答：${decodeZsxqText(topic.answer.text)}`);
-  if (typed.text) parts.push(decodeZsxqText(typed.text));
-  if (typed.article?.title) parts.push(decodeZsxqText(typed.article.title));
+  const links = [];
+  const add = (raw, prefix = "") => {
+    if (!raw) return;
+    const text = decodeZsxqText(raw);
+    if (text) parts.push(`${prefix}${text}`);
+    links.push(...extractZsxqLinks(raw));
+  };
+  add(topic.question?.text, "问：");
+  add(topic.answer?.text, "答：");
+  add(typed.text);
+  add(typed.article?.title);
   const seen = new Set();
-  return parts.filter((p) => p && !seen.has(p) && seen.add(p)).join("\n").trim();
+  const linkSeen = new Set();
+  return {
+    text: parts.filter((p) => p && !seen.has(p) && seen.add(p)).join("\n").trim(),
+    links: links.filter((link) => link.url && !linkSeen.has(link.url) && linkSeen.add(link.url)),
+  };
 }
 
 function extractTopicImages(topic) {
@@ -1690,12 +1753,14 @@ function topicToViewItem(topic) {
   const typed = topic?.[type] || topic?.talk || {};
   const id = String(topic.topic_id || topic.topicId || "");
   const imgs = extractTopicImages(topic);
+  const content = extractTopicContent(topic);
   // show_comments = 随帖预览评论(上游最多带 8~9 条)；评论更多时消费方经 /api/topic-comments 拉全。
   const comments = (topic.show_comments || []).flatMap(flattenComment).filter((c) => c.text || c.author);
   return {
     topicId: id,
     type,
-    text: extractTopicText(topic),
+    text: content.text,
+    links: content.links,
     images: imgs.thumbs,
     image_fulls: imgs.fulls,
     create_time: topic.create_time || "",
