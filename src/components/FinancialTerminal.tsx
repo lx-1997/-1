@@ -146,13 +146,17 @@ function aiAnalysisToText(r: AiAnalysis, title: string): string {
 const SEV_TAG: Record<RealtimeMessageSeverity, string> = { critical: '紧急', warning: '利空', success: '利好', info: '资讯' };
 const STATUS_LABEL: Record<StreamConnectionStatus, string> = { connecting: 'CONNECTING', live: 'LIVE', reconnecting: 'RECONNECTING', closed: 'OFFLINE', error: 'ERROR' };
 // 统一信息流：快讯 / 文章 走 DAO 推送；「研报」标签切到海外投行研报视图（在线搜索 + AI 总结）
-const FEED_FILTERS = [
+const PRIMARY_FEED_FILTERS = [
   { key: '精选', label: '为你' },
   { key: '自选', label: '★自选' },
   { key: '快讯', label: '快讯' },
-  { key: '文章', label: '深度' },
-  { key: '研报', label: '研报' },
+  { key: '研究', label: '研究' },
   { key: 'all', label: '全部' },
+];
+const RESEARCH_FEED_FILTERS = [
+  { key: '文章', label: '深度文章' },
+  { key: '机构纪要', label: '机构纪要' },
+  { key: '研报', label: '投行研报' },
 ];
 type InterestKey = '宏观政策' | 'AI科技' | '新能源' | '医药' | '消费' | '金融地产' | '港美市场' | '商品周期';
 const INTEREST_OPTIONS: { key: InterestKey; label: string; re: RegExp }[] = [
@@ -3058,13 +3062,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 机构纪要：用户拍板放开给所有人含匿名(2026-07-06)——不需登录即可见；名人观点仍限白名单。
   // (后端匿名只给缓存首页护共享星球 cookie；登录用户完整搜索/翻页)
   const canViewZsxq = true;
-  // 主路径按「为你→自选→快讯→深度→纪要→研报」渐进深入；「全部」放最后作为完整兜底。
-  const feedFilters = (() => {
-    let arr = [...FEED_FILTERS];
-    if (canViewZsxq) arr = [...arr.slice(0, 4), { key: '机构纪要', label: '机构纪要' }, ...arr.slice(4)];
-    if (isCelebUser) arr = [...arr, { key: '名人观点', label: '名人观点' }];
-    return arr;
-  })();
+  // 一级按用户任务分；深度文章 / 机构纪要 / 投行研报收进「研究」二级，避免七种内容同层竞争。
+  const researchFeedFilters = [
+    RESEARCH_FEED_FILTERS[0],
+    ...(canViewZsxq ? [RESEARCH_FEED_FILTERS[1]] : []),
+    RESEARCH_FEED_FILTERS[2],
+    ...(isCelebUser ? [{ key: '名人观点', label: '名人观点' }] : []),
+  ];
+  const isResearchGroup = researchFeedFilters.some(f => f.key === feedFilter);
   const isCelebrity = isCelebUser && feedFilter === '名人观点';  // 非白名单恒 false（防 localStorage 残留越权）
   const isZsxqStream = canViewZsxq && feedFilter === '机构纪要'; // 机构调研纪要帖子流（所有登录用户）
 
@@ -3191,7 +3196,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const canBookmark = (m.topic || '') === '文章';  // 快讯不收藏（用户拍板）；研报走独立的 renderResearchRow，不会传入这里
     const isBm = bookmarks.has(bmId(m));
     return (
-      <div key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}`}
+      <div key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}${personalWhy ? ' bbt-nrow--personal' : ''}`}
         onClick={() => { learnFromMessage(m); return isFlash ? copyNews(m) : runNewsAi(m); }}
         title={isFlash ? '点击复制' : '点开 AI 解读'}>
         {pinned && <span className="bbt-pin-badge">★ 头条</span>}
@@ -3707,16 +3712,39 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section className={`bbt-panel${maxed && maxed !== 'news' ? ' bbt-hide' : ''}${collapsed.news ? ' bbt-panel--collapsed' : ''}`}>
           <div className="bbt-ph">
             <button className="bbt-collapse-btn" aria-label="实时资讯" aria-expanded={!collapsed.news} title={collapsed.news ? '展开' : '收起'} onClick={() => toggleCollapse('news')}>{collapsed.news ? '▸' : '▾'}</button>
-            {isCelebrity ? 'VOICES · 名人观点' : isZsxqStream ? 'NOTES · 机构纪要' : isResearch ? 'RESEARCH · 研报' : feedFilter === '精选' ? 'FOR YOU · 为你精选' : 'NEWS WIRE · 实时资讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
-            <span className="bbt-filters" role="tablist" aria-label="资讯分类">{feedFilters.map(f => (
-              <button key={f.key} role="tab" aria-selected={feedFilter === f.key} data-cat={f.key}
-                className={`bbt-chip ${feedFilter === f.key ? 'on' : ''}`}
-                onClick={() => { if (feedFilter !== f.key) logAct('tab', f.label); setFeedFilter(f.key); }}>
-                {f.label}
-              </button>
-            ))}</span>
+            {isCelebrity ? 'VOICES · 名人观点' : isZsxqStream ? 'NOTES · 机构纪要' : isResearch ? 'RESEARCH · 投行研报' : feedFilter === '文章' ? 'RESEARCH · 深度文章' : feedFilter === '精选' ? 'FOR YOU · 为你精选' : 'NEWS WIRE · 实时资讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
+            <span className="bbt-filters" role="tablist" aria-label="资讯任务分类">{PRIMARY_FEED_FILTERS.map(f => {
+              const selected = f.key === '研究' ? isResearchGroup : feedFilter === f.key;
+              return (
+                <button key={f.key} role="tab" aria-selected={selected} data-cat={f.key}
+                  className={`bbt-chip ${selected ? 'on' : ''}`}
+                  onClick={() => {
+                    const next = f.key === '研究' ? (isResearchGroup ? feedFilter : '文章') : f.key;
+                    if (feedFilter !== next) logAct('tab', f.label);
+                    setFeedFilter(next);
+                  }}>
+                  {f.label}
+                </button>
+              );
+            })}</span>
             <button className="bbt-max-btn" title={maxed === 'news' ? '还原' : '最大化'} onClick={() => setMaxed(maxed === 'news' ? null : 'news')}>{maxed === 'news' ? '⤡' : '⤢'}</button>
           </div>
+
+          {isResearchGroup && (
+            <div className="bbt-research-nav" role="tablist" aria-label="研究资料分类">
+              <span className="bbt-research-nav-label">研究资料</span>
+              {researchFeedFilters.map(f => (
+                <button key={f.key} role="tab" aria-selected={feedFilter === f.key}
+                  className={'bbt-research-nav-btn' + (feedFilter === f.key ? ' on' : '')}
+                  onClick={() => {
+                    if (feedFilter !== f.key) logAct('research_tab', f.label);
+                    setFeedFilter(f.key);
+                  }}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {feedFilter === '精选' && !active && !newsQuery.trim() && (
             <div className="bbt-personal">
