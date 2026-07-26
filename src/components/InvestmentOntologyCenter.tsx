@@ -59,9 +59,35 @@ const toneColor: Record<string, string> = {
   neutral: 'blue',
 };
 
+const ATTRIBUTE_LABELS: Record<string, string> = {
+  ticker: '股票代码',
+  exchange: '交易所',
+  currency: '币种',
+  price: '最新价',
+  source: '数据来源',
+  credibility: '可信度',
+  known_at: '入库时间',
+  event_type: '事件类型',
+  occurred_at: '发生时间',
+  severity: '重要性',
+  confidence: '逻辑可信度',
+  invalidation: '失效条件',
+  weight_pct: '当前仓位',
+  risk_budget_pct: '仓位上限',
+  pnl_pct: '浮动盈亏',
+  name: '名称',
+};
+
 function percentage(value: unknown): string {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? `${Math.round(numberValue * 100)}%` : '—';
+}
+
+function attributeText(key: string, value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (key === 'confidence' || key === 'credibility') return percentage(value);
+  if (key.endsWith('_pct')) return numberText(value, '%');
+  return String(value);
 }
 
 function numberText(value: unknown, suffix = ''): string {
@@ -104,7 +130,7 @@ const InvestmentOntologyCenter: React.FC = () => {
       const result = await fetchOntologyDemo(securityId);
       setSnapshot(result);
       setSelectedSecurityId(result.selected_security_id);
-      setSelectedNodeId(result.identity.security.id);
+      setSelectedNodeId(undefined);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '本体快照加载失败');
     } finally {
@@ -121,6 +147,32 @@ const InvestmentOntologyCenter: React.FC = () => {
   ), [snapshot]);
 
   const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) : undefined;
+
+  const focusedNodeIds = useMemo(() => {
+    if (!snapshot || !selectedNodeId) return null;
+    const incoming = new Map<string, OntologyEdge[]>();
+    const outgoing = new Map<string, OntologyEdge[]>();
+    snapshot.graph.edges.forEach(edge => {
+      incoming.set(edge.target, [...(incoming.get(edge.target) || []), edge]);
+      outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge]);
+    });
+    const focused = new Set<string>([selectedNodeId]);
+    const walk = (
+      edgeMap: Map<string, OntologyEdge[]>,
+      nodeId: string,
+      nextNode: (edge: OntologyEdge) => string,
+    ): void => {
+      (edgeMap.get(nodeId) || []).forEach(edge => {
+        const nextId = nextNode(edge);
+        if (focused.has(nextId)) return;
+        focused.add(nextId);
+        walk(edgeMap, nextId, nextNode);
+      });
+    };
+    walk(incoming, selectedNodeId, edge => edge.source);
+    walk(outgoing, selectedNodeId, edge => edge.target);
+    return focused;
+  }, [selectedNodeId, snapshot]);
 
   const recordAction = useCallback(async (
     actionType: string,
@@ -148,14 +200,21 @@ const InvestmentOntologyCenter: React.FC = () => {
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
     if (!source || !target) return null;
+    const bendX = (source.position.x + target.position.x) / 2;
+    const isMuted = focusedNodeIds
+      ? !(focusedNodeIds.has(edge.source) && focusedNodeIds.has(edge.target))
+      : false;
     return (
-      <line
+      <path
         key={edge.id}
-        className={`ontology-edge-line ${edgeClass(edge)}`}
-        x1={source.position.x}
-        y1={source.position.y}
-        x2={target.position.x}
-        y2={target.position.y}
+        className={`ontology-edge-line ${edgeClass(edge)}${isMuted ? ' muted' : ''}`}
+        d={[
+          `M ${source.position.x} ${source.position.y}`,
+          `C ${bendX} ${source.position.y},`,
+          `${bendX} ${target.position.y},`,
+          `${target.position.x} ${target.position.y}`,
+        ].join(' ')}
+        style={{ opacity: 0.28 + edge.confidence * 0.5 }}
         markerEnd={`url(#arrow-${edgeClass(edge)})`}
       />
     );
@@ -164,13 +223,16 @@ const InvestmentOntologyCenter: React.FC = () => {
   const renderEdgeLabel = (edge: OntologyEdge) => {
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
-    if (!source || !target) return null;
+    if (!source || !target || edge.polarity === 0) return null;
     const x = (source.position.x + target.position.x) / 2;
     const y = (source.position.y + target.position.y) / 2;
+    const isMuted = focusedNodeIds
+      ? !(focusedNodeIds.has(edge.source) && focusedNodeIds.has(edge.target))
+      : false;
     return (
       <Tooltip key={`label-${edge.id}`} title={`关系置信度 ${percentage(edge.confidence)}`}>
         <span
-          className={`ontology-edge-label ${edgeClass(edge)}`}
+          className={`ontology-edge-label ${edgeClass(edge)}${isMuted ? ' muted' : ''}`}
           style={{ left: `${x}%`, top: `${y}%` }}
         >
           {EDGE_LABELS[edge.type] || edge.type}
@@ -357,41 +419,75 @@ const InvestmentOntologyCenter: React.FC = () => {
                 </div>
               </header>
 
-              <div className="ontology-graph">
-                <svg className="ontology-edge-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
-                  <defs>
-                    <marker id="arrow-positive" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                      <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-positive" />
-                    </marker>
-                    <marker id="arrow-negative" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                      <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-negative" />
-                    </marker>
-                    <marker id="arrow-neutral" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                      <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-neutral" />
-                    </marker>
-                  </defs>
-                  {snapshot.graph.edges.map(renderEdge)}
-                </svg>
-                {snapshot.graph.edges.map(renderEdgeLabel)}
-                {snapshot.graph.nodes.map(node => {
-                  const meta = NODE_META[node.type];
-                  const isSelected = node.id === selectedNodeId;
-                  return (
-                    <button
-                      key={node.id}
-                      type="button"
-                      className={`ontology-node ${meta.className}${isSelected ? ' selected' : ''}`}
-                      style={{ left: `${node.position.x}%`, top: `${node.position.y}%` }}
-                      onClick={() => setSelectedNodeId(node.id)}
-                    >
-                      <span className="ontology-node-icon">{meta.icon}</span>
-                      <span className="ontology-node-copy">
-                        <small>{meta.label}</small>
-                        <strong>{node.label}</strong>
-                      </span>
-                    </button>
-                  );
-                })}
+              <div className="ontology-graph-guidance">
+                <span>从左向右看：原始信息如何一步步影响到你的组合</span>
+                <small>点击任意节点聚焦相关路径，再点一次取消</small>
+              </div>
+
+              <div className="ontology-graph-scroll">
+                <div className="ontology-graph">
+                  <div className="ontology-graph-lanes" aria-hidden>
+                    <span style={{ left: '8%' }}>原始证据</span>
+                    <span style={{ left: '31%' }}>发生了什么</span>
+                    <span style={{ left: '54%' }}>投资逻辑</span>
+                    <span style={{ left: '73%' }}>我的资产</span>
+                    <span style={{ left: '91%' }}>组合影响</span>
+                  </div>
+                  <svg
+                    className="ontology-edge-layer"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    role="img"
+                    aria-label="证据、事件、投资逻辑、持仓和组合之间的推导关系"
+                  >
+                    <defs>
+                      <marker id="arrow-positive" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                        <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-positive" />
+                      </marker>
+                      <marker id="arrow-negative" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                        <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-negative" />
+                      </marker>
+                      <marker id="arrow-neutral" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                        <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-neutral" />
+                      </marker>
+                    </defs>
+                    {snapshot.graph.edges.map(renderEdge)}
+                  </svg>
+                  {snapshot.graph.edges.map(renderEdgeLabel)}
+                  {snapshot.graph.nodes.map(node => {
+                    const meta = NODE_META[node.type];
+                    const isSelected = node.id === selectedNodeId;
+                    const isMuted = focusedNodeIds ? !focusedNodeIds.has(node.id) : false;
+                    const signalEdge = snapshot.graph.edges.find(
+                      edge => edge.source === node.id && edge.polarity !== 0,
+                    );
+                    const signalClass = signalEdge
+                      ? signalEdge.polarity > 0 ? ' signal-positive' : ' signal-negative'
+                      : '';
+                    return (
+                      <button
+                        key={node.id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        className={[
+                          'ontology-node',
+                          meta.className,
+                          isSelected ? 'selected' : '',
+                          isMuted ? 'muted' : '',
+                          signalClass,
+                        ].filter(Boolean).join(' ')}
+                        style={{ left: `${node.position.x}%`, top: `${node.position.y}%` }}
+                        onClick={() => setSelectedNodeId(current => current === node.id ? undefined : node.id)}
+                      >
+                        <span className="ontology-node-icon">{meta.icon}</span>
+                        <span className="ontology-node-copy">
+                          <small>{meta.label}</small>
+                          <strong>{node.label}</strong>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="ontology-node-inspector">
@@ -405,13 +501,19 @@ const InvestmentOntologyCenter: React.FC = () => {
                       <strong>{selectedNode.label}</strong>
                     </div>
                     <div className="ontology-node-properties">
-                      {Object.entries(selectedNode.attributes).slice(0, 4).map(([key, value]) => (
-                        <span key={key}><b>{key}</b>{String(value)}</span>
+                      {Object.entries(selectedNode.attributes).slice(0, 5).map(([key, value]) => (
+                        <span key={key}>
+                          <b>{ATTRIBUTE_LABELS[key] || key}</b>
+                          {attributeText(key, value)}
+                        </span>
                       ))}
                     </div>
                   </>
                 ) : (
-                  <span>点击图中对象查看属性</span>
+                  <span className="ontology-inspector-empty">
+                    <NodeIndexOutlined />
+                    点击一个节点，查看它的来源、关键属性和完整影响路径
+                  </span>
                 )}
               </div>
             </article>
