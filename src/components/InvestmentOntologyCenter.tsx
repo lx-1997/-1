@@ -1,15 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApartmentOutlined,
+  AppstoreOutlined,
   AuditOutlined,
   BankOutlined,
+  BranchesOutlined,
   BulbOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
+  ControlOutlined,
   DatabaseOutlined,
   FileSearchOutlined,
   FundProjectionScreenOutlined,
+  HistoryOutlined,
   LinkOutlined,
+  LockOutlined,
   NodeIndexOutlined,
+  PlayCircleOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
@@ -31,41 +38,150 @@ import {
 } from '../services/eventService';
 import './InvestmentOntologyCenter.css';
 
-const NODE_META: Record<OntologyEntityType, {
+type WorkspaceView = 'decision' | 'network' | 'objects' | 'actions' | 'governance';
+type LiveEvidenceTone = 'positive' | 'risk' | 'neutral';
+type LiveEvidenceFilter = 'all' | LiveEvidenceTone;
+
+interface ObjectTypeDefinition {
+  type: OntologyEntityType;
   label: string;
-  className: string;
+  description: string;
+  primaryKey: string;
+  source: string;
+  properties: string[];
   icon: React.ReactNode;
-}> = {
-  Evidence: { label: '证据', className: 'evidence', icon: <DatabaseOutlined /> },
-  Event: { label: '事件', className: 'event', icon: <ThunderboltOutlined /> },
-  Thesis: { label: '投资论点', className: 'thesis', icon: <BulbOutlined /> },
-  Security: { label: '证券', className: 'security', icon: <FundProjectionScreenOutlined /> },
-  Issuer: { label: '公司', className: 'issuer', icon: <BankOutlined /> },
-  Position: { label: '持仓', className: 'position', icon: <AuditOutlined /> },
-  Portfolio: { label: '组合', className: 'portfolio', icon: <ApartmentOutlined /> },
-};
+  accent: string;
+}
 
-const EDGE_LABELS: Record<string, string> = {
-  EVIDENCES: '证明',
-  SUPPORTS: '支持',
-  WEAKENS: '削弱',
-  CONTRADICTS: '反驳',
-  ABOUT: '关于',
-  REPRESENTS: '对应',
-  GOVERNS: '约束',
-  HOLDS: '持有',
-  POSITION_IN: '属于',
-};
+const OBJECT_TYPES: ObjectTypeDefinition[] = [
+  {
+    type: 'Portfolio',
+    label: '组合',
+    description: '投资账户或策略组合，是风险预算和行动汇总的边界。',
+    primaryKey: 'portfolio_id',
+    source: '模拟盘 / 用户组合',
+    properties: ['名称', '净值', '币种', '运行模式'],
+    icon: <ApartmentOutlined />,
+    accent: '#34d399',
+  },
+  {
+    type: 'Issuer',
+    label: '公司',
+    description: '证券背后的真实经营主体，用于承接行业、财务和经营事实。',
+    primaryKey: 'issuer_id',
+    source: '证券主数据',
+    properties: ['公司名', '行业', '板块', '市场'],
+    icon: <BankOutlined />,
+    accent: '#60a5fa',
+  },
+  {
+    type: 'Security',
+    label: '证券',
+    description: '可交易证券的统一身份，将代码、简称和供应商别名合并。',
+    primaryKey: 'security_id',
+    source: '行情 / 主数据',
+    properties: ['代码', '交易所', '币种', '价格', '时间'],
+    icon: <FundProjectionScreenOutlined />,
+    accent: '#2dd4bf',
+  },
+  {
+    type: 'Position',
+    label: '持仓',
+    description: '某组合对某证券的真实暴露，连接成本、盈亏和风险预算。',
+    primaryKey: 'position_id',
+    source: '模拟盘 / 券商导入',
+    properties: ['权重', '成本', '盈亏', '风险上限'],
+    icon: <AuditOutlined />,
+    accent: '#10b981',
+  },
+  {
+    type: 'Thesis',
+    label: '投资论点',
+    description: '持有一只股票的核心理由，包含置信度和可验证的失效条件。',
+    primaryKey: 'thesis_id',
+    source: '投研工作流',
+    properties: ['状态', '置信度', '失效条件'],
+    icon: <BulbOutlined />,
+    accent: '#a78bfa',
+  },
+  {
+    type: 'Event',
+    label: '事件',
+    description: '被证据支持的现实变化，用来增强或削弱投资论点。',
+    primaryKey: 'event_id',
+    source: '事件抽取',
+    properties: ['事件类型', '发生时间', '重要性', '方向'],
+    icon: <ThunderboltOutlined />,
+    accent: '#f59e0b',
+  },
+  {
+    type: 'Evidence',
+    label: '证据',
+    description: '快讯、文章、研报或数据快照，是每条推断可以回看的原始依据。',
+    primaryKey: 'evidence_id',
+    source: 'DAO 财经信息库',
+    properties: ['来源', '入库时间', '可信度', '原文链接'],
+    icon: <DatabaseOutlined />,
+    accent: '#22d3ee',
+  },
+];
 
-const NODE_EXPLANATIONS: Record<OntologyEntityType, string> = {
-  Evidence: '这是结论的原始依据。先看来源和可信度，再判断后面的投资逻辑是否站得住。',
-  Event: '这是正在发生的变化。它会增强或削弱投资逻辑，并最终传导到你的持仓风险。',
-  Thesis: '这是持有这只股票的核心理由。新证据都在回答：这个理由变强了，还是变弱了？',
-  Security: '这是统一识别后的股票对象。不同代码和数据源的信息，会在这里汇总到同一个标的。',
-  Issuer: '这是股票背后的公司主体，用来把公司基本面与具体证券准确关联起来。',
-  Position: '这是你的真实持仓。系统会在这里比较投资逻辑、当前仓位和预设风险上限。',
-  Portfolio: '这是对整个组合的影响，用来判断单只股票的变化是否需要转化为整体行动。',
-};
+const OBJECT_META = Object.fromEntries(
+  OBJECT_TYPES.map(item => [item.type, item]),
+) as Record<OntologyEntityType, ObjectTypeDefinition>;
+
+const LINK_TYPES = [
+  ['EVIDENCES', '证据 → 事件', '证明某件事确实发生'],
+  ['SUPPORTS', '事件 → 论点', '增强投资逻辑'],
+  ['WEAKENS', '事件 → 论点', '削弱投资逻辑'],
+  ['CONTRADICTS', '事件 → 论点', '触发论点复核'],
+  ['ABOUT', '论点 → 证券', '论点属于哪只股票'],
+  ['REPRESENTS', '证券 ↔ 公司', '证券代表经营主体'],
+  ['GOVERNS', '论点 → 持仓', '论点变化约束仓位'],
+  ['HOLDS', '持仓 ↔ 证券', '持仓持有哪只证券'],
+  ['POSITION_IN', '持仓 → 组合', '风险传导到组合'],
+] as const;
+
+const EDGE_LABELS: Record<string, string> = Object.fromEntries(
+  LINK_TYPES.map(([apiName, label]) => [apiName, label.split(' ')[0]]),
+);
+
+const ACTION_DEFINITIONS = [
+  {
+    type: 'keep_watch',
+    label: '维持观察',
+    description: '保持当前仓位，将新证据纳入下一次复核。',
+    guardrail: '不改变仓位，只写入决策记录',
+  },
+  {
+    type: 'request_research',
+    label: '发起补证',
+    description: '把当前缺口交给投研流程，要求补充可核验材料。',
+    guardrail: '必须保留标的、缺口和发起理由',
+  },
+  {
+    type: 'reduce_paper',
+    label: '模拟减仓',
+    description: '当仓位超过风险预算时，记录一笔模拟降仓动作。',
+    guardrail: '仅模拟盘，不连接券商',
+  },
+  {
+    type: 'invalidate_thesis',
+    label: '标记论点失效',
+    description: '失效条件被证据满足时，冻结原论点并留下原因。',
+    guardrail: '必须由可追溯证据支持',
+  },
+] as const;
+
+const POSITIVE_TERMS = [
+  '增长', '回购', '增持', '上调', '突破', '中标', '改善', '看好', '机会',
+  '盈利企稳', '超预期', '创新高', '政策支持', '成本回落', '份额提升',
+];
+
+const RISK_TERMS = [
+  '风险', '承压', '减持', '下调', '处罚', '诉讼', '亏损', '低于预期',
+  '下滑', '疲弱', '警示', '违约', '监管', '不确定', '尚需等待', '未临',
+];
 
 const ATTRIBUTE_LABELS: Record<string, string> = {
   ticker: '股票代码',
@@ -78,25 +194,26 @@ const ATTRIBUTE_LABELS: Record<string, string> = {
   event_type: '事件类型',
   occurred_at: '发生时间',
   severity: '重要性',
-  confidence: '逻辑可信度',
+  confidence: '论点置信度',
   invalidation: '失效条件',
   weight_pct: '当前仓位',
-  risk_budget_pct: '仓位上限',
+  risk_budget_pct: '风险预算',
   pnl_pct: '浮动盈亏',
+  status: '状态',
   name: '名称',
 };
 
-type LiveEvidenceTone = 'positive' | 'risk' | 'neutral';
-type LiveEvidenceFilter = 'all' | LiveEvidenceTone;
-
-const POSITIVE_TERMS = [
-  '增长', '回购', '增持', '上调', '突破', '中标', '改善', '看好', '机会',
-  '盈利企稳', '超预期', '创新高', '政策支持', '成本回落', '份额提升',
-];
-
-const RISK_TERMS = [
-  '风险', '承压', '减持', '下调', '处罚', '诉讼', '亏损', '低于预期',
-  '下滑', '疲弱', '警示', '违约', '监管', '不确定', '尚需等待', '未临',
+const NAV_ITEMS: Array<{
+  id: WorkspaceView;
+  label: string;
+  helper: string;
+  icon: React.ReactNode;
+}> = [
+  { id: 'decision', label: '决策台', helper: '今天先看什么', icon: <ControlOutlined /> },
+  { id: 'network', label: '关系网络', helper: '结论如何形成', icon: <BranchesOutlined /> },
+  { id: 'objects', label: '对象目录', helper: '系统认识什么', icon: <AppstoreOutlined /> },
+  { id: 'actions', label: '动作中心', helper: '把判断变成流程', icon: <PlayCircleOutlined /> },
+  { id: 'governance', label: '治理与溯源', helper: '数据从哪来', icon: <LockOutlined /> },
 ];
 
 function liveEvidenceTone(item: RealtimeMessageRecord): LiveEvidenceTone {
@@ -110,29 +227,23 @@ function liveEvidenceTone(item: RealtimeMessageRecord): LiveEvidenceTone {
 }
 
 function cleanEvidenceText(value: string): string {
-  return value
-    .replace(/\*+/g, '')
-    .replace(/#+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return value.replace(/\*+/g, '').replace(/#+/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function liveEvidenceTitle(item: RealtimeMessageRecord): string {
   const title = cleanEvidenceText(item.title);
   if (title && !/^【?(研报)?快讯】?$/.test(title)) return title;
-  const contentLine = item.content
+  return item.content
     .split(/\n+/)
     .map(cleanEvidenceText)
-    .find(line => line.length > 8);
-  return contentLine || title || 'DAO财经相关信息';
+    .find(line => line.length > 8) || title || 'DAO 财经相关信息';
 }
 
 function liveEvidenceSummary(item: RealtimeMessageRecord): string {
   const title = liveEvidenceTitle(item);
   const content = cleanEvidenceText(item.content);
-  const withoutTitle = content.startsWith(title) ? content.slice(title.length).trim() : content;
-  const summary = withoutTitle || content;
-  return summary.length > 150 ? `${summary.slice(0, 150)}…` : summary;
+  const summary = content.startsWith(title) ? content.slice(title.length).trim() : content;
+  return summary.length > 170 ? `${summary.slice(0, 170)}…` : summary;
 }
 
 function percentage(value: unknown): string {
@@ -140,17 +251,18 @@ function percentage(value: unknown): string {
   return Number.isFinite(numberValue) ? `${Math.round(numberValue * 100)}%` : '—';
 }
 
+function numberText(value: unknown, suffix = ''): string {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue)
+    ? `${numberValue.toLocaleString('zh-CN', { maximumFractionDigits: 1 })}${suffix}`
+    : '—';
+}
+
 function attributeText(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
   if (key === 'confidence' || key === 'credibility') return percentage(value);
   if (key.endsWith('_pct')) return numberText(value, '%');
   return String(value);
-}
-
-function numberText(value: unknown, suffix = ''): string {
-  const numberValue = Number(value);
-  if (!Number.isFinite(numberValue)) return '—';
-  return `${numberValue.toLocaleString('zh-CN', { maximumFractionDigits: 1 })}${suffix}`;
 }
 
 function formatTimestamp(value: string): string {
@@ -172,8 +284,10 @@ function edgeClass(edge: OntologyEdge): string {
 
 const InvestmentOntologyCenter: React.FC = () => {
   const [snapshot, setSnapshot] = useState<OntologyDemoSnapshot | null>(null);
+  const [activeView, setActiveView] = useState<WorkspaceView>('decision');
   const [selectedSecurityId, setSelectedSecurityId] = useState<string>();
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const [selectedObjectType, setSelectedObjectType] = useState<OntologyEntityType>('Security');
   const [liveEvidence, setLiveEvidence] = useState<RealtimeMessageRecord[]>([]);
   const [liveEvidenceLoading, setLiveEvidenceLoading] = useState(false);
   const [liveEvidenceError, setLiveEvidenceError] = useState<string | null>(null);
@@ -192,14 +306,13 @@ const InvestmentOntologyCenter: React.FC = () => {
     setError(null);
     setLiveEvidenceLoading(true);
     setLiveEvidenceError(null);
-    setLiveEvidenceFilter('all');
     setShowAllEvidence(false);
     try {
       const result = await fetchOntologyDemo(securityId);
       if (sequence !== loadSequence.current) return;
       setSnapshot(result);
       setSelectedSecurityId(result.selected_security_id);
-      setSelectedNodeId(undefined);
+      setSelectedNodeId(result.decision.thesis.id);
       const selectedAsset = result.assets.find(asset => asset.security_id === result.selected_security_id);
       const ticker = selectedAsset?.canonical_key.split('.')[0] || '';
       const aliases = [
@@ -219,7 +332,7 @@ const InvestmentOntologyCenter: React.FC = () => {
       } catch (liveError) {
         if (sequence === loadSequence.current) {
           setLiveEvidence([]);
-          setLiveEvidenceError(liveError instanceof Error ? liveError.message : 'DAO财经信息读取失败');
+          setLiveEvidenceError(liveError instanceof Error ? liveError.message : 'DAO 财经信息读取失败');
         }
       }
     } catch (loadError) {
@@ -238,56 +351,7 @@ const InvestmentOntologyCenter: React.FC = () => {
     void load();
   }, [load]);
 
-  const nodeMap = useMemo(() => new Map(
-    (snapshot?.graph.nodes || []).map(node => [node.id, node])
-  ), [snapshot]);
-
-  const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) : undefined;
-
-  const selectedIncomingEdges = useMemo(
-    () => snapshot && selectedNodeId
-      ? snapshot.graph.edges.filter(edge => edge.target === selectedNodeId)
-      : [],
-    [selectedNodeId, snapshot],
-  );
-
-  const selectedOutgoingEdges = useMemo(
-    () => snapshot && selectedNodeId
-      ? snapshot.graph.edges.filter(edge => edge.source === selectedNodeId)
-      : [],
-    [selectedNodeId, snapshot],
-  );
-
-  const focusedNodeIds = useMemo(() => {
-    if (!snapshot || !selectedNodeId) return null;
-    const incoming = new Map<string, OntologyEdge[]>();
-    const outgoing = new Map<string, OntologyEdge[]>();
-    snapshot.graph.edges.forEach(edge => {
-      incoming.set(edge.target, [...(incoming.get(edge.target) || []), edge]);
-      outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge]);
-    });
-    const focused = new Set<string>([selectedNodeId]);
-    const walk = (
-      edgeMap: Map<string, OntologyEdge[]>,
-      nodeId: string,
-      nextNode: (edge: OntologyEdge) => string,
-    ): void => {
-      (edgeMap.get(nodeId) || []).forEach(edge => {
-        const nextId = nextNode(edge);
-        if (focused.has(nextId)) return;
-        focused.add(nextId);
-        walk(edgeMap, nextId, nextNode);
-      });
-    };
-    walk(incoming, selectedNodeId, edge => edge.source);
-    walk(outgoing, selectedNodeId, edge => edge.target);
-    return focused;
-  }, [selectedNodeId, snapshot]);
-
-  const recordAction = useCallback(async (
-    actionType: string,
-    reason: string,
-  ) => {
+  const recordAction = useCallback(async (actionType: string, reason: string) => {
     if (!snapshot) return;
     setActionLoading(true);
     try {
@@ -296,9 +360,12 @@ const InvestmentOntologyCenter: React.FC = () => {
         action_type: actionType,
         reason,
       });
+      setSnapshot(current => current
+        ? { ...current, actions: [created, ...current.actions.filter(item => item.id !== created.id)] }
+        : current);
       setActionPulseId(created.id);
-      setSnapshot(prev => prev ? { ...prev, actions: [created, ...prev.actions] } : prev);
-      apiMessage.success(`已记录：${created.action_label}（仅演示审计，不产生真实交易）`);
+      window.setTimeout(() => setActionPulseId(undefined), 1800);
+      apiMessage.success(`已记录“${created.action_label}”，未触发真实交易`);
     } catch (actionError) {
       apiMessage.error(actionError instanceof Error ? actionError.message : '动作记录失败');
     } finally {
@@ -306,109 +373,833 @@ const InvestmentOntologyCenter: React.FC = () => {
     }
   }, [apiMessage, snapshot]);
 
-  const renderEdge = (edge: OntologyEdge) => {
-    const source = nodeMap.get(edge.source);
-    const target = nodeMap.get(edge.target);
-    if (!source || !target) return null;
-    const bendX = (source.position.x + target.position.x) / 2;
-    const isMuted = focusedNodeIds
-      ? !(focusedNodeIds.has(edge.source) && focusedNodeIds.has(edge.target))
-      : false;
-    return (
-      <path
-        key={edge.id}
-        className={`ontology-edge-line ${edgeClass(edge)}${isMuted ? ' muted' : ''}`}
-        d={[
-          `M ${source.position.x} ${source.position.y}`,
-          `C ${bendX} ${source.position.y},`,
-          `${bendX} ${target.position.y},`,
-          `${target.position.x} ${target.position.y}`,
-        ].join(' ')}
-        style={{ opacity: 0.28 + edge.confidence * 0.5 }}
-        markerEnd={`url(#arrow-${edgeClass(edge)})`}
-      />
-    );
-  };
-
-  const renderEdgeLabel = (edge: OntologyEdge) => {
-    const source = nodeMap.get(edge.source);
-    const target = nodeMap.get(edge.target);
-    if (!source || !target || edge.polarity === 0) return null;
-    const x = (source.position.x + target.position.x) / 2;
-    const y = (source.position.y + target.position.y) / 2;
-    const isMuted = focusedNodeIds
-      ? !(focusedNodeIds.has(edge.source) && focusedNodeIds.has(edge.target))
-      : false;
-    return (
-      <Tooltip key={`label-${edge.id}`} title={`关系置信度 ${percentage(edge.confidence)}`}>
-        <span
-          className={`ontology-edge-label ${edgeClass(edge)}${isMuted ? ' muted' : ''}`}
-          style={{ left: `${x}%`, top: `${y}%` }}
-        >
-          {EDGE_LABELS[edge.type] || edge.type}
-        </span>
-      </Tooltip>
-    );
-  };
-
-  const actions = snapshot?.actions || [];
-  const decision = snapshot?.decision;
   const annotatedLiveEvidence = useMemo(
     () => liveEvidence.map(item => ({ item, tone: liveEvidenceTone(item) })),
     [liveEvidence],
   );
+
   const liveEvidenceStats = useMemo(() => {
     const positive = annotatedLiveEvidence.filter(entry => entry.tone === 'positive').length;
     const risk = annotatedLiveEvidence.filter(entry => entry.tone === 'risk').length;
     const neutral = annotatedLiveEvidence.length - positive - risk;
     const sources = new Set(
-      annotatedLiveEvidence.map(entry => entry.item.source_name || 'DAO财经').filter(Boolean),
+      annotatedLiveEvidence.map(entry => entry.item.source_name || 'DAO 财经').filter(Boolean),
     ).size;
     return { positive, risk, neutral, sources, total: annotatedLiveEvidence.length };
   }, [annotatedLiveEvidence]);
+
   const matchingLiveEvidence = useMemo(
     () => annotatedLiveEvidence.filter(
       entry => liveEvidenceFilter === 'all' || entry.tone === liveEvidenceFilter,
     ),
     [annotatedLiveEvidence, liveEvidenceFilter],
   );
+
   const filteredLiveEvidence = useMemo(
     () => matchingLiveEvidence.slice(0, showAllEvidence ? 8 : 3),
     [matchingLiveEvidence, showAllEvidence],
   );
+
+  const selectedAsset = snapshot?.assets.find(asset => asset.security_id === selectedSecurityId);
+  const decision = snapshot?.decision;
   const liveSignalTone: LiveEvidenceTone = liveEvidenceStats.risk > 0
     ? 'risk'
     : liveEvidenceStats.positive > 0
       ? 'positive'
       : 'neutral';
+
   const liveHeadline = liveEvidenceLoading
-    ? '正在读取 DAO 财经的相关信息…'
+    ? '正在把 DAO 财经信息映射到投资对象…'
     : liveEvidenceStats.total === 0
-      ? '暂时没有足够的新信息，不强行给结论'
+      ? '暂时没有足够的新证据，不强行给出结论'
       : liveSignalTone === 'risk'
-        ? `发现 ${liveEvidenceStats.risk} 条风险线索，先核对再决定是否行动`
+        ? `有 ${liveEvidenceStats.risk} 条风险证据需要先核对`
         : liveSignalTone === 'positive'
-          ? `发现 ${liveEvidenceStats.positive} 条积极线索，但仍要逐条验证来源`
-          : '多空信息没有形成一致方向，保持观察';
+          ? `有 ${liveEvidenceStats.positive} 条积极证据，但仍需验证`
+          : '多空证据暂未形成一致方向';
+
   const liveAction = liveEvidenceStats.total === 0
     ? '等待新的快讯、文章或研报进入 DAO 财经信息库。'
     : liveSignalTone === 'risk'
-      ? `先看下面 ${liveEvidenceStats.risk} 条风险线索，确认是否真的破坏原有投资逻辑。`
+      ? '先判断这些证据是否满足论点失效条件，再决定是否调整仓位。'
       : liveSignalTone === 'positive'
-        ? `先看下面 ${liveEvidenceStats.positive} 条积极线索，确认它们是否已经兑现到经营数据。`
-        : '把相互矛盾的证据放在一起看，不因为单条新闻追涨杀跌。';
-  const selectedAsset = snapshot?.assets.find(asset => asset.security_id === selectedSecurityId);
+        ? '先确认积极变化是否已经兑现到经营数据，不因单条信息追涨。'
+        : '保留当前判断，同时跟踪相互矛盾的信息。';
+
+  const dynamicGraph = useMemo(() => {
+    if (!snapshot) return { nodes: [] as OntologyNode[], edges: [] as OntologyEdge[] };
+    const evidenceEntries = annotatedLiveEvidence.slice(0, 3);
+    const ys = evidenceEntries.length === 1 ? [50] : evidenceEntries.length === 2 ? [32, 68] : [22, 50, 78];
+    const evidenceNodes: OntologyNode[] = evidenceEntries.map(({ item, tone }, index) => ({
+      id: `live-evidence:${item.id}`,
+      type: 'Evidence',
+      label: liveEvidenceTitle(item),
+      canonical_key: item.id,
+      market: snapshot.identity.security.market,
+      attributes: {
+        source: item.source_name || 'DAO 财经',
+        known_at: item.created_at,
+        credibility: tone === 'neutral' ? 0.62 : 0.76,
+        signal: tone,
+      },
+      position: { x: 8, y: ys[index] },
+    }));
+    const eventNodes: OntologyNode[] = evidenceEntries.map(({ item, tone }, index) => ({
+      id: `live-event:${item.id}`,
+      type: 'Event',
+      label: tone === 'risk' ? '风险变化' : tone === 'positive' ? '积极变化' : '待确认变化',
+      canonical_key: `event:${item.id}`,
+      market: snapshot.identity.security.market,
+      attributes: {
+        event_type: item.topic || '资讯事件',
+        occurred_at: item.created_at,
+        severity: tone,
+      },
+      position: { x: 30, y: ys[index] },
+    }));
+    const thesisNode = {
+      ...snapshot.decision.thesis,
+      position: { x: 53, y: 50 },
+    };
+    const positionNode = {
+      ...snapshot.decision.position,
+      position: { x: 74, y: 50 },
+    };
+    const portfolioNode = snapshot.graph.nodes.find(node => node.type === 'Portfolio');
+    const finalPortfolio = portfolioNode
+      ? { ...portfolioNode, position: { x: 92, y: 50 } }
+      : undefined;
+    const evidenceEdges: OntologyEdge[] = evidenceEntries.flatMap(({ item, tone }) => [
+      {
+        id: `live-rel-evidence:${item.id}`,
+        source: `live-evidence:${item.id}`,
+        target: `live-event:${item.id}`,
+        type: 'EVIDENCES',
+        polarity: 0,
+        confidence: tone === 'neutral' ? 0.62 : 0.76,
+      },
+      {
+        id: `live-rel-thesis:${item.id}`,
+        source: `live-event:${item.id}`,
+        target: thesisNode.id,
+        type: tone === 'risk' ? 'WEAKENS' : tone === 'positive' ? 'SUPPORTS' : 'ABOUT',
+        polarity: tone === 'risk' ? -1 : tone === 'positive' ? 1 : 0,
+        confidence: tone === 'neutral' ? 0.55 : 0.72,
+      },
+    ]);
+    const downstreamEdges: OntologyEdge[] = [
+      {
+        id: 'live-rel-position',
+        source: thesisNode.id,
+        target: positionNode.id,
+        type: 'GOVERNS',
+        polarity: 0,
+        confidence: 0.9,
+      },
+      ...(finalPortfolio ? [{
+        id: 'live-rel-portfolio',
+        source: positionNode.id,
+        target: finalPortfolio.id,
+        type: 'POSITION_IN',
+        polarity: 0 as const,
+        confidence: 1,
+      }] : []),
+    ];
+    return {
+      nodes: [...evidenceNodes, ...eventNodes, thesisNode, positionNode, ...(finalPortfolio ? [finalPortfolio] : [])],
+      edges: [...evidenceEdges, ...downstreamEdges],
+    };
+  }, [annotatedLiveEvidence, snapshot]);
+
+  const graphNodeMap = useMemo(
+    () => new Map(dynamicGraph.nodes.map(node => [node.id, node])),
+    [dynamicGraph.nodes],
+  );
+  const selectedNode = selectedNodeId ? graphNodeMap.get(selectedNodeId)
+    || snapshot?.graph.nodes.find(node => node.id === selectedNodeId) : undefined;
+  const selectedIncomingEdges = dynamicGraph.edges.filter(edge => edge.target === selectedNode?.id);
+  const selectedOutgoingEdges = dynamicGraph.edges.filter(edge => edge.source === selectedNode?.id);
+
+  const objectCounts = useMemo(() => {
+    const counts = Object.fromEntries(OBJECT_TYPES.map(item => [item.type, 0])) as Record<OntologyEntityType, number>;
+    (snapshot?.graph.nodes || []).forEach(node => { counts[node.type] += 1; });
+    counts.Evidence = Math.max(counts.Evidence, liveEvidenceStats.total);
+    counts.Event = Math.max(counts.Event, Math.min(liveEvidenceStats.total, 12));
+    return counts;
+  }, [liveEvidenceStats.total, snapshot]);
+
+  const selectedTypeDefinition = OBJECT_META[selectedObjectType];
+  const selectedTypeObjects = useMemo(() => {
+    if (!snapshot) return [] as OntologyNode[];
+    if (selectedObjectType === 'Evidence') return dynamicGraph.nodes.filter(node => node.type === 'Evidence');
+    if (selectedObjectType === 'Event') return dynamicGraph.nodes.filter(node => node.type === 'Event');
+    return snapshot.graph.nodes.filter(node => node.type === selectedObjectType);
+  }, [dynamicGraph.nodes, selectedObjectType, snapshot]);
+
+  const focusedNodeIds = useMemo(() => {
+    if (!selectedNodeId) return null;
+    const focused = new Set<string>([selectedNodeId]);
+    dynamicGraph.edges.forEach(edge => {
+      if (edge.source === selectedNodeId) focused.add(edge.target);
+      if (edge.target === selectedNodeId) focused.add(edge.source);
+    });
+    return focused;
+  }, [dynamicGraph.edges, selectedNodeId]);
+
+  const renderEdge = (edge: OntologyEdge) => {
+    const source = graphNodeMap.get(edge.source);
+    const target = graphNodeMap.get(edge.target);
+    if (!source || !target) return null;
+    const isMuted = focusedNodeIds
+      ? !(focusedNodeIds.has(edge.source) && focusedNodeIds.has(edge.target))
+      : false;
+    const midX = (source.position.x + target.position.x) / 2;
+    const controlOffset = Math.max(4, Math.abs(target.position.y - source.position.y) * 0.28);
+    const path = `M ${source.position.x} ${source.position.y} C ${midX - controlOffset} ${source.position.y}, ${midX + controlOffset} ${target.position.y}, ${target.position.x} ${target.position.y}`;
+    return (
+      <path
+        key={edge.id}
+        d={path}
+        className={`${edgeClass(edge)}${isMuted ? ' muted' : ''}`}
+        markerEnd={`url(#ontology-arrow-${edgeClass(edge)})`}
+      />
+    );
+  };
+
+  const renderEvidenceList = () => (
+    <section id="ontology-live-evidence" className="ontology-evidence-panel">
+      <header className="ontology-section-head">
+        <div>
+          <span>LIVE OBJECT SET</span>
+          <h3>与 {selectedAsset?.label} 关联的证据</h3>
+          <p>实时从 DAO 财经信息库匹配，保留来源、时间和原文。</p>
+        </div>
+        <div className="ontology-evidence-filters" role="group" aria-label="筛选关联证据">
+          {([
+            ['all', `全部 ${liveEvidenceStats.total}`],
+            ['risk', `风险 ${liveEvidenceStats.risk}`],
+            ['positive', `积极 ${liveEvidenceStats.positive}`],
+            ['neutral', `中性 ${liveEvidenceStats.neutral}`],
+          ] as Array<[LiveEvidenceFilter, string]>).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={liveEvidenceFilter === value ? 'active' : ''}
+              onClick={() => {
+                setLiveEvidenceFilter(value);
+                setShowAllEvidence(false);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      {liveEvidenceLoading ? (
+        <div className="ontology-empty">正在关联快讯、文章和研报…</div>
+      ) : liveEvidenceError ? (
+        <div className="ontology-empty error">
+          <strong>实时信息暂时读取失败</strong>
+          <span>{liveEvidenceError}</span>
+        </div>
+      ) : filteredLiveEvidence.length ? (
+        <>
+          <div className="ontology-evidence-list">
+            {filteredLiveEvidence.map(({ item, tone }) => (
+              <article key={item.id} className={tone}>
+                <div className="ontology-evidence-meta">
+                  <span>{item.topic || '资讯'}</span>
+                  <em>{item.source_name || 'DAO 财经'}</em>
+                  <small>{formatTimestamp(item.created_at)}</small>
+                </div>
+                <h4>{liveEvidenceTitle(item)}</h4>
+                <p>{liveEvidenceSummary(item)}</p>
+                <footer>
+                  <span className={`ontology-signal-pill ${tone}`}>
+                    {tone === 'risk' ? '削弱论点' : tone === 'positive' ? '支持论点' : '待确认'}
+                  </span>
+                  <span>对象：Evidence</span>
+                  <a
+                    href={item.url || `/?article=${encodeURIComponent(item.id)}`}
+                    target={item.url ? '_blank' : undefined}
+                    rel={item.url ? 'noreferrer' : undefined}
+                  >
+                    查看原文 <LinkOutlined />
+                  </a>
+                </footer>
+              </article>
+            ))}
+          </div>
+          {matchingLiveEvidence.length > 3 && (
+            <button
+              type="button"
+              className="ontology-more-button"
+              onClick={() => setShowAllEvidence(current => !current)}
+            >
+              {showAllEvidence ? '收起，只看优先证据' : `继续查看 ${matchingLiveEvidence.length - 3} 条`}
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="ontology-empty">当前筛选下没有证据，切换“全部”或等待新内容。</div>
+      )}
+    </section>
+  );
+
+  const renderDecisionWorkspace = () => (
+    <div className="ontology-view-stack">
+      <section className={`ontology-decision-hero ${liveSignalTone}`}>
+        <div className="ontology-decision-copy">
+          <div className="ontology-live-status">
+            <i />
+            <span>DAO 财经实时映射</span>
+            <em>{selectedAsset?.label} · {selectedAsset?.canonical_key}</em>
+          </div>
+          <small>当前决策结论</small>
+          <h2>{liveHeadline}</h2>
+          <p>{liveAction}</p>
+          <div className="ontology-decision-actions">
+            <Button
+              type="primary"
+              icon={<FileSearchOutlined />}
+              href="#ontology-live-evidence"
+              onClick={() => {
+                setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all');
+                setShowAllEvidence(false);
+              }}
+            >
+              核对优先证据
+            </Button>
+            <Button
+              icon={<CheckCircleOutlined />}
+              loading={actionLoading}
+              disabled={liveEvidenceStats.total === 0}
+              onClick={() => void recordAction(
+                'request_research',
+                `${selectedAsset?.label || '当前标的'}：关联 ${liveEvidenceStats.total} 条信息，风险 ${liveEvidenceStats.risk} 条，积极 ${liveEvidenceStats.positive} 条`,
+              )}
+            >
+              发起补证
+            </Button>
+          </div>
+        </div>
+        <div className="ontology-decision-facts">
+          <div className="ontology-decision-score">
+            <span>{decision?.verdict || '等待判断'}</span>
+            <strong>{percentage(decision?.thesis.attributes.confidence)}</strong>
+            <small>论点置信度</small>
+          </div>
+          <dl>
+            <div><dt>关联信息</dt><dd>{liveEvidenceStats.total}</dd></div>
+            <div className="risk"><dt>风险证据</dt><dd>{liveEvidenceStats.risk}</dd></div>
+            <div className="positive"><dt>积极证据</dt><dd>{liveEvidenceStats.positive}</dd></div>
+            <div><dt>数据来源</dt><dd>{liveEvidenceStats.sources}</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section className="ontology-decision-grid">
+        <article className="ontology-thesis-card">
+          <header>
+            <div>
+              <span>THESIS OBJECT</span>
+              <h3>{decision?.thesis.label}</h3>
+            </div>
+            <Tag color={decision?.tone === 'positive' ? 'green' : decision?.tone === 'warning' ? 'orange' : 'blue'}>
+              {decision?.verdict}
+            </Tag>
+          </header>
+          <p>{decision?.change_summary}</p>
+          <div className="ontology-thesis-rail">
+            <div>
+              <span>支持路径</span>
+              <strong className="positive">{liveEvidenceStats.positive}</strong>
+            </div>
+            <div>
+              <span>反证路径</span>
+              <strong className="risk">{liveEvidenceStats.risk}</strong>
+            </div>
+            <div>
+              <span>当前仓位</span>
+              <strong>{numberText(decision?.position.attributes.weight_pct, '%')}</strong>
+            </div>
+            <div>
+              <span>风险预算</span>
+              <strong>{numberText(decision?.position.attributes.risk_budget_pct, '%')}</strong>
+            </div>
+          </div>
+          <footer>
+            <span>失效条件</span>
+            <strong>{String(decision?.thesis.attributes.invalidation || '尚未定义')}</strong>
+          </footer>
+        </article>
+
+        <article className="ontology-next-action">
+          <span>ACTION RECOMMENDATION</span>
+          <h3>下一步怎么做</h3>
+          <p>{decision?.recommended_action}</p>
+          <div>
+            <SafetyCertificateOutlined />
+            <span>{decision?.recommended_reason}</span>
+          </div>
+          <Button
+            type="primary"
+            loading={actionLoading}
+            onClick={() => void recordAction(
+              decision?.recommended_action_type || 'keep_watch',
+              decision?.recommended_reason || '按本体建议执行',
+            )}
+          >
+            记录这次决策
+          </Button>
+          <small>仅写入审计台账，不连接真实券商</small>
+        </article>
+      </section>
+
+      <button
+        type="button"
+        className="ontology-path-preview"
+        onClick={() => setActiveView('network')}
+      >
+        <span><DatabaseOutlined /> DAO 证据</span>
+        <i>→</i>
+        <span><ThunderboltOutlined /> 现实事件</span>
+        <i>→</i>
+        <span><BulbOutlined /> 投资论点</span>
+        <i>→</i>
+        <span><AuditOutlined /> 当前持仓</span>
+        <i>→</i>
+        <span><ApartmentOutlined /> 组合风险</span>
+        <em>查看完整关系网络</em>
+      </button>
+
+      {renderEvidenceList()}
+    </div>
+  );
+
+  const renderNetworkWorkspace = () => (
+    <div className="ontology-network-layout">
+      <section className="ontology-network-panel">
+        <header className="ontology-section-head">
+          <div>
+            <span>ONTOLOGY GRAPH</span>
+            <h3>从原始证据到组合行动</h3>
+            <p>当前网络优先使用 DAO 财经真实信息；点击任一对象查看上下游关系。</p>
+          </div>
+          <div className="ontology-network-legend">
+            <span><i className="positive" />支持</span>
+            <span><i className="negative" />削弱</span>
+            <span><i className="neutral" />结构关系</span>
+          </div>
+        </header>
+        <div className="ontology-network-canvas">
+          <div className="ontology-network-lanes" aria-hidden>
+            <span style={{ left: '8%' }}>证据</span>
+            <span style={{ left: '30%' }}>事件</span>
+            <span style={{ left: '53%' }}>论点</span>
+            <span style={{ left: '74%' }}>持仓</span>
+            <span style={{ left: '92%' }}>组合</span>
+          </div>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="投资本体关系网络">
+            <defs>
+              <marker id="ontology-arrow-positive" markerWidth="4" markerHeight="4" refX="3.4" refY="2" orient="auto">
+                <path d="M0,0 L4,2 L0,4 z" />
+              </marker>
+              <marker id="ontology-arrow-negative" markerWidth="4" markerHeight="4" refX="3.4" refY="2" orient="auto">
+                <path d="M0,0 L4,2 L0,4 z" />
+              </marker>
+              <marker id="ontology-arrow-neutral" markerWidth="4" markerHeight="4" refX="3.4" refY="2" orient="auto">
+                <path d="M0,0 L4,2 L0,4 z" />
+              </marker>
+            </defs>
+            {dynamicGraph.edges.map(renderEdge)}
+          </svg>
+          {dynamicGraph.edges.map(edge => {
+            const source = graphNodeMap.get(edge.source);
+            const target = graphNodeMap.get(edge.target);
+            if (!source || !target) return null;
+            return (
+              <span
+                key={`label:${edge.id}`}
+                className={`ontology-network-edge-label ${edgeClass(edge)}`}
+                style={{
+                  left: `${(source.position.x + target.position.x) / 2}%`,
+                  top: `${(source.position.y + target.position.y) / 2}%`,
+                }}
+              >
+                {EDGE_LABELS[edge.type] || edge.type}
+              </span>
+            );
+          })}
+          {dynamicGraph.nodes.map(node => {
+            const meta = OBJECT_META[node.type];
+            const selected = node.id === selectedNodeId;
+            const muted = focusedNodeIds ? !focusedNodeIds.has(node.id) : false;
+            return (
+              <button
+                key={node.id}
+                type="button"
+                aria-pressed={selected}
+                className={`ontology-network-node ${node.type.toLowerCase()}${selected ? ' selected' : ''}${muted ? ' muted' : ''}`}
+                style={{
+                  left: `${node.position.x}%`,
+                  top: `${node.position.y}%`,
+                  '--node-accent': meta.accent,
+                } as React.CSSProperties}
+                onClick={() => setSelectedNodeId(current => current === node.id ? undefined : node.id)}
+              >
+                <span>{meta.icon}</span>
+                <small>{meta.label}</small>
+                <strong>{node.label}</strong>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <aside className="ontology-inspector">
+        <header>
+          <span>OBJECT VIEW</span>
+          <h3>{selectedNode ? OBJECT_META[selectedNode.type].label : '选择一个对象'}</h3>
+        </header>
+        {selectedNode ? (
+          <>
+            <div className="ontology-inspector-object">
+              <span style={{ color: OBJECT_META[selectedNode.type].accent }}>
+                {OBJECT_META[selectedNode.type].icon}
+              </span>
+              <div>
+                <strong>{selectedNode.label}</strong>
+                <small>{selectedNode.canonical_key}</small>
+              </div>
+            </div>
+            <p>{OBJECT_META[selectedNode.type].description}</p>
+            <dl>
+              {Object.entries(selectedNode.attributes).slice(0, 6).map(([key, value]) => (
+                <div key={key}>
+                  <dt>{ATTRIBUTE_LABELS[key] || key}</dt>
+                  <dd>{attributeText(key, value)}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="ontology-inspector-links">
+              <span>上游 {selectedIncomingEdges.length}</span>
+              <span>下游 {selectedOutgoingEdges.length}</span>
+            </div>
+            {[...selectedIncomingEdges, ...selectedOutgoingEdges].map(edge => {
+              const otherId = edge.source === selectedNode.id ? edge.target : edge.source;
+              return (
+                <button key={edge.id} type="button" onClick={() => setSelectedNodeId(otherId)}>
+                  <span>{EDGE_LABELS[edge.type] || edge.type}</span>
+                  <strong>{graphNodeMap.get(otherId)?.label}</strong>
+                </button>
+              );
+            })}
+          </>
+        ) : (
+          <div className="ontology-inspector-empty">
+            <NodeIndexOutlined />
+            <strong>点击图中的任一对象</strong>
+            <span>这里会显示属性、上游证据和下游影响。</span>
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+
+  const renderObjectsWorkspace = () => (
+    <div className="ontology-object-layout">
+      <aside className="ontology-type-list">
+        <header>
+          <span>OBJECT TYPES</span>
+          <strong>投资对象模型</strong>
+        </header>
+        {OBJECT_TYPES.map(item => (
+          <button
+            key={item.type}
+            type="button"
+            className={selectedObjectType === item.type ? 'active' : ''}
+            onClick={() => setSelectedObjectType(item.type)}
+          >
+            <i style={{ color: item.accent }}>{item.icon}</i>
+            <span>
+              <strong>{item.label}</strong>
+              <small>{item.type}</small>
+            </span>
+            <em>{objectCounts[item.type]}</em>
+          </button>
+        ))}
+      </aside>
+
+      <section className="ontology-object-catalog">
+        <header className="ontology-section-head">
+          <div>
+            <span>{selectedTypeDefinition.type.toUpperCase()}</span>
+            <h3>{selectedTypeDefinition.label}对象</h3>
+            <p>{selectedTypeDefinition.description}</p>
+          </div>
+          <Tag color="green">Active</Tag>
+        </header>
+        <div className="ontology-schema-strip">
+          <div><span>主键</span><strong>{selectedTypeDefinition.primaryKey}</strong></div>
+          <div><span>来源</span><strong>{selectedTypeDefinition.source}</strong></div>
+          <div><span>属性</span><strong>{selectedTypeDefinition.properties.length}</strong></div>
+          <div><span>对象数</span><strong>{objectCounts[selectedObjectType]}</strong></div>
+        </div>
+        <div className="ontology-property-list">
+          {selectedTypeDefinition.properties.map((property, index) => (
+            <span key={property}>
+              <i>{index + 1}</i>
+              <strong>{property}</strong>
+              <small>{index === 0 ? 'required' : 'property'}</small>
+            </span>
+          ))}
+        </div>
+        <div className="ontology-object-instances">
+          <div className="ontology-object-table-head">
+            <span>对象实例</span>
+            <small>当前选择范围</small>
+          </div>
+          {selectedTypeObjects.length ? selectedTypeObjects.map(node => (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => {
+                setSelectedNodeId(node.id);
+                setActiveView('network');
+              }}
+            >
+              <span style={{ color: selectedTypeDefinition.accent }}>{selectedTypeDefinition.icon}</span>
+              <strong>{node.label}</strong>
+              <small>{node.canonical_key}</small>
+              <em>查看关系 →</em>
+            </button>
+          )) : (
+            <div className="ontology-empty">当前标的没有这个类型的对象实例。</div>
+          )}
+        </div>
+      </section>
+
+      <aside className="ontology-links-catalog">
+        <header>
+          <span>LINK TYPES</span>
+          <strong>9 种关系</strong>
+        </header>
+        {LINK_TYPES.map(([apiName, label, description]) => (
+          <div key={apiName}>
+            <span>{label}</span>
+            <strong>{apiName}</strong>
+            <small>{description}</small>
+          </div>
+        ))}
+      </aside>
+    </div>
+  );
+
+  const renderActionsWorkspace = () => (
+    <div className="ontology-actions-layout">
+      <section className="ontology-actions-main">
+        <header className="ontology-section-head">
+          <div>
+            <span>ACTION TYPES</span>
+            <h3>把判断变成受控动作</h3>
+            <p>动作作用于本体对象，同时执行校验、权限和审计规则。</p>
+          </div>
+          <Tag color="blue">PAPER ONLY</Tag>
+        </header>
+        <div className="ontology-action-grid">
+          {ACTION_DEFINITIONS.map((action, index) => {
+            const recommended = action.type === decision?.recommended_action_type;
+            return (
+              <article key={action.type} className={recommended ? 'recommended' : ''}>
+                <header>
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  {recommended && <em>系统建议</em>}
+                </header>
+                <h4>{action.label}</h4>
+                <p>{action.description}</p>
+                <div><SafetyCertificateOutlined /> {action.guardrail}</div>
+                <Button
+                  type={recommended ? 'primary' : 'default'}
+                  loading={actionLoading}
+                  onClick={() => void recordAction(
+                    action.type,
+                    action.type === decision?.recommended_action_type
+                      ? decision.recommended_reason
+                      : `${selectedAsset?.label || '当前标的'}：人工执行“${action.label}”`,
+                  )}
+                >
+                  执行并记录
+                </Button>
+              </article>
+            );
+          })}
+        </div>
+        <div className="ontology-action-contract">
+          <span><LockOutlined /> 权限检查</span>
+          <i>→</i>
+          <span><ControlOutlined /> 参数校验</span>
+          <i>→</i>
+          <span><PlayCircleOutlined /> 动作执行</span>
+          <i>→</i>
+          <span><HistoryOutlined /> 审计落账</span>
+        </div>
+      </section>
+
+      <aside className="ontology-audit-log">
+        <header>
+          <span>ACTION LOG</span>
+          <strong>决策审计</strong>
+          <small>{snapshot?.actions.length || 0} 条记录</small>
+        </header>
+        {snapshot?.actions.length ? snapshot.actions.map((action: OntologyDemoAction) => (
+          <div
+            key={action.id}
+            className={action.id === actionPulseId ? 'pulse' : ''}
+          >
+            <i />
+            <span>
+              <strong>{action.action_label}</strong>
+              <p>{action.reason}</p>
+              <small>{action.actor} · {formatTimestamp(action.created_at)}</small>
+            </span>
+          </div>
+        )) : (
+          <div className="ontology-audit-empty">
+            <AuditOutlined />
+            <strong>还没有动作记录</strong>
+            <span>执行一次动作后，理由、时间和操作者会留在这里。</span>
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+
+  const renderGovernanceWorkspace = () => (
+    <div className="ontology-governance-stack">
+      <section className="ontology-lineage-panel">
+        <header className="ontology-section-head">
+          <div>
+            <span>DATA LINEAGE</span>
+            <h3>每个结论都能回到原始数据</h3>
+            <p>不是让 AI 凭空总结，而是让数据沿受控路径进入对象、逻辑和动作。</p>
+          </div>
+          <Tag color="green">可追溯</Tag>
+        </header>
+        <div className="ontology-lineage-flow">
+          <article>
+            <DatabaseOutlined />
+            <span>数据源</span>
+            <strong>DAO 财经</strong>
+            <small>快讯 · 文章 · 研报</small>
+          </article>
+          <i>→</i>
+          <article>
+            <NodeIndexOutlined />
+            <span>身份解析</span>
+            <strong>Canonical ID</strong>
+            <small>名称 · 代码 · 别名</small>
+          </article>
+          <i>→</i>
+          <article>
+            <ThunderboltOutlined />
+            <span>语义映射</span>
+            <strong>对象与关系</strong>
+            <small>方向 · 时间 · 置信度</small>
+          </article>
+          <i>→</i>
+          <article>
+            <BulbOutlined />
+            <span>决策逻辑</span>
+            <strong>论点评估</strong>
+            <small>支持 · 削弱 · 失效</small>
+          </article>
+          <i>→</i>
+          <article>
+            <AuditOutlined />
+            <span>受控动作</span>
+            <strong>Action Log</strong>
+            <small>操作者 · 理由 · 时间</small>
+          </article>
+        </div>
+      </section>
+
+      <section className="ontology-governance-grid">
+        <article>
+          <header><LockOutlined /><div><span>SECURITY</span><h3>权限边界</h3></div></header>
+          <div className="ontology-policy-row allow">
+            <span>读取公开资讯对象</span><strong>允许</strong>
+          </div>
+          <div className="ontology-policy-row allow">
+            <span>写入模拟决策记录</span><strong>允许</strong>
+          </div>
+          <div className="ontology-policy-row deny">
+            <span>连接真实券商下单</span><strong>禁用</strong>
+          </div>
+          <div className="ontology-policy-row">
+            <span>敏感对象字段</span><strong>按角色控制</strong>
+          </div>
+        </article>
+        <article>
+          <header><HistoryOutlined /><div><span>PROVENANCE</span><h3>来源与时效</h3></div></header>
+          <dl>
+            <div><dt>当前对象</dt><dd>{selectedAsset?.canonical_key}</dd></div>
+            <div><dt>关联来源</dt><dd>{liveEvidenceStats.sources}</dd></div>
+            <div><dt>最近刷新</dt><dd>{snapshot ? formatTimestamp(snapshot.generated_at) : '—'}</dd></div>
+            <div><dt>证据保留</dt><dd>{liveEvidenceStats.total} 条</dd></div>
+          </dl>
+        </article>
+        <article>
+          <header><SafetyCertificateOutlined /><div><span>GUARDRAILS</span><h3>决策护栏</h3></div></header>
+          {(snapshot?.guardrails || []).map(item => (
+            <div className="ontology-guardrail-row" key={item}>
+              <CheckCircleOutlined />
+              <span>{item}</span>
+            </div>
+          ))}
+          <div className="ontology-guardrail-row">
+            <CheckCircleOutlined />
+            <span>论点必须定义可验证的失效条件</span>
+          </div>
+        </article>
+      </section>
+
+      <section className="ontology-identity-panel">
+        <div>
+          <span>IDENTITY RESOLUTION</span>
+          <h3>{snapshot?.identity.issuer.label}</h3>
+          <p>不同供应商代码和自然语言名称，统一到同一个证券对象。</p>
+        </div>
+        <div className="ontology-aliases">
+          {snapshot?.identity.aliases.map(alias => (
+            <span key={`${alias.scheme}:${alias.alias}`}>
+              <small>{alias.scheme}</small>
+              <strong>{alias.alias}</strong>
+              <em>{alias.market}</em>
+            </span>
+          ))}
+          <i>→</i>
+          <span className="canonical">
+            <small>canonical</small>
+            <strong>{snapshot?.identity.security.id}</strong>
+            <em>唯一对象</em>
+          </span>
+        </div>
+      </section>
+    </div>
+  );
 
   return (
     <CenterShell
-      eyebrow="DAO财经 · 决策关联"
-      title="这只股票最近发生了什么？"
-      subtitle="把 DAO 财经已有的快讯、文章和研报自动归到同一只股票，再判断哪些值得你先看"
+      eyebrow="DAO 财经 · 投资语义层"
+      title="投资决策本体"
+      subtitle="把资讯、公司、论点、持仓和动作组织成同一套可追溯的决策系统"
       icon={<NodeIndexOutlined />}
-      className="ontology-center"
+      className="ontology-center ontology-v3"
       error={error}
       loading={loading}
-      loadingText="正在构建投资影响图…"
+      loadingText="正在构建投资对象与关系…"
       actions={snapshot && (
         <>
           <Select
@@ -421,392 +1212,53 @@ const InvestmentOntologyCenter: React.FC = () => {
             onChange={value => void load(value)}
           />
           <Button icon={<ReloadOutlined />} onClick={() => void load(selectedSecurityId)}>
-            刷新快照
+            刷新
           </Button>
         </>
       )}
     >
       {contextHolder}
       {snapshot && decision && (
-        <div className="ontology-layout">
-          <section className={`ontology-focus-brief ${liveSignalTone}`}>
-            <div className="ontology-focus-status">
-              <Tag color={liveSignalTone === 'risk' ? 'red' : liveSignalTone === 'positive' ? 'green' : 'blue'}>
-                {liveEvidenceLoading ? '正在整理' : 'DAO财经实时信息'}
-              </Tag>
-              <span>{selectedAsset?.label} · {selectedAsset?.canonical_key}</span>
-            </div>
-            <div className="ontology-focus-copy">
-              <span>现在最值得注意</span>
-              <h2>{liveHeadline}</h2>
-              <p>{liveAction}</p>
-            </div>
-            <dl className="ontology-focus-metrics" aria-label="信息关联结果">
-              <div>
-                <dt>相关信息</dt>
-                <dd>{liveEvidenceStats.total}</dd>
-              </div>
-              <div className="risk">
-                <dt>先核对风险</dt>
-                <dd>{liveEvidenceStats.risk}</dd>
-              </div>
-              <div className="positive">
-                <dt>积极线索</dt>
-                <dd>{liveEvidenceStats.positive}</dd>
-              </div>
-            </dl>
-            <div className="ontology-focus-footer">
-              <span>
-                <SafetyCertificateOutlined />
-                来自 DAO 财经现有快讯、文章和研报；只做信息筛选，不自动下单
-              </span>
-              <div>
-                <Button
-                  type="primary"
-                  icon={<FileSearchOutlined />}
-                  href="#ontology-live-evidence"
-                  onClick={() => {
-                    setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all');
-                    setShowAllEvidence(false);
-                  }}
-                >
-                  看最重要的 3 条
-                </Button>
-                <Button
-                  icon={<CheckCircleOutlined />}
-                  loading={actionLoading}
-                  disabled={liveEvidenceStats.total === 0}
-                  onClick={() => void recordAction(
-                    'request_research',
-                    `${selectedAsset?.label || '当前标的'}：DAO财经命中 ${liveEvidenceStats.total} 条，风险 ${liveEvidenceStats.risk} 条，积极 ${liveEvidenceStats.positive} 条`,
-                  )}
-                >
-                  加入补证清单
-                </Button>
-              </div>
-            </div>
-          </section>
-
-          <section id="ontology-live-evidence" className="ontology-live-evidence">
-            <header className="ontology-live-evidence-head">
-              <div>
-                <span>优先证据</span>
-                <h3>先看这 3 条，再决定要不要继续研究</h3>
-                <p>每条都来自 DAO 财经现有内容，并可回到原文。</p>
-              </div>
-              <div className="ontology-live-filters" role="group" aria-label="筛选关联证据">
-                {([
-                  ['all', `全部 ${liveEvidenceStats.total}`],
-                  ['risk', `风险 ${liveEvidenceStats.risk}`],
-                  ['positive', `积极 ${liveEvidenceStats.positive}`],
-                  ['neutral', `中性 ${liveEvidenceStats.neutral}`],
-                ] as Array<[LiveEvidenceFilter, string]>).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    className={liveEvidenceFilter === value ? 'active' : ''}
-                    onClick={() => {
-                      setLiveEvidenceFilter(value);
-                      setShowAllEvidence(false);
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </header>
-
-            {liveEvidenceLoading ? (
-              <div className="ontology-live-empty">正在从 DAO 财经信息库关联快讯、文章和研报…</div>
-            ) : liveEvidenceError ? (
-              <div className="ontology-live-empty error">
-                <strong>实时信息暂时读取失败</strong>
-                <span>{liveEvidenceError}</span>
-              </div>
-            ) : filteredLiveEvidence.length ? (
-              <>
-                <div className="ontology-live-list">
-                  {filteredLiveEvidence.map(({ item, tone }) => (
-                    <article key={item.id} className={tone}>
-                      <i className="ontology-live-tone" />
-                      <div className="ontology-live-item-copy">
-                        <div>
-                          <span>{item.topic || '资讯'}</span>
-                          <em>{item.source_name || 'DAO财经'}</em>
-                          <small>{formatTimestamp(item.created_at)}</small>
-                        </div>
-                        <h4>{liveEvidenceTitle(item)}</h4>
-                        <p>{liveEvidenceSummary(item)}</p>
-                        <footer>
-                          <span>
-                            命中 {selectedAsset?.label} / {selectedAsset?.canonical_key.split('.')[0]}
-                          </span>
-                          <a
-                            href={item.url || `/?article=${encodeURIComponent(item.id)}`}
-                            target={item.url ? '_blank' : undefined}
-                            rel={item.url ? 'noreferrer' : undefined}
-                          >
-                            打开原文 <LinkOutlined />
-                          </a>
-                        </footer>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-                {matchingLiveEvidence.length > 3 && (
-                  <button
-                    type="button"
-                    className="ontology-live-more"
-                    onClick={() => setShowAllEvidence(current => !current)}
-                  >
-                    {showAllEvidence ? '收起，只看最重要的 3 条' : `查看其余 ${matchingLiveEvidence.length - 3} 条`}
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="ontology-live-empty">
-                当前筛选下没有信息。可以切换“全部”，或刷新等待新内容进入信息库。
-              </div>
-            )}
-          </section>
-
-          <section className="ontology-method-strip">
-            <NodeIndexOutlined />
+        <div className="ontology-workspace">
+          <section className="ontology-system-bar">
             <div>
-              <strong>本体在这里做的事很简单</strong>
-              <span>把不同来源统一到同一只股票，筛出风险，再保留原文让你核对。</span>
+              <i />
+              <span>Ontology online</span>
+              <em>v1.0 · 投资决策域</em>
             </div>
-            <small>不是再造一个资讯列表</small>
+            <dl>
+              <div><dt>对象类型</dt><dd>{OBJECT_TYPES.length}</dd></div>
+              <div><dt>关系类型</dt><dd>{LINK_TYPES.length}</dd></div>
+              <div><dt>动作类型</dt><dd>{ACTION_DEFINITIONS.length}</dd></div>
+              <div><dt>实时证据</dt><dd>{liveEvidenceStats.total}</dd></div>
+            </dl>
+            <span><ClockCircleOutlined /> {formatTimestamp(snapshot.generated_at)}</span>
           </section>
 
-          <details id="ontology-advanced-tools" className="ontology-expert-details">
-            <summary>
-              <span>
-                <strong>高级工具</strong>
-                <small>关系图、对象身份和补证记录</small>
-              </span>
-              <em>默认收起</em>
-            </summary>
-            <section className="ontology-main-grid">
-            <article className="ontology-panel ontology-graph-panel">
-              <header className="ontology-panel-header">
-                <div>
-                  <span className="ontology-panel-kicker">影响路径</span>
-                  <h3>完整证据关系</h3>
-                </div>
-                <div className="ontology-legend">
-                  <span><i className="positive" />支持</span>
-                  <span><i className="negative" />反证</span>
-                  <span><i className="neutral" />结构关系</span>
-                </div>
-              </header>
-
-              <div className="ontology-sandbox-note">
-                <SafetyCertificateOutlined />
-                这里用示例投资逻辑验证关系推导，不作为实时投资建议；真实 DAO 财经信息在上方。
-              </div>
-
-              <div className="ontology-graph-guidance">
-                <span>从左向右看：原始信息如何一步步影响到你的组合</span>
-                <small>点击节点，立即查看它为什么重要</small>
-              </div>
-
-              <div
-                className={`ontology-node-inspector${selectedNode ? ' has-selection' : ''}`}
-                aria-live="polite"
+          <nav className="ontology-workspace-nav" aria-label="本体工作区">
+            {NAV_ITEMS.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className={activeView === item.id ? 'active' : ''}
+                onClick={() => setActiveView(item.id)}
               >
-                {selectedNode ? (
-                  <>
-                    <div className="ontology-inspector-heading">
-                      <span className={`ontology-node-inspector-icon ${NODE_META[selectedNode.type].className}`}>
-                        {NODE_META[selectedNode.type].icon}
-                      </span>
-                      <div>
-                        <small>当前查看 · {NODE_META[selectedNode.type].label}</small>
-                        <strong>{selectedNode.label}</strong>
-                      </div>
-                    </div>
-                    <div className="ontology-inspector-meaning">
-                      <b>为什么重要</b>
-                      <span>{NODE_EXPLANATIONS[selectedNode.type]}</span>
-                    </div>
-                    <Button
-                      className="ontology-inspector-clear"
-                      size="small"
-                      onClick={() => setSelectedNodeId(undefined)}
-                    >
-                      取消聚焦
-                    </Button>
-                    <div className="ontology-node-relations">
-                      <div>
-                        <b>上游依据</b>
-                        {selectedIncomingEdges.length ? selectedIncomingEdges.slice(0, 3).map(edge => (
-                          <span key={edge.id}>
-                            {nodeMap.get(edge.source)?.label || '未知对象'}
-                            <i>{EDGE_LABELS[edge.type] || edge.type}</i>
-                          </span>
-                        )) : <em>这是影响路径的起点</em>}
-                      </div>
-                      <div>
-                        <b>下游影响</b>
-                        {selectedOutgoingEdges.length ? selectedOutgoingEdges.slice(0, 3).map(edge => (
-                          <span key={edge.id}>
-                            <i>{EDGE_LABELS[edge.type] || edge.type}</i>
-                            {nodeMap.get(edge.target)?.label || '未知对象'}
-                          </span>
-                        )) : <em>这是影响路径的终点</em>}
-                      </div>
-                    </div>
-                    <div className="ontology-node-properties">
-                      {Object.entries(selectedNode.attributes).slice(0, 5).map(([key, value]) => (
-                        <span key={key}>
-                          <b>{ATTRIBUTE_LABELS[key] || key}</b>
-                          {attributeText(key, value)}
-                        </span>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <span className="ontology-inspector-empty">
-                    <NodeIndexOutlined />
-                    <span>
-                      <strong>点一个节点，不只看高亮</strong>
-                      <small>这里会解释它为什么重要、从哪里来、接下来影响什么</small>
-                    </span>
-                  </span>
-                )}
-              </div>
+                <i>{item.icon}</i>
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.helper}</small>
+                </span>
+              </button>
+            ))}
+          </nav>
 
-              <div className="ontology-graph-scroll">
-                <div className="ontology-graph">
-                  <div className="ontology-graph-lanes" aria-hidden>
-                    <span style={{ left: '8%' }}>原始证据</span>
-                    <span style={{ left: '31%' }}>发生了什么</span>
-                    <span style={{ left: '54%' }}>投资逻辑</span>
-                    <span style={{ left: '73%' }}>我的资产</span>
-                    <span style={{ left: '91%' }}>组合影响</span>
-                  </div>
-                  <svg
-                    className="ontology-edge-layer"
-                    viewBox="0 0 100 100"
-                    preserveAspectRatio="none"
-                    role="img"
-                    aria-label="证据、事件、投资逻辑、持仓和组合之间的推导关系"
-                  >
-                    <defs>
-                      <marker id="arrow-positive" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                        <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-positive" />
-                      </marker>
-                      <marker id="arrow-negative" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                        <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-negative" />
-                      </marker>
-                      <marker id="arrow-neutral" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                        <path d="M0,0 L5,2.5 L0,5 z" className="ontology-arrow-neutral" />
-                      </marker>
-                    </defs>
-                    {snapshot.graph.edges.map(renderEdge)}
-                  </svg>
-                  {snapshot.graph.edges.map(renderEdgeLabel)}
-                  {snapshot.graph.nodes.map(node => {
-                    const meta = NODE_META[node.type];
-                    const isSelected = node.id === selectedNodeId;
-                    const isMuted = focusedNodeIds ? !focusedNodeIds.has(node.id) : false;
-                    const signalEdge = snapshot.graph.edges.find(
-                      edge => edge.source === node.id && edge.polarity !== 0,
-                    );
-                    const signalClass = signalEdge
-                      ? signalEdge.polarity > 0 ? ' signal-positive' : ' signal-negative'
-                      : '';
-                    return (
-                      <button
-                        key={node.id}
-                        type="button"
-                        aria-pressed={isSelected}
-                        className={[
-                          'ontology-node',
-                          meta.className,
-                          isSelected ? 'selected' : '',
-                          isMuted ? 'muted' : '',
-                          signalClass,
-                        ].filter(Boolean).join(' ')}
-                        style={{ left: `${node.position.x}%`, top: `${node.position.y}%` }}
-                        onClick={() => setSelectedNodeId(current => current === node.id ? undefined : node.id)}
-                      >
-                        <span className="ontology-node-icon">{meta.icon}</span>
-                        <span className="ontology-node-copy">
-                          <small>{meta.label}</small>
-                          <strong>{node.label}</strong>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </article>
-
-            </section>
-
-          <section className="ontology-bottom-grid">
-            <article className="ontology-panel ontology-identity-panel">
-              <header className="ontology-panel-header">
-                <div>
-                  <span className="ontology-panel-kicker">系统为什么不会认错股票？</span>
-                  <h3>不同代码，自动认成同一家公司</h3>
-                </div>
-                <LinkOutlined />
-              </header>
-              <p className="ontology-identity-explainer">
-                财报里的 600519、行情里的 SH600519 和“贵州茅台”，都会自动合并到同一个对象。
-              </p>
-              <div className="ontology-identity-target">
-                <span>{snapshot.identity.security.label}</span>
-                <strong>{snapshot.identity.security.id}</strong>
-              </div>
-              <div className="ontology-alias-grid">
-                {snapshot.identity.aliases.map(alias => (
-                  <div key={`${alias.scheme}:${alias.alias}`}>
-                    <span>{alias.scheme}</span>
-                    <strong>{alias.alias}</strong>
-                    <small>{alias.market}</small>
-                  </div>
-                ))}
-              </div>
-            </article>
-
-            <article className="ontology-panel ontology-audit-panel">
-              <header className="ontology-panel-header">
-                <div>
-                  <span className="ontology-panel-kicker">以后可以回来复盘</span>
-                  <h3>我的决策记录</h3>
-                </div>
-                <AuditOutlined />
-              </header>
-              {actions.length ? (
-                <div className="ontology-audit-list">
-                  {actions.map((action: OntologyDemoAction) => (
-                    <div
-                      key={action.id}
-                      className={`ontology-audit-item${action.id === actionPulseId ? ' pulse' : ''}`}
-                    >
-                      <span className="ontology-audit-dot" />
-                      <div>
-                        <strong>{action.action_label}</strong>
-                        <p>{action.reason}</p>
-                        <small>{action.actor} · {formatTimestamp(action.created_at)} · PAPER ONLY</small>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="ontology-audit-empty">
-                  <AuditOutlined />
-                  <strong>还没有决策记录</strong>
-                  <span>记录一次决策后，时间、理由和执行人会留在这里。</span>
-                </div>
-              )}
-            </article>
-          </section>
-          </details>
+          <main className={`ontology-workspace-content view-${activeView}`}>
+            {activeView === 'decision' && renderDecisionWorkspace()}
+            {activeView === 'network' && renderNetworkWorkspace()}
+            {activeView === 'objects' && renderObjectsWorkspace()}
+            {activeView === 'actions' && renderActionsWorkspace()}
+            {activeView === 'governance' && renderGovernanceWorkspace()}
+          </main>
         </div>
       )}
     </CenterShell>
