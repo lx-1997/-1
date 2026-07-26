@@ -183,12 +183,17 @@ const InvestmentOntologyCenter: React.FC = () => {
   const decision = snapshot?.decision;
   const positionAttrs = decision?.position.attributes || {};
   const thesisAttrs = decision?.thesis.attributes || {};
+  const beginnerHeadline = decision?.tone === 'warning'
+    ? '先控制风险，不急着加仓'
+    : decision?.tone === 'positive'
+      ? '信号正在变好，可以继续关注'
+      : '暂时不需要调整';
 
   return (
     <CenterShell
-      eyebrow="DAO ONTOLOGY · DECISION OS"
-      title="投资本体决策驾驶舱"
-      subtitle="把公司、证券、事件、证据、论点、持仓与动作放在同一条可审计链路中"
+      eyebrow="持仓决策助手"
+      title="今天该怎么做？"
+      subtitle="告诉你哪条信息变了、影响哪笔持仓、为什么要调整"
       icon={<NodeIndexOutlined />}
       className="ontology-center"
       error={error}
@@ -196,7 +201,6 @@ const InvestmentOntologyCenter: React.FC = () => {
       loadingText="正在构建投资影响图…"
       actions={snapshot && (
         <>
-          <Tag color="purple">INTERACTIVE MVP</Tag>
           <Select
             className="ontology-asset-select"
             value={selectedSecurityId}
@@ -215,42 +219,136 @@ const InvestmentOntologyCenter: React.FC = () => {
       {contextHolder}
       {snapshot && decision && (
         <div className="ontology-layout">
-          <section className="ontology-kpi-grid">
-            <article className="ontology-kpi">
-              <span>CANONICAL SECURITY</span>
-              <strong>{snapshot.identity.security.canonical_key}</strong>
-              <small>{snapshot.identity.issuer.label}</small>
-            </article>
-            <article className="ontology-kpi">
-              <span>论点置信度</span>
-              <strong>{percentage(thesisAttrs.confidence)}</strong>
-              <small>{decision.thesis.label}</small>
-            </article>
-            <article className="ontology-kpi">
-              <span>组合仓位 / 风险预算</span>
-              <strong>
-                {numberText(positionAttrs.weight_pct, '%')}
-                <em> / {numberText(positionAttrs.risk_budget_pct, '%')}</em>
-              </strong>
-              <small>浮动盈亏 {numberText(positionAttrs.pnl_pct, '%')}</small>
-            </article>
-            <article className="ontology-kpi">
-              <span>证据路径</span>
-              <strong>
-                <b className="positive">+{decision.supporting_paths}</b>
-                <em> / </em>
-                <b className="negative">−{decision.contradicting_paths}</b>
-              </strong>
-              <small>支持 / 反证路径实时汇总</small>
-            </article>
+          <section className="ontology-decision-brief">
+            <div className="ontology-brief-main">
+              <div className="ontology-brief-status">
+                <Tag color={toneColor[decision.tone]}>{decision.verdict}</Tag>
+                <span>{snapshot.identity.security.label} · {snapshot.identity.security.canonical_key}</span>
+              </div>
+              <span className="ontology-brief-label">一句话结论</span>
+              <h2>{beginnerHeadline}</h2>
+              <p className="ontology-brief-action">{decision.recommended_action}</p>
+              <p>{decision.recommended_reason}</p>
+              <div className={`ontology-change-line ${decision.tone}`}>
+                <span>为什么这样建议</span>
+                <strong>{decision.change_summary}</strong>
+              </div>
+              <div className="ontology-action-row">
+                <Button
+                  type="primary"
+                  icon={<CheckCircleOutlined />}
+                  loading={actionLoading}
+                  onClick={() => void recordAction(
+                    decision.recommended_action_type,
+                    decision.recommended_reason,
+                  )}
+                >
+                  记为待执行计划
+                </Button>
+                <Button
+                  icon={<FileSearchOutlined />}
+                  disabled={actionLoading}
+                  onClick={() => void recordAction(
+                    'request_research',
+                    `补证任务：${decision.change_summary}`,
+                  )}
+                >
+                  让系统继续找证据
+                </Button>
+              </div>
+            </div>
+
+            <aside className="ontology-brief-evidence" aria-label="决策依据">
+              <div className="ontology-brief-evidence-head">
+                <span>这次判断靠什么</span>
+                <small>每项都可追溯</small>
+              </div>
+              <dl>
+                <div>
+                  <dt>投资逻辑可信度</dt>
+                  <dd>{percentage(thesisAttrs.confidence)}</dd>
+                </div>
+                <div>
+                  <dt>我现在持有</dt>
+                  <dd>{numberText(positionAttrs.weight_pct, '%')}</dd>
+                </div>
+                <div className="risk">
+                  <dt>建议仓位上限</dt>
+                  <dd>{numberText(positionAttrs.risk_budget_pct, '%')}</dd>
+                </div>
+                <div>
+                  <dt>有利 / 不利信号</dt>
+                  <dd>
+                    <b className="positive">{decision.supporting_paths}</b>
+                    <em>/</em>
+                    <b className="negative">{decision.contradicting_paths}</b>
+                  </dd>
+                </div>
+              </dl>
+              <div className="ontology-invalidation">
+                <span>什么情况下原来的投资逻辑不成立？</span>
+                <p>{String(thesisAttrs.invalidation || '未设置')}</p>
+              </div>
+              <div className="ontology-brief-guardrail">
+                <SafetyCertificateOutlined />
+                <span>仅写入决策审计，不连接券商</span>
+              </div>
+            </aside>
           </section>
 
-          <section className="ontology-main-grid">
+          <section className="ontology-power-note">
+            <span className="ontology-power-mark">本体在背后做的事</span>
+            <strong>任何新消息进来，系统都会自动找到它影响的投资逻辑、持仓和风险规则。</strong>
+            <p>你不需要自己翻新闻、研报和持仓表拼答案，也能知道结论从哪里来。</p>
+          </section>
+
+          <section className="ontology-simple-chain" aria-label="本次判断的四步推导">
+            <header className="ontology-section-heading">
+              <span>一眼看懂</span>
+              <h3>这次判断是怎样得出的？</h3>
+            </header>
+            <div className="ontology-chain-grid">
+              <article>
+                <b>1</b>
+                <span>新信息</span>
+                <strong>{decision.change_summary}</strong>
+              </article>
+              <article>
+                <b>2</b>
+                <span>影响投资逻辑</span>
+                <strong>{decision.thesis.label}</strong>
+                <small>目前可信度 {percentage(thesisAttrs.confidence)}</small>
+              </article>
+              <article>
+                <b>3</b>
+                <span>检查我的持仓</span>
+                <strong>
+                  当前 {numberText(positionAttrs.weight_pct, '%')}，建议上限 {numberText(positionAttrs.risk_budget_pct, '%')}
+                </strong>
+                <small>系统发现仓位超过了预设边界</small>
+              </article>
+              <article>
+                <b>4</b>
+                <span>得到行动建议</span>
+                <strong>{decision.recommended_action}</strong>
+              </article>
+            </div>
+          </section>
+
+          <details className="ontology-expert-details">
+            <summary>
+              <span>
+                <strong>查看完整证据关系图</strong>
+                <small>适合想核对每条证据和推导关系的用户</small>
+              </span>
+              <em>{snapshot.graph.nodes.length} 个对象 · {snapshot.graph.edges.length} 条关系</em>
+            </summary>
+            <section className="ontology-main-grid">
             <article className="ontology-panel ontology-graph-panel">
               <header className="ontology-panel-header">
                 <div>
-                  <span className="ontology-panel-kicker">IMPACT GRAPH</span>
-                  <h3>这条信息为什么会影响我的持仓？</h3>
+                  <span className="ontology-panel-kicker">影响路径</span>
+                  <h3>完整证据关系</h3>
                 </div>
                 <div className="ontology-legend">
                   <span><i className="positive" />支持</span>
@@ -318,78 +416,21 @@ const InvestmentOntologyCenter: React.FC = () => {
               </div>
             </article>
 
-            <article className="ontology-panel ontology-decision-panel">
-              <header className="ontology-panel-header">
-                <div>
-                  <span className="ontology-panel-kicker">DECISION OBJECT</span>
-                  <h3>需要我做什么？</h3>
-                </div>
-                <Tag color={toneColor[decision.tone]}>{decision.verdict}</Tag>
-              </header>
-
-              <div className={`ontology-change-callout ${decision.tone}`}>
-                <span>自上次决策以来</span>
-                <strong>{decision.change_summary}</strong>
-              </div>
-
-              <div className="ontology-thesis-card">
-                <div className="ontology-thesis-head">
-                  <BulbOutlined />
-                  <span>当前投资论点</span>
-                  <Tag>{percentage(thesisAttrs.confidence)}</Tag>
-                </div>
-                <strong>{decision.thesis.label}</strong>
-                <p><b>失效条件：</b>{String(thesisAttrs.invalidation || '未设置')}</p>
-              </div>
-
-              <div className="ontology-recommendation">
-                <small>ONTOLOGY FUNCTION · 建议动作</small>
-                <strong>{decision.recommended_action}</strong>
-                <p>{decision.recommended_reason}</p>
-              </div>
-
-              <div className="ontology-action-stack">
-                <Button
-                  type="primary"
-                  icon={<CheckCircleOutlined />}
-                  loading={actionLoading}
-                  onClick={() => void recordAction(
-                    decision.recommended_action_type,
-                    decision.recommended_reason,
-                  )}
-                >
-                  接受建议并写入审计
-                </Button>
-                <Button
-                  icon={<FileSearchOutlined />}
-                  disabled={actionLoading}
-                  onClick={() => void recordAction(
-                    'request_research',
-                    `补证任务：${decision.change_summary}`,
-                  )}
-                >
-                  发起补证任务
-                </Button>
-              </div>
-
-              <div className="ontology-guardrails">
-                <SafetyCertificateOutlined />
-                <div>
-                  {snapshot.guardrails.map(item => <span key={item}>{item}</span>)}
-                </div>
-              </div>
-            </article>
-          </section>
+            </section>
+          </details>
 
           <section className="ontology-bottom-grid">
             <article className="ontology-panel ontology-identity-panel">
               <header className="ontology-panel-header">
                 <div>
-                  <span className="ontology-panel-kicker">IDENTITY RESOLUTION</span>
-                  <h3>一个对象，多套代码</h3>
+                  <span className="ontology-panel-kicker">系统为什么不会认错股票？</span>
+                  <h3>不同代码，自动认成同一家公司</h3>
                 </div>
                 <LinkOutlined />
               </header>
+              <p className="ontology-identity-explainer">
+                财报里的 600519、行情里的 SH600519 和“贵州茅台”，都会自动合并到同一个对象。
+              </p>
               <div className="ontology-identity-target">
                 <span>{snapshot.identity.security.label}</span>
                 <strong>{snapshot.identity.security.id}</strong>
@@ -408,8 +449,8 @@ const InvestmentOntologyCenter: React.FC = () => {
             <article className="ontology-panel ontology-audit-panel">
               <header className="ontology-panel-header">
                 <div>
-                  <span className="ontology-panel-kicker">ACTION AUDIT</span>
-                  <h3>动作审计时间线</h3>
+                  <span className="ontology-panel-kicker">以后可以回来复盘</span>
+                  <h3>我的决策记录</h3>
                 </div>
                 <AuditOutlined />
               </header>
@@ -432,8 +473,8 @@ const InvestmentOntologyCenter: React.FC = () => {
               ) : (
                 <div className="ontology-audit-empty">
                   <AuditOutlined />
-                  <strong>还没有动作记录</strong>
-                  <span>接受一次建议，完整审计记录会出现在这里。</span>
+                  <strong>还没有决策记录</strong>
+                  <span>记录一次决策后，时间、理由和执行人会留在这里。</span>
                 </div>
               )}
             </article>
@@ -445,4 +486,3 @@ const InvestmentOntologyCenter: React.FC = () => {
 };
 
 export default InvestmentOntologyCenter;
-

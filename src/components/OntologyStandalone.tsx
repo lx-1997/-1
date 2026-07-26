@@ -39,7 +39,7 @@ const OntologyStandalone: React.FC = () => (
           <a href="/" className="ontology-standalone-brand">
             <span>◆</span>
             <strong>DEEPFOCUS</strong>
-            <small>投资本体 · Decision OS</small>
+            <small>持仓决策助手</small>
           </a>
           <div>
             <a href="/">返回金融终端</a>
