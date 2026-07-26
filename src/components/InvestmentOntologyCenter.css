@@ -632,7 +632,7 @@
 }
 
 .ontology-graph-scroll {
-  margin: 12px 0;
+  margin-top: 10px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
 }
@@ -879,14 +879,32 @@
 
 .ontology-node-inspector {
   display: grid;
-  grid-template-columns: auto minmax(155px, 0.7fr) minmax(0, 1.3fr);
+  grid-template-columns: minmax(190px, 0.75fr) minmax(250px, 1.25fr) auto;
   align-items: center;
-  gap: 10px;
-  min-height: 72px;
-  padding: 11px 13px;
+  gap: 8px 14px;
+  min-height: 118px;
+  margin-top: 10px;
+  padding: 12px 14px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--surface-muted);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 48%),
+    var(--surface-muted);
+  transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+}
+
+.ontology-node-inspector.has-selection {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-soft));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 52%),
+    var(--surface-muted);
+}
+
+.ontology-inspector-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
 }
 
 .ontology-node-inspector-icon {
@@ -894,7 +912,11 @@
   height: 36px;
 }
 
-.ontology-node-inspector > div > small {
+.ontology-inspector-heading > div {
+  min-width: 0;
+}
+
+.ontology-inspector-heading small {
   display: block;
   overflow: hidden;
   color: var(--text-soft);
@@ -903,11 +925,88 @@
   white-space: nowrap;
 }
 
-.ontology-node-inspector > div > strong {
+.ontology-inspector-heading strong {
   display: block;
   margin-top: 3px;
+  overflow: hidden;
   color: var(--text);
   font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ontology-inspector-meaning {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ontology-inspector-meaning b {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ontology-inspector-meaning span {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.ontology-inspector-clear {
+  align-self: start;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.ontology-node-relations {
+  grid-column: 1 / 3;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.ontology-node-relations > div {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+
+.ontology-node-relations b {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.ontology-node-relations span,
+.ontology-node-relations em {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ontology-node-relations span {
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--surface-raised);
+}
+
+.ontology-node-relations i {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 8px;
+  font-style: normal;
 }
 
 .ontology-node-properties {
@@ -915,6 +1014,11 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 5px;
+}
+
+.ontology-node-inspector .ontology-node-properties {
+  grid-column: 3;
+  grid-row: 2;
 }
 
 .ontology-node-properties span {
@@ -939,9 +1043,24 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 9px;
   color: var(--text-soft);
-  font-size: 11px;
+}
+
+.ontology-inspector-empty > span {
+  display: grid;
+  gap: 2px;
+}
+
+.ontology-inspector-empty strong {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.ontology-inspector-empty small {
+  color: var(--text-soft);
+  font-size: 9px;
 }
 
 .ontology-inspector-empty .anticon {
@@ -1297,11 +1416,13 @@
   }
 
   .ontology-node-inspector {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1.2fr) auto;
+    min-height: 136px;
   }
 
-  .ontology-node-properties {
+  .ontology-node-inspector .ontology-node-properties {
     grid-column: 1 / -1;
+    grid-row: auto;
     justify-content: flex-start;
   }
 }
@@ -1319,6 +1440,21 @@
   .ontology-asset-select {
     width: 100%;
     min-width: 0;
+  }
+
+  .ontology-node-inspector {
+    grid-template-columns: 1fr auto;
+    min-height: 168px;
+  }
+
+  .ontology-inspector-meaning,
+  .ontology-node-relations,
+  .ontology-node-inspector .ontology-node-properties {
+    grid-column: 1 / -1;
+  }
+
+  .ontology-node-relations {
+    grid-template-columns: 1fr;
   }
 
   .ontology-kpi-grid {

@@ -53,6 +53,16 @@ const EDGE_LABELS: Record<string, string> = {
   POSITION_IN: '属于',
 };
 
+const NODE_EXPLANATIONS: Record<OntologyEntityType, string> = {
+  Evidence: '这是结论的原始依据。先看来源和可信度，再判断后面的投资逻辑是否站得住。',
+  Event: '这是正在发生的变化。它会增强或削弱投资逻辑，并最终传导到你的持仓风险。',
+  Thesis: '这是持有这只股票的核心理由。新证据都在回答：这个理由变强了，还是变弱了？',
+  Security: '这是统一识别后的股票对象。不同代码和数据源的信息，会在这里汇总到同一个标的。',
+  Issuer: '这是股票背后的公司主体，用来把公司基本面与具体证券准确关联起来。',
+  Position: '这是你的真实持仓。系统会在这里比较投资逻辑、当前仓位和预设风险上限。',
+  Portfolio: '这是对整个组合的影响，用来判断单只股票的变化是否需要转化为整体行动。',
+};
+
 const toneColor: Record<string, string> = {
   positive: 'green',
   warning: 'gold',
@@ -147,6 +157,20 @@ const InvestmentOntologyCenter: React.FC = () => {
   ), [snapshot]);
 
   const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) : undefined;
+
+  const selectedIncomingEdges = useMemo(
+    () => snapshot && selectedNodeId
+      ? snapshot.graph.edges.filter(edge => edge.target === selectedNodeId)
+      : [],
+    [selectedNodeId, snapshot],
+  );
+
+  const selectedOutgoingEdges = useMemo(
+    () => snapshot && selectedNodeId
+      ? snapshot.graph.edges.filter(edge => edge.source === selectedNodeId)
+      : [],
+    [selectedNodeId, snapshot],
+  );
 
   const focusedNodeIds = useMemo(() => {
     if (!snapshot || !selectedNodeId) return null;
@@ -421,7 +445,73 @@ const InvestmentOntologyCenter: React.FC = () => {
 
               <div className="ontology-graph-guidance">
                 <span>从左向右看：原始信息如何一步步影响到你的组合</span>
-                <small>点击任意节点聚焦相关路径，再点一次取消</small>
+                <small>点击节点，立即查看它为什么重要</small>
+              </div>
+
+              <div
+                className={`ontology-node-inspector${selectedNode ? ' has-selection' : ''}`}
+                aria-live="polite"
+              >
+                {selectedNode ? (
+                  <>
+                    <div className="ontology-inspector-heading">
+                      <span className={`ontology-node-inspector-icon ${NODE_META[selectedNode.type].className}`}>
+                        {NODE_META[selectedNode.type].icon}
+                      </span>
+                      <div>
+                        <small>当前查看 · {NODE_META[selectedNode.type].label}</small>
+                        <strong>{selectedNode.label}</strong>
+                      </div>
+                    </div>
+                    <div className="ontology-inspector-meaning">
+                      <b>为什么重要</b>
+                      <span>{NODE_EXPLANATIONS[selectedNode.type]}</span>
+                    </div>
+                    <Button
+                      className="ontology-inspector-clear"
+                      size="small"
+                      onClick={() => setSelectedNodeId(undefined)}
+                    >
+                      取消聚焦
+                    </Button>
+                    <div className="ontology-node-relations">
+                      <div>
+                        <b>上游依据</b>
+                        {selectedIncomingEdges.length ? selectedIncomingEdges.slice(0, 3).map(edge => (
+                          <span key={edge.id}>
+                            {nodeMap.get(edge.source)?.label || '未知对象'}
+                            <i>{EDGE_LABELS[edge.type] || edge.type}</i>
+                          </span>
+                        )) : <em>这是影响路径的起点</em>}
+                      </div>
+                      <div>
+                        <b>下游影响</b>
+                        {selectedOutgoingEdges.length ? selectedOutgoingEdges.slice(0, 3).map(edge => (
+                          <span key={edge.id}>
+                            <i>{EDGE_LABELS[edge.type] || edge.type}</i>
+                            {nodeMap.get(edge.target)?.label || '未知对象'}
+                          </span>
+                        )) : <em>这是影响路径的终点</em>}
+                      </div>
+                    </div>
+                    <div className="ontology-node-properties">
+                      {Object.entries(selectedNode.attributes).slice(0, 5).map(([key, value]) => (
+                        <span key={key}>
+                          <b>{ATTRIBUTE_LABELS[key] || key}</b>
+                          {attributeText(key, value)}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <span className="ontology-inspector-empty">
+                    <NodeIndexOutlined />
+                    <span>
+                      <strong>点一个节点，不只看高亮</strong>
+                      <small>这里会解释它为什么重要、从哪里来、接下来影响什么</small>
+                    </span>
+                  </span>
+                )}
               </div>
 
               <div className="ontology-graph-scroll">
@@ -488,33 +578,6 @@ const InvestmentOntologyCenter: React.FC = () => {
                     );
                   })}
                 </div>
-              </div>
-
-              <div className="ontology-node-inspector">
-                {selectedNode ? (
-                  <>
-                    <span className={`ontology-node-inspector-icon ${NODE_META[selectedNode.type].className}`}>
-                      {NODE_META[selectedNode.type].icon}
-                    </span>
-                    <div>
-                      <small>{NODE_META[selectedNode.type].label} · {selectedNode.canonical_key}</small>
-                      <strong>{selectedNode.label}</strong>
-                    </div>
-                    <div className="ontology-node-properties">
-                      {Object.entries(selectedNode.attributes).slice(0, 5).map(([key, value]) => (
-                        <span key={key}>
-                          <b>{ATTRIBUTE_LABELS[key] || key}</b>
-                          {attributeText(key, value)}
-                        </span>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <span className="ontology-inspector-empty">
-                    <NodeIndexOutlined />
-                    点击一个节点，查看它的来源、关键属性和完整影响路径
-                  </span>
-                )}
               </div>
             </article>
 
