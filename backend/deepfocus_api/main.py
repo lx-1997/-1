@@ -88,6 +88,7 @@ from .investment_ontology import (
     init_ontology_db,
     resolve_alias as resolve_ontology_alias,
 )
+from .content_ontology import annotate_content, build_content_map, init_content_ontology_db
 from . import research_archive
 from . import engagement
 from . import track_record
@@ -1537,6 +1538,64 @@ async def ontology_resolve_alias(alias: str, market: str = "") -> dict[str, Any]
     if not resolved:
         raise HTTPException(status_code=404, detail="未找到匹配的本体对象")
     return resolved
+
+
+@app.get("/api/ontology/content-map")
+async def ontology_content_map(
+    security_id: str = "security:cn:600519.SH",
+    limit: int = 48,
+) -> dict[str, Any]:
+    """统一内容本体：四类内容 → 类型化多标签、实体关系和语义图。
+
+    读取当前证券相关的快讯/文章/研报，并合并已缓存的机构纪要。每条内容在返回前
+    自动补齐内容类型、实体、事件、主题、方向、周期、市场和来源等 facet，同时把
+    规范关系幂等写入 content ontology SQLite，供后续检索、推演和人工校正复用。
+    """
+    try:
+        snapshot = get_demo_snapshot(security_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    selected = next(
+        (item for item in snapshot["assets"] if item["security_id"] == security_id),
+        None,
+    )
+    if not selected:
+        raise HTTPException(status_code=404, detail="未找到证券对象")
+    canonical = str(selected["canonical_key"])
+    ticker = canonical.split(".")[0]
+    label = str(selected["label"])
+    aliases = ",".join([label, canonical, ticker])
+    messages = list_realtime_messages(anyq=aliases, limit=max(8, min(int(limit or 48), 120)))
+
+    notes: list[dict[str, Any]] = []
+    try:
+        from .zsxq_stream import recent_share_topics
+        candidates = recent_share_topics(limit=500)
+        needles = (label.casefold(), canonical.casefold(), ticker.casefold())
+        notes = [
+            item for item in candidates
+            if any(
+                needle and needle in f"{item.get('title', '')} {item.get('lead', '')}".casefold()
+                for needle in needles
+            )
+        ][:12]
+    except Exception:  # noqa: BLE001 - 机构纪要缓存不可用不拖垮其余三类内容
+        notes = []
+
+    security = snapshot["identity"]["security"]
+    context = {
+        "security_id": security_id,
+        "label": label,
+        "canonical_key": canonical,
+        "market": str(security.get("market") or ""),
+    }
+    init_content_ontology_db()
+    return build_content_map(
+        security_context=context,
+        messages=messages,
+        notes=notes,
+        max_items=max(8, min(int(limit or 48), 120)),
+    )
 
 
 @app.post("/api/ontology/demo/actions", response_model=OntologyDemoActionRecord)
@@ -5085,6 +5144,27 @@ def _wire_conditional(request: Request, resp: "ResearchWireResponse"):
 _WIRE_RESP_TTL = float(os.getenv("DEEPFOCUS_WIRE_RESP_TTL", "45"))  # 已构建响应(含市场分类CPU)缓存秒数
 
 
+def _enrich_research_wire_item(item: ResearchWireItem) -> ResearchWireItem:
+    """研报列表也使用统一内容本体协议，不再只有 hashtag/instruments 两套孤立字段。"""
+    try:
+        annotation = annotate_content(
+            content_id=f"report:{item.id}",
+            content_type="research",
+            title=item.title,
+            source_name=item.org,
+            symbol=item.instruments[0] if item.instruments else "",
+            url=item.preview_url,
+            published_at=item.created_at or item.date,
+            legacy_tags=[item.hashtag.strip("#")] if item.hashtag else [],
+            persist=True,
+        )
+        item.tags = [tag["label"] for tag in annotation["tags"]]
+        item.ontology = annotation
+    except Exception:  # noqa: BLE001 - 标签富化失败不影响研报列表可用性
+        pass
+    return item
+
+
 @app.get("/api/research/wire", response_model=ResearchWireResponse)
 async def api_research_wire(request: Request, limit: int = 60, q: str = "", before: str = ""):
     """知识星球「海外投行报告」研报流：终端「研报」面板的数据源。
@@ -5126,6 +5206,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                 )
                 for row in rows
             ]
+            online_items = [_enrich_research_wire_item(item) for item in online_items]
             _resp = ResearchWireResponse(
                 items=online_items, total=len(rows),
                 source="海外投行研报 · 在线检索",
@@ -5149,7 +5230,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
         if arch_rows:
             cache_map = metrics_get_ai_cache_many([r["file_id"] for r in arch_rows if r.get("file_id")])
             return _wire_conditional(request, ResearchWireResponse(
-                items=[ResearchWireItem(
+                items=[_enrich_research_wire_item(ResearchWireItem(
                     id=r["id"], title=r["title"], org=r.get("org") or "海外投行", date=r["date"],
                     created_at=r.get("created_at") or "", filename=r.get("filename") or "", out=r.get("out") or "",
                     size=r.get("size") or 0, hashtag=r.get("hashtag") or "#海外投行报告#",
@@ -5157,7 +5238,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                     instruments=_instruments_for(r.get("file_id"), cache_map.get(str(r.get("file_id") or "").strip())),
                     market=_market_for(r.get("file_id"), r["title"], cache_map.get(str(r.get("file_id") or "").strip())),
                     preview_url=(f"/api/research/wire-file?file_id={quote(r['file_id'])}&name={quote(r.get('filename') or '')}") if r.get("file_id") else None,
-                ) for r in arch_rows],
+                )) for r in arch_rows],
                 total=len(arch_rows), source="海外投行研报 · 历史归档",
                 fetched_at=datetime.now(timezone.utc).isoformat(),
                 data_quality=DataQuality(level="degraded", label="历史归档",
@@ -5184,6 +5265,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
         )
         for row in result["items"]
     ]
+    items = [_enrich_research_wire_item(item) for item in items]
 
     if not result["exists"]:
         data_quality = DataQuality(

@@ -24,6 +24,8 @@ export interface ZsxqTopic {
   digested: boolean;
   comments_count: number;
   comments: ZsxqComment[];
+  tags: string[];
+  ontology?: Record<string, unknown>;
 }
 
 export interface ZsxqGroup { id: string; name: string }

@@ -146,6 +146,13 @@ def create_realtime_message(request: RealtimeMessageCreateRequest) -> Optional[R
         conn.commit()
 
     message = _row_to_message(record)
+    # 所有快讯/文章/研报在入库时同步生成类型化多标签和实体关系。
+    # 标注失败不得阻塞实时消息主链路；后续 content-map 读取时还会自动补标。
+    try:
+        from .content_ontology import annotation_from_message
+        annotation_from_message(message, persist=True)
+    except Exception:  # noqa: BLE001
+        pass
     _broadcast_message(message)
     _run_post_hooks(message)
     return message

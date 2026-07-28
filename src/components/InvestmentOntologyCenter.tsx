@@ -8,11 +8,14 @@ import {
   BulbOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
+  ClusterOutlined,
   ControlOutlined,
   DatabaseOutlined,
   FileSearchOutlined,
   FundProjectionScreenOutlined,
   HistoryOutlined,
+  ExperimentOutlined,
+  LineChartOutlined,
   LinkOutlined,
   LockOutlined,
   NodeIndexOutlined,
@@ -24,6 +27,8 @@ import {
 import { Button, Select, Tag, Tooltip, message } from 'antd';
 import CenterShell from './common/CenterShell';
 import {
+  ContentOntologyMap,
+  fetchContentOntologyMap,
   fetchOntologyDemo,
   OntologyDemoAction,
   OntologyDemoSnapshot,
@@ -32,13 +37,22 @@ import {
   OntologyNode,
   recordOntologyDemoAction,
 } from '../services/ontologyService';
+import ContentSemanticMap from './ContentSemanticMap';
 import {
   listRealtimeMessages,
   RealtimeMessageRecord,
 } from '../services/eventService';
+import {
+  runOntologyScenario,
+  SCENARIO_PRESETS,
+  ScenarioAssumptions,
+  ScenarioPresetId,
+  ScenarioProjectionPoint,
+  ScenarioResult,
+} from '../utils/ontologyScenario';
 import './InvestmentOntologyCenter.css';
 
-type WorkspaceView = 'decision' | 'network' | 'objects' | 'actions' | 'governance';
+type WorkspaceView = 'decision' | 'simulation' | 'semantic' | 'network' | 'governance';
 type LiveEvidenceTone = 'positive' | 'risk' | 'neutral';
 type LiveEvidenceFilter = 'all' | LiveEvidenceTone;
 type NetworkFilter = 'all' | 'risk' | 'positive';
@@ -210,11 +224,25 @@ const NAV_ITEMS: Array<{
   helper: string;
   icon: React.ReactNode;
 }> = [
-  { id: 'decision', label: '决策台', helper: '今天先看什么', icon: <ControlOutlined /> },
-  { id: 'network', label: '关系网络', helper: '结论如何形成', icon: <BranchesOutlined /> },
-  { id: 'objects', label: '对象目录', helper: '系统认识什么', icon: <AppstoreOutlined /> },
-  { id: 'actions', label: '动作中心', helper: '把判断变成流程', icon: <PlayCircleOutlined /> },
-  { id: 'governance', label: '治理与溯源', helper: '数据从哪来', icon: <LockOutlined /> },
+  { id: 'decision', label: '决策总览', helper: '变化、判断与动作', icon: <ControlOutlined /> },
+  { id: 'simulation', label: '情景推演', helper: '改变假设，看清后果', icon: <ExperimentOutlined /> },
+  { id: 'semantic', label: '语义地图', helper: '内容如何连接对象', icon: <ClusterOutlined /> },
+  { id: 'network', label: '证据链', helper: '结论如何形成', icon: <BranchesOutlined /> },
+  { id: 'governance', label: '数据与审计', helper: '来源、权限与记录', icon: <LockOutlined /> },
+];
+
+const ASSUMPTION_META: Array<{
+  key: keyof ScenarioAssumptions;
+  label: string;
+  helper: string;
+  min: number;
+  max: number;
+  suffix: string;
+}> = [
+  { key: 'demand', label: '终端需求', helper: '销量 / 渗透率变化', min: -20, max: 20, suffix: '%' },
+  { key: 'pricing', label: '价格能力', helper: '提价 / 产品结构变化', min: -15, max: 15, suffix: '%' },
+  { key: 'cost', label: '成本压力', helper: '原料 / 渠道 / 费用变化', min: -15, max: 15, suffix: '%' },
+  { key: 'execution', label: '经营兑现', helper: '份额 / 产能 / 管理执行', min: -20, max: 20, suffix: '%' },
 ];
 
 function liveEvidenceTone(item: RealtimeMessageRecord): LiveEvidenceTone {
@@ -299,6 +327,79 @@ function graphNodeMetric(node: OntologyNode): string {
   return node.canonical_key;
 }
 
+function signedNumber(value: number, suffix = '%'): string {
+  if (!Number.isFinite(value)) return '—';
+  return `${value > 0 ? '+' : ''}${value.toLocaleString('zh-CN', {
+    maximumFractionDigits: 1,
+  })}${suffix}`;
+}
+
+function scenarioPath(
+  points: ScenarioProjectionPoint[],
+  key: 'baseline' | 'simulated' | 'stress',
+  min: number,
+  max: number,
+): string {
+  const width = 640;
+  const height = 190;
+  const padX = 28;
+  const padY = 18;
+  const span = Math.max(1, max - min);
+  return points.map((point, index) => {
+    const x = padX + (index / Math.max(1, points.length - 1)) * (width - padX * 2);
+    const y = padY + ((max - point[key]) / span) * (height - padY * 2);
+    return `${index === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(' ');
+}
+
+const ScenarioProjectionChart: React.FC<{ result: ScenarioResult }> = ({ result }) => {
+  const values = result.projection.flatMap(point => [
+    point.baseline,
+    point.simulated,
+    point.stress,
+  ]);
+  const min = Math.floor(Math.min(...values) - 3);
+  const max = Math.ceil(Math.max(...values) + 3);
+  const simulatedPath = scenarioPath(result.projection, 'simulated', min, max);
+  const baselinePath = scenarioPath(result.projection, 'baseline', min, max);
+  const stressPath = scenarioPath(result.projection, 'stress', min, max);
+
+  return (
+    <div className={`ontology-scenario-chart tone-${result.tone}`}>
+      <div className="ontology-chart-legend">
+        <span className="simulated"><i />当前推演</span>
+        <span className="baseline"><i />基准趋势</span>
+        <span className="stress"><i />压力边界</span>
+      </div>
+      <svg viewBox="0 0 640 220" role="img" aria-label="情景推演路径图">
+        {[0, 1, 2, 3].map(index => {
+          const y = 18 + index * 51.3;
+          return <line key={index} x1="28" x2="612" y1={y} y2={y} className="grid" />;
+        })}
+        <path d={stressPath} className="stress-path" />
+        <path d={baselinePath} className="baseline-path" />
+        <path d={simulatedPath} className="simulated-glow" />
+        <path d={simulatedPath} className="simulated-path" />
+        {result.projection.map((point, index) => {
+          const x = 28 + (index / Math.max(1, result.projection.length - 1)) * 584;
+          const y = 18 + ((max - point.simulated) / Math.max(1, max - min)) * 154;
+          return (
+            <g key={point.period}>
+              <circle cx={x} cy={y} r="3.6" className="simulated-point" />
+              <text x={x} y="205" textAnchor="middle">{point.period}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="ontology-chart-axis">
+        <span>{max}</span>
+        <span>经营价值指数 · 当前 = 100</span>
+        <span>{min}</span>
+      </div>
+    </div>
+  );
+};
+
 const InvestmentOntologyCenter: React.FC = () => {
   const [snapshot, setSnapshot] = useState<OntologyDemoSnapshot | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('decision');
@@ -309,12 +410,20 @@ const InvestmentOntologyCenter: React.FC = () => {
   const [liveEvidence, setLiveEvidence] = useState<RealtimeMessageRecord[]>([]);
   const [liveEvidenceLoading, setLiveEvidenceLoading] = useState(false);
   const [liveEvidenceError, setLiveEvidenceError] = useState<string | null>(null);
+  const [contentOntology, setContentOntology] = useState<ContentOntologyMap | null>(null);
+  const [contentOntologyLoading, setContentOntologyLoading] = useState(false);
+  const [contentOntologyError, setContentOntologyError] = useState<string | null>(null);
   const [liveEvidenceFilter, setLiveEvidenceFilter] = useState<LiveEvidenceFilter>('all');
   const [showAllEvidence, setShowAllEvidence] = useState(false);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionPulseId, setActionPulseId] = useState<string>();
+  const [scenarioPreset, setScenarioPreset] = useState<ScenarioPresetId>('base');
+  const [scenarioAssumptions, setScenarioAssumptions] = useState<ScenarioAssumptions>(
+    SCENARIO_PRESETS[0].assumptions,
+  );
+  const [scenarioHorizon, setScenarioHorizon] = useState(4);
   const [apiMessage, contextHolder] = message.useMessage();
   const loadSequence = useRef(0);
 
@@ -324,6 +433,8 @@ const InvestmentOntologyCenter: React.FC = () => {
     setError(null);
     setLiveEvidenceLoading(true);
     setLiveEvidenceError(null);
+    setContentOntologyLoading(true);
+    setContentOntologyError(null);
     setShowAllEvidence(false);
     try {
       const result = await fetchOntologyDemo(securityId);
@@ -332,6 +443,8 @@ const InvestmentOntologyCenter: React.FC = () => {
       setSelectedSecurityId(result.selected_security_id);
       setSelectedNodeId(result.decision.thesis.id);
       setNetworkFilter('all');
+      setScenarioPreset('base');
+      setScenarioAssumptions(SCENARIO_PRESETS[0].assumptions);
       const selectedAsset = result.assets.find(asset => asset.security_id === result.selected_security_id);
       const ticker = selectedAsset?.canonical_key.split('.')[0] || '';
       const aliases = [
@@ -339,19 +452,34 @@ const InvestmentOntologyCenter: React.FC = () => {
         selectedAsset?.canonical_key,
         ticker,
       ].filter(Boolean).join(',');
-      try {
-        const messages = await listRealtimeMessages({ anyq: aliases, limit: 80 });
-        if (sequence === loadSequence.current) {
-          const unique = messages.filter((item, index, all) => (
+      const [messageResult, ontologyResult] = await Promise.allSettled([
+        listRealtimeMessages({ anyq: aliases, limit: 80 }),
+        fetchContentOntologyMap(result.selected_security_id, 64),
+      ]);
+      if (sequence === loadSequence.current) {
+        if (messageResult.status === 'fulfilled') {
+          const unique = messageResult.value.filter((item, index, all) => (
             all.findIndex(candidate => candidate.id === item.id) === index
           ));
           setLiveEvidence(unique);
           setLiveEvidenceFilter(unique.some(item => liveEvidenceTone(item) === 'risk') ? 'risk' : 'all');
-        }
-      } catch (liveError) {
-        if (sequence === loadSequence.current) {
+        } else {
           setLiveEvidence([]);
-          setLiveEvidenceError(liveError instanceof Error ? liveError.message : 'DAO 财经信息读取失败');
+          setLiveEvidenceError(
+            messageResult.reason instanceof Error
+              ? messageResult.reason.message
+              : 'DAO 财经信息读取失败',
+          );
+        }
+        if (ontologyResult.status === 'fulfilled') {
+          setContentOntology(ontologyResult.value);
+        } else {
+          setContentOntology(null);
+          setContentOntologyError(
+            ontologyResult.reason instanceof Error
+              ? ontologyResult.reason.message
+              : '内容本体读取失败',
+          );
         }
       }
     } catch (loadError) {
@@ -362,6 +490,7 @@ const InvestmentOntologyCenter: React.FC = () => {
       if (sequence === loadSequence.current) {
         if (!quiet) setLoading(false);
         setLiveEvidenceLoading(false);
+        setContentOntologyLoading(false);
       }
     }
   }, []);
@@ -421,6 +550,13 @@ const InvestmentOntologyCenter: React.FC = () => {
 
   const selectedAsset = snapshot?.assets.find(asset => asset.security_id === selectedSecurityId);
   const decision = snapshot?.decision;
+  const scenarioResult = useMemo(() => runOntologyScenario({
+    assumptions: scenarioAssumptions,
+    horizon: scenarioHorizon,
+    thesisConfidence: Number(decision?.thesis.attributes.confidence || 0.5),
+    currentWeight: Number(decision?.position.attributes.weight_pct || 0),
+    riskBudget: Number(decision?.position.attributes.risk_budget_pct || 0),
+  }), [decision, scenarioAssumptions, scenarioHorizon]);
   const liveSignalTone: LiveEvidenceTone = liveEvidenceStats.risk > 0
     ? 'risk'
     : liveEvidenceStats.positive > 0
@@ -444,6 +580,9 @@ const InvestmentOntologyCenter: React.FC = () => {
       : liveSignalTone === 'positive'
         ? '先确认积极变化是否已经兑现到经营数据，不因单条信息追涨。'
         : '保留当前判断，同时跟踪相互矛盾的信息。';
+
+  const priorityRiskEvidence = annotatedLiveEvidence.find(entry => entry.tone === 'risk');
+  const priorityPositiveEvidence = annotatedLiveEvidence.find(entry => entry.tone === 'positive');
 
   const dynamicGraph = useMemo(() => {
     if (!snapshot) return { nodes: [] as OntologyNode[], edges: [] as OntologyEdge[] };
@@ -595,6 +734,21 @@ const InvestmentOntologyCenter: React.FC = () => {
     return focused;
   }, [displayedGraph.edges, selectedNodeId]);
 
+  const applyScenarioPreset = useCallback((presetId: Exclude<ScenarioPresetId, 'custom'>) => {
+    const preset = SCENARIO_PRESETS.find(item => item.id === presetId);
+    if (!preset) return;
+    setScenarioPreset(presetId);
+    setScenarioAssumptions({ ...preset.assumptions });
+  }, []);
+
+  const updateScenarioAssumption = useCallback((
+    key: keyof ScenarioAssumptions,
+    value: number,
+  ) => {
+    setScenarioPreset('custom');
+    setScenarioAssumptions(current => ({ ...current, [key]: value }));
+  }, []);
+
   const renderEdge = (edge: OntologyEdge) => {
     const source = graphNodeMap.get(edge.source);
     const target = graphNodeMap.get(edge.target);
@@ -700,62 +854,87 @@ const InvestmentOntologyCenter: React.FC = () => {
   );
 
   const renderDecisionWorkspace = () => (
-    <div className="ontology-view-stack">
-      <section className={`ontology-decision-hero ${liveSignalTone}`}>
-        <div className="ontology-decision-copy">
-          <div className="ontology-live-status">
+    <div className="ontology-view-stack ontology-decision-v4">
+      <section className={`ontology-command-hero tone-${liveSignalTone}`}>
+        <header>
+          <div className="ontology-context-chip">
             <i />
-            <span>DAO 财经实时映射</span>
+            <span>实时决策上下文</span>
             <em>{selectedAsset?.label} · {selectedAsset?.canonical_key}</em>
           </div>
-          <small>当前决策结论</small>
-          <h2>{liveHeadline}</h2>
-          <p>{liveAction}</p>
-          <div className="ontology-decision-actions">
-            <Button
-              type="primary"
-              icon={<FileSearchOutlined />}
-              href="#ontology-live-evidence"
-              onClick={() => {
-                setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all');
-                setShowAllEvidence(false);
-              }}
-            >
-              核对优先证据
-            </Button>
-            <Button
-              icon={<CheckCircleOutlined />}
-              loading={actionLoading}
-              disabled={liveEvidenceStats.total === 0}
-              onClick={() => void recordAction(
-                'request_research',
-                `${selectedAsset?.label || '当前标的'}：关联 ${liveEvidenceStats.total} 条信息，风险 ${liveEvidenceStats.risk} 条，积极 ${liveEvidenceStats.positive} 条`,
-              )}
-            >
-              发起补证
-            </Button>
+          <span><ClockCircleOutlined /> 更新于 {snapshot ? formatTimestamp(snapshot.generated_at) : '—'}</span>
+        </header>
+        <div className="ontology-command-summary">
+          <div>
+            <small>现在最值得关注</small>
+            <h2>{liveHeadline}</h2>
+            <p>{liveAction}</p>
+            <div>
+              <Button
+                type="primary"
+                icon={<FileSearchOutlined />}
+                href="#ontology-live-evidence"
+                onClick={() => {
+                  setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all');
+                  setShowAllEvidence(false);
+                }}
+              >
+                查看关键依据
+              </Button>
+              <Button
+                icon={<ExperimentOutlined />}
+                onClick={() => setActiveView('simulation')}
+              >
+                推演变量变化
+              </Button>
+            </div>
           </div>
-        </div>
-        <div className="ontology-decision-facts">
-          <div className="ontology-decision-score">
+          <aside>
             <span>{decision?.verdict || '等待判断'}</span>
             <strong>{percentage(decision?.thesis.attributes.confidence)}</strong>
-            <small>论点置信度</small>
+            <small>当前论点置信度</small>
+            <i style={{ '--confidence': percentage(decision?.thesis.attributes.confidence) } as React.CSSProperties} />
+          </aside>
+        </div>
+        <div className="ontology-command-metrics">
+          <div>
+            <span>证据净方向</span>
+            <strong className={liveEvidenceStats.positive >= liveEvidenceStats.risk ? 'positive' : 'risk'}>
+              {liveEvidenceStats.positive - liveEvidenceStats.risk > 0 ? '+' : ''}
+              {liveEvidenceStats.positive - liveEvidenceStats.risk}
+            </strong>
+            <small>{liveEvidenceStats.positive} 支持 / {liveEvidenceStats.risk} 反证</small>
           </div>
-          <dl>
-            <div><dt>关联信息</dt><dd>{liveEvidenceStats.total}</dd></div>
-            <div className="risk"><dt>风险证据</dt><dd>{liveEvidenceStats.risk}</dd></div>
-            <div className="positive"><dt>积极证据</dt><dd>{liveEvidenceStats.positive}</dd></div>
-            <div><dt>数据来源</dt><dd>{liveEvidenceStats.sources}</dd></div>
-          </dl>
+          <div>
+            <span>仓位 / 预算</span>
+            <strong className={
+              Number(decision?.position.attributes.weight_pct) > Number(decision?.position.attributes.risk_budget_pct)
+                ? 'risk'
+                : ''
+            }>
+              {numberText(decision?.position.attributes.weight_pct, '%')}
+            </strong>
+            <small>风险上限 {numberText(decision?.position.attributes.risk_budget_pct, '%')}</small>
+          </div>
+          <div>
+            <span>优先核对</span>
+            <strong>{liveEvidenceStats.risk ? `${liveEvidenceStats.risk} 条` : '无新增'}</strong>
+            <small>高影响反向证据</small>
+          </div>
+          <button type="button" onClick={() => setActiveView('simulation')}>
+            <span>基准情景</span>
+            <strong>{signedNumber(scenarioResult.expectedReturn)}</strong>
+            <small>{scenarioHorizon} 季度价值变化区间</small>
+            <LineChartOutlined />
+          </button>
         </div>
       </section>
 
-      <section className="ontology-decision-grid">
-        <article className="ontology-thesis-card">
+      <section className="ontology-decision-command-grid">
+        <article className="ontology-thesis-brief">
           <header>
             <div>
-              <span>THESIS OBJECT</span>
+              <span>01 · 核心论点</span>
               <h3>{decision?.thesis.label}</h3>
             </div>
             <Tag color={decision?.tone === 'positive' ? 'green' : decision?.tone === 'warning' ? 'orange' : 'blue'}>
@@ -763,72 +942,302 @@ const InvestmentOntologyCenter: React.FC = () => {
             </Tag>
           </header>
           <p>{decision?.change_summary}</p>
-          <div className="ontology-thesis-rail">
-            <div>
-              <span>支持路径</span>
-              <strong className="positive">{liveEvidenceStats.positive}</strong>
-            </div>
-            <div>
-              <span>反证路径</span>
-              <strong className="risk">{liveEvidenceStats.risk}</strong>
-            </div>
-            <div>
-              <span>当前仓位</span>
-              <strong>{numberText(decision?.position.attributes.weight_pct, '%')}</strong>
-            </div>
-            <div>
-              <span>风险预算</span>
-              <strong>{numberText(decision?.position.attributes.risk_budget_pct, '%')}</strong>
-            </div>
+          <div className="ontology-thesis-invalidation">
+            <span>什么情况说明我错了</span>
+            <strong>{String(decision?.thesis.attributes.invalidation || '尚未定义')}</strong>
+          </div>
+          <button type="button" onClick={() => {
+            setSelectedNodeId(decision?.thesis.id);
+            setActiveView('network');
+          }}>
+            查看论点的完整证据链 <span>→</span>
+          </button>
+        </article>
+
+        <article className="ontology-signal-brief">
+          <header>
+            <span>02 · 关键变量</span>
+            <button type="button" onClick={() => {
+              setLiveEvidenceFilter('all');
+              setShowAllEvidence(true);
+            }}>全部 {liveEvidenceStats.total}</button>
+          </header>
+          <div className="risk">
+            <i>!</i>
+            <span>
+              <small>最大反证</small>
+              <strong>{priorityRiskEvidence ? liveEvidenceTitle(priorityRiskEvidence.item) : '暂无明确反证'}</strong>
+            </span>
+          </div>
+          <div className="positive">
+            <i>+</i>
+            <span>
+              <small>最强支持</small>
+              <strong>{priorityPositiveEvidence ? liveEvidenceTitle(priorityPositiveEvidence.item) : '暂无明确支持证据'}</strong>
+            </span>
           </div>
           <footer>
-            <span>失效条件</span>
-            <strong>{String(decision?.thesis.attributes.invalidation || '尚未定义')}</strong>
+            <span>{liveEvidenceStats.sources} 个来源</span>
+            <span>{liveEvidenceStats.neutral} 条待确认</span>
           </footer>
         </article>
 
-        <article className="ontology-next-action">
-          <span>ACTION RECOMMENDATION</span>
-          <h3>下一步怎么做</h3>
-          <p>{decision?.recommended_action}</p>
-          <div>
-            <SafetyCertificateOutlined />
-            <span>{decision?.recommended_reason}</span>
-          </div>
+        <aside className="ontology-action-brief">
+          <span>03 · 建议动作</span>
+          <h3>{decision?.recommended_action}</h3>
+          <p><SafetyCertificateOutlined /> {decision?.recommended_reason}</p>
           <Button
             type="primary"
             loading={actionLoading}
             onClick={() => void recordAction(
               decision?.recommended_action_type || 'keep_watch',
-              decision?.recommended_reason || '按本体建议执行',
+              decision?.recommended_reason || '按决策建议执行',
             )}
           >
-            记录这次决策
+            确认并写入决策日志
           </Button>
-          <small>仅写入审计台账，不连接真实券商</small>
-        </article>
+          <button type="button" onClick={() => setActiveView('simulation')}>
+            先做压力测试
+          </button>
+          <small>只记录研究决策，不连接真实券商</small>
+        </aside>
       </section>
 
       <button
         type="button"
-        className="ontology-path-preview"
+        className="ontology-path-preview ontology-path-v4"
         onClick={() => setActiveView('network')}
       >
-        <span><DatabaseOutlined /> DAO 证据</span>
+        <strong>一条链看清结论</strong>
+        <span><DatabaseOutlined /> 证据</span>
         <i>→</i>
-        <span><ThunderboltOutlined /> 现实事件</span>
+        <span><ThunderboltOutlined /> 变量</span>
         <i>→</i>
-        <span><BulbOutlined /> 投资论点</span>
+        <span><BulbOutlined /> 论点</span>
         <i>→</i>
-        <span><AuditOutlined /> 当前持仓</span>
+        <span><AuditOutlined /> 仓位</span>
         <i>→</i>
-        <span><ApartmentOutlined /> 组合风险</span>
-        <em>查看完整关系网络</em>
+        <span><ApartmentOutlined /> 组合</span>
+        <em>打开证据链</em>
       </button>
 
       {renderEvidenceList()}
     </div>
   );
+
+  const renderSimulationWorkspace = () => (
+    <div className="ontology-simulation-workspace">
+      <section className="ontology-simulation-header">
+        <div>
+          <span>SCENARIO LAB · 决策不是预测，是管理假设</span>
+          <h2>如果关键变量改变，会发生什么？</h2>
+          <p>调整经营假设，系统会即时重算论点置信度、价值路径、建议仓位与组合影响。</p>
+        </div>
+        <div className="ontology-horizon-control" role="group" aria-label="选择推演周期">
+          <span>推演周期</span>
+          {[2, 4, 8].map(value => (
+            <button
+              key={value}
+              type="button"
+              className={scenarioHorizon === value ? 'active' : ''}
+              onClick={() => setScenarioHorizon(value)}
+            >
+              {value} 季度
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <div className="ontology-simulation-grid">
+        <aside className="ontology-assumption-panel">
+          <header>
+            <div>
+              <span>01</span>
+              <strong>设置假设</strong>
+            </div>
+            <em>{scenarioPreset === 'custom' ? '自定义情景' : '预设情景'}</em>
+          </header>
+          <div className="ontology-preset-switcher">
+            {SCENARIO_PRESETS.map(preset => (
+              <button
+                key={preset.id}
+                type="button"
+                className={scenarioPreset === preset.id ? 'active' : ''}
+                onClick={() => applyScenarioPreset(preset.id)}
+              >
+                <strong>{preset.label}</strong>
+                <small>{preset.helper}</small>
+              </button>
+            ))}
+          </div>
+          <div className="ontology-assumption-list">
+            {ASSUMPTION_META.map(item => {
+              const value = scenarioAssumptions[item.key];
+              const favorable = item.key === 'cost' ? value < 0 : value > 0;
+              const adverse = item.key === 'cost' ? value > 0 : value < 0;
+              return (
+                <label key={item.key}>
+                  <span>
+                    <strong>{item.label}</strong>
+                    <small>{item.helper}</small>
+                  </span>
+                  <output className={favorable ? 'positive' : adverse ? 'risk' : ''}>
+                    {signedNumber(value, item.suffix)}
+                  </output>
+                  <input
+                    type="range"
+                    min={item.min}
+                    max={item.max}
+                    step="1"
+                    value={value}
+                    onChange={event => updateScenarioAssumption(item.key, Number(event.target.value))}
+                    style={{ '--range-progress': `${((value - item.min) / (item.max - item.min)) * 100}%` } as React.CSSProperties}
+                  />
+                  <div><span>{item.min}{item.suffix}</span><i>当前基线</i><span>+{item.max}{item.suffix}</span></div>
+                </label>
+              );
+            })}
+          </div>
+          <footer>
+            <SafetyCertificateOutlined />
+            <span>模型权重公开透明；拖动任一变量后立即重算，不调用黑盒结论。</span>
+          </footer>
+        </aside>
+
+        <section className={`ontology-projection-panel tone-${scenarioResult.tone}`}>
+          <header>
+            <div>
+              <span>02 · 推演结果</span>
+              <h3>
+                {scenarioResult.tone === 'upside'
+                  ? '论点增强，但仓位仍受预算约束'
+                  : scenarioResult.tone === 'stress'
+                    ? '论点受损，需要先控制暴露'
+                    : '方向未决，等待证据确认'}
+              </h3>
+            </div>
+            <div>
+              <small>情景价值变化</small>
+              <strong>{signedNumber(scenarioResult.expectedReturn)}</strong>
+              <em>{signedNumber(scenarioResult.returnRange[0])} ～ {signedNumber(scenarioResult.returnRange[1])}</em>
+            </div>
+          </header>
+          <ScenarioProjectionChart result={scenarioResult} />
+          <div className="ontology-projection-metrics">
+            <div>
+              <span>营收变化</span>
+              <strong className={scenarioResult.revenueDelta >= 0 ? 'positive' : 'risk'}>
+                {signedNumber(scenarioResult.revenueDelta)}
+              </strong>
+              <small>由需求、价格、执行映射</small>
+            </div>
+            <div>
+              <span>利润率变化</span>
+              <strong className={scenarioResult.marginDelta >= 0 ? 'positive' : 'risk'}>
+                {signedNumber(scenarioResult.marginDelta, 'pct')}
+              </strong>
+              <small>价格、成本与执行的合力</small>
+            </div>
+            <div>
+              <span>论点置信度</span>
+              <strong>{percentage(scenarioResult.confidence)}</strong>
+              <small>{signedNumber(scenarioResult.confidenceDelta * 100)} vs 当前</small>
+            </div>
+            <div>
+              <span>失效风险</span>
+              <strong className={scenarioResult.invalidationRisk >= 60 ? 'risk' : ''}>
+                {numberText(scenarioResult.invalidationRisk, '%')}
+              </strong>
+              <small>触发失效条件的相对风险</small>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section className="ontology-impact-chain">
+        <header>
+          <div>
+            <span>03 · 决策传导</span>
+            <h3>{scenarioResult.summary}</h3>
+          </div>
+          <Tag color={scenarioResult.tone === 'upside' ? 'green' : scenarioResult.tone === 'stress' ? 'red' : 'blue'}>
+            {scenarioPreset === 'custom'
+              ? '自定义'
+              : SCENARIO_PRESETS.find(item => item.id === scenarioPreset)?.label}
+          </Tag>
+        </header>
+        <div className="ontology-impact-flow">
+          <article>
+            <span>经营假设</span>
+            <strong>{signedNumber(scenarioResult.score, ' 分')}</strong>
+            <small>综合冲击</small>
+          </article>
+          <i>→</i>
+          <article>
+            <span>论点置信度</span>
+            <strong>{percentage(scenarioResult.confidence)}</strong>
+            <small>{scenarioResult.summary}</small>
+          </article>
+          <i>→</i>
+          <article>
+            <span>建议研究仓位</span>
+            <strong>{numberText(scenarioResult.suggestedWeight, '%')}</strong>
+            <small>当前 {numberText(decision?.position.attributes.weight_pct, '%')}</small>
+          </article>
+          <i>→</i>
+          <article>
+            <span>组合净影响</span>
+            <strong className={scenarioResult.portfolioImpact >= 0 ? 'positive' : 'risk'}>
+              {signedNumber(scenarioResult.portfolioImpact, 'pct')}
+            </strong>
+            <small>按当前仓位粗估</small>
+          </article>
+        </div>
+        <footer>
+          <div>
+            <strong>系统建议</strong>
+            <span>{scenarioResult.action}</span>
+          </div>
+          <Button
+            type="primary"
+            loading={actionLoading}
+            onClick={() => void recordAction(
+              scenarioResult.suggestedWeight < Number(decision?.position.attributes.weight_pct)
+                ? 'reduce_paper'
+                : 'keep_watch',
+              `${selectedAsset?.label || '当前标的'}情景推演：${scenarioResult.summary} ${scenarioResult.action}`,
+            )}
+          >
+            保存推演并写入日志
+          </Button>
+        </footer>
+        <small>研究模型输出，不构成收益预测或投资建议；真实决策前仍需核验原始证据。</small>
+      </section>
+    </div>
+  );
+
+  const renderSemanticWorkspace = () => {
+    if (contentOntologyLoading) {
+      return (
+        <div className="ontology-semantic-state">
+          <ClusterOutlined />
+          <strong>正在构建统一内容语义图…</strong>
+          <span>为快讯、文章、研报和机构纪要生成类型化多标签与实体关系。</span>
+        </div>
+      );
+    }
+    if (contentOntologyError || !contentOntology) {
+      return (
+        <div className="ontology-semantic-state error">
+          <ClusterOutlined />
+          <strong>内容本体暂时不可用</strong>
+          <span>{contentOntologyError || '暂未返回可用的语义对象。'}</span>
+          <Button onClick={() => void load(selectedSecurityId, true)}>重新构建</Button>
+        </div>
+      );
+    }
+    return <ContentSemanticMap data={contentOntology} />;
+  };
 
   const renderNetworkWorkspace = () => (
     <div className="ontology-network-layout">
@@ -1337,11 +1746,11 @@ const InvestmentOntologyCenter: React.FC = () => {
 
   return (
     <CenterShell
-      eyebrow="DAO 财经 · 投资语义层"
-      title="投资决策本体"
-      subtitle="把资讯、公司、论点、持仓和动作组织成同一套可追溯的决策系统"
+      eyebrow="DAO 财经 · 决策智能"
+      title="决策驾驶舱"
+      subtitle="一个标的、一条证据链、一组可推演假设、一个明确动作"
       icon={<NodeIndexOutlined />}
-      className="ontology-center ontology-v3"
+      className="ontology-center ontology-v4"
       error={error}
       loading={loading}
       loadingText="正在构建投资对象与关系…"
@@ -1368,14 +1777,14 @@ const InvestmentOntologyCenter: React.FC = () => {
           <section className="ontology-system-bar">
             <div>
               <i />
-              <span>Ontology online</span>
-              <em>v1.0 · 投资决策域</em>
+              <span>Decision graph online</span>
+              <em>内容已标注 · 语义图已索引 · 推演模型可用</em>
             </div>
             <dl>
-              <div><dt>对象类型</dt><dd>{OBJECT_TYPES.length}</dd></div>
-              <div><dt>关系类型</dt><dd>{LINK_TYPES.length}</dd></div>
-              <div><dt>动作类型</dt><dd>{ACTION_DEFINITIONS.length}</dd></div>
+              <div><dt>当前标的</dt><dd>{selectedAsset?.canonical_key}</dd></div>
               <div><dt>实时证据</dt><dd>{liveEvidenceStats.total}</dd></div>
+              <div><dt>风险信号</dt><dd>{liveEvidenceStats.risk}</dd></div>
+              <div><dt>本体覆盖</dt><dd>{contentOntology ? `${contentOntology.stats.ontology_coverage}%` : '构建中'}</dd></div>
             </dl>
             <span><ClockCircleOutlined /> {formatTimestamp(snapshot.generated_at)}</span>
           </section>
@@ -1390,7 +1799,7 @@ const InvestmentOntologyCenter: React.FC = () => {
                   setActiveView(item.id);
                   if (item.id === 'network') {
                     setNetworkFilter('all');
-                    setSelectedNodeId(undefined);
+                    setSelectedNodeId(decision.thesis.id);
                   }
                 }}
               >
@@ -1405,10 +1814,15 @@ const InvestmentOntologyCenter: React.FC = () => {
 
           <main className={`ontology-workspace-content view-${activeView}`}>
             {activeView === 'decision' && renderDecisionWorkspace()}
+            {activeView === 'simulation' && renderSimulationWorkspace()}
+            {activeView === 'semantic' && renderSemanticWorkspace()}
             {activeView === 'network' && renderNetworkWorkspace()}
-            {activeView === 'objects' && renderObjectsWorkspace()}
-            {activeView === 'actions' && renderActionsWorkspace()}
-            {activeView === 'governance' && renderGovernanceWorkspace()}
+            {activeView === 'governance' && (
+              <div className="ontology-governance-v4">
+                {renderActionsWorkspace()}
+                {renderGovernanceWorkspace()}
+              </div>
+            )}
           </main>
         </div>
       )}

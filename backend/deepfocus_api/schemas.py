@@ -1096,6 +1096,8 @@ class ResearchWireItem(BaseModel):
     file_id: Optional[str] = None
     instruments: list[str] = Field(default_factory=list)  # 提及标的（A/美/港股+黄金原油白银比特币），收报时预提取
     market: str = ""  # 主要市场 A/HK/US（模型判定，前端据此分 A股/港美股；空=未判定，前端回退标题启发式）
+    tags: list[str] = Field(default_factory=list)
+    ontology: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResearchWireResponse(BaseModel):

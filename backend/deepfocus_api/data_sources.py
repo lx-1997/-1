@@ -1674,7 +1674,9 @@ def _store_data_item(
             )
             conn.commit()
             row = conn.execute("SELECT * FROM data_items WHERE id = ?", (record["id"],)).fetchone()
-            return _row_to_item(dict(row)) if row else _row_to_item(record)
+            result = _row_to_item(dict(row)) if row else _row_to_item(record)
+            _index_data_item_ontology(result)
+            return result
 
         conn.execute(
             """
@@ -1689,7 +1691,39 @@ def _store_data_item(
             record,
         )
         conn.commit()
-    return _row_to_item(record)
+    result = _row_to_item(record)
+    _index_data_item_ontology(result)
+    return result
+
+
+def _index_data_item_ontology(item: DataSourceItemRecord) -> None:
+    """把上传资料/文章/研报/纪要同步进规范内容本体；失败不影响资料入库。"""
+    try:
+        from .content_ontology import annotate_content
+        source_type = str(item.source_type or "")
+        title_text = f"{item.title} {item.text_preview}".lower()
+        if "纪要" in title_text:
+            content_type = "institution_note"
+        elif "研报" in title_text or source_type == "upload":
+            content_type = "research"
+        elif source_type in {"web_page", "keyword_crawl"}:
+            content_type = "article"
+        else:
+            content_type = "evidence"
+        annotate_content(
+            content_id=f"data:{item.id}",
+            content_type=content_type,
+            title=item.title,
+            text=item.text,
+            source_name=item.source_name,
+            symbol=item.symbol or "",
+            url=item.url or "",
+            published_at=item.collected_at,
+            legacy_tags=item.tags,
+            persist=True,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _find_existing_item_row(

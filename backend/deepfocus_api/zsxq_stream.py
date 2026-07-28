@@ -111,9 +111,25 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
     first_line = (text.split("\n", 1)[0]).strip()
     # ⭐不透出来源:响应里刻意不带 author(星球号名)与 url(星球帖子链接)——
     # 展示面不体现具体星球来源,也不提供跳回原文的入口(用户拍板)。
+    topic_id = str(t.get("topicId") or "").strip()
+    title = (first_line[:80] + ("…" if len(first_line) > 80 else "")) or "图片动态"
+    ontology: dict[str, Any] = {}
+    try:
+        from .content_ontology import annotate_content
+        ontology = annotate_content(
+            content_id=f"note:{topic_id}",
+            content_type="institution_note",
+            title=title,
+            text=text,
+            source_name="机构纪要",
+            published_at=ct,
+            persist=True,
+        )
+    except Exception:  # noqa: BLE001
+        ontology = {}
     return {
-        "id": str(t.get("topicId") or "").strip(),
-        "title": (first_line[:80] + ("…" if len(first_line) > 80 else "")) or "图片动态",
+        "id": topic_id,
+        "title": title,
         "text": text,
         "links": links,
         "images": images,
@@ -123,6 +139,8 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
         "digested": bool(t.get("digested")),
         "comments_count": max(int(t.get("comments_count") or 0), len(comments)),
         "comments": comments,
+        "tags": [tag["label"] for tag in ontology.get("tags", [])],
+        "ontology": ontology,
     }
 
 

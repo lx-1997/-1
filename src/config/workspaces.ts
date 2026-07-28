@@ -69,9 +69,9 @@ export const WORKSPACE_SECTIONS: WorkspaceSection[] = [
     sidebarLabelKey: 'sidebar.equityResearch',
     group: 'workspace',
     title: '个股',
-    description: '用投资本体把公司、证据、论点、持仓和动作收进同一条决策链',
+    description: '把变化、证据、情景推演、仓位和动作收进同一条决策链',
     views: [
-      { view: 'investment-ontology', label: '本体', detail: '证据 → 论点 → 持仓' },
+      { view: 'investment-ontology', label: '决策', detail: '证据 × 推演 × 动作' },
       { view: 'ai-research', label: '体检', detail: '单标的诊断' },
       { view: 'stock-tear-sheet', label: '速览', detail: '一页纸全景' },
       { view: 'stock-compare', label: '对比', detail: '多标的 PK' },
