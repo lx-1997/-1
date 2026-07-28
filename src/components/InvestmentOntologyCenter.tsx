@@ -54,7 +54,6 @@ import './InvestmentOntologyCenter.css';
 
 type WorkspaceView = 'decision' | 'simulation' | 'semantic' | 'network' | 'governance';
 type LiveEvidenceTone = 'positive' | 'risk' | 'neutral';
-type LiveEvidenceFilter = 'all' | LiveEvidenceTone;
 type NetworkFilter = 'all' | 'risk' | 'positive';
 
 interface ObjectTypeDefinition {
@@ -218,17 +217,6 @@ const ATTRIBUTE_LABELS: Record<string, string> = {
   name: '名称',
 };
 
-const NAV_ITEMS: Array<{
-  id: WorkspaceView;
-  label: string;
-  helper: string;
-  icon: React.ReactNode;
-}> = [
-  { id: 'decision', label: '现在做什么', helper: '从这里开始', icon: <ControlOutlined /> },
-  { id: 'simulation', label: '模拟变化', helper: '查看可能结果', icon: <ExperimentOutlined /> },
-  { id: 'semantic', label: '消息关系', helper: '查看内容关联', icon: <ClusterOutlined /> },
-];
-
 const ASSUMPTION_META: Array<{
   key: keyof ScenarioAssumptions;
   label: string;
@@ -264,13 +252,6 @@ function liveEvidenceTitle(item: RealtimeMessageRecord): string {
     .split(/\n+/)
     .map(cleanEvidenceText)
     .find(line => line.length > 8) || title || 'DAO 财经相关信息';
-}
-
-function liveEvidenceSummary(item: RealtimeMessageRecord): string {
-  const title = liveEvidenceTitle(item);
-  const content = cleanEvidenceText(item.content);
-  const summary = content.startsWith(title) ? content.slice(title.length).trim() : content;
-  return summary.length > 170 ? `${summary.slice(0, 170)}…` : summary;
 }
 
 function percentage(value: unknown): string {
@@ -411,7 +392,6 @@ const InvestmentOntologyCenter: React.FC = () => {
   const [contentOntology, setContentOntology] = useState<ContentOntologyMap | null>(null);
   const [contentOntologyLoading, setContentOntologyLoading] = useState(false);
   const [contentOntologyError, setContentOntologyError] = useState<string | null>(null);
-  const [liveEvidenceFilter, setLiveEvidenceFilter] = useState<LiveEvidenceFilter>('all');
   const [showAllEvidence, setShowAllEvidence] = useState(false);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -460,7 +440,6 @@ const InvestmentOntologyCenter: React.FC = () => {
             all.findIndex(candidate => candidate.id === item.id) === index
           ));
           setLiveEvidence(unique);
-          setLiveEvidenceFilter(unique.some(item => liveEvidenceTone(item) === 'risk') ? 'risk' : 'all');
         } else {
           setLiveEvidence([]);
           setLiveEvidenceError(
@@ -534,17 +513,16 @@ const InvestmentOntologyCenter: React.FC = () => {
     return { positive, risk, neutral, sources, total: annotatedLiveEvidence.length };
   }, [annotatedLiveEvidence]);
 
-  const matchingLiveEvidence = useMemo(
-    () => annotatedLiveEvidence.filter(
-      entry => liveEvidenceFilter === 'all' || entry.tone === liveEvidenceFilter,
-    ),
-    [annotatedLiveEvidence, liveEvidenceFilter],
-  );
-
-  const filteredLiveEvidence = useMemo(
-    () => matchingLiveEvidence.slice(0, showAllEvidence ? 8 : 3),
-    [matchingLiveEvidence, showAllEvidence],
-  );
+  const decisionEvidence = useMemo(() => {
+    const tonePriority: Record<LiveEvidenceTone, number> = {
+      risk: 0,
+      positive: 1,
+      neutral: 2,
+    };
+    return [...annotatedLiveEvidence]
+      .sort((a, b) => tonePriority[a.tone] - tonePriority[b.tone])
+      .slice(0, showAllEvidence ? 8 : 3);
+  }, [annotatedLiveEvidence, showAllEvidence]);
 
   const selectedAsset = snapshot?.assets.find(asset => asset.security_id === selectedSecurityId);
   const decision = snapshot?.decision;
@@ -757,198 +735,138 @@ const InvestmentOntologyCenter: React.FC = () => {
     );
   };
 
-  const renderEvidenceList = () => (
-    <section id="ontology-live-evidence" className="ontology-evidence-panel">
-      <header className="ontology-section-head">
-        <div>
-          <span>LIVE OBJECT SET</span>
-          <h3>与 {selectedAsset?.label} 关联的证据</h3>
-          <p>实时从 DAO 财经信息库匹配，保留来源、时间和原文。</p>
-        </div>
-        <div className="ontology-evidence-filters" role="group" aria-label="筛选关联证据">
-          {([
-            ['all', `全部 ${liveEvidenceStats.total}`],
-            ['risk', `风险 ${liveEvidenceStats.risk}`],
-            ['positive', `积极 ${liveEvidenceStats.positive}`],
-            ['neutral', `中性 ${liveEvidenceStats.neutral}`],
-          ] as Array<[LiveEvidenceFilter, string]>).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              className={liveEvidenceFilter === value ? 'active' : ''}
-              onClick={() => {
-                setLiveEvidenceFilter(value);
-                setShowAllEvidence(false);
-              }}
+  const renderDecisionWorkspace = () => (
+    <div className="ontology-view-stack ontology-decision-v6">
+      <section className={`ontology-simple-answer tone-${liveSignalTone}`}>
+        <header>
+          <div>
+            <i />
+            <strong>{selectedAsset?.label}</strong>
+            <span>{selectedAsset?.canonical_key}</span>
+          </div>
+          <span><ClockCircleOutlined /> {snapshot ? formatTimestamp(snapshot.generated_at) : '—'}</span>
+        </header>
+        <div className="ontology-simple-answer-copy">
+          <small>今日结论</small>
+          <h2>
+            {liveEvidenceStats.risk
+              ? '先核对，再决定'
+              : liveEvidenceStats.positive
+                ? '暂不追涨，先验证'
+                : '继续观察'}
+          </h2>
+          <p>{liveAction}</p>
+          <div className="ontology-simple-stats" aria-label="判断依据概览">
+            <span className="risk">风险 <strong>{liveEvidenceStats.risk}</strong></span>
+            <span className="positive">支持 <strong>{liveEvidenceStats.positive}</strong></span>
+            <span>把握度 <strong>{percentage(decision?.thesis.attributes.confidence)}</strong></span>
+          </div>
+          <div className="ontology-simple-actions">
+            <Button
+              type="primary"
+              size="large"
+              icon={<FileSearchOutlined />}
+              href="#ontology-key-reasons"
+              onClick={() => setShowAllEvidence(false)}
             >
-              {label}
+              看 3 条关键原因
+            </Button>
+            <button type="button" onClick={() => setActiveView('simulation')}>
+              模拟变化 <span>→</span>
             </button>
-          ))}
+          </div>
         </div>
-      </header>
+      </section>
 
-      {liveEvidenceLoading ? (
-        <div className="ontology-empty">正在关联快讯、文章和研报…</div>
-      ) : liveEvidenceError ? (
-        <div className="ontology-empty error">
-          <strong>实时信息暂时读取失败</strong>
-          <span>{liveEvidenceError}</span>
-        </div>
-      ) : filteredLiveEvidence.length ? (
-        <>
-          <div className="ontology-evidence-list">
-            {filteredLiveEvidence.map(({ item, tone }) => (
-              <article key={item.id} className={tone}>
-                <div className="ontology-evidence-meta">
-                  <span>{item.topic || '资讯'}</span>
-                  <em>{item.source_name || 'DAO 财经'}</em>
-                  <small>{formatTimestamp(item.created_at)}</small>
+      <section id="ontology-key-reasons" className="ontology-simple-reasons">
+        <header>
+          <div>
+            <small>判断依据</small>
+            <h3>为什么这么说</h3>
+          </div>
+          <span>只显示最重要的 {showAllEvidence ? Math.min(8, decisionEvidence.length) : 3} 条</span>
+        </header>
+
+        {liveEvidenceLoading ? (
+          <div className="ontology-empty">正在查找关键原因…</div>
+        ) : liveEvidenceError ? (
+          <div className="ontology-empty error">
+            <strong>信息暂时读取失败</strong>
+            <span>{liveEvidenceError}</span>
+          </div>
+        ) : decisionEvidence.length ? (
+          <div className="ontology-simple-reason-list">
+            {decisionEvidence.map(({ item, tone }, index) => (
+              <article key={item.id}>
+                <span className="ontology-reason-index">{index + 1}</span>
+                <div>
+                  <p>
+                    {item.source_name || 'DAO 财经'}
+                    <span>·</span>
+                    {formatTimestamp(item.created_at)}
+                  </p>
+                  <h4>{liveEvidenceTitle(item)}</h4>
                 </div>
-                <h4>{liveEvidenceTitle(item)}</h4>
-                <p>{liveEvidenceSummary(item)}</p>
-                <footer>
+                <div className="ontology-reason-outcome">
                   <span className={`ontology-signal-pill ${tone}`}>
-                    {tone === 'risk' ? '削弱论点' : tone === 'positive' ? '支持论点' : '待确认'}
+                    {tone === 'risk' ? '风险' : tone === 'positive' ? '支持' : '待确认'}
                   </span>
-                  <span>对象：Evidence</span>
                   <a
                     href={item.url || `/?article=${encodeURIComponent(item.id)}`}
                     target={item.url ? '_blank' : undefined}
                     rel={item.url ? 'noreferrer' : undefined}
                   >
-                    查看原文 <LinkOutlined />
+                    原文 <LinkOutlined />
                   </a>
-                </footer>
+                </div>
               </article>
             ))}
           </div>
-          {matchingLiveEvidence.length > 3 && (
-            <button
-              type="button"
-              className="ontology-more-button"
-              onClick={() => setShowAllEvidence(current => !current)}
-            >
-              {showAllEvidence ? '收起，只看优先证据' : `继续查看 ${matchingLiveEvidence.length - 3} 条`}
-            </button>
-          )}
-        </>
-      ) : (
-        <div className="ontology-empty">当前筛选下没有证据，切换“全部”或等待新内容。</div>
-      )}
-    </section>
-  );
+        ) : (
+          <div className="ontology-empty">还没有足够的相关信息，建议继续观察。</div>
+        )}
 
-  const renderDecisionWorkspace = () => (
-    <div className="ontology-view-stack ontology-decision-v5">
-      <section className={`ontology-task-hero tone-${liveSignalTone}`}>
-        <header>
-          <div className="ontology-context-chip">
-            <i />
-            <span>正在分析</span>
-            <em>{selectedAsset?.label} · {selectedAsset?.canonical_key}</em>
-          </div>
-          <span><ClockCircleOutlined /> 更新于 {snapshot ? formatTimestamp(snapshot.generated_at) : '—'}</span>
-        </header>
-        <div className="ontology-task-summary">
-          <div className="ontology-task-copy">
-            <small>你现在要做的事</small>
-            <h2>
-              {liveEvidenceStats.risk
-                ? `先核对 ${liveEvidenceStats.risk} 条风险证据`
-                : liveEvidenceStats.positive
-                  ? '先确认利好是否真的兑现'
-                  : '先看最新变化，再决定是否行动'}
-            </h2>
-            <p>{liveAction}</p>
-            <div className="ontology-task-actions">
-              <Button
-                type="primary"
-                icon={<FileSearchOutlined />}
-                href="#ontology-live-evidence"
-                onClick={() => {
-                  setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all');
-                  setShowAllEvidence(false);
-                }}
-              >
-                {liveEvidenceStats.risk ? '开始核对风险证据' : '查看最新证据'}
-              </Button>
-              <Button
-                icon={<ExperimentOutlined />}
-                onClick={() => setActiveView('simulation')}
-              >
-                先模拟一下
-              </Button>
-            </div>
-          </div>
-          <aside className="ontology-task-verdict">
-            <small>系统当前判断</small>
-            <span>{decision?.verdict || '等待判断'}</span>
-            <strong>{percentage(decision?.thesis.attributes.confidence)}</strong>
-            <p>判断把握度</p>
-            <i style={{ '--confidence': percentage(decision?.thesis.attributes.confidence) } as React.CSSProperties} />
-          </aside>
+        {liveEvidenceStats.total > 3 && (
+          <button
+            type="button"
+            className="ontology-simple-more"
+            onClick={() => setShowAllEvidence(current => !current)}
+          >
+            {showAllEvidence ? '收起' : `再看 ${Math.min(5, liveEvidenceStats.total - 3)} 条`}
+          </button>
+        )}
+      </section>
+
+      <section className="ontology-simple-decision">
+        <div>
+          <small>看完证据后</small>
+          <strong>{decision?.recommended_action || '维持观察'}</strong>
         </div>
+        <Button
+          size="large"
+          loading={actionLoading}
+          onClick={() => void recordAction(
+            decision?.recommended_action_type || 'keep_watch',
+            decision?.recommended_reason || '按决策建议执行',
+          )}
+        >
+          记录这个决定
+        </Button>
       </section>
 
-      <section className="ontology-task-steps" aria-label="三步完成当前决策">
-        <article className="active">
-          <span>1</span>
-          <div>
-            <small>第一步</small>
-            <h3>看关键证据</h3>
-            <p>
-              {liveEvidenceStats.risk
-                ? `${liveEvidenceStats.risk} 条风险、${liveEvidenceStats.positive} 条支持，先看影响最大的内容。`
-                : `系统找到 ${liveEvidenceStats.total} 条相关内容，先确认事实。`}
-            </p>
-          </div>
-          <Button
-            type="primary"
-            href="#ontology-live-evidence"
-            onClick={() => {
-              setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all');
-              setShowAllEvidence(false);
-            }}
-          >
-            去看证据
-          </Button>
-        </article>
-        <article>
-          <span>2</span>
-          <div>
-            <small>第二步</small>
-            <h3>模拟可能结果</h3>
-            <p>调整需求、价格、成本等条件，看看判断和仓位会怎样变化。</p>
-          </div>
-          <Button onClick={() => setActiveView('simulation')}>开始模拟</Button>
-        </article>
-        <article>
-          <span>3</span>
-          <div>
-            <small>第三步</small>
-            <h3>记录你的决定</h3>
-            <p>{decision?.recommended_action || '确认当前判断，并留下可追溯记录。'}</p>
-          </div>
-          <Button
-            loading={actionLoading}
-            onClick={() => void recordAction(
-              decision?.recommended_action_type || 'keep_watch',
-              decision?.recommended_reason || '按决策建议执行',
-            )}
-          >
-            记录决定
-          </Button>
-        </article>
-      </section>
-
-      {renderEvidenceList()}
-
-      <details className="ontology-professional-tools">
+      <details className="ontology-professional-tools ontology-simple-tools">
         <summary>
-          <span>需要更深入分析？</span>
-          <strong>打开专业工具</strong>
+          <span>更多分析</span>
+          <strong>模拟、关系图与记录</strong>
         </summary>
         <div>
+          <button type="button" onClick={() => setActiveView('simulation')}>
+            <ExperimentOutlined />
+            <span>
+              <strong>模拟变化</strong>
+              <small>调整假设，查看可能结果</small>
+            </span>
+          </button>
           <button type="button" onClick={() => {
             setSelectedNodeId(decision?.thesis.id);
             setActiveView('network');
@@ -1700,10 +1618,10 @@ const InvestmentOntologyCenter: React.FC = () => {
   return (
     <CenterShell
       eyebrow="DAO 财经 · 投研决策助手"
-      title="这只股票现在该怎么办？"
-      subtitle="先看变化，再验证依据，最后记录决定"
+      title="持仓决策助手"
+      subtitle="只回答一件事：现在是否需要行动"
       icon={<NodeIndexOutlined />}
-      className="ontology-center ontology-v4 ontology-v5"
+      className="ontology-center ontology-v4 ontology-v5 ontology-v6"
       error={error}
       loading={loading}
       loadingText="正在构建投资对象与关系…"
@@ -1727,30 +1645,23 @@ const InvestmentOntologyCenter: React.FC = () => {
       {contextHolder}
       {snapshot && decision && (
         <div className="ontology-workspace">
-          <nav className="ontology-workspace-nav" aria-label="本体工作区">
-            {NAV_ITEMS.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                className={activeView === item.id ? 'active' : ''}
-                onClick={() => {
-                  setActiveView(item.id);
-                  if (item.id === 'network') {
-                    setNetworkFilter('all');
-                    setSelectedNodeId(decision.thesis.id);
-                  }
-                }}
-              >
-                <i>{item.icon}</i>
-                <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.helper}</small>
-                </span>
-              </button>
-            ))}
-          </nav>
-
           <main className={`ontology-workspace-content view-${activeView}`}>
+            {activeView !== 'decision' && (
+              <div className="ontology-secondary-back">
+                <button type="button" onClick={() => setActiveView('decision')}>
+                  ← 返回今日结论
+                </button>
+                <span>
+                  {activeView === 'simulation'
+                    ? '模拟变化'
+                    : activeView === 'semantic'
+                      ? '内容关系'
+                      : activeView === 'network'
+                        ? '完整证据链'
+                        : '数据与记录'}
+                </span>
+              </div>
+            )}
             {activeView === 'decision' && renderDecisionWorkspace()}
             {activeView === 'simulation' && renderSimulationWorkspace()}
             {activeView === 'semantic' && renderSemanticWorkspace()}
