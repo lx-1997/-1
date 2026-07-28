@@ -3916,3 +3916,559 @@
     flex-direction: column;
   }
 }
+
+/* ==========================================================================
+   V5 · Task-first interface
+   Default experience answers one question: what should I do next?
+   ========================================================================== */
+
+.ontology-v5.center-shell {
+  max-width: 1280px;
+}
+
+.ontology-v5 .center-shell-header {
+  padding: 24px 26px;
+}
+
+.ontology-v5 .dashboard-eyebrow {
+  font-size: 12px;
+}
+
+.ontology-v5 .dashboard-title {
+  margin-top: 7px;
+  font-size: 28px;
+}
+
+.ontology-v5 .dashboard-subtitle {
+  margin-top: 7px;
+  font-size: 15px;
+}
+
+.ontology-v5 .ontology-workspace-nav {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ontology-v5 .ontology-workspace-nav button {
+  min-height: 74px;
+  padding: 12px 20px;
+}
+
+.ontology-v5 .ontology-workspace-nav button > i {
+  width: 38px;
+  height: 38px;
+  font-size: 17px;
+}
+
+.ontology-v5 .ontology-workspace-nav strong {
+  font-size: 16px;
+}
+
+.ontology-v5 .ontology-workspace-nav small {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.ontology-task-hero {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ontology-blue);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 82% 18%, rgba(98, 168, 255, 0.1), transparent 31%),
+    var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.ontology-task-hero.tone-risk {
+  border-top-color: var(--ontology-red);
+  background:
+    radial-gradient(circle at 82% 18%, rgba(255, 93, 104, 0.1), transparent 31%),
+    var(--surface);
+}
+
+.ontology-task-hero.tone-positive {
+  border-top-color: var(--ontology-green);
+}
+
+.ontology-task-hero > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ontology-task-hero > header > span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.ontology-v5 .ontology-context-chip span {
+  font-size: 14px;
+}
+
+.ontology-v5 .ontology-context-chip em {
+  font-size: 12px;
+}
+
+.ontology-task-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  min-height: 300px;
+}
+
+.ontology-task-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 42px 46px;
+}
+
+.ontology-task-copy > small {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.ontology-task-copy h2 {
+  max-width: 760px;
+  margin: 10px 0 0;
+  color: var(--text);
+  font-size: clamp(32px, 3vw, 44px);
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+}
+
+.ontology-task-copy > p {
+  max-width: 760px;
+  margin: 16px 0 0;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.ontology-task-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.ontology-task-actions .ant-btn {
+  min-height: 46px;
+  padding-inline: 20px;
+  font-size: 15px;
+}
+
+.ontology-task-verdict {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  border-left: 1px solid var(--border-soft);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.ontology-task-verdict > small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.ontology-task-verdict > span {
+  margin-top: 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.ontology-task-verdict > strong {
+  margin-top: 18px;
+  color: var(--text);
+  font-size: 48px;
+  line-height: 1;
+}
+
+.ontology-task-verdict > p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.ontology-task-verdict > i {
+  width: 132px;
+  height: 5px;
+  margin-top: 17px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--border);
+}
+
+.ontology-task-verdict > i::after {
+  display: block;
+  width: var(--confidence);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--ontology-blue), var(--ontology-green));
+  content: '';
+}
+
+.ontology-task-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ontology-task-steps article {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 14px;
+  min-height: 230px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.ontology-task-steps article.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background:
+    linear-gradient(150deg, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--surface) 56%);
+}
+
+.ontology-task-steps article > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-size: 17px;
+  font-weight: 740;
+}
+
+.ontology-task-steps article.active > span {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ontology-task-steps article > div {
+  display: grid;
+  gap: 5px;
+}
+
+.ontology-task-steps small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.ontology-task-steps h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 19px;
+}
+
+.ontology-task-steps p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.ontology-task-steps .ant-btn {
+  grid-column: 1 / -1;
+  align-self: end;
+  min-height: 42px;
+  margin-top: auto;
+  font-size: 14px;
+}
+
+.ontology-v5 .ontology-evidence-panel {
+  padding: 28px;
+}
+
+.ontology-v5 .ontology-section-head > div:first-child > span {
+  font-size: 11px;
+}
+
+.ontology-v5 .ontology-section-head h3 {
+  margin-top: 7px;
+  font-size: 23px;
+}
+
+.ontology-v5 .ontology-section-head p {
+  margin-top: 7px;
+  font-size: 14px;
+}
+
+.ontology-v5 .ontology-evidence-filters {
+  gap: 5px;
+  padding: 5px;
+}
+
+.ontology-v5 .ontology-evidence-filters button {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.ontology-v5 .ontology-evidence-list {
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.ontology-v5 .ontology-evidence-list article {
+  min-height: 250px;
+  padding: 18px 19px 16px;
+}
+
+.ontology-v5 .ontology-evidence-meta {
+  gap: 8px;
+}
+
+.ontology-v5 .ontology-evidence-meta span,
+.ontology-v5 .ontology-evidence-meta em,
+.ontology-v5 .ontology-evidence-meta small {
+  font-size: 11px;
+}
+
+.ontology-v5 .ontology-evidence-list h4 {
+  margin-top: 15px;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.ontology-v5 .ontology-evidence-list p {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.ontology-v5 .ontology-evidence-list footer {
+  gap: 10px;
+  padding-top: 13px;
+}
+
+.ontology-v5 .ontology-evidence-list footer > span,
+.ontology-v5 .ontology-evidence-list footer a {
+  font-size: 11px;
+}
+
+.ontology-v5 .ontology-more-button {
+  margin-top: 16px;
+  padding: 10px 16px;
+  font-size: 13px;
+}
+
+.ontology-professional-tools {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.ontology-professional-tools > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 62px;
+  padding: 0 22px;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ontology-professional-tools > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ontology-professional-tools > summary span {
+  font-size: 14px;
+}
+
+.ontology-professional-tools > summary strong {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.ontology-professional-tools[open] > summary {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ontology-professional-tools > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 16px;
+}
+
+.ontology-professional-tools button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ontology-professional-tools button:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  color: var(--text);
+}
+
+.ontology-professional-tools button > .anticon {
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.ontology-professional-tools button > span {
+  display: grid;
+  gap: 4px;
+}
+
+.ontology-professional-tools button strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ontology-professional-tools button small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+/* Important secondary views use a readable minimum type scale. */
+.ontology-v5 .ontology-simulation-header > div:first-child > span,
+.ontology-v5 .ontology-projection-panel > header > div:first-child > span,
+.ontology-v5 .ontology-impact-chain > header span {
+  font-size: 12px;
+}
+
+.ontology-v5 .ontology-simulation-header h2 {
+  font-size: 28px;
+}
+
+.ontology-v5 .ontology-simulation-header p,
+.ontology-v5 .ontology-assumption-panel > footer {
+  font-size: 14px;
+}
+
+.ontology-v5 .ontology-horizon-control > span,
+.ontology-v5 .ontology-horizon-control button,
+.ontology-v5 .ontology-preset-switcher strong,
+.ontology-v5 .ontology-assumption-list label strong,
+.ontology-v5 .ontology-projection-panel > header em {
+  font-size: 13px;
+}
+
+.ontology-v5 .ontology-preset-switcher small,
+.ontology-v5 .ontology-assumption-list label small,
+.ontology-v5 .ontology-chart-legend span {
+  font-size: 11px;
+}
+
+.ontology-v5 .ontology-assumption-list output {
+  font-size: 15px;
+}
+
+.ontology-v5 .ontology-assumption-list input[type="range"]::-webkit-slider-thumb {
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 900px) {
+  .ontology-task-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .ontology-task-verdict {
+    display: none;
+  }
+
+  .ontology-task-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .ontology-task-steps article {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .ontology-v5 .center-shell-header {
+    padding: 18px;
+  }
+
+  .ontology-v5 .dashboard-title {
+    font-size: 25px;
+  }
+
+  .ontology-v5 .dashboard-subtitle {
+    font-size: 14px;
+  }
+
+  .ontology-v5 .ontology-workspace-nav {
+    grid-template-columns: repeat(3, minmax(104px, 1fr));
+  }
+
+  .ontology-v5 .ontology-workspace-nav button {
+    min-height: 64px;
+  }
+
+  .ontology-v5 .ontology-workspace-nav strong {
+    font-size: 14px;
+  }
+
+  .ontology-task-hero > header {
+    padding: 0 18px;
+  }
+
+  .ontology-task-copy {
+    padding: 30px 22px;
+  }
+
+  .ontology-task-copy h2 {
+    font-size: 31px;
+  }
+
+  .ontology-task-copy > p {
+    font-size: 15px;
+  }
+
+  .ontology-task-actions {
+    display: grid;
+  }
+
+  .ontology-task-steps article {
+    padding: 20px;
+  }
+
+  .ontology-v5 .ontology-evidence-panel {
+    padding: 20px;
+  }
+
+  .ontology-v5 .ontology-section-head {
+    gap: 14px;
+  }
+
+  .ontology-v5 .ontology-evidence-filters {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .ontology-v5 .ontology-evidence-filters button {
+    min-width: max-content;
+  }
+
+  .ontology-professional-tools > div {
+    grid-template-columns: 1fr;
+  }
+}

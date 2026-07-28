@@ -948,3 +948,184 @@
     padding: 0 14px;
   }
 }
+
+/* Readable type scale: advanced information should not require squinting. */
+.semantic-map-hero > div:first-child > span,
+.semantic-visual-panel > header span,
+.semantic-inspector > header span,
+.semantic-tag-cloud > header span {
+  font-size: 11px;
+}
+
+.semantic-map-hero h2 {
+  font-size: 30px;
+}
+
+.semantic-map-hero p {
+  font-size: 14px;
+}
+
+.semantic-map-summary span {
+  font-size: 12px;
+}
+
+.semantic-map-summary strong {
+  font-size: 16px;
+}
+
+.semantic-map-health > span strong {
+  font-size: 13px;
+}
+
+.semantic-map-health > span small {
+  font-size: 11px;
+}
+
+.semantic-facet-ribbon button {
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.semantic-visual-panel h3,
+.semantic-tag-cloud h3 {
+  font-size: 20px;
+}
+
+.semantic-mode-switcher button {
+  padding: 9px 12px;
+  font-size: 12px;
+}
+
+.semantic-graph-lanes span {
+  font-size: 10px;
+}
+
+.semantic-graph-node {
+  width: 146px;
+  min-height: 66px;
+  padding: 10px 11px 10px 15px;
+}
+
+.semantic-graph-node small,
+.semantic-graph-node em {
+  font-size: 9px;
+}
+
+.semantic-graph-node strong {
+  font-size: 11px;
+}
+
+.semantic-graph-node.asset {
+  width: 170px;
+  min-height: 88px;
+}
+
+.semantic-graph-node.asset strong {
+  font-size: 16px;
+}
+
+.semantic-graph-node.tag {
+  width: 120px;
+  min-height: 58px;
+}
+
+.semantic-graph-canvas > footer span,
+.semantic-graph-canvas > footer em {
+  font-size: 10px;
+}
+
+.semantic-inspector {
+  padding: 22px;
+}
+
+.semantic-inspector > header h3 {
+  font-size: 18px;
+}
+
+.semantic-inspector-type strong,
+.semantic-inspector-type em {
+  font-size: 12px;
+}
+
+.semantic-inspector > h4 {
+  font-size: 17px;
+}
+
+.semantic-inspector > p {
+  font-size: 13px;
+}
+
+.semantic-inspector dt,
+.semantic-inspector-tags > div > span {
+  font-size: 11px;
+}
+
+.semantic-inspector dd,
+.semantic-inspector-tags button {
+  font-size: 12px;
+}
+
+.semantic-inspector-tags button small,
+.semantic-provenance small,
+.semantic-inspector > a {
+  font-size: 11px;
+}
+
+.semantic-provenance strong {
+  font-size: 12px;
+}
+
+.semantic-advanced-panel > summary span {
+  font-size: 14px;
+}
+
+.semantic-advanced-panel > summary em,
+.semantic-tag-cloud > header small,
+.semantic-tag-cloud > div button {
+  font-size: 12px;
+}
+
+.semantic-matrix-head > *,
+.semantic-matrix > button > span:first-child small,
+.semantic-matrix-cell em,
+.semantic-matrix output {
+  font-size: 10px;
+}
+
+.semantic-matrix > button > span:first-child strong {
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .semantic-map-hero h2 {
+    font-size: 26px;
+  }
+
+  .semantic-map-hero p {
+    font-size: 14px;
+  }
+
+  .semantic-graph-node {
+    width: 92px;
+    min-height: 54px;
+  }
+
+  .semantic-graph-node.asset {
+    width: 108px;
+    min-height: 72px;
+  }
+
+  .semantic-graph-node.tag {
+    width: 78px;
+    min-height: 48px;
+  }
+
+  .semantic-graph-node strong {
+    font-size: 9px;
+  }
+
+  .semantic-graph-node small,
+  .semantic-graph-node em {
+    font-size: 8px;
+  }
+}

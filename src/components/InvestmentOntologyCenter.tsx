@@ -224,11 +224,9 @@ const NAV_ITEMS: Array<{
   helper: string;
   icon: React.ReactNode;
 }> = [
-  { id: 'decision', label: '决策总览', helper: '变化、判断与动作', icon: <ControlOutlined /> },
-  { id: 'simulation', label: '情景推演', helper: '改变假设，看清后果', icon: <ExperimentOutlined /> },
-  { id: 'semantic', label: '语义地图', helper: '内容如何连接对象', icon: <ClusterOutlined /> },
-  { id: 'network', label: '证据链', helper: '结论如何形成', icon: <BranchesOutlined /> },
-  { id: 'governance', label: '数据与审计', helper: '来源、权限与记录', icon: <LockOutlined /> },
+  { id: 'decision', label: '现在做什么', helper: '从这里开始', icon: <ControlOutlined /> },
+  { id: 'simulation', label: '模拟变化', helper: '查看可能结果', icon: <ExperimentOutlined /> },
+  { id: 'semantic', label: '消息关系', helper: '查看内容关联', icon: <ClusterOutlined /> },
 ];
 
 const ASSUMPTION_META: Array<{
@@ -563,16 +561,6 @@ const InvestmentOntologyCenter: React.FC = () => {
       ? 'positive'
       : 'neutral';
 
-  const liveHeadline = liveEvidenceLoading
-    ? '正在把 DAO 财经信息映射到投资对象…'
-    : liveEvidenceStats.total === 0
-      ? '暂时没有足够的新证据，不强行给出结论'
-      : liveSignalTone === 'risk'
-        ? `有 ${liveEvidenceStats.risk} 条风险证据需要先核对`
-        : liveSignalTone === 'positive'
-          ? `有 ${liveEvidenceStats.positive} 条积极证据，但仍需验证`
-          : '多空证据暂未形成一致方向';
-
   const liveAction = liveEvidenceStats.total === 0
     ? '等待新的快讯、文章或研报进入 DAO 财经信息库。'
     : liveSignalTone === 'risk'
@@ -580,9 +568,6 @@ const InvestmentOntologyCenter: React.FC = () => {
       : liveSignalTone === 'positive'
         ? '先确认积极变化是否已经兑现到经营数据，不因单条信息追涨。'
         : '保留当前判断，同时跟踪相互矛盾的信息。';
-
-  const priorityRiskEvidence = annotatedLiveEvidence.find(entry => entry.tone === 'risk');
-  const priorityPositiveEvidence = annotatedLiveEvidence.find(entry => entry.tone === 'positive');
 
   const dynamicGraph = useMemo(() => {
     if (!snapshot) return { nodes: [] as OntologyNode[], edges: [] as OntologyEdge[] };
@@ -854,22 +839,28 @@ const InvestmentOntologyCenter: React.FC = () => {
   );
 
   const renderDecisionWorkspace = () => (
-    <div className="ontology-view-stack ontology-decision-v4">
-      <section className={`ontology-command-hero tone-${liveSignalTone}`}>
+    <div className="ontology-view-stack ontology-decision-v5">
+      <section className={`ontology-task-hero tone-${liveSignalTone}`}>
         <header>
           <div className="ontology-context-chip">
             <i />
-            <span>实时决策上下文</span>
+            <span>正在分析</span>
             <em>{selectedAsset?.label} · {selectedAsset?.canonical_key}</em>
           </div>
           <span><ClockCircleOutlined /> 更新于 {snapshot ? formatTimestamp(snapshot.generated_at) : '—'}</span>
         </header>
-        <div className="ontology-command-summary">
-          <div>
-            <small>现在最值得关注</small>
-            <h2>{liveHeadline}</h2>
+        <div className="ontology-task-summary">
+          <div className="ontology-task-copy">
+            <small>你现在要做的事</small>
+            <h2>
+              {liveEvidenceStats.risk
+                ? `先核对 ${liveEvidenceStats.risk} 条风险证据`
+                : liveEvidenceStats.positive
+                  ? '先确认利好是否真的兑现'
+                  : '先看最新变化，再决定是否行动'}
+            </h2>
             <p>{liveAction}</p>
-            <div>
+            <div className="ontology-task-actions">
               <Button
                 type="primary"
                 icon={<FileSearchOutlined />}
@@ -879,149 +870,111 @@ const InvestmentOntologyCenter: React.FC = () => {
                   setShowAllEvidence(false);
                 }}
               >
-                查看关键依据
+                {liveEvidenceStats.risk ? '开始核对风险证据' : '查看最新证据'}
               </Button>
               <Button
                 icon={<ExperimentOutlined />}
                 onClick={() => setActiveView('simulation')}
               >
-                推演变量变化
+                先模拟一下
               </Button>
             </div>
           </div>
-          <aside>
+          <aside className="ontology-task-verdict">
+            <small>系统当前判断</small>
             <span>{decision?.verdict || '等待判断'}</span>
             <strong>{percentage(decision?.thesis.attributes.confidence)}</strong>
-            <small>当前论点置信度</small>
+            <p>判断把握度</p>
             <i style={{ '--confidence': percentage(decision?.thesis.attributes.confidence) } as React.CSSProperties} />
           </aside>
         </div>
-        <div className="ontology-command-metrics">
-          <div>
-            <span>证据净方向</span>
-            <strong className={liveEvidenceStats.positive >= liveEvidenceStats.risk ? 'positive' : 'risk'}>
-              {liveEvidenceStats.positive - liveEvidenceStats.risk > 0 ? '+' : ''}
-              {liveEvidenceStats.positive - liveEvidenceStats.risk}
-            </strong>
-            <small>{liveEvidenceStats.positive} 支持 / {liveEvidenceStats.risk} 反证</small>
-          </div>
-          <div>
-            <span>仓位 / 预算</span>
-            <strong className={
-              Number(decision?.position.attributes.weight_pct) > Number(decision?.position.attributes.risk_budget_pct)
-                ? 'risk'
-                : ''
-            }>
-              {numberText(decision?.position.attributes.weight_pct, '%')}
-            </strong>
-            <small>风险上限 {numberText(decision?.position.attributes.risk_budget_pct, '%')}</small>
-          </div>
-          <div>
-            <span>优先核对</span>
-            <strong>{liveEvidenceStats.risk ? `${liveEvidenceStats.risk} 条` : '无新增'}</strong>
-            <small>高影响反向证据</small>
-          </div>
-          <button type="button" onClick={() => setActiveView('simulation')}>
-            <span>基准情景</span>
-            <strong>{signedNumber(scenarioResult.expectedReturn)}</strong>
-            <small>{scenarioHorizon} 季度价值变化区间</small>
-            <LineChartOutlined />
-          </button>
-        </div>
       </section>
 
-      <section className="ontology-decision-command-grid">
-        <article className="ontology-thesis-brief">
-          <header>
-            <div>
-              <span>01 · 核心论点</span>
-              <h3>{decision?.thesis.label}</h3>
-            </div>
-            <Tag color={decision?.tone === 'positive' ? 'green' : decision?.tone === 'warning' ? 'orange' : 'blue'}>
-              {decision?.verdict}
-            </Tag>
-          </header>
-          <p>{decision?.change_summary}</p>
-          <div className="ontology-thesis-invalidation">
-            <span>什么情况说明我错了</span>
-            <strong>{String(decision?.thesis.attributes.invalidation || '尚未定义')}</strong>
+      <section className="ontology-task-steps" aria-label="三步完成当前决策">
+        <article className="active">
+          <span>1</span>
+          <div>
+            <small>第一步</small>
+            <h3>看关键证据</h3>
+            <p>
+              {liveEvidenceStats.risk
+                ? `${liveEvidenceStats.risk} 条风险、${liveEvidenceStats.positive} 条支持，先看影响最大的内容。`
+                : `系统找到 ${liveEvidenceStats.total} 条相关内容，先确认事实。`}
+            </p>
           </div>
-          <button type="button" onClick={() => {
-            setSelectedNodeId(decision?.thesis.id);
-            setActiveView('network');
-          }}>
-            查看论点的完整证据链 <span>→</span>
-          </button>
-        </article>
-
-        <article className="ontology-signal-brief">
-          <header>
-            <span>02 · 关键变量</span>
-            <button type="button" onClick={() => {
-              setLiveEvidenceFilter('all');
-              setShowAllEvidence(true);
-            }}>全部 {liveEvidenceStats.total}</button>
-          </header>
-          <div className="risk">
-            <i>!</i>
-            <span>
-              <small>最大反证</small>
-              <strong>{priorityRiskEvidence ? liveEvidenceTitle(priorityRiskEvidence.item) : '暂无明确反证'}</strong>
-            </span>
-          </div>
-          <div className="positive">
-            <i>+</i>
-            <span>
-              <small>最强支持</small>
-              <strong>{priorityPositiveEvidence ? liveEvidenceTitle(priorityPositiveEvidence.item) : '暂无明确支持证据'}</strong>
-            </span>
-          </div>
-          <footer>
-            <span>{liveEvidenceStats.sources} 个来源</span>
-            <span>{liveEvidenceStats.neutral} 条待确认</span>
-          </footer>
-        </article>
-
-        <aside className="ontology-action-brief">
-          <span>03 · 建议动作</span>
-          <h3>{decision?.recommended_action}</h3>
-          <p><SafetyCertificateOutlined /> {decision?.recommended_reason}</p>
           <Button
             type="primary"
+            href="#ontology-live-evidence"
+            onClick={() => {
+              setLiveEvidenceFilter(liveEvidenceStats.risk ? 'risk' : 'all');
+              setShowAllEvidence(false);
+            }}
+          >
+            去看证据
+          </Button>
+        </article>
+        <article>
+          <span>2</span>
+          <div>
+            <small>第二步</small>
+            <h3>模拟可能结果</h3>
+            <p>调整需求、价格、成本等条件，看看判断和仓位会怎样变化。</p>
+          </div>
+          <Button onClick={() => setActiveView('simulation')}>开始模拟</Button>
+        </article>
+        <article>
+          <span>3</span>
+          <div>
+            <small>第三步</small>
+            <h3>记录你的决定</h3>
+            <p>{decision?.recommended_action || '确认当前判断，并留下可追溯记录。'}</p>
+          </div>
+          <Button
             loading={actionLoading}
             onClick={() => void recordAction(
               decision?.recommended_action_type || 'keep_watch',
               decision?.recommended_reason || '按决策建议执行',
             )}
           >
-            确认并写入决策日志
+            记录决定
           </Button>
-          <button type="button" onClick={() => setActiveView('simulation')}>
-            先做压力测试
-          </button>
-          <small>只记录研究决策，不连接真实券商</small>
-        </aside>
+        </article>
       </section>
 
-      <button
-        type="button"
-        className="ontology-path-preview ontology-path-v4"
-        onClick={() => setActiveView('network')}
-      >
-        <strong>一条链看清结论</strong>
-        <span><DatabaseOutlined /> 证据</span>
-        <i>→</i>
-        <span><ThunderboltOutlined /> 变量</span>
-        <i>→</i>
-        <span><BulbOutlined /> 论点</span>
-        <i>→</i>
-        <span><AuditOutlined /> 仓位</span>
-        <i>→</i>
-        <span><ApartmentOutlined /> 组合</span>
-        <em>打开证据链</em>
-      </button>
-
       {renderEvidenceList()}
+
+      <details className="ontology-professional-tools">
+        <summary>
+          <span>需要更深入分析？</span>
+          <strong>打开专业工具</strong>
+        </summary>
+        <div>
+          <button type="button" onClick={() => {
+            setSelectedNodeId(decision?.thesis.id);
+            setActiveView('network');
+          }}>
+            <BranchesOutlined />
+            <span>
+              <strong>完整证据链</strong>
+              <small>查看结论是怎样形成的</small>
+            </span>
+          </button>
+          <button type="button" onClick={() => setActiveView('semantic')}>
+            <ClusterOutlined />
+            <span>
+              <strong>内容关系图</strong>
+              <small>查看快讯、文章和研报的关联</small>
+            </span>
+          </button>
+          <button type="button" onClick={() => setActiveView('governance')}>
+            <LockOutlined />
+            <span>
+              <strong>数据与记录</strong>
+              <small>查看来源、权限和决策历史</small>
+            </span>
+          </button>
+        </div>
+      </details>
     </div>
   );
 
@@ -1746,11 +1699,11 @@ const InvestmentOntologyCenter: React.FC = () => {
 
   return (
     <CenterShell
-      eyebrow="DAO 财经 · 决策智能"
-      title="决策驾驶舱"
-      subtitle="一个标的、一条证据链、一组可推演假设、一个明确动作"
+      eyebrow="DAO 财经 · 投研决策助手"
+      title="这只股票现在该怎么办？"
+      subtitle="先看变化，再验证依据，最后记录决定"
       icon={<NodeIndexOutlined />}
-      className="ontology-center ontology-v4"
+      className="ontology-center ontology-v4 ontology-v5"
       error={error}
       loading={loading}
       loadingText="正在构建投资对象与关系…"
@@ -1774,21 +1727,6 @@ const InvestmentOntologyCenter: React.FC = () => {
       {contextHolder}
       {snapshot && decision && (
         <div className="ontology-workspace">
-          <section className="ontology-system-bar">
-            <div>
-              <i />
-              <span>Decision graph online</span>
-              <em>内容已标注 · 语义图已索引 · 推演模型可用</em>
-            </div>
-            <dl>
-              <div><dt>当前标的</dt><dd>{selectedAsset?.canonical_key}</dd></div>
-              <div><dt>实时证据</dt><dd>{liveEvidenceStats.total}</dd></div>
-              <div><dt>风险信号</dt><dd>{liveEvidenceStats.risk}</dd></div>
-              <div><dt>本体覆盖</dt><dd>{contentOntology ? `${contentOntology.stats.ontology_coverage}%` : '构建中'}</dd></div>
-            </dl>
-            <span><ClockCircleOutlined /> {formatTimestamp(snapshot.generated_at)}</span>
-          </section>
-
           <nav className="ontology-workspace-nav" aria-label="本体工作区">
             {NAV_ITEMS.map(item => (
               <button
