@@ -139,9 +139,15 @@
   .kevt .pole{position:absolute;top:16px;left:50%;width:1.5px;height:7px;background:currentColor;opacity:.45}
   .kevt.trig{width:20px;height:20px;font-size:11px;box-shadow:0 0 0 2px #fff,0 0 0 4px var(--purple);z-index:3}
   .kevn{position:absolute;top:-6px;right:-7px;min-width:13px;height:13px;padding:0 2px;border-radius:7px;background:var(--purple);color:#fff;font-size:8px;line-height:13px;font-weight:800;text-align:center;box-shadow:0 0 0 1.5px #fff}
-  .kcross{position:absolute;top:0;bottom:14px;width:1px;background:rgba(124,58,237,.5);display:none;pointer-events:none}
-  .ktip{position:absolute;background:#1b1f33;color:#fff;font-size:11px;padding:6px 9px;border-radius:8px;display:none;pointer-events:none;white-space:nowrap;line-height:1.55;z-index:5;box-shadow:0 6px 18px rgba(0,0,0,.3)}
-  .ktip b{font-weight:700}
+  .kcross{position:absolute;display:none;pointer-events:none;z-index:3}
+  .kcross-v{top:31px;bottom:22px;width:1px;border-left:1px dashed rgba(71,79,94,.48)}
+  .kcross-h{left:0;right:50px;height:1px;border-top:1px dashed rgba(71,79,94,.48)}
+  .kohlc{position:absolute;z-index:4;top:0;left:0;right:50px;height:30px;padding:7px 9px;background:rgba(255,255,255,.94);color:#777f8c;font-size:9px;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+  .kohlc b{margin-left:2px;color:#252a33;font-weight:650}.kohlc span{margin-right:9px}
+  .kohlc .up{color:var(--up)}.kohlc .dn{color:var(--down)}
+  .kaxis-tag{position:absolute;z-index:5;display:none;padding:2px 4px;background:#3d4653;color:#fff;font-size:8px;font-weight:650;font-variant-numeric:tabular-nums;pointer-events:none}
+  .kaxis-tag.price{right:0;transform:translateY(-50%);width:49px;text-align:center}
+  .kaxis-tag.date{bottom:0;transform:translateX(-50%);min-width:47px;text-align:center}
   .klegend{font-size:10px;color:var(--ink3);margin-top:5px}.klegend i{display:inline-block;width:11px;height:2px;vertical-align:middle;margin-right:2px}.klegend .m5{background:var(--amber)}.klegend .m20{background:var(--purple)}
   .evtpop{position:fixed;z-index:999;max-width:300px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 13px;box-shadow:0 16px 40px rgba(76,52,140,.22);display:none;font-size:13px;color:var(--ink)}
   .evtpop .src{font-size:11px;color:var(--ink3);font-weight:700}.evtpop .ti{margin:5px 0;line-height:1.45}.evtpop a{color:var(--purple);text-decoration:none;font-weight:700;font-size:12px}
@@ -692,7 +698,8 @@
   .app.detail .chart-toolbar .period.on{color:#1d2230;font-weight:700}
   .app.detail .chart-toolbar .indicator{font-variant-numeric:tabular-nums}
   .app.detail .chart-toolbar .toolbar-note{margin-left:auto;color:#9aa1ad}
-  .app.detail .chart{min-height:390px;border-color:#e2e6eb;border-radius:0;background:#fff}
+  .app.detail .chart{min-height:390px;border-color:#e2e6eb;border-radius:0;background:#fff;cursor:crosshair}
+  .app.detail .kmark{width:17px;height:17px;border-width:1.5px;font-size:7px;box-shadow:0 1px 4px rgba(20,24,31,.22)}
   .app.detail .kevt{width:13px;height:13px;border-width:1px;border-color:#778293!important;background:#fff;box-shadow:none;color:#657184!important;font-size:7px;font-weight:700}
   .app.detail .kevt:not(.multi)::before{content:"";width:4px;height:4px;border-radius:50%;background:currentColor}
   .app.detail .kevt.fresh{animation:none;box-shadow:0 0 0 2px rgba(79,96,216,.1)}
@@ -840,58 +847,59 @@ function drawK(box,p){
   const full=(p.kline||[]);
   const w=Math.round(box.clientWidth||0),h=Math.round(box.clientHeight||0);
   if(full.length<3||w<60||h<80){box.innerHTML='<div class="empty">日线数据加载中…</div>';return;}
-  // 显示窗口聚焦「有本站内容的时段」：最早相关催化剂靠左(留3根上下文)，无则近24根；MA 仍用全量历史算保证准确
+  // 主流行情软件的固定观察窗：始终保留足够的交易日密度，避免少量事件把蜡烛放得巨大。
   const fdmap={};full.forEach((k,i)=>fdmap[k.d]=i);const lastFD=full[full.length-1].d;
   const fIdx=dt=>{if(fdmap[dt]!=null)return fdmap[dt];if(dt>=lastFD)return full.length-1;let r=-1;for(let i=0;i<full.length;i++){if(full[i].d<=dt)r=i;else break;}return r;};
-  const _ei=(p.events||[]).map(e=>fIdx(e.date)).filter(i=>i>=0);
-  // 窗口贴着催化剂：从最早事件往前留 2 根开始，让快讯/研报铺满整张图(不强行留空白左半)；无事件则近 22 根
-  let start=_ei.length?Math.max(0,Math.min(..._ei)-2):Math.max(0,full.length-22);
-  start=Math.min(start,Math.max(0,full.length-8));  // 至少留 ~8 根供均线/上下文
+  const windowBars=Math.min(full.length,w<620?28:40);
+  const start=Math.max(0,full.length-windowBars);
   const kl=full.slice(start),csF=full.map(k=>k.c);
-  const P=6,axisH=14,volH=Math.round(h*0.20),gp=5;
-  const pTop=26,pBot=h-axisH-volH-gp,vTop=h-axisH-volH,vBot=h-axisH;  // 顶部预留一条标记轨道，旗标不再压蜡烛
-  let mn=Math.min(...kl.map(k=>k.l)),mx=Math.max(...kl.map(k=>k.h));const pad=(mx-mn)*.06||1;mn-=pad;mx+=pad;
-  const n=kl.length,gw=(w-2*P)/n,bw=Math.max(3,Math.min(30,gw*.6));
-  const X=i=>P+gw*i+gw/2,Y=v=>pBot-(pBot-pTop)*(v-mn)/(mx-mn);
+  const left=8,rightAxis=50,plotR=w-rightAxis,axisH=22,volH=Math.max(52,Math.round(h*.18)),gp=8;
+  const pTop=31,pBot=h-axisH-volH-gp,vTop=pBot+gp,vBot=h-axisH;
+  let mn=Math.min(...kl.map(k=>k.l)),mx=Math.max(...kl.map(k=>k.h));const pad=(mx-mn)*.08||1;mn-=pad;mx+=pad;
+  const n=kl.length,gw=(plotR-left)/n,bw=Math.max(3,Math.min(11,gw*.62));
+  const X=i=>left+gw*i+gw/2,Y=v=>pBot-(pBot-pTop)*(v-mn)/(mx-mn);
   const vmax=Math.max(...kl.map(k=>k.v||0))||1,VY=v=>vBot-(vBot-vTop)*(v/vmax);
   const cs=kl.map(k=>k.c),ma=(per,i)=>{const gi=start+i;if(gi<per-1)return null;let s=0;for(let j=gi-per+1;j<=gi;j++)s+=csF[j];return s/per;};
   let g='';
-  for(let i=0;i<=3;i++){const v=mn+(mx-mn)*i/3,y=Y(v);g+='<line x1="0" x2="'+w+'" y1="'+y.toFixed(1)+'" y2="'+y.toFixed(1)+'" stroke="#ecece8"/>';g+='<text x="'+(w-2)+'" y="'+(y-2).toFixed(1)+'" text-anchor="end" font-size="9" fill="#8b9099">'+v.toFixed(2)+'</text>';}
+  g+='<rect x="'+plotR+'" y="0" width="'+rightAxis+'" height="'+h+'" fill="#fafbfc"/><line x1="'+plotR+'" x2="'+plotR+'" y1="0" y2="'+h+'" stroke="#e5e8ec"/>';
+  for(let i=0;i<=4;i++){const v=mn+(mx-mn)*i/4,y=Y(v);g+='<line x1="0" x2="'+plotR+'" y1="'+y.toFixed(1)+'" y2="'+y.toFixed(1)+'" stroke="#edf0f2"/>';g+='<text x="'+(plotR+rightAxis/2)+'" y="'+(y+3).toFixed(1)+'" text-anchor="middle" font-size="8" fill="#9097a2">'+v.toFixed(2)+'</text>';}
+  g+='<line x1="0" x2="'+plotR+'" y1="'+pBot+'" y2="'+pBot+'" stroke="#dfe3e7"/><text x="8" y="'+(vTop+10)+'" font-size="8" fill="#a0a6af">VOL</text>';
   kl.forEach((k,i)=>{const x=X(i),up=k.c>=k.o,c=up?'#078564':'#c0445a',yo=Y(k.o),yc=Y(k.c),top=Math.min(yo,yc),bh=Math.max(1.2,Math.abs(yc-yo));
     g+='<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+Y(k.h).toFixed(1)+'" y2="'+Y(k.l).toFixed(1)+'" stroke="'+c+'"/>';
     g+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx=".4" fill="'+c+'"/>';
-    const vy=VY(k.v||0);g+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+vy.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(.6,vBot-vy).toFixed(1)+'" fill="'+c+'" opacity=".45"/>';});
+    const vy=VY(k.v||0);g+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+vy.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(.6,vBot-vy).toFixed(1)+'" fill="'+c+'" opacity=".36"/>';});
   const mline=(per,col)=>{const pts=cs.map((_,i)=>{const m=ma(per,i);return m==null?null:X(i).toFixed(1)+','+Y(m).toFixed(1);}).filter(Boolean).join(' ');return pts?'<polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="1.4" opacity=".92"/>':'';};
   g+=mline(5,'#a86d16')+mline(20,'#5557d9');
-  const last=cs[n-1],yl=Y(last);g+='<line x1="0" x2="'+w+'" y1="'+yl.toFixed(1)+'" y2="'+yl.toFixed(1)+'" stroke="#777c86" stroke-dasharray="3 3" opacity=".48"/>';
-  const stp=Math.max(1,Math.floor(n/4));for(let i=0;i<n;i+=stp){g+='<text x="'+X(i).toFixed(1)+'" y="'+(h-3)+'" text-anchor="middle" font-size="9" fill="#8b9099">'+kl[i].d.slice(5)+'</text>';}
+  const last=cs[n-1],yl=Y(last);g+='<line x1="0" x2="'+plotR+'" y1="'+yl.toFixed(1)+'" y2="'+yl.toFixed(1)+'" stroke="#6f7782" stroke-dasharray="3 3" opacity=".5"/>';
+  const stp=Math.max(1,Math.ceil(n/6));for(let i=0;i<n;i+=stp){g+='<text x="'+X(i).toFixed(1)+'" y="'+(h-7)+'" text-anchor="middle" font-size="8" fill="#9299a4">'+kl[i].d.slice(5)+'</text>';}
+  if((n-1)%stp>2)g+='<text x="'+X(n-1).toFixed(1)+'" y="'+(h-7)+'" text-anchor="middle" font-size="8" fill="#9299a4">'+kl[n-1].d.slice(5)+'</text>';
   const dmap={};kl.forEach((k,i)=>dmap[k.d]=i);const lastD=kl[n-1].d,firstD=kl[0].d;
   // 事件日期→最近的≤该日的交易日蜡烛(非交易日发的就落到前一个交易日)，让快讯/研报铺在对应日期
   const idxOf=dt=>{if(dmap[dt]!=null)return dmap[dt];if(dt>=lastD)return n-1;if(dt<firstD)return -1;let r=-1;for(let i=0;i<n;i++){if(kl[i].d<=dt)r=i;else break;}return r;};
   // 催化剂连线：本站快讯/研报(顶部旗) ↓ 阿尔法买入(▲) —— 把"信息→交易"画在 K 线上
   const evDates=new Set((p.events||[]).map(e=>e.date));
-  (p.marks||[]).forEach(m=>{if(m.side==='buy'&&evDates.has(m.date)){const i=idxOf(m.date);if(i<0)return;const x=X(i).toFixed(1);g+='<line x1="'+x+'" x2="'+x+'" y1="20" y2="'+Y(m.price).toFixed(1)+'" stroke="#5557d9" stroke-width="1.1" stroke-dasharray="2 3" opacity=".48"/>';}});
-  let ovl='<span class="last-price" style="right:3px;top:'+(yl-8).toFixed(1)+'px">'+last.toFixed(2)+'</span>';
+  (p.marks||[]).forEach(m=>{if(m.side==='buy'&&evDates.has(m.date)){const i=idxOf(m.date);if(i<0)return;const x=X(i).toFixed(1);g+='<line x1="'+x+'" x2="'+x+'" y1="'+pTop+'" y2="'+Y(m.price).toFixed(1)+'" stroke="#6673d8" stroke-width="1" stroke-dasharray="2 3" opacity=".32"/>';}});
+  let ovl='<span class="last-price" style="left:'+(plotR+3)+'px;top:'+(yl-8).toFixed(1)+'px">'+last.toFixed(2)+'</span>';
   const markTotals={},markSeen={};
   (p.marks||[]).forEach(m=>{const i=idxOf(m.date);if(i<0)return;const key=i+'-'+m.side;markTotals[key]=(markTotals[key]||0)+1;});
   (p.marks||[]).forEach(m=>{const i=idxOf(m.date);if(i<0)return;const buy=m.side==='buy',key=i+'-'+m.side,slot=markSeen[key]||0,total=markTotals[key]||1;
-    markSeen[key]=slot+1;const dx=(slot-(total-1)/2)*20,dy=buy?9:-9,my=Math.max(31,Math.min(pBot-5,Y(m.price)+dy));
+    markSeen[key]=slot+1;const dx=(slot-(total-1)/2)*16,dy=buy?10:-10,my=Math.max(pTop+9,Math.min(pBot-8,Y(m.price)+dy));
     ovl+='<button type="button" class="kmark '+(buy?'buy':'sell')+'" style="left:'+(X(i)+dx).toFixed(1)+'px;top:'+my.toFixed(1)+'px" data-ktrade="1" data-symbol="'+esc(p.symbol)+'" data-side="'+esc(m.side)+'" data-date="'+esc(m.date)+'" data-price="'+nf(m.price)+'" title="'+(buy?'买入':'卖出')+' ¥'+nf(m.price)+' · '+esc(m.date)+' · 点击查看交割记录">'+(buy?'买':'卖')+'</button>';});
-  // 同一根 K 线的多条本站内容合并成一个标记(避免顶部堆成噪声)：取最新一条做代表，>1 条用角标显数量；统一落在顶部预留轨道
+  // 同一根 K 线的多条本站内容合并成一个轻量标记；详情点击查看，不与成交点抢层级。
   const byI={};(p.events||[]).forEach(ev=>{const i=idxOf(ev.date);if(i<0)return;(byI[i]=byI[i]||[]).push(ev);});
   Object.keys(byI).forEach(key=>{const i=+key,evs=byI[key],ev=evs.slice().sort((a,b)=>(a.age_h==null?1e9:a.age_h)-(b.age_h==null?1e9:b.age_h))[0],px=X(i);
     const fr=evs.some(e=>e.age_h!=null&&e.age_h<=24)?' fresh':'';
     const trig=evs.some(e=>evDates.has(e.date)&&(p.marks||[]).some(m=>m.side==='buy'&&m.date===e.date))?' trig':'';
     const count=evs.length>1?String(evs.length):'';
-    ovl+='<span class="kevt '+(EVT_CLS[ev.src]||'news')+fr+trig+(evs.length>1?' multi':'')+'" style="left:'+px.toFixed(1)+'px;top:4px" data-evt="'+encodeURIComponent(JSON.stringify(ev))+'" title="'+esc(ev.src)+'·'+esc(ev.date)+(evs.length>1?(' 等 '+evs.length+' 条'):'')+(trig?' · 触发了'+pNm()+'买入':'')+'">'+count+'<span class="pole"></span></span>';});
-  box.innerHTML='<svg style="position:absolute;inset:0" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">'+g+'</svg><div class="kovl">'+ovl+'</div><div class="kcross"></div><div class="ktip"></div>';
-  // 十字光标
-  const cross=box.querySelector('.kcross'),tip=box.querySelector('.ktip');
-  box.onmousemove=ev=>{const r=box.getBoundingClientRect(),mxx=ev.clientX-r.left;let i=Math.round((mxx-P)/gw-.5);i=Math.max(0,Math.min(n-1,i));const k=kl[i];
-    cross.style.display='block';cross.style.left=X(i).toFixed(1)+'px';tip.style.display='block';
-    const up=k.c>=k.o;tip.innerHTML=esc(k.d)+'<br>开 '+nf(k.o)+'　收 <b style="color:'+(up?'#8fe0c4':'#f3a0ae')+'">'+nf(k.c)+'</b><br>高 '+nf(k.h)+'　低 '+nf(k.l)+'<br>成交量 '+fmtVol(Number(k.v)||0);
-    let tx=X(i)+8;if(tx+120>w)tx=X(i)-120;tip.style.left=Math.max(2,tx).toFixed(1)+'px';tip.style.top='6px';};
-  box.onmouseleave=()=>{cross.style.display='none';tip.style.display='none';};
+    ovl+='<span class="kevt '+(EVT_CLS[ev.src]||'news')+fr+trig+(evs.length>1?' multi':'')+'" style="left:'+px.toFixed(1)+'px;top:'+(pTop+3)+'px" data-evt="'+encodeURIComponent(JSON.stringify(ev))+'" title="'+esc(ev.src)+'·'+esc(ev.date)+(evs.length>1?(' 等 '+evs.length+' 条'):'')+(trig?' · 触发了'+pNm()+'买入':'')+'">'+count+'<span class="pole"></span></span>';});
+  const ohlc=(k,i)=>{const pc=(start+i>0?full[start+i-1].c:k.o)||k.o,chg=pc?(k.c-pc)/pc*100:0,cl=chg>=0?'up':'dn';return'<span>'+esc(k.d)+'</span><span>开 <b>'+nf(k.o)+'</b></span><span>高 <b>'+nf(k.h)+'</b></span><span>低 <b>'+nf(k.l)+'</b></span><span>收 <b>'+nf(k.c)+'</b></span><span class="'+cl+'">'+(chg>=0?'+':'')+chg.toFixed(2)+'%</span><span>量 <b>'+fmtVol(Number(k.v)||0)+'</b></span>';};
+  box.innerHTML='<svg style="position:absolute;inset:0" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">'+g+'</svg><div class="kovl">'+ovl+'</div><div class="kohlc">'+ohlc(kl[n-1],n-1)+'</div><div class="kcross kcross-v"></div><div class="kcross kcross-h"></div><span class="kaxis-tag price"></span><span class="kaxis-tag date"></span>';
+  // 十字光标：顶部行情条跟随光标更新，价格/日期贴着各自坐标轴显示。
+  const crossV=box.querySelector('.kcross-v'),crossH=box.querySelector('.kcross-h'),priceTag=box.querySelector('.kaxis-tag.price'),dateTag=box.querySelector('.kaxis-tag.date'),ohlcBar=box.querySelector('.kohlc');
+  box.onmousemove=ev=>{const r=box.getBoundingClientRect(),mxx=Math.max(left,Math.min(plotR-1,ev.clientX-r.left)),myy=Math.max(pTop,Math.min(pBot,ev.clientY-r.top));let i=Math.round((mxx-left)/gw-.5);i=Math.max(0,Math.min(n-1,i));const k=kl[i],pv=mn+(pBot-myy)/(pBot-pTop)*(mx-mn);
+    crossV.style.display=crossH.style.display=priceTag.style.display=dateTag.style.display='block';crossV.style.left=X(i).toFixed(1)+'px';crossH.style.top=myy.toFixed(1)+'px';
+    priceTag.style.top=myy.toFixed(1)+'px';priceTag.textContent=pv.toFixed(2);dateTag.style.left=X(i).toFixed(1)+'px';dateTag.textContent=k.d;ohlcBar.innerHTML=ohlc(k,i);};
+  box.onmouseleave=()=>{crossV.style.display=crossH.style.display=priceTag.style.display=dateTag.style.display='none';ohlcBar.innerHTML=ohlc(kl[n-1],n-1);};
 }
 let _kro;
 function drawCenterChart(tries){tries=tries||0;const d=S.data;if(!d)return;const pos=d.positions||[];if(!pos.length)return;
