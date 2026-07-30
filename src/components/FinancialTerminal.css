@@ -1528,6 +1528,94 @@
 .bbt-doc-x:hover { color: var(--amber); }
 .bbt-doc-frame { flex: 1 1 auto; width: 100%; border: none; background: var(--elevated); }
 
+/* 跨市场风险预警：生产 TERMINAL_ONLY 的独立全屏模块容器。
+   组件本体按需加载，终端首屏不承担 antd 表格/抽屉体积。 */
+.bbt-risk-radar-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 72;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2vh 2vw;
+  background: rgba(2, 6, 12, .82);
+  animation: bbt-overlay-in var(--dur-mid) var(--ease) both;
+}
+.bbt-risk-radar-modal {
+  width: min(1540px, 98vw);
+  height: 96vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--panel, #0d1117);
+  box-shadow: var(--sh-3);
+  animation: bbt-modal-in var(--dur-mid) var(--ease-out) both;
+}
+.bbt-risk-radar-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--bar, #101722);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+.bbt-risk-radar-bar > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.bbt-risk-radar-bar b {
+  color: var(--text-strong, #f3f6fb);
+  font-size: 14px;
+}
+.bbt-risk-radar-bar span {
+  color: var(--mute, #8a94a3);
+  font-size: 12px;
+}
+.bbt-risk-radar-bar button {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  color: var(--text-soft, #d3d9e2);
+  background: rgba(255,255,255,.04);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.bbt-risk-radar-bar button:hover {
+  border-color: var(--amber-dim, #8b6b20);
+  color: var(--amber, #ffb000);
+}
+.bbt-risk-radar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+.bbt-risk-radar-body .center-shell {
+  min-height: 100%;
+}
+.bbt-risk-radar-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  color: var(--mute, #8a94a3);
+  font-size: 13px;
+}
+@media (max-width: 820px) {
+  .bbt-risk-radar-overlay { padding: 0; }
+  .bbt-risk-radar-modal { width: 100%; height: 100%; border: 0; border-radius: 0; }
+  .bbt-risk-radar-bar span { display: none; }
+}
+
 /* 命令面板 */
 .bbt-palette-overlay {
   position: absolute; inset: 0; z-index: 50;

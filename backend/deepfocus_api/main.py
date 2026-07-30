@@ -251,6 +251,7 @@ from .market_dashboard import (
     fetch_market_dashboard,
     fetch_ashare_dashboard,
 )
+from .market_risk_radar import build_market_risk_radar
 from .tushare_data import fetch_ashare_structured_data
 from .cross_module_aggregator import (
     gather_all_for_stock,
@@ -11202,6 +11203,16 @@ async def market_dashboard() -> MarketDashboardResponse:
 async def ashare_dashboard() -> MarketDashboardResponse:
     data = await fetch_ashare_dashboard()
     return MarketDashboardResponse(**data)
+
+
+@app.get("/api/market-risk-radar")
+async def market_risk_radar(
+    markets: str = "CN,HK,US",
+    limit: int = 20,
+    force: bool = False,
+) -> dict[str, Any]:
+    selected = [market.strip().upper() for market in markets.split(",") if market.strip()]
+    return await build_market_risk_radar(selected, limit=limit, force=force)
 
 
 @app.post("/api/market-dashboard/analyze", response_model=DashboardAnalysisResponse)

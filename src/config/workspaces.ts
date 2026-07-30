@@ -112,8 +112,9 @@ export const WORKSPACE_SECTIONS: WorkspaceSection[] = [
     sidebarLabelKey: 'sidebar.risk',
     group: 'workspace',
     title: '风险',
-    description: '持仓、宏观和风险仪表盘合并成一个风险工作区',
+    description: '市场级预警、持仓、宏观和组合风险合并成一个风险工作区',
     views: [
+      { view: 'risk-radar', label: '预警雷达', detail: 'A / H / 美股市值前20' },
       { view: 'risk-dashboard', label: '仪表盘', detail: '风险摘要' },
       { view: 'portfolio-review', label: '组合速判', detail: '集中度 / 止损' },
       { view: 'position-monitor', label: '持仓', detail: '头寸 / 盈亏' },

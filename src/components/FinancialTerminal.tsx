@@ -32,6 +32,10 @@ import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 
+// 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
+// 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
+const MarketRiskRadar = React.lazy(() => import('./MarketRiskRadar'));
+
 // ===== 市场交易时段（北京时间）+ 2026 节假日 =====
 const HOLIDAYS_2026: Record<string, string[]> = {
   CN: ['2026-01-01', '2026-01-02', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20',
@@ -611,6 +615,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [showReferral, setShowReferral] = useState(false);  // 邀请得会员弹层
   const [showAiFund, setShowAiFund] = useState(false);      // AI 模拟盘弹层
   const [showWeixinBind, setShowWeixinBind] = useState(false);  // 微信扫码绑定（扫码即问 DeepFocus）
+  const [riskRadarOpen, setRiskRadarOpen] = useState(false);  // A/H/美股市值前20风险预警独立模块
   // 账号菜单可发现性：首次登录给一次性气泡指向头像，告知里面有会员/绑定/邀请等功能（看过即不再弹）
   const [showAcctHint, setShowAcctHint] = useState(false);
   const dismissAcctHint = useCallback(() => { setShowAcctHint(false); try { localStorage.setItem('bbt_acct_hint_v1', '1'); } catch { /* */ } }, []);
@@ -3349,6 +3354,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     { id: 'news', label: 'NEWS · 全部资讯', run: () => { setFeedFilter('all'); setActive(null); } },
     { id: 'kx', label: '快讯 · 只看快讯', run: () => setFeedFilter('快讯') },
     { id: 'wz', label: '文章 · 只看文章', run: () => setFeedFilter('文章') },
+    { id: 'risk', label: 'RISK · 跨市场风险预警', run: () => { setRiskRadarOpen(true); logAct('tab', 'risk-radar'); } },
     { id: 'clr', label: 'CLR · 清除标的/筛选', run: () => { setActive(null); setFeedFilter('all'); } },
   ];
   const pqLow = pq.trim().toLowerCase();
@@ -3453,6 +3459,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <div className="bbt-acct-pop bbt-more-pop" onClick={e => e.stopPropagation()}>
                   <div className="bbt-more-section">研究工具</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openReview(); }}>📊 A股收盘复盘{authUser && checkin && checkin.streak > 0 ? ` · 连续 ${checkin.streak} 天` : ''}</button>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setRiskRadarOpen(true); logAct('tab', 'risk-radar'); }}>🛡️ 跨市场风险预警 · A/H/美Top20</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }}>🤖 AI 模拟盘</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_ontology', '投资本体'); window.location.href = '/ontology'; }}>🧬 决策本体</button>
                   {groupCfg?.enabled !== false && <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openGroup(); }}>💬 用户交流群{!groupSeen ? ' · 免费' : ''}</button>}
@@ -4989,6 +4996,33 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 </div>
               )}
               <div className="bbt-ifind-foot">数据来源 同花顺 iFinD · 实时 A股行情与基本面 · 仅供研究参考，不构成投资建议</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {riskRadarOpen && (
+        <div className="bbt-risk-radar-overlay" onMouseDown={() => setRiskRadarOpen(false)}>
+          <div
+            className="bbt-risk-radar-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="跨市场风险预警雷达"
+            onMouseDown={e => e.stopPropagation()}
+          >
+            <div className="bbt-risk-radar-bar">
+              <div>
+                <b>🛡️ 跨市场风险预警</b>
+                <span>A股 · 港股 · 美股市值前20</span>
+              </div>
+              <button type="button" onClick={() => setRiskRadarOpen(false)} aria-label="关闭风险预警">
+                ✕ 关闭
+              </button>
+            </div>
+            <div className="bbt-risk-radar-body">
+              <React.Suspense fallback={<div className="bbt-risk-radar-loading">正在加载风险预警模块…</div>}>
+                <MarketRiskRadar />
+              </React.Suspense>
             </div>
           </div>
         </div>

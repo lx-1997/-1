@@ -1,0 +1,324 @@
+.market-risk-radar {
+  --risk-red: #dc2626;
+  --risk-orange: #ea580c;
+  --risk-yellow: #d97706;
+  --risk-green: #16a34a;
+}
+
+.market-risk-search {
+  width: 220px;
+}
+
+.market-risk-level-filter {
+  width: 130px;
+}
+
+.market-risk-warning {
+  margin-bottom: 12px;
+}
+
+.market-risk-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.market-risk-kpis .ant-card {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.market-risk-kpis .ant-card-body {
+  padding: 16px;
+}
+
+.market-risk-kpis .ant-typography {
+  margin-bottom: 0;
+}
+
+.market-risk-kpis h3,
+.market-risk-kpis h4 {
+  margin: 5px 0 3px;
+}
+
+.market-risk-kpis small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.market-risk-kpi-danger {
+  border-color: color-mix(in srgb, var(--risk-orange) 35%, var(--border)) !important;
+  background: color-mix(in srgb, var(--risk-orange) 5%, var(--surface)) !important;
+}
+
+.market-risk-market-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.market-risk-market-strip button {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.market-risk-market-strip button:hover,
+.market-risk-market-strip button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.market-risk-market-strip button strong {
+  text-align: center;
+}
+
+.market-risk-market-strip button small {
+  color: var(--text-muted);
+}
+
+.market-risk-table-card {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.market-risk-rank {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.market-risk-rank > span {
+  min-width: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-risk-company {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.market-risk-company > span,
+.market-risk-small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.market-risk-up {
+  color: #dc2626;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-risk-down {
+  color: #16a34a;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-risk-score-cell {
+  min-width: 140px;
+}
+
+.market-risk-score-cell > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.market-risk-score-cell .ant-progress {
+  margin: 0;
+}
+
+.market-risk-level-tag {
+  margin-inline-end: 0;
+  font-weight: 700;
+}
+
+.market-risk-drivers {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.market-risk-clickable-row {
+  cursor: pointer;
+}
+
+.market-risk-clickable-row:hover > td {
+  background: var(--accent-soft) !important;
+}
+
+.market-risk-methodology {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.market-risk-methodology .ant-card {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.market-risk-weight-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.market-risk-weight-grid > div {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+.market-risk-weight-grid span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.market-risk-weight-grid strong {
+  font-size: 18px;
+}
+
+.market-risk-source-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.market-risk-source-row:last-of-type {
+  margin-bottom: 10px;
+}
+
+.market-risk-source-row > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.market-risk-source-row span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.market-risk-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.market-risk-drawer h5 {
+  margin: 0;
+}
+
+.market-risk-drawer-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.market-risk-drawer-summary h3 {
+  margin: 4px 0;
+}
+
+.market-risk-drawer-summary .ant-typography:not(.ant-typography-secondary) {
+  color: var(--text);
+}
+
+.market-risk-drawer-summary .ant-typography-secondary {
+  color: var(--text-muted);
+}
+
+.market-risk-dimensions {
+  display: grid;
+  gap: 10px;
+}
+
+.market-risk-dimensions > div > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.market-risk-dimensions .ant-progress {
+  margin: 0;
+}
+
+.market-risk-driver-list,
+.market-risk-evidence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.market-risk-driver-list > div {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--risk-orange) 7%, var(--surface-muted));
+}
+
+.market-risk-driver-list .anticon {
+  margin-top: 3px;
+  color: var(--risk-orange);
+}
+
+.market-risk-evidence-list .ant-card {
+  border-color: var(--border);
+}
+
+.market-risk-evidence-list h5 {
+  margin: 10px 0 6px;
+}
+
+@media (max-width: 1100px) {
+  .market-risk-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .market-risk-kpis,
+  .market-risk-market-strip,
+  .market-risk-methodology {
+    grid-template-columns: 1fr;
+  }
+
+  .market-risk-weight-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .market-risk-search {
+    width: min(220px, 58vw);
+  }
+}

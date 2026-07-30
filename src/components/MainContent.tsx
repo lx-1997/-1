@@ -44,6 +44,7 @@ const CustomsTradeCenter = lazyWithPreload(() => import('./CustomsTradeCenter'))
 const OptionsSignalCenter = lazyWithPreload(() => import('./OptionsSignalCenter'));
 const BacktestCenter = lazyWithPreload(() => import('./BacktestCenter'));
 const PremarketOpportunityCenter = lazyWithPreload(() => import('./PremarketOpportunityCenter'));
+const MarketRiskRadar = lazyWithPreload(() => import('./MarketRiskRadar'));
 const RiskDashboard = lazyWithPreload(() => import('./RiskDashboard'));
 const PositionMonitor = lazyWithPreload(() => import('./PositionMonitor'));
 const MacroDashboard = lazyWithPreload(() => import('./MacroDashboard'));
@@ -310,6 +311,10 @@ const VIEW_RENDER_CONFIG: Record<ViewType, ViewConfig> = {
   'backtest-center': {
     component: BacktestCenter,
     render: () => <BacktestCenter />,
+  },
+  'risk-radar': {
+    component: MarketRiskRadar,
+    render: () => <MarketRiskRadar />,
   },
   'risk-dashboard': {
     component: RiskDashboard,
