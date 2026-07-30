@@ -19,7 +19,7 @@
 
 .market-risk-kpis {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -178,7 +178,7 @@
 
 .market-risk-weight-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -301,6 +301,51 @@
   margin: 10px 0 6px;
 }
 
+.market-risk-options-card {
+  border-color: color-mix(in srgb, var(--risk-yellow) 30%, var(--border)) !important;
+  background: color-mix(in srgb, var(--risk-yellow) 4%, var(--surface)) !important;
+}
+
+.market-risk-options-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.market-risk-options-head h5 {
+  margin: 5px 0 10px;
+}
+
+.market-risk-options-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.market-risk-options-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+.market-risk-options-metrics span,
+.market-risk-options-reasons,
+.market-risk-options-card .ant-typography-secondary {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.market-risk-options-reasons {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 10px;
+}
+
 @media (max-width: 1100px) {
   .market-risk-kpis {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -316,6 +361,10 @@
 
   .market-risk-weight-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .market-risk-options-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .market-risk-search {

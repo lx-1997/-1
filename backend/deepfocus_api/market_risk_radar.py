@@ -1,7 +1,8 @@
 """A股 / 港股 / 美股市值前20风险预警雷达。
 
 排名与价量字段来自东方财富公开行情列表；宏观维度复用平台现有宏观仪表盘；
-信息维度只使用已经进入 daocaijing 实时消息库的文章、快讯和研报。
+信息维度聚合 daocaijing 实时消息、抓取/上传资料、专业财报和海外研报归档；
+美股在拿到有效期权链时增加期权左尾风险维度。
 
 这里刻意使用确定性规则，而不是让 LLM 直接给风险分。这样每个分数都能回溯到
 明确字段和站内证据，也便于以后用历史回放校准阈值。
@@ -14,12 +15,18 @@ import json
 import re
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 import httpx
 
+from . import research_archive
+from .data_sources import list_data_items
 from .market_dashboard import fetch_ashare_dashboard, fetch_market_dashboard
+from .options_signal import MAX_SYMBOLS as OPTIONS_MAX_SYMBOLS
+from .options_signal import fetch_options_signals
+from .professional_research import list_professional_reports
 from .realtime_messages import list_realtime_messages
 from .shared_utils import safe_float, utc_now_iso
 
@@ -42,13 +49,24 @@ MARKET_META = {
     },
 }
 
-DIMENSION_WEIGHTS = {
+BASE_DIMENSION_WEIGHTS = {
     "macro": 0.22,
     "industry": 0.18,
     "stock": 0.30,
     "flow": 0.15,
     "information": 0.15,
 }
+
+# 期权只对拿到有效合约链的美股生效。15% 从原五维按比例腾挪，因此：
+# - 有期权：六维权重合计 100%
+# - 无期权/A/H：沿用 BASE_DIMENSION_WEIGHTS，绝不把“缺数据”误当成 50 分中性风险
+OPTIONS_WEIGHT = 0.15
+DIMENSION_WEIGHTS = {
+    **{key: value * (1.0 - OPTIONS_WEIGHT) for key, value in BASE_DIMENSION_WEIGHTS.items()},
+    "options": OPTIONS_WEIGHT,
+}
+OPTIONS_FETCH_TIMEOUT_SECONDS = 26.0
+SITE_CONTENT_LIMIT = 2000
 
 RISK_TERMS = (
     "暴跌", "下调", "减持", "处罚", "立案", "调查", "诉讼", "违约", "停产",
@@ -115,6 +133,19 @@ ALIASES: dict[str, tuple[str, ...]] = {
 _CACHE_TTL_SECONDS = 300.0
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _last_good_rows: dict[str, list[dict[str, Any]]] = {}
+
+
+@dataclass(frozen=True)
+class SiteContent:
+    id: str
+    title: str
+    content: str = ""
+    symbol: str = ""
+    severity: str = "info"
+    source_name: str = "daocaijing站内信息"
+    content_type: str = "站内内容"
+    url: Optional[str] = None
+    published_at: Optional[str] = None
 
 
 def _clip(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -385,15 +416,34 @@ async def _fetch_market_rows(market: str, limit: int) -> tuple[list[dict[str, An
     return fallback, "fallback", warnings
 
 
+def _field(item: Any, name: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
 def _message_text(message: Any) -> str:
-    return f"{getattr(message, 'title', '')} {getattr(message, 'content', '')}".strip()
+    return f"{_field(message, 'title', '')} {_field(message, 'content', '')}".strip()
+
+
+def _symbol_root(symbol: str) -> str:
+    value = str(symbol or "").strip().upper()
+    if re.fullmatch(r"\d{5,6}\.(?:SH|SZ|BJ|HK)", value):
+        return value.split(".", 1)[0]
+    return value
+
+
+def _company_aliases(company: dict[str, Any]) -> list[str]:
+    symbol = str(company["symbol"]).upper()
+    aliases = [str(company["name"]), symbol, *ALIASES.get(symbol, ())]
+    return list(dict.fromkeys(alias.strip() for alias in aliases if alias and alias.strip()))
 
 
 def _matches_company(message: Any, company: dict[str, Any]) -> bool:
-    symbol = company["symbol"]
+    symbol = str(company["symbol"]).upper()
     name = company["name"]
-    message_symbol = str(getattr(message, "symbol", "") or "").upper()
-    if message_symbol and message_symbol == symbol:
+    message_symbol = str(_field(message, "symbol", "") or "").upper()
+    if message_symbol and _symbol_root(message_symbol) == _symbol_root(symbol):
         return True
     text = _message_text(message)
     aliases = [name, *ALIASES.get(symbol, ())]
@@ -401,38 +451,257 @@ def _matches_company(message: Any, company: dict[str, Any]) -> bool:
         return True
     if company["market"] == "US" and len(symbol) >= 2:
         return bool(re.search(rf"(?<![A-Z]){re.escape(symbol)}(?![A-Z])", text.upper()))
+    if symbol.isdigit() and len(symbol) >= 5:
+        return bool(re.search(rf"(?<!\d){re.escape(symbol)}(?!\d)", text))
     return False
 
 
 def _site_signals(messages: list[Any], company: dict[str, Any]) -> list[Any]:
-    return [message for message in messages if _matches_company(message, company)][:5]
+    matched = [message for message in messages if _matches_company(message, company)]
+    matched.sort(key=_site_priority, reverse=True)
+    return matched[:10]
 
 
-def _information_risk(messages: list[Any]) -> tuple[float, list[dict[str, Any]]]:
+def _parse_timestamp(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+
+def _freshness_weight(message: Any) -> float:
+    published = _parse_timestamp(
+        _field(message, "published_at") or _field(message, "created_at")
+    )
+    if published is None:
+        return 0.45
+    age_days = max(0.0, (datetime.now(timezone.utc) - published.astimezone(timezone.utc)).total_seconds() / 86400)
+    if age_days <= 1:
+        return 1.0
+    if age_days <= 3:
+        return 0.82
+    if age_days <= 7:
+        return 0.65
+    if age_days <= 30:
+        return 0.45
+    return 0.30
+
+
+def _site_priority(message: Any) -> float:
+    text = _message_text(message).lower()
+    risk_hits = sum(1 for term in RISK_TERMS if term.lower() in text)
+    severity = str(_field(message, "severity", "info") or "info")
+    severity_points = {"info": 0, "success": -1, "warning": 3, "critical": 6}
+    return risk_hits * 2 + severity_points.get(severity, 0) + _freshness_weight(message)
+
+
+def _dedupe_site_content(items: Iterable[SiteContent]) -> list[SiteContent]:
+    seen_ids: set[str] = set()
+    seen_titles: set[str] = set()
+    result: list[SiteContent] = []
+    for item in items:
+        title_key = re.sub(r"\W+", "", item.title).lower()[:180]
+        if item.id in seen_ids or (title_key and title_key in seen_titles):
+            continue
+        seen_ids.add(item.id)
+        if title_key:
+            seen_titles.add(title_key)
+        result.append(item)
+        if len(result) >= SITE_CONTENT_LIMIT:
+            break
+    return result
+
+
+def _load_site_content(companies: list[dict[str, Any]]) -> tuple[list[SiteContent], dict[str, int]]:
+    """有界聚合站内多源内容；只读本地库，不触发外部抓取。"""
+    items: list[SiteContent] = []
+    counts: dict[str, int] = defaultdict(int)
+
+    aliases = list(dict.fromkeys(
+        alias
+        for company in companies
+        for alias in _company_aliases(company)
+        if len(alias) >= 2
+    ))
+    realtime_seen: set[str] = set()
+    for start in range(0, len(aliases), 40):
+        batch = aliases[start:start + 40]
+        for message in list_realtime_messages(anyq=",".join(batch), limit=200):
+            if message.id in realtime_seen:
+                continue
+            realtime_seen.add(message.id)
+            topic = str(message.topic or "站内消息")
+            # 文章/快讯统一回链本站公开落地页；研报不暴露第三方原始文件入口。
+            url = f"/article/{message.id}" if topic in {"文章", "快讯"} else None
+            items.append(SiteContent(
+                id=f"realtime:{message.id}",
+                title=message.title,
+                content=message.content,
+                symbol=message.symbol or "",
+                severity=message.severity,
+                source_name=message.source_name or "DAO财经",
+                content_type=f"站内{topic}",
+                url=url,
+                published_at=message.created_at,
+            ))
+            counts["realtime"] += 1
+
+    for row in list_data_items(limit=1000, sort="time_desc"):
+        items.append(SiteContent(
+            id=f"corpus:{row.id}",
+            title=row.title,
+            content=row.text_preview or row.text[:500],
+            symbol=row.symbol or "",
+            source_name=row.source_name or "daocaijing资料库",
+            content_type="抓取/上传资料",
+            url=row.url,
+            published_at=row.collected_at or row.created_at,
+        ))
+        counts["corpus"] += 1
+
+    for row in research_archive.query(limit=1000):
+        row_id = str(row.get("id") or "")
+        if not row_id or not row.get("title"):
+            continue
+        items.append(SiteContent(
+            id=f"archive:{row_id}",
+            title=str(row["title"]),
+            content=str(row.get("out") or ""),
+            source_name=str(row.get("org") or "海外投行"),
+            content_type="海外研报归档",
+            # 只展示标题/机构/日期元数据，不提供第三方原始报告下载链接。
+            url=None,
+            published_at=str(row.get("created_at") or row.get("date") or ""),
+        ))
+        counts["research_archive"] += 1
+
+    for report in list_professional_reports(limit=200):
+        items.append(SiteContent(
+            id=f"professional:{report.id}",
+            title=report.title,
+            content=f"{report.report_type} {report.period or ''}".strip(),
+            symbol=report.symbol or "",
+            source_name="daocaijing专业财报库",
+            content_type="专业财报",
+            url=None,
+            published_at=report.updated_at or report.created_at,
+        ))
+        counts["professional"] += 1
+
+    return _dedupe_site_content(items), dict(counts)
+
+
+def _information_risk(messages: list[Any]) -> tuple[float, list[dict[str, Any]], int]:
     if not messages:
-        return 18.0, []
-    score = 20.0
+        return 18.0, [], 0
+    score = 18.0
     evidence: list[dict[str, Any]] = []
+    risk_evidence_count = 0
     severity_points = {"info": 0, "success": -4, "warning": 12, "critical": 24}
     for message in messages:
         text = _message_text(message)
         lower = text.lower()
         risk_hits = sum(1 for term in RISK_TERMS if term.lower() in lower)
         positive_hits = sum(1 for term in POSITIVE_TERMS if term.lower() in lower)
-        severity = str(getattr(message, "severity", "info") or "info")
+        severity = str(_field(message, "severity", "info") or "info")
         contribution = severity_points.get(severity, 0) + min(risk_hits, 3) * 8 - min(positive_hits, 2) * 4
-        score += contribution
-        if risk_hits or severity in {"warning", "critical"}:
-            evidence.append({
-                "dimension": "information",
-                "title": str(getattr(message, "title", "") or "站内信息信号")[:160],
-                "detail": str(getattr(message, "content", "") or "")[:220],
-                "severity": "critical" if severity == "critical" else "warning",
-                "source": str(getattr(message, "source_name", "") or "daocaijing站内信息"),
-                "url": getattr(message, "url", None),
-                "published_at": getattr(message, "created_at", None),
-            })
-    return _clip(score), evidence[:3]
+        score += contribution * _freshness_weight(message)
+        is_risk = bool(risk_hits or severity in {"warning", "critical"})
+        if is_risk:
+            risk_evidence_count += 1
+        evidence.append({
+            "dimension": "information",
+            "title": str(_field(message, "title", "") or "站内信息信号")[:160],
+            "detail": str(_field(message, "content", "") or "")[:220],
+            "severity": "critical" if severity == "critical" else "warning" if is_risk else "info",
+            "source": str(_field(message, "source_name", "") or "daocaijing站内信息"),
+            "content_type": str(_field(message, "content_type", "") or "站内内容"),
+            "url": _field(message, "url"),
+            "published_at": _field(message, "published_at") or _field(message, "created_at"),
+        })
+    return _clip(score), evidence[:5], risk_evidence_count
+
+
+def _options_risk(signal: Any) -> dict[str, Any]:
+    if (
+        signal is None
+        or str(_field(signal, "source_status", "unavailable")) == "unavailable"
+        or int(_field(signal, "contract_count", 0) or 0) <= 0
+        or int(_field(signal, "data_quality", 0) or 0) < 20
+    ):
+        return {
+            "status": "unavailable",
+            "risk_score": None,
+            "summary": "当前未取得质量达标的期权链，本维度不参与总分。",
+            "reasons": [],
+        }
+
+    risk_score = int(_field(signal, "tail_event_risk_score", 0) or 0)
+    reasons = [str(item) for item in (_field(signal, "tail_event_risk_reasons", []) or []) if str(item).strip()]
+    if not reasons:
+        reasons = [str(_field(signal, "tail_event_risk_summary", "") or "暂无明显左尾事件预警。")]
+    return {
+        "status": "available",
+        "risk_score": round(_clip(risk_score), 1),
+        "provider": str(_field(signal, "provider_name", "") or _field(signal, "provider", "")),
+        "source_status": str(_field(signal, "source_status", "")),
+        "data_quality": int(_field(signal, "data_quality", 0) or 0),
+        "contract_count": int(_field(signal, "contract_count", 0) or 0),
+        "expiration_count": int(_field(signal, "expiration_count", 0) or 0),
+        "direction": str(_field(signal, "direction", "不可判定")),
+        "conviction": str(_field(signal, "conviction", "低")),
+        "tail_event_risk_level": str(_field(signal, "tail_event_risk_level", "绿灯")),
+        "put_call_volume_ratio": safe_float(_field(signal, "put_call_volume_ratio")),
+        "put_call_open_interest_ratio": safe_float(_field(signal, "put_call_open_interest_ratio")),
+        "avg_iv": safe_float(_field(signal, "avg_iv")),
+        "iv_skew": safe_float(_field(signal, "iv_skew")),
+        "expected_move_pct": safe_float(_field(signal, "expected_move_pct")),
+        "pin_risk_score": int(_field(signal, "pin_risk_score", 0) or 0),
+        "gamma_exposure_status": str(_field(signal, "gamma_exposure_status", "unavailable")),
+        "net_gamma_exposure": safe_float(_field(signal, "net_gamma_exposure")),
+        "unusual_flow_count": int(_field(signal, "unusual_flow_count", 0) or 0),
+        "unusual_premium_notional": safe_float(_field(signal, "unusual_premium_notional")),
+        "summary": str(_field(signal, "tail_event_risk_summary", "") or _field(signal, "summary", "")),
+        "reasons": reasons[:5],
+        "fetched_at": str(_field(signal, "fetched_at", "") or ""),
+    }
+
+
+async def _fetch_options_map(symbols: list[str]) -> tuple[dict[str, Any], list[str]]:
+    if not symbols:
+        return {}, []
+
+    async def _fetch_chunk(chunk: list[str]) -> tuple[list[Any], list[str]]:
+        try:
+            response = await asyncio.wait_for(
+                fetch_options_signals(chunk, horizon_days=45, max_expirations=2),
+                timeout=OPTIONS_FETCH_TIMEOUT_SECONDS,
+            )
+            return list(response.signals), list(response.warnings)
+        except asyncio.TimeoutError:
+            return [], [f"{','.join(chunk)} 期权链聚合超时"]
+        except Exception as exc:  # noqa: BLE001 - 期权源异常不阻断三市场排行
+            return [], [f"{','.join(chunk)} 期权链暂不可用：{type(exc).__name__}"]
+
+    chunks = [
+        symbols[start:start + OPTIONS_MAX_SYMBOLS]
+        for start in range(0, len(symbols), OPTIONS_MAX_SYMBOLS)
+    ]
+    results = await asyncio.gather(*[_fetch_chunk(chunk) for chunk in chunks])
+    signal_map: dict[str, Any] = {}
+    warnings: list[str] = []
+    for signals, chunk_warnings in results:
+        for signal in signals:
+            signal_map[str(signal.symbol).upper()] = signal
+        warnings.extend(chunk_warnings)
+    return signal_map, warnings
 
 
 def _macro_context(market: str, global_dashboard: dict[str, Any], cn_dashboard: dict[str, Any]) -> tuple[float, str]:
@@ -452,6 +721,7 @@ def _score_company(
     industry_change: Optional[float],
     messages: list[Any],
     ranking_status: str,
+    options_signal: Any = None,
 ) -> dict[str, Any]:
     change = safe_float(company.get("change_pct"))
     change_60d = safe_float(company.get("change_60d_pct"))
@@ -489,7 +759,7 @@ def _score_company(
     if change is not None and change < -2 and volume_ratio is not None and volume_ratio > 1.2:
         flow_risk += 12.0
 
-    information_risk, evidence = _information_risk(messages)
+    information_risk, evidence, risk_evidence_count = _information_risk(messages)
     dimensions = {
         "macro": round(_clip(macro_risk), 1),
         "industry": round(_clip(industry_risk), 1),
@@ -497,7 +767,20 @@ def _score_company(
         "flow": round(_clip(flow_risk), 1),
         "information": round(_clip(information_risk), 1),
     }
-    risk_score = sum(dimensions[key] * weight for key, weight in DIMENSION_WEIGHTS.items())
+    if company["market"] == "US":
+        options = _options_risk(options_signal)
+    else:
+        options = {
+            "status": "not_applicable",
+            "risk_score": None,
+            "summary": "A股/港股当前不纳入美股期权链维度。",
+            "reasons": [],
+        }
+    if options["status"] == "available":
+        dimensions["options"] = options["risk_score"]
+        risk_score = sum(dimensions[key] * weight for key, weight in DIMENSION_WEIGHTS.items())
+    else:
+        risk_score = sum(dimensions[key] * weight for key, weight in BASE_DIMENSION_WEIGHTS.items())
     level = _risk_level(risk_score)
 
     drivers: list[str] = []
@@ -511,8 +794,12 @@ def _score_company(
         drivers.append(f"近60日回撤 {abs(change_60d):.1f}%")
     if flow_pct is not None and flow_pct <= -3:
         drivers.append(f"主力净流出占比 {abs(flow_pct):.1f}%")
-    if evidence:
-        drivers.append(f"站内命中 {len(evidence)} 条负面/警示证据")
+    if risk_evidence_count:
+        drivers.append(f"站内命中 {risk_evidence_count} 条负面/警示证据")
+    if options["status"] == "available" and options["risk_score"] >= 30:
+        drivers.append(
+            f"期权左尾风险{options['tail_event_risk_level']} {options['risk_score']:.0f}分"
+        )
     if not drivers:
         drivers.append("暂无触发高等级阈值的单项信号")
 
@@ -520,6 +807,8 @@ def _score_company(
     if ranking_status != "live" or company.get("price") is None or company.get("market_cap") is None:
         confidence = "low"
     elif change is None or industry_change is None:
+        confidence = "medium"
+    elif company["market"] == "US" and options["status"] != "available":
         confidence = "medium"
 
     return {
@@ -530,7 +819,13 @@ def _score_company(
         "dimensions": dimensions,
         "drivers": drivers[:4],
         "evidence": evidence,
+        "risk_evidence_count": risk_evidence_count,
         "site_signal_count": len(messages),
+        "site_source_types": list(dict.fromkeys(
+            str(_field(message, "content_type", "") or "站内内容")
+            for message in messages
+        )),
+        "options_signal": options,
         "data_status": ranking_status,
     }
 
@@ -576,14 +871,47 @@ async def build_market_risk_radar(
     )
     macro_status = "live" if global_dashboard and cn_dashboard else "partial"
 
-    try:
-        site_messages = list_realtime_messages(limit=200)
-        site_status = "live"
-    except Exception:  # noqa: BLE001 - 站内消息库异常不阻断排行
-        site_messages = []
-        site_status = "unavailable"
+    ranked_rows = [
+        row
+        for rows, _source_status, _market_warnings in market_results
+        for row in rows
+    ]
+    us_symbols = [
+        str(row["symbol"]).upper()
+        for market, (rows, _source_status, _market_warnings) in zip(selected, market_results)
+        if market == "US"
+        for row in rows
+    ]
+
+    async def _safe_site_content() -> tuple[list[SiteContent], dict[str, int], str]:
+        try:
+            content, counts = await asyncio.to_thread(_load_site_content, ranked_rows)
+            return content, counts, "live"
+        except Exception:  # noqa: BLE001 - 站内库异常不阻断排行
+            return [], {}, "unavailable"
+
+    (site_messages, site_counts, site_status), (options_map, options_warnings) = await asyncio.gather(
+        _safe_site_content(),
+        _fetch_options_map(us_symbols),
+    )
+    valid_options_count = sum(
+        1 for symbol in us_symbols
+        if _options_risk(options_map.get(symbol))["status"] == "available"
+    )
+    options_status = (
+        "not_applicable" if not us_symbols
+        # 期权引擎当前来源均为延迟快照或部分字段，覆盖完整也不标成实时逐笔。
+        else "partial" if valid_options_count > 0
+        else "unavailable"
+    )
 
     warnings: list[str] = []
+    if us_symbols and valid_options_count < len(us_symbols):
+        warnings.append(
+            f"美股期权链有效覆盖 {valid_options_count}/{len(us_symbols)}；缺失标的不计入期权维度"
+        )
+    if options_warnings and not valid_options_count:
+        warnings.append("期权免费/授权数据源本次均未返回可用合约链")
     market_payloads: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
     all_companies: list[dict[str, Any]] = []
@@ -611,6 +939,7 @@ async def build_market_risk_radar(
                 industry_change=sector_average.get(row["sector"]),
                 messages=matched_messages,
                 ranking_status=source_status,
+                options_signal=options_map.get(str(row["symbol"]).upper()),
             )
             scored["rank"] = rank
             companies.append(scored)
@@ -638,7 +967,16 @@ async def build_market_risk_radar(
         if all_companies else 0.0
     )
     degraded_markets = [summary["label"] for summary in summaries if summary["source_status"] != "live"]
-    quality_level = "degraded" if degraded_markets or site_status != "live" or macro_status != "live" else "live"
+    quality_level = (
+        "degraded"
+        if (
+            degraded_markets
+            or site_status != "live"
+            or macro_status != "live"
+            or (us_symbols and valid_options_count < len(us_symbols))
+        )
+        else "live"
+    )
     quality_reasons = []
     if degraded_markets:
         quality_reasons.append(f"{'、'.join(degraded_markets)}排行使用缓存或候选池")
@@ -646,6 +984,10 @@ async def build_market_risk_radar(
         quality_reasons.append("站内信息库暂不可用")
     if macro_status != "live":
         quality_reasons.append("部分宏观指标暂不可用，相关维度按中性风险处理")
+    if options_status == "unavailable" and us_symbols:
+        quality_reasons.append("美股期权链暂不可用，已自动移出总分权重")
+    elif valid_options_count < len(us_symbols):
+        quality_reasons.append(f"美股期权链部分覆盖 {valid_options_count}/{len(us_symbols)}")
 
     result = {
         "generated_at": utc_now_iso(),
@@ -660,24 +1002,49 @@ async def build_market_risk_radar(
             "risk_level": _risk_level(overall_average),
             "counts": total_counts,
             "site_signal_companies": sum(1 for company in all_companies if company["site_signal_count"] > 0),
+            "site_content_items": len(site_messages),
+            "site_source_counts": site_counts,
+            "options_available_companies": valid_options_count,
+            "options_risk_companies": sum(
+                1
+                for company in all_companies
+                if company["options_signal"]["status"] == "available"
+                and (company["options_signal"]["risk_score"] or 0) >= 55
+            ),
             "market_summaries": summaries,
         },
         "markets": market_payloads,
         "methodology": {
-            "weights": {key: round(value * 100) for key, value in DIMENSION_WEIGHTS.items()},
+            "weights": {key: round(value * 100, 2) for key, value in DIMENSION_WEIGHTS.items()},
             "thresholds": {"green": "<35", "yellow": "35-54", "orange": "55-74", "red": "≥75"},
-            "explanation": "宏观、行业、个股、资金、站内信息五维确定性评分；预警用于提示复核，不预测必然涨跌。",
+            "explanation": (
+                "宏观、行业、个股、资金、站内信息五维为基础；美股取得质量达标的期权链时，"
+                "新增15%期权左尾风险维度，其余五维按比例缩放。A/H或期权缺失时自动恢复基础五维权重，"
+                "不会用中性分填补缺失数据。"
+            ),
         },
         "sources": [
             {"name": "东方财富 / 新浪财经公开行情", "role": "动态市值排名、价格、成交与资金字段", "status": "live" if not degraded_markets else "partial"},
             {"name": "daocaijing宏观仪表盘", "role": "全球与A股宏观风险环境", "status": macro_status},
-            {"name": "daocaijing站内信息", "role": "快讯、文章、研报中的公司级风险词与严重度", "status": site_status},
+            {
+                "name": "daocaijing站内多源信息",
+                "role": "实时快讯/文章、抓取与上传资料、专业财报、海外研报归档",
+                "status": site_status,
+            },
+            {
+                "name": "daocaijing期权信号引擎",
+                "role": "美股Put/Call、IV偏斜、异常流、GEX与左尾事件风险",
+                "status": options_status,
+            },
         ],
         "warnings": warnings,
         "data_quality": {
             "level": quality_level,
             "label": "实时综合数据" if quality_level == "live" else "部分数据已降级",
-            "detail": "排名与风险信号按5分钟缓存更新；站内信息只计入已入库且可追溯的内容。",
+            "detail": (
+                "排名与风险信号按5分钟缓存更新；站内信息只计入已入库且可追溯的内容；"
+                "期权数据多为延迟快照，只有有效合约链才进入总分。"
+            ),
             "reasons": quality_reasons,
         },
         "disclaimer": "本模块用于风险线索筛查和投研复核，不构成证券投资建议，也不替代人工核验。",

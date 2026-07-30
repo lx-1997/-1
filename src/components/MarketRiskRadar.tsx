@@ -59,7 +59,8 @@ const DIMENSION_META: Record<RiskDimensionKey, { label: string; description: str
   industry: { label: '行业', description: '同组公司价格压力与行业共振' },
   stock: { label: '个股', description: '当日波动、60日趋势和估值异常' },
   flow: { label: '资金', description: '量比、换手和主力资金方向' },
-  information: { label: '信息', description: '站内快讯、文章、研报的风险证据' }
+  information: { label: '信息', description: '站内快讯、文章、资料库与研报归档的风险证据' },
+  options: { label: '期权', description: '美股Put/Call、IV偏斜、异常流、GEX与左尾事件风险' }
 };
 
 type MarketFilter = 'ALL' | RiskMarket;
@@ -81,6 +82,18 @@ const formatTime = (value?: string | null) => {
   if (!value) return '时间未知';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
+};
+
+const formatRatio = (value?: number | null) => (
+  typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '—'
+);
+
+const formatPremium = (value?: number | null) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '—';
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`;
+  return `$${value.toFixed(0)}`;
 };
 
 const RiskTag: React.FC<{ level: RiskLevel; score?: number }> = ({ level, score }) => {
@@ -235,6 +248,24 @@ const MarketRiskRadar: React.FC = () => {
       )
     },
     {
+      title: '期权左尾',
+      key: 'options',
+      width: 105,
+      align: 'center',
+      sorter: (a, b) => (a.options_signal.risk_score || -1) - (b.options_signal.risk_score || -1),
+      render: (_, company) => {
+        if (company.options_signal.status === 'not_applicable') return <Text type="secondary">不适用</Text>;
+        if (company.options_signal.status !== 'available') return <Tag>待数据</Tag>;
+        const score = company.options_signal.risk_score || 0;
+        const level = score >= 75 ? 'red' : score >= 55 ? 'orange' : score >= 30 ? 'yellow' : 'green';
+        return (
+          <Tooltip title={company.options_signal.summary}>
+            <Tag color={LEVEL_META[level].color}>{score.toFixed(0)} · {company.options_signal.tail_event_risk_level}</Tag>
+          </Tooltip>
+        );
+      }
+    },
+    {
       title: '站内证据',
       key: 'evidence',
       width: 100,
@@ -245,7 +276,7 @@ const MarketRiskRadar: React.FC = () => {
           <Badge
             count={company.site_signal_count}
             showZero
-            color={company.evidence.length > 0 ? '#ea580c' : '#64748b'}
+            color={company.risk_evidence_count > 0 ? '#ea580c' : '#64748b'}
           />
         </Tooltip>
       )
@@ -301,7 +332,7 @@ const MarketRiskRadar: React.FC = () => {
       <CenterShell
       eyebrow="MARKET RISK EARLY WARNING"
       title="跨市场风险预警雷达"
-      subtitle="A股、港股、美股各市值前20家公司 · 宏观 × 行业 × 个股 × 资金 × daocaijing站内信息"
+      subtitle="A股、港股、美股各市值前20家公司 · 宏观 × 行业 × 个股 × 资金 × daocaijing站内信息 × 美股期权"
       icon={<SafetyCertificateOutlined />}
       actions={(
         <Space wrap>
@@ -353,7 +384,12 @@ const MarketRiskRadar: React.FC = () => {
             <Card>
               <Text type="secondary">站内信息命中</Text>
               <Title level={3}>{data.summary.site_signal_companies}<small> 家</small></Title>
-              <Text>已关联快讯 / 文章 / 研报</Text>
+              <Text>多源内容池 {data.summary.site_content_items} 条</Text>
+            </Card>
+            <Card>
+              <Text type="secondary">期权有效覆盖</Text>
+              <Title level={3}>{data.summary.options_available_companies}<small> / 20</small></Title>
+              <Text>橙/红左尾风险 {data.summary.options_risk_companies} 家</Text>
             </Card>
             <Card>
               <Text type="secondary">当前最高风险</Text>
@@ -385,7 +421,7 @@ const MarketRiskRadar: React.FC = () => {
               columns={columns}
               dataSource={visibleCompanies}
               pagination={{ pageSize: 20, showSizeChanger: false }}
-              scroll={{ x: 1180 }}
+              scroll={{ x: 1300 }}
               size="middle"
               onRow={company => ({
                 onClick: () => setSelected(company),
@@ -445,28 +481,73 @@ const MarketRiskRadar: React.FC = () => {
               <RiskTag level={selected.risk_level} score={selected.risk_score} />
             </div>
 
-            <Title level={5}>五维风险拆解</Title>
+            <Title level={5}>
+              {selected.dimensions.options === undefined ? '五维风险拆解' : '六维风险拆解'}
+            </Title>
             <div className="market-risk-dimensions">
-              {(Object.keys(selected.dimensions) as RiskDimensionKey[]).map(key => (
+              {(Object.entries(selected.dimensions) as Array<[RiskDimensionKey, number]>).map(([key, value]) => (
                 <div key={key}>
                   <div>
                     <Tooltip title={DIMENSION_META[key].description}>
                       <span>{DIMENSION_META[key].label}</span>
                     </Tooltip>
-                    <strong>{selected.dimensions[key].toFixed(0)}</strong>
+                    <strong>{value.toFixed(0)}</strong>
                   </div>
                   <Progress
-                    percent={selected.dimensions[key]}
+                    percent={value}
                     showInfo={false}
                     strokeColor={LEVEL_META[
-                      selected.dimensions[key] >= 75 ? 'red'
-                        : selected.dimensions[key] >= 55 ? 'orange'
-                          : selected.dimensions[key] >= 35 ? 'yellow' : 'green'
+                      value >= 75 ? 'red'
+                        : value >= 55 ? 'orange'
+                          : value >= 35 ? 'yellow' : 'green'
                     ].hex}
                   />
                 </div>
               ))}
             </div>
+
+            {selected.market === 'US' && (
+              <>
+                <Title level={5}>期权链预警明细</Title>
+                {selected.options_signal.status !== 'available' ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="本次未取得质量达标的期权链"
+                    description="期权维度已自动移出总分，不会按中性分填补。"
+                  />
+                ) : (
+                  <Card size="small" className="market-risk-options-card">
+                    <div className="market-risk-options-head">
+                      <div>
+                        <Text type="secondary">{selected.options_signal.provider} · 数据质量 {selected.options_signal.data_quality}/100</Text>
+                        <Title level={5}>{selected.options_signal.summary}</Title>
+                      </div>
+                      <Tag color={(selected.options_signal.risk_score || 0) >= 55 ? 'orange' : 'green'}>
+                        {selected.options_signal.risk_score?.toFixed(0)} 分
+                      </Tag>
+                    </div>
+                    <div className="market-risk-options-metrics">
+                      <div><span>Put/Call成交</span><strong>{formatRatio(selected.options_signal.put_call_volume_ratio)}</strong></div>
+                      <div><span>Put/Call持仓</span><strong>{formatRatio(selected.options_signal.put_call_open_interest_ratio)}</strong></div>
+                      <div><span>IV偏斜</span><strong>{typeof selected.options_signal.iv_skew === 'number' ? `${(selected.options_signal.iv_skew * 100).toFixed(1)}pp` : '—'}</strong></div>
+                      <div><span>预期波动</span><strong>{typeof selected.options_signal.expected_move_pct === 'number' ? `${selected.options_signal.expected_move_pct.toFixed(1)}%` : '—'}</strong></div>
+                      <div><span>异常流</span><strong>{selected.options_signal.unusual_flow_count || 0} 条</strong></div>
+                      <div><span>异常权利金</span><strong>{formatPremium(selected.options_signal.unusual_premium_notional)}</strong></div>
+                    </div>
+                    {selected.options_signal.reasons.length > 0 && (
+                      <div className="market-risk-options-reasons">
+                        {selected.options_signal.reasons.map(reason => <span key={reason}>• {reason}</span>)}
+                      </div>
+                    )}
+                    <Text type="secondary">
+                      {selected.options_signal.contract_count} 张合约 · {selected.options_signal.expiration_count} 个到期日 ·
+                      更新 {formatTime(selected.options_signal.fetched_at)}
+                    </Text>
+                  </Card>
+                )}
+              </>
+            )}
 
             <Title level={5}>本次触发原因</Title>
             <div className="market-risk-driver-list">
@@ -478,17 +559,18 @@ const MarketRiskRadar: React.FC = () => {
               ))}
             </div>
 
-            <Title level={5}>站内可追溯证据</Title>
+            <Title level={5}>关联的站内内容与风险证据</Title>
             {selected.evidence.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无命中风险阈值的站内证据" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无命中的站内内容" />
             ) : (
               <div className="market-risk-evidence-list">
                 {selected.evidence.map((evidence, index) => (
                   <Card key={`${evidence.title}-${index}`} size="small">
                     <Space>
-                      <Tag color={evidence.severity === 'critical' ? 'red' : 'gold'}>
-                        {evidence.severity === 'critical' ? '高风险' : '需关注'}
+                      <Tag color={evidence.severity === 'critical' ? 'red' : evidence.severity === 'warning' ? 'gold' : 'default'}>
+                        {evidence.severity === 'critical' ? '高风险' : evidence.severity === 'warning' ? '需关注' : '站内关联'}
                       </Tag>
+                      {evidence.content_type && <Tag>{evidence.content_type}</Tag>}
                       <Text type="secondary">{evidence.source}</Text>
                     </Space>
                     <Title level={5}>{evidence.title}</Title>
