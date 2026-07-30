@@ -506,21 +506,19 @@
   .position-glance b{display:block;margin-top:3px;color:var(--ink2);font-size:10px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
   .chart{min-height:310px;border:1px solid #ecece8;border-radius:11px;background:#fbfbf9;overflow:hidden}
   .kmark{
-    appearance:none;min-width:72px;height:24px;padding:0 7px 0 6px;border:1px solid;border-radius:4px;display:flex;align-items:center;justify-content:center;gap:4px;line-height:1;
-    transform:translate(-50%,-50%);background:#fff!important;color:#252a33!important;font-size:8px;font-weight:700;filter:none;box-shadow:0 2px 7px rgba(20,21,24,.16);z-index:4;cursor:pointer
+    appearance:none;width:22px;height:20px;padding:0;border:1.5px solid #fff;border-radius:4px;display:flex;align-items:center;justify-content:center;line-height:1;
+    transform:translate(-50%,-50%);color:#fff!important;font-size:9px;font-weight:800;filter:none;box-shadow:0 2px 6px rgba(20,21,24,.24);z-index:4;cursor:pointer
   }
-  .kmark.buy{border-color:var(--up)}.kmark.sell{border-color:var(--down)}
-  .kmark b{display:flex;align-items:center;align-self:stretch;margin-left:-6px;padding:0 5px;border-radius:3px 0 0 3px;color:#fff;font-size:10px;font-weight:850}
-  .kmark.buy b{background:var(--up)}.kmark.sell b{background:var(--down)}
-  .kmark span{color:#737b87;font-size:7px;white-space:nowrap}.kmark strong{font-size:9px;font-weight:750;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .kmark.buy{background:var(--up)}.kmark.sell{background:var(--down)}
+  .kmark b{font-size:9px;font-weight:850}
   .kmark::before{content:"";position:absolute;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent}
   .kmark.buy::before{top:-5px;border-bottom:5px solid var(--up)}
   .kmark.sell::before{bottom:-5px;border-top:5px solid var(--down)}
   .kmark::after{
-    content:attr(data-date) " · 点击查看交割";position:absolute;left:50%;transform:translateX(-50%);display:none;
+    content:attr(data-detail);position:absolute;left:50%;transform:translateX(-50%);display:none;
     padding:4px 7px;border-radius:4px;background:#17191e;color:#fff;font-size:8px;font-weight:650;white-space:nowrap
   }
-  .kmark.buy::after{top:29px}.kmark.sell::after{bottom:29px}
+  .kmark.buy::after{top:25px}.kmark.sell::after{bottom:25px}
   .kmark:hover::after{display:block}
   .last-price{position:absolute;padding:2px 5px;border-radius:5px;background:#25272c;color:#fff;font-size:9px;font-weight:700;font-variant-numeric:tabular-nums}
   .klegend{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin-top:7px;color:var(--ink3);font-size:8px}
@@ -529,6 +527,15 @@
   .legend-trade{display:inline-flex;min-width:31px;height:16px;padding:0 5px;align-items:center;justify-content:center;border-radius:3px;color:#fff;font-size:7px;letter-spacing:.02em}
   .legend-trade.buy{background:var(--up)}.legend-trade.sell{background:var(--down)}
   .legend-note{margin-left:auto}
+  .trade-tape{display:flex;min-height:43px;border:1px solid #e2e6eb;border-top:0;background:#fff}
+  .trade-tape-head{flex:0 0 68px;display:flex;flex-direction:column;justify-content:center;padding:6px 8px;border-right:1px solid #e7eaee}
+  .trade-tape-head b{color:#2b3039;font-size:9px}.trade-tape-head span{margin-top:3px;color:#9aa1ac;font-size:7px}
+  .trade-tape-list{min-width:0;display:flex;align-items:center;gap:6px;padding:6px 7px;overflow-x:auto;scrollbar-width:thin}
+  .trade-chip{flex:0 0 auto;display:flex;align-items:center;height:29px;padding:0 8px 0 0;border:1px solid #e0e4e8;border-radius:4px;background:#fff;color:#343a45;font-size:8px;cursor:pointer}
+  .trade-chip:hover{border-color:#aeb6c2;background:#fafbfc}
+  .trade-chip b{display:flex;align-items:center;align-self:stretch;padding:0 6px;margin-right:6px;border-radius:3px 0 0 3px;color:#fff;font-size:9px}
+  .trade-chip.buy b{background:var(--up)}.trade-chip.sell b{background:var(--down)}
+  .trade-chip time{color:#89919d}.trade-chip strong{margin-left:7px;font-size:9px;font-variant-numeric:tabular-nums}.trade-chip em{margin-left:7px;color:#626b78;font-size:8px;font-style:normal;white-space:nowrap}
   .chart-note{margin-top:9px}
 
   .log-head{margin-bottom:10px}
@@ -706,7 +713,7 @@
   .app.detail .chart-toolbar .indicator{font-variant-numeric:tabular-nums}
   .app.detail .chart-toolbar .toolbar-note{margin-left:auto;color:#9aa1ad}
   .app.detail .chart{min-height:390px;border-color:#e2e6eb;border-radius:0;background:#fff;cursor:crosshair}
-  .app.detail .kmark{min-width:72px;height:24px;border-width:1px;font-size:8px;box-shadow:0 2px 7px rgba(20,24,31,.16)}
+  .app.detail .kmark{width:22px;min-width:22px;height:20px;border-width:1.5px;font-size:9px;box-shadow:0 2px 6px rgba(20,24,31,.24)}
   .app.detail .kevt{width:13px;height:13px;border-width:1px;border-color:#778293!important;background:#fff;box-shadow:none;color:#657184!important;font-size:7px;font-weight:700}
   .app.detail .kevt:not(.multi)::before{content:"";width:4px;height:4px;border-radius:50%;background:currentColor}
   .app.detail .kevt.fresh{animation:none;box-shadow:0 0 0 2px rgba(79,96,216,.1)}
@@ -887,14 +894,16 @@ function drawK(box,p){
   const evDates=new Set((p.events||[]).map(e=>e.date));
   (p.marks||[]).forEach(m=>{if(m.side==='buy'&&evDates.has(m.date)){const i=idxOf(m.date);if(i<0)return;const x=X(i).toFixed(1);g+='<line x1="'+x+'" x2="'+x+'" y1="'+pTop+'" y2="'+Y(m.price).toFixed(1)+'" stroke="#6673d8" stroke-width="1" stroke-dasharray="2 3" opacity=".32"/>';}});
   let ovl='<span class="last-price" style="left:'+(plotR+3)+'px;top:'+(yl-8).toFixed(1)+'px">'+last.toFixed(2)+'</span>';
-  const markSeen={},placedMarks=[],labelW=72,labelH=24;
+  const tradeOf=m=>((S.data&&S.data.trades)||[]).find(t=>t.symbol===p.symbol&&t.side===m.side&&String(t.ts||'').slice(0,10)===m.date&&Math.abs(Number(t.price)-Number(m.price))<.011);
+  const markSeen={},placedMarks=[],labelW=22,labelH=20;
   (p.marks||[]).forEach(m=>{const i=idxOf(m.date);if(i<0)return;const buy=m.side==='buy',key=i+'-'+m.side,slot=markSeen[key]||0;
     markSeen[key]=slot+1;const candle=kl[i],anchor=buy?Math.min(Number(m.price)||candle.l,candle.l):Math.max(Number(m.price)||candle.h,candle.h),py=Y(Number(m.price)||anchor);
-    const dir=buy?1:-1,minY=pTop+labelH/2+7,maxY=pBot-labelH/2-5,x0=X(i),y0=Y(anchor),xOffsets=[0,-42,42,-84,84];let mxp=Math.max(labelW/2+3,Math.min(plotR-labelW/2-3,x0)),my=Math.max(minY,Math.min(maxY,y0+dir*(27+slot*29))),found=false;
-    for(let lane=slot;lane<slot+5&&!found;lane++){for(const dx of xOffsets){const cx=Math.max(labelW/2+3,Math.min(plotR-labelW/2-3,x0+dx)),cy=Math.max(minY,Math.min(maxY,y0+dir*(27+lane*29)));if(!placedMarks.some(r=>Math.abs(r.x-cx)<labelW+5&&Math.abs(r.y-cy)<labelH+5)){mxp=cx;my=cy;found=true;break;}}}
+    const dir=buy?1:-1,minY=pTop+labelH/2+7,maxY=pBot-labelH/2-5,x0=X(i),y0=Y(anchor),xOffsets=[0,-15,15,-30,30];let mxp=Math.max(labelW/2+3,Math.min(plotR-labelW/2-3,x0)),my=Math.max(minY,Math.min(maxY,y0+dir*(18+slot*24))),found=false;
+    for(let lane=slot;lane<slot+4&&!found;lane++){for(const dx of xOffsets){const cx=Math.max(labelW/2+3,Math.min(plotR-labelW/2-3,x0+dx)),cy=Math.max(minY,Math.min(maxY,y0+dir*(18+lane*24)));if(!placedMarks.some(r=>Math.abs(r.x-cx)<labelW+3&&Math.abs(r.y-cy)<labelH+3)){mxp=cx;my=cy;found=true;break;}}}
     placedMarks.push({x:mxp,y:my});const mc=buy?'#078564':'#c0445a',edgeY=my+dir*-1*(labelH/2+4);
-    g+='<line x1="'+x0.toFixed(1)+'" x2="'+mxp.toFixed(1)+'" y1="'+py.toFixed(1)+'" y2="'+edgeY.toFixed(1)+'" stroke="'+mc+'" stroke-width="1.1" opacity=".62"/><circle cx="'+x0.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="2.8" fill="#fff" stroke="'+mc+'" stroke-width="1.5"/>';
-    ovl+='<button type="button" class="kmark '+(buy?'buy':'sell')+'" style="left:'+mxp.toFixed(1)+'px;top:'+my.toFixed(1)+'px" data-ktrade="1" data-symbol="'+esc(p.symbol)+'" data-side="'+esc(m.side)+'" data-date="'+esc(m.date)+'" data-price="'+nf(m.price)+'" aria-label="'+(buy?'买入':'卖出')+' '+nf(m.price)+'，查看交割记录" title="'+(buy?'买入':'卖出')+' ¥'+nf(m.price)+' · '+esc(m.date)+' · 点击查看交割记录"><b>'+(buy?'B':'S')+'</b><span>'+(buy?'买入':'卖出')+'</span><strong>'+nf(m.price)+'</strong></button>';});
+    const tr=tradeOf(m),qty=Number(tr&&tr.qty)||0,detail=(buy?'买入':'卖出')+' ¥'+nf(m.price)+' · '+(qty?qty.toLocaleString('zh-CN')+'股':'数量待同步')+' · '+m.date;
+    g+='<line x1="'+x0.toFixed(1)+'" x2="'+mxp.toFixed(1)+'" y1="'+py.toFixed(1)+'" y2="'+edgeY.toFixed(1)+'" stroke="'+mc+'" stroke-width="1" opacity=".55"/><circle cx="'+x0.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="2.6" fill="#fff" stroke="'+mc+'" stroke-width="1.4"/>';
+    ovl+='<button type="button" class="kmark '+(buy?'buy':'sell')+'" style="left:'+mxp.toFixed(1)+'px;top:'+my.toFixed(1)+'px" data-ktrade="1" data-symbol="'+esc(p.symbol)+'" data-side="'+esc(m.side)+'" data-date="'+esc(m.date)+'" data-price="'+nf(m.price)+'" data-detail="'+esc(detail)+'" aria-label="'+esc(detail)+'，查看交割记录" title="'+esc(detail)+' · 点击查看交割记录"><b>'+(buy?'B':'S')+'</b></button>';});
   // 同一根 K 线的多条本站内容合并成一个轻量标记；详情点击查看，不与成交点抢层级。
   const byI={};(p.events||[]).forEach(ev=>{const i=idxOf(ev.date);if(i<0)return;(byI[i]=byI[i]||[]).push(ev);});
   Object.keys(byI).forEach(key=>{const i=+key,evs=byI[key],ev=evs.slice().sort((a,b)=>(a.age_h==null?1e9:a.age_h)-(b.age_h==null?1e9:b.age_h))[0],px=X(i);
@@ -974,13 +983,15 @@ function buildCenter(d){
   const chips=pos.map(x=>'<button class="chip'+(x.symbol===sel?' on':'')+'" data-sym="'+x.symbol+'">'+esc(x.name)+'<span class="pn '+cl(x.pnl_pct)+'">'+fmtPct(x.pnl_pct)+'</span></button>').join('');
   const dec=(d.feed||[]).find(f=>f.symbol===p.symbol&&f.kind==='trade');
   const marks=p.marks||[],buys=marks.filter(m=>m.side==='buy').length,sells=marks.filter(m=>m.side==='sell').length;
+  const markRows=marks.map(m=>{const t=(d.trades||[]).find(x=>x.symbol===p.symbol&&x.side===m.side&&String(x.ts||'').slice(0,10)===m.date&&Math.abs(Number(x.price)-Number(m.price))<.011);return Object.assign({},m,{qty:Number(t&&t.qty)||0});}).sort((a,b)=>a.date.localeCompare(b.date)||a.side.localeCompare(b.side));
+  const tradeTape=markRows.map(m=>'<button type="button" class="trade-chip '+(m.side==='buy'?'buy':'sell')+'" data-ktrade="1" data-symbol="'+esc(p.symbol)+'" data-side="'+esc(m.side)+'" data-date="'+esc(m.date)+'" data-price="'+nf(m.price)+'" title="点击查看交割记录"><b>'+(m.side==='buy'?'B':'S')+'</b><time>'+esc(m.date.slice(5))+'</time><strong>¥'+nf(m.price)+'</strong><em>'+(m.qty?m.qty.toLocaleString('zh-CN')+'股':'数量待同步')+'</em></button>').join('');
   return'<div class="chips">'+chips+'</div><div class="asset-head"><span class="asset-title"><b>'+esc(p.name)+'</b><small>'+esc(p.symbol)+'</small></span>'+
     '<span class="asset-quote"><b class="num">'+nf(p.current_price)+'</b><small class="'+cl(p.pnl_pct)+'">'+fmtPct(p.pnl_pct)+'</small></span></div>'+
     '<div class="position-glance"><span><small>持仓成本</small><b>'+nf(p.avg_cost)+'</b></span><span><small>持仓数量</small><b>'+Number(p.qty||0).toLocaleString('zh-CN')+' 股</b></span>'+
     '<span><small>持仓市值</small><b>'+fmtMoney(p.market_value||0)+'</b></span><span><small>当前仓位</small><b>'+(Number(p.weight||0)*100).toFixed(1)+'%</b></span></div>'+
     '<div class="chart-toolbar"><span class="period on">日 K</span><span class="period">前复权</span><span class="indicator">MA5</span><span class="indicator">MA20</span><span class="toolbar-note">'+marks.length+' 个成交点 · '+(p.events||[]).length+' 条关联信息</span></div>'+
-    '<div class="kwrap"><div class="chart" id="kchart"></div><div class="klegend"><span><i class="m5"></i>MA5</span><span><i class="m20"></i>MA20</span>'+
-    '<span><b class="legend-trade buy">B 买入</b> '+buys+' 笔</span><span><b class="legend-trade sell">S 卖出</b> '+sells+' 笔</span><span class="legend-note">点击 B/S 查看交割 · 顶部圆点为信息催化</span></div></div>'+
+    '<div class="kwrap"><div class="chart" id="kchart"></div><div class="klegend"><span><i class="m5"></i>MA5</span><span><i class="m20"></i>MA20</span><span><b class="legend-trade buy">B 买入</b> '+buys+' 笔</span><span><b class="legend-trade sell">S 卖出</b> '+sells+' 笔</span><span class="legend-note">图上只做定位，完整成交见下方</span></div>'+
+    '<div class="trade-tape"><div class="trade-tape-head"><b>成交明细</b><span>价格 · 数量</span></div><div class="trade-tape-list">'+tradeTape+'</div></div></div>'+
     (dec&&dec.narrative&&dec.narrative!==d.commentary?'<details class="chart-note"><summary><span><b>最新决策</b>'+esc(dec.narrative.slice(0,34))+(dec.narrative.length>34?'…':'')+'</span><span>查看 ›</span></summary><div>'+esc(dec.narrative)+'</div></details>':'');  // 与顶部 #commentary 相同则不重复展示
 }
 function feedItem(f,id){const op=S.open===id;
@@ -1129,8 +1140,8 @@ async function sharePoster(){
   document.getElementById('posterDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download=(d.persona?.name||'阿尔法')+'战绩.png';a.click();};
 }
 document.addEventListener('click',e=>{
-  const km=e.target.closest('.kmark[data-ktrade]');if(km){
-    const i=(S.data&&S.data.feed||[]).findIndex(f=>f.kind==='trade'&&f.symbol===km.dataset.symbol&&f.side===km.dataset.side&&String(f.ts||'').slice(0,10)===km.dataset.date);
+  const km=e.target.closest('[data-ktrade]');if(km){
+    const i=(S.data&&S.data.feed||[]).findIndex(f=>f.kind==='trade'&&f.symbol===km.dataset.symbol&&f.side===km.dataset.side&&String(f.ts||'').slice(0,10)===km.dataset.date&&(!km.dataset.price||Math.abs(Number(f.price)-Number(km.dataset.price))<.011));
     S.logTab='trades';S.open=i>=0?'f'+i:null;document.getElementById('colRight').innerHTML=buildRight(S.data);
     if(isMobile()){S.tab='right';document.getElementById('grid').dataset.tab='right';document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.tab==='right'));}
     requestAnimationFrame(()=>{const row=document.querySelector('.trade-record.open');if(row)row.scrollIntoView({block:'nearest',behavior:'smooth'});});
