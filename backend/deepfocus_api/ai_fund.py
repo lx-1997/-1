@@ -107,6 +107,8 @@ class AgentConfig:
     contrarian: bool = False           # 逆向：超跌 + 催化剂反买，不强制站上 20 日线
     max_pe: Optional[float] = None     # 价值：估值上限，超过则不出手
     pos_size_mult: float = 1.0         # 单仓大小系数（激进重仓、价值分散）
+    reentry_cooldown_days: int = 1     # 平仓后至少隔日再评估；1=禁同日卖出后买回
+    max_daily_buys: int = 2            # 单日最多新开仓次数，防高频来回打脸
     muse: bool = False                 # 是否产出 LLM「脑内独白」（控成本：仅主账户开）
     debate: bool = False               # 是否对重大买入跑「多空辩论→裁判」推演（控成本：仅主账户开）
 
@@ -121,6 +123,7 @@ ROSTER: list[AgentConfig] = [
         blurb="激进趋势：强催化重仓、敢追突破、集中持股、短打快攻",
         max_positions=4, buy_threshold=0.11, sell_threshold=-0.05, hard_stop=-0.10,
         trail_min=0.10, rotate_edge=0.22, fresh_hours=48.0, chase_ok=True, pos_size_mult=1.35,
+        reentry_cooldown_days=1, max_daily_buys=3,
         weights={"消息面": 0.32, "技术面": 0.24, "趋势": 0.16, "资金面": 0.16,
                  "成长质量": 0.05, "基本面": 0.05, "情绪": 0.02}),
     AgentConfig(
@@ -129,6 +132,7 @@ ROSTER: list[AgentConfig] = [
         blurb="稳健价值：估值有底线、重盈利质量、分散持有、拿得久",
         max_positions=8, buy_threshold=0.18, sell_threshold=-0.08, hard_stop=-0.07,
         trail_min=0.12, rotate_edge=0.34, fresh_hours=240.0, max_pe=40.0, pos_size_mult=0.8,
+        reentry_cooldown_days=3, max_daily_buys=1,
         weights={"消息面": 0.24, "技术面": 0.12, "趋势": 0.12, "资金面": 0.10,
                  "成长质量": 0.20, "基本面": 0.20, "情绪": 0.02}),
     AgentConfig(
@@ -137,6 +141,7 @@ ROSTER: list[AgentConfig] = [
         blurb="事件驱动：本站快讯一响就扑、吃催化剂快进快出",
         max_positions=5, buy_threshold=0.13, sell_threshold=-0.05, hard_stop=-0.08,
         trail_min=0.07, rotate_edge=0.24, fresh_hours=36.0, pos_size_mult=1.1,
+        reentry_cooldown_days=1, max_daily_buys=2,
         weights={"消息面": 0.46, "技术面": 0.16, "趋势": 0.10, "资金面": 0.16,
                  "成长质量": 0.04, "基本面": 0.04, "情绪": 0.04}),
     AgentConfig(
@@ -145,6 +150,7 @@ ROSTER: list[AgentConfig] = [
         blurb="逆向抄底：超跌 + 本站催化共振才反手、专挑被错杀",
         max_positions=6, buy_threshold=0.12, sell_threshold=-0.07, hard_stop=-0.09,
         trail_min=0.10, rotate_edge=0.30, fresh_hours=180.0, contrarian=True, pos_size_mult=0.95,
+        reentry_cooldown_days=2, max_daily_buys=2,
         weights={"消息面": 0.30, "技术面": 0.10, "趋势": 0.10, "资金面": 0.18,
                  "成长质量": 0.12, "基本面": 0.16, "情绪": 0.04}),
 ]
@@ -664,9 +670,16 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
     if fresh_items:
         prof = bull_playbook.catalyst_profile([it.get("title", "") for it in fresh_items])
         msg_dir = prof["net_dir"] if prof.get("n") else _headline_dir(items)
-        top = min(fresh_items, key=lambda x: float(x.get("age_h", 999.0)))
+        # 催化类型与溯源必须来自同一条内容：旧逻辑会把“最强标题”的类型贴到“最新标题”上，
+        # 例如把「持续涨价」误贴到“港股黄金股低开”，既误导展示也污染决策。
+        classified = [(it, bull_playbook.classify_catalyst(it.get("title", ""))) for it in fresh_items]
+        classified = [(it, ck_) for it, ck_ in classified if ck_]
+        chosen = max(classified,
+                     key=lambda pair: (pair[1]["strength"] * (1.0 if pair[1]["dir"] > 0 else 0.9),
+                                       -float(pair[0].get("age_h", 999.0)))) if classified else None
+        top = chosen[0] if chosen else min(fresh_items, key=lambda x: float(x.get("age_h", 999.0)))
         ta = float(top.get("age_h", 999.0)); fresh = ta <= 24
-        ck = prof.get("top")
+        ck = chosen[1] if chosen else None
         kind_tag = f"·{ck['label']}" if (ck and ck.get("dir", 0) > 0) else ""
         catalyst = f"【{top.get('src', '资讯')}{kind_tag}】{top.get('title', '')}"
         # 结构化溯源：本站这条催化剂内容（含领先时间 lead_h = 内容比本次决策早多少小时发布 + 催化剂类型 kind）
@@ -801,6 +814,8 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
     score = max(-1.0, min(1.0, score))
     # 真·不同算法：value(DCF/质量) / reversion(均值回归) 用根本不同的核心打分，催化作确认(磐石/磁极)
     fu = (md or {}).get("fundamentals") or {}
+    model_detail: dict = {}
+    model_ready = True
     if cfg.model == "value":
         vs = ai_fund_evolve.value_score(
             fcf=fu.get("fcf"), market_cap=safe_float(q.get("totalCapital")), pe=pe,
@@ -813,6 +828,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
             steps.append({"icon": "💎", "label": "内在价值", "text": "、".join(vs["reasons"][:3]) + "。"})
     elif cfg.model == "reversion":
         rs = ai_fund_evolve.reversion_score((md or {}).get("closes") or [], last, learned_mult)
+        model_detail = rs
         if rs.get("score") is not None:
             scores.update(rs["scores"])          # 超跌度/回撤空间/企稳
             score = max(-1.0, min(1.0, 0.66 * rs["score"] + 0.34 * max(0.0, msg_dir)))  # 超跌为主、催化确认
@@ -831,7 +847,10 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
         trend_ok = strong_fresh or (chg is not None and chg > 0.5)  # 盲态只敢做强催化剂+动量
     # 价值派估值闸门：PE 超上限（或尚未盈利）直接不出手——只在便宜处下手
     valuation_ok = True if cfg.max_pe is None else (pe is not None and 0 < pe <= cfg.max_pe)
-    has_catalyst = catalyst_ref is not None
+    # 多因子/事件派只认“方向明确的正催化”，不能因一条中性甚至偏空新闻恰好很新就放行。
+    catalyst_ok = bool(catalyst_kind and catalyst_kind.get("strength", 0) >= 0.45 and msg_dir > 0.08)
+    if cfg.style == "event":
+        catalyst_ok = catalyst_ok and fresh and msg_dir > 0.22
     # 市场态势自适应：买入门槛随大盘动态升降(趋势派牛市更敢/熊市更挑、价值逆向派熊市更敢捡便宜)
     adapt = ai_fund_evolve.regime_adapt(cfg.style, regime)
     eff_thr = max(0.02, cfg.buy_threshold + adapt["thr_delta"])
@@ -841,9 +860,13 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
     if cfg.model == "value":
         entry_ok = (score >= eff_thr) and (not overbought) and valuation_ok
     elif cfg.model == "reversion":
-        entry_ok = (score >= eff_thr) and (not overbought)
+        model_ready = bool(model_detail.get("stabilizing")
+                           and float(model_detail.get("z", 0.0)) <= -0.5
+                           and float(model_detail.get("drawdown", 0.0)) >= 0.05)
+        entry_ok = (score >= eff_thr) and (not overbought) and model_ready
     else:
-        entry_ok = (score >= eff_thr) and (not overbought) and trend_ok and fund_ok and has_catalyst and valuation_ok
+        model_ready = True
+        entry_ok = (score >= eff_thr) and (not overbought) and trend_ok and fund_ok and catalyst_ok and valuation_ok
 
     bp = []
     if cfg.model == "value":
@@ -875,6 +898,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
     return {"score": round(score, 3), "confidence": round(conf, 2), "scores": scores,
             "thinking": steps, "catalyst": catalyst, "catalyst_ref": catalyst_ref, "fresh": fresh, "tech": tech,
             "entry_ok": entry_ok, "buy_point": buy_point, "msg_dir": round(msg_dir, 2),
+            "entry_threshold": round(eff_thr, 3), "catalyst_ok": catalyst_ok, "model_ready": model_ready,
             "trend_up": trend_up, "overbought": overbought, "catalyst_kind": catalyst_kind,
             "trend_template": ({"score": tt.get("score"), "stage": tt.get("stage"),
                                 "passed": tt.get("passed"), "total": tt.get("total")} if tt.get("has") else None),
@@ -900,6 +924,20 @@ def _stats(conn, fund_id: str = FUND_ID) -> dict:
     return {"closed": closed, "wins": wins, "win_rate": round(wins / closed * 100, 1) if closed else None,
             "best": round(max(pnls), 1) if pnls else None, "worst": round(min(pnls), 1) if pnls else None,
             "win_streak": streak, "avg": round(sum(pnls) / closed, 2) if closed else None}
+
+
+def _performance_brake(stats: dict) -> dict:
+    """按已平仓战绩自动降档：亏损期提高门槛、缩仓、减少换仓；样本不足时不妄调参数。"""
+    closed = int(stats.get("closed") or 0)
+    if closed < 12:
+        return {"key": "normal", "label": "正常", "thr_delta": 0.0, "size_mult": 1.0, "rotate_mult": 1.0}
+    win_rate = float(stats.get("win_rate") if stats.get("win_rate") is not None else 100.0)
+    avg = float(stats.get("avg") if stats.get("avg") is not None else 0.0)
+    if avg <= -0.25 or win_rate < 40.0:
+        return {"key": "defensive", "label": "防守", "thr_delta": 0.10, "size_mult": 0.55, "rotate_mult": 1.8}
+    if avg < 0.0 or win_rate < 45.0:
+        return {"key": "cautious", "label": "谨慎", "thr_delta": 0.05, "size_mult": 0.75, "rotate_mult": 1.35}
+    return {"key": "normal", "label": "正常", "thr_delta": 0.0, "size_mult": 1.0, "rotate_mult": 1.0}
 
 
 def _mood(stats: dict, nav_pct: float) -> dict:
@@ -1077,7 +1115,7 @@ def _upsert_thesis(conn, symbol: str, name: str, items: list[dict], score: float
 # A股交易铁律——写进每个机器人的永久记忆(mem_type='rule')，认知面板可见、不衰减；行为上由 _in_session 硬闸门保证。
 TRADING_RULES = ("A股交易铁律：① 只在交易日(周一~五、非法定节假日)的 09:30–11:30、13:00–15:00 撮合下单，"
                  "午休/盘后/夜间/周末/节假日一律不交易；② T+1——当日买入的当日不可卖出(含止损)，必须持到下一交易日；"
-                 "③ 100股一手、不追涨停、严格止损。")
+                 "③ 100股一手、不追涨停、严格止损；④ 平仓后执行回补冷静期，单日开仓设上限，亏损期自动提门槛、缩仓位。")
 
 
 def _seed_trading_rules(conn, fund_id: str) -> None:
@@ -1087,11 +1125,12 @@ def _seed_trading_rules(conn, fund_id: str) -> None:
         conn.execute(
             "INSERT INTO aif_memory (id,fund_id,symbol,name,mem_type,ts,updated_at,title,detail,confidence,weight,pnl_impact,src,seen_count)"
             " VALUES (?,?,?,?, 'rule', ?,?,?,?,1.0,1.0,NULL,'规则',1)"
-            " ON CONFLICT(fund_id,symbol,mem_type,title) DO NOTHING",
+            " ON CONFLICT(fund_id,symbol,mem_type,title) DO UPDATE SET detail=excluded.detail",
             (uuid.uuid4().hex, fund_id, "", "交易规则", now, now, "A股交易铁律·只交易时段·T+1不当日卖",
              json.dumps({"rule": TRADING_RULES, "session": "周一~五 09:30–11:30 / 13:00–15:00",
                          "T+1": "当日买入当日不可卖，持到下一交易日",
-                         "holiday": "法定节假日休市(CN_MARKET_HOLIDAYS)"}, ensure_ascii=False)))
+                         "holiday": "法定节假日休市(CN_MARKET_HOLIDAYS)",
+                         "discipline": "平仓后冷静期、单日开仓上限、亏损期自动降档"}, ensure_ascii=False)))
     except Exception:  # noqa: BLE001
         pass
 
@@ -1516,6 +1555,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         held_syms = [r["symbol"] for r in _positions(conn, fund_id)]
         st0 = _state(conn, fund_id)
         learned_mult = _loadj(st0["learned_weights"] if (st0 and "learned_weights" in st0.keys()) else None, {})  # 真·调教：自学权重乘子
+        performance_brake = _performance_brake(_stats(conn, fund_id))
     md = _market_data(list(universe.keys()), priority=held_syms)
     regime = _market_regime_now()           # 大盘多空(沪深300 vs MA60)——第6.3 依据指数止损/收紧买入；驱动策略动态自适应
     regime_str = regime.get("regime")
@@ -1541,6 +1581,14 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     with _connect() as conn:
         st = _state(conn, fund_id); cash = float(st["cash"])
         held = {r["symbol"]: dict(r) for r in _positions(conn, fund_id)}
+        today_bj = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
+        cooldown_start = (datetime.now(BJ_TZ) - timedelta(days=max(0, cfg.reentry_cooldown_days - 1))).strftime("%Y-%m-%d")
+        recent_trades = conn.execute(
+            "SELECT side,symbol,ts FROM aif_trade WHERE fund_id=? ORDER BY ts DESC LIMIT 500",
+            (fund_id,)).fetchall()
+        reentry_blocked = {r["symbol"] for r in recent_trades
+                           if r["side"] == "sell" and _bj_date(r["ts"]) >= cooldown_start}
+        daily_buys = sum(1 for r in recent_trades if r["side"] == "buy" and _bj_date(r["ts"]) == today_bj)
 
         # 更新移动止盈高水位
         for code, pos in held.items():
@@ -1554,7 +1602,6 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
 
         # 1) 卖出（严谨章法）
         sold_now: set[str] = set()
-        today_bj = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
         for code, pos in (list(held.items()) if trade else []):
             q = quotes.get(code)
             price = safe_float(q.get("latest")) if q else None
@@ -1610,17 +1657,23 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         def _buy_allowed(an):
             if not an.get("entry_ok"):
                 return False
+            if an.get("score", 0) < float(an.get("entry_threshold", cfg.buy_threshold)) + performance_brake["thr_delta"]:
+                return False
             if bear:
                 return an.get("score", 0) >= 0.30 and (
                     an.get("pattern") is not None
                     or (an.get("trend_template") or {}).get("stage") == "advancing"
                     or (an.get("msg_dir", 0) > 0.45 and an.get("fresh")))
             return True
-        ranked = sorted(((c, analyses[c]) for c in quotes if c not in held and c not in sold_now and _buy_allowed(analyses[c])),
+        ranked = sorted(((c, analyses[c]) for c in quotes
+                         if c not in held and c not in sold_now and c not in reentry_blocked
+                         and daily_buys < cfg.max_daily_buys and _buy_allowed(analyses[c])),
                         key=lambda x: x[1]["score"], reverse=True) if trade else []
 
         def _do_buy(code, an):
-            nonlocal cash
+            nonlocal cash, daily_buys
+            if daily_buys >= cfg.max_daily_buys or code in reentry_blocked:
+                return False
             price = safe_float(quotes[code].get("latest"))
             if not price:
                 return False
@@ -1629,7 +1682,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 return False
             nav_now = cash + sum(float(p["qty"]) * (safe_float(quotes.get(p["symbol"], {}).get("latest")) or float(p["avg_cost"])) for p in held.values())
             # 单仓大小按流派系数 × 市场态势系数缩放：激进重仓(系数>1)/价值分散(<1)，再叠牛市加仓/熊市减仓；硬上限不超 50%
-            size_mult = cfg.pos_size_mult * (an.get("regime_adapt", {}).get("size_mult") or 1.0)
+            size_mult = (cfg.pos_size_mult * (an.get("regime_adapt", {}).get("size_mult") or 1.0)
+                         * performance_brake["size_mult"])
             target = nav_now * (0.18 + 0.14 * an["confidence"]) * size_mult
             cap = nav_now * min(0.5, 0.33 * size_mult)
             budget = min(cash, target, cap)
@@ -1641,6 +1695,10 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             cmp = _compare_step(code, an, analyses, set(held) | {code}, universe)  # 为什么买它不买别的(横向对比)
             if cmp:
                 think.append(cmp)
+            if performance_brake["key"] != "normal":
+                think.append({"icon": "🛡", "label": f"{performance_brake['label']}档",
+                              "text": f"近期战绩触发自动降档：门槛 +{performance_brake['thr_delta']:.2f}、"
+                                      f"仓位缩至 {performance_brake['size_mult']*100:.0f}%。"})
             think.append({"icon": "🧠", "label": "买点", "text": f"{an['buy_point']}；综合 {an['score']:+.2f}、信心 {an['confidence']*100:.0f}%，出手。"})
             conn.execute("INSERT INTO aif_position (fund_id,symbol,name,qty,avg_cost,opened_at,updated_at,high_water) VALUES (?,?,?,?,?,?,?,?)",
                          (fund_id, code, name, qty, price, now2, now2, price))
@@ -1656,9 +1714,12 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             data_store.record("simulation_trade", code, {"side": "buy", "price": price, "agent": fund_id}, market="A")
             decisions.append({"tid": tid, "side": "buy", "symbol": code, "name": name, "qty": qty, "price": price, "pnl": None, "an": {**an, "thinking": think}})
             traded.append({"side": "buy", "symbol": code, "name": name, "qty": qty, "price": price, "reason": an.get("buy_point") or ""})
+            daily_buys += 1
             return True
 
         for code, an in ranked:
+            if daily_buys >= cfg.max_daily_buys:
+                break
             if len(held) < cfg.max_positions:
                 _do_buy(code, an)
             else:
@@ -1672,7 +1733,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 ws = analyses.get(weakest, {}).get("score", 0.0)
                 # 换仓前确认接盘股买得进(没涨停封板)，否则会「卖了最弱却买不进」→ 空仓换仓、现金空置、直播流食言
                 incoming_sealed = _at_upper_limit(code, universe.get(code, code), safe_float((quotes.get(code) or {}).get("changeRatio")))
-                if code not in held and not incoming_sealed and an["score"] - ws >= cfg.rotate_edge:
+                rotate_edge = cfg.rotate_edge * performance_brake["rotate_mult"]
+                if code not in held and not incoming_sealed and an["score"] - ws >= rotate_edge:
                     q = quotes.get(weakest)
                     if q and safe_float(q.get("latest")):
                         wp = safe_float(q.get("latest")); wpos = held[weakest]
@@ -1707,6 +1769,10 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                     txt = "已持有，按章法持股待涨"
                 elif not trade:
                     txt = "盘后捕捉到催化剂，待开盘验证买点" if an.get("score", 0) >= cfg.buy_threshold else "盘后扫到相关动态，记一笔"
+                elif code in reentry_blocked:
+                    txt = f"刚平仓，执行 {cfg.reentry_cooldown_days} 日回补冷静期"
+                elif daily_buys >= cfg.max_daily_buys:
+                    txt = f"今日已达 {cfg.max_daily_buys} 笔开仓上限，停止追单"
                 elif not an.get("entry_ok"):
                     why = "趋势未确认" if not an.get("trend_up") else ("涨幅过高不追" if an.get("overbought") else "资金/分数不够")
                     txt = f"有催化剂但买点不成立（{why}），观望"
@@ -2081,9 +2147,14 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     _drule = {"value": "内在价值低估(便宜+质量)才买，不追催化",
               "reversion": "超跌+企稳才反手抄，不接飞刀",
               }.get(cfg.model, "每笔买入需本站快讯/文章/研报催化剂 + 站上20日线确认")
+    _brake = _performance_brake(stats)
     discipline = {"trades": _tc, "buys": _bc,
                   "catalyst_pct": round(_cc / _bc * 100) if _bc else None,  # 多少买入由本站催化剂触发
-                  "drive_label": _drive, "rule": _drule}
+                  "drive_label": _drive, "rule": _drule,
+                  "brain_mode": _brake["key"], "brain_mode_label": _brake["label"],
+                  "threshold_add": _brake["thr_delta"], "size_mult": _brake["size_mult"],
+                  "reentry_cooldown_days": cfg.reentry_cooldown_days,
+                  "daily_buy_cap": cfg.max_daily_buys}
     _k = lambda c: (st[c] if c in st.keys() else None)  # noqa: E731 老库列可能缺
     scan = {"news": int(_k("scanned_news") or 0), "report": int(_k("scanned_report") or 0),
             "article": int(_k("scanned_article") or 0), "titles": _loadj(_k("scanned_titles"), [])}

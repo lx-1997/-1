@@ -65,6 +65,52 @@ def test_analyze_blocks_downtrend():
     assert an["entry_ok"] is False
 
 
+def test_catalyst_kind_and_source_are_same_item():
+    """催化类型不能错贴到另一条更新的标题上。"""
+    q = {"latest": 100, "pe_ttm": 22, "pb": 3, "changeRatio": 2.0, "turnoverRatio": 6}
+    items = [
+        {"title": "港股黄金股低开，板块回落", "severity": "info", "age_h": 0.1,
+         "id": "new", "src": "快讯", "url": "/new"},
+        {"title": "国际金价持续上涨、报价上涨，紫金矿业受益", "severity": "success", "age_h": 1.0,
+         "id": "price", "src": "文章", "url": "/price"},
+    ]
+    an = ai_fund._analyze("紫金矿业", q, items, MD_UP)
+    assert an["catalyst_kind"]["label"] == "持续涨价"
+    assert an["catalyst_ref"]["id"] == "price"
+    assert "报价上涨" in an["catalyst"] and "低开" not in an["catalyst"]
+
+
+def test_negative_news_cannot_unlock_multifactor_entry():
+    """趋势再强，中性/负面内容也不能冒充正催化剂放行。"""
+    q = {"latest": 100, "pe_ttm": 22, "pb": 3, "changeRatio": 3.0, "turnoverRatio": 6}
+    items = [{"title": "公司净利下滑并遭处罚", "severity": "warning", "age_h": 1,
+              "id": "neg", "src": "快讯"}]
+    an = ai_fund._analyze("某股", q, items, MD_UP)
+    assert an["trend_up"] is True
+    assert an["catalyst_ok"] is False
+    assert an["entry_ok"] is False
+
+
+def test_reversion_requires_real_stabilization():
+    """磁极只能抄“超跌且企稳”，连续创新低时即使有利好也不接飞刀。"""
+    closes = [120 - i for i in range(30)]
+    q = {"latest": 90, "pe_ttm": 18, "pb": 1.5, "changeRatio": -3.0, "turnoverRatio": 5}
+    items = [{"title": "公司中标大订单、业绩超预期", "severity": "success", "age_h": 1,
+              "id": "good", "src": "快讯"}]
+    an = ai_fund._analyze("某股", q, items, {"closes": closes, "flow5": 1.0e8}, ai_fund.cfg_for("contra"))
+    assert an["model_ready"] is False
+    assert an["entry_ok"] is False
+
+
+def test_performance_brake_levels():
+    assert ai_fund._performance_brake({"closed": 8, "win_rate": 20, "avg": -1})["key"] == "normal"
+    cautious = ai_fund._performance_brake({"closed": 20, "win_rate": 47, "avg": -0.03})
+    assert cautious["key"] == "cautious" and cautious["size_mult"] < 1
+    defensive = ai_fund._performance_brake({"closed": 20, "win_rate": 38, "avg": -0.4})
+    assert defensive["key"] == "defensive"
+    assert defensive["thr_delta"] > cautious["thr_delta"]
+
+
 def test_ifind_unavailable_failsafe(fund, monkeypatch):
     monkeypatch.setattr(ai_fund, "ifind_enabled", lambda: False)
     out = ai_fund.run_tick()
@@ -106,6 +152,40 @@ def test_t_plus_one_no_same_day_sell(fund, monkeypatch):
     _age_pos("002594")          # 隔日
     out2 = ai_fund.run_tick()
     assert any(t["side"] == "sell" and t["symbol"] == "002594" for t in out2["traded"]), "隔日应可止损卖出"
+
+
+def test_same_day_reentry_stays_blocked_across_ticks(fund, monkeypatch):
+    """卖出后的下一轮仍处于冷静期，不能像旧逻辑一样 5 分钟后买回。"""
+    q = _byd_strong(monkeypatch)
+    ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)
+    _age_pos("002594")
+    q["002594"]["latest"] = 88
+    q["002594"]["changeRatio"] = -5.0
+    sold = ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)
+    assert any(t["side"] == "sell" and t["symbol"] == "002594" for t in sold["traded"])
+    q["002594"]["latest"] = 100
+    q["002594"]["changeRatio"] = 4.0
+    again = ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)
+    assert not [t for t in again["traded"] if t["side"] == "buy" and t["symbol"] == "002594"]
+
+
+def test_daily_buy_cap_limits_new_positions(fund, monkeypatch):
+    """同日强信号再多也受开仓上限约束，抑制过度交易。"""
+    import dataclasses
+    cfg = dataclasses.replace(ai_fund.MAIN_CFG, max_daily_buys=1)
+    q = {
+        "002594": {"latest": 100, "changeRatio": 4.0, "pe_ttm": 20, "pb": 3, "turnoverRatio": 5},
+        "300750": {"latest": 200, "changeRatio": 4.0, "pe_ttm": 25, "pb": 4, "turnoverRatio": 5},
+    }
+    _wire(monkeypatch, q)
+    monkeypatch.setattr(ai_fund, "_market_data",
+                        lambda codes, priority=None: {"002594": MD_UP, "300750": MD_UP})
+    monkeypatch.setattr(
+        ai_fund, "_our_content",
+        lambda name: [{"title": f"{name}中标大订单、业绩超预期", "severity": "success",
+                       "age_h": 1, "id": name, "src": "快讯"}] if name in ("比亚迪", "宁德时代") else [])
+    out = ai_fund.run_tick(cfg=cfg)
+    assert len([t for t in out["traded"] if t["side"] == "buy"]) == 1
 
 
 def test_bull_playbook_dims_flow_through_tick(fund, monkeypatch):
@@ -154,6 +234,9 @@ def test_snapshot_shape(fund, monkeypatch):
         assert k in snap
     assert "不构成投资建议" in snap["disclaimer"] and snap["feed"][0]["thinking"]
     assert "sample_days" in snap["risk"] and "max_drawdown_pct" in snap["risk"]
+    assert snap["discipline"]["brain_mode"] == "normal"
+    assert snap["discipline"]["reentry_cooldown_days"] == 1
+    assert snap["discipline"]["daily_buy_cap"] == 2
 
 
 def test_phase_buckets():
