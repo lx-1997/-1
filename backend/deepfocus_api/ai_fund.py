@@ -911,7 +911,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
 # --------------------------------------------------------------------------- #
 
 def _stats(conn, fund_id: str = FUND_ID) -> dict:
-    rows = conn.execute("SELECT pnl_pct FROM aif_trade WHERE fund_id=? AND side='sell' AND pnl_pct IS NOT NULL ORDER BY ts ASC",
+    rows = conn.execute("SELECT pnl_pct,ts FROM aif_trade WHERE fund_id=? AND side='sell' AND pnl_pct IS NOT NULL ORDER BY ts ASC",
                         (fund_id,)).fetchall()
     pnls = [float(r["pnl_pct"]) for r in rows]
     closed = len(pnls); wins = sum(1 for p in pnls if p > 0)
@@ -921,9 +921,21 @@ def _stats(conn, fund_id: str = FUND_ID) -> dict:
             streak += 1
         else:
             break
+    all_rows = conn.execute("SELECT side,symbol,ts FROM aif_trade WHERE fund_id=? ORDER BY ts ASC", (fund_id,)).fetchall()
+    recent = pnls[-12:]
+    last_sell_by_symbol: dict[str, str] = {}
+    same_day_reentries = 0
+    for row in all_rows:
+        symbol = row["symbol"] or ""; day = _bj_date(row["ts"] or "")
+        if row["side"] == "sell":
+            last_sell_by_symbol[symbol] = day
+        elif row["side"] == "buy" and symbol in last_sell_by_symbol and day and day == last_sell_by_symbol[symbol]:
+            same_day_reentries += 1
     return {"closed": closed, "wins": wins, "win_rate": round(wins / closed * 100, 1) if closed else None,
             "best": round(max(pnls), 1) if pnls else None, "worst": round(min(pnls), 1) if pnls else None,
-            "win_streak": streak, "avg": round(sum(pnls) / closed, 2) if closed else None}
+            "win_streak": streak, "avg": round(sum(pnls) / closed, 2) if closed else None,
+            "recent_avg": round(sum(recent) / len(recent), 2) if recent else None,
+            "same_day_reentries": same_day_reentries}
 
 
 def _performance_brake(stats: dict) -> dict:
@@ -935,9 +947,92 @@ def _performance_brake(stats: dict) -> dict:
     avg = float(stats.get("avg") if stats.get("avg") is not None else 0.0)
     if avg <= -0.25 or win_rate < 40.0:
         return {"key": "defensive", "label": "防守", "thr_delta": 0.10, "size_mult": 0.55, "rotate_mult": 1.8}
-    if avg < 0.0 or win_rate < 45.0:
+    recent_avg = stats.get("recent_avg")
+    same_day_reentries = int(stats.get("same_day_reentries") or 0)
+    if avg < 0.0 or win_rate < 45.0 or same_day_reentries >= 3 or (recent_avg is not None and float(recent_avg) <= -0.1):
         return {"key": "cautious", "label": "谨慎", "thr_delta": 0.05, "size_mult": 0.75, "rotate_mult": 1.35}
     return {"key": "normal", "label": "正常", "thr_delta": 0.0, "size_mult": 1.0, "rotate_mult": 1.0}
+
+
+def _retrospective(conn, fund_id: str, stats: dict, brake: dict, cfg: AgentConfig) -> dict:
+    """把交易结果翻译成可读、可持续迭代的『脑内复盘』。
+
+    只读成交表，不引入新表或额外行情请求；同一份结论同时服务快照、竞技场和分享卡。
+    重点盯三件事：样本是否足够、近期盈亏是否变差、卖出后是否过快重返同一只票。
+    """
+    rows = conn.execute(
+        "SELECT side,symbol,name,pnl_pct,ts FROM aif_trade WHERE fund_id=? ORDER BY ts ASC",
+        (fund_id,),
+    ).fetchall()
+    sells = [r for r in rows if r["side"] == "sell" and r["pnl_pct"] is not None]
+    recent = sells[-12:]
+    recent_pnls = [float(r["pnl_pct"]) for r in recent]
+    recent_wins = sum(1 for p in recent_pnls if p > 0)
+    recent_win_rate = round(recent_wins / len(recent_pnls) * 100, 1) if recent_pnls else None
+    recent_avg = round(sum(recent_pnls) / len(recent_pnls), 2) if recent_pnls else None
+
+    # 同股卖出后在同一北京日再次买入，是最容易制造“节目效果”却伤害纪律的行为。
+    last_sell_by_symbol: dict[str, str] = {}
+    same_day_reentries = 0
+    for row in rows:
+        symbol = row["symbol"] or ""
+        day = _bj_date(row["ts"] or "")
+        if row["side"] == "sell":
+            last_sell_by_symbol[symbol] = day
+        elif row["side"] == "buy" and symbol in last_sell_by_symbol and day and day == last_sell_by_symbol[symbol]:
+            same_day_reentries += 1
+
+    closed = int(stats.get("closed") or 0)
+    mode = brake.get("key", "normal")
+    if closed < 12:
+        headline = "样本积累中：先把每一笔理由记清楚，再放大仓位。"
+        takeaway = "目前样本还不足以证明策略稳定，保持小步验证。"
+    elif mode == "defensive":
+        headline = "防守档不是认输：先把错误变贵，再等胜率修复。"
+        takeaway = "近期性价比偏弱，已自动提高门槛并压缩仓位。"
+    elif mode == "cautious":
+        headline = "谨慎档复盘：少出手，等更硬的证据。"
+        takeaway = "近期期望偏弱，先减少无效换手，等待信号质量回升。"
+    else:
+        headline = "正常档复盘：催化剂与趋势双确认，继续让利润奔跑。"
+        takeaway = "当前战绩没有触发自动降档，继续执行原有买入与止损纪律。"
+
+    good = []
+    bad = []
+    if recent_win_rate is not None:
+        good.append(f"最近 {len(recent_pnls)} 笔胜率 {recent_win_rate:.1f}%")
+    if int(stats.get("win_streak") or 0) >= 3:
+        good.append(f"当前连胜 {int(stats['win_streak'])} 笔，执行力在线")
+    if int(stats.get("wins") or 0) and (stats.get("avg") or 0) >= 0:
+        good.append("累计单笔期望为正，暂不主动加速")
+    if same_day_reentries:
+        bad.append(f"发现 {same_day_reentries} 次同日回补，冷静期必须拦住冲动")
+    if recent_avg is not None and recent_avg < 0:
+        bad.append(f"最近单笔期望 {recent_avg:+.2f}%，先收紧而不是追单")
+    if stats.get("worst") is not None and float(stats["worst"]) <= -8:
+        bad.append(f"历史最差单笔 {float(stats['worst']):+.1f}%，硬止损仍是底线")
+    if not good:
+        good.append("已记录每笔买卖理由，等待更多平仓样本")
+    if not bad:
+        bad.append("暂未发现新的纪律性异常")
+
+    next_rule = "保持本站催化剂 + 趋势确认；平仓后至少冷静 {} 天，单日最多新开 {} 笔。".format(
+        cfg.reentry_cooldown_days, cfg.max_daily_buys
+    )
+    return {
+        "headline": headline,
+        "brief": takeaway,
+        "mode": mode,
+        "mode_label": brake.get("label", "正常"),
+        "sample": closed,
+        "recent_sample": len(recent_pnls),
+        "recent_win_rate": recent_win_rate,
+        "recent_avg": recent_avg,
+        "same_day_reentries": same_day_reentries,
+        "good": good[:3],
+        "bad": bad[:3],
+        "next_rule": next_rule,
+    }
 
 
 def _mood(stats: dict, nav_pct: float) -> dict:
@@ -2155,6 +2250,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
                   "threshold_add": _brake["thr_delta"], "size_mult": _brake["size_mult"],
                   "reentry_cooldown_days": cfg.reentry_cooldown_days,
                   "daily_buy_cap": cfg.max_daily_buys}
+    review = _retrospective(conn, fund_id, stats, _brake, cfg)
     _k = lambda c: (st[c] if c in st.keys() else None)  # noqa: E731 老库列可能缺
     scan = {"news": int(_k("scanned_news") or 0), "report": int(_k("scanned_report") or 0),
             "article": int(_k("scanned_article") or 0), "titles": _loadj(_k("scanned_titles"), [])}
@@ -2297,7 +2393,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
         # 权威交易日/时段状态（前端据此显示开闭市，不再自行按星期推算→节假日不再误显「撮合中」）
         "is_trading_day": _is_trading_day(), "in_session": _in_session(), "phase": _phase()[0], "phase_label": _phase()[1],
         "musings": musings, "thinking_total": thinking_total,
-        "memory": memory, "memory_stats": memory_stats, "discipline": discipline,
+        "memory": memory, "memory_stats": memory_stats, "discipline": discipline, "review": review,
         "roster": [{"fund_id": c.fund_id, "name": c.name, "emoji": c.emoji, "style": c.style, "blurb": c.blurb} for c in ROSTER],
         "latest_debate": latest_debate,
         "disclaimer": "AI 模拟盘为投研能力演示，使用虚拟资金、不接入任何券商、不构成投资建议；历史表现不代表未来收益。",
@@ -2523,6 +2619,8 @@ def get_arena() -> dict[str, Any]:
                 started_nav = nv["started_nav"]
                 nav_pct = (nv["nav"] - started_nav) / started_nav * 100 if started_nav else 0.0
                 stats = _stats(conn, cfg.fund_id)
+                brake = _performance_brake(stats)
+                review = _retrospective(conn, cfg.fund_id, stats, brake, cfg)
                 mood = _mood(stats, nav_pct)
                 bench = _benchmark(nv["started_at"], nav_pct) or {}
                 if cfg.fund_id == FUND_ID:
@@ -2548,6 +2646,10 @@ def get_arena() -> dict[str, Any]:
                     "max_drawdown_pct": nv.get("max_drawdown_pct"),  # 最大回撤：收益高≠稳的风险对照
                     "closed": stats.get("closed", 0), "position_count": nv["position_count"],
                     "max_positions": cfg.max_positions, "mood": mood, "days_running": days,
+                    "brain_mode": brake["key"], "brain_mode_label": brake["label"],
+                    "threshold_add": brake["thr_delta"], "size_mult": brake["size_mult"],
+                    "reentry_cooldown_days": cfg.reentry_cooldown_days, "daily_buy_cap": cfg.max_daily_buys,
+                    "review": review,
                     "last_action": last_action, "last_tick_at": nv["last_tick_at"], "is_main": cfg.fund_id == FUND_ID,
                     "history": _nav_history(conn, cfg.fund_id, started_nav),   # 归一化净值火花线
                     "commentary": _commentary([], {}, mood, nv["position_count"], nav_pct, stats, cfg),  # 每张卡各自的直播一句话

@@ -106,6 +106,8 @@ def test_performance_brake_levels():
     assert ai_fund._performance_brake({"closed": 8, "win_rate": 20, "avg": -1})["key"] == "normal"
     cautious = ai_fund._performance_brake({"closed": 20, "win_rate": 47, "avg": -0.03})
     assert cautious["key"] == "cautious" and cautious["size_mult"] < 1
+    learned = ai_fund._performance_brake({"closed": 20, "win_rate": 51, "avg": 0.05, "recent_avg": -0.16, "same_day_reentries": 5})
+    assert learned["key"] == "cautious", "近期负期望或同日回补应触发复盘降档"
     defensive = ai_fund._performance_brake({"closed": 20, "win_rate": 38, "avg": -0.4})
     assert defensive["key"] == "defensive"
     assert defensive["thr_delta"] > cautious["thr_delta"]
@@ -230,13 +232,15 @@ def test_snapshot_shape(fund, monkeypatch):
                         lambda name: [{"title": "宁德储能放量", "severity": "success", "age_h": 1, "id": "c", "src": "研报"}] if name == "宁德时代" else [])
     ai_fund.run_tick()
     snap = ai_fund.get_snapshot()
-    for k in ("nav", "nav_unit", "commentary", "feed", "persona", "mood", "stats", "positions", "history", "data_quality", "risk"):
+    for k in ("nav", "nav_unit", "commentary", "feed", "persona", "mood", "stats", "positions", "history", "data_quality", "risk", "review"):
         assert k in snap
     assert "不构成投资建议" in snap["disclaimer"] and snap["feed"][0]["thinking"]
     assert "sample_days" in snap["risk"] and "max_drawdown_pct" in snap["risk"]
     assert snap["discipline"]["brain_mode"] == "normal"
     assert snap["discipline"]["reentry_cooldown_days"] == 1
     assert snap["discipline"]["daily_buy_cap"] == 2
+    assert snap["review"]["mode"] == "normal" and snap["review"]["sample"] == 0
+    assert snap["review"]["next_rule"]
 
 
 def test_phase_buckets():
@@ -356,6 +360,8 @@ def test_arena_isolation_and_leaderboard(fund, monkeypatch):
     assert main_card["is_main"] is True and "mood" in main_card and "blurb" in main_card
     for c in arena["strategies"]:  # 每张卡含前端要的展示字段
         assert "nav_unit" in c and "color" in c and "rank" in c and "emoji" in c
+        assert c["review"]["mode"] in {"normal", "cautious", "defensive"}
+        assert "brain_mode_label" in c and "next_rule" in c["review"]
 
 
 def test_style_divergence_aggressive_and_value():

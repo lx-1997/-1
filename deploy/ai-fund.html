@@ -645,6 +645,33 @@
   .app.detail .bdg{border-radius:4px;background:#202f2c;color:#77c9aa}
   .app.detail .share{padding:6px 10px;border-color:#434a58;border-radius:4px;background:#242a35;color:#dfe3ea}
 
+  /* ===== V6 · AI showrunner / review-first arena =====
+     先讲今天发生了什么，再让用户下钻看五张策略卡；复盘也能一键生成社交卡片。 */
+  .arena-showcase{display:grid;grid-template-columns:minmax(1.45fr,1.7fr) repeat(2,minmax(0,1fr));gap:10px}
+  .showcase-main,.showcase-card{min-width:0;border:1px solid #dfe3e8;border-radius:14px;background:#fff}
+  .showcase-main{padding:18px 20px;background:#171b24;color:#fff;position:relative;overflow:hidden}
+  .showcase-main::after{content:"";position:absolute;right:-34px;bottom:-62px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(91,103,255,.35),transparent 68%)}
+  .showcase-kicker,.showcase-label{display:block;color:#7f8cff;font-size:9px;font-weight:750;letter-spacing:.16em;text-transform:uppercase}
+  .showcase-main h3{position:relative;z-index:1;margin:7px 0 4px;font-size:20px;line-height:1.3;letter-spacing:-.03em}
+  .showcase-main p{position:relative;z-index:1;margin:0;color:#b9bfca;font-size:11px;line-height:1.7;max-width:470px}
+  .showcase-main .showcase-foot{position:relative;z-index:1;display:flex;align-items:center;gap:8px;margin-top:14px;color:#8f98aa;font-size:10px}
+  .showcase-main .showcase-foot b{color:#f5f6f8;font-size:12px}
+  .showcase-card{padding:16px 17px;display:flex;flex-direction:column;justify-content:space-between}
+  .showcase-card .showcase-value{margin-top:10px;color:var(--ink);font-size:18px;font-weight:720;letter-spacing:-.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .showcase-card .showcase-note{margin-top:7px;color:var(--ink3);font-size:10px;line-height:1.55}
+  .showcase-card .showcase-value.up{color:var(--up)}.showcase-card .showcase-value.down{color:var(--down)}
+  .showcase-card .showcase-value.warn{color:#b7791f}
+  .arena-share{margin-left:auto;position:relative;z-index:2;padding:7px 11px;border:1px solid rgba(255,255,255,.18);border-radius:7px;background:rgba(255,255,255,.08);color:#fff;font-size:10px;font-weight:700;cursor:pointer}
+  .arena-share:hover{background:rgba(255,255,255,.16)}
+  .at-actions{display:flex;align-items:center;gap:8px}
+  .lbbrain{display:flex;align-items:center;gap:5px;margin:-3px 0 11px;color:var(--ink3);font-size:10px;line-height:1.45}
+  .lbbrain b{padding:3px 6px;border-radius:4px;background:#f0f1f5;color:#555b69;font-size:9px;font-weight:700}
+  .lbbrain b.defensive{background:#fff0f0;color:#c24156}.lbbrain b.cautious{background:#fff7e7;color:#a36b12}.lbbrain b.normal{background:#edf7f3;color:#138260}
+  .arena-section-head{margin-top:2px}
+  @media(max-width:1100px){.arena-showcase{grid-template-columns:1.35fr repeat(2,minmax(0,1fr))}}
+  @media(max-width:760px){.arena-showcase{grid-template-columns:1fr 1fr}.showcase-main{grid-column:1/-1}.arena-share{margin-left:0}.showcase-main h3{font-size:18px}}
+  @media(max-width:480px){.arena-showcase{grid-template-columns:1fr}.showcase-main{grid-column:auto}.arena-share{width:100%}.showcase-card .showcase-value{font-size:16px}}
+
   .app.detail .hero{gap:8px}
   .app.detail .heroL{padding:16px 18px}
   .app.detail .heroR{padding:14px 16px}
@@ -1139,6 +1166,28 @@ async function sharePoster(){
   const url=c.toDataURL('image/png');document.getElementById('posterImg').src=url;document.getElementById('poster').style.display='flex';
   document.getElementById('posterDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download=(d.persona?.name||'阿尔法')+'战绩.png';a.click();};
 }
+async function arenaPoster(){
+  const d=S.arena;if(!d)return;
+  const c=document.getElementById('pcanvas'),x=c.getContext('2d'),W=750,H=1334;x.clearRect(0,0,W,H);
+  const g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,'#161a23');g.addColorStop(.55,'#252b48');g.addColorStop(1,'#5964d8');x.fillStyle=g;x.fillRect(0,0,W,H);
+  x.fillStyle='rgba(255,255,255,.97)';x.beginPath();x.roundRect(36,54,W-72,H-108,28);x.fill();
+  x.textAlign='left';x.fillStyle='#5964d8';x.font='800 20px sans-serif';x.fillText('DEEPFOCUS · AI LAB',72,108);
+  x.fillStyle='#171b24';x.font='900 42px sans-serif';x.fillText('今日策略复盘',72,165);
+  const sts=(d.strategies||[]),champ=sts.find(s=>s.fund_id===d.champion)||sts[0]||{},rev=champ.review||{};
+  x.fillStyle='#6b7080';x.font='600 20px sans-serif';x.fillText('五种纪律，同一组公开信息',72,202);
+  x.fillStyle='#171b24';x.font='800 27px sans-serif';x.fillText((champ.emoji||'🤖')+' '+(champ.name||'—')+' 领跑',72,264);
+  x.fillStyle=(champ.nav_pct||0)>=0?'#138260':'#c24156';x.font='900 64px sans-serif';x.fillText(fmtPct(champ.nav_pct),72,337);
+  x.fillStyle='#6b7080';x.font='600 20px sans-serif';x.fillText('相对沪深300 '+(champ.alpha_pct!=null?fmtPct(champ.alpha_pct):'—')+' · '+(rev.mode_label||'正常')+'档',72,376);
+  x.strokeStyle='#e6e8ee';x.lineWidth=2;x.beginPath();x.moveTo(72,408);x.lineTo(W-72,408);x.stroke();
+  x.fillStyle='#171b24';x.font='800 21px sans-serif';x.fillText('本期榜单',72,450);
+  sts.slice(0,5).forEach((s,i)=>{const y=492+i*74,up=(s.nav_pct||0)>=0;x.fillStyle='#747b8c';x.font='700 18px sans-serif';x.fillText(String(i+1).padStart(2,'0'),74,y);x.fillStyle='#171b24';x.font='700 23px sans-serif';x.fillText((s.emoji||'🤖')+' '+(s.name||'—'),130,y);x.fillStyle=up?'#138260':'#c24156';x.font='800 22px sans-serif';x.textAlign='right';x.fillText(fmtPct(s.nav_pct),W-76,y);x.textAlign='left';x.fillStyle='#858b99';x.font='500 15px sans-serif';x.fillText((s.brain_mode_label||'正常')+'档 · 胜率 '+(s.win_rate!=null?s.win_rate+'%':'—')+' · '+(s.closed||0)+' 笔平仓',130,y+25);x.strokeStyle='#f0f1f4';x.beginPath();x.moveTo(72,y+42);x.lineTo(W-72,y+42);x.stroke();});
+  const cons=(d.consensus||[]).length,div=(d.divergence||[]).length;
+  x.fillStyle='#171b24';x.font='800 21px sans-serif';x.fillText('导演剪辑',72,900);
+  x.fillStyle='#555d70';x.font='600 19px sans-serif';const lines=[rev.headline||'公开每一次买卖，让策略自己接受检验。','共识 '+cons+' 只 · 分歧 '+div+' 组 · 脑档 '+(rev.mode_label||'正常')];lines.forEach((ln,i)=>x.fillText(ln.slice(0,34),72,940+i*34));
+  x.fillStyle='#8b91a0';x.font='600 17px sans-serif';x.fillText('虚拟资金 · 模拟交易 · 不构成投资建议',72,1230);x.textAlign='right';x.fillText('daocaijing.com/ai-fund',W-72,1230);
+  const url=c.toDataURL('image/png');document.getElementById('posterImg').src=url;document.getElementById('poster').style.display='flex';
+  document.getElementById('posterDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download='DeepFocus-今日策略复盘.png';a.click();};
+}
 document.addEventListener('click',e=>{
   const km=e.target.closest('[data-ktrade]');if(km){
     const i=(S.data&&S.data.feed||[]).findIndex(f=>f.kind==='trade'&&f.symbol===km.dataset.symbol&&f.side===km.dataset.side&&String(f.ts||'').slice(0,10)===km.dataset.date&&(!km.dataset.price||Math.abs(Number(f.price)-Number(km.dataset.price))<.011));
@@ -1152,6 +1201,7 @@ document.addEventListener('click',e=>{
   const mr=e.target.closest('.muse-refs .r');if(mr){if(mr.dataset.url){window.open(mr.dataset.url,'_blank','noopener');}else{showEvtPop(mr,{src:mr.dataset.src,title:mr.dataset.title,date:'',url:''});}return;}
   const mem=e.target.closest('.mem');if(mem){showMemPop(mem);return;}
   if(!e.target.closest('#evtpop'))document.getElementById('evtpop').style.display='none';
+  if(e.target.closest('#arenaShare')){arenaPoster();return;}
   if(e.target.closest('#share')){sharePoster();return;}
   if(e.target.id==='posterCl'||e.target.id==='poster'){document.getElementById('poster').style.display='none';return;}
   const sb=e.target.closest('.sortbtn');if(sb){S.sort=sb.dataset.sort;document.getElementById('colLeft').innerHTML=buildLeft(S.data);const lf=document.getElementById('leftExtraFold');if(lf)lf.addEventListener('toggle',()=>{S.leftExtraOpen=lf.open;});requestAnimationFrame(()=>document.querySelectorAll('.wb i').forEach(x=>x.style.width=(x.dataset.w||0)+'%'));return;}
@@ -1184,11 +1234,29 @@ function arenaSay(s){
     return '最近'+(SIDE_CN[la.side]||'操作')+' '+esc(la.name)+pnl;}
   return esc(s.commentary||(((s.mood&&s.mood.label)||'盯盘找机会')+'，等待本站信息与买点共振。'));
 }
+function arenaShowcase(d,sts,racing){
+  const champ=sts.find(s=>s.fund_id===d.champion)||sts[0]||{};
+  const weak=sts.slice().sort((a,b)=>(a.nav_pct||0)-(b.nav_pct||0))[0]||{};
+  const review=champ.review||{};
+  const cons=Array.isArray(d.consensus)?d.consensus:[],div=Array.isArray(d.divergence)?d.divergence:[];
+  const champRet=racing?fmtPct(champ.nav_pct):'待开赛';
+  const alpha=champ.alpha_pct!=null?('，跑赢基准 '+fmtPct(champ.alpha_pct)):'。';
+  const headline=review.headline||'今天的交易，先看结果，再看理由。';
+  const scene=racing?((champ.emoji||'🤖')+' '+esc(champ.name)+' 领跑 '+champRet+alpha):'五种纪律已经就位，等待第一笔有效信号。';
+  const crowd=cons.length?('共识 '+cons.length+' 只票'):'暂无共识票';
+  const split=div.length?('分歧 '+div.length+' 组'):'分歧待发生';
+  return '<section class="arena-showcase">'+
+    '<div class="showcase-main"><span class="showcase-kicker">Today · AI review</span><h3>'+scene+'</h3><p>'+esc(headline)+'</p><div class="showcase-foot"><span>🧠 '+esc(review.mode_label||champ.brain_mode_label||'正常')+'</span><b>'+esc(review.brief||'保持公开决策链，按纪律执行。')+'</b></div></div>'+
+    '<div class="showcase-card"><span class="showcase-label">赛场看点</span><div class="showcase-value">'+crowd+' · '+split+'</div><div class="showcase-note">同一组公开信息，策略为何拿与躲，一眼看清。</div></div>'+
+    '<div class="showcase-card"><span class="showcase-label">本期复盘对象</span><div class="showcase-value '+(((weak.nav_pct||0)>=0)?'up':'down')+'">'+esc(weak.emoji||'🤖')+' '+esc(weak.name||'—')+' '+fmtPct(weak.nav_pct)+'</div><div class="showcase-note">'+esc((weak.review&&weak.review.bad&&weak.review.bad[0])||'继续观察回撤与出手质量。')+'</div></div>'+
+    '</section>';
+}
 function lbcard(s,bench,racing){
   // 策略色直插 style 属性，须做十六进制白名单，防 CSS 注入(color 字段理论上可被上游污染)
   const up=(s.nav_pct||0)>=0,c=/^#[0-9a-fA-F]{3,8}$/.test(s.color)?s.color:'#7c3aed';
   const la=s.last_action,chip=(la&&la.name)?('<div class="lbtop">'+esc(SIDE_CN[la.side]||'观察')+' · '+esc(la.name)+((la.pnl_pct!=null)?(' '+fmtPct(la.pnl_pct)):'')+'</div>'):'';
   const a=s.alpha_pct,alpha=(a==null)?'—':fmtPct(a);
+  const review=s.review||{},brain=s.brain_mode_label||review.mode_label||'正常',brainKey=s.brain_mode||review.mode||'normal';
   // 未开赛时收益都是 0%，让「章法」当主角；开赛后才以最近动作/收益为主
   const say=racing?arenaSay(s):esc(s.blurb||s.tag||'');
   const rank=Number(s.rank)||0,rankHtml='<span class="lbrank">'+(rank?String(rank).padStart(2,'0'):'—')+'</span>';
@@ -1200,6 +1268,7 @@ function lbcard(s,bench,racing){
     '<div class="lbalpha">相对沪深300<b class="'+(Number(a)>=0?'up':'down')+'">'+alpha+'</b></div></div>'+
     '<div class="lbspark">'+spark(s.history,bench&&bench.history,c)+'</div>'+
     '<div class="lbsay">'+say+'</div>'+
+    '<div class="lbbrain">🧠 <b class="'+esc(brainKey)+'">'+esc(brain)+'</b><span>'+esc(review.brief||'按既定纪律执行')+'</span></div>'+
     '<div class="lbmeta"><span class="lbstat">当前持仓<b>'+(s.position_count||0)+' / '+(s.max_positions||6)+'</b></span><span class="lbstat">历史胜率<b>'+(s.win_rate!=null?s.win_rate+'%':'—')+'</b></span><span class="lbstat">已平仓<b>'+(s.closed||0)+'</b></span></div>'+
     '<div class="lbfoot">'+chip+'<span class="lbcta">查看详情&nbsp; →</span></div></button>';
 }
@@ -1216,11 +1285,13 @@ function renderArena(d){
     '<div class="at-title-row"><h1 class="at-ttl">AI 策略实验室</h1><span class="at-status">'+esc(status)+'</span></div>'+
     '<div class="at-sub">'+sts.length+' 种投资纪律使用同一组 DeepFocus 快讯、文章与研报，在完全公开的规则下进行模拟交易。</div></div>'+
     '<div class="at-right"><div class="at-stat"><span>当前领先</span><strong>'+esc(champ.name)+'<i class="'+((champ.nav_pct||0)>=0?'up':'down')+'">'+champValue+'</i></strong></div>'+
-    '<div class="at-stat"><span>市场基准</span><strong>'+esc((bench&&bench.name)||'沪深300')+'<i class="'+(((bench&&bench.nav_pct)||0)>=0?'up':'down')+'">'+benchValue+'</i></strong></div></div></header>';
+    '<div class="at-stat"><span>市场基准</span><strong>'+esc((bench&&bench.name)||'沪深300')+'<i class="'+(((bench&&bench.nav_pct)||0)>=0?'up':'down')+'">'+benchValue+'</i></strong></div></div>'+
+    '<div class="at-actions"><button type="button" class="arena-share" id="arenaShare">生成今日复盘卡 ↗</button></div></header>';
+  const showcase=arenaShowcase(d,sts,racing);
   const cards='<section class="arena-portfolios"><div class="arena-section-head"><div><span class="section-kicker">Live portfolios</span><h2>五种风格，同场验证</h2></div>'+
     '<p>点击任一策略，查看持仓、净值与完整决策链</p></div><div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div></section>';
   const foot='<div class="arena-foot">虚拟资金 · 模拟交易 · 不构成投资建议 · 历史表现不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">进入 DeepFocus 终端查看原始信息 →</a></div>';
-  el.innerHTML=head+cards+divergenceCard(d)+'<div id="debateBox"></div>'+foot;
+  el.innerHTML=head+showcase+cards+divergenceCard(d)+'<div id="debateBox"></div>'+foot;
   renderDebateBox();
   const fold=document.getElementById('divergenceFold');
   if(fold)fold.addEventListener('toggle',()=>{S.divergenceOpen=fold.open;});
