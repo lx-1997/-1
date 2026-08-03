@@ -801,6 +801,36 @@
   @media(prefers-reduced-motion:reduce){
     *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
   }
+  /* ===== V7 · New-user tour ===== */
+  #tourRoot{position:fixed;inset:0;z-index:2000;pointer-events:none}
+  #tourRoot[aria-hidden="true"]{display:none}
+  .tour-backdrop{position:fixed;inset:0;background:transparent;pointer-events:auto}
+  .tour-spot{position:fixed;border:2px solid #9b8cff;border-radius:14px;box-shadow:0 0 0 9999px rgba(10,12,20,.68),0 0 0 7px rgba(155,140,255,.16);pointer-events:none;transition:top .24s ease,left .24s ease,width .24s ease,height .24s ease}
+  .tour-dialog{position:fixed;width:min(330px,calc(100vw - 32px));padding:17px 18px 15px;border:1px solid rgba(255,255,255,.16);border-radius:14px;background:#171b24;color:#fff;box-shadow:0 18px 55px rgba(5,7,14,.35);pointer-events:auto;animation:tourIn .24s ease both}
+  .tour-dialog::before{content:"";position:absolute;top:-6px;left:28px;width:11px;height:11px;border-left:1px solid rgba(255,255,255,.16);border-top:1px solid rgba(255,255,255,.16);background:#171b24;transform:rotate(45deg)}
+  .tour-dialog.above::before{top:auto;bottom:-6px;transform:rotate(225deg)}
+  .tour-kicker{display:flex;align-items:center;justify-content:space-between;color:#a9a2ff;font-size:9px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}
+  .tour-count{color:#9aa2b5;font-size:10px;font-weight:600;letter-spacing:0}
+  .tour-dialog h3{margin:8px 0 5px;font-size:17px;line-height:1.35;letter-spacing:-.02em}
+  .tour-dialog p{margin:0;color:#bac0cc;font-size:11px;line-height:1.7}
+  .tour-actions{display:flex;align-items:center;gap:8px;margin-top:14px}
+  .tour-actions button{padding:7px 11px;border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.07);color:#dfe3ed;font-size:10px;font-weight:700;cursor:pointer}
+  .tour-actions .tour-next{border-color:#8d81ff;background:#7568ed;color:#fff}
+  .tour-actions .tour-skip{margin-left:auto;border:0;background:transparent;color:#8992a5;font-weight:600}
+  .tour-open{padding:0;border:0;background:transparent;color:var(--purple);font:inherit;font-size:10px;font-weight:700;cursor:pointer}
+  .tour-open:hover{text-decoration:underline}
+  @keyframes tourIn{from{opacity:0;transform:translateY(7px) scale(.98)}to{opacity:1;transform:none}}
+  @media(max-width:640px){
+    .tour-dialog{bottom:16px;top:auto!important;left:16px!important;width:calc(100vw - 32px)}
+    .tour-dialog::before{display:none}
+    .tour-spot{transition:top .18s ease,left .18s ease,width .18s ease,height .18s ease}
+  }
+  /* ===== V8 · Zoom-safe K-line sizing =====
+     浏览器放大后 CSS 视口会进入窄屏断点；图表不能再用旧的 min-height 把整页撑长。 */
+  .app.detail .kwrap{flex:0 1 auto;min-height:0}
+  .app.detail .chart{height:clamp(300px,52vh,560px);min-height:0!important;flex:0 1 auto}
+  @media(max-width:1023px){.app.detail .chart{height:clamp(300px,58vh,520px)}}
+  @media(max-width:640px){.app.detail .chart{height:clamp(300px,60vh,500px)}}
 </style>
 </head>
 <body>
@@ -836,6 +866,7 @@
 <div id="ticker"></div>
 <div id="poster"><div class="ph">长按或下载保存分享 ↓</div><img id="posterImg" alt="战绩海报"/><div class="pb"><button class="dl" id="posterDl">下载图片</button><button class="cl" id="posterCl">关闭</button></div></div>
 <canvas id="pcanvas" width="750" height="1334" style="display:none"></canvas>
+<div id="tourRoot" aria-hidden="true"></div>
 <script>
 const fmtMoney=v=>'¥'+Math.round(v).toLocaleString('zh-CN');
 const fmtPct=v=>(v==null)?'—':(v>0?'+':'')+Number(v).toFixed(2)+'%';
@@ -1251,6 +1282,45 @@ function arenaShowcase(d,sts,racing){
     '<div class="showcase-card"><span class="showcase-label">本期复盘对象</span><div class="showcase-value '+(((weak.nav_pct||0)>=0)?'up':'down')+'">'+esc(weak.emoji||'🤖')+' '+esc(weak.name||'—')+' '+fmtPct(weak.nav_pct)+'</div><div class="showcase-note">'+esc((weak.review&&weak.review.bad&&weak.review.bad[0])||'继续观察回撤与出手质量。')+'</div></div>'+
     '</section>';
 }
+const TOUR_KEY='df_ai_fund_tour_v1';
+const TOUR_STEPS=[
+  {selector:'#arenaView .arena-top',title:'先看今天的结论',text:'这里展示当前交易时段、领先策略和市场基准，先用 10 秒建立全局判断。'},
+  {selector:'#arenaView .arena-showcase',title:'再看 AI 的复盘',text:'今日主线会告诉你谁赢了、谁踩坑，以及机器人现在处于什么脑档。'},
+  {selector:'#arenaView .arena-portfolios',title:'点策略卡看完整链路',text:'每张卡都是一套独立纪律。点击后可以继续看持仓、K 线、买卖价格和股数。'},
+  {selector:'#arenaView #divergenceFold',title:'最后看分歧',text:'同一只股票为什么有人拿、有人躲？在这里展开多策略的共识与分歧。'}
+];
+const Tour={open:false,step:0};
+function tourHasSeen(){try{return localStorage.getItem(TOUR_KEY)==='1';}catch(e){return false;}}
+function closeTour(mark=true){
+  Tour.open=false;
+  if(mark){try{localStorage.setItem(TOUR_KEY,'1');}catch(e){}}
+  const root=document.getElementById('tourRoot');if(root){root.setAttribute('aria-hidden','true');root.innerHTML='';}
+}
+function renderTour(){
+  if(!Tour.open)return;
+  const root=document.getElementById('tourRoot'),item=TOUR_STEPS[Tour.step];
+  if(!root||!item)return closeTour(false);
+  const target=document.querySelector(item.selector);
+  if(!target||target.offsetParent===null){if(Tour.step<TOUR_STEPS.length-1){Tour.step++;return renderTour();}return closeTour(false);}
+  const r=target.getBoundingClientRect(),pad=7;
+  const left=Math.max(8,Math.min(r.left-pad,innerWidth-r.width-2*pad-8));
+  const width=Math.min(innerWidth-16,r.width+2*pad),top=Math.max(8,r.top-pad),height=Math.min(innerHeight-16,r.height+2*pad);
+  const above=innerWidth>640&&r.bottom+190>innerHeight;
+  root.setAttribute('aria-hidden','false');
+  root.innerHTML='<div class="tour-backdrop"></div><div class="tour-spot" style="left:'+left+'px;top:'+top+'px;width:'+width+'px;height:'+height+'px"></div>'+
+    '<section class="tour-dialog'+(above?' above':'')+'"'+(innerWidth>640?' style="left:'+Math.max(16,Math.min(r.left,innerWidth-346))+'px;top:'+(above?Math.max(16,r.top-184):Math.min(innerHeight-184,r.bottom+16))+'px"':'')+' role="dialog" aria-label="新手引导">'+
+    '<div class="tour-kicker"><span>New user tour</span><span class="tour-count">'+(Tour.step+1)+' / '+TOUR_STEPS.length+'</span></div>'+
+    '<h3>'+item.title+'</h3><p>'+item.text+'</p>'+
+    '<div class="tour-actions">'+(Tour.step?'<button type="button" id="tourPrev">上一步</button>':'')+
+    '<button type="button" class="tour-next" id="tourNext">'+(Tour.step===TOUR_STEPS.length-1?'开始探索':'下一步')+'</button>'+
+    '<button type="button" class="tour-skip" id="tourSkip">跳过引导</button></div></section>';
+}
+function maybeStartTour(){
+  if(S.mode!=='arena'||Tour.open||tourHasSeen())return;
+  Tour.open=true;Tour.step=0;renderTour();
+}
+function nextTour(){if(Tour.step>=TOUR_STEPS.length-1)return closeTour(true);Tour.step++;renderTour();}
+function prevTour(){if(Tour.step>0){Tour.step--;renderTour();}}
 function lbcard(s,bench,racing){
   // 策略色直插 style 属性，须做十六进制白名单，防 CSS 注入(color 字段理论上可被上游污染)
   const up=(s.nav_pct||0)>=0,c=/^#[0-9a-fA-F]{3,8}$/.test(s.color)?s.color:'#7c3aed';
@@ -1290,11 +1360,12 @@ function renderArena(d){
   const showcase=arenaShowcase(d,sts,racing);
   const cards='<section class="arena-portfolios"><div class="arena-section-head"><div><span class="section-kicker">Live portfolios</span><h2>五种风格，同场验证</h2></div>'+
     '<p>点击任一策略，查看持仓、净值与完整决策链</p></div><div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div></section>';
-  const foot='<div class="arena-foot">虚拟资金 · 模拟交易 · 不构成投资建议 · 历史表现不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">进入 DeepFocus 终端查看原始信息 →</a></div>';
+  const foot='<div class="arena-foot">虚拟资金 · 模拟交易 · 不构成投资建议 · 历史表现不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">进入 DeepFocus 终端查看原始信息 →</a> · <button type="button" class="tour-open" id="tourOpen">重新查看新手引导</button></div>';
   el.innerHTML=head+showcase+cards+divergenceCard(d)+'<div id="debateBox"></div>'+foot;
   renderDebateBox();
   const fold=document.getElementById('divergenceFold');
   if(fold)fold.addEventListener('toggle',()=>{S.divergenceOpen=fold.open;});
+  window.setTimeout(maybeStartTour,420);
 }
 /* ===== 今日分歧(get_arena 的 consensus/divergence) + 多空辩论回放(snapshot 的 latest_debate) ===== */
 function agChip(a){a=a||{};return '<span class="dv-ag">'+esc(a.emoji||'🤖')+' '+esc(a.name||'')+'</span>';}
@@ -1398,6 +1469,10 @@ async function load(){try{const r=await fetch('/api/ai-fund/snapshot?strategy='+
 function poll(){if(S.mode==='arena')loadArena();else load();}
 // 竞技场卡片 / 切换器 / 返回
 document.addEventListener('click',e=>{
+  if(e.target.closest('#tourNext')){nextTour();return;}
+  if(e.target.closest('#tourPrev')){prevTour();return;}
+  if(e.target.closest('#tourSkip')){closeTour(true);return;}
+  if(e.target.closest('#tourOpen')){Tour.open=true;Tour.step=0;renderTour();return;}
   const lc=e.target.closest('.lbcard[data-fund]');if(lc){openDetail(lc.dataset.fund);return;}
   const sc=e.target.closest('.stchip[data-fund]');if(sc){if(sc.dataset.fund!==S.fund)openDetail(sc.dataset.fund);return;}
   if(e.target.closest('#backArena')){backToArena();return;}
@@ -1407,6 +1482,8 @@ let _pollT=null;
 function startPoll(){stopPoll();_pollT=setInterval(poll,30000);}
 function stopPoll(){if(_pollT){clearInterval(_pollT);_pollT=null;}}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPoll();else{poll();startPoll();}});
+document.addEventListener('keydown',e=>{if(!Tour.open)return;if(e.key==='Escape')closeTour(true);else if(e.key==='ArrowRight')nextTour();else if(e.key==='ArrowLeft')prevTour();});
+window.addEventListener('resize',()=>{if(Tour.open){clearTimeout(window.__tourResize);window.__tourResize=setTimeout(renderTour,120);}});
 loadArena();startPoll();
 </script>
 </body>
