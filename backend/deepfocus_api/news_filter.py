@@ -135,8 +135,15 @@ _DEFAULT_JUNK_MARKERS: Tuple[str, ...] = (
     # 目的是导流去看直播/找分析师——用固定营销短语识别，不匹配人名（多变）；正规快讯不会用这类措辞。
     "正在直播中", "直播预告", "扫码观看直播", "识别二维码观看直播", "点击马上看", "点击立即观看",
     "戳我观看", "马上看直播", "正在多角度解析中", "正在为您解析",
+    # 会议分享类伪文章（上游源混入的腾讯会议屏幕分享通知卡，如「路透终端页面共享 #腾讯会议: 562-430-597」，
+    # 按天反复重发、无信息量的会议导流；「页面共享」是会议分享卡专用措辞，正规财经文章几乎不会出现——用户点名：一律拦。
+    # ⚠️不放「屏幕共享」裸词：它是常见科技词汇（如智能眼镜隐私新闻），变体由下方 meeting-share 共现规则兜）
+    "页面共享",
 )
 _DOMAIN_RE = re.compile(r"[\w-]+\.(?:com|cn|net|org|io|co)(?![a-z0-9-])", re.I)  # 裸域名（TLD 后不接 ASCII 字母数字；兼容后接中文/标点）
+# 会议分享卡特征：腾讯会议品牌词 / 会议号(3-3-3、3-3-4 分段)；正规新闻不会公布会议号
+_MEETING_BRAND_RE = re.compile(r"#?腾讯会议")
+_MEETING_NO_RE = re.compile(r"\d{3}[-—]\d{3}[-—]\d{3,4}")
 _IMPERATIVE_RE = re.compile(r"(请|停止|禁止|勿|警告|谢绝)")               # 祈使/喊话
 _SELF_BRAND_RE = re.compile(r"daocaijing|道财经", re.I)                   # 我方域名/品牌（攻击目标）
 # 明确敌意词（**刻意不含"请"等中性祈使**，避免误伤我方"请关注 daocaijing.com"这类正常文案）
@@ -161,6 +168,11 @@ def junk_reason(title: str, content: str = "") -> Optional[str]:
     for w in junk_markers():
         if w in hay or _WS_RE.sub("", w) in hay_ns:
             return f"junk:{w}"
+    # 会议分享卡变体：腾讯会议+会议号同现，或「屏幕共享」与会议特征共现（裸「屏幕共享」是常见科技词汇，不单独拦）
+    if _MEETING_BRAND_RE.search(hay) and _MEETING_NO_RE.search(hay):
+        return "junk:meeting-share"
+    if "屏幕共享" in hay and _MEETING_NO_RE.search(hay):
+        return "junk:meeting-share"
     # 针对我方的恶意 / 骚扰内容（反爬页、攻击喊话、辱骂等）：可见文字里同时出现「我方品牌/域名」+「敌意/祈使词」。
     # 第三方财经新闻的可见正文几乎不会出现我方域名，出现且带敌意 → 判为攻击/自指垃圾。
     if _SELF_BRAND_RE.search(hay) and _HOSTILE_RE.search(hay):

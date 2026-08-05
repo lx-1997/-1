@@ -83,6 +83,22 @@ def test_tradealpha_brand_scrubbed_not_discarded():
         assert ch2 and "alpha" not in c2.lower()
 
 
+def test_meeting_share_spam_discarded():
+    """腾讯会议屏幕分享卡(用户点名:不要再发):上游混入的会议导流通知,按天重发、无信息量→整条丢弃。"""
+    title = "0805 路透终端页面共享"
+    content = "路透终端页面共享 #腾讯会议: 562-430-597"
+    reason = nf.discard_reason(title, content)
+    assert reason is not None and reason.startswith("junk:")
+    # 变体：不含「页面共享」措辞，仅腾讯会议+会议号 → 仍兜住
+    assert nf.discard_reason("路透终端", "#腾讯会议：562-430-597") is not None
+    assert nf.discard_reason("x", "屏幕共享 #腾讯会议: 123-456-7890") is not None
+    # 真实腾讯相关新闻(无会议号/无分享措辞)不误伤
+    assert nf.discard_reason("腾讯二季度业绩前瞻", "券商预计腾讯会议等企业服务收入保持双位数增长") is None
+    # 含「屏幕共享」的真实科技新闻(无会议特征)不误伤——三星智能眼镜隐私稿正文天然带该词
+    assert nf.discard_reason("彭博社：三星称智能眼镜隐私问题需行业共同解决",
+                             "三星承诺，不会将智能眼镜用户的音频、屏幕共享内容或视频数据用于训练人工智能模型。") is None
+
+
 def test_livestream_promo_discarded():
     """直播导流伪快讯(用户点名):标题像新闻实则是拉去看直播的钩子,无信息量→整条丢弃。"""
     title = "【正在直播中 】国际黄金再遭遇抛售，是否意味上行动能已消失？"
