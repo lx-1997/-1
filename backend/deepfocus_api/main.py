@@ -50,6 +50,7 @@ from .auth import (
     is_disposable_email,
     membership_of_username,
     reg_ip_daily_max,
+    reset_password,
     turnstile_enabled,
     turnstile_secret,
     turnstile_sitekey,
@@ -429,6 +430,15 @@ async function load(){
     '<div class="panel"><h2>👤 账号体系 · 角色分布 / 最近注册</h2>'+
       '<div class="sub" style="margin-bottom:10px">管理员 '+(by.admin||0)+' · 分析师 '+(by.analyst||0)+' · 访客 '+(by.viewer||0)+'</div>'+
       '<table><thead><tr><th>账号</th><th>角色</th><th>手机</th><th>邮箱</th><th style="text-align:right">注册时间</th></tr></thead><tbody>'+acctRows+'</tbody></table>'+
+    '</div>'+
+    '<div class="panel"><h2>🔐 重置指定账号密码</h2>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
+        '<input id="rp-identifier" placeholder="用户名、邮箱或手机号" autocomplete="username" style="flex:1;min-width:180px;padding:7px 10px;background:#0f141b;border:1px solid #263041;border-radius:6px;color:#e6ebf2;font-family:inherit">'+
+        '<input id="rp-password" type="password" placeholder="新密码（至少 6 位）" autocomplete="new-password" style="flex:1;min-width:180px;padding:7px 10px;background:#0f141b;border:1px solid #263041;border-radius:6px;color:#e6ebf2;font-family:inherit">'+
+        '<button class="refresh" id="rp-submit" onclick="resetAccountPassword()">重置密码</button>'+
+        '<span id="rp-result" class="sub"></span>'+
+      '</div>'+
+      '<div class="sub" style="margin-top:7px">仅供运营协助用户恢复登录。重置后会立即退出该账号全部已登录设备；新密码不会在看板或操作流水中保存。</div>'+
     '</div>'
   ) : '';
   // 拉新 / 邀请
@@ -1028,7 +1038,7 @@ async function saveCookie(){
     setTimeout(loadZsxq,800);
   }catch(e){ $('#zmsg').innerHTML='<span style="color:#ff5a52">✗ '+esc(e.message)+'</span>'; }
 }
-const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'兑换会员码',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
+const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',reset_password:'运营重置密码',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'兑换会员码',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
 function alabel(a){return ACT_LABEL[a]||a;}
 function tshort(s){
   if(!s) return '';
@@ -1067,6 +1077,21 @@ async function loadActivity(actor){
 }
 function memTierBadge(t,label){ var c=t==='lifetime'?'#c4b5fd':(t==='premium'?'#ffb000':'#7f8a96'); return '<span style="color:'+c+';font-weight:700">'+esc(label)+'</span>'; }
 function memRem(t,dl){ if(t==='lifetime') return '<span style="color:#c4b5fd;font-weight:700">永久</span>'; if(t!=='premium'||dl==null) return '<span class="sub">—</span>'; var c=dl<=7?'#ff5a52':(dl<=30?'#ffb000':'#2bd96a'); return '<span style="color:'+c+';font-weight:700;white-space:nowrap">'+(dl<=0?'今天到期':(dl+' 天'))+'</span>'; }
+async function resetAccountPassword(){
+  var identifier=($('#rp-identifier').value||'').trim(), password=$('#rp-password').value||'', result=$('#rp-result'), button=$('#rp-submit');
+  if(!identifier){ result.style.color='#ff5a52'; result.textContent='请输入账号标识'; return; }
+  if(password.length<6){ result.style.color='#ff5a52'; result.textContent='新密码至少 6 位'; return; }
+  if(!confirm('确定要重置「'+identifier+'」的密码吗？该账号现有登录设备将全部退出。')) return;
+  button.disabled=true; result.style.color='#7f8a96'; result.textContent='重置中…';
+  try{
+    var r=await fetch('/api/admin/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier:identifier,new_password:password,token:token})});
+    var d=await r.json();
+    if(!r.ok||!d.ok){ result.style.color='#ff5a52'; result.textContent='失败：'+((d&&d.detail)||r.status); return; }
+    $('#rp-password').value=''; result.style.color='#2bd96a'; result.textContent='✓ '+(d.username||identifier)+' 已重置，旧登录已退出';
+    loadActivity('');
+  }catch(e){ result.style.color='#ff5a52'; result.textContent='出错：'+e.message; }
+  finally{ button.disabled=false; }
+}
 async function grantMember(){
   var u=($('#gm-user').value||'').trim(); var days=parseInt($('#gm-days').value||'0',10)||0; var paid=$('#gm-paid').checked; var res=$('#gm-result');
   if(!u){ res.style.color='#ff5a52'; res.textContent='请输入账号'; return; }
@@ -1809,6 +1834,42 @@ def _admin_token_ok(request: Request, token: str) -> bool:
     return (bool(mem) and provided == mem) or (bool(met) and provided == met)
 
 
+@app.post("/api/admin/reset-password")
+async def admin_reset_password(request: Request) -> dict[str, Any]:
+    """运营看板重置指定账号密码（需管理令牌）。
+
+    body: {identifier: 用户名/邮箱/手机号, new_password: 新密码, token: 管理令牌}
+    改密后会立即使该账号所有既有登录会话失效，避免旧设备继续可用。
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - 返回统一的参数错误，不暴露内部异常
+        body = {}
+    token = str(body.get("token") or "")
+    if not _admin_token_ok(request, token):
+        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
+    identifier = str(body.get("identifier") or "").strip()
+    new_password = str(body.get("new_password") or "")
+    if not identifier:
+        raise HTTPException(status_code=422, detail="请输入用户名、邮箱或手机号")
+    try:
+        user = reset_password(identifier, new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if user is None:
+        raise HTTPException(status_code=404, detail="未找到该账号")
+    # 不记录新口令，只留下可追溯的管理动作和目标账号。
+    try:
+        metrics_log_activity(
+            actor_kind="admin", actor_id="ops-dashboard", actor_name="运营看板",
+            action="reset_password", target=str(user.username), ip=_client_ip(request),
+            device=("mobile" if _MOBILE_UA_RE.search(request.headers.get("user-agent") or "") else "pc"),
+        )
+    except Exception:  # noqa: BLE001 - 审计异常不能影响完成的改密操作
+        pass
+    return {"ok": True, "username": user.username, "message": "密码已重置，账号其他登录设备已退出"}
+
+
 @app.post("/api/admin/membership")
 async def admin_set_membership(
     request: Request, username: str = "", tier: str = "premium", days: int = 0, token: str = "", paid: bool = False,
@@ -2213,6 +2274,14 @@ async def support_send(request: Request) -> dict[str, Any]:
     if not content:
         raise HTTPException(status_code=422, detail="消息内容不能为空")
     uid = str(claims.get("sub", ""))
+    # 写侧风控：按用户限流 + 与快讯共用 junk 识别口径（防批量小号灌垃圾私信轰炸管理员）
+    from . import write_guard as _wg
+    if not _wg.check_rate("support", uid or (request.client.host if request.client else "anon")):
+        raise HTTPException(status_code=429, detail="发送太频繁，请稍后再试")
+    _junk = _wg.junk_hit(content)
+    if _junk:
+        raise HTTPException(status_code=422, detail="消息被内容规则拦截")
+    content = content[:1000]
     uname = str(claims.get("username") or claims.get("email") or uid)
     is_first = not support_store.get_thread(uid, limit=1)  # 发这条之前会话是否为空
     msg = support_store.add_message(uid, uname, "user", content)
@@ -2348,6 +2417,10 @@ async def api_save_watchlist(request: Request, payload: WatchlistPayload) -> dic
 async def api_news_react(request: Request) -> dict[str, Any]:
     """对一条资讯表态（看多/看空，再点取消）。登录态。返回该条聚合 {bull,bear,mine}。"""
     claims = require_current_user(request)
+    # 写侧风控：防脚本无限刷表态（sub 为空兜底按客户端 IP 计数）
+    from . import write_guard as _wg
+    if not _wg.check_rate("react", str(claims.get("sub", "")) or (request.client.host if request.client else "anon")):
+        raise HTTPException(status_code=429, detail="操作太频繁，请稍后再试")
     body = await request.json()
     return engagement.react(str(claims.get("sub", "")), str(body.get("message_id", "")), str(body.get("stance", "")))
 
@@ -8533,6 +8606,7 @@ async def public_share_page(snapshot_id: str, request: Request) -> HTMLResponse:
 # 个股页防爬虫打爆：速判卡重建要并发十余个外源，公开页限并发 + 结果落 data_store 复用 1h。
 _SEO_TS_TTL = 3600.0
 _seo_build_semaphore = asyncio.Semaphore(2)
+_SEO_TS_BUILD_TIMEOUT = 45.0  # tearsheet 构建硬超时：上游数据源挂死时不让事件循环被吊住拖垮全站
 _SEO_SYMBOL_RE = re.compile(r"^[A-Za-z0-9.\-]{1,12}$")
 
 
@@ -8701,7 +8775,13 @@ def _seo_related_stocks(symbol: str, market: str) -> list[dict[str, Any]]:
 @app.get("/stocks", response_class=HTMLResponse, include_in_schema=False)
 async def public_stocks_hub() -> HTMLResponse:
     items = []
+    seen_norm: set[str] = set()  # 同一标的前导零变体（0148/00148）只留热度最高的一条
     for h in data_hot_symbols("verdict", days=30, limit=50):
+        sym_u = str(h.get("symbol") or "").upper()
+        nk = (str(h.get("market") or "").upper()) + ":" + (sym_u.lstrip("0") or sym_u)  # 市场维度防跨市场同码误删
+        if nk in seen_norm:
+            continue
+        seen_norm.add(nk)
         v = data_latest("verdict", h["symbol"]) or {}
         items.append({**h, "verdict": v.get("verdict"), "change_percent": v.get("change_percent")})
     return HTMLResponse(seo_pages.render_stocks_hub_html(items))
@@ -8740,7 +8820,10 @@ async def public_stock_page(symbol: str, request: Request, market: str = "") -> 
             ts_dict = data_latest("seo_tear_sheet", sym, max_age_seconds=_SEO_TS_TTL)  # 排队期间可能已被同标的请求建好
             if not ts_dict:
                 try:
-                    ts = await _build_stock_tear_sheet_core(sym, market=market)
+                    ts = await asyncio.wait_for(_build_stock_tear_sheet_core(sym, market=market), timeout=_SEO_TS_BUILD_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logging.getLogger(__name__).warning("[seo] tear_sheet build timeout (%ss) for %s", _SEO_TS_BUILD_TIMEOUT, sym)
+                    return HTMLResponse(seo_pages.render_error_html(), status_code=503)
                 except Exception:
                     return HTMLResponse(seo_pages.render_error_html(), status_code=503)
                 ts_dict = ts.model_dump(mode="json")
@@ -8753,9 +8836,26 @@ async def public_stock_page(symbol: str, request: Request, market: str = "") -> 
 
 
 @app.get("/articles", response_class=HTMLResponse, include_in_schema=False)
-async def public_articles_hub() -> HTMLResponse:
-    items = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=60)]
-    return HTMLResponse(seo_pages.render_articles_hub_html(items))
+async def public_articles_hub(page: int = 1) -> HTMLResponse:
+    # P2 信息架构：60 条单页太长，改为每页 30 条分页
+    per = 30
+    items = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=120)]
+    items = [it for it in items if it.get("id")]
+    total_pages = max(1, (len(items) + per - 1) // per)
+    page = max(1, min(int(page or 1), total_pages))
+    chunk = items[(page - 1) * per: page * per]
+    return HTMLResponse(seo_pages.render_articles_hub_html(chunk, page=page, total_pages=total_pages))
+
+
+@app.get("/about", response_class=HTMLResponse, include_in_schema=False)
+async def public_about_page() -> HTMLResponse:
+    return HTMLResponse(seo_pages.render_about_page_html())
+
+
+@app.get("/partners", response_class=HTMLResponse, include_in_schema=False)
+async def public_partners_page() -> HTMLResponse:
+    return HTMLResponse(seo_pages.render_partners_page_html())
+
 
 
 @app.get("/article/{article_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -10757,14 +10857,26 @@ async def api_agent_feedback(request: Request, _user: Optional[dict] = Depends(o
     from .weixin_channel import _qa_fingerprint as _wx_fp
     fp = _wx_fp(q)
     uname = str((_user or {}).get("username") or "").strip() or "anon"
+    # 写侧风控：限流（登录按用户名、匿名按 IP）+ 与快讯共用 junk 识别口径
+    from . import write_guard as _wg
+    _actor = uname if uname != "anon" else (request.client.host if request.client else "anon")
+    if not _wg.check_rate("feedback", _actor):
+        raise HTTPException(status_code=429, detail="反馈太频繁，请稍后再试")
+    _junk = _wg.junk_hit(f"{q}\n{a}")
+    if _junk:
+        raise HTTPException(status_code=422, detail="反馈被内容规则拦截")
     try:
         _ds.record("qa_feedback", fp or "misc", {
             "q": q, "answer": a, "verdict": verdict, "user": uname,
             "tool_trace": [str(t.get("tool") or "") for t in (body.get("tool_trace") or []) if isinstance(t, dict)][:10],
         })
         if verdict == "down" and fp:
-            # 作废共享缓存：data_store.latest 取最新一条，空答案会被缓存读取处的 strip() 判为未命中
-            _ds.record("wx_qa", fp, {"answer": "", "q": q, "invalidated_by": uname})
+            # 作废共享缓存：data_store.latest 取最新一条，空答案会被缓存读取处的 strip() 判为未命中。
+            # ⚠️缓存投毒防护：作废是高权限副作用——需登录态，且同一指纹 24h 内只许作废一次，
+            # 防恶意批量刷踩把全体用户共享的正确答案从缓存里抹掉。
+            if uname != "anon" and _ds.latest("wx_qa_invalidate", fp, max_age_seconds=86400) is None:
+                _ds.record("wx_qa_invalidate", fp, {"by": uname})
+                _ds.record("wx_qa", fp, {"answer": "", "q": q, "invalidated_by": uname})
         from . import metrics_store as _ms
         _ms.log_activity(actor_kind="user", actor_id=uname, actor_name=uname,
                          action=("qa_feedback_down" if verdict == "down" else "qa_feedback_up"),

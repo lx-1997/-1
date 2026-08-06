@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BulbOutlined,
+  ClockCircleOutlined,
+  FileTextOutlined,
   PaperClipOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -9,6 +11,7 @@ import {
   ShareAltOutlined,
   TeamOutlined,
   UserOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import type { AppState, Product, Stock, ViewType } from '../types';
 import type { MarketSymbolCandidate } from '../services/marketService';
@@ -16,7 +19,7 @@ import { useModuleContext } from '../contexts/ModuleContext';
 import { runGeneralChatStream, runDulusRoundtable, LoopResearchEvent, DulusRoundtableResponse, ChatCitationSource } from '../services/agentService';
 import { uploadDataFile } from '../services/infrastructureService';
 import { getGreeting, shouldRunStockResearch } from '../utils/chatRouting';
-import { archiveConversation } from '../utils/conversationMemory';
+import { archiveConversation, memoryPreview } from '../utils/conversationMemory';
 import { logDecision, autoResolveWithPrices } from '../utils/decisionJournal';
 import { buildHomeSuggestions } from '../utils/homeSuggestions';
 import CitableSources from './common/CitableSources';
@@ -95,6 +98,17 @@ const recommendationLabels: Record<string, string> = {
   strong_sell: '强烈看淡',
 };
 
+function formatHomeQuoteTime(value?: string | null): string {
+  if (!value) {
+    return '等待行情更新';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '等待行情更新';
+  }
+  return `更新于 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 /** 把一次深研 Loop 的结果格式化成一条 assistant 消息。 */
 function formatLoopResult(final: LoopResearchEvent): string {
   const recLabel = recommendationLabels[final.recommendation || ''] || '中性';
@@ -139,7 +153,13 @@ function buildShareTarget(messages: ChatMessage[], index: number): ShareTarget {
   return { title, summary, byline: '由 DeepFocus 投研工作台生成' };
 }
 
-const HomePage: React.FC<HomePageProps> = ({ appState, onStockSelect, onViewChange }) => {
+const HomePage: React.FC<HomePageProps> = ({
+  appState,
+  onStockSelect,
+  onViewChange,
+  onRefreshMarketData,
+  isMarketDataRefreshing,
+}) => {
   const { currentContext } = useModuleContext();
   const [messages, setMessages] = useState<ChatMessage[]>(loadStoredMessages);
   const [input, setInput] = useState('');
@@ -266,6 +286,26 @@ const HomePage: React.FC<HomePageProps> = ({ appState, onStockSelect, onViewChan
     () => buildHomeSuggestions(appState.stocks, Date.now()),
     [appState.stocks, hasConversation]
   );
+
+  // 首页概览：把方案里的「观察池 → 简报 → 风险 → 历史」串成一个可扫描的工作台。
+  const overview = useMemo(() => {
+    const watchlist = appState.stocks.slice(0, 5);
+    const movers = appState.stocks.filter(stock => typeof stock.changePercent === 'number');
+    const averageChange = movers.length > 0
+      ? movers.reduce((sum, stock) => sum + stock.changePercent, 0) / movers.length
+      : 0;
+    const monitoredCount = appState.stocks.filter(stock => stock.isSubscribed !== false).length;
+    const latestQuote = appState.stocks
+      .map(stock => stock.quoteFetchedAt || stock.quoteMarketTime || '')
+      .filter(Boolean)
+      .sort()
+      .slice(-1)[0];
+    const tone = averageChange > 0.35 ? '偏强' : averageChange < -0.35 ? '偏弱' : '震荡';
+    const toneClass = averageChange > 0.35 ? 'positive' : averageChange < -0.35 ? 'negative' : 'neutral';
+    return { watchlist, averageChange, monitoredCount, latestQuote, tone, toneClass };
+  }, [appState.stocks]);
+
+  const recentResearch = useMemo(() => memoryPreview(Date.now(), 3), [hasConversation]);
 
   useEffect(() => {
     // 只在对话态把消息流滚到底部；空状态（首屏）保持顶部，避免遮住问候语和输入框。
@@ -650,6 +690,128 @@ const HomePage: React.FC<HomePageProps> = ({ appState, onStockSelect, onViewChan
                 </button>
               ))}
             </div>
+
+            <section className="dfx-home-overview" aria-label="个人投研概览">
+              <div className="dfx-home-overview-head">
+                <div>
+                  <div className="dfx-home-overview-kicker">PERSONAL RESEARCH DESK</div>
+                  <h2>今天先看什么</h2>
+                </div>
+                <div className="dfx-home-overview-meta">
+                  <span className={`dfx-home-market-tone ${overview.toneClass}`}>
+                    {overview.tone === '偏强' ? '↑' : overview.tone === '偏弱' ? '↓' : '→'} 市场{overview.tone}
+                  </span>
+                  <span>{formatHomeQuoteTime(overview.latestQuote)}</span>
+                  <button
+                    type="button"
+                    className="dfx-home-refresh"
+                    onClick={onRefreshMarketData}
+                    disabled={isMarketDataRefreshing}
+                    title="刷新观察池行情"
+                  >
+                    <ReloadOutlined spin={isMarketDataRefreshing} />
+                    刷新
+                  </button>
+                </div>
+              </div>
+
+              <div className="dfx-home-overview-grid">
+                <div className="dfx-home-watch-card">
+                  <div className="dfx-home-card-head">
+                    <div>
+                      <span className="dfx-home-card-eyebrow">WATCHLIST</span>
+                      <h3>我的观察池</h3>
+                    </div>
+                    <button type="button" className="dfx-home-text-btn" onClick={() => onViewChange('stocks')}>
+                      管理观察池 →
+                    </button>
+                  </div>
+                  {overview.watchlist.length > 0 ? (
+                    <div className="dfx-home-watch-list">
+                      {overview.watchlist.map(stock => {
+                        const changeClass = stock.changePercent > 0 ? 'positive' : stock.changePercent < 0 ? 'negative' : 'neutral';
+                        return (
+                          <button
+                            key={stock.symbol}
+                            type="button"
+                            className="dfx-home-watch-row"
+                            onClick={() => onStockSelect(stock, 'stock-tear-sheet')}
+                          >
+                            <span className="dfx-home-watch-name">
+                              <strong>{stock.symbol}</strong>
+                              <small>{stock.name || stock.sector || '未命名标的'}</small>
+                            </span>
+                            <span className="dfx-home-watch-price">
+                              {stock.currentPrice > 0 ? stock.currentPrice.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '--'}
+                            </span>
+                            <span className={`dfx-home-watch-change ${changeClass}`}>
+                              {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                            </span>
+                            <span className={`dfx-home-watch-dot${stock.isSubscribed === false ? ' paused' : ''}`} title={stock.isSubscribed === false ? '监控已暂停' : '监控中'} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <button type="button" className="dfx-home-empty-watch" onClick={() => onViewChange('stocks')}>
+                      <SearchOutlined /> 添加第一只关注标的
+                    </button>
+                  )}
+                  <div className="dfx-home-watch-footer">
+                    <span><span className="dfx-home-footer-dot" /> {overview.monitoredCount} 个标的持续监控</span>
+                    <span>平均涨跌 {overview.averageChange > 0 ? '+' : ''}{overview.averageChange.toFixed(2)}%</span>
+                  </div>
+                </div>
+
+                <div className="dfx-home-action-card">
+                  <div className="dfx-home-card-head">
+                    <div>
+                      <span className="dfx-home-card-eyebrow">WORKFLOW</span>
+                      <h3>投研工作流</h3>
+                    </div>
+                    <span className="dfx-home-card-hint">一键进入</span>
+                  </div>
+                  <div className="dfx-home-action-list">
+                    <button type="button" className="dfx-home-action-row" onClick={() => overview.watchlist[0] ? onStockSelect(overview.watchlist[0], 'stock-tear-sheet') : onViewChange('stocks')}>
+                      <span className="dfx-home-action-icon teal"><FileTextOutlined /></span>
+                      <span><strong>个股简评</strong><small>查看观察池首个标的的最新判断</small></span>
+                      <span className="dfx-home-action-arrow">→</span>
+                    </button>
+                    <button type="button" className="dfx-home-action-row" onClick={() => onViewChange('briefing')}>
+                      <span className="dfx-home-action-icon amber"><ClockCircleOutlined /></span>
+                      <span><strong>投研晨报</strong><small>汇总关注标的与市场要闻</small></span>
+                      <span className="dfx-home-action-arrow">→</span>
+                    </button>
+                    <button type="button" className="dfx-home-action-row" onClick={() => onViewChange('risk-dashboard')}>
+                      <span className="dfx-home-action-icon red"><WarningOutlined /></span>
+                      <span><strong>盘后风险摘要</strong><small>快速定位需要复核的风险信号</small></span>
+                      <span className="dfx-home-action-arrow">→</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="dfx-home-history-strip">
+                <div className="dfx-home-history-title">
+                  <span className="dfx-home-card-eyebrow">MEMORY</span>
+                  <strong>最近研究</strong>
+                  <span>结论会自动留存，方便回看和核验</span>
+                </div>
+                {recentResearch.length > 0 ? (
+                  <div className="dfx-home-history-list">
+                    {recentResearch.map(item => (
+                      <button key={`${item.title}-${item.when}`} type="button" className="dfx-home-history-item" onClick={() => onViewChange('research-workbench')}>
+                        <span>{item.title}</span><small>{item.when}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <button type="button" className="dfx-home-history-empty" onClick={() => onViewChange('research-workbench')}>
+                    完成一次研究后，会在这里看到历史记录 →
+                  </button>
+                )}
+              </div>
+            </section>
           </div>
         ) : (
           <div className="dfx-home-thread">

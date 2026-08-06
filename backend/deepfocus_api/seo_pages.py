@@ -434,15 +434,28 @@ def render_review_fallback_html(review: dict[str, Any], page_url: str = "") -> s
 
 
 def render_review_hub_html(items: list[dict[str, Any]]) -> str:
-    rows = "".join(
-        f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
-        f'href="{_esc(BASE_URL)}/review/{_esc(it.get("date"))}">{_esc(it.get("date"))} · {_esc(it.get("session_label") or "收盘复盘")}</a></div>'
-        f'<ul><li>{_esc((it.get("one_liner") or "")[:120])}</li></ul></div>'
-        for it in items if it.get("date")
-    ) or "<p>暂无复盘，交易日 15:35 后自动生成。</p>"
+    # 按月分组：90 条一次铺开难读，按月份折叠成段，最新的月份在最前
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for it in items:
+        d = str(it.get("date") or "")[:7]
+        if d:
+            groups.setdefault(d, []).append(it)
+    if groups:
+        bits: list[str] = []
+        for month in sorted(groups, reverse=True):
+            rows = "".join(
+                f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
+                f'href="{_esc(BASE_URL)}/review/{_esc(it.get("date"))}">{_esc(it.get("date"))} · {_esc(it.get("session_label") or "收盘复盘")}</a></div>'
+                f'<ul><li>{_esc((it.get("one_liner") or "")[:120])}</li></ul></div>'
+                for it in groups[month]
+            )
+            bits.append(f'<h2>{_esc(month)} · {len(groups[month])} 篇</h2>' + rows)
+        rows_html = "".join(bits)
+    else:
+        rows_html = "<p>暂无复盘，交易日 15:35 后自动生成。</p>"
     body = (
         "<h1>A股每日复盘归档</h1>"
-        '<div class="meta">每个交易日 11:40 / 15:35 自动生成：大盘 × 板块 × 资金 × 我们提前发现的资讯</div>' + rows
+        '<div class="meta">每个交易日 11:40 / 15:35 自动生成：大盘 × 板块 × 资金 × 我们提前发现的资讯</div>' + rows_html
     )
     trail = [("首页", f"{BASE_URL}/"), ("每日复盘", f"{BASE_URL}/review")]
     return _page(
@@ -616,11 +629,13 @@ def render_stocks_hub_html(items: list[dict[str, Any]]) -> str:
         sym = str(it.get("symbol") or "").upper()
         if not sym:
             continue
-        label = f"{it.get('name') or sym}"
+        _nm = str(it.get("name") or "").strip()
+        # 名称缺失或等于代码时只显代码，避免「0148（0148）」式冗余
+        label_html = _esc(_nm) + f"（{_esc(sym)}）" if _nm and _nm != sym else _esc(sym)
         extra = " · ".join(x for x in (str(it.get("verdict") or ""), _fmt_pct(it.get("change_percent")) if it.get("change_percent") is not None else "") if x)
         rows.append(
             f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" href="{_esc(BASE_URL)}/stock/{_esc(sym)}">'
-            f"{_esc(label)}（{_esc(sym)}）</a></div><ul><li>{_esc(extra or '查看多维证据速判')}</li></ul></div>"
+            f"{label_html}</a></div><ul><li>{_esc(extra or '查看多维证据速判')}</li></ul></div>"
         )
     body = (
         "<h1>热门个股 · 多维证据速判</h1>"
@@ -646,10 +661,12 @@ def render_stocks_all_html(entries: list[tuple[str, str]], page: int, total_page
     entries 为本页的 (名称, 代码) 切片。落地页本身薄（只是链接索引），不进 sitemap、不发主实体结构化数据，
     但 index,follow 让爬虫顺着链接抓个股页——个股页自带 C7 质量门控（薄的自己 noindex）。
     """
-    links = "".join(
-        f'<a href="{_esc(BASE_URL)}/stock/{_esc(code)}">{_esc(name)}（{_esc(code)}）</a>'
-        for name, code in entries
-    ) or "<p>名录加载中，稍后再试。</p>"
+    link_bits = []
+    for name, code in entries:
+        nm = str(name or "").strip()
+        label = (_esc(nm) + f"（{_esc(code)}）") if nm and nm != code else _esc(code)
+        link_bits.append(f'<a href="{_esc(BASE_URL)}/stock/{_esc(code)}">{label}</a>')
+    links = "".join(link_bits) or "<p>名录加载中，稍后再试。</p>"
     pager = ""
     if total_pages > 1:
         nums = " ".join(
@@ -824,7 +841,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     )
 
 
-def render_articles_hub_html(items: list[dict[str, Any]]) -> str:
+def render_articles_hub_html(items: list[dict[str, Any]], page: int = 1, total_pages: int = 1) -> str:
     rows = "".join(
         f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
         f'href="{_esc(BASE_URL)}/article/{_esc(it.get("id"))}">{_esc((it.get("title") or "")[:48])}</a></div>'
@@ -835,6 +852,14 @@ def render_articles_hub_html(items: list[dict[str, Any]]) -> str:
         "<h1>财经资讯文章</h1>"
         '<div class="meta">DeepFocus 聚合的财经资讯，登录后阅读全文并解锁行情 / 自选 / AI 解读</div>' + rows
     )
+    if total_pages > 1:
+        nums = " ".join(
+            (f'<strong>{p}</strong>' if p == page
+             else f'<a href="{_esc(BASE_URL)}/articles?page={p}">{p}</a>')
+            for p in range(1, total_pages + 1)
+        )
+        body += f'<h2>更多页</h2><div class="chips">{nums}</div>'
+
     trail = [("首页", f"{BASE_URL}/"), ("财经资讯", f"{BASE_URL}/articles")]
     return _page(
         title="财经资讯文章",
@@ -1621,4 +1646,78 @@ def render_error_html(message: str = "页面暂时无法生成，请稍后再试
         '<title>暂时无法生成 · DeepFocus</title><meta name="robots" content="noindex"></head>'
         '<body style="font-family:sans-serif;max-width:520px;margin:60px auto;padding:0 20px;color:#333">'
         f"<h1>稍后再试</h1><p>{html.escape(message)}</p></body></html>"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# P2 信息架构：站点品牌页 /about 与合作方页 /partners（此前无公开介绍页，信任缺失）。
+# --------------------------------------------------------------------------- #
+def render_about_page_html() -> str:
+    body = (
+        "<h1>DeepFocus · 深度焦点</h1>"
+        '<div class="meta">现代化个股投研智库 —— 从信息到决策，钻井式深度研究</div>'
+        "<h2>我们做什么</h2>"
+        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+        "<li><strong>A 股每日复盘</strong>：每个交易日 11:40 / 15:35 自动生成大盘 × 板块 × 资金复盘，并标注我们提前发现的资讯如何被当日行情验证</li>"
+        "<li><strong>个股多维证据速判</strong>：动量 / 催化 / 估值 / 资金面等多维证据链，给出信号方向、证据与置信度</li>"
+        "<li><strong>AI 策略实验室</strong>：五只 AI 策略模拟盘的公开业绩，与沪深 300 逐日对比</li>"
+        "<li><strong>AI 蒸馏资讯</strong>：从海量快讯 / 研报中蒸馏出与持仓相关的决策内参</li>"
+        "</ul></div>"
+        "<h2>方法论</h2>"
+        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+        "<li><strong>钻井模式</strong>：不追求覆盖广度，对单一个股追求极致深度</li>"
+        "<li><strong>证据先行</strong>：每个结论都附证据链与置信度，速判结论由确定性规则引擎生成，未经 AI 改写</li>"
+        "<li><strong>多源交叉验证</strong>：行情、公告、研报、资金面等多源数据相互印证</li>"
+        "</ul></div>"
+        "<h2>从这里开始</h2>"
+        '<div class="chips">'
+        f'<a href="{_esc(BASE_URL)}/review">每日复盘</a>'
+        f'<a href="{_esc(BASE_URL)}/stocks">个股研究</a>'
+        f'<a href="{_esc(BASE_URL)}/articles">财经资讯</a>'
+        f'<a href="{_esc(BASE_URL)}/ai-fund">AI 策略业绩</a>'
+        f'<a href="{_esc(BASE_URL)}/partners">合作方入口</a>'
+        "</div>"
+        '<p style="color:#8a939e;font-size:13px">⚠ 本站内容仅供研究与教育用途，不构成任何投资建议。市场有风险，投资需谨慎。</p>'
+    )
+    trail = [("首页", f"{BASE_URL}/"), ("关于我们", f"{BASE_URL}/about")]
+    return _page(
+        title="关于 DeepFocus · 深度焦点",
+        description="DeepFocus（深度焦点）是现代化个股投研智库：A 股每日复盘、个股多维证据速判、AI 策略模拟盘业绩与 AI 蒸馏资讯，钻井式深度研究。",
+        body=body,
+        canonical=f"{BASE_URL}/about",
+        graph=_graph(_breadcrumb_node(trail)),
+    )
+
+
+def render_partners_page_html() -> str:
+    body = (
+        "<h1>合作与 API</h1>"
+        '<div class="meta">面向机构、数据伙伴与产品专家：接口能力、数据覆盖与合作通道</div>'
+        "<h2>API 能力</h2>"
+        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+        "<li>个股证据速判卡（verdict）：确定性引擎输出的信号 / 证据 / 置信度</li>"
+        "<li>个股 tearsheet：多维证据的结构化快照</li>"
+        "<li>每日复盘与财经资讯的结构化数据</li>"
+        "</ul></div>"
+        f'<div class="chips"><a href="{_esc(BASE_URL)}/api/v1/docs">查看完整 API 文档 →</a></div>'
+        "<h2>数据覆盖</h2>"
+        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+        "<li>A 股 / 港股 / 美股标的的多维证据与热度数据</li>"
+        "<li>交易日自动生成的复盘与解读内容</li>"
+        "</ul></div>"
+        "<h2>合作通道</h2>"
+        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+        "<li>API 接入：先阅读上方 API 文档，接口规格与鉴权方式以文档为准</li>"
+        "<li>产品体验：注册站内账号即可体验完整功能（含 AI 解读与持仓决策助手）</li>"
+        "<li>内容与方法论交流：站内产品说明书提供完整功能说明</li>"
+        "</ul></div>"
+        '<p style="color:#8a939e;font-size:13px">⚠ 平台数据与结论仅供研究参考，不构成任何投资建议。</p>'
+    )
+    trail = [("首页", f"{BASE_URL}/"), ("合作与API", f"{BASE_URL}/partners")]
+    return _page(
+        title="合作与 API · DeepFocus",
+        description="DeepFocus 面向机构与合作伙伴：个股速判 / tearsheet / 复盘数据的 API 能力、数据覆盖与合作通道。",
+        body=body,
+        canonical=f"{BASE_URL}/partners",
+        graph=_graph(_breadcrumb_node(trail)),
     )

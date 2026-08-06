@@ -1155,15 +1155,19 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [resSearchKws, loadReports, logAct]);
 
   // ---- 账号登录态（终端独占页：AI 解读 / 查看原文 = 登录网关，行情与资讯免费）----
-  const [authUser, setAuthUser] = useState<string | null>(null);
-  const authUserRef = useRef<string | null>(null);
+  // 刷新时从本地会话快照同步恢复登录态（有 token 才信缓存）：首帧直接渲染已登录工作台，
+  // /auth/me 异步校准；token 失效（拦截器清 token）回落匿名。无缓存时首帧先渲染匿名 hero 再跳变——
+  // 用户感知为「刷新刚开始弹到另一个界面」。
+  const [cachedSession] = useState(() => (authService.getStoredToken() ? authService.loadSessionCache() : null));
+  const [authUser, setAuthUser] = useState<string | null>(cachedSession?.u ?? null);
+  const authUserRef = useRef<string | null>(cachedSession?.u ?? null);
   const refreshMembershipRef = useRef<(() => void) | null>(null);  // 解决定义顺序：签到发奖后刷新会员态
   // 已登录用户的专属邀请码——用于让所有分享卡的二维码带 ?ref=，扫码注册即归到分享者名下（拉新闭环）。
   const inviteCodeRef = useRef<string>('');
-  const [membership, setMembership] = useState<authService.Membership | null>(null);  // 会员状态：体验期/尊享会员
-  const [isAdmin, setIsAdmin] = useState(false);  // 后端角色=管理员（决定是否显示「管理员」标签，不再写死「站长」）
-  const [trialClaimable, setTrialClaimable] = useState(false);  // 可领「登录送 3 天体验会员」
-  const [joinedAt, setJoinedAt] = useState('');  // 注册时间(account.created_at)，判「新人前三天」福利
+  const [membership, setMembership] = useState<authService.Membership | null>(cachedSession?.m ?? null);  // 会员状态：体验期/尊享会员
+  const [isAdmin, setIsAdmin] = useState(cachedSession?.r === 'admin');  // 后端角色=管理员（决定是否显示「管理员」标签，不再写死「站长」）
+  const [trialClaimable, setTrialClaimable] = useState(!!cachedSession?.t);  // 可领「登录送 3 天体验会员」
+  const [joinedAt, setJoinedAt] = useState(cachedSession?.c ?? '');  // 注册时间(account.created_at)，判「新人前三天」福利
   const [expiryDismissed, setExpiryDismissed] = useState(false);  // 本次会话关闭到期续费条
   const [trialClaiming, setTrialClaiming] = useState(false);    // 领取请求进行中
   const [acctOpen, setAcctOpen] = useState(false);  // 头像下拉（账号 + 会员 + 邀请 + 登出）
@@ -1346,7 +1350,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       .then(r => { if (r.exists) setReviewToday(r.review); }).catch(() => {});
   }, []);
   const refreshMembership = useCallback(() => {
-    authService.fetchAccount().then(u => { if (u) { setMembership(u.membership ?? null); setIsAdmin(u.role === 'admin'); setTrialClaimable(!!u.trial_claimable); setJoinedAt(u.created_at || ''); } }).catch(() => {});
+    authService.fetchAccount().then(u => { if (u) { setMembership(u.membership ?? null); setIsAdmin(u.role === 'admin'); setTrialClaimable(!!u.trial_claimable); setJoinedAt(u.created_at || ''); authService.saveSessionCache({ u: u.username, m: u.membership ?? null, r: u.role, t: !!u.trial_claimable, c: u.created_at || '' }); } }).catch(() => {});
     authService.fetchSupportUnread().then(n => applySupportUnread(n, false)).catch(() => {});  // 进页面只对齐红点、不弹
     if (authService.getStoredToken()) {  // 邀请奖励可兑换卡数（醒目角标）
       authService.fetchReferral().then(d => setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0))).catch(() => {});
@@ -1521,6 +1525,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const canViewResearchOriginal = IFIND_USERS.has((authUser || '').toLowerCase());
   const [authOpen, setAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState('AI 解读');
+  // /login 深链：URL 直达登录意图，自动弹登录弹窗（默认登录 tab）并清理 URL，不再让用户面对终端再找按钮
+  const [loginDeepLink, setLoginDeepLink] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.location.pathname.replace(/\/+$/, '') === '/login') {
+        setLoginDeepLink(true);
+        setAuthReason('登录');
+        setAuthOpen(true);
+        window.history.replaceState({}, '', '/');
+      }
+    } catch { /* */ }
+  }, []);
   const pendingActionRef = useRef<null | (() => void)>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteData, setInviteData] = useState<authService.InviteOverview | null>(null);
@@ -1600,9 +1616,21 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!authService.getStoredToken()) return;
     let cancelled = false;
     authService.fetchAccount().then(u => {
-      if (cancelled || !u) return;
+      if (cancelled) return;
+      if (!u) {
+        // /auth/me 失败：token 已被拦截器清掉(401 过期)→ 缓存登录态作废旧、回落匿名；
+        // token 还在(网络瞬断等)→ 保持缓存登录态，下次再校准，避免误闪匿名屏。
+        if (!authService.getStoredToken()) {
+          setAuthUser(null);
+          authUserRef.current = null;
+          setMembership(null); setIsAdmin(false); setTrialClaimable(false); setJoinedAt('');
+          authService.clearSessionCache();
+        }
+        return;
+      }
       setAuthUser(u.username);
       setMembership(u.membership ?? null); setIsAdmin(u.role === 'admin'); setTrialClaimable(!!u.trial_claimable); setJoinedAt(u.created_at || '');
+      authService.saveSessionCache({ u: u.username, m: u.membership ?? null, r: u.role, t: !!u.trial_claimable, c: u.created_at || '' });
       authService.fetchSupportUnread().then(n => applySupportUnread(n, false)).catch(() => {});
       authService.fetchReferral().then(d => setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0))).catch(() => {});
       authService.fetchInvite().then(o => { inviteCodeRef.current = o.code || ''; }).catch(() => {});
@@ -3432,6 +3460,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <span className="bbt-cmd-amber">金融终端</span>
           <span className="bbt-cmd-tagline" title="实时快讯、自选盯盘与 AI 研判">实时快讯 · 自选盯盘 · AI 研判</span>
         </span>
+        <nav className="bbt-cmd-nav" aria-label="主导航">
+          <a href="/review" title="每个交易日自动生成的大盘复盘">每日复盘</a>
+          <a href="/stocks" title="多维证据速判热门个股">个股研究</a>
+          <a href="/articles" title="财经资讯文章">财经资讯</a>
+          <a href="/ai-fund" title="AI 策略模拟盘业绩">策略业绩</a>
+        </nav>
         <span className="bbt-cmd-input" onClick={() => { setPaletteOpen(true); setPq(''); }} title="搜索股票、行业或资讯（点击，或按 /）"><span className="bbt-cmd-mag" aria-hidden="true">⌕</span>{active ? <b>{active} {activeName}</b> : <span className="bbt-cmd-ph">搜索股票、行业或资讯</span>}<span className="bbt-cmd-kbd">/</span></span>
         <span className="bbt-cmd-right">
           <button className="bbt-review-entry bbt-aiqa-entry bbt-primary-action"
@@ -3545,6 +3579,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             : <button className="bbt-acct-in" title="登录解锁 AI 解读" onClick={() => { setAuthReason('AI 解读'); setAuthOpen(true); }}>登录</button>}
         </span>
       </div>
+
+      {/* 匿名访客 hero：先回答「这是什么、值不值得看」，再给三条最直接的入口（登录后隐藏，工作台用户不需要） */}
+      {!authUser && (
+        <div className="bbt-hero">
+          <div className="bbt-hero-inner">
+            <h1 className="bbt-hero-title">DeepFocus · AI 蒸馏的个股投研智库</h1>
+            <p className="bbt-hero-sub">每日 A 股复盘 · 个股多维证据速判 · AI 策略实战业绩，钻井式深度研究，公开内容免登录可看</p>
+            <div className="bbt-hero-ctas">
+              <button type="button" className="bbt-hero-cta bbt-hero-cta-primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 免费查一只股票</button>
+              <a className="bbt-hero-cta" href="/ai-fund">📈 看 AI 策略业绩</a>
+              <a className="bbt-hero-cta" href="/review">📊 今日 A 股复盘</a>
+            </div>
+            <div className="bbt-hero-alt">机构 / 合作方？<a href="/partners">API 能力与合作通道 →</a> · <a href="/about">了解 DeepFocus</a></div>
+          </div>
+        </div>
+      )}
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}
       {primaryBanner === 'admin-unread' && (
@@ -3709,7 +3759,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               </React.Fragment>
             ))}
           </div>
-          <div className="bbt-pf">东财/新浪/Google · A股港股近实时·美股约延迟 · 开盘5s刷新 · 点行选标的 · 表头排序 · 点 ✕ 删除(需确认)</div>
+          <div className="bbt-pf" title="东财/新浪/Google · A股港股近实时 · 美股约延迟 · 开盘5s刷新 · 点行选标的 · 表头排序 · 点 ✕ 删除(需确认)">东财/新浪/Google 行情 · 点行选标的 · 表头排序 · ✕ 删除需确认</div>
         </section>
 
         {/* 可拖拽分隔条：拖动调整行情监视列宽 */}
@@ -4300,10 +4350,44 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
 
+      {/* 站点页脚（仅匿名访客）：公开内容地图 + 合作方入口 + 免责声明；登录后不占工作台空间 */}
+      {!authUser && (
+      <footer className="bbt-footer">
+        <div className="bbt-footer-cols">
+          <div className="bbt-footer-col">
+            <div className="bbt-footer-brand">DeepFocus · 深度焦点</div>
+            <div className="bbt-footer-slogan">现代化个股投研智库 · AI 蒸馏 · 多维证据</div>
+            <a href="/about">关于我们</a>
+          </div>
+          <div className="bbt-footer-col">
+            <div className="bbt-footer-h">市场洞察</div>
+            <a href="/review">A 股每日复盘</a>
+            <a href="/stocks">个股多维证据速判</a>
+            <a href="/articles">财经资讯</a>
+          </div>
+          <div className="bbt-footer-col">
+            <div className="bbt-footer-h">产品与业绩</div>
+            <a href="/ai-fund">AI 策略实验室（模拟盘业绩）</a>
+            <a href="/ontology">持仓决策助手</a>
+            <button type="button" className="bbt-footer-link" onClick={() => setShowHelp(true)}>产品说明书</button>
+          </div>
+          <div className="bbt-footer-col">
+            <div className="bbt-footer-h">合作与帮助</div>
+            <a href="/partners">合作与 API 总览</a>
+            <a href="/api/v1/docs" target="_blank" rel="noopener noreferrer">合作方 API 文档</a>
+            <button type="button" className="bbt-footer-link" onClick={() => setGroupOpen(true)}>用户交流群</button>
+            <button type="button" className="bbt-footer-link" onClick={() => { setShowHelp(false); setShowOnb(true); }}>新手引导</button>
+          </div>
+        </div>
+        <div className="bbt-footer-legal">⚠ 本站内容仅供研究与教育用途，不构成任何投资建议 · 市场数据可能存在延迟 · 投资有风险，决策需谨慎</div>
+      </footer>
+      )}
+
       <TerminalAuthModal
         open={authOpen}
         reason={authReason}
-        onClose={() => setAuthOpen(false)}
+        initialMode={loginDeepLink ? 'login' : undefined}
+        onClose={() => { setAuthOpen(false); setLoginDeepLink(false); }}
         onAuthed={onAuthed}
       />
 

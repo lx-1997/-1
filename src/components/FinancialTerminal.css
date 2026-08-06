@@ -84,11 +84,11 @@
 .bbt-cmd-amber { color: var(--amber); letter-spacing: 1px; white-space: nowrap; flex: 0 0 auto; }
 /* 价值主张常驻品牌区（新用户 10 秒心智）；窄屏空间寸土寸金 → 隐藏 */
 .bbt-cmd-tagline { color: var(--mute2, #6b7782); font-size: 11px; font-weight: 400; white-space: nowrap; flex: 0 0 auto; letter-spacing: .5px; }
-@media (max-width: 1100px) { .bbt-cmd-tagline { display: none; } }
+@media (max-width: 1360px) { .bbt-cmd-tagline { display: none; } }
 .bbt-cmd-input { color: var(--blue); font-weight: 400; }
 .bbt-caret { animation: bbt-blink 1s step-end infinite; color: var(--amber); }
 @keyframes bbt-blink { 50% { opacity: 0; } }
-.bbt-cmd-right { margin-left: auto; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; gap: 12px; font-weight: 700; }
+.bbt-cmd-right { margin-left: auto; display: flex; align-items: center; flex-wrap: nowrap; justify-content: flex-end; row-gap: 6px; gap: 12px; font-weight: 700; }
 .bbt-mkt.on { color: var(--up); }
 .bbt-mkt.off { color: var(--mute); }
 .bbt-clock { color: var(--amber-dim); font-weight: 400; }
@@ -424,7 +424,7 @@
   border-bottom: 1px solid var(--line);
   padding: 4px 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.8px;
 }
-.bbt-pf { flex: 0 0 auto; padding: 3px 10px; font-size: 12px; color: var(--mute); border-top: 1px solid var(--line); }
+.bbt-pf { flex: 0 0 auto; padding: 3px 10px; font-size: 12px; color: var(--mute); border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 滚动条 */
 .bbt-qbody, .bbt-news, .bbt-res { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
@@ -849,7 +849,7 @@
 /* 顶部触发器：做成明显可点的搜索框 */
 .bbt-cmd-input {
   cursor: pointer; display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; white-space: nowrap;
-  flex: 1 1 auto; min-width: 200px; max-width: 640px; height: 30px; padding: 0 10px; border-radius: 6px;
+  flex: 1 1 150px; min-width: 140px; max-width: 640px; height: 30px; padding: 0 10px; border-radius: 6px;
   background: rgba(106,176,255,.08); border: 1px solid rgba(106,176,255,.28);
   color: var(--blue); font-weight: 400; transition: background .15s, border-color .15s;
 }
@@ -2487,11 +2487,10 @@
    顶栏只保留高频主任务；次级工具统一进入「更多」，内容重新成为视觉主角。
    ============================================================ */
 .bbt-cmd {
-  display: grid;
-  grid-template-columns: max-content minmax(280px, 1fr) max-content;
+  display: flex;
   align-items: center;
-  gap: 12px 20px;
-  flex-wrap: nowrap;
+  gap: 12px 14px;
+  flex-wrap: wrap;
   padding: 10px 14px;
   background: #0c141f;
   border-bottom-color: #223144;
@@ -2517,9 +2516,6 @@
   letter-spacing: .1px;
 }
 .bbt-cmd-input {
-  width: 100%;
-  max-width: none;
-  min-width: 0;
   height: 36px;
   padding: 0 12px;
   border-radius: 8px;
@@ -2544,8 +2540,6 @@
   border-radius: 5px;
 }
 .bbt-cmd-right {
-  margin-left: 0;
-  flex-wrap: nowrap;
   gap: 8px;
 }
 .bbt-cmd-right .bbt-primary-action {
@@ -2786,4 +2780,73 @@
   .bbt-personal-reset { margin-left: 0; }
   .bbt-personal-why { order: 5; }
   .bbt-nrow--personal .bbt-ntext { -webkit-line-clamp: 3; max-height: 4.35em; }
+}
+
+/* ===== 主导航 / Hero / 页脚（信息架构优化：公开内容、业绩与合作入口可见化）===== */
+.bbt-cmd-nav { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+/* 中屏(821-1279)单行容纳不下→主导航降级为独立第二行（有意的两行设计），
+   避免右侧动作组被挤换行成左对齐锯齿（用户反馈「顶栏乱」的根因） */
+@media (min-width: 821px) and (max-width: 1279px) {
+  .bbt-cmd-nav { order: 9; flex: 1 1 100%; }
+}
+.bbt-cmd-nav a {
+  color: var(--text-soft); text-decoration: none; font-size: 12px; font-weight: 600;
+  padding: 5px 8px; border-radius: 6px; white-space: nowrap;
+  transition: color .15s ease, background .15s ease;
+}
+.bbt-cmd-nav a:hover { color: var(--amber); background: rgba(255,176,0,.09); }
+
+/* 匿名访客 hero：回答"这是什么、值不值得看"+三条直达入口 */
+.bbt-hero {
+  flex: 0 0 auto; border-bottom: 1px solid var(--line);
+  padding: 24px 18px 20px;
+  background: linear-gradient(180deg, rgba(255,176,0,.06), rgba(255,176,0,0) 75%);
+}
+.bbt-hero-inner { max-width: 960px; margin: 0 auto; }
+.bbt-hero-title { margin: 0 0 6px; font-size: 21px; font-weight: 800; color: var(--text-strong); letter-spacing: .5px; }
+.bbt-hero-sub { margin: 0 0 14px; font-size: 13px; font-weight: 400; color: var(--text-soft); line-height: 1.6; }
+.bbt-hero-ctas { display: flex; flex-wrap: wrap; gap: 10px; }
+.bbt-hero-alt { margin-top: 12px; font-size: 12px; color: var(--text-faint, #7c8794); }
+.bbt-hero-alt a { color: #9fd9c3; text-decoration: none; }
+.bbt-hero-alt a:hover { text-decoration: underline; }
+.bbt-hero-cta {
+  display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px;
+  border-radius: 8px; border: 1px solid var(--line-3); background: transparent;
+  color: var(--text-body); font-size: 13px; font-weight: 600; font-family: inherit;
+  text-decoration: none; cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.bbt-hero-cta:hover { border-color: var(--amber); color: var(--amber); }
+.bbt-hero-cta-primary { background: var(--amber); border-color: var(--amber); color: #14100a; }
+.bbt-hero-cta-primary:hover { background: #ffc233; border-color: #ffc233; color: #14100a; }
+
+/* 站点页脚（仅匿名访客展示） */
+.bbt-footer {
+  flex: 0 0 auto; overflow-y: auto;
+  border-top: 1px solid var(--line); padding: 20px 18px 12px;
+  background: var(--panel);
+}
+.bbt-footer-cols { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 18px; }
+.bbt-footer-brand { color: var(--amber); font-weight: 800; font-size: 14px; letter-spacing: .5px; margin-bottom: 6px; }
+.bbt-footer-slogan { color: var(--mute2); font-size: 12px; font-weight: 400; }
+.bbt-footer-h { color: var(--text-soft); font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+.bbt-footer-col a, .bbt-footer-link {
+  display: block; color: var(--mute2); font-size: 12px; font-weight: 400;
+  text-decoration: none; background: none; border: none; padding: 0;
+  margin: 0 0 6px; cursor: pointer; text-align: left; font-family: inherit;
+}
+.bbt-footer-col a:hover, .bbt-footer-link:hover { color: var(--amber); }
+.bbt-footer-legal {
+  max-width: 1080px; margin: 14px auto 0; padding-top: 10px;
+  border-top: 1px solid var(--line); color: var(--mute2); font-size: 11px; font-weight: 400; line-height: 1.6;
+}
+
+@media (max-width: 1220px) {
+  .bbt-cmd-nav a { padding: 5px 7px; font-size: 12px; }
+}
+@media (max-width: 820px) {
+  .bbt-cmd-nav { order: 9; flex: 1 1 100%; overflow-x: auto; grid-column: 1 / -1; }
+  .bbt-hero { padding: 16px 12px 14px; }
+  .bbt-hero-title { font-size: 17px; }
+  .bbt-footer-cols { grid-template-columns: 1fr 1fr; }
 }

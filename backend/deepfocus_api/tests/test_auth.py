@@ -426,6 +426,48 @@ def test_users_endpoint_requires_admin(client):
     assert client.get("/api/auth/users", headers=ana_h).status_code == 403
 
 
+def test_ops_dashboard_can_reset_a_specific_account_password_and_revoke_sessions(client, monkeypatch):
+    """看板改密仅接受管理令牌，且成功后旧会话立即失效。"""
+    monkeypatch.setenv("DEEPFOCUS_METRICS_TOKEN", "ops-test-token")
+    registered = client.post(
+        "/api/auth/register",
+        json={"email": "reset@firm.com", "username": "reset_user", "password": "password1"},
+    ).json()
+    old_token = registered["access_token"]
+
+    denied = client.post(
+        "/api/admin/reset-password",
+        json={"identifier": "reset_user", "new_password": "new-password1"},
+    )
+    assert denied.status_code == 403
+
+    changed = client.post(
+        "/api/admin/reset-password",
+        json={
+            "identifier": "reset@firm.com",
+            "new_password": "new-password1",
+            "token": "ops-test-token",
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["username"] == "reset_user"
+
+    # 改密后老 JWT 的 sid 与库内新会话不匹配，不能再用。
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {old_token}"}).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"username": "reset_user", "password": "password1"}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"username": "reset_user", "password": "new-password1"}
+    ).status_code == 200
+
+    too_short = client.post(
+        "/api/admin/reset-password",
+        json={"identifier": "reset_user", "new_password": "short", "token": "ops-test-token"},
+    )
+    assert too_short.status_code == 422
+
+
 # --------------------------------------------------------------------------- #
 # 中间件强制（DEEPFOCUS_AUTH_REQUIRED=true）
 # --------------------------------------------------------------------------- #

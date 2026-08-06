@@ -65,6 +65,37 @@ export function clearToken(): void {
   }
 }
 
+// ---- 会话快照缓存：刷新首帧同步恢复登录态，避免「先闪匿名首页、/auth/me 回来再跳工作台」的界面跳变 ----
+const SESSION_CACHE_KEY = 'df_session_cache_v1';
+
+export interface SessionCache {
+  u: string;                    // username
+  m: Membership | null;         // 会员态
+  r: AuthRole;                  // 角色
+  t: boolean;                   // trial_claimable
+  c: string;                    // created_at
+}
+
+export function saveSessionCache(c: SessionCache): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(c)); } catch { /* 隐私模式忽略 */ }
+}
+
+export function loadSessionCache(): SessionCache | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw) as SessionCache;
+    return c && typeof c.u === 'string' && c.u ? c : null;
+  } catch { return null; }
+}
+
+export function clearSessionCache(): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.removeItem(SESSION_CACHE_KEY); } catch { /* */ }
+}
+
 /** 把后端认证账号映射到前端 User 视图模型（社区字段给安全默认值）。 */
 export function mapAuthUser(authUser: AuthUser): User {
   return {
@@ -85,6 +116,7 @@ export function mapAuthUser(authUser: AuthUser): User {
 
 function toSession(resp: TokenResponse): AuthSession {
   storeToken(resp.access_token);
+  saveSessionCache({ u: resp.user.username, m: resp.user.membership ?? null, r: resp.user.role, t: !!resp.user.trial_claimable, c: resp.user.created_at || '' });
   return { token: resp.access_token, user: mapAuthUser(resp.user), authUser: resp.user };
 }
 
@@ -326,4 +358,5 @@ export async function fetchSupportUnread(): Promise<number> {
 
 export function logout(): void {
   clearToken();
+  clearSessionCache();
 }

@@ -25,9 +25,11 @@ function loadTurnstile(): Promise<boolean> {
 interface TerminalAuthModalProps {
   open: boolean;
   onClose: () => void;
-  onAuthed: (username: string, isNew?: boolean) => void;  // isNew=本次为注册（父组件做 T+0 激活）
+  onAuthed: (username: string, isNew?: boolean) => void;  // isNew=本次为注册（ 父组件做 T+0 激活）
   /** 触发登录的上下文文案，例如「AI 解读」需要登录。 */
   reason?: string;
+  /** 强制初始模式（/login 深链用）：不给新访客默认注册的转换机会，直接给登录表单。 */
+  initialMode?: 'login' | 'register';
 }
 
 /**
@@ -36,7 +38,7 @@ interface TerminalAuthModalProps {
  * 复用现成的 authService（JWT 落库），账号即主平台账号；
  * 邮箱选填——仅用户名 + 密码即可注册。登录态由父组件持有，成功后回调 onAuthed。
  */
-const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, onAuthed, reason }) => {
+const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, onAuthed, reason, initialMode }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -58,13 +60,15 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
       try {
         const r = localStorage.getItem('df_ref');
         if (r && !invite) { setInvite(r); setMode('register'); }
-        // 匿名(本机从未登录过)默认开「注册」态——撞到收藏/自选/盯盘等钩子的多是新访客，直接给注册表单提转化；
+        // 深链 /login 等明确登录意图：强制登录表单，不切注册
+        else if (initialMode === 'login') { setMode('login'); }
+        // 匿名(本机从未登录过)默认开「注册」态——撞到收藏/自选/盯盘等钩子的多是 新访客，直接给注册表单提转化；
         // 老用户(本机有登录记录 df_has_account)仍默认登录，免去多点一下的摩擦。
         else if (!localStorage.getItem('df_has_account')) { setMode('register'); }
         else { setMode('login'); }
       } catch { /* */ }
     } else { setUsername(''); setPassword(''); setPhone(''); setEmail(''); setInvite(''); }
-  }, [open]);
+  }, [open, initialMode]);
 
   // Esc 关闭
   useEffect(() => {

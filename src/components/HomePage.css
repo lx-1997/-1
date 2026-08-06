@@ -342,6 +342,192 @@
   color: var(--text);
 }
 
+/* ===== 个人投研概览：观察池 / 工作流 / 研究记忆 ===== */
+.dfx-home-overview {
+  width: min(960px, calc(100vw - 32px));
+  margin: 42px auto 0;
+  padding: 20px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: linear-gradient(145deg, var(--surface), var(--surface-muted));
+  box-shadow: var(--shadow-soft);
+}
+
+.dfx-home-overview-head,
+.dfx-home-card-head,
+.dfx-home-watch-footer,
+.dfx-home-history-strip,
+.dfx-home-history-title,
+.dfx-home-overview-meta {
+  display: flex;
+  align-items: center;
+}
+
+.dfx-home-overview-head {
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.dfx-home-overview-kicker,
+.dfx-home-card-eyebrow {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.dfx-home-overview-head h2,
+.dfx-home-card-head h3 {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 650;
+  margin: 3px 0 0;
+}
+
+.dfx-home-overview-meta {
+  gap: 10px;
+  color: var(--text-soft);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dfx-home-market-tone {
+  font-weight: 700;
+}
+
+.dfx-home-market-tone.positive,
+.dfx-home-watch-change.positive { color: var(--positive); }
+.dfx-home-market-tone.negative,
+.dfx-home-watch-change.negative { color: var(--negative); }
+.dfx-home-market-tone.neutral,
+.dfx-home-watch-change.neutral { color: var(--text-muted); }
+
+.dfx-home-refresh,
+.dfx-home-text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 0;
+}
+
+.dfx-home-refresh:disabled { opacity: 0.55; cursor: default; }
+.dfx-home-text-btn:hover { color: var(--text); }
+
+.dfx-home-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 12px;
+}
+
+.dfx-home-watch-card,
+.dfx-home-action-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 13px;
+  background: var(--surface);
+  padding: 15px;
+  min-width: 0;
+}
+
+.dfx-home-card-head {
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.dfx-home-card-hint {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.dfx-home-watch-list { display: flex; flex-direction: column; }
+
+.dfx-home-watch-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) 90px 70px 8px;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text);
+  padding: 10px 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dfx-home-watch-row:hover { background: var(--accent-soft); }
+.dfx-home-watch-name { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dfx-home-watch-name strong { font-size: 13px; }
+.dfx-home-watch-name small,
+.dfx-home-action-row small { color: var(--text-soft); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfx-home-watch-price { color: var(--text-muted); font-size: 12px; text-align: right; }
+.dfx-home-watch-change { font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.dfx-home-watch-dot,
+.dfx-home-footer-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--positive); display: inline-block; }
+.dfx-home-watch-dot.paused { background: var(--text-soft); }
+.dfx-home-empty-watch { width: 100%; border: 1px dashed var(--border); border-radius: 9px; padding: 16px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.dfx-home-empty-watch:hover { border-color: var(--accent); color: var(--accent); }
+
+.dfx-home-watch-footer {
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-soft);
+  font-size: 11px;
+  padding-top: 10px;
+}
+.dfx-home-watch-footer span:first-child { display: inline-flex; align-items: center; gap: 6px; }
+
+.dfx-home-action-list { display: flex; flex-direction: column; }
+.dfx-home-action-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  padding: 9px 0;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.dfx-home-action-row:hover { color: var(--accent); }
+.dfx-home-action-row > span:nth-child(2) { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dfx-home-action-row strong { font-size: 12px; }
+.dfx-home-action-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; }
+.dfx-home-action-icon.teal { background: var(--accent-soft); color: var(--accent); }
+.dfx-home-action-icon.amber { background: rgba(245, 158, 11, 0.12); color: var(--warning); }
+.dfx-home-action-icon.red { background: rgba(239, 68, 68, 0.1); color: var(--negative); }
+.dfx-home-action-arrow { color: var(--text-soft); font-size: 15px; }
+
+.dfx-home-history-strip {
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border-soft);
+}
+.dfx-home-history-title { gap: 9px; min-width: 0; }
+.dfx-home-history-title strong { font-size: 12px; }
+.dfx-home-history-title > span:last-child { color: var(--text-soft); font-size: 11px; }
+.dfx-home-history-list { display: flex; gap: 7px; min-width: 0; }
+.dfx-home-history-item,
+.dfx-home-history-empty { border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-muted); color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 6px 9px; }
+.dfx-home-history-item { display: flex; align-items: center; gap: 7px; max-width: 210px; }
+.dfx-home-history-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfx-home-history-item small { color: var(--text-soft); white-space: nowrap; }
+.dfx-home-history-item:hover,
+.dfx-home-history-empty:hover { border-color: var(--accent); color: var(--text); }
+
 /* ===== 快速进入：把三层导航压成一层可扫描的网格 ===== */
 .dfx-home-launcher {
   margin-top: 40px;
@@ -561,6 +747,31 @@
 @media (max-width: 720px) {
   .dfx-home-launcher-grid {
     grid-template-columns: 1fr;
+  }
+  .dfx-home-overview {
+    width: 100%;
+    padding: 15px;
+    margin-top: 28px;
+  }
+  .dfx-home-overview-head,
+  .dfx-home-history-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .dfx-home-overview-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .dfx-home-overview-grid {
+    grid-template-columns: 1fr;
+  }
+  .dfx-home-history-list {
+    width: 100%;
+    overflow-x: auto;
+  }
+  .dfx-home-history-empty {
+    width: 100%;
+    text-align: left;
   }
   .dfx-home-hero {
     padding-top: 5vh;
