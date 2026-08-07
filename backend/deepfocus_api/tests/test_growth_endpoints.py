@@ -28,7 +28,8 @@ def test_flash_news_article_page_now_serves(client):
     r = client.get(f"/article/{flash.id}")
     assert r.status_code == 200
     assert "某芯片大厂获大额订单快讯" in r.text          # 标题公开
-    assert "登录 DeepFocus 看全文" in r.text             # 软墙 CTA（_teaser 逻辑复用）
+    assert "打开 DeepFocus 查看" in r.text             # 快讯软墙 CTA（站内免费可读，不承诺会员解锁）
+    assert "会员读全文" not in r.text                   # ⭐ 快讯不是会员专享内容，不出现会员墙口径
     assert "DAO财经" not in r.text                        # 内部源名不外露（品牌红线）
 
 

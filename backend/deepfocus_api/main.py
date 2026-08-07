@@ -8036,8 +8036,41 @@ async def api_keyword_crawl(request: DataSourceKeywordCrawlRequest) -> DataSourc
     )
 
 
+# ===== 文章全文会员硬墙（用户拍板 2026-08-07：daocaijing 文章必须会员才能解锁查看）=====
+# 前端「全文/原文」按钮早已 requireMember（只控可见性）；这里补后端硬控——
+# 列表/单条/SSE 三路对非会员只给 ≤120 字导语 + 会员锁定标记，快讯/研报/其它 topic 不受影响。
+_ARTICLE_TEASER_LEN = 120
+_ARTICLE_LOCK_NOTE = "\n\n—— 🔒 全文为会员专享内容 · 开通会员即可阅读全文 ——"
+
+
+def _claims_is_member(claims: Optional[dict]) -> bool:
+    """会员判定（管理员视同会员）：与全站其它会员闸同口径（premium/lifetime）。"""
+    if not claims:
+        return False
+    if str(claims.get("role") or "").strip().lower() == "admin":
+        return True
+    u = get_user_out_by_id(str(claims.get("sub", "")))
+    tier = (u.membership or {}).get("tier") if (u and u.membership) else None
+    return tier in ("premium", "lifetime")
+
+
+def _article_member_view(m: RealtimeMessageRecord, request: Request) -> RealtimeMessageRecord:
+    """文章类消息的会员视图：会员/管理员返回全文；非会员（含匿名）只给导语 + 锁定标记。
+
+    前端靠锁定标记识别「未解锁」态（先展示后要账：不白屏、弹升级引导）。
+    会员身份取中间件挂载的 Bearer claims——未带 token 一律按匿名裁剪。"""
+    if (m.topic or "") != "文章":
+        return m
+    if _claims_is_member(current_claims(request)):
+        return m
+    content = str(m.content or "")
+    teaser = content[:_ARTICLE_TEASER_LEN] + ("…" if len(content) > _ARTICLE_TEASER_LEN else "")
+    return m.model_copy(update={"content": teaser + _ARTICLE_LOCK_NOTE})
+
+
 @app.get("/api/realtime/messages", response_model=RealtimeMessageListResponse)
 async def api_list_realtime_messages(
+    request: Request,
     symbol: Optional[str] = None,
     topic: Optional[str] = None,
     severity: Optional[str] = None,
@@ -8048,16 +8081,19 @@ async def api_list_realtime_messages(
     limit: int = 80,
 ) -> RealtimeMessageListResponse:
     return RealtimeMessageListResponse(
-        messages=list_realtime_messages(
-            symbol=symbol,
-            topic=topic,
-            severity=severity,
-            since=since,
-            before=before,
-            q=q,
-            anyq=anyq,
-            limit=max(1, min(limit, 200)),
-        )
+        messages=[
+            _article_member_view(m, request)
+            for m in list_realtime_messages(
+                symbol=symbol,
+                topic=topic,
+                severity=severity,
+                since=since,
+                before=before,
+                q=q,
+                anyq=anyq,
+                limit=max(1, min(limit, 200)),
+            )
+        ]
     )
 
 
@@ -8075,8 +8111,11 @@ async def api_push_realtime_message(request: RealtimeMessageCreateRequest, http_
 
 @app.get("/api/realtime/messages/stream")
 async def api_realtime_message_stream(request: Request) -> StreamingResponse:
+    # 文章会员墙（2026-08-07）：非会员连接上的文章推送同样只给导语+锁定标记。
+    # 会员身份按连接建立时刻判定一次（会员中途到期由 STREAM_MAX_LIFETIME 重连自然刷新）。
+    transform = None if _claims_is_member(current_claims(request)) else (lambda m: _article_member_view(m, request))
     return StreamingResponse(
-        realtime_message_event_stream(request),
+        realtime_message_event_stream(request, transform=transform),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -8087,12 +8126,13 @@ async def api_realtime_message_stream(request: Request) -> StreamingResponse:
 
 
 @app.get("/api/realtime/messages/{message_id}", response_model=RealtimeMessageRecord)
-async def api_get_realtime_message(message_id: str) -> RealtimeMessageRecord:
-    """按 id 取单条消息（文章分享深链 ?article={id} 登录后定位用）。公开，与列表端点同口径。"""
+async def api_get_realtime_message(message_id: str, request: Request) -> RealtimeMessageRecord:
+    """按 id 取单条消息（文章分享深链 ?article={id} 定位用）。公开可取，但文章全文会员墙：
+    非会员只回 ≤120 字导语 + 锁定标记（2026-08-07 用户拍板：文章必须会员才能解锁查看）。"""
     msg = get_realtime_message(message_id)
     if msg is None:
         raise HTTPException(status_code=404, detail="消息不存在")
-    return msg
+    return _article_member_view(msg, request)
 
 
 # ===== 研报「AI 解读」可分享落地页（软墙，分享我们的解读而非第三方原文，见 [[report_share]]）=====
@@ -8860,7 +8900,7 @@ async def public_partners_page() -> HTMLResponse:
 
 @app.get("/article/{article_id}", response_class=HTMLResponse, include_in_schema=False)
 async def public_article_page(article_id: str, request: Request) -> HTMLResponse:
-    """文章/快讯公开落地页（软墙）：标题+来源+短导语公开可分享/收录；全文需登录在 App 内看。
+    """文章/快讯公开落地页（软墙）：标题+来源+短导语公开可分享/收录；全文需会员在 App 内解锁（2026-08-07）。
 
     快讯也放行：前端「复制快讯」的引流链接就是 /article/{id}（全站最大自然分发行为），
     不放行=断头链接。软墙 _teaser 逻辑对两种 topic 通用（第三方全文不上公开页）。"""

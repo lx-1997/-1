@@ -183,6 +183,9 @@ const interestKeysOf = (m: { title?: string | null; content?: string | null }): 
 const interestLabel = (key: InterestKey): string => INTEREST_OPTIONS.find(option => option.key === key)?.label || key;
 // iFinD 专业数据：目前只对白名单账号开放（后端 DEEPFOCUS_IFIND_ALLOWED_USERS 同步硬控，前端只控入口可见性）
 const IFIND_USERS = new Set(['lx199710']);
+// 文章全文会员墙（2026-08-07 用户拍板）：后端对非会员把文章正文裁成导语 + 此锁定标记（后端 _ARTICLE_LOCK_NOTE），
+// 前端认标记判断「未解锁」——先展示后要账：不白屏，导语照给，弹升级引导。
+const ARTICLE_LOCK_MARKER = '全文为会员专享内容';
 
 // 创始会员价限时档：每位访客「首次打开起 72 小时」滚动倒计时——永远在走、不会像固定日期那样过期哑火。
 // 持久化到本地：窗口内复访继续倒计时；过期后下次打开顺延新的 72h（紧迫感长期有效）。
@@ -1703,12 +1706,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     }
   }, [refreshMembership, logAct, showToast, openReview]);
 
-  // 文章分享深链：?article={id} → 拉取该文章，未登录先弹登录（登录即解锁这一篇，不卡会员墙，契合「分享链接登录就能看原文」），
-  // 登录后打开站内全文阅读器。只跑一次：抓到参数即清掉 URL，避免重复触发。
-  // ⭐先展示后要账：分享回流的最后一米。原来「一进站弹登录墙 + 立刻抹掉 URL 参数」——
-  // 匿名回流者在看到任何内容之前先撞墙，点掉登录框内容永久丢失、中途刷新参数已焚。
-  // 现在：先打开阅读器（匿名给 ~120 字软墙导语，镜像服务端 /article/{id} 的分寸），
-  // 参数清理挪到内容成功展示之后；登录弹窗盖在预览之上，关掉弹窗内容仍在。
+  // 文章分享深链：?article={id} → 拉取该文章并打开站内阅读器。只跑一次：抓到参数即清掉 URL，避免重复触发。
+  // ⭐先展示后要账：分享回流的最后一米——先打开阅读器（后端已把非会员可见正文裁成导语），参数清理挪到内容展示之后。
+  // 全文为会员专享（用户拍板 2026-08-07）：后端对非会员返回导语+锁定标记（硬墙），前端认标记定态——
+  // 无标记=已是会员拿到全文，直接展示；有标记=requireMember 先展示后要账（未登录→登录弹窗；登录后仍非会员→升级弹窗）。
   const articleDeepLinkDone = useRef(false);
   useEffect(() => {
     if (articleDeepLinkDone.current) return;
@@ -1721,16 +1722,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (!article) { showToast('该文章不存在或已下线'); return; }
       try { window.history.replaceState({}, '', window.location.pathname + window.location.hash); } catch { /* */ }
       logAct('open_news', `深链·${article.title}`);
-      if (authUser) { setNewsPreview(article); return; }
-      // 匿名软墙预览：第三方全文绝不出现在登录前视图（合规红线），只给导语+登录引导
-      const teaser = {
-        ...article,
-        content: `${(article.content || '').slice(0, 120)}……\n\n—— 🔓 登录即可阅读本篇全文（用户名+密码即可注册）——`,
-      } as RealtimeMessageRecord;
-      setNewsPreview(teaser);
-      requireLogin(() => setNewsPreview(article), '登录查看文章全文');
+      setNewsPreview(article);
+      if (!(article.content || '').includes(ARTICLE_LOCK_MARKER)) return;  // 会员/管理员：后端已回全文
+      requireMember(async () => {
+        const fresh = await getRealtimeMessageById(articleId);
+        if (!fresh) return;
+        setNewsPreview(fresh);
+        // 登录流程走完仍带锁（已登录非会员）→ 续上升级引导，别停在导语
+        if ((fresh.content || '').includes(ARTICLE_LOCK_MARKER)) { setUpgradeReason('开通会员解锁文章全文'); setUpgradeOpen(true); }
+      }, '开通会员解锁文章全文');
     })();
-  }, [requireLogin, logAct, showToast, authUser]);
+  }, [requireMember, logAct, showToast]);
   // 机构纪要分享深链 ?note={id}：/note/{id} 落地页「打开看完整」→ 切到机构纪要模块，并高亮/滚动定位该条(在已加载池内)。
   // 之前落地页 CTA 只开裸 App 首页，收信人点进来落不到对应模块——这是用户反馈的「跳转后到不了对应消息模块」。
   const noteDeepDone = useRef(false);
@@ -3271,7 +3273,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 : (m.topic === '文章'
                   ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button>
                   : null)}
-              {/* 文章分享：链接指向公开落地页 /article/{id}（软墙，登录看全文）。span 兜住冒泡，不触发整行的 AI 解读 */}
+              {/* 文章分享：链接指向公开落地页 /article/{id}（软墙，全文会员专享）。span 兜住冒泡，不触发整行的 AI 解读 */}
               {m.topic === '文章' && (
                 <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
                   <ShareButton
@@ -3410,7 +3412,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     })),
     ...uniHits.news.slice(0, 4).map((n: any, i: number): PItem => ({
       key: 'un' + i, type: 'uni', label: `📰 ${String(n.title || '').slice(0, 40)}`,
-      run: () => setNewsPreview(n as RealtimeMessageRecord),
+      run: () => {
+        const rec = n as RealtimeMessageRecord;
+        // 文章全文会员专享（2026-08-07）：过会员门后按 id 拉单条（后端对非会员裁剪，不会泄漏）；快讯照旧直接预览
+        if ((rec.topic || '') === '文章') {
+          requireMember(() => { void getRealtimeMessageById(rec.id).then(full => setNewsPreview(full || rec)); }, '开通会员阅读文章全文');
+          return;
+        }
+        setNewsPreview(rec);
+      },
     })),
     ...uniHits.reports.slice(0, 3).map((r: any, i: number): PItem => ({
       key: 'ur' + i, type: 'uni', label: `📑 ${String(r.title || '').slice(0, 40)}`,
@@ -3441,7 +3451,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     : null;
 
   return (
-    <div className="bbt">
+    <div className={`bbt${authUser ? '' : ' bbt--anon'}`}>
       {pdfLoadingUrl && (
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}}>
           <div style={{background:'#141e30',border:'1px solid #263348',borderRadius:12,padding:'28px 40px',textAlign:'center',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>

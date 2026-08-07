@@ -1,7 +1,8 @@
 """文章分享落地页 + 深链 get-by-id 回归。
 
-核心断言（软墙）：公开落地页只放标题+来源+短导语+「登录看全文」CTA，**第三方全文绝不泄漏**；
-路由按 topic='文章' 守门；/api/realtime/messages/{id} 公开可取单条供深链定位。
+核心断言（软墙）：公开落地页只放标题+来源+短导语+「会员读全文」CTA，**第三方全文绝不泄漏**；
+路由按 topic='文章' 守门；/api/realtime/messages/{id} 公开可取单条供深链定位，
+但文章全文为会员专享（2026-08-07）：匿名/非会员只回 ≤120 字导语 + 会员锁定标记。
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -32,7 +33,7 @@ def test_article_page_soft_wall_no_fulltext_leak():
     assert "某公司发布重大利好公告" in page          # 标题公开
     assert "这是文章导语第一句" in page               # 短导语公开（120字预览）
     assert _TAIL_MARKER not in page                   # ⭐ 导语之外的全文尾部不泄漏
-    assert "登录 DeepFocus 看全文" in page            # 软墙 CTA
+    assert "打开 DeepFocus · 会员读全文" in page        # 软墙 CTA（全文会员专享，2026-08-07）
     assert "?article=a-1" in page                      # 登录深链
     assert "DeepFocus" in page                         # 对外署名 DeepFocus
     assert "DAO财经" not in page                        # ⭐ 内部聚合源名不外露(品牌红线)
@@ -84,7 +85,7 @@ def test_article_route_serves_soft_wall(client):
     r = client.get(f"/article/{art.id}")
     assert r.status_code == 200
     assert "重大资产重组获批" in r.text
-    assert "登录 DeepFocus 看全文" in r.text
+    assert "打开 DeepFocus · 会员读全文" in r.text
     assert _TAIL_MARKER not in r.text  # 全文尾部不泄漏
 
 
@@ -106,13 +107,68 @@ def test_get_message_by_id_endpoint(client):
     art = _make_article()
     r = client.get(f"/api/realtime/messages/{art.id}")
     assert r.status_code == 200
-    assert r.json()["id"] == art.id and r.json()["topic"] == "文章"
+    body = r.json()
+    assert body["id"] == art.id and body["topic"] == "文章"
+    # ⭐ 文章会员墙（2026-08-07）：匿名取单条只回导语+锁定标记，全文尾部不泄漏
+    assert _TAIL_MARKER not in body["content"]
+    assert "全文为会员专享内容" in body["content"]
+    assert "文章导语第一句" in body["content"]  # 导语仍给（先展示后要账）
     assert client.get("/api/realtime/messages/nope").status_code == 404
     # 不能截胡字面量 SSE 流路由：/stream 须先于 /{id} 匹配（按声明顺序）。
     # 直接 GET /stream 会永久挂起（SSE），故只校验路由表里 stream 路由排在 {id} 之前。
     from deepfocus_api import main as main_mod
     paths = [getattr(rt, "path", "") for rt in main_mod.app.router.routes]
     assert paths.index("/api/realtime/messages/stream") < paths.index("/api/realtime/messages/{message_id}")
+
+
+def test_list_endpoint_member_wall_anonymous(client):
+    """列表端点同口径：匿名拉流，文章正文被裁成导语+锁标；快讯不受会员墙影响（全文照给）。"""
+    _make_article()
+    flash_content = "央行宣布降准 0.5 个百分点，释放长期资金约一万亿元。"
+    rm.create_realtime_message(RealtimeMessageCreateRequest(
+        title="央行降准", content=flash_content, topic="快讯",
+        severity="info", source_name="DAO财经", tags=["快讯"],
+    ))
+    r = client.get("/api/realtime/messages")
+    assert r.status_code == 200
+    msgs = {m["topic"]: m for m in r.json()["messages"]}
+    assert _TAIL_MARKER not in msgs["文章"]["content"]
+    assert "全文为会员专享内容" in msgs["文章"]["content"]
+    assert msgs["快讯"]["content"] == flash_content  # 快讯全文不受影响
+
+
+@pytest.fixture()
+def member_client(tmp_path, monkeypatch):
+    """client + 独立 auth 库：用于「会员带 token 解锁全文」正向路径。"""
+    data_store.DB_PATH = tmp_path / "data.sqlite3"
+    data_store.init_data_store()
+    monkeypatch.setattr(rm, "DB_PATH", tmp_path / "rt.sqlite3")
+    rm.init_realtime_message_db()
+    monkeypatch.setenv("DEEPFOCUS_DATABASE_URL", f"sqlite:///{tmp_path / 'auth.sqlite3'}")
+    monkeypatch.setenv("DEEPFOCUS_JWT_SECRET", "test-secret-key")
+    monkeypatch.delenv("DEEPFOCUS_AUTH_REQUIRED", raising=False)
+    from deepfocus_api import storage, auth as auth_mod
+    storage.reset_engine_for_tests()
+    auth_mod.init_auth()
+    from deepfocus_api import main as main_mod
+    yield TestClient(main_mod.app)
+    storage.reset_engine_for_tests()
+
+
+def test_member_unlocks_full_article(member_client):
+    """正向路径：付费会员带 token 取单条 → 全文放行、无锁定标记。"""
+    from deepfocus_api import auth as auth_mod
+    c = member_client
+    art = _make_article()
+    r = c.post("/api/auth/register", json={"username": "vipreader", "password": "password1", "email": "vip@firm.com"})
+    assert r.status_code == 200, r.text
+    auth_mod.grant_membership("vipreader", days=30, source="paid")
+    tok = c.post("/api/auth/login", json={"username": "vipreader", "password": "password1"}).json()["access_token"]
+    r = c.get(f"/api/realtime/messages/{art.id}", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    body = r.json()
+    assert _TAIL_MARKER in body["content"]              # ⭐ 会员拿到完整全文
+    assert "全文为会员专享内容" not in body["content"]   # 无锁定标记
 
 
 def test_sitemap_route_includes_articles(client):

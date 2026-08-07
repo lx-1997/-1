@@ -302,7 +302,11 @@ def publish_data_source_items(
     return messages
 
 
-async def realtime_message_event_stream(request: Request) -> AsyncIterator[str]:
+async def realtime_message_event_stream(
+    request: Request,
+    transform: Optional[Callable[[RealtimeMessageRecord], RealtimeMessageRecord]] = None,
+) -> AsyncIterator[str]:
+    """transform：按连接定制出参（如文章会员墙——非会员连接只给导语+锁定标记），None=原样广播。"""
     if len(_subscribers) >= MAX_SUBSCRIBERS:
         yield _sse_event("error", {"message": "当前在线人数已达上限，请稍后重试。"})
         return
@@ -323,7 +327,8 @@ async def realtime_message_event_stream(request: Request) -> AsyncIterator[str]:
             except asyncio.TimeoutError:
                 yield _sse_event("heartbeat", {"created_at": utc_now_iso()})
                 continue
-            yield _sse_event("realtime-message", message.model_dump(mode="json"))
+            out = transform(message) if transform is not None else message
+            yield _sse_event("realtime-message", out.model_dump(mode="json"))
     finally:
         _subscribers.discard(queue)
 

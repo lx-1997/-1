@@ -3,7 +3,7 @@
 与 share_snapshots.py（一次性结论快照）互补：这里是**机器每天自动生产的常青内容**——
 - /review/{date}  每个交易日一篇收盘复盘 → 长期积累成可收录页面库
 - /stock/{symbol} 个股速判卡落地页 → 承接「XX股票 怎么样/估值」长尾搜索
-- /article/{id}   财经资讯软墙落地页（标题+来源+短导语公开可收录，全文需登录）
+- /article/{id}   财经资讯软墙落地页（标题+来源+短导语公开可收录，全文需会员解锁）
 - /review、/stocks、/articles 聚合页 + /sitemap.xml、/robots.txt、/llms.txt → 给搜索/AI 爬虫一条完整的发现路径
 
 设计要点：
@@ -746,10 +746,10 @@ def render_compare_page_html(a: dict[str, Any], b: dict[str, Any], page_url: str
 
 
 # --------------------------------------------------------------------------- #
-# 文章公开落地页（软墙：标题+来源+短导语公开可分享/收录，全文需登录在 App 内看）
+# 文章公开落地页（软墙：标题+来源+短导语公开可分享/收录，全文需会员在 App 内解锁，2026-08-07 用户拍板）
 # --------------------------------------------------------------------------- #
 def _app_article_url(article_id: str) -> str:
-    """登录后看全文的深链：打开终端 App 并定位到该文章。"""
+    """看全文的深链：打开终端 App 并定位到该文章（全文为会员专享，站内有会员墙）。"""
     base = APP_URL if APP_URL.startswith("http") else f"{BASE_URL}{APP_URL}"
     sep = "&" if "?" in base else "?"
     return f"{base}{sep}article={_esc(article_id)}"
@@ -792,17 +792,28 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     parts = [f"<h1>{_esc(title)}</h1>", f'<div class="meta">{" · ".join(meta_bits)}</div>']
     if teaser and teaser.strip() != title.strip():  # 正文与标题相同则不重复展示导语
         parts.append(f'<h2>内容摘要</h2><div class="lead">{_esc(teaser)}</div>')
-    # 软墙：全文需登录在 App 内看
-    parts.append(f'<a class="cta" href="{_app_article_url(aid)}">登录 DeepFocus 看全文 →</a>')
-    # 价值点：登录能看到什么（填充页面 + 说明为何登录）
-    parts.append(
-        '<h2>登录后你可以</h2>'
-        '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
-        '<li>阅读本文<strong>完整原文</strong></li>'
-        '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
-        '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>，以及每日 A 股收盘复盘</li>'
-        '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 登录即用</p></div>'
-    )
+    # 软墙 CTA 按 topic 分口径（2026-08-07）：文章全文会员专享；快讯站内免费可读，只做 App 引流，不承诺会员解锁
+    is_article = str(article.get("topic") or "") == "文章"
+    if is_article:
+        parts.append(f'<a class="cta" href="{_app_article_url(aid)}">打开 DeepFocus · 会员读全文 →</a>')
+        parts.append(
+            '<h2>会员权益</h2>'
+            '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+            '<li>解锁本文及全部财经资讯的<strong>完整原文</strong></li>'
+            '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
+            '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>，以及每日 A 股收盘复盘</li>'
+            '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">文章全文会员专享 · 行情与自选登录即用</p></div>'
+        )
+    else:
+        parts.append(f'<a class="cta" href="{_app_article_url(aid)}">打开 DeepFocus 查看 →</a>')
+        parts.append(
+            '<h2>登录后你可以</h2>'
+            '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
+            '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
+            '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>，以及每日 A 股收盘复盘</li>'
+            '<li>全部财经快讯第一时间<strong>推送提醒</strong></li>'
+            '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">快讯免费 · 登录即用</p></div>'
+        )
 
     others = [r for r in recent if r.get("id") and r.get("id") != aid][:6]  # 移动端 12 条太长显乱，收敛到 6
     if others:
@@ -828,7 +839,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
         "image": DEFAULT_OG_IMAGE,
         "author": {"@type": "Organization", "name": source},
         "publisher": {"@id": ORG_ID},
-        "isAccessibleForFree": False,  # 软墙：公开仅标题+摘要，全文需登录
+        "isAccessibleForFree": False,  # 软墙：公开仅标题+摘要，全文需会员解锁
         **({"mainEntityOfPage": canonical} if canonical else {}),
     }
     trail = [("首页", f"{BASE_URL}/"), ("财经资讯", f"{BASE_URL}/articles"), (title[:30], canonical)]
@@ -850,7 +861,7 @@ def render_articles_hub_html(items: list[dict[str, Any]], page: int = 1, total_p
     ) or "<p>暂无文章。</p>"
     body = (
         "<h1>财经资讯文章</h1>"
-        '<div class="meta">DeepFocus 聚合的财经资讯，登录后阅读全文并解锁行情 / 自选 / AI 解读</div>' + rows
+        '<div class="meta">DeepFocus 聚合的财经资讯，会员解锁阅读全文 · 行情 / 自选 / AI 解读登录即用</div>' + rows
     )
     if total_pages > 1:
         nums = " ".join(
@@ -863,7 +874,7 @@ def render_articles_hub_html(items: list[dict[str, Any]], page: int = 1, total_p
     trail = [("首页", f"{BASE_URL}/"), ("财经资讯", f"{BASE_URL}/articles")]
     return _page(
         title="财经资讯文章",
-        description="DeepFocus 聚合的财经资讯文章：登录后阅读全文，并解锁实时行情、自选与 AI 解读。",
+        description="DeepFocus 聚合的财经资讯文章：会员解锁阅读全文，并解锁实时行情、自选与 AI 解读。",
         body=body,
         canonical=f"{BASE_URL}/articles",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1593,7 +1604,7 @@ def render_llms_txt() -> str:
 - [热门个股多维证据速判]({BASE_URL}/stocks)：动量 / 催化 / 估值 / 资金面等多维证据，含信号方向、证据与置信度。单只个股见 {BASE_URL}/stock/{{symbol}}（如 {BASE_URL}/stock/AAPL）；全市场索引见 {BASE_URL}/stocks/all。
 - [投研问答]({BASE_URL}/qa)：用户高频股票 / 市场问题的 AI 多维取数解答，answer-first + FAQ 结构，每问一页。
 - [财经术语科普]({BASE_URL}/learn)：市盈率 / 换手率 / ROE / MACD / 杯柄形态等常用概念一文看懂（纯科普）。
-- [财经资讯文章]({BASE_URL}/articles)：聚合财经资讯（公开为标题 + 来源 + 摘要，全文需登录）。
+- [财经资讯文章]({BASE_URL}/articles)：聚合财经资讯（公开为标题 + 来源 + 摘要，全文需会员解锁）。
 - [实时快讯]({BASE_URL}/articles)：A股实时财经快讯，比券商 App 早一步。每条快讯见 {BASE_URL}/article/{{id}}（标题 + 摘要公开可引用）。
 - [机构纪要]({BASE_URL}/notes)：机构调研会议纪要 / 个股动态点评聚合，每条含标题与摘要。单条见 {BASE_URL}/note/{{id}}。
 
