@@ -34,6 +34,7 @@ import AgentLoopStream from './AgentLoopStream';
 import Markdown from './common/Markdown';
 import RoundtableMessage from './RoundtableMessage';
 import ShareModal, { ShareTarget } from './ShareModal';
+import InvestorCompass from './home/InvestorCompass';
 import './HomePage.css';
 
 type AgentMode = 'analyst' | 'roundtable';
@@ -157,6 +158,7 @@ const HomePage: React.FC<HomePageProps> = ({
   appState,
   onStockSelect,
   onViewChange,
+  onAddStock,
   onRefreshMarketData,
   isMarketDataRefreshing,
 }) => {
@@ -690,6 +692,13 @@ const HomePage: React.FC<HomePageProps> = ({
                 </button>
               ))}
             </div>
+
+            <InvestorCompass
+              stocks={appState.stocks}
+              onStockSelect={onStockSelect}
+              onViewChange={onViewChange}
+              onAddStock={onAddStock}
+            />
 
             <section className="dfx-home-overview" aria-label="个人投研概览">
               <div className="dfx-home-overview-head">
