@@ -11,6 +11,14 @@ import MainContent, { preloadCoreWorkspaceModules, preloadMainContentModules } f
 
 const { Sider, Content } = Layout;
 
+const DIRECT_MENU_VIEWS: Partial<Record<string, ViewType>> = {
+  'premarket-opportunity': 'premarket-opportunity',
+  'financial-terminal': 'financial-terminal',
+  'risk-dashboard': 'risk-dashboard',
+  'data-sources': 'data-sources',
+  'multi-market-decision': 'multi-market-decision',
+};
+
 const WorkspaceFallback: React.FC = () => (
   <div className="workspace-loading-state">
     <div className="skeleton-shimmer" style={{ width: 120, height: 6, marginBottom: 4 }} />
@@ -143,7 +151,9 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
   }, []);
 
   useEffect(() => {
-    const nextMenu = VIEW_TO_WORKSPACE_MENU[appState.currentView];
+    const directMenu = Object.entries(DIRECT_MENU_VIEWS)
+      .find(([, view]) => view === appState.currentView)?.[0];
+    const nextMenu = directMenu || VIEW_TO_WORKSPACE_MENU[appState.currentView];
     if (nextMenu && nextMenu !== selectedMenu) {
       setSelectedMenu(nextMenu);
     }
@@ -179,7 +189,7 @@ const TradingLayout: React.FC<TradingLayoutProps> = ({
         onBackToStocks();
       }
 
-      onViewChange(MENU_TO_DEFAULT_VIEW[key] || 'home');
+      onViewChange(DIRECT_MENU_VIEWS[key] || MENU_TO_DEFAULT_VIEW[key] || 'home');
     });
   };
 

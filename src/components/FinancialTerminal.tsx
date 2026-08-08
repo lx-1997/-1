@@ -31,6 +31,7 @@ import TerminalKline from './TerminalKline';
 import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
+import './TerminalSimpleStart.css';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
@@ -151,11 +152,11 @@ const SEV_TAG: Record<RealtimeMessageSeverity, string> = { critical: '紧急', w
 const STATUS_LABEL: Record<StreamConnectionStatus, string> = { connecting: 'CONNECTING', live: 'LIVE', reconnecting: 'RECONNECTING', closed: 'OFFLINE', error: 'ERROR' };
 // 统一信息流：快讯 / 文章 走 DAO 推送；「研报」标签切到海外投行研报视图（在线搜索 + AI 总结）
 const PRIMARY_FEED_FILTERS = [
-  { key: '精选', label: '为你' },
-  { key: '自选', label: '★自选' },
-  { key: '快讯', label: '快讯' },
-  { key: '研究', label: '研究' },
-  { key: 'all', label: '全部' },
+  { key: '精选', label: '和我有关' },
+  { key: '自选', label: '我的股票' },
+  { key: '快讯', label: '市场快讯' },
+  { key: '研究', label: '研究资料' },
+  { key: 'all', label: '全部资讯' },
 ];
 const RESEARCH_FEED_FILTERS = [
   { key: '文章', label: '深度文章' },
@@ -3594,17 +3595,36 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       {!authUser && (
         <div className="bbt-hero">
           <div className="bbt-hero-inner">
-            <h1 className="bbt-hero-title">DeepFocus · AI 蒸馏的个股投研智库</h1>
-            <p className="bbt-hero-sub">每日 A 股复盘 · 个股多维证据速判 · AI 策略实战业绩，钻井式深度研究，公开内容免登录可看</p>
+            <h1 className="bbt-hero-title">先看清你的股票，再决定下一步</h1>
+            <p className="bbt-hero-sub">把股票变化、关键资讯和市场风险收在一起；不需要先学会一堆工具。</p>
             <div className="bbt-hero-ctas">
-              <button type="button" className="bbt-hero-cta bbt-hero-cta-primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 免费查一只股票</button>
-              <a className="bbt-hero-cta" href="/ai-fund">📈 看 AI 策略业绩</a>
-              <a className="bbt-hero-cta" href="/review">📊 今日 A 股复盘</a>
+              <button type="button" className="bbt-hero-cta bbt-hero-cta-primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 看看一只股票</button>
+              <button type="button" className="bbt-hero-cta" onClick={() => { setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>★ 看我的股票</button>
+              <a className="bbt-hero-cta" href="/review">📊 看今天市场</a>
             </div>
-            <div className="bbt-hero-alt">机构 / 合作方？<a href="/partners">API 能力与合作通道 →</a> · <a href="/about">了解 DeepFocus</a></div>
+            <div className="bbt-hero-alt">想深入研究？直接问 AI；专业数据和策略工具收在「更多」里。</div>
           </div>
         </div>
       )}
+
+      <section className="bbt-simple-start" aria-label="从这里开始">
+        <div className="bbt-simple-start-copy">
+          <span>从这里开始</span>
+          <h2>今天最值得你花时间看的，只有三件事</h2>
+          <p>先看和你有关的股票，再看市场；需要时再让 AI 帮你拆解。</p>
+        </div>
+        <div className="bbt-simple-start-actions">
+          <button type="button" onClick={() => { setActive(null); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+            <b>我的股票</b><span>发生了什么？</span>
+          </button>
+          <button type="button" onClick={() => openReview()}>
+            <b>今天市场</b><span>热点和风险在哪？</span>
+          </button>
+          <button type="button" onClick={() => { openAi(); setAiInput('帮我用简单的话说说：我现在最该关注什么？'); }}>
+            <b>问 AI</b><span>用一句话问清楚</span>
+          </button>
+        </div>
+      </section>
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}
       {primaryBanner === 'admin-unread' && (
@@ -3727,7 +3747,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section className={`bbt-panel${maxed && maxed !== 'eq' ? ' bbt-hide' : ''}${collapsed.eq ? ' bbt-panel--collapsed' : ''}${(eqNarrow && maxed !== 'eq') ? ' bbt-eq--narrow' : ''}`}>
           <div className="bbt-ph" onClick={e => { if ((e.target as HTMLElement).closest('button')) return; if (window.innerWidth <= 820) toggleCollapse('eq'); }}>
             <button className="bbt-collapse-btn" aria-label="自选股票" aria-expanded={!collapsed.eq} title={collapsed.eq ? '展开' : '收起'} onClick={() => toggleCollapse('eq')}>{collapsed.eq ? '▸' : '▾'}</button>
-<span className="bbt-eq-en">WATCHLIST · </span>自选股票 <span className="bbt-breadth"><b className="bbt-up">{breadthUp}▲</b> <b className="bbt-down">{breadthDown}▼</b></span>
+<span className="bbt-eq-en">MY STOCKS · </span>我的股票 <span className="bbt-breadth"><b className="bbt-up">{breadthUp}▲</b> <b className="bbt-down">{breadthDown}▼</b></span>
             {watchlist.length > 0 && (
               /* AI 原生：自选旁一键体检——把整份自选喂给 AI 逐只判多空，复用现成 get_stock_verdict/get_my_watchlist 工具，后端零改动。
                  gating 交给 askAi(未登录/额度用尽自会引导)，与 ⚡AI速判 同范式。 */
@@ -3779,7 +3799,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section className={`bbt-panel${maxed && maxed !== 'news' ? ' bbt-hide' : ''}${collapsed.news ? ' bbt-panel--collapsed' : ''}`}>
           <div className="bbt-ph">
             <button className="bbt-collapse-btn" aria-label="实时资讯" aria-expanded={!collapsed.news} title={collapsed.news ? '展开' : '收起'} onClick={() => toggleCollapse('news')}>{collapsed.news ? '▸' : '▾'}</button>
-            {isCelebrity ? 'VOICES · 名人观点' : isZsxqStream ? 'NOTES · 机构纪要' : isResearch ? 'RESEARCH · 投行研报' : feedFilter === '文章' ? 'RESEARCH · 深度文章' : feedFilter === '精选' ? 'FOR YOU · 为你精选' : 'NEWS WIRE · 实时资讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
+            {isCelebrity ? '名人观点' : isZsxqStream ? '机构纪要' : isResearch ? '研究资料' : feedFilter === '文章' ? '深度文章' : feedFilter === '精选' ? '和我有关的资讯' : feedFilter === '自选' ? '我的股票发生了什么' : '今天市场发生什么'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
             <span className="bbt-filters" role="tablist" aria-label="资讯任务分类">{PRIMARY_FEED_FILTERS.map(f => {
               const selected = f.key === '研究' ? isResearchGroup : feedFilter === f.key;
               return (

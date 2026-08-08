@@ -126,6 +126,29 @@
   color: var(--text-soft);
 }
 
+.dfx-sidebar-tools-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 9px;
+  padding: 9px 12px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.dfx-sidebar-tools-toggle:hover { color: var(--text); }
+.dfx-sidebar-tools-toggle > .anticon { color: var(--text-soft); }
+.dfx-sidebar-tools-toggle > span:nth-child(2) { flex: 1; }
+.dfx-sidebar-tools-toggle.open .dfx-sidebar-pinned-caret { transform: rotate(90deg); }
+.dfx-sidebar-tools-list { display: flex; flex-direction: column; padding-left: 8px; }
+.dfx-sidebar-tools-list .dfx-sidebar-item { font-size: 12.5px; }
+
 /* ---- 置顶：核心标的 ---- */
 .dfx-sidebar-pinned {
   margin-top: auto;
@@ -206,11 +229,13 @@
 .ant-layout-sider-collapsed .dfx-sidebar-item-count,
 .ant-layout-sider-collapsed .dfx-sidebar-group-label,
 .ant-layout-sider-collapsed .dfx-sidebar-new-label,
+.ant-layout-sider-collapsed .dfx-sidebar-tools-toggle span,
 .ant-layout-sider-collapsed .dfx-sidebar-pinned {
   display: none;
 }
 .ant-layout-sider-collapsed .dfx-sidebar-item,
-.ant-layout-sider-collapsed .dfx-sidebar-new {
+.ant-layout-sider-collapsed .dfx-sidebar-new,
+.ant-layout-sider-collapsed .dfx-sidebar-tools-toggle {
   justify-content: center;
   gap: 0;
   padding-left: 0;

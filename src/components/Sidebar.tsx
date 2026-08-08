@@ -1,5 +1,4 @@
 import React from 'react';
-import { useT } from '../i18n/useT';
 import {
   DashboardOutlined,
   RobotOutlined,
@@ -9,21 +8,26 @@ import {
   EyeOutlined,
   SafetyCertificateOutlined,
   FormOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { AppState, Stock } from '../types';
-import { WORKSPACE_SECTIONS, WorkspaceGroup, WorkspaceId } from '../config/workspaces';
 import { countStocksBySegment } from '../utils/marketSegments';
 import './Sidebar.css';
 
-const workspaceIcons: Record<WorkspaceId, React.ReactNode> = {
-  research: <RobotOutlined />,
-  observe: <EyeOutlined />,
-  equity: <DashboardOutlined />,
-  evidence: <DatabaseOutlined />,
-  strategy: <FundProjectionScreenOutlined />,
-  risk: <SafetyCertificateOutlined />,
-  system: <ToolOutlined />,
-};
+const PRIMARY_NAV = [
+  { key: 'home', label: '首页', icon: <DashboardOutlined /> },
+  { key: 'stocks', label: '我的股票', icon: <EyeOutlined />, count: true },
+  { key: 'premarket-opportunity', label: '发现机会', icon: <ThunderboltOutlined /> },
+];
+
+const ADVANCED_NAV = [
+  { key: 'ai-research', label: '深度分析', icon: <RobotOutlined /> },
+  { key: 'financial-terminal', label: '市场数据', icon: <DashboardOutlined /> },
+  { key: 'risk-dashboard', label: '组合与风险', icon: <SafetyCertificateOutlined /> },
+  { key: 'data-sources', label: '资料与来源', icon: <DatabaseOutlined /> },
+  { key: 'multi-market-decision', label: '策略与回测', icon: <FundProjectionScreenOutlined /> },
+  { key: 'profile', label: '设置', icon: <ToolOutlined /> },
+];
 
 interface SidebarProps {
   selectedMenu: string;
@@ -40,33 +44,29 @@ const Sidebar: React.FC<SidebarProps> = ({
   onStockSelect,
   appState,
 }) => {
-  const t = useT();
   const [pinnedOpen, setPinnedOpen] = React.useState(true);
+  const [toolsOpen, setToolsOpen] = React.useState(() => !PRIMARY_NAV.some(item => item.key === selectedMenu));
   const segmentStats = countStocksBySegment(appState.stocks);
   const hotStocks = appState.stocks.slice(0, 5);
 
-  const renderGroup = (group: WorkspaceGroup) => (
-    WORKSPACE_SECTIONS
-      .filter(section => section.group === group)
-      .map(section => {
-        const active = selectedMenu === section.menuKey;
-        const count = section.id === 'observe' ? segmentStats.all : undefined;
-        return (
-          <button
-            key={section.menuKey}
-            type="button"
-            className={`dfx-sidebar-item${active ? ' active' : ''}`}
-            title={t(section.sidebarLabelKey)}
-            onMouseEnter={() => onMenuPreload?.(section.menuKey)}
-            onFocus={() => onMenuPreload?.(section.menuKey)}
-            onClick={() => onMenuSelect(section.menuKey)}
-          >
-            <span className="dfx-sidebar-item-icon">{workspaceIcons[section.id]}</span>
-            <span className="dfx-sidebar-item-label">{t(section.sidebarLabelKey)}</span>
-            {count !== undefined && <span className="dfx-sidebar-item-count">{count}</span>}
-          </button>
-        );
-      })
+  React.useEffect(() => {
+    if (!PRIMARY_NAV.some(item => item.key === selectedMenu)) setToolsOpen(true);
+  }, [selectedMenu]);
+
+  const renderItem = (item: { key: string; label: string; icon: React.ReactNode; count?: boolean }) => (
+    <button
+      key={item.key}
+      type="button"
+      className={`dfx-sidebar-item${selectedMenu === item.key ? ' active' : ''}`}
+      title={item.label}
+      onMouseEnter={() => onMenuPreload?.(item.key)}
+      onFocus={() => onMenuPreload?.(item.key)}
+      onClick={() => onMenuSelect(item.key)}
+    >
+      <span className="dfx-sidebar-item-icon">{item.icon}</span>
+      <span className="dfx-sidebar-item-label">{item.label}</span>
+      {item.count && <span className="dfx-sidebar-item-count">{segmentStats.all}</span>}
+    </button>
   );
 
   return (
@@ -74,19 +74,28 @@ const Sidebar: React.FC<SidebarProps> = ({
       <button
         type="button"
         className="dfx-sidebar-new"
-        title={t('sidebar.research')}
+        title="问 AI"
         onMouseEnter={() => onMenuPreload?.('home')}
         onClick={() => onMenuSelect('home')}
       >
         <FormOutlined />
-        <span className="dfx-sidebar-new-label">新对话</span>
+        <span className="dfx-sidebar-new-label">问 AI</span>
       </button>
 
       <nav className="dfx-sidebar-nav">
-        <div className="dfx-sidebar-group-label">{t('sidebar.workspace')}</div>
-        {renderGroup('workspace')}
-        <div className="dfx-sidebar-group-label">{t('sidebar.system')}</div>
-        {renderGroup('system')}
+        <div className="dfx-sidebar-group-label">开始</div>
+        {PRIMARY_NAV.map(renderItem)}
+        <button
+          type="button"
+          className={`dfx-sidebar-tools-toggle${toolsOpen ? ' open' : ''}`}
+          onClick={() => setToolsOpen(value => !value)}
+          aria-expanded={toolsOpen}
+        >
+          <ToolOutlined />
+          <span>专业工具</span>
+          <span className="dfx-sidebar-pinned-caret">›</span>
+        </button>
+        {toolsOpen && <div className="dfx-sidebar-tools-list">{ADVANCED_NAV.map(renderItem)}</div>}
       </nav>
 
       <div className="dfx-sidebar-pinned">
@@ -96,7 +105,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => setPinnedOpen(v => !v)}
           aria-expanded={pinnedOpen}
         >
-          <span>{t('sidebar.coreStocks')}</span>
+          <span>我的自选</span>
           <span className={`dfx-sidebar-pinned-caret${pinnedOpen ? ' open' : ''}`}>›</span>
         </button>
         {pinnedOpen && hotStocks.map(stock => (
@@ -118,7 +127,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </button>
         ))}
         {pinnedOpen && hotStocks.length === 0 && (
-          <div className="dfx-sidebar-empty">{t('sidebar.noStocks')}</div>
+          <div className="dfx-sidebar-empty">还没有关注股票</div>
         )}
       </div>
     </div>
