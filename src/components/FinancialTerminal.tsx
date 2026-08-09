@@ -29,6 +29,7 @@ import TerminalZsxqStream from './TerminalZsxqStream';
 import TerminalWeixinBind from './TerminalWeixinBind';
 import TerminalKline from './TerminalKline';
 import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
+import TerminalInvestorCompass from './TerminalInvestorCompass';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
@@ -3625,6 +3626,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           </button>
         </div>
       </section>
+
+      <TerminalInvestorCompass
+        symbols={watchlist}
+        names={names}
+        quotes={quotes}
+        loggedIn={!!authUser}
+        onSelectSymbol={(symbol) => { setActive(symbol); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+        onAddSymbol={(symbol, name) => requireLogin(() => { void addSymbol(symbol, name, false); }, '添加关注股票')}
+        onRequireLogin={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '添加关注股票')}
+        onOpenMarket={() => { void openReview(); }}
+      />
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}
       {primaryBanner === 'admin-unread' && (
