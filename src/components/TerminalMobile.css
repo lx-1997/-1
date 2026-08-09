@@ -7,6 +7,25 @@
   .bbt-cmd-right .bbt-primary-action::before { display: none; }
   .bbt-cmd-input { height: 38px; }
 
+  /* “更多” must not inherit the desktop popover anchor on a narrow screen. */
+  .bbt-more-pop {
+    position: fixed;
+    top: 112px;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    width: auto;
+    max-height: none;
+    padding: 10px;
+    border-radius: 14px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .bbt-more-pop::after { display: none; }
+  .bbt-more-mobile-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 9px; border-bottom: 1px solid var(--line); color: var(--text-strong); font-size: 15px; }
+  .bbt-more-mobile-head button { width: 36px; height: 36px; border: 0; border-radius: 8px; background: var(--surface-muted); color: var(--text); font-size: 24px; line-height: 1; cursor: pointer; }
+  .bbt-more-pop .bbt-acct-row { min-height: 44px; padding: 10px 9px; font-size: 14px; line-height: 1.35; }
+
   .bbt-simple-start { gap: 10px; padding: 12px 10px 14px; }
   .bbt-simple-start-copy { min-width: 0; }
   .bbt-simple-start-copy h2 { margin-top: 2px; font-size: 16px; line-height: 1.35; }

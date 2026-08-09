@@ -3504,6 +3504,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               <>
                 <div className="bbt-acct-mask" onClick={() => setHelpMenuOpen(false)} />
                 <div className="bbt-acct-pop bbt-more-pop" onClick={e => e.stopPropagation()}>
+                  <div className="bbt-more-mobile-head"><b>更多功能</b><button type="button" aria-label="关闭更多功能" onClick={() => setHelpMenuOpen(false)}>×</button></div>
                   <div className="bbt-more-section">研究工具</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openReview(); }}>📊 A股收盘复盘{authUser && checkin && checkin.streak > 0 ? ` · 连续 ${checkin.streak} 天` : ''}</button>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setRiskRadarOpen(true); logAct('tab', 'risk-radar'); }}>🛡️ 跨市场风险预警 · A/H/美Top20</button>
