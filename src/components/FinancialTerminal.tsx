@@ -33,6 +33,7 @@ import TerminalInvestorCompass from './TerminalInvestorCompass';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
+import './TerminalMobile.css';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。

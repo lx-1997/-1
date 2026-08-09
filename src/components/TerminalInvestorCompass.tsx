@@ -75,11 +75,11 @@ const TerminalInvestorCompass: React.FC<TerminalInvestorCompassProps> = ({
       <div className="bbt-investor-compass-grid">
         <div className="bbt-investor-compass-panel">
           <div className="bbt-investor-compass-title"><b>我的股票</b><small>只提示值得你花时间核对的变化</small></div>
-          {healthItems.length ? healthItems.map(item => (
+          {healthItems.length ? <div className="bbt-investor-health-list">{healthItems.map(item => (
             <button className="bbt-investor-health" type="button" key={item.symbol} onClick={() => onSelectSymbol(item.symbol)}>
               <i className={item.tone} /><span><strong>{item.name}</strong><small>{item.label} · {item.reason}</small></span><em>→</em>
             </button>
-          )) : <button className="bbt-investor-empty" type="button" onClick={onRequireLogin}>登录后添加关注股票，系统会自动帮你筛选变化 →</button>}
+          ))}</div> : <button className="bbt-investor-empty" type="button" onClick={onRequireLogin}>登录后添加关注股票，系统会自动帮你筛选变化 →</button>}
         </div>
         <div className="bbt-investor-compass-panel">
           <div className="bbt-investor-compass-title"><b>发现机会</b><small>先观察，再决定要不要深入研究</small></div>

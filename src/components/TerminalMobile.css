@@ -1,0 +1,44 @@
+/* Mobile-first overrides for the terminal home. Kept separate from the desktop terminal stylesheet. */
+@media (max-width: 560px) {
+  .bbt-cmd { position: sticky; top: 0; z-index: 40; padding: 6px 10px 8px; box-shadow: 0 3px 14px rgba(0, 0, 0, .24); }
+  .bbt-cmd-nav { display: none; }
+  .bbt-cmd-right { gap: 4px; }
+  .bbt-cmd-right .bbt-primary-action { width: auto; min-width: 0; height: 34px; padding: 0 10px; color: #d9f8ff; font-size: 12px !important; }
+  .bbt-cmd-right .bbt-primary-action::before { display: none; }
+  .bbt-cmd-input { height: 38px; }
+
+  .bbt-simple-start { gap: 10px; padding: 12px 10px 14px; }
+  .bbt-simple-start-copy { min-width: 0; }
+  .bbt-simple-start-copy h2 { margin-top: 2px; font-size: 16px; line-height: 1.35; }
+  .bbt-simple-start-copy p { line-height: 1.45; }
+  .bbt-simple-start-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .bbt-simple-start-actions button { min-height: 72px; padding: 9px 8px; justify-content: center; border-radius: 10px; }
+  .bbt-simple-start-actions b { font-size: 13px; }
+  .bbt-simple-start-actions span { font-size: 10px; line-height: 1.35; }
+
+  /* An anonymous visitor already sees the same three first actions in the hero. */
+  .bbt-hero + .bbt-simple-start { display: none; }
+  .bbt-hero { padding: 15px 12px 16px; }
+  .bbt-hero-title { margin-bottom: 5px; font-size: 18px; line-height: 1.35; }
+  .bbt-hero-sub { margin-bottom: 12px; font-size: 12px; line-height: 1.5; }
+  .bbt-hero-ctas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .bbt-hero-cta { min-height: 52px; justify-content: center; padding: 7px 5px; border-radius: 9px; font-size: 12px; line-height: 1.35; text-align: center; }
+  .bbt-hero-alt { display: none; }
+
+  .bbt-investor-compass { margin: 8px 8px 0; border-radius: 12px; }
+  .bbt-investor-compass-head { padding: 12px; }
+  .bbt-investor-compass-head h2 { font-size: 16px; }
+  .bbt-investor-compass-panel { padding: 11px 10px; }
+  .bbt-investor-health-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .bbt-investor-health { min-height: 70px; grid-template-columns: 7px minmax(0, 1fr); align-items: start; gap: 7px; padding: 9px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-muted); }
+  .bbt-investor-health i { margin-top: 4px; }
+  .bbt-investor-health span { gap: 3px; }
+  .bbt-investor-health strong { font-size: 12px; }
+  .bbt-investor-health small { display: -webkit-box; width: auto; overflow: hidden; font-size: 10px; line-height: 1.35; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .bbt-investor-health em { display: none; }
+  .bbt-investor-theme { padding: 10px 0; }
+  .bbt-investor-theme strong { font-size: 12px; }
+  .bbt-investor-theme p { margin-top: 5px; font-size: 11px; }
+  .bbt-investor-theme button, .bbt-investor-empty { min-height: 36px; font-size: 11px; }
+  .bbt-investor-compass-foot { padding: 8px 10px; line-height: 1.45; }
+}
