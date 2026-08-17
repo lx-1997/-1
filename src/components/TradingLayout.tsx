@@ -15,6 +15,7 @@ const DIRECT_MENU_VIEWS: Partial<Record<string, ViewType>> = {
   'premarket-opportunity': 'premarket-opportunity',
   'financial-terminal': 'financial-terminal',
   'risk-dashboard': 'risk-dashboard',
+  'quant-lab': 'quant-lab',
   'data-sources': 'data-sources',
   'multi-market-decision': 'multi-market-decision',
 };

@@ -1,0 +1,38 @@
+.quant-lab {
+  min-width: 0;
+}
+
+.quant-lab .ant-card,
+.quant-lab .ant-table-wrapper,
+.quant-lab .recharts-responsive-container {
+  min-width: 0;
+}
+
+.quant-lab .ant-form-item {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 767px) {
+  .quant-lab {
+    padding: 10px;
+  }
+
+  .quant-lab .center-shell-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+
+  .quant-lab .center-shell-actions,
+  .quant-lab .center-shell-actions .ant-btn {
+    width: 100%;
+  }
+
+  .quant-lab .ant-picker-range {
+    width: 100%;
+  }
+
+  .quant-lab .ant-statistic-content {
+    font-size: 17px;
+  }
+}

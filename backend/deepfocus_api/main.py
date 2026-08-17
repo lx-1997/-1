@@ -247,6 +247,7 @@ from .backtest_engine import (
     update_backtest,
 )
 from .backtest_executor import run_backtest, list_backtest_results
+from .quant_lab import run_quant_lab
 from .agent_loop import run_agent_research_loop
 from .market_dashboard import (
     fetch_market_dashboard,
@@ -1357,6 +1358,8 @@ from .schemas import (
     BacktestMetricsRequest,
     BacktestMetricsResponse,
     BacktestRecord,
+    QuantLabRequest,
+    QuantLabResponse,
     MarketDashboardResponse,
     DashboardAnalysisResponse,
     ModuleContextChatRequest,
@@ -11325,6 +11328,12 @@ async def risk_pnl_summary() -> PnlSummaryResponse:
 async def risk_pnl_records(position_id: Optional[str] = None, limit: int = 100) -> list[PnlRecord]:
     records = list_pnl_records(position_id=position_id, limit=limit)
     return [PnlRecord(**r) for r in records]
+
+
+@app.post("/api/quant/lab", response_model=QuantLabResponse)
+async def quant_lab(request: QuantLabRequest) -> QuantLabResponse:
+    result = await run_quant_lab(request)
+    return QuantLabResponse(**result)
 
 
 @app.post("/api/backtest/{backtest_id}/run")

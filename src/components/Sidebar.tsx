@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   DashboardOutlined,
+  BarChartOutlined,
   RobotOutlined,
   DatabaseOutlined,
   FundProjectionScreenOutlined,
@@ -24,6 +25,7 @@ const ADVANCED_NAV = [
   { key: 'ai-research', label: '深度分析', icon: <RobotOutlined /> },
   { key: 'financial-terminal', label: '市场数据', icon: <DashboardOutlined /> },
   { key: 'risk-dashboard', label: '组合与风险', icon: <SafetyCertificateOutlined /> },
+  { key: 'quant-lab', label: 'QuantLab 量化', icon: <BarChartOutlined /> },
   { key: 'data-sources', label: '资料与来源', icon: <DatabaseOutlined /> },
   { key: 'multi-market-decision', label: '策略与回测', icon: <FundProjectionScreenOutlined /> },
   { key: 'profile', label: '设置', icon: <ToolOutlined /> },

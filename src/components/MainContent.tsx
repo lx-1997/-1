@@ -43,6 +43,7 @@ const AiSupplyChainCycleCenter = lazyWithPreload(() => import('./AiSupplyChainCy
 const CustomsTradeCenter = lazyWithPreload(() => import('./CustomsTradeCenter'));
 const OptionsSignalCenter = lazyWithPreload(() => import('./OptionsSignalCenter'));
 const BacktestCenter = lazyWithPreload(() => import('./BacktestCenter'));
+const QuantLab = lazyWithPreload(() => import('./QuantLab'));
 const PremarketOpportunityCenter = lazyWithPreload(() => import('./PremarketOpportunityCenter'));
 const MarketRiskRadar = lazyWithPreload(() => import('./MarketRiskRadar'));
 const RiskDashboard = lazyWithPreload(() => import('./RiskDashboard'));
@@ -259,6 +260,10 @@ const VIEW_RENDER_CONFIG: Record<ViewType, ViewConfig> = {
   'financial-terminal': {
     component: FinancialTerminal,
     render: (props) => <FinancialTerminal appState={props.appState} />,
+  },
+  'quant-lab': {
+    component: QuantLab,
+    render: (props) => <QuantLab appState={props.appState} />,
   },
   'cctv-news': {
     component: CctvNewsCenter,

@@ -38,6 +38,10 @@ import './TerminalMobile.css';
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
 const MarketRiskRadar = React.lazy(() => import('./MarketRiskRadar'));
+const QuantLab = React.lazy(() => import('./QuantLab'));
+const QUANT_LAB_PATH = '/quant-lab';
+const isQuantLabPath = () => typeof window !== 'undefined'
+  && window.location.pathname.replace(/\/+$/, '') === QUANT_LAB_PATH;
 
 // ===== 市场交易时段（北京时间）+ 2026 节假日 =====
 const HOLIDAYS_2026: Record<string, string[]> = {
@@ -622,6 +626,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [showAiFund, setShowAiFund] = useState(false);      // AI 模拟盘弹层
   const [showWeixinBind, setShowWeixinBind] = useState(false);  // 微信扫码绑定（扫码即问 DeepFocus）
   const [riskRadarOpen, setRiskRadarOpen] = useState(false);  // A/H/美股市值前20风险预警独立模块
+  const [quantLabOpen, setQuantLabOpen] = useState(false);  // QuantLab 登录态全屏工具；URL 与浏览器后退同步
   // 账号菜单可发现性：首次登录给一次性气泡指向头像，告知里面有会员/绑定/邀请等功能（看过即不再弹）
   const [showAcctHint, setShowAcctHint] = useState(false);
   const dismissAcctHint = useCallback(() => { setShowAcctHint(false); try { localStorage.setItem('bbt_acct_hint_v1', '1'); } catch { /* */ } }, []);
@@ -1656,6 +1661,39 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (membership?.tier === 'premium' || membership?.tier === 'lifetime') { run(); return; }
     setUpgradeReason(reason); setUpgradeOpen(true);
   }, [requireLogin, membership]);
+  const openQuantLab = useCallback((pushRoute = true) => {
+    setHelpMenuOpen(false);
+    setQuantLabOpen(true);
+    logAct('tab', 'quant-lab');
+    if (pushRoute && !isQuantLabPath()) {
+      try {
+        window.history.pushState({ ...(window.history.state || {}), deepfocusOverlay: 'quant-lab' }, '', QUANT_LAB_PATH);
+      } catch { /* 保留弹层可用，URL 同步失败不阻断 */ }
+    }
+  }, [logAct]);
+  const closeQuantLab = useCallback(() => {
+    setQuantLabOpen(false);
+    if (!isQuantLabPath()) return;
+    try {
+      if (window.history.state?.deepfocusOverlay === 'quant-lab') {
+        window.history.back();
+      } else {
+        window.history.replaceState({}, '', '/');
+      }
+    } catch { /* */ }
+  }, []);
+  useEffect(() => {
+    const syncQuantLabRoute = () => {
+      if (isQuantLabPath()) {
+        requireLogin(() => openQuantLab(false), '使用 QuantLab 量化系统');
+      } else {
+        setQuantLabOpen(false);
+      }
+    };
+    syncQuantLabRoute();
+    window.addEventListener('popstate', syncQuantLabRoute);
+    return () => window.removeEventListener('popstate', syncQuantLabRoute);
+  }, [openQuantLab, requireLogin]);
   // 收藏 id：研报头条可能只有 file_id/filename，统一解析
   const bmId = (m: any): string => String(m?.id || m?.file_id || m?.filename || '');
   // 收藏（登录态，头像菜单「我的收藏」可看）；topicOverride 用于头条卡（m.topic 可能缺）
@@ -3388,6 +3426,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     { id: 'kx', label: '快讯 · 只看快讯', run: () => setFeedFilter('快讯') },
     { id: 'wz', label: '文章 · 只看文章', run: () => setFeedFilter('文章') },
     { id: 'risk', label: 'RISK · 跨市场风险预警', run: () => { setRiskRadarOpen(true); logAct('tab', 'risk-radar'); } },
+    { id: 'quant', label: 'QUANT · QuantLab 量化系统', run: () => requireLogin(() => openQuantLab(), '使用 QuantLab 量化系统') },
     { id: 'clr', label: 'CLR · 清除标的/筛选', run: () => { setActive(null); setFeedFilter('all'); } },
   ];
   const pqLow = pq.trim().toLowerCase();
@@ -3508,6 +3547,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <div className="bbt-more-section">研究工具</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openReview(); }}>📊 A股收盘复盘{authUser && checkin && checkin.streak > 0 ? ` · 连续 ${checkin.streak} 天` : ''}</button>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setRiskRadarOpen(true); logAct('tab', 'risk-radar'); }}>🛡️ 跨市场风险预警 · A/H/美Top20</button>
+                  <button className="bbt-acct-row" onClick={() => requireLogin(() => openQuantLab(), '使用 QuantLab 量化系统')}>🧪 QuantLab 量化系统 · 信号/仓位/回测</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }}>🤖 AI 模拟盘</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_ontology', '投资本体'); window.location.href = '/ontology'; }}>🧬 决策本体</button>
                   {groupCfg?.enabled !== false && <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openGroup(); }}>💬 用户交流群{!groupSeen ? ' · 免费' : ''}</button>}
@@ -5150,6 +5190,33 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <div className="bbt-risk-radar-body">
               <React.Suspense fallback={<div className="bbt-risk-radar-loading">正在加载风险预警模块…</div>}>
                 <MarketRiskRadar />
+              </React.Suspense>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quantLabOpen && (
+        <div className="bbt-risk-radar-overlay" onMouseDown={closeQuantLab}>
+          <div
+            className="bbt-risk-radar-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="QuantLab 量化系统"
+            onMouseDown={e => e.stopPropagation()}
+          >
+            <div className="bbt-risk-radar-bar">
+              <div>
+                <b>🧪 QuantLab 量化系统</b>
+                <span>信号扫描 · 目标仓位 · 风控回放</span>
+              </div>
+              <button type="button" onClick={closeQuantLab} aria-label="返回金融终端">
+                ← 返回终端
+              </button>
+            </div>
+            <div className="bbt-risk-radar-body">
+              <React.Suspense fallback={<div className="bbt-risk-radar-loading">正在加载 QuantLab…</div>}>
+                <QuantLab defaultSymbols={watchlist} />
               </React.Suspense>
             </div>
           </div>

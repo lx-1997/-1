@@ -2822,6 +2822,137 @@ class BacktestMetricsResponse(BaseModel):
     information_ratio: float
 
 
+class RiskBacktestRuleSet(BaseModel):
+    max_position_size_pct: float = Field(default=20, ge=0, le=100)
+    max_total_exposure_pct: float = Field(default=100, ge=0, le=100)
+    max_sector_exposure_pct: float = Field(default=40, ge=0, le=100)
+    max_drawdown_pct: float = Field(default=15, ge=0, le=100)
+    daily_loss_limit_pct: float = Field(default=5, ge=0, le=100)
+    stop_loss_pct: float = Field(default=8, ge=0, le=100)
+    take_profit_pct: float = Field(default=15, ge=0, le=200)
+    cooldown_days: int = Field(default=5, ge=0, le=252)
+    allow_reentry: bool = False
+
+
+class RiskBacktestRequest(BaseModel):
+    name: str
+    market: MarketRegion = "US"
+    symbols: list[str] = Field(default_factory=list)
+    start_date: str = ""
+    end_date: str = ""
+    initial_capital: float = Field(default=100000, ge=1000)
+    benchmark: str = "SPY"
+    rules: RiskBacktestRuleSet = Field(default_factory=RiskBacktestRuleSet)
+    sector_map: dict[str, str] = Field(default_factory=dict)
+
+
+class RiskBacktestEvent(BaseModel):
+    date: str
+    type: str
+    message: str
+    symbol: Optional[str] = None
+    value: Optional[float] = None
+
+
+class RiskBacktestResponse(BaseModel):
+    generated_at: str
+    name: str
+    market: str
+    symbols: list[str] = Field(default_factory=list)
+    benchmark: str = ""
+    start_date: str = ""
+    end_date: str = ""
+    initial_capital: float = 0
+    rules: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    events: list[RiskBacktestEvent] = Field(default_factory=list)
+    trades_log: list[dict[str, Any]] = Field(default_factory=list)
+    equity_curve: list[float] = Field(default_factory=list)
+    baseline_curve: list[float] = Field(default_factory=list)
+    benchmark_curve: list[float] = Field(default_factory=list)
+    dates: list[str] = Field(default_factory=list)
+    data_sources: dict[str, str] = Field(default_factory=dict)
+    disclaimer: str = "风控回测基于历史行情与本地规则引擎，仅用于风险管理研究，不构成投资建议。"
+
+
+QuantStrategyKey = Literal["momentum", "mean_reversion", "trend_following", "breakout", "defensive"]
+
+
+class QuantLabRequest(BaseModel):
+    name: str
+    market: MarketRegion = "US"
+    strategy_key: QuantStrategyKey = "momentum"
+    symbols: list[str] = Field(default_factory=list)
+    start_date: str = ""
+    end_date: str = ""
+    benchmark: str = "SPY"
+    initial_capital: float = Field(default=100000, ge=1000)
+    lookback: int = Field(default=20, ge=5, le=252)
+    top_n: int = Field(default=5, ge=1, le=50)
+    allow_short: bool = False
+    risk_rules: RiskBacktestRuleSet = Field(default_factory=RiskBacktestRuleSet)
+    sector_map: dict[str, str] = Field(default_factory=dict)
+
+
+class QuantSignalRecord(BaseModel):
+    symbol: str
+    name: str = ""
+    sector: str = ""
+    market: str = ""
+    latest_close: float = 0
+    score: float = 0
+    action: Literal["buy", "hold", "sell"] = "hold"
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    target_weight: float = 0
+    current_weight: float = 0
+    reasons: list[str] = Field(default_factory=list)
+    risk_flags: list[str] = Field(default_factory=list)
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class QuantOrderPlan(BaseModel):
+    symbol: str
+    side: Literal["buy", "sell", "hold"] = "hold"
+    current_weight: float = 0
+    target_weight: float = 0
+    delta_weight: float = 0
+    quantity: float = 0
+    notional: float = 0
+    reason: str = ""
+
+
+class QuantAllocationSummary(BaseModel):
+    gross_exposure_pct: float = 0
+    cash_buffer_pct: float = 0
+    selected_count: int = 0
+    buy_count: int = 0
+    sell_count: int = 0
+    hold_count: int = 0
+    max_target_weight_pct: float = 0
+    notes: list[str] = Field(default_factory=list)
+
+
+class QuantLabResponse(BaseModel):
+    generated_at: str
+    name: str
+    market: str
+    strategy_key: QuantStrategyKey
+    strategy_label: str
+    symbols: list[str] = Field(default_factory=list)
+    benchmark: str = ""
+    initial_capital: float = 0
+    lookback: int = 0
+    signals: list[QuantSignalRecord] = Field(default_factory=list)
+    orders: list[QuantOrderPlan] = Field(default_factory=list)
+    allocation: QuantAllocationSummary = Field(default_factory=QuantAllocationSummary)
+    portfolio_context: dict[str, Any] = Field(default_factory=dict)
+    backtest: RiskBacktestResponse
+    risk_summary: Optional[RiskSummaryResponse] = None
+    notes: list[str] = Field(default_factory=list)
+    data_sources: dict[str, str] = Field(default_factory=dict)
+    disclaimer: str = "量化系统输出为研究与纸上回放用途，不构成投资建议，也不是自动下单承诺。"
+
+
 IndicatorSignal = Literal["strong_bullish", "bullish", "neutral", "bearish", "strong_bearish"]
 
 

@@ -101,6 +101,7 @@ export const WORKSPACE_SECTIONS: WorkspaceSection[] = [
     views: [
       { view: 'multi-market-decision', label: '组合', detail: '多市场' },
       { view: 'backtest-center', label: '回测', detail: '验证策略' },
+      { view: 'quant-lab', label: 'QuantLab', detail: '信号 × 仓位 × 风控回放' },
       { view: 'options-signal', label: '期权', detail: '异动雷达' },
       { view: 'ai-supply-chain', label: '供应链', detail: 'AI 产业' },
       { view: 'customs-trade', label: '海关', detail: '进出口' }
