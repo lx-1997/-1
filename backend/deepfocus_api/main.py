@@ -262,6 +262,7 @@ from .realtime_messages import (
     create_realtime_message,
     get_realtime_message,
     init_realtime_message_db,
+    is_futoucaixin_message,
     list_realtime_messages,
     publish_data_source_items,
     realtime_message_event_stream,
@@ -1568,6 +1569,7 @@ async def ontology_resolve_alias(alias: str, market: str = "") -> dict[str, Any]
 
 @app.get("/api/ontology/content-map")
 async def ontology_content_map(
+    request: Request,
     security_id: str = "security:cn:600519.SH",
     limit: int = 48,
 ) -> dict[str, Any]:
@@ -1591,7 +1593,11 @@ async def ontology_content_map(
     ticker = canonical.split(".")[0]
     label = str(selected["label"])
     aliases = ",".join([label, canonical, ticker])
-    messages = list_realtime_messages(anyq=aliases, limit=max(8, min(int(limit or 48), 120)))
+    messages = list_realtime_messages(
+        anyq=aliases,
+        exclude_futoucaixin=_should_hide_futoucaixin(request),
+        limit=max(8, min(int(limit or 48), 120)),
+    )
 
     notes: list[dict[str, Any]] = []
     try:
@@ -5605,9 +5611,15 @@ async def api_metrics_activity(request: Request, token: str = "", actor: str = "
 
 
 @app.get("/api/headlines")
-async def api_headlines() -> dict[str, Any]:
+async def api_headlines(request: Request) -> dict[str, Any]:
     """AI 评选的今日头条（快讯/文章/研报各最多 3 条、按重要性排序，附"为什么重要"）。"""
-    return _HEADLINES
+    if not _should_hide_futoucaixin(request):
+        return _HEADLINES
+    return {
+        **_HEADLINES,
+        "kx": [item for item in (_HEADLINES.get("kx") or []) if not is_futoucaixin_message(item)],
+        "wz": [item for item in (_HEADLINES.get("wz") or []) if not is_futoucaixin_message(item)],
+    }
 
 
 @app.get("/api/review/today")
@@ -7209,7 +7221,7 @@ async def run_seo_submit() -> None:
             from . import glossary as _gl  # C12：术语科普页
             urls.append(f"{base}/learn")
             urls += [f"{base}/learn/{_t['slug']}" for _t in _gl.GLOSSARY]
-            for m in list_realtime_messages(topic="文章", limit=120):
+            for m in list_realtime_messages(topic="文章", exclude_futoucaixin=True, limit=120):
                 urls.append(f"{base}/article/{m.id}")
             urls = list(dict.fromkeys(u for u in urls if u))  # 去重保序
             state = data_latest("seo_submit_state", "global") or {}
@@ -7404,6 +7416,7 @@ def _stabilize_headlines(cat: str, fresh: list[dict], max_n: int = 3) -> list[di
 
 def _hl_pack_msg(m: Any, why: str) -> dict[str, Any]:
     return {"id": m.id, "title": m.title, "content": m.content or "", "url": m.url or "",
+            "source_id": m.source_id or "", "topic": m.topic or "",
             "created_at": m.created_at, "severity": m.severity, "why": why}
 
 
@@ -8068,6 +8081,31 @@ def _article_member_view(m: RealtimeMessageRecord, request: Request) -> Realtime
     return m.model_copy(update={"content": teaser + _ARTICLE_LOCK_NOTE})
 
 
+_FUTOUCAIXIN_RESTRICTED_USERS = {"dao2"}
+
+
+def _should_hide_futoucaixin(request: Request) -> bool:
+    """匿名/失效会话与指定账号不可见 futoucaixin 快讯和文章。"""
+    claims = optional_current_user(request)
+    if claims is None:
+        return True
+    username = str(claims.get("username") or "").strip().casefold()
+    return username in _FUTOUCAIXIN_RESTRICTED_USERS
+
+
+def _realtime_message_view(
+    message: RealtimeMessageRecord,
+    request: Request,
+    *,
+    hide_futoucaixin: Optional[bool] = None,
+) -> Optional[RealtimeMessageRecord]:
+    """统一资讯出参闸：先按来源隐藏，再套文章会员墙。"""
+    hide = _should_hide_futoucaixin(request) if hide_futoucaixin is None else hide_futoucaixin
+    if hide and is_futoucaixin_message(message):
+        return None
+    return _article_member_view(message, request)
+
+
 @app.get("/api/realtime/messages", response_model=RealtimeMessageListResponse)
 async def api_list_realtime_messages(
     request: Request,
@@ -8080,9 +8118,10 @@ async def api_list_realtime_messages(
     anyq: Optional[str] = None,
     limit: int = 80,
 ) -> RealtimeMessageListResponse:
+    hide_futoucaixin = _should_hide_futoucaixin(request)
     return RealtimeMessageListResponse(
         messages=[
-            _article_member_view(m, request)
+            viewed
             for m in list_realtime_messages(
                 symbol=symbol,
                 topic=topic,
@@ -8091,8 +8130,10 @@ async def api_list_realtime_messages(
                 before=before,
                 q=q,
                 anyq=anyq,
+                exclude_futoucaixin=hide_futoucaixin,
                 limit=max(1, min(limit, 200)),
             )
+            if (viewed := _realtime_message_view(m, request, hide_futoucaixin=hide_futoucaixin)) is not None
         ]
     )
 
@@ -8111,9 +8152,9 @@ async def api_push_realtime_message(request: RealtimeMessageCreateRequest, http_
 
 @app.get("/api/realtime/messages/stream")
 async def api_realtime_message_stream(request: Request) -> StreamingResponse:
-    # 文章会员墙（2026-08-07）：非会员连接上的文章推送同样只给导语+锁定标记。
-    # 会员身份按连接建立时刻判定一次（会员中途到期由 STREAM_MAX_LIFETIME 重连自然刷新）。
-    transform = None if _claims_is_member(current_claims(request)) else (lambda m: _article_member_view(m, request))
+    # 会员/来源可见性按连接建立时判定一次，到期或换号由 STREAM_MAX_LIFETIME 重连刷新。
+    hide_futoucaixin = _should_hide_futoucaixin(request)
+    transform = lambda m: _realtime_message_view(m, request, hide_futoucaixin=hide_futoucaixin)
     return StreamingResponse(
         realtime_message_event_stream(request, transform=transform),
         media_type="text/event-stream",
@@ -8132,7 +8173,10 @@ async def api_get_realtime_message(message_id: str, request: Request) -> Realtim
     msg = get_realtime_message(message_id)
     if msg is None:
         raise HTTPException(status_code=404, detail="消息不存在")
-    return _article_member_view(msg, request)
+    viewed = _realtime_message_view(msg, request)
+    if viewed is None:
+        raise HTTPException(status_code=404, detail="消息不存在")
+    return viewed
 
 
 # ===== 研报「AI 解读」可分享落地页（软墙，分享我们的解读而非第三方原文，见 [[report_share]]）=====
@@ -8733,13 +8777,13 @@ async def public_sitemap() -> Response:
         if lm:
             lastmod[f"{base}/stock/{sym}"] = lm
     article_ids: list[str] = []
-    for m in list_realtime_messages(topic="文章", limit=200):
+    for m in list_realtime_messages(topic="文章", exclude_futoucaixin=True, limit=200):
         article_ids.append(m.id)
         if getattr(m, "created_at", None):
             lastmod[f"{base}/article/{m.id}"] = str(m.created_at)
     # 快讯：也走 /article/{id} 落地页，纳入 sitemap（用户要求可被百度/谷歌/AI 搜到）。滤掉过短的薄快讯。
     flash_ids: list[str] = []
-    for m in list_realtime_messages(topic="快讯", limit=300):
+    for m in list_realtime_messages(topic="快讯", exclude_futoucaixin=True, limit=300):
         if len((m.content or m.title or "").strip()) < 30:
             continue
         flash_ids.append(m.id)
@@ -8844,7 +8888,7 @@ async def public_stocks_all(page: int = 1) -> HTMLResponse:
 async def public_feed() -> Response:
     """RSS 2.0（C6）：复盘 + 资讯增量发现通道。"""
     reviews = ashare_review.list_reviews(limit=25)
-    articles = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=25)]
+    articles = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", exclude_futoucaixin=True, limit=25)]
     return Response(seo_pages.render_feed_xml(reviews, articles),
                     media_type="application/rss+xml; charset=utf-8")
 
@@ -8876,10 +8920,17 @@ async def public_stock_page(symbol: str, request: Request, market: str = "") -> 
 
 
 @app.get("/articles", response_class=HTMLResponse, include_in_schema=False)
-async def public_articles_hub(page: int = 1) -> HTMLResponse:
+async def public_articles_hub(request: Request, page: int = 1) -> HTMLResponse:
     # P2 信息架构：60 条单页太长，改为每页 30 条分页
     per = 30
-    items = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=120)]
+    items = [
+        m.model_dump(mode="json")
+        for m in list_realtime_messages(
+            topic="文章",
+            exclude_futoucaixin=_should_hide_futoucaixin(request),
+            limit=120,
+        )
+    ]
     items = [it for it in items if it.get("id")]
     total_pages = max(1, (len(items) + per - 1) // per)
     page = max(1, min(int(page or 1), total_pages))
@@ -8907,7 +8958,16 @@ async def public_article_page(article_id: str, request: Request) -> HTMLResponse
     article = get_realtime_message(article_id)
     if article is None or (article.topic or "") not in ("文章", "快讯"):
         return HTMLResponse(render_not_found_html(), status_code=404)
-    recent = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", limit=12)]
+    if _should_hide_futoucaixin(request) and is_futoucaixin_message(article):
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    recent = [
+        m.model_dump(mode="json")
+        for m in list_realtime_messages(
+            topic="文章",
+            exclude_futoucaixin=_should_hide_futoucaixin(request),
+            limit=12,
+        )
+    ]
     return HTMLResponse(
         seo_pages.render_article_page_html(article.model_dump(mode="json"), recent, page_url=_canonical_url(request))
     )
@@ -9055,10 +9115,10 @@ async def _usearch_stocks(query: str) -> list:
     ]
 
 
-async def _usearch_news(query: str) -> list:
+async def _usearch_news(query: str, *, exclude_futoucaixin: bool = False) -> list:
     return [
         {"id": m.id, "title": m.title, "topic": m.topic, "created_at": m.created_at}
-        for m in list_realtime_messages(anyq=query, limit=5)
+        for m in list_realtime_messages(anyq=query, exclude_futoucaixin=exclude_futoucaixin, limit=5)
     ]
 
 
@@ -9099,7 +9159,7 @@ async def _usearch_boards(query: str) -> list:
 
 
 @app.get("/api/search/universal")
-async def api_universal_search(q: str = "") -> dict[str, Any]:
+async def api_universal_search(request: Request, q: str = "") -> dict[str, Any]:
     """统一搜索：股票/快讯文章/研报/术语/板块 并行聚合。公开（PUBLIC_EXACT）。
 
     每路独立 try/except 失败为空；总超时 8s 兜底（慢源不拖垮整个搜索框）。"""
@@ -9118,7 +9178,7 @@ async def api_universal_search(q: str = "") -> dict[str, Any]:
         stocks, news, reports, terms, boards = await asyncio.wait_for(
             asyncio.gather(
                 _safe(_usearch_stocks(query)),
-                _safe(_usearch_news(query)),
+                _safe(_usearch_news(query, exclude_futoucaixin=_should_hide_futoucaixin(request))),
                 _safe(_usearch_reports(query)),
                 _safe(_usearch_terms(query)),
                 _safe(_usearch_boards(query)),

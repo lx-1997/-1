@@ -203,6 +203,7 @@ def list_realtime_messages(
     before: Optional[str] = None,
     q: Optional[str] = None,
     anyq: Optional[str] = None,
+    exclude_futoucaixin: bool = False,
     limit: int = 80,
 ) -> list[RealtimeMessageRecord]:
     init_realtime_message_db()
@@ -217,6 +218,14 @@ def list_realtime_messages(
     if severity:
         clauses.append("severity = ?")
         values.append(severity.strip())
+    if exclude_futoucaixin:
+        # 匿名用户和受限账号的数据闸：文章可由保留的原文域名识别；
+        # 快讯通常没有 url，生产存量使用 lxaa* source_id（含 lxaanr 文章）标识该上游。
+        clauses.append(
+            "NOT (topic IN ('快讯', '文章') AND "
+            "(LOWER(COALESCE(url, '')) LIKE '%futoucaixin%' "
+            "OR LOWER(COALESCE(source_id, '')) LIKE 'lxaa%'))"
+        )
     if q and q.strip():  # 关键词检索全量历史：空格分词，每词命中标题或正文（AND）
         for term in q.strip().split()[:6]:
             like = f"%{term}%"
@@ -269,6 +278,24 @@ def get_realtime_message(message_id: str) -> Optional[RealtimeMessageRecord]:
     return _row_to_message(dict(row)) if row else None
 
 
+def is_futoucaixin_message(message: Any) -> bool:
+    """识别来自 futoucaixin 上游的快讯/文章。
+
+    入库时可见正文会抹去竞品字样，故不能用 title/content 判断；
+    结构化 url 和上游 source_id 会保留，是稳定的服务端识别依据。
+    同时支持 Pydantic 记录与头条缓存 dict。
+    """
+    if isinstance(message, dict):
+        get = message.get
+    else:
+        get = lambda key, default=None: getattr(message, key, default)
+    if str(get("topic", "") or "") not in ("快讯", "文章"):
+        return False
+    url = str(get("url", "") or "").strip().lower()
+    source_id = str(get("source_id", "") or "").strip().lower()
+    return "futoucaixin" in url or source_id.startswith("lxaa")
+
+
 def publish_data_source_items(
     items: list[DataSourceItemRecord],
     *,
@@ -304,9 +331,9 @@ def publish_data_source_items(
 
 async def realtime_message_event_stream(
     request: Request,
-    transform: Optional[Callable[[RealtimeMessageRecord], RealtimeMessageRecord]] = None,
+    transform: Optional[Callable[[RealtimeMessageRecord], Optional[RealtimeMessageRecord]]] = None,
 ) -> AsyncIterator[str]:
-    """transform：按连接定制出参（如文章会员墙——非会员连接只给导语+锁定标记），None=原样广播。"""
+    """transform：按连接定制出参；返回 None 可对该连接跳过某条消息。"""
     if len(_subscribers) >= MAX_SUBSCRIBERS:
         yield _sse_event("error", {"message": "当前在线人数已达上限，请稍后重试。"})
         return
@@ -328,6 +355,8 @@ async def realtime_message_event_stream(
                 yield _sse_event("heartbeat", {"created_at": utc_now_iso()})
                 continue
             out = transform(message) if transform is not None else message
+            if out is None:
+                continue
             yield _sse_event("realtime-message", out.model_dump(mode="json"))
     finally:
         _subscribers.discard(queue)

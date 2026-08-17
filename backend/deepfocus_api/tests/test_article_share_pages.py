@@ -4,6 +4,8 @@
 路由按 topic='文章' 守门；/api/realtime/messages/{id} 公开可取单条供深链定位，
 但文章全文为会员专享（2026-08-07）：匿名/非会员只回 ≤120 字导语 + 会员锁定标记。
 """
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -80,6 +82,31 @@ def _make_article(content="文章导语第一句。" + "中间正文段落。" *
     ))
 
 
+def _make_futou_article():
+    return rm.create_realtime_message(RealtimeMessageCreateRequest(
+        title="受限来源文章", content="受限文章正文", topic="文章",
+        severity="info", source_name="DAO财经", source_id="88001",
+        source_type="dao-article", url="https://backend.futoucaixin.cn/a/88001",
+        tags=["文章"],
+    ))
+
+
+def _make_futou_flash():
+    return rm.create_realtime_message(RealtimeMessageCreateRequest(
+        title="受限来源快讯", content="受限快讯正文", topic="快讯",
+        severity="info", source_name="DAO财经", source_id="lxaa88002",
+        source_type="dao-news", tags=["快讯"],
+    ))
+
+
+def _make_normal_flash():
+    return rm.create_realtime_message(RealtimeMessageCreateRequest(
+        title="普通来源快讯", content="普通快讯正文", topic="快讯",
+        severity="info", source_name="其他财经", source_id="wire-88003",
+        source_type="wire-news", tags=["快讯"],
+    ))
+
+
 def test_article_route_serves_soft_wall(client):
     art = _make_article()
     r = client.get(f"/article/{art.id}")
@@ -137,6 +164,83 @@ def test_list_endpoint_member_wall_anonymous(client):
     assert msgs["快讯"]["content"] == flash_content  # 快讯全文不受影响
 
 
+def test_anonymous_cannot_see_futou_messages(client, monkeypatch):
+    """匿名的列表、单条深链、公开落地页和头条全部隐藏；普通来源仍可见。"""
+    article = _make_futou_article()
+    flash = _make_futou_flash()
+    normal = _make_normal_flash()
+
+    listed = {m["id"] for m in client.get("/api/realtime/messages", params={"limit": 20}).json()["messages"]}
+    assert article.id not in listed and flash.id not in listed
+    assert normal.id in listed
+    assert client.get(f"/api/realtime/messages/{article.id}").status_code == 404
+    assert client.get(f"/api/realtime/messages/{flash.id}").status_code == 404
+    assert client.get(f"/article/{article.id}").status_code == 404
+    assert client.get(f"/article/{flash.id}").status_code == 404
+
+    from deepfocus_api import main as main_mod
+    monkeypatch.setattr(main_mod, "_HEADLINES", {
+        "kx": [main_mod._hl_pack_msg(flash, "restricted"), main_mod._hl_pack_msg(normal, "normal")],
+        "wz": [main_mod._hl_pack_msg(article, "restricted")],
+        "yb": [], "generated_at": "now",
+    })
+    headlines = client.get("/api/headlines").json()
+    assert [m["id"] for m in headlines["kx"]] == [normal.id]
+    assert headlines["wz"] == []
+    assert article.id not in client.get("/sitemap.xml").text
+    assert article.id not in client.get("/feed.xml").text
+    assert article.id not in client.get("/articles").text
+
+    async def _empty(*_args, **_kwargs):
+        return []
+
+    for name in ("_usearch_stocks", "_usearch_reports", "_usearch_terms", "_usearch_boards"):
+        monkeypatch.setattr(main_mod, name, _empty)
+    search = client.get("/api/search/universal", params={"q": "受限来源"}).json()
+    assert search["news"] == []
+
+
+def test_exclude_futou_query_keeps_full_limit(client):
+    """SQL 层过滤要先于 LIMIT，不能因最新受限消息占满窗口而返回空页。"""
+    normal = _make_normal_flash()
+    for i in range(5):
+        rm.create_realtime_message(RealtimeMessageCreateRequest(
+            title=f"受限快讯 {i}", content="x", topic="快讯", severity="info",
+            source_id=f"lxaa99{i}", source_type="dao-news",
+        ))
+    rows = rm.list_realtime_messages(exclude_futoucaixin=True, limit=1)
+    assert [m.id for m in rows] == [normal.id]
+
+
+def test_sse_transform_can_drop_restricted_message(client):
+    restricted = _make_futou_flash()
+    normal = _make_normal_flash()
+
+    class _Request:
+        async def is_disconnected(self):
+            return False
+
+    async def _run():
+        stream = rm.realtime_message_event_stream(
+            _Request(),
+            transform=lambda message: None if rm.is_futoucaixin_message(message) else message,
+        )
+        try:
+            assert "event: connected" in await stream.__anext__()
+            pending = asyncio.create_task(stream.__anext__())
+            await asyncio.sleep(0)
+            rm._broadcast_message(restricted)
+            await asyncio.sleep(0.02)
+            assert not pending.done()
+            rm._broadcast_message(normal)
+            event = await asyncio.wait_for(pending, timeout=1)
+            assert normal.id in event and restricted.id not in event
+        finally:
+            await stream.aclose()
+
+    asyncio.run(_run())
+
+
 @pytest.fixture()
 def member_client(tmp_path, monkeypatch):
     """client + 独立 auth 库：用于「会员带 token 解锁全文」正向路径。"""
@@ -169,6 +273,50 @@ def test_member_unlocks_full_article(member_client):
     body = r.json()
     assert _TAIL_MARKER in body["content"]              # ⭐ 会员拿到完整全文
     assert "全文为会员专享内容" not in body["content"]   # 无锁定标记
+
+
+def test_dao2_is_restricted_but_regular_user_can_read(member_client, monkeypatch):
+    c = member_client
+    article = _make_futou_article()
+    flash = _make_futou_flash()
+    normal = _make_normal_flash()
+
+    dao2 = c.post("/api/auth/register", json={
+        "username": "dao2", "password": "password1", "email": "dao2@example.com",
+    })
+    assert dao2.status_code == 200, dao2.text
+    dao2_token = dao2.json()["access_token"]
+    dao2_headers = {"Authorization": f"Bearer {dao2_token}"}
+    dao2_ids = {
+        m["id"] for m in c.get("/api/realtime/messages", headers=dao2_headers).json()["messages"]
+    }
+    assert article.id not in dao2_ids and flash.id not in dao2_ids
+    assert normal.id in dao2_ids
+    assert c.get(f"/api/realtime/messages/{article.id}", headers=dao2_headers).status_code == 404
+
+    from deepfocus_api import main as main_mod
+    monkeypatch.setattr(main_mod, "_HEADLINES", {
+        "kx": [main_mod._hl_pack_msg(flash, "restricted"), main_mod._hl_pack_msg(normal, "normal")],
+        "wz": [main_mod._hl_pack_msg(article, "restricted")],
+        "yb": [], "generated_at": "now",
+    })
+    dao2_heads = c.get("/api/headlines", headers=dao2_headers).json()
+    assert [m["id"] for m in dao2_heads["kx"]] == [normal.id]
+    assert dao2_heads["wz"] == []
+
+    reader = c.post("/api/auth/register", json={
+        "username": "reader", "password": "password1", "email": "reader@example.com",
+    })
+    assert reader.status_code == 200, reader.text
+    reader_headers = {"Authorization": f"Bearer {reader.json()['access_token']}"}
+    reader_ids = {
+        m["id"] for m in c.get("/api/realtime/messages", headers=reader_headers).json()["messages"]
+    }
+    assert article.id in reader_ids and flash.id in reader_ids and normal.id in reader_ids
+    assert c.get(f"/api/realtime/messages/{article.id}", headers=reader_headers).status_code == 200
+    reader_heads = c.get("/api/headlines", headers=reader_headers).json()
+    assert [m["id"] for m in reader_heads["kx"]] == [flash.id, normal.id]
+    assert [m["id"] for m in reader_heads["wz"]] == [article.id]
 
 
 def test_sitemap_route_includes_articles(client):
