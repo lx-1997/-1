@@ -5,6 +5,7 @@
 启用：环境变量 DEEPFOCUS_DAO_BRIDGE_ENABLED=1
 源地址：DEEPFOCUS_DAO_API_URL（默认 http://127.0.0.1:8765，本地开发可用 SSH 隧道映射）
 鉴权：DEEPFOCUS_DAO_API_TOKEN（DAO 服务器 .api_server_token 的值）
+轮询：DEEPFOCUS_DAO_BRIDGE_POLL_SECONDS（默认 300 秒，即 5 分钟）
 """
 from __future__ import annotations
 
@@ -36,7 +37,7 @@ def _bridge_config() -> dict:
         "enabled": os.getenv("DEEPFOCUS_DAO_BRIDGE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on"),
         "url": os.getenv("DEEPFOCUS_DAO_API_URL", "http://127.0.0.1:8765").rstrip("/"),
         "token": os.getenv("DEEPFOCUS_DAO_API_TOKEN", "").strip(),
-        "poll": float(os.getenv("DEEPFOCUS_DAO_BRIDGE_POLL_SECONDS", "4")),
+        "poll": float(os.getenv("DEEPFOCUS_DAO_BRIDGE_POLL_SECONDS", "300")),
         "backfill": int(os.getenv("DEEPFOCUS_DAO_BRIDGE_BACKFILL", "40")),
         # 同机部署：直读 DAO 的 SQLite 库（绕过 dao_api 的 http.server，最稳）；
         # 留空则走 HTTP API（Mac 开发经 SSH 隧道）。
