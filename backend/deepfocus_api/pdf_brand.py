@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v10")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v12")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -1032,6 +1032,104 @@ def _find_repeated_diagonal_bands(core_mask) -> list[tuple[float, float, int, in
     return chosen
 
 
+def _find_diagonal_bands_at_slope(
+    core_mask, slope: float
+) -> list[tuple[float, float, int, int, int]]:
+    """已知全文主导水印斜率后，定点找出该斜率上的多条文字轨迹。
+
+    封面常同时有两条「更多一手调研纪要…加V」。通用候选会被密集正文
+    的其他斜率挤掉第二条；这里不再扩大灰度范围，只在跨页已验证的斜率上
+    补找投影峰，之后还必须与跨页稳定的纵向轨迹匹配才会擦除。
+    """
+    import numpy as np  # noqa: PLC0415 - 仅图片型 PDF 才加载
+
+    height, width = core_mask.shape
+    ys, xs = np.where(core_mask)
+    if len(xs) < max(180, int(width * 0.35)):
+        return []
+
+    half = max(8, int(round(height / 90)))
+    min_count = max(120, int(width * 0.24))
+    min_span = int(width * 0.25)
+    intercepts = np.rint(ys - slope * xs).astype(np.int32)
+    offset = max(0, -int(intercepts.min()) + 2)
+    hist = np.bincount(intercepts + offset)
+    smooth = np.convolve(hist, np.ones(2 * half + 1, dtype=np.int32), mode="same")
+
+    chosen = []
+    for idx in np.argsort(smooth)[::-1]:
+        intercept = float(int(idx) - offset)
+        if any(abs(intercept - band[1]) <= half * 2.5 for band in chosen):
+            continue
+        near = np.abs(ys - slope * xs - intercept) <= half
+        count = int(near.sum())
+        if count < min_count:
+            continue
+        x_near = xs[near]
+        span = int(x_near.max() - x_near.min())
+        median_y = float(np.median(ys[near]))
+        if (span < min_span or median_y < height * 0.18 or median_y > height * 0.90):
+            continue
+        # 定点层要求比通用层更高的笔画密度；普通斜线或正文偶然对齐
+        # 会在 1.3-1.6px/列，连续中英文水印通常稳定高于此阈值。
+        if count / max(1, span) < 1.65:
+            continue
+        chosen.append((float(slope), intercept, int(x_near.min()), int(x_near.max()), half))
+        if len(chosen) >= 6:
+            break
+    return chosen
+
+
+def _stable_diagonal_profile(page_bands, width: int, height: int, page_count: int):
+    """从通用候选中锁定跨页重复的主斜率与纵向轨迹。"""
+    slope_pages: dict[float, set[int]] = {}
+    slope_score: Counter = Counter()
+    for page_index, bands in page_bands.items():
+        for slope, _, x0, x1, _ in bands:
+            key = round(float(slope), 3)
+            slope_pages.setdefault(key, set()).add(page_index)
+            slope_score[key] += max(0, x1 - x0)
+    if not slope_pages:
+        return None, []
+
+    dominant_slope = max(
+        slope_pages,
+        key=lambda slope: (len(slope_pages[slope]), slope_score[slope]),
+    )
+    if len(slope_pages[dominant_slope]) < math.ceil(page_count * 0.60):
+        return None, []
+
+    middle_x = width / 2
+    slope_tolerance = 0.065
+    center_rows = []
+    for page_index, bands in page_bands.items():
+        for band in bands:
+            slope, intercept, x0, x1, _ = band
+            if abs(slope - dominant_slope) <= slope_tolerance:
+                center_rows.append((page_index, slope * middle_x + intercept, x1 - x0))
+
+    center_tolerance = height * 0.045
+    min_support = math.ceil(page_count * 0.50)
+    candidates = []
+    for _, seed, _ in center_rows:
+        matched = [row for row in center_rows if abs(row[1] - seed) <= center_tolerance]
+        support = len({row[0] for row in matched})
+        if support < min_support:
+            continue
+        weight = sum(max(0, row[2]) for row in matched)
+        weighted_center = sum(row[1] * max(1, row[2]) for row in matched) / max(1, weight)
+        candidates.append((support, weight, weighted_center))
+
+    centers = []
+    for _, _, center in sorted(candidates, reverse=True):
+        if any(abs(center - existing) <= center_tolerance * 1.5 for existing in centers):
+            continue
+        centers.append(center)
+        if len(centers) >= 3:
+            break
+    return dominant_slope, centers
+
+
 def _neighbor_light_fill(rgb):
     """用水印笔画四周的较亮像素做快速局部修复，不依赖 OpenCV / SciPy。"""
     import numpy as np  # noqa: PLC0415
@@ -1197,15 +1295,26 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
 
         dominant_sign = -1 if sign_score[-1] >= sign_score[1] else 1
         other_sign = -dominant_sign
+        dominant_slope, stable_centers = _stable_diagonal_profile(
+            page_bands, width, height, len(targets)
+        )
         adaptive_ok = (
             len(sign_pages[dominant_sign]) >= math.ceil(len(targets) * 0.60)
             and sign_score[dominant_sign] >= len(targets) * width * 0.30
             and sign_score[dominant_sign] >= sign_score[other_sign] * 1.35
         )
-        solo_bands = {
-            page_index: _long_single_page_bands(detected, width)
-            for page_index, detected in page_bands.items()
-        }
+        slope_tolerance = 0.065
+        solo_bands = {}
+        for page_index, detected in page_bands.items():
+            long_bands = _long_single_page_bands(detected, width)
+            if dominant_slope is not None:
+                long_bands = [
+                    band for band in long_bands
+                    if abs(band[0] - dominant_slope) <= slope_tolerance
+                ]
+            solo_bands[page_index] = _dedupe_page_bands(
+                long_bands, width, height, dominant_sign
+            )
         solo_ok = any(solo_bands.values())
 
         template_gray = max_gray
@@ -1247,14 +1356,20 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
             repair = opaque | (template & (current_delta <= 7))
             selected = []
             if adaptive_ok:
+                adaptive_candidates = page_bands.get(page_index, [])
+                if dominant_slope is not None:
+                    adaptive_candidates = [
+                        band for band in adaptive_candidates
+                        if abs(band[0] - dominant_slope) <= slope_tolerance
+                    ]
                 selected.extend(_dedupe_page_bands(
-                    page_bands.get(page_index, []), width, height, dominant_sign
+                    adaptive_candidates, width, height, dominant_sign
                 ))
                 if stable_ok and selected:
                     # 固定模板已经覆盖的斜带不要再做宽松单页修复；否则正文抗锯齿会被
                     # 重复处理。自适应层只补模板没有覆盖到的、逐页移动的水印行。
                     middle_x = width / 2
-                    stable_centers = [
+                    template_centers = [
                         slope * middle_x + intercept
                         for slope, intercept, *_ in bands
                         if (-1 if slope < 0 else 1) == dominant_sign
@@ -1264,9 +1379,40 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
                         band for band in selected
                         if not any(
                             abs((band[0] * middle_x + band[1]) - center) < min_gap
-                            for center in stable_centers
+                            for center in template_centers
                         )
                     ]
+            # 同一封面常同时烘焙两条平行引流语。通用 top-N 可能被密集正文
+            # 的其他斜率挤掉其中一条；用跨页稳定斜率定点补找，且只接受与
+            # 跨页稳定纵向轨迹匹配的候选，避免扩大误擦范围。
+            if dominant_slope is not None and stable_centers:
+                page_core = (
+                    (spread <= 18)
+                    & (current_gray >= 125)
+                    & (current_gray <= 225)
+                )
+                page_core[:edge] = False
+                page_core[-edge:] = False
+                targeted = _find_diagonal_bands_at_slope(page_core, dominant_slope)
+                middle_x = width / 2
+                center_tolerance = height * 0.045
+                for stable_center in stable_centers:
+                    matches = [
+                        band for band in targeted
+                        if abs(
+                            band[0] * middle_x + band[1] - stable_center
+                        ) <= center_tolerance
+                    ]
+                    if matches:
+                        best = min(
+                            matches,
+                            key=lambda band: abs(
+                                band[0] * middle_x + band[1] - stable_center
+                            ),
+                        )
+                        if best not in selected:
+                            selected.append(best)
+
             # 单页超长斜排引流字带不要求跨页重复；与自适应候选合并并去重。
             for band in solo_bands.get(page_index, []):
                 if band not in selected:
@@ -1279,8 +1425,20 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
                 )
                 # 只擦斜带里的浅/中灰中性像素：保留黑色正文核心与彩色图表；
                 # 上限要覆盖水印的浅色抗锯齿，否则会留下肉眼可见的“幽灵字”。
+                # 不能把整条斜带里的中灰像素全部当成水印：封面浅色摘要框
+                # 也在这个范围，会被拉成一条白色斜痕。先以「中性中灰」作为
+                # 真水印笔画种子，再只向外扩 2px 包住抗锯齿边缘，避免改写
+                # 大片米色背景或正文留白。
+                watermark_seed = (
+                    adaptive_geometry
+                    & (spread <= 18)
+                    & (current_gray >= 125)
+                    & (current_gray <= 225)
+                )
+                seed_radius = max(2, int(round(width / 550)))
                 adaptive = (
                     adaptive_geometry
+                    & _dilate_mask(watermark_seed, seed_radius)
                     & (spread <= 120)
                     & (current_gray >= 90)
                     & (current_gray <= 254)
@@ -1304,9 +1462,11 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
 
         logger.info(
             "[pdf_brand] raster cleaned pages=%d stable_bands=%d stable_pixels=%d "
-            "adaptive=%s adaptive_bands=%d solo=%s sign=%+d",
+            "adaptive=%s adaptive_bands=%d solo=%s sign=%+d slope=%s tracks=%d",
             changed_pages, len(bands) if stable_ok else 0, template_pixels,
             adaptive_ok, adaptive_band_count, solo_ok, dominant_sign,
+            f"{dominant_slope:+.3f}" if dominant_slope is not None else "none",
+            len(stable_centers),
         )
         return changed_pages
 

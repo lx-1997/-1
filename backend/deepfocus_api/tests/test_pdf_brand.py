@@ -367,3 +367,23 @@ def test_single_page_long_channel_watermark_is_suppressed():
     after = np.abs(result_page.astype(np.int16) - clean_page.astype(np.int16)).mean()
     assert before > 0.25
     assert after < before * 0.55
+
+
+def test_stable_diagonal_profile_keeps_two_channel_watermark_tracks():
+    """通用检测每页可能只抢到两条平行水印中的一条，不得合并丢失。"""
+    page_bands = {}
+    for page_index in range(8):
+        # 两条平行水印在通用 top-N 里交替胜出；跨页合并后应恢复两条轨迹。
+        center = 310 if page_index % 2 == 0 else 610
+        slope = -0.375
+        intercept = center - slope * 300
+        bands = [(slope, intercept, 10, 590, 9)]
+        if page_index == 0:
+            # 封面密集正文造成的高分错斜率，只出现一页，必须排除。
+            bands.append((-0.225, 520, 5, 595, 9))
+        page_bands[page_index] = bands
+
+    slope, centers = pb._stable_diagonal_profile(page_bands, 600, 800, 8)
+    assert slope == -0.375
+    assert len(centers) == 2
+    assert sorted(round(center) for center in centers) == [310, 610]

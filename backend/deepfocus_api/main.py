@@ -5350,7 +5350,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
             download_count=row["download_count"],
             preview_url=(
                 "/api/research/workbench-pdf"
-                f"?filename={quote(row['filename'])}&out={quote(row['out'])}"
+                f"?filename={quote(row['filename'])}&out={quote(row['out'])}&brand=v12"
             ),
         )
         for row in result["items"]
@@ -5386,7 +5386,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
 @app.get("/api/research/workbench-pdf")
 async def api_research_workbench_pdf(
     request: Request, filename: str, out: str = "downloads/海外投行报告"
-) -> FileResponse:
+) -> Response:
     """内联返回抓取舱内的研报原文（终端研报面板「原文」按钮）。
 
     路径穿越由 _safe_workbench_file_path 防护；Content-Disposition 用 ASCII 文件名，
@@ -5402,6 +5402,23 @@ async def api_research_workbench_pdf(
     path = _safe_workbench_file_path(out, filename)
     media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
     metrics_incr_research(filename, filename)  # 研报下载/打开计数（本地原文）
+    if media_type == "application/pdf":
+        # 抓取舱文件与在线 wire-file 必须走同一套去水印 + DeepFocus 打标。
+        # 用 to_thread 读大 PDF，避免阻塞 uvicorn 事件循环；apply_pdf_brand 内部按
+        # sha + 处理版本缓存，同一文件只会实际处理一次。
+        from .pdf_brand import apply_pdf_brand  # noqa: PLC0415
+
+        raw = await asyncio.to_thread(path.read_bytes)
+        content = await apply_pdf_brand(raw)
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'inline; filename="report{path.suffix.lower()}"',
+                "Cache-Control": "private, no-store",
+                "Accept-Ranges": "none",
+            },
+        )
     return FileResponse(
         path,
         media_type=media_type,

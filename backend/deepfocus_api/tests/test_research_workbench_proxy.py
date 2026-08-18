@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 from deepfocus_api import pdf_brand
@@ -80,3 +82,21 @@ def test_workbench_pdf_preview_is_branded_and_range_is_not_forwarded(monkeypatch
     assert response.headers["accept-ranges"] == "none"
     assert response.headers["cache-control"] == "private, no-store"
     assert "range" not in {key.lower() for key in _FakeClient.last_headers}
+
+
+def test_local_workbench_pdf_route_uses_brand_pipeline_and_cache_buster():
+    """不导入重型 main，用 AST 锁住本地研报入口不得再直出原 PDF。"""
+    main_path = Path(__file__).resolve().parents[1] / "main.py"
+    source = main_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    route = next(
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "api_research_workbench_pdf"
+    )
+    route_source = ast.get_source_segment(source, route) or ""
+    assert "apply_pdf_brand" in route_source
+    assert '"Cache-Control": "private, no-store"' in route_source
+    assert '"Accept-Ranges": "none"' in route_source
+    assert "&brand=v12" in source
