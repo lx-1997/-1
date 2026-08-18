@@ -296,7 +296,8 @@ from .report_url_ingest import extract_report_url
 from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
 from .async_singleflight import AsyncSingleFlight
 from .research_prewarm_policy import research_prewarm_download_cap
-from .research_vision import analyze_pdf_auto, analyze_news
+from .research_multi_agent import analyze_pdf_adaptive
+from .research_vision import analyze_news
 
 # 对外 AI 品牌名：不暴露底层模型（如 MiniMax）
 _AI_BRAND = (os.getenv("DEEPFOCUS_AI_BRAND") or "DEEPFOCUS 智能解读").strip()
@@ -7602,7 +7603,7 @@ async def run_research_prewarm() -> None:
                 return
             try:
                 async with _AI_ANALYZE_SEM:  # 与用户请求共用总闸，防止预热绕过并发上限
-                    result = await analyze_pdf_auto(content, title=item.get("title", "研报"), max_pages=4)
+                    result = await analyze_pdf_adaptive(content, title=item.get("title", "研报"), max_pages=4)
                 metrics_set_ai_cache(fid, result)
                 done_counter["n"] += 1
             except asyncio.CancelledError:
@@ -7872,7 +7873,7 @@ async def _generate_research_ai_result(
         if not pdf_bytes:
             raise HTTPException(status_code=422, detail="未能获取研报 PDF 内容")
         async with _AI_ANALYZE_SEM:
-            result = await analyze_pdf_auto(
+            result = await analyze_pdf_adaptive(
                 pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
             )
         if cache_key:
