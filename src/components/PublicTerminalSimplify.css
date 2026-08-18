@@ -1,0 +1,227 @@
+/*
+ * Public terminal information hierarchy.
+ *
+ * The terminal already contains every capability. This layer deliberately
+ * removes repeated entry points from the public landing state and keeps the
+ * live market surface as the main product preview. Logged-in tools remain
+ * available through their existing menus and workspaces.
+ */
+
+/* The hero already explains the three jobs. Repeating the same jobs in a
+   second block immediately below made the page feel like a feature directory. */
+.bbt .bbt-simple-start {
+  display: none;
+}
+
+/* Keep the anonymous first screen focused on two decisions: inspect a stock or
+   understand today's market. The watchlist itself is visible directly below. */
+.bbt--anon .bbt-hero {
+  padding: 28px 20px 24px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 176, 0, 0.08), transparent 38%),
+    linear-gradient(180deg, rgba(255, 176, 0, 0.025), transparent 82%);
+}
+
+.bbt--anon .bbt-hero-inner {
+  max-width: 1040px;
+}
+
+.bbt--anon .bbt-hero-title {
+  max-width: 720px;
+  margin-bottom: 8px;
+  font-size: clamp(24px, 2.2vw, 32px);
+  line-height: 1.28;
+  letter-spacing: -0.02em;
+}
+
+.bbt--anon .bbt-hero-sub {
+  max-width: 760px;
+  margin-bottom: 18px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.bbt--anon .bbt-hero-ctas {
+  gap: 8px;
+}
+
+.bbt--anon .bbt-hero-ctas > :nth-child(2),
+.bbt--anon .bbt-hero-ctas + div,
+.bbt--anon .bbt-hero-alt {
+  display: none !important;
+}
+
+.bbt--anon .bbt-hero-cta {
+  min-height: 38px;
+  padding: 8px 15px;
+}
+
+/* The full compass duplicated the watchlist and opportunity surfaces below.
+   Reduce it to a single glanceable status strip and, crucially, prevent the
+   flex container from shrinking it to a 2px box on anonymous desktop pages. */
+.bbt .bbt-investor-compass {
+  flex: 0 0 auto;
+  margin: 0;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  overflow: visible;
+  background: #0b121b;
+}
+
+.bbt .bbt-investor-compass-head {
+  min-height: 58px;
+  padding: 9px 14px;
+  gap: 14px;
+  background: transparent;
+}
+
+.bbt .bbt-investor-compass-head > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bbt .bbt-investor-compass-head > div > span:first-child {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid rgba(16, 163, 127, 0.3);
+  border-radius: 5px;
+  background: rgba(16, 163, 127, 0.08);
+  letter-spacing: 0.06em;
+}
+
+.bbt .bbt-investor-compass-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.bbt .bbt-investor-compass-head p,
+.bbt .bbt-investor-compass-grid,
+.bbt .bbt-investor-compass-foot {
+  display: none;
+}
+
+.bbt .bbt-investor-compass-head > div > div {
+  margin-top: 0 !important;
+  gap: 5px !important;
+}
+
+.bbt .bbt-investor-compass-head > button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+/* Public navigation: strategy performance remains in “More”; the top row is
+   reserved for the three high-frequency content destinations. */
+.bbt--anon .bbt-cmd-nav a[href="/ai-fund"] {
+  display: none;
+}
+
+/* When market indicators are unavailable, an error-only strip adds noise but
+   no action. It will reappear automatically as soon as real indicators load. */
+.bbt--anon .bbt-macro:has(> .bbt-dim:last-child) {
+  display: none;
+}
+
+/* The public preview favors content over power-user controls. Search/add is
+   already present in the header and hero; advanced panel actions remain after
+   login. */
+.bbt--anon .bbt-grid .bbt-max-btn,
+.bbt--anon .bbt-eq-en,
+.bbt--anon .bbt-breadth,
+.bbt--anon .bbt-filters [data-cat="研究"],
+.bbt--anon .bbt-filters [data-cat="all"] {
+  display: none;
+}
+
+.bbt--anon .bbt-grid .bbt-ph {
+  gap: 8px;
+}
+
+/* The footer is useful for orientation and trust, but it should read as a quiet
+   index rather than another product surface. */
+.bbt--anon .bbt-footer {
+  padding-top: 16px;
+}
+
+.bbt--anon .bbt-footer-cols {
+  gap: 24px;
+}
+
+@media (max-width: 820px) {
+  /* The existing responsive rules define grid areas but the container stayed
+     flex, which pushed all actions onto a third row. Honor the intended two-row
+     layout: brand/actions first, search second. */
+  .bbt--anon .bbt-cmd {
+    display: grid;
+  }
+
+  .bbt--anon .bbt-hero {
+    padding: 20px 12px 18px;
+  }
+
+  .bbt--anon .bbt-hero-title {
+    font-size: 22px;
+  }
+
+  .bbt--anon .bbt-hero-sub {
+    margin-bottom: 14px;
+    font-size: 13px;
+  }
+
+  .bbt .bbt-investor-compass-head {
+    align-items: flex-start;
+    padding: 9px 10px;
+  }
+
+  .bbt .bbt-investor-compass-head > div {
+    gap: 6px 8px;
+  }
+
+  .bbt .bbt-investor-compass-head h2 {
+    flex: 1 1 calc(100% - 108px);
+    white-space: normal;
+  }
+}
+
+@media (max-width: 560px) {
+  .bbt--anon .bbt-hero-title {
+    font-size: 20px;
+  }
+
+  .bbt--anon .bbt-hero-ctas {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .bbt--anon .bbt-hero-cta {
+    justify-content: center;
+    padding-right: 10px;
+    padding-left: 10px;
+    text-align: center;
+  }
+
+  .bbt .bbt-investor-compass-head > div > span:first-child {
+    display: none;
+  }
+
+  .bbt .bbt-investor-compass-head h2 {
+    flex: 1 1 auto;
+    font-size: 12px;
+  }
+
+  .bbt .bbt-investor-compass-head {
+    min-height: 48px;
+    align-items: center;
+  }
+
+  .bbt .bbt-investor-compass-head > div {
+    flex: 1;
+  }
+}

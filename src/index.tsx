@@ -5,6 +5,7 @@ import FinancialTerminal from './components/FinancialTerminal';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ThemeProvider } from './context/ThemeContext';
 import './index.css';
+import './components/PublicTerminalSimplify.css';
 
 // 终端独占模式：构建时 REACT_APP_TERMINAL_ONLY=true，公开免登录，整页仅渲染金融终端。
 const TERMINAL_ONLY = process.env.REACT_APP_TERMINAL_ONLY === 'true';
