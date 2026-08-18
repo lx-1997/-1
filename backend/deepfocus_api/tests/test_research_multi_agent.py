@@ -131,7 +131,7 @@ def test_image_report_runs_three_agents_concurrently_and_merges(monkeypatch):
     assert result["target_price"] == "1800元"
 
 
-def test_partial_agent_failure_is_not_returned_or_cached(monkeypatch):
+def test_partial_agent_failure_falls_back_without_caching_partial(monkeypatch):
     class FakeLLM:
         provider = "minimax"
         model = "fake-model"
@@ -153,13 +153,21 @@ def test_partial_agent_failure_is_not_returned_or_cached(monkeypatch):
     monkeypatch.setattr(ma, "_cache_get", lambda key: None)
     cache_writes = []
     monkeypatch.setattr(ma, "_cache_put", lambda key, value: cache_writes.append((key, value)))
+    expected = {"summary": "single fallback", "bullish": ["完整结论"], "bearish": ["完整风险"]}
 
-    with pytest.raises(RuntimeError, match="多 Agent 研报解读未完整"):
-        asyncio.run(ma.analyze_pdf_adaptive(b"partial"))
+    async def single_fallback(*args, **kwargs):
+        return expected
+
+    monkeypatch.setattr(ma.rv, "analyze_pdf_vision", single_fallback)
+
+    result = asyncio.run(ma.analyze_pdf_adaptive(b"partial"))
+    assert result["summary"] == "single fallback"
+    assert result["analysis_mode"] == "single_agent_fallback"
+    assert "风险反证 Agent" in result["multi_agent_warning"]
     assert cache_writes == []
 
 
-def test_all_agents_failure_is_reported_without_slow_single_agent_retry(monkeypatch):
+def test_all_agents_failure_falls_back_to_single_agent(monkeypatch):
     class FakeLLM:
         provider = "minimax"
         model = "fake-model"
@@ -175,7 +183,7 @@ def test_all_agents_failure_is_reported_without_slow_single_agent_retry(monkeypa
     async def single_fallback(*args, **kwargs):
         nonlocal single_calls
         single_calls += 1
-        raise AssertionError("多 Agent 全失败时不应再串行重跑整份研报")
+        return {"summary": "single-agent recovered"}
 
     monkeypatch.setattr(ma, "CloudResearchLLM", FakeLLM)
     monkeypatch.setattr(ma.rv, "analyze_pdf_text", no_text)
@@ -185,9 +193,10 @@ def test_all_agents_failure_is_reported_without_slow_single_agent_retry(monkeypa
     monkeypatch.setattr(ma, "_cache_get", lambda key: None)
     monkeypatch.setattr(ma, "_cache_put", lambda key, value: None)
 
-    with pytest.raises(RuntimeError, match="多 Agent 研报解读未完整"):
-        asyncio.run(ma.analyze_pdf_adaptive(b"all-fail"))
-    assert single_calls == 0
+    result = asyncio.run(ma.analyze_pdf_adaptive(b"all-fail"))
+    assert result["summary"] == "single-agent recovered"
+    assert result["analysis_mode"] == "single_agent_fallback"
+    assert single_calls == 1
 
 
 def test_short_scan_uses_single_agent_without_pre_render(monkeypatch):

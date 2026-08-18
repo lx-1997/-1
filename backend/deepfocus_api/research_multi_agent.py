@@ -384,6 +384,21 @@ async def analyze_pdf_adaptive(
         # ``max_pages`` historically controls only the slower visual route.
         return await rv.analyze_pdf_text(pdf_bytes, title=title, symbol=symbol)
     except rv.PdfTextUnavailable:
-        return await _analyze_images_parallel(
-            pdf_bytes, title=title, symbol=symbol, max_pages=max_pages, background=background,
-        )
+        try:
+            return await _analyze_images_parallel(
+                pdf_bytes, title=title, symbol=symbol, max_pages=max_pages, background=background,
+            )
+        except (ResearchMultiAgentBusy, asyncio.CancelledError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - preserve availability when a specialist/provider misbehaves
+            # A single malformed/slow specialist must not make the whole report
+            # unreadable.  Partial multi-Agent output was never cached, so it is
+            # safe to retry through the established visual path and cache only
+            # that complete result at the caller.
+            result = await rv.analyze_pdf_vision(
+                pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            )
+            result = dict(result)
+            result.setdefault("analysis_mode", "single_agent_fallback")
+            result.setdefault("multi_agent_warning", str(exc)[:240])
+            return result

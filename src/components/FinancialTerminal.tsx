@@ -1549,9 +1549,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     (async () => { const s = await authService.fetchCheckinStatus(); if (!dead && s) setCheckin(s); })();
     return () => { dead = true; };
   }, [authUser]);
-  // 研报「原文」PDF 入口：仅白名单账号(lx199710)可见可用；其余账号一律隐藏入口。
-  // 复用 IFIND_USERS 单一真源（后端 wire-file 亦硬门 403，见 main.py：前端只控可见性、后端硬控）。
-  const canViewResearchOriginal = IFIND_USERS.has((authUser || '').toLowerCase());
+  // 研报「原文」PDF 入口：有效付费会员 / 管理员 / 原有授权白名单可见；后端再做硬门校验。
+  const canViewResearchOriginal = isMemberVip || isAdmin || IFIND_USERS.has((authUser || '').toLowerCase());
   const [authOpen, setAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState('AI 解读');
   // /login 深链：URL 直达登录意图，自动弹登录弹窗（默认登录 tab）并清理 URL，不再让用户面对终端再找按钮
@@ -2089,7 +2088,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // 研报「原文」：带 JWT 头 fetch 取 PDF Blob → createObjectURL → 新标签打开（会员专享，402 → 升级弹窗）
   const openResearchOriginal = useCallback(async (preview_url: string) => {
-    if (!canViewResearchOriginal) return;   // 白名单外不发起请求（入口本已隐藏，双保险）
+    if (!canViewResearchOriginal) return;   // 非会员不发起请求（入口本已隐藏，双保险）
     if (!preview_url || pdfLoadingUrl) return;
     setPdfLoadingUrl(preview_url);
     try {
@@ -2105,8 +2104,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         setUpgradeReason(detail || '该功能为会员功能，开通会员即可使用');
         setUpgradeOpen(true);
       } else if (status === 403) {
-        // 版权合规：原文仅白名单开放，绝不能用「开通会员即可阅读」招揽（买了也解不开=虚假宣传）
-        showToast(detail || '应版权合规要求，研报原文暂不开放——可查看 AI 解读');
+        showToast(detail || '当前账号暂无法查看研报原文');
       } else if (status === 401) {
         showToast('请先登录再查看研报原文');
       } else {

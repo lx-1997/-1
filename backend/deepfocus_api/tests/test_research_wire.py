@@ -136,14 +136,15 @@ def test_wire_endpoint_degraded_when_empty(monkeypatch, tmp_path):
 
 
 def _login_as(monkeypatch, username: str):
-    """伪造已登录用户（端点内 require_current_user 直接回 claims），白名单固定为 lx199710。"""
+    """伪造已登录用户（端点内 require_current_user 直接回 claims）。"""
     monkeypatch.setattr(main, "require_current_user", lambda request: {"sub": "u-test", "username": username})
     monkeypatch.setattr(ifind_api, "allowed_usernames", lambda: {"lx199710"})
+    monkeypatch.setattr(main, "membership_of_username", lambda value: {"tier": "trial"})
 
 
 def test_research_file_download_gated_by_default(monkeypatch):
     """研报原文默认锁死（版权合规）：wire-file 未配 DEEPFOCUS_SERVE_RESEARCH_ORIGINAL → 410 整体下线；
-    workbench-pdf 非白名单账号 → 403（原文仅白名单可见，其余只给「DeepFocus 视角」AI 解读）。"""
+    workbench-pdf 非会员账号 → 402。"""
     monkeypatch.delenv("DEEPFOCUS_SERVE_RESEARCH_ORIGINAL", raising=False)
     _login_as(monkeypatch, "member-user")
     with pytest.raises(HTTPException) as exc:
@@ -151,7 +152,20 @@ def test_research_file_download_gated_by_default(monkeypatch):
     assert exc.value.status_code == 410
     with pytest.raises(HTTPException) as exc:
         asyncio.run(main.api_research_workbench_pdf(_fake_request(), filename="x.pdf"))
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 402
+
+
+@pytest.mark.parametrize("tier", ["premium", "lifetime"])
+def test_paid_members_pass_research_original_gate(monkeypatch, tier):
+    _login_as(monkeypatch, "paid-member")
+    monkeypatch.setattr(main, "membership_of_username", lambda value: {"tier": tier})
+    assert main._can_read_research_original({"username": "paid-member"}) is True
+
+
+def test_admin_and_existing_allowlist_keep_research_original_access(monkeypatch):
+    _login_as(monkeypatch, "ordinary-admin")
+    assert main._can_read_research_original({"username": "ordinary-admin", "role": "admin"}) is True
+    assert main._can_read_research_original({"username": "LX199710"}) is True
 
 
 def test_workbench_pdf_blocks_path_traversal(monkeypatch):

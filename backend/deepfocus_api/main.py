@@ -5390,15 +5390,9 @@ async def api_research_workbench_pdf(
     """内联返回抓取舱内的研报原文（终端研报面板「原文」按钮）。
 
     路径穿越由 _safe_workbench_file_path 防护；Content-Disposition 用 ASCII 文件名，
-    避免中文研报名破坏响应头编码。版权合规：原文仅白名单账号可见（与 wire-file 同一单一真源），
-    对外一律引导看我方 AI 解读——绝不能用「开通会员即可阅读」招揽（会员买了也解不开=虚假宣传）。"""
+    避免中文研报名破坏响应头编码。原文仅向有效付费会员、管理员和原有授权白名单开放。"""
     claims = require_current_user(request)
-    from . import ifind_api
-    if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
-        raise HTTPException(
-            status_code=403,
-            detail="应版权合规要求，研报原文暂不开放——可查看「DeepFocus 视角」AI 解读与要点。",
-        )
+    _require_research_original_access(claims)
     path = _safe_workbench_file_path(out, filename)
     media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
     metrics_incr_research(filename, filename)  # 研报下载/打开计数（本地原文）
@@ -5427,6 +5421,23 @@ async def api_research_workbench_pdf(
             "Cache-Control": "public, max-age=3600",
         },
     )
+
+
+def _can_read_research_original(claims: dict[str, Any]) -> bool:
+    """研报原文权限真源：有效付费会员 / 管理员 / 原有授权白名单。"""
+    username = str(claims.get("username") or "").strip().lower()
+    if str(claims.get("role") or "").strip().lower() == "admin":
+        return True
+    from . import ifind_api
+    if username in ifind_api.allowed_usernames():
+        return True
+    membership = membership_of_username(username) or {}
+    return membership.get("tier") in ("premium", "lifetime")
+
+
+def _require_research_original_access(claims: dict[str, Any]) -> None:
+    if not _can_read_research_original(claims):
+        raise HTTPException(status_code=402, detail="研报原文是会员功能，开通会员即可阅读")
 
 
 _PDF_PREWARM_SEEN: set[str] = set()  # 已触发预热的 file_id，进程级去重
@@ -5505,11 +5516,7 @@ async def api_research_wire_file(request: Request, file_id: str, name: str = "")
             detail="应版权合规要求，研报原文已不再提供在线查看。请查看我们的「DeepFocus 视角」AI 解读与要点（目标价 / 评级 / 盈利预测），或前往原始发布方获取原文。",
         )
     claims = require_current_user(request)
-    # 研报原文仅对白名单账号(lx199710)开放：其余账号一律 403（前端入口亦已隐藏）。
-    # 复用 iFinD 白名单单一真源（ifind_api.allowed_usernames，env DEEPFOCUS_IFIND_ALLOWED_USERS，默认 lx199710）。
-    from . import ifind_api
-    if str(claims.get("username") or "").strip().lower() not in ifind_api.allowed_usernames():
-        raise HTTPException(status_code=403, detail="研报原文暂未对你的账号开放")
+    _require_research_original_access(claims)
     safe_name = (name or f"{file_id}.pdf").strip()
     ext = safe_name[safe_name.rfind("."):].lower() if "." in safe_name else ".pdf"
     try:
