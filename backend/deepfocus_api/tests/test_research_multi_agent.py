@@ -8,16 +8,6 @@ import pytest
 from deepfocus_api import research_multi_agent as ma
 
 
-def test_partition_images_shares_cover_and_distributes_rest_once():
-    images = [bytes([i]) for i in range(7)]
-    groups = ma._partition_images(images, 3)
-    assert len(groups) == 3
-    assert all(group[0] == images[0] for group in groups)
-    assigned = [image for group in groups for image in group[1:]]
-    assert sorted(assigned) == images[1:]
-    assert max(map(len, groups)) - min(map(len, groups)) <= 1
-
-
 def test_merge_results_obeys_field_ownership_and_deduplicates():
     result = ma._merge_results(
         {
@@ -99,6 +89,7 @@ def test_image_report_runs_three_agents_concurrently_and_merges(monkeypatch):
 
     monkeypatch.setattr(ma, "CloudResearchLLM", FakeLLM)
     monkeypatch.setattr(ma.rv, "analyze_pdf_text", no_text)
+    monkeypatch.setattr(ma, "_pdf_page_count", lambda pdf: 4)
     monkeypatch.setattr(ma.rv, "render_pdf_to_pngs", lambda *args, **kwargs: [b"p1", b"p2", b"p3", b"p4"])
     monkeypatch.setattr(ma, "_cache_get", lambda key: None)
     monkeypatch.setattr(ma, "_cache_put", lambda key, value: None)
@@ -112,7 +103,7 @@ def test_image_report_runs_three_agents_concurrently_and_merges(monkeypatch):
     assert result["target_price"] == "1800元"
 
 
-def test_partial_agent_failure_returns_degraded_useful_result(monkeypatch):
+def test_partial_agent_failure_is_not_returned_or_cached(monkeypatch):
     class FakeLLM:
         provider = "minimax"
         model = "fake-model"
@@ -129,14 +120,15 @@ def test_partial_agent_failure_returns_degraded_useful_result(monkeypatch):
 
     monkeypatch.setattr(ma, "CloudResearchLLM", FakeLLM)
     monkeypatch.setattr(ma.rv, "analyze_pdf_text", no_text)
+    monkeypatch.setattr(ma, "_pdf_page_count", lambda pdf: 4)
     monkeypatch.setattr(ma.rv, "render_pdf_to_pngs", lambda *args, **kwargs: [b"1", b"2", b"3", b"4"])
     monkeypatch.setattr(ma, "_cache_get", lambda key: None)
-    monkeypatch.setattr(ma, "_cache_put", lambda key, value: None)
+    cache_writes = []
+    monkeypatch.setattr(ma, "_cache_put", lambda key, value: cache_writes.append((key, value)))
 
-    result = asyncio.run(ma.analyze_pdf_adaptive(b"partial"))
-    assert result["agent_count"] == 2
-    assert result["one_liner"].startswith("中性偏多")
-    assert result["agent_warnings"]
+    with pytest.raises(RuntimeError, match="多 Agent 研报解读未完整"):
+        asyncio.run(ma.analyze_pdf_adaptive(b"partial"))
+    assert cache_writes == []
 
 
 def test_all_agents_failure_is_reported_without_slow_single_agent_retry(monkeypatch):
@@ -160,10 +152,76 @@ def test_all_agents_failure_is_reported_without_slow_single_agent_retry(monkeypa
     monkeypatch.setattr(ma, "CloudResearchLLM", FakeLLM)
     monkeypatch.setattr(ma.rv, "analyze_pdf_text", no_text)
     monkeypatch.setattr(ma.rv, "analyze_pdf_vision", single_fallback)
+    monkeypatch.setattr(ma, "_pdf_page_count", lambda pdf: 4)
     monkeypatch.setattr(ma.rv, "render_pdf_to_pngs", lambda *args, **kwargs: [b"1", b"2", b"3", b"4"])
     monkeypatch.setattr(ma, "_cache_get", lambda key: None)
     monkeypatch.setattr(ma, "_cache_put", lambda key, value: None)
 
-    with pytest.raises(RuntimeError, match="多 Agent 研报解读失败"):
+    with pytest.raises(RuntimeError, match="多 Agent 研报解读未完整"):
         asyncio.run(ma.analyze_pdf_adaptive(b"all-fail"))
     assert single_calls == 0
+
+
+def test_short_scan_uses_single_agent_without_pre_render(monkeypatch):
+    async def no_text(*args, **kwargs):
+        raise ma.rv.PdfTextUnavailable("scan")
+
+    expected = {"summary": "single"}
+    renders = 0
+
+    def unexpected_render(*args, **kwargs):
+        nonlocal renders
+        renders += 1
+        return [b"image"]
+
+    async def single(*args, **kwargs):
+        return expected
+
+    monkeypatch.setattr(ma.rv, "analyze_pdf_text", no_text)
+    monkeypatch.setattr(ma, "_pdf_page_count", lambda pdf: 2)
+    monkeypatch.setattr(ma.rv, "render_pdf_to_pngs", unexpected_render)
+    monkeypatch.setattr(ma.rv, "analyze_pdf_vision", single)
+    monkeypatch.setattr(ma, "_cache_get", lambda key: None)
+
+    result = asyncio.run(ma.analyze_pdf_adaptive(b"short"))
+    assert result is expected
+    assert renders == 0
+
+
+def test_cancelling_outer_analysis_cancels_all_agent_tasks(monkeypatch):
+    active = 0
+
+    class SlowLLM:
+        provider = "minimax"
+        model = "fake-model"
+
+        async def complete_vision(self, prompt, images, **kwargs):
+            nonlocal active
+            active += 1
+            try:
+                await asyncio.sleep(60)
+            finally:
+                active -= 1
+
+    async def no_text(*args, **kwargs):
+        raise ma.rv.PdfTextUnavailable("scan")
+
+    async def scenario():
+        monkeypatch.setattr(ma, "CloudResearchLLM", SlowLLM)
+        monkeypatch.setattr(ma.rv, "analyze_pdf_text", no_text)
+        monkeypatch.setattr(ma, "_pdf_page_count", lambda pdf: 4)
+        monkeypatch.setattr(ma.rv, "render_pdf_to_pngs", lambda *args, **kwargs: [b"1", b"2", b"3", b"4"])
+        monkeypatch.setattr(ma, "_cache_get", lambda key: None)
+        task = asyncio.create_task(ma.analyze_pdf_adaptive(b"cancel"))
+        for _ in range(100):
+            if active == 3:
+                break
+            await asyncio.sleep(0.01)
+        assert active == 3
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        assert active == 0
+
+    asyncio.run(scenario())

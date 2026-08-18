@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from statistics import mean
 from typing import Any, Optional
 
+import fitz
+
 from .llm import CloudResearchLLM
 from . import research_vision as rv
 
@@ -30,7 +32,7 @@ _AGENT_TIMEOUT_SECONDS = max(
 _TOTAL_TIMEOUT_SECONDS = max(
     25.0, float(os.getenv("DEEPFOCUS_RESEARCH_AGENT_TOTAL_SECONDS", "115") or 115),
 )
-_CACHE_VERSION = "agents-v1"
+_CACHE_VERSION = "agents-v2"
 _DISCLAIMER = (
     "本结论由多个 AI 角色并行阅读研报页面后合并生成，非逐句溯源，"
     "可能遗漏或误读，请以原文为准。"
@@ -67,7 +69,7 @@ _ROLES = (
         schema=(
             '{"one_liner":"看多/看空/中性+最关键理由，35字内", "summary":"最多2句", '
             '"core_logic":"核心因果链，最多2句", "bullish":["最多3条关键依据"], '
-            '"takeaway":"最值得记住的一点", "instruments":["可交易标的"], "confidence":0.0}'
+            '"instruments":["可交易标的"], "confidence":0.0}'
         ),
         instruction=(
             "只负责核心观点、驱动因果链和上行依据；优先保留数字、预测变化和催化剂，"
@@ -79,8 +81,7 @@ _ROLES = (
         key="risk",
         label="风险反证 Agent",
         schema=(
-            '{"bearish":["最多3条风险或反证"], '
-            '"df_take":"平衡校验：关键假设、最大变数和待跟踪指标，180字内", '
+            '{"bearish":["最多3条风险或反证，写明触发条件"], '
             '"instruments":["可交易标的"], "confidence":0.0}'
         ),
         instruction=(
@@ -94,6 +95,8 @@ _ROLES = (
 
 _sem: Optional[asyncio.Semaphore] = None
 _sem_loop: Optional[asyncio.AbstractEventLoop] = None
+_batch_sem: Optional[asyncio.Semaphore] = None
+_batch_sem_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _agent_semaphore() -> asyncio.Semaphore:
@@ -106,6 +109,16 @@ def _agent_semaphore() -> asyncio.Semaphore:
     return _sem
 
 
+def _batch_semaphore() -> asyncio.Semaphore:
+    """Keep each three-Agent batch together so sibling reports cannot starve it."""
+    global _batch_sem, _batch_sem_loop
+    loop = asyncio.get_running_loop()
+    if _batch_sem is None or _batch_sem_loop is not loop:
+        _batch_sem = asyncio.Semaphore(1)
+        _batch_sem_loop = loop
+    return _batch_sem
+
+
 def _build_prompt(role: _Role, title: Optional[str], symbol: Optional[str]) -> str:
     target = " ".join(part for part in (title, symbol) if part) or "未知"
     return (
@@ -114,16 +127,6 @@ def _build_prompt(role: _Role, title: Optional[str], symbol: Optional[str]) -> s
         "不得给确定性交易指令。输出严格 JSON object，不要 Markdown、解释或思考过程。\n"
         f"字段：{role.schema}\n任务：{role.instruction}\n线索标的：{target}。"
     )
-
-
-def _partition_images(images: list[bytes], count: int) -> list[list[bytes]]:
-    """Share the cover page, then distribute remaining pages without duplication."""
-    count = max(1, min(count, len(images)))
-    cover = images[0]
-    groups: list[list[bytes]] = [[cover] for _ in range(count)]
-    for index, image in enumerate(images[1:]):
-        groups[index % count].append(image)
-    return groups
 
 
 def _as_list(value: Any, limit: int) -> list[str]:
@@ -177,8 +180,8 @@ def _merge_results(
         "one_liner": _pick(thesis.get("one_liner"), facts.get("one_liner")),
         "summary": _pick(thesis.get("summary"), thesis.get("one_liner")),
         "core_logic": _pick(thesis.get("core_logic")),
-        "takeaway": _pick(thesis.get("takeaway")),
-        "df_take": _pick(risk.get("df_take")),
+        "takeaway": "",
+        "df_take": "",
         "bullish": _as_list(thesis.get("bullish") or thesis.get("key_points"), 3),
         "bearish": _as_list(risk.get("bearish") or risk.get("risks"), 3),
         "instruments": instruments,
@@ -258,6 +261,11 @@ def _cache_put(key: str, result: dict[str, Any]) -> None:
         pass
 
 
+def _pdf_page_count(pdf_bytes: bytes) -> int:
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        return doc.page_count
+
+
 async def _analyze_images_parallel(
     pdf_bytes: bytes,
     *,
@@ -270,51 +278,65 @@ async def _analyze_images_parallel(
     if cached is not None:
         return cached
 
-    images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
-    if len(images) < _MIN_IMAGES:
-        # Short scans gain little from fan-out; keep the battle-tested single-agent path.
+    page_count = await asyncio.to_thread(_pdf_page_count, pdf_bytes)
+    if page_count < _MIN_IMAGES:
+        # Check page count before rendering so the established single-agent path can
+        # hit its own cache and never pays for a duplicate render.
         return await rv.analyze_pdf_vision(
             pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
         )
 
-    llm = CloudResearchLLM()
-    if llm.provider == "mock":
-        raise RuntimeError("当前为本地演示模型，无法做多 Agent 研报解读；请配置云端视觉模型。")
+    # Queue before starting the per-report deadline.  With a 3-slot global child
+    # semaphore, interleaving three reports (nine tasks) made later reports time
+    # out while merely waiting for slots.
+    async with _batch_semaphore():
+        images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
+        if len(images) < _MIN_IMAGES:
+            return await rv.analyze_pdf_vision(
+                pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            )
 
-    groups = _partition_images(images, len(_ROLES))
-    tasks = [
-        asyncio.create_task(
-            _call_role(llm, role, group, title=title, symbol=symbol),
-            name=f"research-{role.key}",
-        )
-        for role, group in zip(_ROLES, groups)
-    ]
-    done, pending = await asyncio.wait(tasks, timeout=_TOTAL_TIMEOUT_SECONDS)
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+        llm = CloudResearchLLM()
+        if llm.provider == "mock":
+            raise RuntimeError("当前为本地演示模型，无法做多 Agent 研报解读；请配置云端视觉模型。")
 
-    results: dict[str, dict[str, Any]] = {}
-    errors: list[str] = []
-    for role, task in zip(_ROLES, tasks):
-        if task not in done:
-            errors.append(f"{role.label}超时")
-            continue
+        tasks: list[asyncio.Task[dict[str, Any]]] = []
         try:
-            results[role.key] = task.result()
-        except Exception as exc:  # noqa: BLE001 - sibling agents may still produce a useful result
-            errors.append(f"{role.label}: {str(exc)[:100]}")
+            # Every specialist sees all selected pages.  Field ownership without
+            # page coverage caused deterministic omissions (for example a target
+            # price on a page assigned only to the risk role).
+            tasks = [
+                asyncio.create_task(
+                    _call_role(llm, role, images, title=title, symbol=symbol),
+                    name=f"research-{role.key}",
+                )
+                for role in _ROLES
+            ]
+            done, pending = await asyncio.wait(tasks, timeout=_TOTAL_TIMEOUT_SECONDS)
+            if pending:
+                labels = [role.label for role, task in zip(_ROLES, tasks) if task in pending]
+                raise RuntimeError(f"多 Agent 研报解读超时：{'、'.join(labels)}")
 
-    if not results:
-        detail = "；".join(errors) or "所有 Agent 均未返回结果"
-        raise RuntimeError(f"多 Agent 研报解读失败：{detail}")
+            results: dict[str, dict[str, Any]] = {}
+            errors: list[str] = []
+            for role, task in zip(_ROLES, tasks):
+                try:
+                    results[role.key] = task.result()
+                except Exception as exc:  # noqa: BLE001 - aggregate role failures into one clear error
+                    errors.append(f"{role.label}: {str(exc)[:100]}")
+            if errors:
+                # Never cache a report that silently lost its facts/thesis/risk role.
+                raise RuntimeError(f"多 Agent 研报解读未完整：{'；'.join(errors)}")
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
-    result = _merge_results(results, provider=f"{llm.model} · {len(results)} agents", pages=len(images))
-    result["agent_count"] = len(results)
+    result = _merge_results(results, provider=f"{llm.model} · 3 agents", pages=len(images))
+    result["agent_count"] = 3
     result["analysis_mode"] = "multi_agent_vision"
-    if errors:
-        result["agent_warnings"] = errors
     _cache_put(key, result)
     return result
 
