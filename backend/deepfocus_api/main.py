@@ -6761,7 +6761,10 @@ async def run_wechat_scheduled_push() -> None:
             await asyncio.sleep(120)
 
 
-_FEED_WATCHDOG_STATE: dict = {"last_news_at": "", "stale_minutes": None, "alerted_at": 0.0}
+_FEED_WATCHDOG_STATE: dict = {
+    "last_news_at": "", "stale_minutes": None, "alerted_at": 0.0,
+    "filtered_last_news_at": "", "filtered_stale_minutes": None, "filtered_alerted_at": 0.0,
+}
 _FEED_STALE_MINUTES = int(os.getenv("DEEPFOCUS_FEED_STALE_MINUTES", "45") or 45)
 
 
@@ -6782,38 +6785,48 @@ async def run_feed_watchdog() -> None:
             hm = now.hour * 60 + now.minute
             if not (9 * 60 + 15 <= hm <= 15 * 60 + 30):  # 只在盘中盯（快讯最密集、断供伤害最大的时段）
                 continue
-            rows = list_realtime_messages(topic="快讯", limit=1)
-            latest = rows[0] if rows else None
-            created = str(getattr(latest, "created_at", "") or "") if latest else ""
-            _FEED_WATCHDOG_STATE["last_news_at"] = created
-            stale_min = None
-            if created:
-                try:
-                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    stale_min = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
-                except ValueError:
-                    stale_min = None
-            _FEED_WATCHDOG_STATE["stale_minutes"] = round(stale_min, 1) if stale_min is not None else None
-            is_stale = (stale_min is None) or (stale_min > _FEED_STALE_MINUTES)
-            if not is_stale:
-                _FEED_WATCHDOG_STATE["alerted_at"] = 0.0  # 恢复 → 复位去重
-                continue
-            if time.time() - float(_FEED_WATCHDOG_STATE.get("alerted_at") or 0.0) < 7200:
-                continue  # 同一事件 2h 内不重复吵
-            _FEED_WATCHDOG_STATE["alerted_at"] = time.time()
-            desc = f"{stale_min:.0f} 分钟" if stale_min is not None else "无法确认(空库/时间解析失败)"
-            msg = f"⚠️ DeepFocus 快讯断供告警：交易时段已 {desc} 无新快讯入库（阈值 {_FEED_STALE_MINUTES}min）。请检查上游 token/dao-realinfo 服务。最后一条：{created or '无'}"
-            print(f"[feed-watchdog] {msg}")
-            hook = (os.getenv("DEEPFOCUS_OPS_WEBHOOK") or "").strip()
-            if hook:
-                try:
-                    import httpx as _httpx
-                    async with _httpx.AsyncClient(timeout=10, trust_env=False) as _c:
-                        await _c.post(hook, json={"msgtype": "text", "text": {"content": msg}})
-                except Exception as _hexc:  # noqa: BLE001
-                    print(f"[feed-watchdog] webhook 发送失败：{type(_hexc).__name__}")
+            # 两条线分开盯：全量源有新 lxaa 不代表匿名/dao2 可见源也是新的。
+            # 权限逻辑不变，watchdog 只按同样的过滤口径增加可观测性。
+            channels = (
+                ("全量", False, "last_news_at", "stale_minutes", "alerted_at"),
+                ("匿名/dao2 可见", True, "filtered_last_news_at", "filtered_stale_minutes", "filtered_alerted_at"),
+            )
+            for label, exclude_futou, last_key, stale_key, alerted_key in channels:
+                rows = list_realtime_messages(topic="快讯", exclude_futoucaixin=exclude_futou, limit=1)
+                latest = rows[0] if rows else None
+                created = str(getattr(latest, "created_at", "") or "") if latest else ""
+                _FEED_WATCHDOG_STATE[last_key] = created
+                stale_min = None
+                if created:
+                    try:
+                        dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        stale_min = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+                    except ValueError:
+                        stale_min = None
+                _FEED_WATCHDOG_STATE[stale_key] = round(stale_min, 1) if stale_min is not None else None
+                is_stale = (stale_min is None) or (stale_min > _FEED_STALE_MINUTES)
+                if not is_stale:
+                    _FEED_WATCHDOG_STATE[alerted_key] = 0.0  # 恢复 → 复位去重
+                    continue
+                if time.time() - float(_FEED_WATCHDOG_STATE.get(alerted_key) or 0.0) < 7200:
+                    continue  # 同一视图的同一事件 2h 内不重复吵
+                _FEED_WATCHDOG_STATE[alerted_key] = time.time()
+                desc = f"{stale_min:.0f} 分钟" if stale_min is not None else "无法确认(空库/时间解析失败)"
+                msg = (
+                    f"⚠️ DeepFocus 快讯断供告警（{label}）：交易时段已 {desc} 无新快讯入库"
+                    f"（阈值 {_FEED_STALE_MINUTES}min）。请检查上游 token/dao-realinfo 服务。最后一条：{created or '无'}"
+                )
+                print(f"[feed-watchdog] {msg}")
+                hook = (os.getenv("DEEPFOCUS_OPS_WEBHOOK") or "").strip()
+                if hook:
+                    try:
+                        import httpx as _httpx
+                        async with _httpx.AsyncClient(timeout=10, trust_env=False) as _c:
+                            await _c.post(hook, json={"msgtype": "text", "text": {"content": msg}})
+                    except Exception as _hexc:  # noqa: BLE001
+                        print(f"[feed-watchdog] webhook 发送失败：{type(_hexc).__name__}")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -8318,6 +8331,42 @@ def _article_member_view(m: RealtimeMessageRecord, request: Request) -> Realtime
 _FUTOUCAIXIN_RESTRICTED_USERS = {"dao2"}
 
 
+def _filtered_view_flash_max_age_hours() -> int:
+    """匿名/失效会话/dao2 的最新流里，旧快讯最多保留多久。
+
+    72h 能覆盖周五收盘到周一开盘的正常空档；超过后宁可显示「暂无最新资讯」，
+    也不把几天前的存量伪装成「最新」。只影响最新流，历史检索/翻页不受影响。
+    """
+    try:
+        return max(1, int(os.getenv("DEEPFOCUS_FILTERED_FLASH_MAX_AGE_HOURS", "72") or 72))
+    except (TypeError, ValueError):
+        return 72
+
+
+def _is_stale_filtered_view_flash(
+    message: RealtimeMessageRecord,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> bool:
+    """判定一条「已允许该视图看」的快讯是否早已过期。"""
+    if str(getattr(message, "topic", "") or "") != "快讯":
+        return False
+    created = str(getattr(message, "created_at", "") or "").strip()
+    if not created:
+        return True
+    try:
+        created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        now = now_utc or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        age_seconds = (now.astimezone(timezone.utc) - created_at.astimezone(timezone.utc)).total_seconds()
+        return age_seconds > _filtered_view_flash_max_age_hours() * 3600
+    except (TypeError, ValueError):
+        return True
+
+
 def _should_hide_futoucaixin(request: Request) -> bool:
     """匿名/失效会话与指定账号不可见 futoucaixin 快讯和文章。"""
     claims = optional_current_user(request)
@@ -8353,20 +8402,26 @@ async def api_list_realtime_messages(
     limit: int = 80,
 ) -> RealtimeMessageListResponse:
     hide_futoucaixin = _should_hide_futoucaixin(request)
+    messages = list_realtime_messages(
+        symbol=symbol,
+        topic=topic,
+        severity=severity,
+        since=since,
+        before=before,
+        q=q,
+        anyq=anyq,
+        exclude_futoucaixin=hide_futoucaixin,
+        limit=max(1, min(limit, 200)),
+    )
+    # 权限不变：该隐藏的 lxaa 仍隐藏，dao2 仍走受限视图。
+    # 只修正「最新」语义：无搜索/标的/历史翻页时，不再返回超龄快讯。
+    trim_stale_latest = hide_futoucaixin and not any((symbol, before, q, anyq))
+    if trim_stale_latest:
+        messages = [m for m in messages if not _is_stale_filtered_view_flash(m)]
     return RealtimeMessageListResponse(
         messages=[
             viewed
-            for m in list_realtime_messages(
-                symbol=symbol,
-                topic=topic,
-                severity=severity,
-                since=since,
-                before=before,
-                q=q,
-                anyq=anyq,
-                exclude_futoucaixin=hide_futoucaixin,
-                limit=max(1, min(limit, 200)),
-            )
+            for m in messages
             if (viewed := _realtime_message_view(m, request, hide_futoucaixin=hide_futoucaixin)) is not None
         ]
     )

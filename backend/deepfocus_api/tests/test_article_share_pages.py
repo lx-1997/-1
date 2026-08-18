@@ -5,6 +5,7 @@
 但文章全文为会员专享（2026-08-07）：匿名/非会员只回 ≤120 字导语 + 会员锁定标记。
 """
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -210,6 +211,25 @@ def test_exclude_futou_query_keeps_full_limit(client):
         ))
     rows = rm.list_realtime_messages(exclude_futoucaixin=True, limit=1)
     assert [m.id for m in rows] == [normal.id]
+
+
+def test_filtered_latest_hides_stale_flash_but_keeps_history_search(client):
+    """匿名最新流不把超过 72h 的普通源快讯伪装成「最新」；
+    只修复最新流的语义，明确的历史搜索仍可取回。
+    """
+    stale = _make_normal_flash()
+    stale_created = (datetime.now(timezone.utc) - timedelta(hours=96)).isoformat()
+    with rm._connect() as conn:
+        conn.execute("UPDATE realtime_messages SET created_at=? WHERE id=?", (stale_created, stale.id))
+        conn.commit()
+
+    latest = client.get("/api/realtime/messages", params={"topic": "快讯", "limit": 20})
+    assert latest.status_code == 200
+    assert stale.id not in {m["id"] for m in latest.json()["messages"]}
+
+    history = client.get("/api/realtime/messages", params={"topic": "快讯", "q": "普通来源", "limit": 20})
+    assert history.status_code == 200
+    assert stale.id in {m["id"] for m in history.json()["messages"]}
 
 
 def test_sse_transform_can_drop_restricted_message(client):
