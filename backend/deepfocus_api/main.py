@@ -294,6 +294,8 @@ from .share_snapshots import (
 )
 from .report_url_ingest import extract_report_url
 from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
+from .async_singleflight import AsyncSingleFlight
+from .research_prewarm_policy import research_prewarm_download_cap
 from .research_vision import analyze_pdf_auto, analyze_news
 
 # 对外 AI 品牌名：不暴露底层模型（如 MiniMax）
@@ -7552,7 +7554,7 @@ async def run_research_prewarm() -> None:
     if (os.getenv("DEEPFOCUS_RESEARCH_PREWARM", "1").strip().lower() in {"0", "false", "no"}):
         print("[prewarm] 研报预解读未启用")
         return
-    per_cycle = int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_PER_CYCLE", "30"))
+    per_cycle = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_PER_CYCLE", "30")))
     gap = float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_GAP_SECONDS", "3"))
     cycle = float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CYCLE_SECONDS", "1800"))
     workers = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CONCURRENCY", "2")))
@@ -7572,7 +7574,11 @@ async def run_research_prewarm() -> None:
     async def _warm_one(item: dict, sem: asyncio.Semaphore, ai: bool = True) -> None:
         fid = str(item.get("file_id") or "").strip()
         async with sem:
-            if banned["hit"] or metrics_get_daily(_DL_KEY) >= daily_max:
+            already_local = has_cached_file_id(fid)
+            # 下载额度/源站限额只拦网络下载；本地已有 PDF 的 AI 缓存补齐仍可继续。
+            if (banned["hit"] and not already_local) or (
+                not already_local and metrics_get_daily(_DL_KEY) >= daily_max
+            ):
                 return
             try:
                 # _fetch_research_online_pdf 内部即会去水印并按 file_id 落盘成品（下载本身就完成了 PDF 缓存）。
@@ -7587,14 +7593,16 @@ async def run_research_prewarm() -> None:
                 else:
                     print(f"[prewarm] 下载失败 {fid}: {type(exc).__name__}: {msg[:50]}")
                 return
-            metrics_incr(_DL_KEY)  # 下载成功即计入当日预算（无论解读成败，配额都已消耗）
+            if not already_local:
+                metrics_incr(_DL_KEY)  # 只有真实下载才占外部源当日配额；磁盘命中不重复计数
             if not ai:
                 # 仅补原文去水印缓存（已 AI 解读过的存量），让用户点开秒看，不再重复烧模型 token。
                 done_counter["n"] += 1
                 await asyncio.sleep(gap)
                 return
             try:
-                result = await analyze_pdf_auto(content, title=item.get("title", "研报"), max_pages=4)
+                async with _AI_ANALYZE_SEM:  # 与用户请求共用总闸，防止预热绕过并发上限
+                    result = await analyze_pdf_auto(content, title=item.get("title", "研报"), max_pages=4)
                 metrics_set_ai_cache(fid, result)
                 done_counter["n"] += 1
             except asyncio.CancelledError:
@@ -7609,11 +7617,10 @@ async def run_research_prewarm() -> None:
         banned["hit"] = False
         try:
             used = metrics_get_daily(_DL_KEY)
-            total_room = max(0, daily_max - used)
-            if total_room <= 0:
-                print(f"[prewarm] 今日下载预算已用尽（{used}/{daily_max}），本轮跳过")
-                await asyncio.sleep(cycle)
-                continue
+            download_cap = research_prewarm_download_cap(
+                daily_max, datetime.now(ai_fund.BJ_TZ).hour,
+            )
+            download_room = max(0, download_cap - used)
             data = await fetch_research_wire_online(limit=200)  # 整库覆盖（知识星球返回上限）
             fresh: list[dict] = []
             migrate: list[dict] = []
@@ -7629,18 +7636,49 @@ async def run_research_prewarm() -> None:
                     migrate.append(it)  # 旧缓存补「提及标的」（市场归类由 _market_for 用 subject 即时算，无需重下载）
                 elif not has_cached_file_id(fid):
                     pdf_only.append(it)  # AI 已就绪、仅差原文去水印成品 → 补缓存让点开秒看（不重复烧模型）
-            # 优先级：新报告(全价值) > 原文 PDF 缓存(高频诉求,点开秒看) > instruments 回填(可即时算,最次)。
-            fresh_pending = fresh[:total_room]
-            room_after_fresh = total_room - len(fresh_pending)
-            pdf_pending = pdf_only[:room_after_fresh]  # 用满剩余预算补原文缓存（存量将在数日内逐步补齐）
-            backfill_room = max(0, min(backfill_cap, (daily_max - fresh_reserve) - used, room_after_fresh - len(pdf_pending)))
-            pending = fresh_pending + pdf_pending + migrate[:backfill_room]
+            # 优先级：新报告(本地 PDF 优先) > 原文 PDF 缓存 > instruments 回填。
+            # per_cycle 同时限制本轮模型/下载任务数；分时 cap 给白天的新报告保留下载额度。
+            fresh_local = [it for it in fresh if has_cached_file_id(str(it.get("file_id") or ""))]
+            fresh_remote = [it for it in fresh if not has_cached_file_id(str(it.get("file_id") or ""))]
+            migrate_local = [it for it in migrate if has_cached_file_id(str(it.get("file_id") or ""))]
+            migrate_remote = [it for it in migrate if not has_cached_file_id(str(it.get("file_id") or ""))]
+
+            slots = per_cycle
+            fresh_local_pending = fresh_local[:slots]
+            slots -= len(fresh_local_pending)
+            fresh_remote_pending = fresh_remote[:min(slots, download_room)]
+            slots -= len(fresh_remote_pending)
+            download_room -= len(fresh_remote_pending)
+            fresh_pending = fresh_local_pending + fresh_remote_pending
+
+            pdf_pending = pdf_only[:min(slots, download_room)]
+            slots -= len(pdf_pending)
+            download_room -= len(pdf_pending)
+
+            backfill_left = min(backfill_cap, slots)
+            migrate_local_pending = migrate_local[:backfill_left]
+            slots -= len(migrate_local_pending)
+            backfill_left -= len(migrate_local_pending)
+            remote_backfill_room = max(0, min(
+                backfill_left,
+                slots,
+                download_room,
+                (daily_max - fresh_reserve) - used,
+            ))
+            migrate_remote_pending = migrate_remote[:remote_backfill_room]
+            migrate_pending = migrate_local_pending + migrate_remote_pending
+            pending = fresh_pending + pdf_pending + migrate_pending
             if pending:
-                print(f"[prewarm] 本轮处理 {len(pending)} 篇（新{len(fresh_pending)}/原文{len(pdf_pending)}/回填{len(migrate[:backfill_room])}），当日已下 {used}/{daily_max}")
+                print(
+                    f"[prewarm] 本轮处理 {len(pending)} 篇（新{len(fresh_pending)}/原文{len(pdf_pending)}/"
+                    f"回填{len(migrate_pending)}），分时下载额度 {used}/{download_cap}（日上限{daily_max}）"
+                )
                 sem = asyncio.Semaphore(workers)
                 pdf_ids = {id(x) for x in pdf_pending}  # 仅这批走「只补 PDF、不重解读」
                 await asyncio.gather(*[_warm_one(it, sem, ai=(id(it) not in pdf_ids)) for it in pending], return_exceptions=True)
                 print(f"[prewarm] 本轮完成 {done_counter['n']} 篇，当日累计 {metrics_get_daily(_DL_KEY)}/{daily_max}")
+            elif used >= download_cap:
+                print(f"[prewarm] 当前分时下载额度已用尽（{used}/{download_cap}，日上限{daily_max}），等待下一时段")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -7814,6 +7852,34 @@ async def _resolve_research_pdf_bytes(request: ResearchVisionAnalyzeRequest) -> 
 # AI 解读并发闸：2 核/1.8G 小机器上，限制同时进行的 PDF 渲染+LLM 解读数，避免 CPU 打满/内存爆。
 # 超出的请求排队等待（前端有 150s 超时兜底）；结果有缓存，重复点开秒回不占额度。
 _AI_ANALYZE_SEM = asyncio.Semaphore(int(os.getenv("DEEPFOCUS_AI_ANALYZE_CONCURRENCY", "3")))
+_RESEARCH_AI_SINGLEFLIGHT: AsyncSingleFlight[dict[str, Any]] = AsyncSingleFlight()
+
+
+async def _generate_research_ai_result(
+    request: ResearchVisionAnalyzeRequest,
+    *,
+    title: str,
+    cache_key: str,
+) -> dict[str, Any]:
+    """Generate one report analysis per cache key, even across concurrent requests."""
+    async def _generate() -> dict[str, Any]:
+        # A request may have filled the cache after the endpoint's first lookup.
+        if cache_key:
+            late_cached = metrics_get_ai_cache(cache_key)
+            if late_cached is not None:
+                return late_cached
+        pdf_bytes = await _resolve_research_pdf_bytes(request)
+        if not pdf_bytes:
+            raise HTTPException(status_code=422, detail="未能获取研报 PDF 内容")
+        async with _AI_ANALYZE_SEM:
+            result = await analyze_pdf_auto(
+                pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
+            )
+        if cache_key:
+            metrics_set_ai_cache(cache_key, result)
+        return result
+
+    return await _RESEARCH_AI_SINGLEFLIGHT.run(cache_key, _generate)
 
 
 def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] = None, *, cached: bool = False) -> Optional[str]:
@@ -7948,21 +8014,13 @@ async def api_research_vision_analyze(
         return _build_response(cached_result)
 
     # 走到这里必为会员（非会员未缓存已被 _check_ai_quota 拦下，不会触发生成）
-    pdf_bytes = await _resolve_research_pdf_bytes(request)
-    if not pdf_bytes:
-        raise HTTPException(status_code=422, detail="未能获取研报 PDF 内容")
     try:
-        async with _AI_ANALYZE_SEM:  # 并发闸：避免小机器同时跑太多解读
-            result = await analyze_pdf_auto(
-                pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
-            )
+        result = await _generate_research_ai_result(request, title=title, cache_key=cache_key)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - 统一转成 502，前端给友好提示
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{exc}") from exc
 
-    if cache_key:
-        metrics_set_ai_cache(cache_key, result)
     if quota_key: metrics_incr(quota_key)
     return _build_response(result)
 

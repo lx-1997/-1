@@ -86,6 +86,10 @@ _VISION_DISCLAIMER = "本结论基于研报页面图像的 AI 视觉解读，非
 _TEXT_DISCLAIMER = "本结论基于研报文本的 AI 摘要，可能遗漏图表信息，请以原文为准。"
 
 
+class PdfTextUnavailable(RuntimeError):
+    """The PDF has no usable text layer, so the vision path is appropriate."""
+
+
 import math
 
 MAX_RENDER_PX = 2200  # 单张图最长边上限：保证可被视觉模型接收，又尽量清晰
@@ -354,9 +358,12 @@ async def analyze_pdf_text(
     max_pages: int = MAX_VISION_PAGES,
 ) -> dict[str, Any]:
     """文本快速通道：抽取文字层 → 文本模型出解读（远快于视觉）。文本过少则抛错由上层回退。"""
-    text = await asyncio.to_thread(extract_pdf_text, pdf_bytes, max_pages=max_pages)
+    try:
+        text = await asyncio.to_thread(extract_pdf_text, pdf_bytes, max_pages=max_pages)
+    except Exception as exc:  # PDF 损坏/文本层读取失败属于视觉回退条件，模型调用失败不属于
+        raise PdfTextUnavailable("无法读取 PDF 文本层，转视觉解读") from exc
     if len(text) < MIN_TEXT_CHARS:
-        raise RuntimeError("文本层过少，转视觉解读")
+        raise PdfTextUnavailable("文本层过少，转视觉解读")
 
     llm = CloudResearchLLM()
     if llm.provider == "mock":
@@ -377,10 +384,10 @@ async def analyze_pdf_auto(
     symbol: Optional[str] = None,
     max_pages: int = 6,
 ) -> dict[str, Any]:
-    """优先文本快速通道；图片型 PDF 或文本失败时回退多模态视觉解读。"""
+    """优先文本快速通道；仅图片型/无可读文本层的 PDF 回退视觉解读。"""
     try:
         return await analyze_pdf_text(pdf_bytes, title=title, symbol=symbol)
-    except Exception:
+    except PdfTextUnavailable:
         return await analyze_pdf_vision(pdf_bytes, title=title, symbol=symbol, max_pages=max_pages)
 
 
