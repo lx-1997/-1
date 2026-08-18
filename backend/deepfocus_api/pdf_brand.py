@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v14")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v15")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -144,17 +144,18 @@ _SUSPICIOUS_XOBJ_RE = [
 
 # 品牌标记：顶部用完全不透明色带覆盖原分发水印，底部增加独立页脚。
 _BRAND_TOP_COVER_H = 26.0
-_BRAND_TOP_FILL = (0.925, 0.955, 0.995)
+_BRAND_TOP_FILL = (0.055, 0.120, 0.235)
 _BRAND_FOOTER_H = 12.0
 _BRAND_FOOTER_FILL = (0.955, 0.975, 1.0)
 _BRAND_TEXT_COLOR = (0.12, 0.29, 0.52)
+_BRAND_HEADER_TEXT_COLOR = (0.965, 0.985, 1.0)
+_BRAND_WATERMARK_COLOR = (0.055, 0.300, 0.690)
 _BRAND_TEXT = "DeepFocus｜专注股票投资信息与深度研究｜www.daocaijing.com"
 _BRAND_PARTS = (
     ("DeepFocus", "hebo"),
     ("｜专注股票投资信息与深度研究｜", "china-s"),
     ("www.daocaijing.com", "helv"),
 )
-_BRAND_WATERMARK_OPACITY = 0.14
 
 
 # ── 辅助 ─────────────────────────────────────────────────────────────────────
@@ -208,6 +209,7 @@ def _insert_brand_text(
     fontsize: float,
     fill_opacity: float,
     morph=None,
+    color=None,
 ) -> None:
     """中英文混排：英文使用紧凑的 Helvetica，中文使用内置 CJK 字体。"""
     x, y = point
@@ -217,7 +219,7 @@ def _insert_brand_text(
             text,
             fontsize=fontsize,
             fontname=fontname,
-            color=_BRAND_TEXT_COLOR,
+            color=color or _BRAND_TEXT_COLOR,
             fill_opacity=fill_opacity,
             morph=morph,
             overlay=True,
@@ -1507,7 +1509,7 @@ def _page_has_brand(page: fitz.Page) -> bool:
     try:
         page_text = page.get_text("text")
         compact = _compact(page_text)
-        # v13 的顶栏、页脚和页中斜向水印各有一次品牌文案。
+        # v15 的顶栏、页脚和页中斜向水印各有一次品牌文案。
         # 只有顶/底栏的旧成品不能被误判为已升级。
         if (not _is_current_brand(page_text)
                 or compact.count("deepfocus") < 3
@@ -1531,29 +1533,39 @@ def _page_has_brand(page: fitz.Page) -> bool:
 
 
 def _add_diagonal_brand(page: fitz.Page, pw: float, ph: float) -> None:
-    """在页面中部加一条低透明品牌水印，清晰宣传但不盖住研报正文。"""
+    """在页面中部加「品牌名 + 价值主张 + 网址」三层斜向视觉水印。"""
     if pw < 220 or ph < 220:
         return
 
-    base_fs = 15.0
-    base_width = _brand_text_width(base_fs)
-    # 留出斜放后的左右安全边距；窄页自动缩小，常见 A4/Letter 保持 15pt。
-    fontsize = max(9.5, base_fs * min(1.0, (pw * 0.76) / max(1.0, base_width)))
-    text_width = _brand_text_width(fontsize)
-    x = max(12.0, (pw - text_width) / 2.0)
-    y = ph * 0.54
+    # A4 / Letter 使用 42pt 的 DeepFocus 主标；小页按宽度等比缩放。
+    scale = min(1.0, max(0.62, pw / 595.0))
+    logo_fs = 42.0 * scale
+    tagline_fs = 13.5 * scale
+    url_fs = 12.0 * scale
+    center_y = ph * 0.535
     pivot = fitz.Point(pw / 2.0, ph / 2.0)
-    angle = math.radians(-18.0)
+    angle = math.radians(-20.0)
     matrix = fitz.Matrix(
         math.cos(angle), -math.sin(angle), math.sin(angle), math.cos(angle), 0, 0
     )
-    _insert_brand_text(
-        page,
-        (x, y),
-        fontsize=fontsize,
-        fill_opacity=_BRAND_WATERMARK_OPACITY,
-        morph=(pivot, matrix),
-    )
+    morph = (pivot, matrix)
+
+    def _centered_line(text: str, fontname: str, fontsize: float, y: float, opacity: float) -> None:
+        width = fitz.get_text_length(text, fontname=fontname, fontsize=fontsize)
+        page.insert_text(
+            (max(10.0, (pw - width) / 2.0), y),
+            text,
+            fontsize=fontsize,
+            fontname=fontname,
+            color=_BRAND_WATERMARK_COLOR,
+            fill_opacity=opacity,
+            morph=morph,
+            overlay=True,
+        )
+
+    _centered_line("DeepFocus", "hebo", logo_fs, center_y - 12.0 * scale, 0.22)
+    _centered_line("专注股票投资信息与深度研究", "china-s", tagline_fs, center_y + 13.0 * scale, 0.20)
+    _centered_line("www.daocaijing.com", "hebo", url_fs, center_y + 31.0 * scale, 0.23)
 
 
 def _add_brand(page: fitz.Page) -> None:
@@ -1627,13 +1639,13 @@ def _add_brand(page: fitz.Page) -> None:
     top_band = fitz.Rect(0, 0, pw, min(_BRAND_TOP_COVER_H, ph))
     page.draw_rect(
         top_band,
-        color=(0.78, 0.86, 0.95),
+        color=(0.12, 0.39, 0.76),
         fill=_BRAND_TOP_FILL,
         width=0.45,
         fill_opacity=1.0,
         overlay=True,
     )
-    header_fs = 7.4
+    header_fs = 7.8
     header_text_width = _brand_text_width(header_fs)
     header_x = max(5.0, (pw - header_text_width) / 2.0)
     header_y = max(header_fs + 1.0, (_BRAND_TOP_COVER_H + header_fs) / 2.0 - 0.8)
@@ -1641,7 +1653,8 @@ def _add_brand(page: fitz.Page) -> None:
         page,
         (header_x, header_y),
         fontsize=header_fs,
-        fill_opacity=0.96,
+        fill_opacity=1.0,
+        color=_BRAND_HEADER_TEXT_COLOR,
     )
 
     _add_diagonal_brand(page, pw, ph)
