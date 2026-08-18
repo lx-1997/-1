@@ -1,26 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import * as authService from '../services/authService';
 import { formatErrorMessage } from '../services/apiClient';
-
-declare global { interface Window { turnstile?: any; onTurnstileLoad?: () => void; } }
-
-// 按需加载 Cloudflare Turnstile 脚本（只加载一次）
-let _tsLoading: Promise<boolean> | null = null;
-function loadTurnstile(): Promise<boolean> {
-  if (typeof window === 'undefined') return Promise.resolve(false);
-  if (window.turnstile) return Promise.resolve(true);
-  if (_tsLoading) return _tsLoading;
-  _tsLoading = new Promise<boolean>((resolve) => {
-    const s = document.createElement('script');
-    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-    s.async = true; s.defer = true;
-    s.onload = () => resolve(true);
-    s.onerror = () => resolve(false);
-    document.head.appendChild(s);
-    window.setTimeout(() => resolve(!!window.turnstile), 6000);  // 6s 还没好(可能被墙)→放弃，前端放行
-  });
-  return _tsLoading;
-}
 
 interface TerminalAuthModalProps {
   open: boolean;
@@ -48,10 +28,6 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
   const [hp, setHp] = useState('');  // 蜜罐：真人看不到、留空；机器人会填
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [capSitekey, setCapSitekey] = useState('');  // Turnstile sitekey（空=未启用）
-  const tsTokenRef = useRef('');                      // 人机校验票据
-  const tsBoxRef = useRef<HTMLDivElement | null>(null);
-  const tsWidgetRef = useRef<any>(null);
 
   // 每次打开重置错误/忙碌态；关闭时清空表单避免残留。打开时若本地有邀请码(来自分享链接 ?ref=)则预填。
   useEffect(() => {
@@ -78,32 +54,6 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  // 打开时拉人机校验配置
-  useEffect(() => {
-    if (!open) return;
-    authService.fetchCaptchaConfig().then(c => setCapSitekey(c.enabled ? c.sitekey : '')).catch(() => setCapSitekey(''));
-  }, [open]);
-
-  // 注册态 + 已配 sitekey → 渲染 Turnstile 框（加载失败/被墙则静默放行，靠其余反刷防线）
-  useEffect(() => {
-    if (!open || mode !== 'register' || !capSitekey || !tsBoxRef.current) return;
-    let cancelled = false;
-    tsTokenRef.current = '';
-    loadTurnstile().then(ok => {
-      if (cancelled || !ok || !window.turnstile || !tsBoxRef.current) return;
-      try {
-        if (tsWidgetRef.current != null) { try { window.turnstile.remove(tsWidgetRef.current); } catch { /* */ } }
-        tsWidgetRef.current = window.turnstile.render(tsBoxRef.current, {
-          sitekey: capSitekey,
-          callback: (t: string) => { tsTokenRef.current = t; },
-          'expired-callback': () => { tsTokenRef.current = ''; },
-          'error-callback': () => { tsTokenRef.current = ''; },
-        });
-      } catch { /* 渲染失败放行 */ }
-    });
-    return () => { cancelled = true; };
-  }, [open, mode, capSitekey]);
-
   if (!open) return null;
 
   const isRegister = mode === 'register';
@@ -119,7 +69,7 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
     setBusy(true); setError('');
     try {
       const session = isRegister
-        ? await authService.register(email.trim(), u, password, phone.trim(), invite.trim(), hp, tsTokenRef.current)
+        ? await authService.register(email.trim(), u, password, phone.trim(), invite.trim(), hp)
         : await authService.login(u, password);
       try { localStorage.removeItem('df_ref'); localStorage.setItem('df_has_account', '1'); } catch { /* */ }  // 消费邀请码 + 标记本机已有账号(下次弹层默认登录态)
       onAuthed(session.authUser.username, isRegister);
@@ -196,7 +146,6 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
             <input type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true"
               value={hp} onChange={e => setHp(e.target.value)}
               style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }} />
-            {capSitekey && <div ref={tsBoxRef} className="bbt-auth-ts" style={{ marginTop: 10, minHeight: 66 }} />}
           </>
         )}
 

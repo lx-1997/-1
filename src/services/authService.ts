@@ -131,8 +131,7 @@ export async function register(
   password: string,
   phone?: string,
   inviteCode?: string,
-  website?: string,        // 蜜罐：真人留空
-  turnstileToken?: string  // 人机校验票据
+  website?: string         // 蜜罐：真人留空
 ): Promise<AuthSession> {
   const resp = await apiPost<TokenResponse>('/api/auth/register', {
     email: email || undefined,
@@ -140,15 +139,9 @@ export async function register(
     username,
     password,
     invite_code: inviteCode || undefined,
-    website: website || undefined,
-    turnstile_token: turnstileToken || undefined
+    website: website || undefined
   });
   return toSession(resp);
-}
-
-export interface CaptchaConfig { enabled: boolean; provider: string; sitekey: string; }
-export async function fetchCaptchaConfig(): Promise<CaptchaConfig> {
-  try { return await apiGet<CaptchaConfig>('/api/auth/captcha'); } catch { return { enabled: false, provider: '', sitekey: '' }; }
 }
 
 export interface InviteOverview { code: string; invited_count: number; invited: { username: string; created_at: string }[]; }
