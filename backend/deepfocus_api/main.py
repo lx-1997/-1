@@ -5350,7 +5350,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
             download_count=row["download_count"],
             preview_url=(
                 "/api/research/workbench-pdf"
-                f"?filename={quote(row['filename'])}&out={quote(row['out'])}&brand=v15"
+                f"?filename={quote(row['filename'])}&out={quote(row['out'])}&brand=v16"
             ),
         )
         for row in result["items"]

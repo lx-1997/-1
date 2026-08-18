@@ -214,7 +214,7 @@ def test_brand_uses_dedicated_footer_and_is_idempotent():
         page = branded[0]
         assert page.rect.height == original_height + pb._BRAND_FOOTER_H
         assert page.get_text("text").count("www.daocaijing.com") == 3
-        assert page.get_text("text").count("专注股票投资信息与深度研究") == 3
+        assert page.get_text("text").count("股票投资信息与深度研究平台") == 3
         rotated_brand_lines = [
             line
             for block in page.get_text("dict").get("blocks", [])
@@ -222,7 +222,7 @@ def test_brand_uses_dedicated_footer_and_is_idempotent():
             if abs(float(line.get("dir", (1, 0))[1])) > 0.1
             and any("DeepFocus" in span.get("text", "") for span in line.get("spans", []))
         ]
-        assert len(rotated_brand_lines) == 1
+        assert len(rotated_brand_lines) == 3
         branded_body = page.search_for("BODY_KEEP")[0]
         assert branded_body == original_body
 
@@ -284,7 +284,7 @@ def test_legacy_footer_is_upgraded_without_extending_page_again():
         page = branded[0]
         assert page.rect.height == 854
         assert pb._page_has_brand(page)
-        assert page.get_text("text").count("专注股票投资信息与深度研究") == 3
+        assert page.get_text("text").count("股票投资信息与深度研究平台") == 3
 
 
 def test_repeated_baked_raster_watermark_is_suppressed_without_rasterizing_text_pdf():
@@ -315,6 +315,51 @@ def test_repeated_baked_raster_watermark_is_suppressed_without_rasterizing_text_
     assert "SEARCHABLE BODY" in searchable[0].get_text("text")
     assert all(not page.get_images(full=True) for page in searchable)
     searchable.close()
+
+
+def test_deepfocus_brand_is_baked_into_image_only_report():
+    """整页图研报的主品牌水印必须进入图像像素，不能只是可删的旋转文字层。"""
+    source = _image_only_report(watermark=False)
+    result, ok = pb._process_sync(source)
+    assert ok
+
+    with (
+        fitz.open(stream=source, filetype="pdf") as original,
+        fitz.open(stream=result, filetype="pdf") as branded,
+    ):
+        source_info = pb._dominant_raster_image(original[0])
+        branded_info = pb._dominant_raster_image(branded[0])
+        assert source_info is not None
+        assert branded_info is not None
+
+        source_pix = fitz.Pixmap(original, source_info[0])
+        branded_pix = fitz.Pixmap(branded, branded_info[0])
+        source_rgb = (
+            np.frombuffer(source_pix.samples, dtype=np.uint8)
+            .reshape(source_pix.height, source_pix.width, source_pix.n)[:, :, :3]
+        )
+        branded_rgb = (
+            np.frombuffer(branded_pix.samples, dtype=np.uint8)
+            .reshape(branded_pix.height, branded_pix.width, branded_pix.n)[:, :, :3]
+        )
+        assert source_rgb.shape == branded_rgb.shape
+        height, width = source_rgb.shape[:2]
+        central_change = np.abs(
+            source_rgb[int(height * 0.28):int(height * 0.78), int(width * 0.16):int(width * 0.84)].astype(np.int16)
+            - branded_rgb[int(height * 0.28):int(height * 0.78), int(width * 0.16):int(width * 0.84)].astype(np.int16)
+        ).mean()
+        assert central_change > 0.25
+
+        # 页面文字层没有旋转的 DeepFocus 主标，但像素已改变：证明主视觉已烘印。
+        rotated_brand_lines = [
+            line
+            for block in branded[0].get_text("dict").get("blocks", [])
+            for line in block.get("lines", [])
+            if abs(float(line.get("dir", (1, 0))[1])) > 0.1
+            and any("DeepFocus" in span.get("text", "") for span in line.get("spans", []))
+        ]
+        assert rotated_brand_lines == []
+        assert branded[0].get_text("text").count("www.daocaijing.com") == 3
 
 
 def test_dominant_raster_prefers_image_actually_painted_by_content_stream():

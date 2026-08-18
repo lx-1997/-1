@@ -99,4 +99,4 @@ def test_local_workbench_pdf_route_uses_brand_pipeline_and_cache_buster():
     assert "apply_pdf_brand" in route_source
     assert '"Cache-Control": "private, no-store"' in route_source
     assert '"Accept-Ranges": "none"' in route_source
-    assert "&brand=v15" in source
+    assert "&brand=v16" in source

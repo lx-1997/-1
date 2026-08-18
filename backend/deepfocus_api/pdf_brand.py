@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v15")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v16")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -150,10 +150,10 @@ _BRAND_FOOTER_FILL = (0.955, 0.975, 1.0)
 _BRAND_TEXT_COLOR = (0.12, 0.29, 0.52)
 _BRAND_HEADER_TEXT_COLOR = (0.965, 0.985, 1.0)
 _BRAND_WATERMARK_COLOR = (0.055, 0.300, 0.690)
-_BRAND_TEXT = "DeepFocus｜专注股票投资信息与深度研究｜www.daocaijing.com"
+_BRAND_TEXT = "DeepFocus｜股票投资信息与深度研究平台｜www.daocaijing.com"
 _BRAND_PARTS = (
     ("DeepFocus", "hebo"),
-    ("｜专注股票投资信息与深度研究｜", "china-s"),
+    ("｜股票投资信息与深度研究平台｜", "china-s"),
     ("www.daocaijing.com", "helv"),
 )
 
@@ -1533,16 +1533,18 @@ def _page_has_brand(page: fitz.Page) -> bool:
 
 
 def _add_diagonal_brand(page: fitz.Page, pw: float, ph: float) -> None:
-    """在页面中部加「品牌名 + 价值主张 + 网址」三层斜向视觉水印。"""
+    """在页面中部加多层中文品牌视觉；可直接画到页面，也可用于烘进整页图像。"""
     if pw < 220 or ph < 220:
         return
 
     # A4 / Letter 使用 42pt 的 DeepFocus 主标；小页按宽度等比缩放。
     scale = min(1.0, max(0.62, pw / 595.0))
-    logo_fs = 42.0 * scale
-    tagline_fs = 13.5 * scale
-    url_fs = 12.0 * scale
-    center_y = ph * 0.535
+    logo_fs = 40.0 * scale
+    hero_fs = 15.0 * scale
+    slogan_fs = 12.5 * scale
+    platform_fs = 11.5 * scale
+    url_fs = 11.5 * scale
+    center_y = ph * 0.515
     pivot = fitz.Point(pw / 2.0, ph / 2.0)
     angle = math.radians(-20.0)
     matrix = fitz.Matrix(
@@ -1563,9 +1565,55 @@ def _add_diagonal_brand(page: fitz.Page, pw: float, ph: float) -> None:
             overlay=True,
         )
 
-    _centered_line("DeepFocus", "hebo", logo_fs, center_y - 12.0 * scale, 0.22)
-    _centered_line("专注股票投资信息与深度研究", "china-s", tagline_fs, center_y + 13.0 * scale, 0.20)
-    _centered_line("www.daocaijing.com", "hebo", url_fs, center_y + 31.0 * scale, 0.23)
+    _centered_line("DeepFocus", "hebo", logo_fs, center_y - 22.0 * scale, 0.25)
+    _centered_line("让投资研究更有深度", "china-s", hero_fs, center_y + 5.0 * scale, 0.23)
+    _centered_line("看懂公司 · 看清趋势 · 发现机会", "china-s", slogan_fs, center_y + 24.0 * scale, 0.21)
+    _centered_line("股票投资信息与深度研究平台", "china-s", platform_fs, center_y + 41.0 * scale, 0.19)
+    _centered_line("www.daocaijing.com", "hebo", url_fs, center_y + 57.0 * scale, 0.24)
+
+    # 两条独立中文微缩水印分布在上下区域，即使删除主视觉内容流，
+    # 仍会留下品牌信息；透明度更低，不与主体层级抢视线。
+    for y, text in (
+        (ph * 0.245, "DeepFocus · 让投资研究更有深度"),
+        (ph * 0.790, "DeepFocus · 看懂公司 · 看清趋势 · 发现机会"),
+    ):
+        _centered_line(text, "china-s", 9.5 * scale, y, 0.095)
+
+
+def _bake_diagonal_brand_into_raster(page: fitz.Page) -> bool:
+    """对原本就是整页图像的研报，把品牌视觉直接烘入主图像素。
+
+    这不会把可搜索文字型 PDF 栅格化；只处理 ``_dominant_raster_image`` 已经确认
+    的单张整页图。用户即使删除 PDF 顶栏、页脚或文字内容流，主图里仍会
+    保留中文品牌水印，显著提高二次清理成本。
+    """
+    info = _dominant_raster_image(page)
+    if info is None:
+        return False
+    xref, width, height = info
+    pw, ph = page.rect.width, page.rect.height
+    if pw <= 0 or ph <= 0:
+        return False
+
+    temp_doc = fitz.open()
+    try:
+        temp_page = temp_doc.new_page(width=pw, height=ph)
+        temp_page.show_pdf_page(temp_page.rect, page.parent, page.number)
+        _add_diagonal_brand(temp_page, pw, ph)
+        replacement = temp_page.get_pixmap(
+            matrix=fitz.Matrix(width / pw, height / ph),
+            alpha=False,
+            annots=False,
+        )
+        if replacement.width != width or replacement.height != height:
+            return False
+        _replace_raster_image(page, xref, replacement)
+        return True
+    except Exception as exc:
+        logger.debug("[pdf_brand] 品牌水印烘入整页图失败: %s", exc)
+        return False
+    finally:
+        temp_doc.close()
 
 
 def _add_brand(page: fitz.Page) -> None:
@@ -1583,6 +1631,7 @@ def _add_brand(page: fitz.Page) -> None:
         has_legacy_brand = _is_our_brand(page.get_text("text"))
     except Exception:
         has_legacy_brand = False
+    raster_baked = _bake_diagonal_brand_into_raster(page)
     footer_fs = 6.2
     footer_text_width = _brand_text_width(footer_fs)
     mb = page.mediabox
@@ -1657,7 +1706,18 @@ def _add_brand(page: fitz.Page) -> None:
         color=_BRAND_HEADER_TEXT_COLOR,
     )
 
-    _add_diagonal_brand(page, pw, ph)
+    if raster_baked:
+        # 主视觉已烘入整页图。添加一个几乎不可见的文本版本标记，
+        # 使幂等性检测能区分「已有 v16 烘印」和「只有旧牌顶/底栏」。
+        _insert_brand_text(
+            page,
+            (2.0, max(1.0, ph - 1.0)),
+            fontsize=0.5,
+            fill_opacity=0.001,
+        )
+    else:
+        # 文字型 PDF 不做整页栅格化，保留搜索/复制能力；用多处独立矢量水印。
+        _add_diagonal_brand(page, pw, ph)
 
     if can_extend or can_upgrade_footer or not has_legacy_brand:
         _insert_brand_text(
