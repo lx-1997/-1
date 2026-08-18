@@ -5464,7 +5464,7 @@ def _trigger_pdf_prewarm(rows: list[dict]) -> None:
             _PDF_PREWARM_SEEN.add(fid)
             continue
         targets.append((fid, str(row.get("filename") or "")))
-        if len(targets) >= 10:
+        if len(targets) >= 3:
             break
     if not targets:
         return
@@ -5475,7 +5475,7 @@ def _trigger_pdf_prewarm(rows: list[dict]) -> None:
 
 async def _prewarm_pdf_batch(targets: list[tuple[str, str]]) -> None:
     log = logging.getLogger(__name__)
-    sem = asyncio.Semaphore(2)   # 图片烙印较吃 CPU；并发 2 兼顾预热速度和在线请求
+    sem = asyncio.Semaphore(1)   # 2GB 生产机严格串行，避免后台烙印拖慢在线接口
 
     async def _one(fid: str, fname: str) -> None:
         async with sem:
@@ -5519,7 +5519,7 @@ def _trigger_local_pdf_prewarm(rows: list[dict]) -> None:
             continue
         _LOCAL_PDF_PREWARM_INFLIGHT.add(key)
         targets.append((path, signature))
-        if len(targets) >= 10:
+        if len(targets) >= 3:
             break
     if targets:
         asyncio.create_task(_prewarm_local_pdf_batch(targets))
@@ -5530,7 +5530,7 @@ async def _prewarm_local_pdf_batch(targets: list[tuple[Path, tuple[int, int]]]) 
     from .pdf_brand import apply_pdf_brand, has_cached_content  # noqa: PLC0415
 
     log = logging.getLogger(__name__)
-    sem = asyncio.Semaphore(2)
+    sem = asyncio.Semaphore(1)
 
     async def _one(path: Path, signature: tuple[int, int]) -> None:
         key = str(path)

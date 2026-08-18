@@ -116,3 +116,12 @@ def test_background_wire_refresh_preprocesses_online_and_local_pdfs():
     refresher_source = ast.get_source_segment(source, refresher) or ""
     assert "_trigger_pdf_prewarm" in refresher_source
     assert "_trigger_local_pdf_prewarm" in refresher_source
+    for function_name in ("_prewarm_pdf_batch", "_prewarm_local_pdf_batch"):
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function_name
+        )
+        function_source = ast.get_source_segment(source, function) or ""
+        assert "Semaphore(1)" in function_source
