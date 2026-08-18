@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v6")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v7")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────

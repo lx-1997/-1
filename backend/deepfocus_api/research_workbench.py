@@ -8,7 +8,7 @@ from typing import AsyncIterator, Optional, Union
 
 import httpx
 from fastapi import HTTPException, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKBENCH_DIR = REPO_ROOT / "modules" / "research-workbench"
@@ -45,6 +45,12 @@ _log_tasks: set[asyncio.Task[None]] = set()
 _last_error = ""
 
 
+def _is_pdf_delivery_path(path: str) -> bool:
+    """工作台的临时预览与已下载 PDF 都必须经过统一去水印/品牌处理。"""
+    normalized = str(path or "").split("?", 1)[0].lower().lstrip("/")
+    return normalized.startswith("api/previews/") or normalized.endswith(".pdf")
+
+
 async def warm_research_workbench() -> None:
     try:
         await ensure_research_workbench_started()
@@ -73,7 +79,9 @@ async def stop_research_workbench() -> None:
         await process.wait()
 
 
-async def proxy_research_workbench(request: Request, path: str) -> Union[StreamingResponse, RedirectResponse]:
+async def proxy_research_workbench(
+    request: Request, path: str
+) -> Union[Response, StreamingResponse, RedirectResponse]:
     if request.url.path == "/research-workbench":
         return RedirectResponse(url="/research-workbench/", status_code=307)
 
@@ -84,10 +92,13 @@ async def proxy_research_workbench(request: Request, path: str) -> Union[Streami
     if request.url.query:
         upstream_url = f"{upstream_url}?{request.url.query}"
 
+    pdf_delivery = request.method.upper() == "GET" and _is_pdf_delivery_path(path)
     request_headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
+        if (key.lower() not in HOP_BY_HOP_HEADERS
+            and key.lower() != "host"
+            and not (pdf_delivery and key.lower() == "range"))
     }
     body = await request.body()
     # 本地子服务（127.0.0.1:3927）必须直连，绝不能走外网代理——某些环境 NO_PROXY 解析异常
@@ -111,6 +122,32 @@ async def proxy_research_workbench(request: Request, path: str) -> Union[Streami
         for key, value in upstream_response.headers.items()
         if key.lower() not in HOP_BY_HOP_HEADERS
     }
+
+    # 研报工作台原先把 /api/previews/* 的原始 PDF 直接透传给浏览器，绕过了
+    # pdf_brand，导致终端列表里的在线原文已清理、工作台快速预览却仍显示渠道水印。
+    # PDF 必须读取完整字节后统一处理；Range 请求已在上游请求处移除，避免拿半截 PDF。
+    content_type = upstream_response.headers.get("content-type", "").lower()
+    if (pdf_delivery and upstream_response.status_code == 200
+            and content_type.startswith("application/pdf")):
+        try:
+            raw = await upstream_response.aread()
+        finally:
+            await upstream_response.aclose()
+            await client.aclose()
+        if raw.startswith(b"%PDF"):
+            from .pdf_brand import apply_pdf_brand  # noqa: PLC0415 - 避免启动期循环依赖
+
+            raw = await apply_pdf_brand(raw)
+        response_headers.pop("content-range", None)
+        response_headers["content-length"] = str(len(raw))
+        response_headers["accept-ranges"] = "none"
+        response_headers["cache-control"] = "private, no-store"
+        return Response(
+            content=raw,
+            status_code=upstream_response.status_code,
+            headers=response_headers,
+            media_type=None,
+        )
 
     async def body_iter() -> AsyncIterator[bytes]:
         try:
