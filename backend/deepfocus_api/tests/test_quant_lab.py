@@ -29,12 +29,18 @@ async def test_quant_lab_connects_signals_orders_and_risk_backtest(monkeypatch):
         "SPY": _bars(100, 0.2),
     }
 
-    async def fake_fetch(symbol, start_date, end_date, interval="1d"):
+    async def fake_fetch(symbol, start_date, end_date, interval="1d", *, market=None):
         bars = market_data[symbol]
         return {
             "symbol": symbol,
+            "normalized_symbol": symbol,
+            "market": market or "US",
             "bars": bars,
-            "source": "mock",
+            "source": "verified_test",
+            "source_name": "单元测试真实行情替身",
+            "quality": "verified_real",
+            "adjustment": "test",
+            "is_synthetic": False,
             "total_bars": len(bars),
             "interval": interval,
         }
@@ -73,4 +79,18 @@ async def test_quant_lab_connects_signals_orders_and_risk_backtest(monkeypatch):
     assert result["portfolio_context"]["current_open_count"] == 1
     assert result["backtest"]["metrics"]["summary"]
     assert len(result["backtest"]["dates"]) == len(result["backtest"]["equity_curve"])
-    assert result["data_sources"] == {"AAA": "mock", "BBB": "mock", "SPY": "mock"}
+    assert result["data_sources"] == {"AAA": "verified_test", "BBB": "verified_test", "SPY": "verified_test"}
+    assert all(not detail["is_synthetic"] for detail in result["data_source_details"].values())
+    assert result["backtest"]["metrics"]["execution"]["signal_timing"].startswith("T-1")
+
+
+@pytest.mark.asyncio
+async def test_quant_lab_fails_closed_when_real_market_data_is_missing(monkeypatch):
+    async def fake_fetch(symbol, start_date, end_date, interval="1d", *, market=None):
+        return {"symbol": symbol, "bars": [], "source": "unavailable", "is_synthetic": False, "warnings": ["真实源超时"]}
+
+    monkeypatch.setattr("deepfocus_api.quant_lab.fetch_historical_ohlcv", fake_fetch)
+    request = QuantLabRequest(name="fail closed", symbols=["AAPL"], benchmark="SPY")
+
+    with pytest.raises(ValueError, match="不会使用模拟数据"):
+        await run_quant_lab(request)

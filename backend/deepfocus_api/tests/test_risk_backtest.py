@@ -20,12 +20,12 @@ def _bars(prices):
 
 @pytest.mark.asyncio
 async def test_risk_backtest_triggers_stop_loss(monkeypatch):
-    async def fake_fetch(symbol, start_date, end_date, interval="1d"):
+    async def fake_fetch(symbol, start_date, end_date, interval="1d", *, market=None):
         data = {
             "AAA": _bars([100, 94, 90, 88, 86]),
             "SPY": _bars([100, 101, 102, 103, 104]),
         }
-        return {"symbol": symbol, "bars": data[symbol], "source": "mock", "total_bars": len(data[symbol]), "interval": interval}
+        return {"symbol": symbol, "bars": data[symbol], "source": "verified_test", "is_synthetic": False, "total_bars": len(data[symbol]), "interval": interval}
 
     monkeypatch.setattr("deepfocus_api.risk_backtest.fetch_historical_ohlcv", fake_fetch)
 
@@ -59,12 +59,12 @@ async def test_risk_backtest_triggers_stop_loss(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_risk_backtest_circuit_breaker_on_daily_loss(monkeypatch):
-    async def fake_fetch(symbol, start_date, end_date, interval="1d"):
+    async def fake_fetch(symbol, start_date, end_date, interval="1d", *, market=None):
         data = {
             "AAA": _bars([100, 84, 82, 81, 80]),
             "SPY": _bars([100, 99, 98, 97, 96]),
         }
-        return {"symbol": symbol, "bars": data[symbol], "source": "mock", "total_bars": len(data[symbol]), "interval": interval}
+        return {"symbol": symbol, "bars": data[symbol], "source": "verified_test", "is_synthetic": False, "total_bars": len(data[symbol]), "interval": interval}
 
     monkeypatch.setattr("deepfocus_api.risk_backtest.fetch_historical_ohlcv", fake_fetch)
 
@@ -94,3 +94,14 @@ async def test_risk_backtest_circuit_breaker_on_daily_loss(monkeypatch):
     assert result["metrics"]["rule_hits"]["daily_loss"] >= 1
     assert any(event["type"] == "circuit_breaker" for event in result["events"])
     assert result["metrics"]["risk"]["total_return_pct"] >= result["metrics"]["baseline"]["total_return_pct"]
+
+
+@pytest.mark.asyncio
+async def test_risk_backtest_fails_closed_without_real_bars(monkeypatch):
+    async def fake_fetch(symbol, start_date, end_date, interval="1d", *, market=None):
+        return {"symbol": symbol, "bars": [], "source": "unavailable", "is_synthetic": False, "warnings": ["供应商不可用"]}
+
+    monkeypatch.setattr("deepfocus_api.risk_backtest.fetch_historical_ohlcv", fake_fetch)
+    request = RiskBacktestRequest(name="missing", symbols=["AAA"], start_date="2026-01-01", end_date="2026-02-01")
+    with pytest.raises(ValueError, match="不会使用模拟数据"):
+        await run_risk_backtest(request)

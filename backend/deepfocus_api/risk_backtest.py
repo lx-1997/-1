@@ -294,25 +294,7 @@ async def run_risk_backtest(request: Any) -> dict[str, Any]:
     rules_obj = getattr(request, "rules", {})
     rules = rules_obj.model_dump() if hasattr(rules_obj, "model_dump") else dict(rules_obj or {})
     if not symbols:
-        return {
-            "generated_at": utc_now_iso(),
-            "name": getattr(request, "name", "") or "风控回测",
-            "market": getattr(request, "market", "US"),
-            "symbols": [],
-            "benchmark": getattr(request, "benchmark", "SPY"),
-            "start_date": getattr(request, "start_date", ""),
-            "end_date": getattr(request, "end_date", ""),
-            "initial_capital": safe_float(getattr(request, "initial_capital", 100000), 100000),
-            "rules": rules,
-            "metrics": {},
-            "events": [],
-            "trades_log": [],
-            "equity_curve": [safe_float(getattr(request, "initial_capital", 100000), 100000)],
-            "baseline_curve": [safe_float(getattr(request, "initial_capital", 100000), 100000)],
-            "benchmark_curve": [safe_float(getattr(request, "initial_capital", 100000), 100000)],
-            "dates": [],
-            "data_sources": {},
-        }
+        raise ValueError("请至少输入一个回测标的")
 
     start_date = getattr(request, "start_date", "") or ""
     end_date = getattr(request, "end_date", "") or ""
@@ -328,22 +310,30 @@ async def run_risk_backtest(request: Any) -> dict[str, Any]:
 
         end_date = datetime.utcnow().strftime("%Y-%m-%d")
 
-    fetch_targets = {symbol: fetch_historical_ohlcv(symbol, start_date, end_date) for symbol in symbols}
+    fetch_targets = {symbol: fetch_historical_ohlcv(symbol, start_date, end_date, market=market) for symbol in symbols}
     fetch_targets[benchmark] = fetch_historical_ohlcv(benchmark, start_date, end_date)
     fetched = await asyncio.gather(*fetch_targets.values(), return_exceptions=True)
     all_data: dict[str, dict[str, Any]] = {}
     for (symbol, _), result in zip(fetch_targets.items(), fetched):
         if isinstance(result, Exception):
-            all_data[symbol] = {"symbol": symbol, "bars": [], "source": "error", "error": str(result)}
+            all_data[symbol] = {"symbol": symbol, "bars": [], "source": "unavailable", "warnings": [str(result)], "is_synthetic": False}
         else:
-            all_data[symbol] = result if isinstance(result, dict) else {"symbol": symbol, "bars": [], "source": "unknown"}
+            all_data[symbol] = result if isinstance(result, dict) else {"symbol": symbol, "bars": [], "source": "unavailable", "is_synthetic": False}
+
+    unavailable = []
+    for symbol in dedupe(symbols + [benchmark]):
+        payload = all_data.get(symbol) or {}
+        bar_count = len(payload.get("bars") or [])
+        if bar_count < 2:
+            warning = "；".join(str(item) for item in (payload.get("warnings") or [])[-2:])
+            unavailable.append(f"{symbol} 仅 {bar_count} 根真实日线" + (f"（{warning}）" if warning else ""))
+    if unavailable:
+        raise ValueError("真实行情校验未通过：" + "；".join(unavailable) + "。系统已停止计算，不会使用模拟数据。")
 
     all_bars = {symbol: list(data.get("bars", [])) for symbol, data in all_data.items()}
     dates, price_maps = _price_maps(all_bars)
     if len(dates) < 2:
-        dates = dates or [start_date, end_date or start_date]
-        for symbol in symbols + [benchmark]:
-            price_maps.setdefault(symbol, {})
+        raise ValueError("真实行情可用交易日不足，无法回测")
 
     baseline = _simulate_portfolio(
         dates=dates,
@@ -443,5 +433,13 @@ async def run_risk_backtest(request: Any) -> dict[str, Any]:
         "benchmark_curve": benchmark_curve,
         "dates": dates,
         "data_sources": {symbol: str(all_data.get(symbol, {}).get("source", "")) for symbol in symbols + [benchmark]},
+        "data_source_details": {
+            symbol: {
+                key: all_data.get(symbol, {}).get(key)
+                for key in ("symbol", "normalized_symbol", "market", "exchange", "provider_symbol", "asset_class", "source", "source_name", "quality", "adjustment", "is_synthetic", "total_bars", "start_date", "end_date", "fetched_at", "cached", "warnings")
+                if all_data.get(symbol, {}).get(key) is not None
+            }
+            for symbol in dedupe(symbols + [benchmark])
+        },
         "disclaimer": "风控回测基于历史行情与本地规则引擎，仅用于风险管理研究，不构成投资建议。",
     }

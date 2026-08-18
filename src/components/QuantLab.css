@@ -12,6 +12,35 @@
   margin-bottom: 12px;
 }
 
+.quant-lab .quant-chart {
+  width: 100%;
+  height: 340px;
+}
+
+.quant-lab .quant-stat-card .ant-card-body {
+  padding: 10px 12px;
+}
+
+.quant-lab .quant-stat-hint {
+  display: block;
+  min-height: 36px;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.quant-lab .quant-job-card {
+  position: sticky;
+  top: 8px;
+  z-index: 4;
+  border-color: color-mix(in srgb, #10a37f 35%, transparent);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 8%);
+}
+
+.quant-lab .ant-table-cell {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 767px) {
   .quant-lab {
     padding: 10px;
@@ -34,5 +63,13 @@
 
   .quant-lab .ant-statistic-content {
     font-size: 17px;
+  }
+
+  .quant-lab .quant-chart {
+    height: 260px;
+  }
+
+  .quant-lab .quant-job-card {
+    top: 64px;
   }
 }

@@ -2825,6 +2825,7 @@ class BacktestMetricsResponse(BaseModel):
 class RiskBacktestRuleSet(BaseModel):
     max_position_size_pct: float = Field(default=20, ge=0, le=100)
     max_total_exposure_pct: float = Field(default=100, ge=0, le=100)
+    max_short_exposure_pct: float = Field(default=30, ge=0, le=100)
     max_sector_exposure_pct: float = Field(default=40, ge=0, le=100)
     max_drawdown_pct: float = Field(default=15, ge=0, le=100)
     daily_loss_limit_pct: float = Field(default=5, ge=0, le=100)
@@ -2872,15 +2873,17 @@ class RiskBacktestResponse(BaseModel):
     benchmark_curve: list[float] = Field(default_factory=list)
     dates: list[str] = Field(default_factory=list)
     data_sources: dict[str, str] = Field(default_factory=dict)
+    data_source_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
     disclaimer: str = "风控回测基于历史行情与本地规则引擎，仅用于风险管理研究，不构成投资建议。"
 
 
 QuantStrategyKey = Literal["momentum", "mean_reversion", "trend_following", "breakout", "defensive"]
+QuantMarketRegion = Literal["AUTO", "US", "HK", "CN"]
 
 
 class QuantLabRequest(BaseModel):
     name: str
-    market: MarketRegion = "US"
+    market: QuantMarketRegion = "AUTO"
     strategy_key: QuantStrategyKey = "momentum"
     symbols: list[str] = Field(default_factory=list)
     start_date: str = ""
@@ -2890,6 +2893,11 @@ class QuantLabRequest(BaseModel):
     lookback: int = Field(default=20, ge=5, le=252)
     top_n: int = Field(default=5, ge=1, le=50)
     allow_short: bool = False
+    rebalance_frequency: Literal["daily", "weekly", "monthly"] = "weekly"
+    commission_bps: float = Field(default=3, ge=0, le=100)
+    slippage_bps: float = Field(default=5, ge=0, le=500)
+    short_borrow_bps: float = Field(default=100, ge=0, le=5000)
+    min_trade_notional: float = Field(default=100, ge=0)
     risk_rules: RiskBacktestRuleSet = Field(default_factory=RiskBacktestRuleSet)
     sector_map: dict[str, str] = Field(default_factory=dict)
 
@@ -2901,7 +2909,7 @@ class QuantSignalRecord(BaseModel):
     market: str = ""
     latest_close: float = 0
     score: float = 0
-    action: Literal["buy", "hold", "sell"] = "hold"
+    action: Literal["buy", "hold", "sell", "short"] = "hold"
     confidence: float = Field(default=0.0, ge=0, le=1)
     target_weight: float = 0
     current_weight: float = 0
@@ -2912,7 +2920,7 @@ class QuantSignalRecord(BaseModel):
 
 class QuantOrderPlan(BaseModel):
     symbol: str
-    side: Literal["buy", "sell", "hold"] = "hold"
+    side: Literal["buy", "sell", "short", "cover", "hold"] = "hold"
     current_weight: float = 0
     target_weight: float = 0
     delta_weight: float = 0
@@ -2923,10 +2931,12 @@ class QuantOrderPlan(BaseModel):
 
 class QuantAllocationSummary(BaseModel):
     gross_exposure_pct: float = 0
+    net_exposure_pct: float = 0
     cash_buffer_pct: float = 0
     selected_count: int = 0
     buy_count: int = 0
     sell_count: int = 0
+    short_count: int = 0
     hold_count: int = 0
     max_target_weight_pct: float = 0
     notes: list[str] = Field(default_factory=list)
@@ -2950,6 +2960,7 @@ class QuantLabResponse(BaseModel):
     risk_summary: Optional[RiskSummaryResponse] = None
     notes: list[str] = Field(default_factory=list)
     data_sources: dict[str, str] = Field(default_factory=dict)
+    data_source_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
     disclaimer: str = "量化系统输出为研究与纸上回放用途，不构成投资建议，也不是自动下单承诺。"
 
 

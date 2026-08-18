@@ -248,6 +248,7 @@ from .backtest_engine import (
 )
 from .backtest_executor import run_backtest, list_backtest_results
 from .quant_lab import run_quant_lab
+from .quant_jobs import cancel_quant_job, create_quant_job, get_quant_job
 from .agent_loop import run_agent_research_loop
 from .market_dashboard import (
     fetch_market_dashboard,
@@ -11561,9 +11562,40 @@ async def risk_pnl_records(position_id: Optional[str] = None, limit: int = 100) 
 
 
 @app.post("/api/quant/lab", response_model=QuantLabResponse)
-async def quant_lab(request: QuantLabRequest) -> QuantLabResponse:
-    result = await run_quant_lab(request)
+async def quant_lab(payload: QuantLabRequest, request: Request) -> QuantLabResponse:
+    require_current_user(request)
+    result = await run_quant_lab(payload)
     return QuantLabResponse(**result)
+
+
+@app.post("/api/quant/lab/jobs")
+async def quant_lab_job_start(payload: QuantLabRequest, request: Request) -> dict[str, Any]:
+    claims = require_current_user(request)
+    owner = str(claims.get("sub") or claims.get("username") or "").strip()
+    try:
+        return await create_quant_job(owner, payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+@app.get("/api/quant/lab/jobs/{job_id}")
+async def quant_lab_job_poll(job_id: str, request: Request) -> dict[str, Any]:
+    claims = require_current_user(request)
+    owner = str(claims.get("sub") or claims.get("username") or "").strip()
+    job = get_quant_job(owner, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="量化任务不存在")
+    return job
+
+
+@app.delete("/api/quant/lab/jobs/{job_id}")
+async def quant_lab_job_cancel(job_id: str, request: Request) -> dict[str, Any]:
+    claims = require_current_user(request)
+    owner = str(claims.get("sub") or claims.get("username") or "").strip()
+    job = await cancel_quant_job(owner, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="量化任务不存在")
+    return job
 
 
 @app.post("/api/backtest/{backtest_id}/run")

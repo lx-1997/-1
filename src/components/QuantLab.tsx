@@ -1,10 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import dayjs from 'dayjs';
 import {
   Alert,
   App as AntdApp,
   Button,
   Card,
   Col,
+  ConfigProvider,
   DatePicker,
   Form,
   Input,
@@ -19,11 +21,12 @@ import {
   Tag,
   Timeline,
   Typography,
-  ConfigProvider,
   theme as antTheme,
 } from 'antd';
 import {
   BarChartOutlined,
+  CloseCircleOutlined,
+  DatabaseOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
@@ -39,24 +42,41 @@ import {
 } from 'recharts';
 import CenterShell from './common/CenterShell';
 import { AppState } from '../types';
-import { runQuantLab, QuantLabResponse, QuantStrategyKey } from '../services/quantService';
+import {
+  cancelQuantLabJob,
+  getQuantLabJob,
+  QuantJobResponse,
+  QuantLabRequest,
+  QuantLabResponse,
+  QuantMarket,
+  QuantStrategyKey,
+  startQuantLabJob,
+} from '../services/quantService';
 import { useTheme } from '../context/ThemeContext';
 import './QuantLab.css';
 
 const { RangePicker } = DatePicker;
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Text } = Typography;
 
 const STRATEGY_OPTIONS: Array<{ value: QuantStrategyKey; label: string; desc: string }> = [
-  { value: 'momentum', label: '动量', desc: '顺势追踪近中期表现更强的标的' },
-  { value: 'mean_reversion', label: '均值回归', desc: '寻找超涨/超跌后的反转机会' },
-  { value: 'trend_following', label: '趋势跟踪', desc: '用均线差和趋势强度构建仓位' },
-  { value: 'breakout', label: '突破', desc: '突破高点并放量后给出进攻信号' },
-  { value: 'defensive', label: '防守', desc: '波动和回撤优先级更高的低风险策略' },
+  { value: 'momentum', label: '动量', desc: '以相对强度、趋势和中期收益构建滚动信号' },
+  { value: 'mean_reversion', label: '均值回归', desc: '寻找价格偏离与短期超买超卖后的反转机会' },
+  { value: 'trend_following', label: '趋势跟踪', desc: '用均线结构、趋势强度和波动约束构建仓位' },
+  { value: 'breakout', label: '突破', desc: '结合区间突破、量能和相对强度筛选进攻信号' },
+  { value: 'defensive', label: '防守', desc: '优先控制波动、回撤与价格偏离的低风险策略' },
 ];
+
+const MARKET_BENCHMARKS: Record<QuantMarket, string> = {
+  AUTO: 'SPY',
+  US: 'SPY',
+  CN: '000300',
+  HK: 'HSI',
+};
 
 const DEFAULT_RULES = {
   max_position_size_pct: 20,
   max_total_exposure_pct: 100,
+  max_short_exposure_pct: 30,
   max_sector_exposure_pct: 40,
   max_drawdown_pct: 15,
   daily_loss_limit_pct: 5,
@@ -66,35 +86,35 @@ const DEFAULT_RULES = {
   allow_reentry: false,
 };
 
-const fmtPct = (value?: number) => `${(value ?? 0) >= 0 ? '+' : ''}${(value ?? 0).toFixed(2)}%`;
-const fmtUsd = (value?: number) => `$${Math.round(value ?? 0).toLocaleString()}`;
+const ACTION_LABELS: Record<string, string> = {
+  buy: '买入', sell: '卖出', short: '做空', cover: '平空', hold: '观望',
+};
+
+const ACTION_COLORS: Record<string, string> = {
+  buy: 'green', sell: 'volcano', short: 'red', cover: 'cyan', hold: 'default',
+};
+
+const fmtPct = (value?: number, signed = true) => `${signed && (value ?? 0) >= 0 ? '+' : ''}${(value ?? 0).toFixed(2)}%`;
+const fmtMoney = (value?: number) => Math.round(value ?? 0).toLocaleString('zh-CN');
+const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
 
 const parseSectorMap = (text: string): Record<string, string> => {
   const map: Record<string, string> = {};
   text.split(/[\n,;]+/).forEach(part => {
-    const trimmed = part.trim();
-    if (!trimmed) return;
-    const [symbol, sector] = trimmed.split(/[:=]/).map(v => v.trim());
-    if (symbol && sector) {
-      map[symbol.toUpperCase()] = sector;
-    }
+    const [symbol, sector] = part.trim().split(/[:=]/).map(value => value.trim());
+    if (symbol && sector) map[symbol.toUpperCase()] = sector;
   });
   return map;
 };
 
 const buildChartData = (result: QuantLabResponse | null) => {
   if (!result) return [];
-  const len = Math.min(
-    result.backtest.dates.length,
-    result.backtest.equity_curve.length,
-    result.backtest.baseline_curve.length,
-    result.backtest.benchmark_curve.length || result.backtest.dates.length,
-  );
-  return Array.from({ length: len }, (_, index) => ({
-    date: result.backtest.dates[index],
-    量化组合: result.backtest.equity_curve[index],
-    裸持有: result.backtest.baseline_curve[index],
-    基准: result.backtest.benchmark_curve[index] ?? null,
+  const { dates, equity_curve, baseline_curve, benchmark_curve } = result.backtest;
+  return dates.map((date, index) => ({
+    date,
+    量化组合: equity_curve[index] ?? null,
+    等权持有: baseline_curve[index] ?? null,
+    基准: benchmark_curve[index] ?? null,
   }));
 };
 
@@ -107,169 +127,199 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [job, setJob] = useState<QuantJobResponse | null>(null);
   const [result, setResult] = useState<QuantLabResponse | null>(null);
   const [error, setError] = useState('');
   const [strategyKey, setStrategyKey] = useState<QuantStrategyKey>('momentum');
+  const activeJobRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  const allowShort = Form.useWatch('allow_short', form);
 
   const defaultSymbols = useMemo(() => {
-    const stockSymbols = (preferredSymbols?.length ? preferredSymbols : appState?.stocks?.map(stock => stock.symbol) || []).slice(0, 6);
-    return stockSymbols.length ? stockSymbols.join(', ') : 'AAPL, MSFT, NVDA';
+    const symbols = (preferredSymbols?.length
+      ? preferredSymbols
+      : appState?.stocks?.map(stock => stock.symbol) || []).slice(0, 6);
+    return symbols.length ? symbols.join(', ') : 'AAPL, MSFT, NVDA';
   }, [appState?.stocks, preferredSymbols]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const jobId = activeJobRef.current;
+      activeJobRef.current = null;
+      if (jobId) void cancelQuantLabJob(jobId).catch(() => undefined);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!form.isFieldTouched('symbols')) form.setFieldValue('symbols', defaultSymbols);
+  }, [defaultSymbols, form]);
 
   const chartData = useMemo(() => buildChartData(result), [result]);
   const backtest = result?.backtest;
   const signals = result?.signals || [];
   const orders = result?.orders || [];
   const riskSummary = result?.risk_summary;
+  const execution = backtest?.metrics.execution;
+
+  const buildRequest = async (): Promise<QuantLabRequest | null> => {
+    const values = await form.validateFields();
+    const symbols = String(values.symbols || '')
+      .split(/[,，\s]+/)
+      .map((symbol: string) => symbol.trim().toUpperCase())
+      .filter(Boolean);
+    if (!symbols.length) {
+      message.error('请输入至少一个标的代码');
+      return null;
+    }
+    const [start, end] = values.dateRange || [];
+    return {
+      name: values.name,
+      market: (values.market || 'AUTO') as QuantMarket,
+      strategy_key: strategyKey,
+      symbols,
+      start_date: start.format('YYYY-MM-DD'),
+      end_date: end.format('YYYY-MM-DD'),
+      benchmark: String(values.benchmark || 'SPY').trim().toUpperCase(),
+      initial_capital: values.initial_capital,
+      lookback: values.lookback,
+      top_n: values.top_n,
+      allow_short: !!values.allow_short,
+      rebalance_frequency: values.rebalance_frequency,
+      commission_bps: values.commission_bps,
+      slippage_bps: values.slippage_bps,
+      short_borrow_bps: values.short_borrow_bps,
+      min_trade_notional: values.min_trade_notional,
+      risk_rules: {
+        max_position_size_pct: values.max_position_size_pct,
+        max_total_exposure_pct: values.max_total_exposure_pct,
+        max_short_exposure_pct: values.max_short_exposure_pct,
+        max_sector_exposure_pct: values.max_sector_exposure_pct,
+        max_drawdown_pct: values.max_drawdown_pct,
+        daily_loss_limit_pct: values.daily_loss_limit_pct,
+        stop_loss_pct: values.stop_loss_pct,
+        take_profit_pct: values.take_profit_pct,
+        cooldown_days: values.cooldown_days,
+        allow_reentry: !!values.allow_reentry,
+      },
+      sector_map: parseSectorMap(values.sector_map || ''),
+    };
+  };
 
   const handleRun = async () => {
     try {
-      const values = await form.validateFields();
-      const symbols = String(values.symbols || '')
-        .split(/[,，\s]+/)
-        .map((s: string) => s.trim().toUpperCase())
-        .filter(Boolean);
-      if (!symbols.length) {
-        message.error('请输入至少一个标的代码');
-        return;
-      }
-
-      const [start, end] = values.dateRange || [];
-      const request = {
-        name: values.name,
-        market: values.market || 'US',
-        strategy_key: strategyKey,
-        symbols,
-        start_date: start?.format('YYYY-MM-DD') || '2024-01-01',
-        end_date: end?.format('YYYY-MM-DD') || '',
-        benchmark: values.benchmark || 'SPY',
-        initial_capital: values.initial_capital || 100000,
-        lookback: values.lookback || 20,
-        top_n: values.top_n || 5,
-        allow_short: !!values.allow_short,
-        risk_rules: {
-          max_position_size_pct: values.max_position_size_pct,
-          max_total_exposure_pct: values.max_total_exposure_pct,
-          max_sector_exposure_pct: values.max_sector_exposure_pct,
-          max_drawdown_pct: values.max_drawdown_pct,
-          daily_loss_limit_pct: values.daily_loss_limit_pct,
-          stop_loss_pct: values.stop_loss_pct,
-          take_profit_pct: values.take_profit_pct,
-          cooldown_days: values.cooldown_days,
-          allow_reentry: !!values.allow_reentry,
-        },
-        sector_map: parseSectorMap(values.sector_map || ''),
-      };
-
+      const request = await buildRequest();
+      if (!request) return;
       setLoading(true);
       setError('');
-      const response = await runQuantLab(request);
-      setResult(response);
-      message.success('量化系统快照已生成');
-    } catch (err: any) {
-      if (err?.errorFields) {
-        return;
+      setResult(null);
+      const created = await startQuantLabJob(request);
+      activeJobRef.current = created.job_id;
+      if (mountedRef.current) setJob(created);
+      let current = created;
+      while (activeJobRef.current === created.job_id && ['pending', 'running'].includes(current.status)) {
+        await sleep(800);
+        if (activeJobRef.current !== created.job_id) return;
+        current = await getQuantLabJob(created.job_id);
+        if (mountedRef.current) setJob(current);
       }
+      if (activeJobRef.current !== created.job_id) return;
+      if (current.status === 'completed' && current.result) {
+        setResult(current.result);
+        message.success('量化研究与回测已完成');
+      } else if (current.status === 'cancelled') {
+        message.info('量化任务已取消');
+      } else {
+        throw new Error(current.error || '量化任务执行失败');
+      }
+    } catch (err: any) {
+      if (err?.errorFields) return;
       const detail = err?.message || '量化系统运行失败';
-      setError(detail);
+      if (mountedRef.current) setError(detail);
       message.error(detail);
     } finally {
-      setLoading(false);
+      activeJobRef.current = null;
+      if (mountedRef.current) setLoading(false);
     }
   };
 
-  const summaryCards = result
-    ? [
-        { title: '信号数量', value: signals.length, hint: `${orders.filter(order => order.side === 'buy').length} 买 · ${orders.filter(order => order.side === 'sell').length} 卖` },
-        { title: '目标仓位', value: fmtPct(result.allocation.gross_exposure_pct), hint: `现金缓冲 ${fmtPct(result.allocation.cash_buffer_pct)}` },
-        { title: '风控后收益', value: fmtPct(backtest?.metrics?.risk?.total_return_pct), hint: `裸持有 ${fmtPct(backtest?.metrics?.baseline?.total_return_pct)}` },
-        { title: '最大回撤', value: fmtPct(backtest?.metrics?.risk?.max_drawdown_pct), hint: `回撤改善 ${fmtPct(backtest?.metrics?.improvement?.drawdown_reduction_pct)}` },
-        { title: '组合开仓', value: result.portfolio_context.current_open_count ?? 0, hint: `市值 ${fmtUsd(result.portfolio_context.current_total_value)}` },
-        { title: '当前盈亏', value: fmtPct(result.portfolio_context.current_total_pnl_pct), hint: `策略 ${result.strategy_label}` },
-      ]
-    : [];
+  const handleCancel = async () => {
+    const jobId = activeJobRef.current;
+    if (!jobId) return;
+    activeJobRef.current = null;
+    setCancelling(true);
+    try {
+      const cancelled = await cancelQuantLabJob(jobId);
+      if (mountedRef.current) setJob(cancelled);
+      message.info('量化任务已取消');
+    } catch (err: any) {
+      message.error(err?.message || '取消失败');
+    } finally {
+      if (mountedRef.current) {
+        setCancelling(false);
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleMarketChange = (market: QuantMarket) => {
+    form.setFieldValue('benchmark', MARKET_BENCHMARKS[market]);
+  };
+
+  const summaryCards = result ? [
+    { title: '净敞口', value: fmtPct(result.allocation.net_exposure_pct), hint: `总敞口 ${fmtPct(result.allocation.gross_exposure_pct, false)}` },
+    { title: '策略收益', value: fmtPct(backtest?.metrics.risk.total_return_pct), hint: `等权 ${fmtPct(backtest?.metrics.baseline.total_return_pct)}` },
+    { title: '最大回撤', value: fmtPct(backtest?.metrics.risk.max_drawdown_pct, false), hint: `改善 ${fmtPct(backtest?.metrics.improvement.drawdown_reduction_pct)}` },
+    { title: '夏普比率', value: (backtest?.metrics.risk.sharpe_ratio ?? 0).toFixed(2), hint: `Sortino ${(backtest?.metrics.risk.sortino_ratio ?? 0).toFixed(2)}` },
+    { title: '交易成本', value: fmtMoney(execution?.transaction_cost), hint: `${execution?.rebalance_count ?? 0} 次再平衡` },
+    { title: '换手率', value: fmtPct((execution?.turnover_ratio ?? 0) * 100, false), hint: execution?.signal_timing || '' },
+  ] : [];
 
   const signalColumns = [
-    {
-      title: '标的',
-      key: 'symbol',
-      width: 120,
-      render: (_: unknown, row: QuantLabResponse['signals'][number]) => (
-        <Space direction="vertical" size={0}>
-          <Text strong>{row.symbol}</Text>
-          <Text type="secondary">{row.sector || '未分组'}</Text>
-        </Space>
-      ),
-    },
-    {
-      title: '动作',
-      dataIndex: 'action',
-      key: 'action',
-      width: 84,
-      render: (value: string) => <Tag color={value === 'buy' ? 'green' : value === 'sell' ? 'red' : 'default'}>{value}</Tag>,
-    },
-    {
-      title: '评分',
-      dataIndex: 'score',
-      key: 'score',
-      width: 150,
-      render: (score: number) => <Progress percent={Math.max(0, Math.min(100, score + 50))} size="small" />,
-    },
-    {
-      title: '当前 / 目标',
-      key: 'weights',
-      width: 130,
-      render: (_: unknown, row: QuantLabResponse['signals'][number]) => (
-        <Text>{row.current_weight.toFixed(1)}% / {row.target_weight.toFixed(1)}%</Text>
-      ),
-    },
-    {
-      title: '最新价',
-      dataIndex: 'latest_close',
-      key: 'latest_close',
-      width: 100,
-      render: (value: number) => fmtUsd(value),
-    },
-    {
-      title: '置信度',
-      dataIndex: 'confidence',
-      key: 'confidence',
-      width: 100,
-      render: (value: number) => `${Math.round(value * 100)}%`,
-    },
-    {
-      title: '理由',
-      dataIndex: 'reasons',
-      key: 'reasons',
-      ellipsis: true,
-      render: (value: string[]) => <Space wrap size={[4, 4]}>{(value || []).slice(0, 2).map(item => <Tag key={item}>{item}</Tag>)}</Space>,
-    },
-    {
-      title: '风险',
-      dataIndex: 'risk_flags',
-      key: 'risk_flags',
-      ellipsis: true,
-      render: (value: string[]) => <Space wrap size={[4, 4]}>{(value || []).slice(0, 2).map(item => <Tag key={item} color="orange">{item}</Tag>)}</Space>,
-    },
+    { title: '标的', key: 'symbol', width: 120, render: (_: unknown, row: QuantLabResponse['signals'][number]) => <Space direction="vertical" size={0}><Text strong>{row.symbol}</Text><Text type="secondary">{row.market} · {row.sector || '未分组'}</Text></Space> },
+    { title: '动作', dataIndex: 'action', key: 'action', width: 82, render: (value: string) => <Tag color={ACTION_COLORS[value]}>{ACTION_LABELS[value] || value}</Tag> },
+    { title: '评分', dataIndex: 'score', key: 'score', width: 145, render: (score: number) => <Space direction="vertical" size={0} style={{ width: '100%' }}><Text>{score >= 0 ? '+' : ''}{score.toFixed(1)}</Text><Progress percent={Math.max(0, Math.min(100, score + 50))} size="small" showInfo={false} /></Space> },
+    { title: '当前 / 目标', key: 'weights', width: 130, render: (_: unknown, row: QuantLabResponse['signals'][number]) => <Text>{row.current_weight.toFixed(1)}% / {row.target_weight.toFixed(1)}%</Text> },
+    { title: '最新价', dataIndex: 'latest_close', key: 'latest_close', width: 100, render: (value: number) => value.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) },
+    { title: '置信度', dataIndex: 'confidence', key: 'confidence', width: 90, render: (value: number) => `${Math.round(value * 100)}%` },
+    { title: '依据', dataIndex: 'reasons', key: 'reasons', width: 260, render: (value: string[]) => <Space wrap size={[4, 4]}>{(value || []).slice(0, 3).map(item => <Tag key={item}>{item}</Tag>)}</Space> },
+    { title: '风险', dataIndex: 'risk_flags', key: 'risk_flags', width: 220, render: (value: string[]) => (value || []).length ? <Space wrap size={[4, 4]}>{value.slice(0, 2).map(item => <Tag key={item} color="orange">{item}</Tag>)}</Space> : <Text type="secondary">暂无显著标记</Text> },
   ];
 
   const orderColumns = [
     { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 100 },
-    { title: '方向', dataIndex: 'side', key: 'side', width: 72, render: (v: string) => <Tag color={v === 'buy' ? 'green' : v === 'sell' ? 'red' : 'default'}>{v}</Tag> },
-    { title: '当前', dataIndex: 'current_weight', key: 'current_weight', width: 90, render: (v: number) => `${v.toFixed(1)}%` },
-    { title: '目标', dataIndex: 'target_weight', key: 'target_weight', width: 90, render: (v: number) => `${v.toFixed(1)}%` },
-    { title: '变化', dataIndex: 'delta_weight', key: 'delta_weight', width: 90, render: (v: number) => <Text style={{ color: v >= 0 ? '#22c55e' : '#ef4444' }}>{v >= 0 ? '+' : ''}{v.toFixed(1)}%</Text> },
-    { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 90, render: (v: number) => v.toFixed(2) },
-    { title: '名义', dataIndex: 'notional', key: 'notional', width: 110, render: (v: number) => fmtUsd(v) },
-    { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true },
+    { title: '方向', dataIndex: 'side', key: 'side', width: 76, render: (value: string) => <Tag color={ACTION_COLORS[value]}>{ACTION_LABELS[value] || value}</Tag> },
+    { title: '当前', dataIndex: 'current_weight', key: 'current_weight', width: 84, render: (value: number) => `${value.toFixed(1)}%` },
+    { title: '目标', dataIndex: 'target_weight', key: 'target_weight', width: 84, render: (value: number) => `${value.toFixed(1)}%` },
+    { title: '变化', dataIndex: 'delta_weight', key: 'delta_weight', width: 84, render: (value: number) => <Text style={{ color: value >= 0 ? '#22c55e' : '#ef4444' }}>{value >= 0 ? '+' : ''}{value.toFixed(1)}%</Text> },
+    { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 100, render: (value: number) => value.toFixed(2) },
+    { title: '名义金额', dataIndex: 'notional', key: 'notional', width: 110, render: (value: number) => fmtMoney(value) },
+    { title: '原因', dataIndex: 'reason', key: 'reason', width: 260, ellipsis: true },
   ];
 
-  const portfolioColumns = [
-    { title: '代码', dataIndex: 'symbol', key: 'symbol', width: 100 },
-    { title: '名称', dataIndex: 'name', key: 'name', width: 100 },
-    { title: '方向', dataIndex: 'direction', key: 'direction', width: 70, render: (v: string) => <Tag color={v === 'long' ? 'green' : 'red'}>{v}</Tag> },
-    { title: '市值', dataIndex: 'notional_value', key: 'notional_value', width: 110, render: (v: number) => fmtUsd(v) },
-    { title: '盈亏', dataIndex: 'unrealized_pnl_pct', key: 'unrealized_pnl_pct', width: 90, render: (v: number) => <Text style={{ color: v >= 0 ? '#22c55e' : '#ef4444' }}>{fmtPct(v)}</Text> },
+  const sourceRows = result ? Object.entries(result.data_source_details).map(([symbol, detail]) => ({ symbol, ...detail })) : [];
+  const sourceColumns = [
+    { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 100 },
+    { title: '市场', dataIndex: 'market', key: 'market', width: 72 },
+    { title: '真实数据源', dataIndex: 'source_name', key: 'source_name', width: 180 },
+    { title: '复权口径', dataIndex: 'adjustment', key: 'adjustment', width: 130 },
+    { title: '日线数', dataIndex: 'total_bars', key: 'total_bars', width: 80 },
+    { title: '覆盖区间', key: 'range', width: 190, render: (_: unknown, row: any) => `${row.start_date || '-'} → ${row.end_date || '-'}` },
+    { title: '质量', key: 'quality', width: 130, render: (_: unknown, row: any) => <Tag color={row.is_synthetic ? 'red' : 'green'}>{row.is_synthetic ? '模拟数据' : '已验证真实行情'}</Tag> },
+    { title: '提示', dataIndex: 'warnings', key: 'warnings', width: 260, render: (value: string[]) => (value || []).join('；') || '—' },
+  ];
+
+  const tradeColumns = [
+    { title: '日期', dataIndex: 'date', key: 'date', width: 110 },
+    { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 90 },
+    { title: '动作', dataIndex: 'action', key: 'action', width: 76, render: (value: string) => <Tag color={ACTION_COLORS[value]}>{ACTION_LABELS[value] || value}</Tag> },
+    { title: '成交价', dataIndex: 'price', key: 'price', width: 100 },
+    { title: '名义金额', dataIndex: 'value', key: 'value', width: 110, render: (value: number) => fmtMoney(value) },
+    { title: '佣金', dataIndex: 'cost', key: 'cost', width: 90 },
+    { title: '已实现盈亏', dataIndex: 'pnl', key: 'pnl', width: 110, render: (value: number) => <Text style={{ color: value >= 0 ? '#22c55e' : '#ef4444' }}>{fmtMoney(value)}</Text> },
+    { title: '原因', dataIndex: 'reason', key: 'reason', width: 260, ellipsis: true },
   ];
 
   return (
@@ -277,222 +327,190 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
       className="quant-lab"
       icon={<BarChartOutlined />}
       title="QuantLab 量化系统"
-      subtitle={<><SafetyCertificateOutlined /> 策略扫描 · 回测 · 纸上实盘</>}
-      actions={<Button type="primary" icon={<ThunderboltOutlined />} loading={loading} onClick={handleRun}>运行量化</Button>}
+      subtitle={<><SafetyCertificateOutlined /> 真实行情 · 滚动回测 · 成本与风控</>}
+      actions={loading ? (
+        <Button danger icon={<CloseCircleOutlined />} loading={cancelling} onClick={handleCancel}>取消任务</Button>
+      ) : (
+        <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun}>运行量化</Button>
+      )}
     >
-      <Card size="small" style={{ marginBottom: 16 }}>
+      <Alert
+        type="info"
+        showIcon
+        message="研究口径"
+        description="只接受真实历史行情，数据不足会直接停止；信号使用 T-1 收盘数据并在 T 日收盘执行，回测计入佣金、滑点和借券费。跨市场组合采用常汇率收益口径，不包含汇率损益。"
+        style={{ marginBottom: 16 }}
+      />
+
+      <Card size="small" title="研究配置" style={{ marginBottom: 16 }}>
         <Form
           form={form}
           layout="vertical"
           size="small"
           initialValues={{
-            name: '量化系统',
-            market: 'US',
+            name: '量化研究方案',
+            market: 'AUTO',
             benchmark: 'SPY',
             initial_capital: 100000,
             lookback: 20,
             top_n: 5,
+            allow_short: false,
+            rebalance_frequency: 'weekly',
+            commission_bps: 3,
+            slippage_bps: 5,
+            short_borrow_bps: 100,
+            min_trade_notional: 100,
             sector_map: '',
             symbols: defaultSymbols,
+            dateRange: [dayjs().subtract(1, 'year'), dayjs()],
             ...DEFAULT_RULES,
           }}
         >
           <Row gutter={12}>
-            <Col xs={24} md={10}>
-              <Form.Item name="name" label="方案名称" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col xs={12} md={7}>
-              <Form.Item name="market" label="市场">
-                <Select options={[{ value: 'US', label: '美股' }, { value: 'CN', label: 'A股' }, { value: 'HK', label: '港股' }]} />
-              </Form.Item>
-            </Col>
-            <Col xs={12} md={7}>
-              <Form.Item label="策略" required>
-                <Select value={strategyKey} onChange={setStrategyKey} options={STRATEGY_OPTIONS.map(option => ({ value: option.value, label: option.label }))} />
-              </Form.Item>
-            </Col>
+            <Col xs={24} md={10}><Form.Item name="name" label="方案名称" rules={[{ required: true, message: '请输入方案名称' }]}><Input /></Form.Item></Col>
+            <Col xs={12} md={7}><Form.Item name="market" label="市场识别"><Select onChange={handleMarketChange} options={[{ value: 'AUTO', label: '自动识别（支持混合）' }, { value: 'US', label: '美股' }, { value: 'CN', label: 'A股' }, { value: 'HK', label: '港股' }]} /></Form.Item></Col>
+            <Col xs={12} md={7}><Form.Item label="策略" required><Select value={strategyKey} onChange={setStrategyKey} options={STRATEGY_OPTIONS.map(option => ({ value: option.value, label: option.label }))} /></Form.Item></Col>
           </Row>
-
-          <Paragraph type="secondary" style={{ marginBottom: 8 }}>
-            {STRATEGY_OPTIONS.find(option => option.value === strategyKey)?.desc}
-          </Paragraph>
-
-          <Form.Item name="symbols" label="交易标的" rules={[{ required: true }]} extra="多个标的用逗号分隔。默认取当前自选前几只。">
-            <Input placeholder="AAPL, MSFT, NVDA" />
-          </Form.Item>
+          <Paragraph type="secondary" style={{ marginBottom: 8 }}>{STRATEGY_OPTIONS.find(option => option.value === strategyKey)?.desc}</Paragraph>
+          <Form.Item name="symbols" label="交易标的" rules={[{ required: true, message: '请输入至少一个标的代码' }]} extra="多个代码用逗号或空格分隔；A股支持 600519 / 000001.SZ，港股支持 00700 / 00700.HK，美股支持 AAPL。"><Input placeholder="AAPL, MSFT, 600519, 00700" /></Form.Item>
 
           <Row gutter={12}>
-            <Col xs={24} md={12}>
-              <Form.Item name="dateRange" label="回测区间" rules={[{ required: true }]}>
-                <RangePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={12} md={6}>
-              <Form.Item name="benchmark" label="基准">
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col xs={12} md={6}>
-              <Form.Item name="initial_capital" label="初始资金">
-                <InputNumber style={{ width: '100%' }} min={1000} />
-              </Form.Item>
-            </Col>
+            <Col xs={24} md={12}><Form.Item name="dateRange" label="回测区间" rules={[{ required: true, message: '请选择回测开始和结束日期' }]}><RangePicker allowClear={false} style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="benchmark" label="比较基准" rules={[{ required: true, message: '请输入比较基准' }]}><Input /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="initial_capital" label="初始资金（计价单位）"><InputNumber style={{ width: '100%' }} min={1000} /></Form.Item></Col>
           </Row>
 
           <Row gutter={12}>
             <Col xs={12} md={6}><Form.Item name="lookback" label="回看窗口"><InputNumber style={{ width: '100%' }} min={5} max={252} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="top_n" label="选前几名"><InputNumber style={{ width: '100%' }} min={1} max={50} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="allow_short" label="允许做空" valuePropName="checked"><Switch /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="allow_reentry" label="允许重入" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="top_n" label="最多持仓"><InputNumber style={{ width: '100%' }} min={1} max={50} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="rebalance_frequency" label="再平衡频率"><Select options={[{ value: 'daily', label: '每日' }, { value: 'weekly', label: '每周' }, { value: 'monthly', label: '每月' }]} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="allow_short" label="允许做空" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="allow_reentry" label="风控后重入" valuePropName="checked"><Switch /></Form.Item></Col>
           </Row>
 
-          <Form.Item name="sector_map" label="行业映射" extra="可选：AAPL=科技,MSFT=科技,JPM=金融">
-            <Input.TextArea rows={2} placeholder="AAPL=科技, MSFT=科技, JPM=金融" />
-          </Form.Item>
+          <Row gutter={12}>
+            <Col xs={12} md={6}><Form.Item name="commission_bps" label="单边佣金 (bps)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="slippage_bps" label="单边滑点 (bps)"><InputNumber style={{ width: '100%' }} min={0} max={500} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="short_borrow_bps" label="年化借券费 (bps)"><InputNumber disabled={!allowShort} style={{ width: '100%' }} min={0} max={5000} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="min_trade_notional" label="最小交易金额"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
+          </Row>
+
+          <Form.Item name="sector_map" label="行业映射（可选）" extra="用于行业敞口约束，例如 AAPL=科技,MSFT=科技,JPM=金融"><Input.TextArea rows={2} placeholder="AAPL=科技, MSFT=科技, JPM=金融" /></Form.Item>
 
           <Row gutter={12}>
-            <Col xs={12} md={6}><Form.Item name="max_position_size_pct" label="单仓上限(%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="max_total_exposure_pct" label="总仓上限(%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="max_sector_exposure_pct" label="行业上限(%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="max_drawdown_pct" label="最大回撤(%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="max_position_size_pct" label="单仓上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="max_total_exposure_pct" label="总敞口上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="max_short_exposure_pct" label="空头上限 (%)"><InputNumber disabled={!allowShort} style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="max_sector_exposure_pct" label="行业上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
           </Row>
           <Row gutter={12}>
-            <Col xs={12} md={6}><Form.Item name="daily_loss_limit_pct" label="单日亏损(%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="stop_loss_pct" label="止损(%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="take_profit_pct" label="止盈(%)"><InputNumber style={{ width: '100%' }} min={0} max={200} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="cooldown_days" label="冷却天数"><InputNumber style={{ width: '100%' }} min={0} max={252} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="max_drawdown_pct" label="最大回撤 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="daily_loss_limit_pct" label="单日亏损 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={4}><Form.Item name="stop_loss_pct" label="止损 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+            <Col xs={12} md={4}><Form.Item name="take_profit_pct" label="止盈 (%)"><InputNumber style={{ width: '100%' }} min={0} max={200} /></Form.Item></Col>
+            <Col xs={12} md={4}><Form.Item name="cooldown_days" label="冷却天数"><InputNumber style={{ width: '100%' }} min={0} max={252} /></Form.Item></Col>
           </Row>
         </Form>
       </Card>
 
-      {error && <Alert type="error" showIcon message="量化系统运行失败" description={error} style={{ marginBottom: 16 }} />}
+      {(loading || job) && !result && (
+        <Card size="small" className="quant-job-card" style={{ marginBottom: 16 }}>
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <Space wrap><Tag color={job?.status === 'failed' ? 'red' : job?.status === 'cancelled' ? 'default' : 'processing'}>{job?.status === 'pending' ? '排队中' : job?.status === 'running' ? '运行中' : job?.status === 'failed' ? '失败' : job?.status === 'cancelled' ? '已取消' : '准备中'}</Tag><Text>{job?.stage || '正在创建任务'}</Text></Space>
+            <Progress percent={job?.progress || 1} status={job?.status === 'failed' ? 'exception' : job?.status === 'cancelled' ? 'normal' : 'active'} />
+          </Space>
+        </Card>
+      )}
 
-      {result && (
+      {error && <Alert type="error" showIcon message="量化研究未完成" description={error} style={{ marginBottom: 16 }} />}
+
+      {result && backtest && (
         <>
           <Card size="small" style={{ marginBottom: 16 }}>
-            <Alert type="success" showIcon message={result.backtest.metrics.summary} style={{ marginBottom: 16 }} />
+            <Alert type="success" showIcon message={backtest.metrics.summary} style={{ marginBottom: 16 }} />
             <Row gutter={[12, 12]}>
-              {summaryCards.map(item => (
-                <Col xs={12} md={8} xl={4} key={item.title}>
-                  <Card size="small" bodyStyle={{ padding: '10px 12px' }}>
-                    <Statistic title={item.title} value={item.value} valueStyle={{ fontSize: 18, fontWeight: 600 }} />
-                    <Text type="secondary" style={{ fontSize: 12 }}>{item.hint}</Text>
-                  </Card>
-                </Col>
-              ))}
+              {summaryCards.map(item => <Col xs={12} md={8} xl={4} key={item.title}><Card size="small" className="quant-stat-card"><Statistic title={item.title} value={item.value} valueStyle={{ fontSize: 18, fontWeight: 600 }} /><Text type="secondary" className="quant-stat-hint">{item.hint}</Text></Card></Col>)}
             </Row>
             <Space wrap style={{ marginTop: 12 }}>
-              <Tag color="blue">策略 {result.strategy_label}</Tag>
-              <Tag color="green">买入 {result.allocation.buy_count}</Tag>
-              <Tag color="red">卖出 {result.allocation.sell_count}</Tag>
-              <Tag color="orange">持有 {result.allocation.hold_count}</Tag>
+              <Tag color="blue">{result.strategy_label}</Tag>
+              <Tag color="green">买入/平空 {result.allocation.buy_count}</Tag>
+              <Tag color="red">卖出/做空 {result.allocation.sell_count}</Tag>
+              <Tag>做空 {result.allocation.short_count}</Tag>
+              <Tag>现金缓冲 {fmtPct(result.allocation.cash_buffer_pct, false)}</Tag>
               {result.notes.map(note => <Tag key={note}>{note}</Tag>)}
             </Space>
           </Card>
 
-          <Card size="small" title={<><BarChartOutlined /> 组合曲线</>} style={{ marginBottom: 16 }}>
-            <div style={{ width: '100%', height: 320 }}>
+          <Card size="small" title={<><BarChartOutlined /> 组合净值曲线</>} style={{ marginBottom: 16 }}>
+            <div className="quant-chart">
               <ResponsiveContainer>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={value => `$${Math.round(value).toLocaleString()}`} />
-                  <Tooltip formatter={(value: any) => fmtUsd(Number(value))} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={28} />
+                  <YAxis tickFormatter={value => fmtMoney(Number(value))} width={72} />
+                  <Tooltip formatter={(value: any) => fmtMoney(Number(value))} />
                   <Legend />
                   <Line type="monotone" dataKey="量化组合" stroke="#1677ff" dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="裸持有" stroke="#22c55e" dot={false} strokeWidth={2} />
+                  <Line type="monotone" dataKey="等权持有" stroke="#22c55e" dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="基准" stroke="#f59e0b" dot={false} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </Card>
 
+          <Card size="small" title={<><DatabaseOutlined /> 行情来源与质量</>} style={{ marginBottom: 16 }}>
+            <Table rowKey="symbol" size="small" pagination={false} dataSource={sourceRows} columns={sourceColumns} tableLayout="fixed" scroll={{ x: 1240 }} />
+          </Card>
+
           <Row gutter={16}>
             <Col xs={24} xl={14}>
-              <Card size="small" title="候选信号" style={{ marginBottom: 16 }}>
-                <Table
-                  rowKey="symbol"
-                  size="small"
-                  pagination={{ pageSize: 8 }}
-                  dataSource={signals}
-                  columns={signalColumns}
-                  tableLayout="fixed"
-                  scroll={{ x: 980 }}
-                />
-              </Card>
-              <Card size="small" title="执行计划">
-                <Table
-                  rowKey="symbol"
-                  size="small"
-                  pagination={{ pageSize: 8 }}
-                  dataSource={orders}
-                  columns={orderColumns}
-                  tableLayout="fixed"
-                  scroll={{ x: 820 }}
-                />
-              </Card>
+              <Card size="small" title="最新候选信号" style={{ marginBottom: 16 }}><Table rowKey="symbol" size="small" pagination={{ pageSize: 8 }} dataSource={signals} columns={signalColumns} tableLayout="fixed" scroll={{ x: 1240 }} /></Card>
+              <Card size="small" title="目标执行计划" style={{ marginBottom: 16 }}><Table rowKey="symbol" size="small" pagination={{ pageSize: 8 }} dataSource={orders} columns={orderColumns} tableLayout="fixed" scroll={{ x: 1000 }} /></Card>
             </Col>
             <Col xs={24} xl={10}>
+              {execution && <Card size="small" title="执行假设" style={{ marginBottom: 16 }}>
+                <Row gutter={[12, 12]}>
+                  <Col span={8}><Statistic title="佣金" value={`${execution.commission_bps} bps`} /></Col>
+                  <Col span={8}><Statistic title="滑点" value={`${execution.slippage_bps} bps`} /></Col>
+                  <Col span={8}><Statistic title="借券费" value={`${execution.short_borrow_bps} bps`} /></Col>
+                  <Col span={12}><Statistic title="成交名义额" value={fmtMoney(execution.turnover_notional)} /></Col>
+                  <Col span={12}><Statistic title="借券成本" value={fmtMoney(execution.borrow_cost)} /></Col>
+                </Row>
+                <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>{execution.signal_timing}；{execution.currency_mode === 'constant_currency' ? '跨市场常汇率口径，不含汇率损益' : '单市场本币口径'}。</Paragraph>
+              </Card>}
+
               {riskSummary && (
-                <Card size="small" title="当前组合" style={{ marginBottom: 16 }}>
+                <Card size="small" title="当前组合上下文" style={{ marginBottom: 16 }}>
                   <Row gutter={12}>
-                    <Col span={8}><Statistic title="市值" value={fmtUsd(result.portfolio_context.current_total_value)} /></Col>
+                    <Col span={8}><Statistic title="市值" value={fmtMoney(result.portfolio_context.current_total_value)} /></Col>
                     <Col span={8}><Statistic title="开仓数" value={result.portfolio_context.current_open_count} /></Col>
                     <Col span={8}><Statistic title="总盈亏" value={fmtPct(result.portfolio_context.current_total_pnl_pct)} /></Col>
                   </Row>
-                  {Array.isArray(riskSummary.open_positions) && riskSummary.open_positions.length > 0 && (
-                    <Table
-                      rowKey="id"
-                      size="small"
-                      pagination={false}
-                      style={{ marginTop: 12 }}
-                      dataSource={riskSummary.open_positions.slice(0, 5)}
-                      columns={portfolioColumns}
-                      tableLayout="fixed"
-                    />
-                  )}
                 </Card>
               )}
 
-              <Card size="small" title="纸上回放">
-                <Timeline
-                  items={(backtest?.events || []).slice(-12).map(event => ({
-                    color: event.type === 'circuit_breaker' ? 'red' : event.type === 'exit' ? 'orange' : 'blue',
-                    children: (
-                      <div>
-                        <Text strong>{event.date}</Text>
-                        <div>{event.message}{event.symbol ? ` · ${event.symbol}` : ''}</div>
-                      </div>
-                    ),
-                  }))}
-                />
+              <Card size="small" title="风控事件" style={{ marginBottom: 16 }}>
+                {backtest.events.length ? <Timeline items={backtest.events.slice(-12).map(event => ({ color: event.type === 'circuit_breaker' ? 'red' : event.type === 'exit' ? 'orange' : 'blue', children: <div><Text strong>{event.date}</Text><div>{event.message}{event.symbol ? ` · ${event.symbol}` : ''}</div></div> }))} /> : <Text type="secondary">本次回测未触发止损、止盈或组合熔断。</Text>}
               </Card>
             </Col>
           </Row>
+
+          <Card size="small" title="成交审计（最近 100 笔）" style={{ marginBottom: 16 }}>
+            <Table rowKey={(_, index) => String(index)} size="small" pagination={{ pageSize: 10 }} dataSource={backtest.trades_log.slice(-100)} columns={tradeColumns} tableLayout="fixed" scroll={{ x: 1000 }} />
+          </Card>
+
+          <Alert type="warning" showIcon message="使用边界" description={`${backtest.disclaimer} ${result.disclaimer}`} />
         </>
       )}
     </CenterShell>
   );
 };
 
-const QuantLab: React.FC<QuantLabProps> = (props) => {
+const QuantLab: React.FC<QuantLabProps> = props => {
   const { theme } = useTheme();
   return (
-    <ConfigProvider
-      theme={{
-        algorithm: theme === 'dark' ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
-        token: {
-          colorPrimary: '#10a37f',
-          borderRadius: 8,
-          fontSize: 13,
-        },
-      }}
-    >
-      <AntdApp>
-        <QuantLabContent {...props} />
-      </AntdApp>
+    <ConfigProvider theme={{ algorithm: theme === 'dark' ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm, token: { colorPrimary: '#10a37f', borderRadius: 8, fontSize: 13 } }}>
+      <AntdApp><QuantLabContent {...props} /></AntdApp>
     </ConfigProvider>
   );
 };
