@@ -116,6 +116,7 @@ def test_background_wire_refresh_preprocesses_online_and_local_pdfs():
     refresher_source = ast.get_source_segment(source, refresher) or ""
     assert "_trigger_pdf_prewarm" in refresher_source
     assert "_trigger_local_pdf_prewarm" in refresher_source
+    assert "today_rows" in refresher_source
     for function_name in ("_prewarm_pdf_batch", "_prewarm_local_pdf_batch"):
         function = next(
             node

@@ -5464,7 +5464,7 @@ def _trigger_pdf_prewarm(rows: list[dict]) -> None:
             _PDF_PREWARM_SEEN.add(fid)
             continue
         targets.append((fid, str(row.get("filename") or "")))
-        if len(targets) >= 3:
+        if len(targets) >= 50:
             break
     if not targets:
         return
@@ -7290,7 +7290,14 @@ async def run_wire_refresher() -> None:
     while True:
         try:
             data = await fetch_research_wire_online(limit=120, use_cache=False)
-            _trigger_pdf_prewarm((data.get("items") or [])[:10])
+            rows = data.get("items") or []
+            today = datetime.now(ai_fund.BJ_TZ).date().isoformat()
+            today_rows = [
+                row for row in rows
+                if str(row.get("date") or row.get("created_at") or "")[:10] == today
+            ]
+            # 当天研报一次性进入同一个串行批次：抓到后连续预处理完，不再每 4 分钟只补 3 篇。
+            _trigger_pdf_prewarm(today_rows or rows[:10])
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
