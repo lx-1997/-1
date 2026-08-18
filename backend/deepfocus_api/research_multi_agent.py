@@ -1,9 +1,9 @@
 """Adaptive multi-agent analysis for image-based research reports.
 
-Text PDFs already have a fast single-call path.  For scanned/image PDFs we
-render once, give small page groups to field-owning specialists in parallel,
-then merge their disjoint JSON fields deterministically.  There is deliberately
-no fourth "synthesis" LLM call: that would erase most of the latency win.
+Text PDFs already have a fast single-call path.  The optional scanned-PDF mode
+renders once, lets field-owning specialists inspect the selected pages in
+parallel, then merges their disjoint JSON fields deterministically.  There is
+deliberately no fourth "synthesis" LLM call: that would erase any latency win.
 """
 from __future__ import annotations
 
@@ -21,16 +21,16 @@ from .llm import CloudResearchLLM
 from . import research_vision as rv
 
 
-_ENABLED = os.getenv("DEEPFOCUS_RESEARCH_MULTI_AGENT", "1").strip().lower() not in {
+_ENABLED = os.getenv("DEEPFOCUS_RESEARCH_MULTI_AGENT", "0").strip().lower() not in {
     "0", "false", "no", "off",
 }
 _MIN_IMAGES = max(3, int(os.getenv("DEEPFOCUS_RESEARCH_MULTI_AGENT_MIN_IMAGES", "4") or 4))
 _AGENT_CONCURRENCY = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_AGENT_CONCURRENCY", "3") or 3))
 _AGENT_TIMEOUT_SECONDS = max(
-    20.0, float(os.getenv("DEEPFOCUS_RESEARCH_AGENT_TIMEOUT_SECONDS", "105") or 105),
+    20.0, float(os.getenv("DEEPFOCUS_RESEARCH_AGENT_TIMEOUT_SECONDS", "60") or 60),
 )
 _TOTAL_TIMEOUT_SECONDS = max(
-    25.0, float(os.getenv("DEEPFOCUS_RESEARCH_AGENT_TOTAL_SECONDS", "115") or 115),
+    25.0, float(os.getenv("DEEPFOCUS_RESEARCH_AGENT_TOTAL_SECONDS", "65") or 65),
 )
 _CACHE_VERSION = "agents-v2"
 _DISCLAIMER = (
@@ -38,6 +38,22 @@ _DISCLAIMER = (
     "可能遗漏或误读，请以原文为准。"
 )
 _SENSITIVE_CONTENT_RE = re.compile(r"content\[(\d+)\]")
+
+
+class ResearchMultiAgentBusy(RuntimeError):
+    """A background prewarm yielded to an interactive analysis batch."""
+
+
+def multi_agent_enabled() -> bool:
+    return _ENABLED
+
+
+def analysis_cache_key(ref: str) -> str:
+    """Version the long-lived main cache only while the experiment is enabled."""
+    cleaned = str(ref or "").strip()
+    if not cleaned or not _ENABLED:
+        return cleaned
+    return f"research:{_CACHE_VERSION}:{cleaned}"
 
 
 @dataclass(frozen=True)
@@ -61,7 +77,7 @@ _ROLES = (
             "只提取页面明确出现的标的、市场、评级、目标价和关键数字；"
             "没有的信息留空，不做推测。"
         ),
-        max_tokens=800,
+        max_tokens=1800,
     ),
     _Role(
         key="thesis",
@@ -75,7 +91,7 @@ _ROLES = (
             "只负责核心观点、驱动因果链和上行依据；优先保留数字、预测变化和催化剂，"
             "各字段不要重复。"
         ),
-        max_tokens=1050,
+        max_tokens=2800,
     ),
     _Role(
         key="risk",
@@ -88,7 +104,7 @@ _ROLES = (
             "站在买方风控视角，只找报告结论成立的前提、反证、下行触发条件和待验证指标；"
             "不得编造报告外事实。"
         ),
-        max_tokens=900,
+        max_tokens=1800,
     ),
 )
 
@@ -272,6 +288,7 @@ async def _analyze_images_parallel(
     title: Optional[str],
     symbol: Optional[str],
     max_pages: int,
+    background: bool = False,
 ) -> dict[str, Any]:
     key = _cache_key(pdf_bytes, max_pages, title, symbol)
     cached = _cache_get(key)
@@ -289,7 +306,15 @@ async def _analyze_images_parallel(
     # Queue before starting the per-report deadline.  With a 3-slot global child
     # semaphore, interleaving three reports (nine tasks) made later reports time
     # out while merely waiting for slots.
-    async with _batch_semaphore():
+    batch_sem = _batch_semaphore()
+    if background and batch_sem.locked():
+        raise ResearchMultiAgentBusy("交互式研报解读正在运行，后台预热稍后重试")
+    async with batch_sem:
+        # A prewarm and an HTTP request can miss the inner cache concurrently.
+        # Recheck after queueing so the follower does not pay for three duplicate calls.
+        late_cached = _cache_get(key)
+        if late_cached is not None:
+            return late_cached
         images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
         if len(images) < _MIN_IMAGES:
             return await rv.analyze_pdf_vision(
@@ -347,6 +372,7 @@ async def analyze_pdf_adaptive(
     title: Optional[str] = None,
     symbol: Optional[str] = None,
     max_pages: int = 6,
+    background: bool = False,
 ) -> dict[str, Any]:
     """Use the fast text agent, or parallel specialists for image-only reports."""
     if not _ENABLED:
@@ -359,5 +385,5 @@ async def analyze_pdf_adaptive(
         return await rv.analyze_pdf_text(pdf_bytes, title=title, symbol=symbol)
     except rv.PdfTextUnavailable:
         return await _analyze_images_parallel(
-            pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            pdf_bytes, title=title, symbol=symbol, max_pages=max_pages, background=background,
         )

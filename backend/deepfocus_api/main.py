@@ -296,7 +296,11 @@ from .report_url_ingest import extract_report_url
 from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
 from .async_singleflight import AsyncSingleFlight
 from .research_prewarm_policy import research_prewarm_download_cap
-from .research_multi_agent import analyze_pdf_adaptive
+from .research_multi_agent import (
+    ResearchMultiAgentBusy,
+    analysis_cache_key,
+    analyze_pdf_adaptive,
+)
 from .research_vision import analyze_news
 
 # 对外 AI 品牌名：不暴露底层模型（如 MiniMax）
@@ -7574,6 +7578,7 @@ async def run_research_prewarm() -> None:
 
     async def _warm_one(item: dict, sem: asyncio.Semaphore, ai: bool = True) -> None:
         fid = str(item.get("file_id") or "").strip()
+        ai_cache_key = analysis_cache_key(fid)
         async with sem:
             already_local = has_cached_file_id(fid)
             # 下载额度/源站限额只拦网络下载；本地已有 PDF 的 AI 缓存补齐仍可继续。
@@ -7603,11 +7608,17 @@ async def run_research_prewarm() -> None:
                 return
             try:
                 async with _AI_ANALYZE_SEM:  # 与用户请求共用总闸，防止预热绕过并发上限
-                    result = await analyze_pdf_adaptive(content, title=item.get("title", "研报"), max_pages=4)
-                metrics_set_ai_cache(fid, result)
+                    result = await analyze_pdf_adaptive(
+                        content, title=item.get("title", "研报"), max_pages=4, background=True,
+                    )
+                metrics_set_ai_cache(ai_cache_key, result)
+                if ai_cache_key != fid:  # 保留无版本别名给研报博客/头条标的提取
+                    metrics_set_ai_cache(fid, result)
                 done_counter["n"] += 1
             except asyncio.CancelledError:
                 raise
+            except ResearchMultiAgentBusy:
+                print(f"[prewarm] 交互式解读优先，本轮跳过 {fid}")
             except Exception as exc:  # noqa: BLE001 - 解读失败：拉黑，避免反复下载烧预算
                 failed_fids.add(fid)
                 print(f"[prewarm] 解读失败(已拉黑本轮) {fid}: {type(exc).__name__}: {str(exc)[:50]}")
@@ -7630,7 +7641,7 @@ async def run_research_prewarm() -> None:
                 fid = str(it.get("file_id") or "").strip()
                 if not fid or fid in failed_fids:
                     continue
-                cached = metrics_get_ai_cache(fid)
+                cached = metrics_get_ai_cache(analysis_cache_key(fid))
                 if not cached:
                     fresh.append(it)  # 新报告(无缓存)：下载→去水印缓存+AI 解读
                 elif isinstance(cached, dict) and "instruments" not in cached:
@@ -7972,7 +7983,8 @@ async def api_research_vision_analyze(
 
     付费墙：非会员不触发新生成（省 token），仅命中缓存才放行、每天免费 1 次；会员无限。"""
     title = (request.title or "研报").strip()
-    cache_key = (request.file_id or request.workbench_filename or request.pdf_url or "").strip()
+    cache_ref = (request.file_id or request.workbench_filename or request.pdf_url or "").strip()
+    cache_key = analysis_cache_key(cache_ref)
     cached_result = metrics_get_ai_cache(cache_key) if cache_key else None  # 先探缓存，决定非会员能否放行
     quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None)
     metrics_incr("ai_research")  # 统计 AI 解读点击次数
@@ -8022,6 +8034,8 @@ async def api_research_vision_analyze(
     except Exception as exc:  # noqa: BLE001 - 统一转成 502，前端给友好提示
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{exc}") from exc
 
+    if cache_ref and cache_key != cache_ref:
+        metrics_set_ai_cache(cache_ref, result)  # 给研报博客/头条保留最新结构的无版本别名
     if quota_key: metrics_incr(quota_key)
     return _build_response(result)
 

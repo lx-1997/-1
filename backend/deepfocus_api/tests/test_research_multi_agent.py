@@ -8,6 +8,34 @@ import pytest
 from deepfocus_api import research_multi_agent as ma
 
 
+@pytest.fixture(autouse=True)
+def _enable_multi_agent(monkeypatch):
+    monkeypatch.setattr(ma, "_ENABLED", True)
+
+
+def test_main_cache_key_is_versioned_only_when_enabled(monkeypatch):
+    monkeypatch.setattr(ma, "_ENABLED", True)
+    assert ma.analysis_cache_key("fid-1") == "research:agents-v2:fid-1"
+    monkeypatch.setattr(ma, "_ENABLED", False)
+    assert ma.analysis_cache_key("fid-1") == "fid-1"
+
+
+def test_disabled_mode_delegates_to_established_single_agent(monkeypatch):
+    expected = {"summary": "single-agent"}
+    calls = 0
+
+    async def single(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return expected
+
+    monkeypatch.setattr(ma, "_ENABLED", False)
+    monkeypatch.setattr(ma.rv, "analyze_pdf_auto", single)
+    result = asyncio.run(ma.analyze_pdf_adaptive(b"pdf", title="report", max_pages=4))
+    assert result is expected
+    assert calls == 1
+
+
 def test_merge_results_obeys_field_ownership_and_deduplicates():
     result = ma._merge_results(
         {
@@ -223,5 +251,41 @@ def test_cancelling_outer_analysis_cancels_all_agent_tasks(monkeypatch):
             await task
         await asyncio.sleep(0)
         assert active == 0
+
+    asyncio.run(scenario())
+
+
+def test_batch_rechecks_cache_after_waiting(monkeypatch):
+    expected = {"summary": "filled while queued"}
+    reads = 0
+
+    def cache_get(key):
+        nonlocal reads
+        reads += 1
+        return None if reads == 1 else expected
+
+    monkeypatch.setattr(ma, "_cache_get", cache_get)
+    monkeypatch.setattr(ma, "_pdf_page_count", lambda pdf: 4)
+    monkeypatch.setattr(
+        ma.rv, "render_pdf_to_pngs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("后到请求不应重复渲染")),
+    )
+    result = asyncio.run(ma._analyze_images_parallel(
+        b"late-cache", title=None, symbol=None, max_pages=4,
+    ))
+    assert result is expected
+    assert reads == 2
+
+
+def test_background_batch_yields_when_interactive_batch_is_busy(monkeypatch):
+    monkeypatch.setattr(ma, "_cache_get", lambda key: None)
+    monkeypatch.setattr(ma, "_pdf_page_count", lambda pdf: 4)
+
+    async def scenario():
+        async with ma._batch_semaphore():
+            with pytest.raises(ma.ResearchMultiAgentBusy):
+                await ma._analyze_images_parallel(
+                    b"background", title=None, symbol=None, max_pages=4, background=True,
+                )
 
     asyncio.run(scenario())
