@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import fitz
+import pikepdf
 
 from deepfocus_api import pdf_brand as pb
 
@@ -36,6 +37,36 @@ def test_single_rotated_xobject_is_preserved_but_tiling_is_removed():
     cleaned, count = pb._remove_wm_q_blocks(tiled, {})
     assert b"/Fm0 Do" not in cleaned
     assert count == pb._REPEAT_ON_PAGE
+
+
+def test_full_page_zsxq_link_redirects_to_research_hub_only():
+    pdf = pikepdf.Pdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+
+    def link(rect, uri):
+        return pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name("/Annot"),
+            Subtype=pikepdf.Name("/Link"),
+            Rect=pikepdf.Array(rect),
+            A=pikepdf.Dictionary(
+                S=pikepdf.Name("/URI"),
+                URI=pikepdf.String(uri),
+            ),
+        ))
+
+    page.obj["/Annots"] = pikepdf.Array([
+        link([0, 0, 612, 792], "https://wx.zsxq.com/group/88888142214212"),
+        link([10, 10, 110, 40], "https://wx.zsxq.com/group/88888142214212"),
+        link([0, 0, 612, 792], "https://example.com/source"),
+    ])
+
+    assert pb._redirect_full_page_source_links(pdf) == 1
+    uris = [str(ref["/A"]["/URI"]) for ref in page.obj["/Annots"]]
+    assert uris == [
+        "https://www.daocaijing.com/?tab=research",
+        "https://wx.zsxq.com/group/88888142214212",
+        "https://example.com/source",
+    ]
 
 
 def test_repeated_light_confidential_marks_are_removed_without_touching_body():

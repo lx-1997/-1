@@ -771,7 +771,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [status, setStatus] = useState<StreamConnectionStatus>('connecting');
   // v3 默认进入「为你」：先看少量高相关内容；用户显式切到其它标签后仍记住选择。
-  const [feedFilter, setFeedFilter] = useState<string>(() => { try { return LS.read('bbt.feedFilter.v3', '精选'); } catch { return '精选'; } });
+  const [feedFilter, setFeedFilter] = useState<string>(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('tab') === 'research') return '研报';
+      return LS.read('bbt.feedFilter.v3', '精选');
+    } catch { return '精选'; }
+  });
   const [personalPrefsOpen, setPersonalPrefsOpen] = useState(false);
   const [personalInterests, setPersonalInterests] = useState<InterestKey[]>(() => LS.read<InterestKey[]>('bbt.personal.interests.v1', []));
   const [interestSignals, setInterestSignals] = useState<Partial<Record<InterestKey, number>>>(() => LS.read('bbt.personal.signals.v1', {}));
@@ -791,6 +796,19 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => { LS.write('bbt.eqw', eqW); }, [eqW]);
   const eqNarrow = eqW < EQ_NARROW;
   const gridRef = useRef<HTMLDivElement>(null);
+  // PDF 内的来源跳转统一落到 ?tab=research：自动打开研报栏目并把它滚进视野。
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('tab') !== 'research') return;
+      setActive(null);
+      setFeedFilter('研报');
+      setCollapsed(previous => ({ ...previous, news: false }));
+      const timer = window.setTimeout(() => {
+        gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
+      return () => window.clearTimeout(timer);
+    } catch { return; }
+  }, []);
   const startEqDrag = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     const apply = (clientX: number) => {

@@ -212,11 +212,11 @@ def _mem_put(key: str, data: bytes) -> None:
 
 def _fid_cache_path(file_id: str) -> Path:
     safe = re.sub(r'[^A-Za-z0-9._-]', '_', file_id)[:80]
-    return _CACHE_DIR / f"fid_{_PROC_VERSION}_{safe}.pdf"
+    return _CACHE_DIR / f"fid_{_PROC_VERSION}_links1_{safe}.pdf"
 
 
 def _fid_mem_key(file_id: str) -> str:
-    return f"fid:{_PROC_VERSION}:{file_id}"
+    return f"fid:{_PROC_VERSION}:links1:{file_id}"
 
 
 _OWNED_CACHE_RE = re.compile(r"^(?:fid_v\d+_|[0-9a-f]{20}_v\d+$)")
@@ -601,6 +601,55 @@ def _remove_gray_rotated_text(pdf: pikepdf.Pdf) -> int:
     return total
 
 
+_RESEARCH_HUB_URL = (
+    os.getenv("DEEPFOCUS_RESEARCH_HUB_URL", "https://www.daocaijing.com/?tab=research").strip()
+    or "https://www.daocaijing.com/?tab=research"
+)
+_ZSXQ_URI_RE = re.compile(r"^https?://(?:[^./]+\.)?zsxq\.com(?:[/:?#]|$)", re.I)
+
+
+def _redirect_full_page_source_links(pdf: pikepdf.Pdf) -> int:
+    """把知识星球植入的整页 PDF 链接改到本站研报栏目。
+
+    只改覆盖页面至少 80% 的 ``/Link`` 注释，保留研报正文里的普通外部引用，
+    也不触碰其它来源域名。部分上游 PDF 会在前几页铺一个透明整页链接，
+    导致用户点击正文任意位置都离站；这里保留点击能力但把落点收回本站。
+    """
+    redirected = 0
+    for page in pdf.pages:
+        page_obj = page.obj
+        page_box = page_obj.get("/CropBox") or page_obj.get("/MediaBox")
+        try:
+            px0, py0, px1, py1 = (float(value) for value in page_box)
+            page_area = abs((px1 - px0) * (py1 - py0))
+        except Exception:
+            page_area = 0.0
+        if page_area <= 0:
+            continue
+
+        for annot_ref in list(page_obj.get("/Annots") or []):
+            try:
+                # pikepdf 读取间接引用时已经自动解引用为 Object，没有 get_object()。
+                annot = annot_ref
+                if str(annot.get("/Subtype") or "") != "/Link":
+                    continue
+                action = annot.get("/A")
+                if not action or str(action.get("/S") or "") != "/URI":
+                    continue
+                uri = str(action.get("/URI") or "").strip()
+                if not _ZSXQ_URI_RE.match(uri):
+                    continue
+                rx0, ry0, rx1, ry1 = (float(value) for value in annot.get("/Rect"))
+                link_area = abs((rx1 - rx0) * (ry1 - ry0))
+                if link_area < page_area * 0.80:
+                    continue
+                action["/URI"] = pikepdf.String(_RESEARCH_HUB_URL)
+                redirected += 1
+            except Exception:
+                continue
+    return redirected
+
+
 # ── 去水印：PyMuPDF（E 文字 / F 注释 / G 图片）────────────────────────────────
 
 def _gather_text_spans(doc: fitz.Document) -> tuple[list, "Counter", int]:
@@ -964,6 +1013,10 @@ def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, boo
             n_pikepdf += _remove_gray_rotated_text(pdf)   # 外科级删对角浅灰水印（正文零损）
         except Exception as exc:
             logger.debug("[pdf_brand] gray-rotated 外科层失败: %s", exc)
+        try:
+            n_pikepdf += _redirect_full_page_source_links(pdf)
+        except Exception as exc:
+            logger.debug("[pdf_brand] 整页来源链接改写失败: %s", exc)
         if n_pikepdf > 0 or was_encrypted:      # 有改动，或需解密 → 重存明文
             buf = io.BytesIO()
             pdf.save(buf)
@@ -1028,7 +1081,7 @@ async def apply_pdf_brand(content: bytes, *, file_id: str = "") -> bytes:
     if len(content) < 1024:
         return content
 
-    key = f"{hashlib.sha256(content).hexdigest()[:20]}_{_PROC_VERSION}"
+    key = f"{hashlib.sha256(content).hexdigest()[:20]}_{_PROC_VERSION}_links1"
 
     if key in _MEM_CACHE:
         _MEM_CACHE.move_to_end(key)
