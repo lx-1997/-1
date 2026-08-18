@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v12")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v14")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -144,16 +144,17 @@ _SUSPICIOUS_XOBJ_RE = [
 
 # 品牌标记：顶部用完全不透明色带覆盖原分发水印，底部增加独立页脚。
 _BRAND_TOP_COVER_H = 26.0
-_BRAND_TOP_FILL = (0.945, 0.970, 1.0)
+_BRAND_TOP_FILL = (0.925, 0.955, 0.995)
 _BRAND_FOOTER_H = 12.0
 _BRAND_FOOTER_FILL = (0.955, 0.975, 1.0)
-_BRAND_TEXT_COLOR = (0.22, 0.34, 0.52)
-_BRAND_TEXT = "DeepFocus｜股票投资信息与深度研究｜www.daocaijing.com"
+_BRAND_TEXT_COLOR = (0.12, 0.29, 0.52)
+_BRAND_TEXT = "DeepFocus｜专注股票投资信息与深度研究｜www.daocaijing.com"
 _BRAND_PARTS = (
-    ("DeepFocus", "helv"),
-    ("｜股票投资信息与深度研究｜", "china-s"),
+    ("DeepFocus", "hebo"),
+    ("｜专注股票投资信息与深度研究｜", "china-s"),
     ("www.daocaijing.com", "helv"),
 )
+_BRAND_WATERMARK_OPACITY = 0.14
 
 
 # ── 辅助 ─────────────────────────────────────────────────────────────────────
@@ -206,6 +207,7 @@ def _insert_brand_text(
     *,
     fontsize: float,
     fill_opacity: float,
+    morph=None,
 ) -> None:
     """中英文混排：英文使用紧凑的 Helvetica，中文使用内置 CJK 字体。"""
     x, y = point
@@ -217,6 +219,7 @@ def _insert_brand_text(
             fontname=fontname,
             color=_BRAND_TEXT_COLOR,
             fill_opacity=fill_opacity,
+            morph=morph,
             overlay=True,
         )
         x += fitz.get_text_length(text, fontname=fontname, fontsize=fontsize)
@@ -1502,7 +1505,13 @@ def _page_has_brand(page: fitz.Page) -> bool:
     旧版只有 16pt 顶栏 / 只有底栏，不能提前返回，否则露出的原水印会一直保留。
     """
     try:
-        if not _is_current_brand(page.get_text("text")):
+        page_text = page.get_text("text")
+        compact = _compact(page_text)
+        # v13 的顶栏、页脚和页中斜向水印各有一次品牌文案。
+        # 只有顶/底栏的旧成品不能被误判为已升级。
+        if (not _is_current_brand(page_text)
+                or compact.count("deepfocus") < 3
+                or compact.count("www.daocaijing.com") < 3):
             return False
         pw = page.rect.width
         for drawing in page.get_drawings():
@@ -1521,8 +1530,34 @@ def _page_has_brand(page: fitz.Page) -> bool:
         return False
 
 
+def _add_diagonal_brand(page: fitz.Page, pw: float, ph: float) -> None:
+    """在页面中部加一条低透明品牌水印，清晰宣传但不盖住研报正文。"""
+    if pw < 220 or ph < 220:
+        return
+
+    base_fs = 15.0
+    base_width = _brand_text_width(base_fs)
+    # 留出斜放后的左右安全边距；窄页自动缩小，常见 A4/Letter 保持 15pt。
+    fontsize = max(9.5, base_fs * min(1.0, (pw * 0.76) / max(1.0, base_width)))
+    text_width = _brand_text_width(fontsize)
+    x = max(12.0, (pw - text_width) / 2.0)
+    y = ph * 0.54
+    pivot = fitz.Point(pw / 2.0, ph / 2.0)
+    angle = math.radians(-18.0)
+    matrix = fitz.Matrix(
+        math.cos(angle), -math.sin(angle), math.sin(angle), math.cos(angle), 0, 0
+    )
+    _insert_brand_text(
+        page,
+        (x, y),
+        fontsize=fontsize,
+        fill_opacity=_BRAND_WATERMARK_OPACITY,
+        morph=(pivot, matrix),
+    )
+
+
 def _add_brand(page: fitz.Page) -> None:
-    """加顶部遮盖带和不遮挡正文的品牌页脚。
+    """加顶部遮盖带、页中斜向品牌水印和独立页脚。
 
     顶部 26pt 色带完全不透明，专门覆盖原渠道字样；常规页同时在 MediaBox
     底部增加 12pt 独立色带，原页内容的坐标、比例与可选文字完全不变。
@@ -1606,8 +1641,10 @@ def _add_brand(page: fitz.Page) -> None:
         page,
         (header_x, header_y),
         fontsize=header_fs,
-        fill_opacity=0.92,
+        fill_opacity=0.96,
     )
+
+    _add_diagonal_brand(page, pw, ph)
 
     if can_extend or can_upgrade_footer or not has_legacy_brand:
         _insert_brand_text(
@@ -1636,6 +1673,28 @@ def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, boo
     ok=False 表示只能透传/部分处理——**调用方据此决定是否落盘缓存**。
     """
     # ── 相 1：pikepdf（A-D）+ 解密。失败则退回原文继续相 2 ─────────────────────
+    # 当前版本已有顶栏 + 斜向水印 + 页脚时直接返回。若继续走去水印相，
+    # 低透明斜向 DeepFocus 会被当作外部水印擦掉，重画时又会在 PDF 文字层
+    # 留下重复文案。旧牌只有顶/底栏，_page_has_brand 会返回 False，仍正常升级。
+    if add_brand:
+        branded_doc = None
+        current_brand = False
+        try:
+            branded_doc = _open_fitz(content)
+            current_brand = bool(len(branded_doc)) and all(
+                _page_has_brand(page) for page in branded_doc
+            )
+        except Exception:
+            current_brand = False
+        finally:
+            if branded_doc is not None:
+                try:
+                    branded_doc.close()
+                except Exception:
+                    pass
+        if current_brand:
+            return content, True
+
     working = content
     pikepdf_changed = False
     pdf = None

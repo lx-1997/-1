@@ -213,8 +213,16 @@ def test_brand_uses_dedicated_footer_and_is_idempotent():
     with fitz.open(stream=once, filetype="pdf") as branded:
         page = branded[0]
         assert page.rect.height == original_height + pb._BRAND_FOOTER_H
-        assert page.get_text("text").count("www.daocaijing.com") == 2
-        assert page.get_text("text").count("股票投资信息与深度研究") == 2
+        assert page.get_text("text").count("www.daocaijing.com") == 3
+        assert page.get_text("text").count("专注股票投资信息与深度研究") == 3
+        rotated_brand_lines = [
+            line
+            for block in page.get_text("dict").get("blocks", [])
+            for line in block.get("lines", [])
+            if abs(float(line.get("dir", (1, 0))[1])) > 0.1
+            and any("DeepFocus" in span.get("text", "") for span in line.get("spans", []))
+        ]
+        assert len(rotated_brand_lines) == 1
         branded_body = page.search_for("BODY_KEEP")[0]
         assert branded_body == original_body
 
@@ -223,7 +231,7 @@ def test_brand_uses_dedicated_footer_and_is_idempotent():
     with fitz.open(stream=twice, filetype="pdf") as branded_again:
         page = branded_again[0]
         assert page.rect.height == original_height + pb._BRAND_FOOTER_H
-        assert page.get_text("text").count("www.daocaijing.com") == 2
+        assert page.get_text("text").count("www.daocaijing.com") == 3
 
 
 def test_top_cover_is_tall_and_fully_opaque():
@@ -276,7 +284,7 @@ def test_legacy_footer_is_upgraded_without_extending_page_again():
         page = branded[0]
         assert page.rect.height == 854
         assert pb._page_has_brand(page)
-        assert page.get_text("text").count("股票投资信息与深度研究") == 2
+        assert page.get_text("text").count("专注股票投资信息与深度研究") == 3
 
 
 def test_repeated_baked_raster_watermark_is_suppressed_without_rasterizing_text_pdf():
