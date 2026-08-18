@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v7")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v8")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -147,7 +147,12 @@ _BRAND_TOP_FILL = (0.945, 0.970, 1.0)
 _BRAND_FOOTER_H = 12.0
 _BRAND_FOOTER_FILL = (0.955, 0.975, 1.0)
 _BRAND_TEXT_COLOR = (0.22, 0.34, 0.52)
-_BRAND_TEXT = "DeepFocus Research  |  www.daocaijing.com"
+_BRAND_TEXT = "DeepFocus｜股票投资信息与深度研究｜www.daocaijing.com"
+_BRAND_PARTS = (
+    ("DeepFocus", "helv"),
+    ("｜股票投资信息与深度研究｜", "china-s"),
+    ("www.daocaijing.com", "helv"),
+)
 
 
 # ── 辅助 ─────────────────────────────────────────────────────────────────────
@@ -180,6 +185,40 @@ def _is_generic_wm_label(text: str) -> bool:
 def _is_our_brand(text: str) -> bool:
     compact = _compact(text)
     return "daocaijing.com" in compact and "deepfocus" in compact
+
+
+def _is_current_brand(text: str) -> bool:
+    """只识别当前版本的完整品牌文案。"""
+    return _compact(_BRAND_TEXT) in _compact(text)
+
+
+def _brand_text_width(fontsize: float) -> float:
+    return sum(
+        fitz.get_text_length(text, fontname=fontname, fontsize=fontsize)
+        for text, fontname in _BRAND_PARTS
+    )
+
+
+def _insert_brand_text(
+    page: fitz.Page,
+    point: tuple[float, float],
+    *,
+    fontsize: float,
+    fill_opacity: float,
+) -> None:
+    """中英文混排：英文使用紧凑的 Helvetica，中文使用内置 CJK 字体。"""
+    x, y = point
+    for text, fontname in _BRAND_PARTS:
+        page.insert_text(
+            (x, y),
+            text,
+            fontsize=fontsize,
+            fontname=fontname,
+            color=_BRAND_TEXT_COLOR,
+            fill_opacity=fill_opacity,
+            overlay=True,
+        )
+        x += fitz.get_text_length(text, fontname=fontname, fontsize=fontsize)
 
 
 def _rect_area(rect: fitz.Rect) -> float:
@@ -1210,7 +1249,7 @@ def _page_has_brand(page: fitz.Page) -> bool:
     旧版只有 16pt 顶栏 / 只有底栏，不能提前返回，否则露出的原水印会一直保留。
     """
     try:
-        if not _is_our_brand(page.get_text("text")):
+        if not _is_current_brand(page.get_text("text")):
             return False
         pw = page.rect.width
         for drawing in page.get_drawings():
@@ -1245,13 +1284,20 @@ def _add_brand(page: fitz.Page) -> None:
     except Exception:
         has_legacy_brand = False
     footer_fs = 6.2
-    footer_text_width = fitz.get_text_length(
-        _BRAND_TEXT, fontname="helv", fontsize=footer_fs
-    )
+    footer_text_width = _brand_text_width(footer_fs)
     mb = page.mediabox
     cb = page.cropbox
     boxes_match = all(abs(a - b) < 0.1 for a, b in zip(mb, cb))
     can_extend = page.rotation == 0 and boxes_match
+    # 旧版扩展 MediaBox 后，PyMuPDF 会把 CropBox 规范化为从 (0, 0)
+    # 开始，因而两者坐标不再字面相等，但页面尺寸仍与 MediaBox 一致。
+    # 只对已识别为我方旧品牌的正向页重绘现有底栏，不会再加高。
+    can_upgrade_footer = (
+        has_legacy_brand
+        and page.rotation == 0
+        and abs(page.rect.width - mb.width) < 0.1
+        and abs(page.rect.height - mb.height) < 0.1
+    )
 
     if can_extend and not has_legacy_brand:
         # PDF 原点在左下：下移 y0 才是在视觉底部加空间；扩 y1 会把
@@ -1268,10 +1314,20 @@ def _add_brand(page: fitz.Page) -> None:
         )
         footer_x = max(5.0, pw - footer_text_width - 7.0)
         footer_y = ph - 3.1
-    elif can_extend:
+    elif can_upgrade_footer:
         # v2 / v3 成品可能已经带品牌页脚，但顶部遮盖带过短或缺失。
-        # 只升级顶栏，绝不再扩一次 MediaBox，避免页脚越叠越厚。
+        # 不再扩 MediaBox，但会重绘旧页脚并替换为当前文案。
         pw, ph = page.rect.width, page.rect.height
+        band = fitz.Rect(0, ph - _BRAND_FOOTER_H, pw, ph)
+        page.draw_rect(
+            band,
+            color=(0.82, 0.88, 0.96),
+            fill=_BRAND_FOOTER_FILL,
+            width=0.35,
+            overlay=True,
+        )
+        footer_x = max(5.0, pw - footer_text_width - 7.0)
+        footer_y = ph - 3.1
     else:
         # 稀有的旋转 / 特殊裁切页：不改 page box，也不画底色盖正文。
         pw, ph = page.rect.width, page.rect.height
@@ -1290,30 +1346,22 @@ def _add_brand(page: fitz.Page) -> None:
         overlay=True,
     )
     header_fs = 7.4
-    header_text_width = fitz.get_text_length(
-        _BRAND_TEXT, fontname="helv", fontsize=header_fs
-    )
+    header_text_width = _brand_text_width(header_fs)
     header_x = max(5.0, (pw - header_text_width) / 2.0)
     header_y = max(header_fs + 1.0, (_BRAND_TOP_COVER_H + header_fs) / 2.0 - 0.8)
-    page.insert_text(
+    _insert_brand_text(
+        page,
         (header_x, header_y),
-        _BRAND_TEXT,
         fontsize=header_fs,
-        fontname="helv",
-        color=_BRAND_TEXT_COLOR,
         fill_opacity=0.92,
-        overlay=True,
     )
 
-    if not has_legacy_brand:
-        page.insert_text(
+    if can_extend or can_upgrade_footer or not has_legacy_brand:
+        _insert_brand_text(
+            page,
             (footer_x, footer_y),
-            _BRAND_TEXT,
             fontsize=footer_fs,
-            fontname="helv",
-            color=_BRAND_TEXT_COLOR,
-            fill_opacity=0.72 if can_extend else 0.48,
-            overlay=True,
+            fill_opacity=0.72 if (can_extend or can_upgrade_footer) else 0.48,
         )
 
 

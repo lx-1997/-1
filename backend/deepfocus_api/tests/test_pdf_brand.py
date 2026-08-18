@@ -177,6 +177,7 @@ def test_brand_uses_dedicated_footer_and_is_idempotent():
         page = branded[0]
         assert page.rect.height == original_height + pb._BRAND_FOOTER_H
         assert page.get_text("text").count("www.daocaijing.com") == 2
+        assert page.get_text("text").count("股票投资信息与深度研究") == 2
         branded_body = page.search_for("BODY_KEEP")[0]
         assert branded_body == original_body
 
@@ -215,7 +216,8 @@ def test_top_cover_is_tall_and_fully_opaque():
 
 def test_legacy_footer_is_upgraded_without_extending_page_again():
     doc = fitz.open()
-    page = doc.new_page(width=595, height=854)
+    page = doc.new_page(width=595, height=842)
+    page.set_mediabox(fitz.Rect(0, -12, 595, 842))
     page.insert_text((72, 90), "BODY_KEEP", fontsize=12)
     page.draw_rect(
         fitz.Rect(0, 842, 595, 854),
@@ -224,7 +226,7 @@ def test_legacy_footer_is_upgraded_without_extending_page_again():
     )
     page.insert_text(
         (390, 851),
-        pb._BRAND_TEXT,
+        "DeepFocus Research  |  www.daocaijing.com",
         fontsize=6.2,
         color=pb._BRAND_TEXT_COLOR,
     )
@@ -237,7 +239,7 @@ def test_legacy_footer_is_upgraded_without_extending_page_again():
         page = branded[0]
         assert page.rect.height == 854
         assert pb._page_has_brand(page)
-        assert page.get_text("text").count("www.daocaijing.com") == 2
+        assert page.get_text("text").count("股票投资信息与深度研究") == 2
 
 
 def test_repeated_baked_raster_watermark_is_suppressed_without_rasterizing_text_pdf():
