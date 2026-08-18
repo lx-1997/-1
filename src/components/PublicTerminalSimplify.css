@@ -144,6 +144,25 @@
   gap: 8px;
 }
 
+/* Anonymous desktop pages are documents, not fixed-height workstations. Give
+   the live preview its own stable viewport instead of asking every block plus
+   the footer to shrink into 100vh (the old layout could collapse the grid to
+   just a few pixels). Logged-in terminal sessions keep the fixed workspace. */
+@media (min-width: 821px) {
+  .bbt--anon {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .bbt--anon .bbt-grid {
+    flex: 0 0 auto;
+    height: min(74vh, 820px);
+    grid-auto-rows: minmax(0, 1fr);
+  }
+}
+
 /* The footer is useful for orientation and trust, but it should read as a quiet
    index rather than another product surface. */
 .bbt--anon .bbt-footer {
