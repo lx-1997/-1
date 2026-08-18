@@ -293,13 +293,17 @@ def _normalize_result(data: Any, *, provider: str, pages: int, disclaimer: str) 
     }
 
 
-# 我方品牌水印（pdf_brand 打的页眉 + 对角平铺 www.daocaijing.com）是真文字对象，
+# 我方品牌页脚（pdf_brand 打的 DeepFocus Research + 域名）是真文字对象，
 # 会被 get_text 一并抽出。图片型研报（原文无文字层）打完品牌水印后，抽出的“文本”
 # 全是水印且轻松超过 MIN_TEXT_CHARS → 文本通道误判有正文，把纯水印喂给模型
 # （解读成“原文只有网址水印”），且不再回退视觉。这里在长度判定/喂模型前剥掉水印字样。
 # 注意：页边被裁切的斜排水印会以残缺片段进文本层（如 "ww.daocaijing.co"、"caijing"），
 # 整串正则匹配不到 → 按「token 是水印串的子串」判定片段。
-_BRAND_TEXT_RE = re.compile(r"www\.daocaijing\.com|更多投研内容|DeepFocus|深度焦点", re.I)
+_BRAND_TEXT_RE = re.compile(
+    r"DeepFocus\s+Research\s*[|｜]\s*www\.daocaijing\.com"
+    r"|www\.daocaijing\.com|更多投研内容|DeepFocus|深度焦点",
+    re.I,
+)
 _BRAND_URL = "www.daocaijing.com"
 _BRAND_HEADER = "更多投研内容|deepfocus深度焦点|www.daocaijing.com"
 _BRAND_PUNCT = "|｜·—- \t　"

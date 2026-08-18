@@ -15,13 +15,13 @@
     D2. 内容流指令级：跟踪 CTM×文本矩阵 + 填充色，只删「浅灰 + 斜置」的 Tj/TJ 显示指令
         （对角平铺水印常压在正文上，矩形 redaction 会连正文一起擦掉；这里只删水印字形）
     并顺带解密（owner 加密、空 user 口令）——保证相 2 拿到的是明文
-  相 2 PyMuPDF（渲染级，物理擦除 + 打品牌水印）
+  相 2 PyMuPDF（渲染级，物理擦除 + 添加顶部遮盖带 / 独立品牌页脚）
     E. 文字水印：关键词/正则 · 旋转 · 浅灰/低透明 · **重复平铺**（跨 span/跨页去重）
     F. 注释水印：Stamp / 低透明 FreeText / 关键词
-    G. 图片水印：半透明覆盖 · **平铺小图** · **整页半透明蒙层（正文页才删，扫描件不动）** · 角落二维码
+    G. 图片水印：只处理带 SMask 的透明叠加图 / 平铺图；不透明扫描图不做破坏性擦除
 
 稳健性红线（本次强化）:
-  - 单相 try/except 隔离；任一相失败仍尽力产出（至少解密 + 打品牌水印）。
+  - 单相 try/except 隔离；任一相失败仍尽力产出（至少解密 + 添加品牌标记）。
   - 加密 PDF：pikepdf 空口令解密 + fitz authenticate("")；user 口令保护的优雅透传。
   - **失败（原样透传）不写盘缓存**——避免把「带水印原文」永久钉进缓存，下次仍有机会重试成功。
 
@@ -52,7 +52,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v2")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v4")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -70,13 +70,17 @@ _PREWARM_SEM: asyncio.Semaphore | None = None
 #   海外投行研报(产品自身来源标签)、vip、主播、draft、保密(保密协议) 等——
 #   这些会误删正文；真水印靠「浅灰/旋转/重复平铺」等信号兜住，不依赖泛关键词。
 _WATERMARK_KEYWORDS = [
-    "confidential", "not for distribution", "do not distribute", "do not redistribute",
     "知识星球", "加入星球", "加入知识星球", "水木纪要", "shuimu", "水木2026",
     "扫码关注", "扫码添加", "扫码进群", "长按识别", "长按二维码", "识别二维码",
     "不得转载", "翻版必究", "严禁外传", "禁止外传", "禁止传播", "严禁传播",
     "大家好我是",
     "加v看", "加V看", "加v：", "加v:", "加V：", "加V:", "加微信", "薇信",
 ]
+# 这些英文词会在正文的合规描述中出现，不能单靠关键词直接擦除；
+# 只在浅色 / 旋转 / 重复等版式水印信号同时存在时才判定。
+_GENERIC_WATERMARK_LABELS = (
+    "confidential", "not for distribution", "do not distribute", "do not redistribute",
+)
 # 复审教训：关键词命中即物理擦整行，故这里**只留研报正文几乎不可能出现的分发/社群短语**。
 # 已剔除会误删正文/标题的行业词与泛词：调研纪要(=研报体裁,如「XX公司调研纪要」)、
 # 内部资料/内部参考/内部交流(内部资料库/内部交流会)、公众号/微信公众(可为研报分析对象)、
@@ -113,9 +117,9 @@ _LEGIT_REPEAT = (
     "免责声明", "风险提示", "分析师", "证券研究报告", "请阅读", "评级说明",
 )
 
-# Aspose Artifact BDC...EMC 正则
+# Aspose Artifact BDC...EMC：兼容 name 之间无空格的紧凑写法。
 _ARTIFACT_WM_RE = re.compile(
-    rb'/Artifact\s*<<[^>]*?/Subtype\s*/Watermark[^>]*?>>\s*BDC\s*q\s*.*?Q\s*EMC',
+    rb'/Artifact\s*<<[^>]*?/Subtype\s*/Watermark\b[^>]*?>>\s*BDC\s*q\s*.*?Q\s*EMC',
     re.DOTALL,
 )
 
@@ -126,15 +130,13 @@ _SUSPICIOUS_XOBJ_RE = [
     re.compile(r"(?i)^/stamp", re.I),
 ]
 
-# 品牌水印配置
-_HEADER_H    = 16
-_HEADER_FILL = (0.93, 0.96, 1.0)
-_TEXT_COLOR  = (0.25, 0.35, 0.55)
-_DIAG_COLOR  = (0.78, 0.78, 0.78)
-_DIAG_ANGLE  = 20
-_DIAG_FS     = 11
-_DIAG_SX     = 240
-_DIAG_SY     = 140
+# 品牌标记：顶部用完全不透明色带覆盖原分发水印，底部增加独立页脚。
+_BRAND_TOP_COVER_H = 26.0
+_BRAND_TOP_FILL = (0.945, 0.970, 1.0)
+_BRAND_FOOTER_H = 12.0
+_BRAND_FOOTER_FILL = (0.955, 0.975, 1.0)
+_BRAND_TEXT_COLOR = (0.22, 0.34, 0.52)
+_BRAND_TEXT = "DeepFocus Research  |  www.daocaijing.com"
 
 
 # ── 辅助 ─────────────────────────────────────────────────────────────────────
@@ -143,14 +145,35 @@ def _norm(text: str) -> str:
     """归一化文字（折叠空白）——用于重复平铺计数。"""
     return re.sub(r"\s+", " ", (text or "").strip())
 
+
+def _compact(text: str) -> str:
+    """去掉水印中常见的拆字空格 / 分隔符，供高精度关键词匹配。"""
+    return re.sub(r"[\s\u3000|｜·•_\-:：]+", "", (text or "").lower())
+
 def _is_kw(text: str) -> bool:
     """关键词子串 或 高信号正则 命中。"""
     t = (text or "").lower().strip()
     if not t:
         return False
-    if any(k in t for k in _WATERMARK_KEYWORDS):
+    compact = _compact(t)
+    if any(k.lower() in t or _compact(k) in compact for k in _WATERMARK_KEYWORDS):
         return True
     return any(rx.search(text or "") for rx in _WATERMARK_REGEXES)
+
+
+def _is_generic_wm_label(text: str) -> bool:
+    compact = _compact(text)
+    return any(_compact(label) in compact for label in _GENERIC_WATERMARK_LABELS)
+
+
+def _is_our_brand(text: str) -> bool:
+    compact = _compact(text)
+    return "daocaijing.com" in compact and "deepfocus" in compact
+
+
+def _rect_area(rect: fitz.Rect) -> float:
+    """PyMuPDF 1.26 的 Rect 已无 get_area()，使用宽高乘积兼容新旧版。"""
+    return max(0.0, rect.width) * max(0.0, rect.height)
 
 def _is_suspicious(name: str) -> bool:
     return any(p.match(name) for p in _SUSPICIOUS_XOBJ_RE)
@@ -314,9 +337,7 @@ def _remove_wm_q_blocks(raw: bytes, xobjs) -> tuple[bytes, int]:
         return raw, 0
 
     words = [t[0] for t in toks]
-    removed = 0
-    xobj_names: list[str] = []
-    skip_bytes: list[tuple[int, int]] = []  # (start_byte, end_byte)
+    candidates: list[tuple[int, int, list[str]]] = []
 
     i = 0
     while i < n:
@@ -353,14 +374,31 @@ def _remove_wm_q_blocks(raw: bytes, xobjs) -> tuple[bytes, int]:
                         for k in range(1, len(blk))
                         if blk[k] == b'Do' and blk[k-1].startswith(b'/')]
             if do_found:
-                skip_bytes.append((toks[i][1], toks[j-1][2]))
-                xobj_names.extend(do_found)
-                removed += 1
+                candidates.append((toks[i][1], toks[j-1][2], do_found))
 
         i = j
 
-    if not skip_bytes:
+    if not candidates:
         return raw, 0
+
+    # 单个旋转 XObject 很可能是合法的图表标签 / 旋转图片，不能直接删。
+    # 只删可疑命名，或同一 XObject 在本页旋转平铺 >= N 次的块。
+    # Aspose 这类每个水印都是不同 Fm 的情况由前面的 /Subtype/Watermark
+    # Artifact 精确切除，不依赖这个启发式。
+    name_counts: "Counter[str]" = Counter(
+        name for _, _, names in candidates for name in set(names)
+    )
+    selected = [
+        (start, end, names)
+        for start, end, names in candidates
+        if any(_is_suspicious(name) or name_counts[name] >= _REPEAT_ON_PAGE for name in names)
+    ]
+    if not selected:
+        return raw, 0
+
+    skip_bytes = [(start, end) for start, end, _ in selected]
+    xobj_names = [name for _, _, names in selected for name in names]
+    removed = len(selected)
 
     # 删被引用 XObject
     for name in xobj_names:
@@ -479,17 +517,19 @@ def _remove_gray_rotated_text(pdf: pikepdf.Pdf) -> int:
         ctm = [1.0, 0.0, 0.0, 1.0]
         tm  = [1.0, 0.0, 0.0, 1.0]
         fill_gray = False
+        fill_sig = None
+        font_sig = ("", 0.0)
         stack: list = []
-        kept: list = []
-        removed = 0
+        classified: list[tuple[object, object]] = []
+        candidate_counts: "Counter[object]" = Counter()
         for ins in insns:
             op = str(ins.operator)
             od = ins.operands
             if op == "q":
-                stack.append((list(ctm), fill_gray))
+                stack.append((list(ctm), fill_gray, fill_sig, font_sig))
             elif op == "Q":
                 if stack:
-                    saved_ctm, fill_gray = stack.pop()
+                    saved_ctm, fill_gray, fill_sig, font_sig = stack.pop()
                     ctm = list(saved_ctm)
             elif op == "cm":
                 try:
@@ -501,17 +541,28 @@ def _remove_gray_rotated_text(pdf: pikepdf.Pdf) -> int:
                 try:
                     r, g, b = (float(x) for x in od)
                     fill_gray = _rgb_is_light_gray(r, g, b)
+                    fill_sig = ("rgb", round(r, 2), round(g, 2), round(b, 2)) if fill_gray else None
                 except Exception:
                     fill_gray = False
+                    fill_sig = None
             elif op == "g":
                 try:
-                    fill_gray = float(od[0]) > 0.55
+                    gray = float(od[0])
+                    fill_gray = gray > 0.55
+                    fill_sig = ("g", round(gray, 2)) if fill_gray else None
                 except Exception:
                     fill_gray = False
+                    fill_sig = None
             elif op in ("cs", "sc", "scn", "k"):
                 fill_gray = False          # 未知/非灰阶色空间：宁可不删
+                fill_sig = None
             elif op == "BT":
                 tm = [1.0, 0.0, 0.0, 1.0]
+            elif op == "Tf":
+                try:
+                    font_sig = (str(od[0]), round(float(od[1]), 1))
+                except Exception:
+                    font_sig = ("", 0.0)
             elif op == "Tm":
                 try:
                     t = [float(x) for x in od]
@@ -519,12 +570,26 @@ def _remove_gray_rotated_text(pdf: pikepdf.Pdf) -> int:
                 except Exception:
                     tm = [1.0, 0.0, 0.0, 1.0]
 
-            if op in _SHOW_OPS:
+            signature = None
+            if op in _SHOW_OPS and fill_gray:
                 comb = _mat2_mul(tm, ctm)
-                if fill_gray and _is_wm_rotation(*comb):
-                    removed += 1
-                    continue               # 丢弃这条水印显示指令
-            kept.append(ins)
+                if _is_wm_rotation(*comb):
+                    angle = round(math.degrees(math.atan2(comb[1], comb[0])) / 2) * 2
+                    signature = ("rot", angle, fill_sig, font_sig)
+                elif font_sig[1] >= 16:
+                    # 大字号正立平铺（如 CONFIDENTIAL）也在指令层外科删字形，
+                    # 但必须是「同字体 + 同颜色 + 同显示内容」重复，避免误删表格。
+                    signature = ("flat-large", fill_sig, font_sig, repr(od))
+                if signature is not None:
+                    candidate_counts[signature] += 1
+            classified.append((ins, signature))
+
+        removable = {
+            sig for sig, count in candidate_counts.items()
+            if count >= _REPEAT_ON_PAGE
+        }
+        kept = [ins for ins, sig in classified if sig not in removable]
+        removed = sum(1 for _, sig in classified if sig in removable)
 
         if removed:
             try:
@@ -601,6 +666,7 @@ def _redact_text_watermarks(page: fitz.Page, spans: list, doc_presence: "Counter
 
     page_counts: "Counter" = Counter(s["norm"] for s in spans if s["norm"])
     cross_thresh = max(_MIN_PAGES_FOR_CROSS, math.ceil(_CROSS_PAGE_FRAC * npages))
+    pw = page.rect.width or 1.0
     ph = page.rect.height or 1.0
 
     def _is_wm(s: dict) -> bool:
@@ -609,6 +675,7 @@ def _redact_text_watermarks(page: fitz.Page, spans: list, doc_presence: "Counter
         faint = s["opacity"] < _OPACITY_THRESHOLD
         rot = s["is_rot"]
         kw = _is_kw(s["text"])
+        generic_label = _is_generic_wm_label(s["text"])
         long_enough = len(norm) >= _MIN_WM_LEN
         whitelisted = any(w in norm for w in _LEGIT_REPEAT)
         rep_page = bool(norm) and long_enough and not whitelisted and page_counts[norm] >= _REPEAT_ON_PAGE
@@ -616,12 +683,17 @@ def _redact_text_watermarks(page: fitz.Page, spans: list, doc_presence: "Counter
                      and npages >= _MIN_PAGES_FOR_CROSS
                      and doc_presence.get(norm, 0) >= cross_thresh)
 
+        if _is_our_brand(s["text"]):
+            return False                  # 幂等重跑时保留我方页脚
         if kw:
             return True
+        if generic_label and (gray or faint or rot or rep_page or rep_cross):
+            return True
         if rot:
-            # 旋转文字：**只按 浅灰/低透明 判**。深色斜置文字（图表类目轴标签、斜置图表标题，
-            # 无论字号大小、是否重复）一律保留——重复/大字号都不是水印信号（合法轴标签也重复）。
-            return gray or faint
+            # 旋转浅灰不等于水印：图表轴标签也经常旋转。要求重复，或者是
+            # 明显跨越页面的大型单枚水印，避免误删单个斜置图注。
+            large_center_mark = s["size"] >= 16 and s["rect"].width >= pw * 0.30
+            return (gray or faint) and (rep_page or rep_cross or large_center_mark)
         if gray or faint:
             # 正立浅灰/低透明：唯一出现视为合法脚注（豁免），重复平铺才判水印
             return rep_page or rep_cross
@@ -644,7 +716,7 @@ def _redact_text_watermarks(page: fitz.Page, spans: list, doc_presence: "Counter
     def _would_gut_body(r: fitz.Rect) -> bool:
         for br in body_rects:
             inter = r & br
-            if (not inter.is_empty) and inter.get_area() > 0.30 * br.get_area():
+            if (not inter.is_empty) and _rect_area(inter) > 0.30 * _rect_area(br):
                 return True
         return False
 
@@ -750,41 +822,117 @@ def _remove_annots(page: fitz.Page) -> int:
 
 # ── 加品牌水印 ────────────────────────────────────────────────────────────────
 
-def _add_brand(page: fitz.Page) -> None:
-    pw, ph = page.rect.width, page.rect.height
-    page.draw_rect(fitz.Rect(0, 0, pw, _HEADER_H),
-                   color=None, fill=_HEADER_FILL, overlay=True)
-    SEG_FS = 8
-    segments = [
-        ("更多投研内容", "china-s"),
-        ("  |  DeepFocus", "helv"),
-        ("深度焦点",      "china-s"),
-        ("  |  www.daocaijing.com", "helv"),
-    ]
-    total_w = sum(fitz.get_text_length(t, fontname=f, fontsize=SEG_FS)
-                  for t, f in segments)
-    x = pw / 2 - total_w / 2
-    y_text = _HEADER_H - 3
-    for seg_text, seg_font in segments:
-        seg_w = fitz.get_text_length(seg_text, fontname=seg_font, fontsize=SEG_FS)
-        page.insert_text((x, y_text), seg_text, fontsize=SEG_FS,
-                         fontname=seg_font, color=_TEXT_COLOR, overlay=True)
-        x += seg_w
-    rad   = math.radians(_DIAG_ANGLE)
-    cos_a = math.cos(rad)
-    sin_a = math.sin(rad)
-    mat   = fitz.Matrix(cos_a, -sin_a, sin_a, cos_a, 0, 0)
-    short = "www.daocaijing.com"
-    for xi in range(-1, int(pw / _DIAG_SX) + 2):
-        for yi in range(-1, int(ph / _DIAG_SY) + 2):
-            ax = xi * _DIAG_SX; ay = yi * _DIAG_SY
-            px_ = ax * cos_a - ay * sin_a
-            py_ = ax * sin_a + ay * cos_a
-            if px_ < -100 or px_ > pw + 100 or py_ < -100 or py_ > ph + 100:
+def _page_has_brand(page: fitz.Page) -> bool:
+    """仅把带有当前 26pt 顶部遮盖带的页面视为已处理。
+
+    旧版只有 16pt 顶栏 / 只有底栏，不能提前返回，否则露出的原水印会一直保留。
+    """
+    try:
+        if not _is_our_brand(page.get_text("text")):
+            return False
+        pw = page.rect.width
+        for drawing in page.get_drawings():
+            rect = fitz.Rect(drawing.get("rect"))
+            fill = drawing.get("fill")
+            if not fill or len(fill) < 3:
                 continue
-            pivot = fitz.Point(px_, py_)
-            page.insert_text(pivot, short, fontsize=_DIAG_FS, fontname="helv",
-                             color=_DIAG_COLOR, morph=(pivot, mat), overlay=True)
+            fill_matches = all(abs(float(fill[i]) - _BRAND_TOP_FILL[i]) < 0.035 for i in range(3))
+            if (fill_matches
+                    and rect.y0 <= 0.8
+                    and rect.width >= pw - 1.0
+                    and rect.height >= _BRAND_TOP_COVER_H - 0.8):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _add_brand(page: fitz.Page) -> None:
+    """加顶部遮盖带和不遮挡正文的品牌页脚。
+
+    顶部 26pt 色带完全不透明，专门覆盖原渠道字样；常规页同时在 MediaBox
+    底部增加 12pt 独立色带，原页内容的坐标、比例与可选文字完全不变。
+    异常 CropBox / 旋转页不改页框，但仍覆盖顶部。若已存在当前高度的我方
+    顶栏则不重复添加，保证重跑幂等。
+    """
+    if _page_has_brand(page):
+        return
+
+    try:
+        has_legacy_brand = _is_our_brand(page.get_text("text"))
+    except Exception:
+        has_legacy_brand = False
+    footer_fs = 6.2
+    footer_text_width = fitz.get_text_length(
+        _BRAND_TEXT, fontname="helv", fontsize=footer_fs
+    )
+    mb = page.mediabox
+    cb = page.cropbox
+    boxes_match = all(abs(a - b) < 0.1 for a, b in zip(mb, cb))
+    can_extend = page.rotation == 0 and boxes_match
+
+    if can_extend and not has_legacy_brand:
+        # PDF 原点在左下：下移 y0 才是在视觉底部加空间；扩 y1 会把
+        # 原内容整体下推，导致顶部排版坐标变化。
+        page.set_mediabox(fitz.Rect(mb.x0, mb.y0 - _BRAND_FOOTER_H, mb.x1, mb.y1))
+        pw, ph = page.rect.width, page.rect.height
+        band = fitz.Rect(0, ph - _BRAND_FOOTER_H, pw, ph)
+        page.draw_rect(
+            band,
+            color=(0.82, 0.88, 0.96),
+            fill=_BRAND_FOOTER_FILL,
+            width=0.35,
+            overlay=True,
+        )
+        footer_x = max(5.0, pw - footer_text_width - 7.0)
+        footer_y = ph - 3.1
+    elif can_extend:
+        # v2 / v3 成品可能已经带品牌页脚，但顶部遮盖带过短或缺失。
+        # 只升级顶栏，绝不再扩一次 MediaBox，避免页脚越叠越厚。
+        pw, ph = page.rect.width, page.rect.height
+    else:
+        # 稀有的旋转 / 特殊裁切页：不改 page box，也不画底色盖正文。
+        pw, ph = page.rect.width, page.rect.height
+        footer_x = max(3.0, pw - footer_text_width - 4.0)
+        footer_y = max(footer_fs + 1.0, ph - 2.0)
+
+    # 先用 100% 不透明色带把原文件顶部的渠道文字 / 斜水印彻底盖住，
+    # 再把我方品牌放在色带中央；26pt 覆盖旧 16pt 顶栏下方仍外露的一整行。
+    top_band = fitz.Rect(0, 0, pw, min(_BRAND_TOP_COVER_H, ph))
+    page.draw_rect(
+        top_band,
+        color=(0.78, 0.86, 0.95),
+        fill=_BRAND_TOP_FILL,
+        width=0.45,
+        fill_opacity=1.0,
+        overlay=True,
+    )
+    header_fs = 7.4
+    header_text_width = fitz.get_text_length(
+        _BRAND_TEXT, fontname="helv", fontsize=header_fs
+    )
+    header_x = max(5.0, (pw - header_text_width) / 2.0)
+    header_y = max(header_fs + 1.0, (_BRAND_TOP_COVER_H + header_fs) / 2.0 - 0.8)
+    page.insert_text(
+        (header_x, header_y),
+        _BRAND_TEXT,
+        fontsize=header_fs,
+        fontname="helv",
+        color=_BRAND_TEXT_COLOR,
+        fill_opacity=0.92,
+        overlay=True,
+    )
+
+    if not has_legacy_brand:
+        page.insert_text(
+            (footer_x, footer_y),
+            _BRAND_TEXT,
+            fontsize=footer_fs,
+            fontname="helv",
+            color=_BRAND_TEXT_COLOR,
+            fill_opacity=0.72 if can_extend else 0.48,
+            overlay=True,
+        )
 
 
 # ── 相隔离的同步主流程 ────────────────────────────────────────────────────────
@@ -798,8 +946,8 @@ def _open_fitz(data: bytes) -> fitz.Document:
     return doc
 
 
-def _process_sync(content: bytes) -> tuple[bytes, bool]:
-    """去水印 + 品牌水印，全程内存处理（零临时文件）。
+def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, bool]:
+    """去水印 + 可选品牌顶栏 / 页脚，全程内存处理（零临时文件）。
 
     返回 (result_bytes, ok)。ok=True 仅当完整跑通相 2（已打品牌水印）；
     ok=False 表示只能透传/部分处理——**调用方据此决定是否落盘缓存**。
@@ -852,10 +1000,11 @@ def _process_sync(content: bytes) -> tuple[bytes, bool]:
                 _remove_image_watermarks(page)
             except Exception as exc:
                 logger.debug("[pdf_brand] 图片层第 %d 页失败: %s", i, exc)
-            try:
-                _add_brand(page)
-            except Exception as exc:
-                logger.debug("[pdf_brand] 品牌水印第 %d 页失败: %s", i, exc)
+            if add_brand:
+                try:
+                    _add_brand(page)
+                except Exception as exc:
+                    logger.debug("[pdf_brand] 品牌标记第 %d 页失败: %s", i, exc)
         result = doc.tobytes(garbage=2, deflate=True)
         doc.close()
         return result, True

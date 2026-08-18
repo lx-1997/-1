@@ -129,6 +129,7 @@ def test_extract_text_image_pdf_with_brand_falls_below_text_gate():
     text = rv.extract_pdf_text(_branded_pdf(3))
     assert "daocaijing" not in text
     assert "更多投研内容" not in text
+    assert text == ""
     assert len(text) < rv.MIN_TEXT_CHARS
 
 

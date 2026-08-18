@@ -9,7 +9,7 @@ PDF 去水印 + 打品牌水印  ——  pikepdf + PyMuPDF 双引擎
   E. 可疑名称 XObject (/Wm* /stamp* 等)
 
 加水印支持:
-  顶部 header 条 + 对角线平铺文字
+  26pt 完全不透明顶部遮盖带 + 不覆盖正文的 DeepFocus 独立页脚
 
 用法:
   python remover.py input.pdf [output.pdf] [-v]
@@ -22,6 +22,7 @@ import math
 import os
 import re
 import argparse
+import sys
 from pathlib import Path
 
 import fitz
@@ -253,7 +254,7 @@ def _strip_do_call(page: pikepdf.Page, xobj_name: str):
 
 # ─── 加水印：daocaijing.com 品牌水印 ─────────────────────────────────────────
 
-def add_brand_watermark(page: fitz.Page, text: str = DEFAULT_WM_TEXT) -> None:
+def _legacy_add_brand_watermark(page: fitz.Page, text: str = DEFAULT_WM_TEXT) -> None:
     """
     在每页添加两层品牌水印：
     1. 顶部 header 条（浅蓝底 + 深蓝字）
@@ -315,6 +316,16 @@ def add_brand_watermark(page: fitz.Page, text: str = DEFAULT_WM_TEXT) -> None:
             )
 
 
+def add_brand_watermark(page: fitz.Page, text: str = DEFAULT_WM_TEXT) -> None:
+    """兼容入口：与线上公用同一套「顶部遮盖带 + 独立页脚」品牌实现。"""
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from backend.deepfocus_api.pdf_brand import _add_brand  # noqa: PLC0415
+
+    _add_brand(page)
+
+
 # ─── 主流程 ──────────────────────────────────────────────────────────────────
 
 def process_pdf(
@@ -332,37 +343,25 @@ def process_pdf(
     print(f"\n{'─'*55}")
     print(f"输入: {Path(input_path).name}")
 
-    stats = dict(pages=0, text=0, annot=0, xobj=0, image=0)
-    tmp = output_path + ".tmp.pdf"
+    # CLI 与线上公用同一套引擎，避免两份规则漂移。
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from backend.deepfocus_api.pdf_brand import _process_sync  # noqa: PLC0415
 
-    # 步骤 1：pikepdf — Artifact / XObject 水印外科切除
-    pdf = pikepdf.open(input_path)
-    stats["xobj"] = remove_xobject_watermarks(pdf, verbose)
-    pdf.save(tmp)
-    pdf.close()
+    source = Path(input_path).read_bytes()
+    result, ok = _process_sync(source, add_brand=add_watermark)
+    Path(output_path).write_bytes(result)
+    with fitz.open(stream=result, filetype="pdf") as doc:
+        pages = len(doc)
+    stats = dict(pages=pages, text=0, annot=0, xobj=0, image=0, ok=ok)
 
-    # 步骤 2：PyMuPDF — 文字 / 注释 / 图片水印 + 可选打品牌水印
-    doc = fitz.open(tmp)
-    stats["pages"] = len(doc)
-    for page in doc:
-        stats["text"]  += remove_text_watermarks(page, verbose)
-        stats["annot"] += remove_annotation_watermarks(page, verbose)
-        stats["image"] += remove_image_watermarks(page, verbose)
-        if add_watermark:
-            add_brand_watermark(page, wm_text)
-
-    doc.save(output_path, garbage=4, deflate=True)
-    doc.close()
-    os.remove(tmp)
-
-    total    = sum(stats[k] for k in ("text", "annot", "xobj", "image"))
     orig_kb  = os.path.getsize(input_path) // 1024
     clean_kb = os.path.getsize(output_path) // 1024
     print(f"输出: {Path(output_path).name}")
-    print(f"  页数={stats['pages']}  文字={stats['text']}  注释={stats['annot']}  "
-          f"XObject={stats['xobj']}  图片={stats['image']}  "
-          + (f"[已打品牌水印]" if add_watermark else ""))
-    print(f"  大小: {orig_kb} KB → {clean_kb} KB  (去除 {total} 项)")
+    print(f"  页数={stats['pages']}  状态={'完整处理' if ok else '尽力透传'}  "
+          + ("[已加顶部遮盖带/品牌页脚]" if add_watermark else "[仅去水印]"))
+    print(f"  大小: {orig_kb} KB → {clean_kb} KB")
     return stats
 
 
