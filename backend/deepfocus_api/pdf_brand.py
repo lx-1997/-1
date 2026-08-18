@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v8")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v9")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -82,6 +82,7 @@ _RASTER_WM_SEM = threading.Semaphore(max(1, int(os.getenv("PDF_RASTER_WM_CONCURR
 #   这些会误删正文；真水印靠「浅灰/旋转/重复平铺」等信号兜住，不依赖泛关键词。
 _WATERMARK_KEYWORDS = [
     "知识星球", "加入星球", "加入知识星球", "水木纪要", "shuimu", "水木2026",
+    "更多一手调研纪要和海外投行研报",
     "扫码关注", "扫码添加", "扫码进群", "长按识别", "长按二维码", "识别二维码",
     "不得转载", "翻版必究", "严禁外传", "禁止外传", "禁止传播", "严禁传播",
     "大家好我是",
@@ -912,14 +913,44 @@ def _dominant_raster_image(page: fitz.Page) -> "tuple[int, int, int] | None":
         if page_area <= 0:
             return None
         dominant = []
-        for info in page.get_image_info(xrefs=True):
-            xref = int(info.get("xref") or 0)
-            rect = fitz.Rect(info.get("bbox") or (0, 0, 0, 0))
-            width = int(info.get("width") or 0)
-            height = int(info.get("height") or 0)
-            if (xref > 0 and width >= 400 and height >= 500
-                    and _rect_area(rect) >= page_area * 0.92):
-                dominant.append((xref, width, height))
+
+        # replace_image() 在部分旧版 PyMuPDF 中会把新图只挂到 Resources，
+        # 但内容流仍画原图。get_image_info(xrefs=True) 可能误报这个未显示
+        # 的 fzImg0，导致二次去水印修到“幽灵副本”。优先按内容流里
+        # 真正执行的 /Name Do 反查 xref；只有无法解析时才回退旧接口。
+        painted_names: set[str] = set()
+        try:
+            raw = b"\n".join(
+                page.parent.xref_stream(xref) or b""
+                for xref in page.get_contents()
+            )
+            painted_names = {
+                match.decode("latin-1")
+                for match in re.findall(rb"/([^\s/<>{}\[\]()]+)\s+Do\b", raw)
+            }
+        except Exception:
+            painted_names = set()
+
+        if painted_names:
+            for info in page.get_images(full=True):
+                try:
+                    xref, width, height, name = int(info[0]), int(info[2]), int(info[3]), str(info[7])
+                    if name not in painted_names or xref <= 0 or width < 400 or height < 500:
+                        continue
+                    rects = page.get_image_rects(xref)
+                    if any(_rect_area(rect) >= page_area * 0.92 for rect in rects):
+                        dominant.append((xref, width, height))
+                except Exception:
+                    continue
+        if not dominant:
+            for info in page.get_image_info(xrefs=True):
+                xref = int(info.get("xref") or 0)
+                rect = fitz.Rect(info.get("bbox") or (0, 0, 0, 0))
+                width = int(info.get("width") or 0)
+                height = int(info.get("height") or 0)
+                if (xref > 0 and width >= 400 and height >= 500
+                        and _rect_area(rect) >= page_area * 0.92):
+                    dominant.append((xref, width, height))
         if len(dominant) != 1:
             return None
         return dominant[0]
@@ -1013,6 +1044,24 @@ def _neighbor_light_fill(rgb):
     return filled
 
 
+def _dilate_mask(mask, radius: int):
+    """无 SciPy 的小半径布尔膨胀，用于保护深色正文字形边缘。"""
+    import numpy as np  # noqa: PLC0415
+
+    if radius <= 0:
+        return mask.copy()
+    height, width = mask.shape
+    expanded = np.zeros_like(mask, dtype=bool)
+    for dy in range(-radius, radius + 1):
+        sy0, sy1 = max(0, -dy), min(height, height - dy)
+        dy0, dy1 = sy0 + dy, sy1 + dy
+        for dx in range(-radius, radius + 1):
+            sx0, sx1 = max(0, -dx), min(width, width - dx)
+            dx0, dx1 = sx0 + dx, sx1 + dx
+            expanded[dy0:dy1, dx0:dx1] |= mask[sy0:sy1, sx0:sx1]
+    return expanded
+
+
 def _diagonal_band_geometry(shape, bands):
     """把斜排候选扩成覆盖完整字形的布尔区域。"""
     import numpy as np  # noqa: PLC0415
@@ -1046,6 +1095,18 @@ def _dedupe_page_bands(bands, width: int, height: int, sign: int):
         if len(selected) >= 3:
             break
     return [band for band, _ in selected]
+
+
+def _long_single_page_bands(bands, width: int):
+    """找单页中横跨近半页以上的长斜排字带。
+
+    这是对「更多一手调研纪要和海外投行研报…」固定引流水印的
+    定点补漏：它会在各页大幅平移，无法通过跨页稳定模板。上游斜带检测
+    已经要求浅灰、非正交角度、多个断续笔画和足够像素密度；这里再要求
+    横跨至少 48% 页宽，以排除普通图表斜线与短轴标。
+    """
+    min_span = width * 0.48
+    return [band for band in bands if band[3] - band[2] >= min_span]
 
 
 def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
@@ -1125,6 +1186,11 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
             and sign_score[dominant_sign] >= len(targets) * width * 0.30
             and sign_score[dominant_sign] >= sign_score[other_sign] * 1.35
         )
+        solo_bands = {
+            page_index: _long_single_page_bands(detected, width)
+            for page_index, detected in page_bands.items()
+        }
+        solo_ok = any(solo_bands.values())
 
         template_gray = max_gray
         gray_range = max_gray.astype(np.int16) - min_gray.astype(np.int16)
@@ -1148,7 +1214,7 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
             template[:] = False
             opaque[:] = False
             template_pixels = 0
-        if not stable_ok and not adaptive_ok:
+        if not stable_ok and not adaptive_ok and not solo_ok:
             return 0
 
         changed_pages = 0
@@ -1163,10 +1229,11 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
             ) // 3
             current_delta = np.abs(current_gray.astype(np.int16) - max_gray.astype(np.int16))
             repair = opaque | (template & (current_delta <= 7))
+            selected = []
             if adaptive_ok:
-                selected = _dedupe_page_bands(
+                selected.extend(_dedupe_page_bands(
                     page_bands.get(page_index, []), width, height, dominant_sign
-                )
+                ))
                 if stable_ok and selected:
                     # 固定模板已经覆盖的斜带不要再做宽松单页修复；否则正文抗锯齿会被
                     # 重复处理。自适应层只补模板没有覆盖到的、逐页移动的水印行。
@@ -1184,23 +1251,33 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
                             for center in stable_centers
                         )
                     ]
-                if selected:
-                    adaptive_geometry = _diagonal_band_geometry((height, width), selected)
-                    spread = (
-                        rgb.max(axis=2).astype(np.int16)
-                        - rgb.min(axis=2).astype(np.int16)
-                    )
-                    # 只擦斜带里的浅/中灰中性像素：保留黑色正文核心与彩色图表；
-                    # 上限要覆盖水印的浅色抗锯齿，否则会留下肉眼可见的“幽灵字”。
-                    adaptive = (
-                        adaptive_geometry
-                        & (spread <= 120)
-                        & (current_gray >= 90)
-                        & (current_gray <= 254)
-                    )
-                    if int(adaptive.sum()) <= width * height * 0.025:
-                        repair |= adaptive
-                        adaptive_band_count += len(selected)
+            # 单页超长斜排引流字带不要求跨页重复；与自适应候选合并并去重。
+            for band in solo_bands.get(page_index, []):
+                if band not in selected:
+                    selected.append(band)
+            if selected:
+                adaptive_geometry = _diagonal_band_geometry((height, width), selected)
+                spread = (
+                    rgb.max(axis=2).astype(np.int16)
+                    - rgb.min(axis=2).astype(np.int16)
+                )
+                # 只擦斜带里的浅/中灰中性像素：保留黑色正文核心与彩色图表；
+                # 上限要覆盖水印的浅色抗锯齿，否则会留下肉眼可见的“幽灵字”。
+                adaptive = (
+                    adaptive_geometry
+                    & (spread <= 120)
+                    & (current_gray >= 90)
+                    & (current_gray <= 254)
+                )
+                # 只保留黑色核心还不够：局部填充会把字母的浅灰抗锯齿边缘
+                # 一并变白，形成“断字”。把深色像素向外保护 2-3px，水印在空白处
+                # 照常清理，与正文重合的极少量灰像素则宁可保留，不损坏原文。
+                protect_radius = max(2, int(round(width / 700)))
+                protected_body = _dilate_mask(current_gray < 105, protect_radius)
+                adaptive &= ~protected_body
+                if int(adaptive.sum()) <= width * height * 0.025:
+                    repair |= adaptive
+                    adaptive_band_count += len(selected)
             if int(repair.sum()) < 50:
                 continue
             filled = _neighbor_light_fill(rgb)
@@ -1211,9 +1288,9 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
 
         logger.info(
             "[pdf_brand] raster cleaned pages=%d stable_bands=%d stable_pixels=%d "
-            "adaptive=%s adaptive_bands=%d sign=%+d",
+            "adaptive=%s adaptive_bands=%d solo=%s sign=%+d",
             changed_pages, len(bands) if stable_ok else 0, template_pixels,
-            adaptive_ok, adaptive_band_count, dominant_sign,
+            adaptive_ok, adaptive_band_count, solo_ok, dominant_sign,
         )
         return changed_pages
 

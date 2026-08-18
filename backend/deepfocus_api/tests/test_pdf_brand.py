@@ -53,6 +53,42 @@ def _image_only_report(*, watermark: bool, shifted: bool = False) -> bytes:
     return data
 
 
+def _single_page_channel_watermark_report(*, watermark: bool) -> bytes:
+    """生成只有一页出现超长斜排引流语的整图研报。"""
+    raster = fitz.open()
+    angle = math.radians(20)
+    matrix = fitz.Matrix(
+        math.cos(angle), -math.sin(angle), math.sin(angle), math.cos(angle), 0, 0
+    )
+    for index in range(5):
+        vector = fitz.open()
+        page = vector.new_page(width=600, height=800)
+        page.insert_text((330, 90), f"BODY KEEP PAGE {index}", fontsize=14)
+        for y in range(125, 420, 28):
+            page.insert_text(
+                (330, y),
+                "Incremental policies and market outlook",
+                fontsize=9,
+            )
+        if watermark and index == 1:
+            pivot = fitz.Point(12, 500)
+            page.insert_text(
+                pivot,
+                "更多一手调研纪要和海外投行研报 数据加微信 shuimu",
+                fontsize=18,
+                fontname="china-s",
+                color=(0.65, 0.65, 0.65),
+                morph=(pivot, matrix),
+            )
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+        vector.close()
+        out_page = raster.new_page(width=600, height=800)
+        out_page.insert_image(out_page.rect, stream=pix.tobytes("png"))
+    data = raster.tobytes(garbage=2, deflate=True)
+    raster.close()
+    return data
+
+
 def _render_rgb_pages(data: bytes) -> list[np.ndarray]:
     rendered = []
     with fitz.open(stream=data, filetype="pdf") as doc:
@@ -69,6 +105,7 @@ def _render_rgb_pages(data: bytes) -> list[np.ndarray]:
 def test_compact_keyword_matches_spaced_channel_watermark():
     assert pb._is_kw("水 木 纪 要")
     assert pb._is_kw("加 入 知 识 星 球")
+    assert pb._is_kw("更多 一手调研纪要 和 海外投行研报")
 
 
 def test_generic_confidential_body_is_not_a_direct_keyword():
@@ -272,6 +309,18 @@ def test_repeated_baked_raster_watermark_is_suppressed_without_rasterizing_text_
     searchable.close()
 
 
+def test_dominant_raster_prefers_image_actually_painted_by_content_stream():
+    with fitz.open(stream=_image_only_report(watermark=True), filetype="pdf") as doc:
+        page = doc[0]
+        original = pb._dominant_raster_image(page)
+        assert original is not None
+        original_xref = original[0]
+        replacement = fitz.Pixmap(doc, original_xref)
+        page.replace_image(original_xref, pixmap=replacement)
+        assert len(page.get_images(full=True)) == 2
+        assert pb._dominant_raster_image(page) == original
+
+
 def test_page_shifted_baked_raster_watermark_is_suppressed():
     source = _image_only_report(watermark=True, shifted=True)
     clean_reference = _image_only_report(watermark=False, shifted=True)
@@ -290,4 +339,19 @@ def test_page_shifted_baked_raster_watermark_is_suppressed():
         for a, b in zip(result_pages, clean_pages)
     ])
     assert before > 0.4
+    assert after < before * 0.55
+
+
+def test_single_page_long_channel_watermark_is_suppressed():
+    source = _single_page_channel_watermark_report(watermark=True)
+    clean_reference = _single_page_channel_watermark_report(watermark=False)
+    result, ok = pb._process_sync(source, add_brand=False)
+    assert ok
+
+    source_page = _render_rgb_pages(source)[1]
+    clean_page = _render_rgb_pages(clean_reference)[1]
+    result_page = _render_rgb_pages(result)[1]
+    before = np.abs(source_page.astype(np.int16) - clean_page.astype(np.int16)).mean()
+    after = np.abs(result_page.astype(np.int16) - clean_page.astype(np.int16)).mean()
+    assert before > 0.25
     assert after < before * 0.55
