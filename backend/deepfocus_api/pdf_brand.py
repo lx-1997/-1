@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v9")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v10")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -958,6 +958,22 @@ def _dominant_raster_image(page: fitz.Page) -> "tuple[int, int, int] | None":
         return None
 
 
+def _replace_raster_image(page: fitz.Page, xref: int, replacement: fitz.Pixmap) -> None:
+    """真正替换内容流正在绘制的整页图像。
+
+    PyMuPDF 1.26 的 ``replace_image()`` 会新建 ``fzImg*`` 资源，但某些
+    PDF 的 ``/Name Do`` 仍指向原 xref，因而看似处理成功、实际画面不变。
+    找到这次新建的图像对象后，再把其字典与流复制回原 xref，
+    使现有内容流无需改写即显示修复后像素。
+    """
+    before = {int(info[0]) for info in page.get_images(full=True)}
+    page.replace_image(xref, pixmap=replacement)
+    after = {int(info[0]) for info in page.get_images(full=True)}
+    created = sorted(candidate for candidate in after - before if candidate > 0)
+    if created:
+        page.parent.xref_copy(created[-1], xref)
+
+
 def _find_repeated_diagonal_bands(core_mask) -> list[tuple[float, float, int, int, int]]:
     """在跨页稳定像素中找长斜排文字带，返回 ``(slope,b,x0,x1,half_width)``。
 
@@ -1283,7 +1299,7 @@ def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
             filled = _neighbor_light_fill(rgb)
             rgb[repair] = filled[repair]
             replacement = fitz.Pixmap(fitz.csRGB, width, height, rgb.tobytes(), False)
-            doc[page_index].replace_image(xref, pixmap=replacement)
+            _replace_raster_image(doc[page_index], xref, replacement)
             changed_pages += 1
 
         logger.info(
@@ -1498,7 +1514,12 @@ def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, boo
             doc = _open_fitz(content)           # working 打不开就用原文再试
             working = content
         try:
-            _remove_repeated_raster_watermarks(doc)
+            # 烘焙水印的深色字心与浅色抗锯齿会在首轮修复后分批暴露；
+            # 实报中首轮去掉大部分字形，第二轮才清掉余下 3 页的“幽灵字”。
+            # 最多 3 轮且无改动即停，避免无界重复。
+            for _ in range(3):
+                if _remove_repeated_raster_watermarks(doc) == 0:
+                    break
         except Exception as exc:
             logger.debug("[pdf_brand] 跨页图片模板层失败: %s", exc)
         spans_by_page, doc_presence, npages = _gather_text_spans(doc)

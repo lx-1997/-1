@@ -320,6 +320,18 @@ def test_dominant_raster_prefers_image_actually_painted_by_content_stream():
         assert len(page.get_images(full=True)) == 2
         assert pb._dominant_raster_image(page) == original
 
+        width, height = original[1:]
+        white = fitz.Pixmap(
+            fitz.csRGB,
+            width,
+            height,
+            b"\xff" * (width * height * 3),
+            False,
+        )
+        pb._replace_raster_image(page, original_xref, white)
+        rendered = np.frombuffer(page.get_pixmap(alpha=False).samples, dtype=np.uint8)
+        assert rendered.mean() > 254.9
+
 
 def test_page_shifted_baked_raster_watermark_is_suppressed():
     source = _image_only_report(watermark=True, shifted=True)
