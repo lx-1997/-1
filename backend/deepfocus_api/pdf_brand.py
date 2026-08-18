@@ -64,6 +64,8 @@ _MEM_CACHE_MAX = int(os.getenv("PDF_BRAND_MEM_CACHE", "100"))
 # ── 预热已见集合 ──────────────────────────────────────────────────────────────
 _PREWARM_SEEN: set = set()
 _PREWARM_SEM: asyncio.Semaphore | None = None
+_PROCESS_SEM: asyncio.Semaphore | None = None
+_PROCESS_SEM_LOOP: asyncio.AbstractEventLoop | None = None
 
 # 图片型研报跨页模板识别会同时持有数张全页 RGB 数组。生产预热虽可并发下载，
 # 但这里默认串行，避免 3 篇大扫描件同时处理造成内存尖峰。
@@ -1920,27 +1922,52 @@ async def apply_pdf_brand(content: bytes, *, file_id: str = "") -> bytes:
     except Exception:
         pass
 
-    loop = asyncio.get_event_loop()
-    result, ok = await loop.run_in_executor(None, _process_sync, content)
+    # 所有入口共用一个重处理闸门：wire 即时预热、本地抓取舱预热、AI 预解读
+    # 可能同时拉起 apply_pdf_brand。2GB 生产机并发两份整页图片会把 RSS 推到
+    # 900MB、health 延迟到 6-12s；缓存命中在闸门外，只有真正首次处理才串行。
+    global _PROCESS_SEM, _PROCESS_SEM_LOOP
+    loop = asyncio.get_running_loop()
+    if _PROCESS_SEM is None or _PROCESS_SEM_LOOP is not loop:
+        _PROCESS_SEM = asyncio.Semaphore(1)
+        _PROCESS_SEM_LOOP = loop
 
-    if not ok:
-        # 未成功：直接返回尽力产物，不写任何缓存（下次重试）
-        return result
-
-    _mem_put(key, result)
-    try:
+    async with _PROCESS_SEM:
+        # 等待期间另一任务可能已完成同一 PDF；再次检查，避免重复烧 CPU / 内存。
         if file_id:
-            # 有 file_id（知识星球研报）只落 fid 成品。此前 sha+fid 双写让每篇研报在磁盘
-            # 存两份相同字节（实测 2.1GB 里 1.1GB 是孪生副本）；fid 是这类 PDF 唯一的磁盘热路径，
-            # sha 盘缓存仅服务无 fid 的调用方（东财代理），互不交叉。
-            _fid_cache_path(file_id).write_bytes(result)
-            _mem_put(_fid_mem_key(file_id), result)
-        elif cache_file is not None:
-            cache_file.write_bytes(result)
-    except Exception:
-        pass
+            cached_fid = get_cached_by_file_id(file_id)
+            if cached_fid is not None:
+                return cached_fid
+        if key in _MEM_CACHE:
+            _MEM_CACHE.move_to_end(key)
+            return _MEM_CACHE[key]
+        try:
+            if cache_file is not None and cache_file.exists():
+                data = cache_file.read_bytes()
+                _mem_put(key, data)
+                return data
+        except Exception:
+            pass
 
-    return result
+        result, ok = await loop.run_in_executor(None, _process_sync, content)
+
+        if not ok:
+            # 未成功：直接返回尽力产物，不写任何缓存（下次重试）
+            return result
+
+        _mem_put(key, result)
+        try:
+            if file_id:
+                # 有 file_id（知识星球研报）只落 fid 成品。此前 sha+fid 双写让每篇研报在磁盘
+                # 存两份相同字节（实测 2.1GB 里 1.1GB 是孪生副本）；fid 是这类 PDF 唯一的磁盘热路径，
+                # sha 盘缓存仅服务无 fid 的调用方（东财代理），互不交叉。
+                _fid_cache_path(file_id).write_bytes(result)
+                _mem_put(_fid_mem_key(file_id), result)
+            elif cache_file is not None:
+                cache_file.write_bytes(result)
+        except Exception:
+            pass
+
+        return result
 
 
 async def prewarm_pdf(content: bytes) -> None:

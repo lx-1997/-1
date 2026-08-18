@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import math
+import threading
+import time
 
 import fitz
 import numpy as np
@@ -378,6 +381,36 @@ def test_baked_image_stream_is_losslessly_compressed():
         raw_stream = branded.xref_stream_raw(xref) or b""
         assert len(raw_stream) < width * height
         assert len(branded[0].get_images(full=True)) == 1
+
+
+def test_first_time_processing_is_globally_serialized(monkeypatch, tmp_path):
+    """多个后台入口同时预热时只允许一份 PDF 做重处理，缓存快路径不受影响。"""
+    monkeypatch.setattr(pb, "_CACHE_DIR", tmp_path)
+    pb._MEM_CACHE.clear()
+    pb._PROCESS_SEM = None
+    pb._PROCESS_SEM_LOOP = None
+    state = {"active": 0, "peak": 0}
+    guard = threading.Lock()
+
+    def fake_process(content: bytes):
+        with guard:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        time.sleep(0.04)
+        with guard:
+            state["active"] -= 1
+        return content + b"-done", True
+
+    monkeypatch.setattr(pb, "_process_sync", fake_process)
+    first = b"%PDF-1.7\n" + b"A" * 2048
+    second = b"%PDF-1.7\n" + b"B" * 2048
+
+    async def run_both():
+        return await asyncio.gather(pb.apply_pdf_brand(first), pb.apply_pdf_brand(second))
+
+    results = asyncio.run(run_both())
+    assert state["peak"] == 1
+    assert results == [first + b"-done", second + b"-done"]
 
 
 def test_dominant_raster_prefers_image_actually_painted_by_content_stream():
