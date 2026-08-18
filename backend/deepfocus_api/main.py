@@ -5350,7 +5350,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
             download_count=row["download_count"],
             preview_url=(
                 "/api/research/workbench-pdf"
-                f"?filename={quote(row['filename'])}&out={quote(row['out'])}&brand=v16"
+                f"?filename={quote(row['filename'])}&out={quote(row['out'])}&brand=v17"
             ),
         )
         for row in result["items"]
@@ -5440,33 +5440,116 @@ def _require_research_original_access(claims: dict[str, Any]) -> None:
         raise HTTPException(status_code=402, detail="研报原文是会员功能，开通会员即可阅读")
 
 
-_PDF_PREWARM_SEEN: set[str] = set()  # 已触发预热的 file_id，进程级去重
+_PDF_PREWARM_SEEN: set[str] = set()  # 已成功预热的 file_id，进程级去重
+_PDF_PREWARM_INFLIGHT: set[str] = set()
+_PDF_PREWARM_RETRY_AT: dict[str, float] = {}
+_LOCAL_PDF_PREWARM_DONE: dict[str, tuple[int, int]] = {}
+_LOCAL_PDF_PREWARM_INFLIGHT: set[str] = set()
+_LOCAL_PDF_PREWARM_RETRY_AT: dict[str, float] = {}
 
 
 def _trigger_pdf_prewarm(rows: list[dict]) -> None:
-    """fire-and-forget：对新研报 PDF 后台预热（最多 5 个，已见跳过）。"""
-    targets = [(r["file_id"], r.get("filename", "")) for r in rows
-               if r.get("file_id") and r["file_id"] not in _PDF_PREWARM_SEEN][:10]
+    """fire-and-forget：抓到在线新研报后立即下载、去水印、打标并落成品缓存。"""
+    from .pdf_brand import has_cached_file_id  # noqa: PLC0415
+
+    now = time.monotonic()
+    targets: list[tuple[str, str]] = []
+    for row in rows:
+        fid = str(row.get("file_id") or "").strip()
+        if not fid or fid in _PDF_PREWARM_SEEN or fid in _PDF_PREWARM_INFLIGHT:
+            continue
+        if _PDF_PREWARM_RETRY_AT.get(fid, 0.0) > now:
+            continue
+        if has_cached_file_id(fid):
+            _PDF_PREWARM_SEEN.add(fid)
+            continue
+        targets.append((fid, str(row.get("filename") or "")))
+        if len(targets) >= 10:
+            break
     if not targets:
         return
     for fid, _ in targets:
-        _PDF_PREWARM_SEEN.add(fid)
+        _PDF_PREWARM_INFLIGHT.add(fid)
     asyncio.create_task(_prewarm_pdf_batch(targets))
 
 
 async def _prewarm_pdf_batch(targets: list[tuple[str, str]]) -> None:
     log = logging.getLogger(__name__)
-    sem = asyncio.Semaphore(3)   # 最多 3 个并发，避免同时打爆 Node 工作台
+    sem = asyncio.Semaphore(2)   # 图片烙印较吃 CPU；并发 2 兼顾预热速度和在线请求
 
     async def _one(fid: str, fname: str) -> None:
         async with sem:
             try:
                 await _fetch_research_online_pdf(fid, fname)
+                from .pdf_brand import has_cached_file_id  # noqa: PLC0415
+                if not has_cached_file_id(fid):
+                    raise RuntimeError("PDF 成品未写入缓存")
+                _PDF_PREWARM_SEEN.add(fid)
+                _PDF_PREWARM_RETRY_AT.pop(fid, None)
                 log.debug("[pdf_prewarm] done %s", fid)
             except Exception as exc:
+                _PDF_PREWARM_RETRY_AT[fid] = time.monotonic() + 300.0
                 log.debug("[pdf_prewarm] skip %s: %s", fid, exc)
+            finally:
+                _PDF_PREWARM_INFLIGHT.discard(fid)
 
     await asyncio.gather(*[_one(fid, fname) for fid, fname in targets])
+
+
+def _trigger_local_pdf_prewarm(rows: list[dict]) -> None:
+    """抓取舱出现完整 PDF 后立即预处理；.part 文件不会进入 rows，避免读到半截。"""
+    now = time.monotonic()
+    targets: list[tuple[Path, tuple[int, int]]] = []
+    for row in rows:
+        if not str(row.get("filename") or "").lower().endswith(".pdf"):
+            continue
+        try:
+            path = _safe_workbench_file_path(
+                str(row.get("out") or "downloads/海外投行报告"),
+                str(row.get("filename") or ""),
+            )
+            stat = path.stat()
+        except (HTTPException, OSError):
+            continue
+        key = str(path)
+        signature = (int(stat.st_size), int(stat.st_mtime_ns))
+        if (_LOCAL_PDF_PREWARM_DONE.get(key) == signature
+                or key in _LOCAL_PDF_PREWARM_INFLIGHT
+                or _LOCAL_PDF_PREWARM_RETRY_AT.get(key, 0.0) > now):
+            continue
+        _LOCAL_PDF_PREWARM_INFLIGHT.add(key)
+        targets.append((path, signature))
+        if len(targets) >= 10:
+            break
+    if targets:
+        asyncio.create_task(_prewarm_local_pdf_batch(targets))
+
+
+async def _prewarm_local_pdf_batch(targets: list[tuple[Path, tuple[int, int]]]) -> None:
+    """本地抓取 PDF 只在后台处理一次；失败五分钟后自动重试。"""
+    from .pdf_brand import apply_pdf_brand, has_cached_content  # noqa: PLC0415
+
+    log = logging.getLogger(__name__)
+    sem = asyncio.Semaphore(2)
+
+    async def _one(path: Path, signature: tuple[int, int]) -> None:
+        key = str(path)
+        async with sem:
+            try:
+                raw = await asyncio.to_thread(path.read_bytes)
+                await apply_pdf_brand(raw)
+                if not has_cached_content(raw):
+                    raise RuntimeError("PDF 成品未写入缓存")
+                _LOCAL_PDF_PREWARM_DONE[key] = signature
+                _LOCAL_PDF_PREWARM_RETRY_AT.pop(key, None)
+                log.debug("[pdf_prewarm] local done %s", path.name)
+            except Exception as exc:
+                _LOCAL_PDF_PREWARM_RETRY_AT[key] = time.monotonic() + 300.0
+                log.debug("[pdf_prewarm] local skip %s: %s", path.name, exc)
+            finally:
+                _LOCAL_PDF_PREWARM_INFLIGHT.discard(key)
+
+    await asyncio.gather(*[_one(path, signature) for path, signature in targets])
 
 
 async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[bytes, str]:
@@ -7200,17 +7283,23 @@ async def api_metrics_token(request: Request) -> dict[str, str]:
 
 
 async def run_wire_refresher() -> None:
-    """后台保活研报列表缓存：定期强制刷新默认视图（limit=120），让前端始终秒开。"""
+    """后台抓取研报元数据，并立刻预处理新 PDF；用户打开时只读成品缓存。"""
     interval = float(os.getenv("DEEPFOCUS_WIRE_REFRESH_SECONDS", "75"))
     await asyncio.sleep(8)
-    print(f"[wire-refresh] 启动：每 {interval}s 刷新研报列表缓存")
+    print(f"[wire-refresh] 启动：每 {interval}s 刷新研报列表并预处理新 PDF")
     while True:
         try:
-            await fetch_research_wire_online(limit=120, use_cache=False)
+            data = await fetch_research_wire_online(limit=120, use_cache=False)
+            _trigger_pdf_prewarm((data.get("items") or [])[:10])
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             print(f"[wire-refresh] 刷新失败：{type(exc).__name__}")
+        try:
+            local = list_research_wire(limit=10)
+            _trigger_local_pdf_prewarm(local.get("items") or [])
+        except Exception as exc:  # noqa: BLE001 - 本地舱失败不影响在线预热
+            print(f"[wire-refresh] 本地 PDF 预热扫描失败：{type(exc).__name__}")
         await asyncio.sleep(interval)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import math
 
 import fitz
@@ -360,6 +361,23 @@ def test_deepfocus_brand_is_baked_into_image_only_report():
         ]
         assert rotated_brand_lines == []
         assert branded[0].get_text("text").count("www.daocaijing.com") == 3
+
+    with pikepdf.Pdf.open(io.BytesIO(result)) as optimized:
+        assert optimized.is_linearized is True
+
+
+def test_baked_image_stream_is_losslessly_compressed():
+    """整页烙印不能再把 RGB 原始像素直接塞回 PDF，避免三倍体积拖慢打开。"""
+    source = _image_only_report(watermark=False)
+    result, ok = pb._process_sync(source)
+    assert ok
+    with fitz.open(stream=result, filetype="pdf") as branded:
+        info = pb._dominant_raster_image(branded[0])
+        assert info is not None
+        xref, width, height = info
+        raw_stream = branded.xref_stream_raw(xref) or b""
+        assert len(raw_stream) < width * height
+        assert len(branded[0].get_images(full=True)) == 1
 
 
 def test_dominant_raster_prefers_image_actually_painted_by_content_stream():

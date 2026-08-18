@@ -99,4 +99,20 @@ def test_local_workbench_pdf_route_uses_brand_pipeline_and_cache_buster():
     assert "apply_pdf_brand" in route_source
     assert '"Cache-Control": "private, no-store"' in route_source
     assert '"Accept-Ranges": "none"' in route_source
-    assert "&brand=v16" in source
+    assert "&brand=v17" in source
+
+
+def test_background_wire_refresh_preprocesses_online_and_local_pdfs():
+    """PDF 预处理必须由后台抓取刷新触发，不能依赖第一个用户打开列表。"""
+    main_path = Path(__file__).resolve().parents[1] / "main.py"
+    source = main_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    refresher = next(
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "run_wire_refresher"
+    )
+    refresher_source = ast.get_source_segment(source, refresher) or ""
+    assert "_trigger_pdf_prewarm" in refresher_source
+    assert "_trigger_local_pdf_prewarm" in refresher_source

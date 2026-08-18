@@ -54,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v16")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v17")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ def _fid_mem_key(file_id: str) -> str:
     return f"fid:{_PROC_VERSION}:links1:{file_id}"
 
 
-_OWNED_CACHE_RE = re.compile(r"^(?:fid_v\d+_|[0-9a-f]{20}_v\d+$)")
+_OWNED_CACHE_RE = re.compile(r"^(?:fid_v\d+_|[0-9a-f]{20}_v\d+(?:_links\d+)?$)")
 _CUR_VER_RE = re.compile(rf"(?:^|_){re.escape(_PROC_VERSION)}(?:_|$)")
 
 
@@ -329,6 +329,23 @@ def has_cached_file_id(file_id: str) -> bool:
         return True
     try:
         return _fid_cache_path(file_id).exists()
+    except Exception:
+        return False
+
+
+def _content_cache_key(content: bytes) -> str:
+    return f"{hashlib.sha256(content).hexdigest()[:20]}_{_PROC_VERSION}_links1"
+
+
+def has_cached_content(content: bytes) -> bool:
+    """轻量判断无 file_id 的原始 PDF 是否已经生成当前版本成品。"""
+    if len(content) < 1024:
+        return True
+    key = _content_cache_key(content)
+    if key in _MEM_CACHE:
+        return True
+    try:
+        return (_CACHE_DIR / f"{key}.pdf").exists()
     except Exception:
         return False
 
@@ -971,8 +988,12 @@ def _replace_raster_image(page: fitz.Page, xref: int, replacement: fitz.Pixmap) 
     找到这次新建的图像对象后，再把其字典与流复制回原 xref，
     使现有内容流无需改写即显示修复后像素。
     """
+    # 直接传 Pixmap 会让 PyMuPDF 把 RGB 像素以大体积 Flate 流写回：实测 14 页
+    # 6.1 MB 原稿会膨胀到 19.7 MB。先编码为无损 PNG stream 再替换，画质不变，
+    # 同一成品降至约 6.8 MB，显著缩短网络传输和浏览器打开时间。
+    compressed = replacement.tobytes("png")
     before = {int(info[0]) for info in page.get_images(full=True)}
-    page.replace_image(xref, pixmap=replacement)
+    page.replace_image(xref, stream=compressed)
     after = {int(info[0]) for info in page.get_images(full=True)}
     created = sorted(candidate for candidate in after - before if candidate > 0)
     if created:
@@ -1739,6 +1760,25 @@ def _open_fitz(data: bytes) -> fitz.Document:
     return doc
 
 
+def _linearize_pdf_bytes(data: bytes) -> bytes:
+    """把成品改成 Fast Web View，使浏览器能在整份文件下载完前先显示首页。"""
+    pdf = None
+    try:
+        pdf = pikepdf.open(io.BytesIO(data))
+        buf = io.BytesIO()
+        pdf.save(buf, linearize=True, compress_streams=True)
+        return buf.getvalue()
+    except Exception as exc:
+        logger.debug("[pdf_brand] linearize 跳过: %s", exc)
+        return data
+    finally:
+        if pdf is not None:
+            try:
+                pdf.close()
+            except Exception:
+                pass
+
+
 def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, bool]:
     """去水印 + 可选品牌顶栏 / 页脚，全程内存处理（零临时文件）。
 
@@ -1833,8 +1873,12 @@ def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, boo
                     _add_brand(page)
                 except Exception as exc:
                     logger.debug("[pdf_brand] 品牌标记第 %d 页失败: %s", i, exc)
-        result = doc.tobytes(garbage=2, deflate=True)
+        # replace_image 会临时创建新 XObject；garbage=2 仍把不再绘制的旧图像资源
+        # 留在 PDF 里，14 页实报因此从 6.1 MB 膨胀到 19.7 MB。garbage=4 + clean
+        # 会合并重复对象并清掉这些幽灵资源，显示内容和烙印像素不变。
+        result = doc.tobytes(garbage=4, clean=True, deflate=True)
         doc.close()
+        result = _linearize_pdf_bytes(result)
         return result, True
     except Exception as exc:
         logger.warning("[pdf_brand] PyMuPDF 相失败，退回相 1 产物: %s", exc)
@@ -1856,7 +1900,7 @@ async def apply_pdf_brand(content: bytes, *, file_id: str = "") -> bytes:
     if len(content) < 1024:
         return content
 
-    key = f"{hashlib.sha256(content).hexdigest()[:20]}_{_PROC_VERSION}_links1"
+    key = _content_cache_key(content)
 
     if key in _MEM_CACHE:
         _MEM_CACHE.move_to_end(key)
@@ -1906,7 +1950,7 @@ async def prewarm_pdf(content: bytes) -> None:
         _PREWARM_SEM = asyncio.Semaphore(3)
     if len(content) < 1024:
         return
-    key = f"{hashlib.sha256(content).hexdigest()[:20]}_{_PROC_VERSION}"
+    key = _content_cache_key(content)
     if key in _MEM_CACHE:
         return
     try:
