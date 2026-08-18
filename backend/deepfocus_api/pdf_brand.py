@@ -35,10 +35,12 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import io
 import logging
 import math
+import multiprocessing
 import os
 import re
 import threading
@@ -66,6 +68,7 @@ _PREWARM_SEEN: set = set()
 _PREWARM_SEM: asyncio.Semaphore | None = None
 _PROCESS_SEM: asyncio.Semaphore | None = None
 _PROCESS_SEM_LOOP: asyncio.AbstractEventLoop | None = None
+_PROCESS_EXECUTOR: concurrent.futures.Executor | None = None
 
 # 图片型研报跨页模板识别会同时持有数张全页 RGB 数组。生产预热虽可并发下载，
 # 但这里默认串行，避免 3 篇大扫描件同时处理造成内存尖峰。
@@ -1781,6 +1784,17 @@ def _linearize_pdf_bytes(data: bytes) -> bytes:
                 pass
 
 
+def _get_process_executor() -> concurrent.futures.Executor:
+    """单独子进程承载 PyMuPDF / pikepdf 重计算，避免 C 扩展长时间占 GIL 拖慢 API。"""
+    global _PROCESS_EXECUTOR
+    if _PROCESS_EXECUTOR is None:
+        _PROCESS_EXECUTOR = concurrent.futures.ProcessPoolExecutor(
+            max_workers=1,
+            mp_context=multiprocessing.get_context("spawn"),
+        )
+    return _PROCESS_EXECUTOR
+
+
 def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, bool]:
     """去水印 + 可选品牌顶栏 / 页脚，全程内存处理（零临时文件）。
 
@@ -1948,7 +1962,7 @@ async def apply_pdf_brand(content: bytes, *, file_id: str = "") -> bytes:
         except Exception:
             pass
 
-        result, ok = await loop.run_in_executor(None, _process_sync, content)
+        result, ok = await loop.run_in_executor(_get_process_executor(), _process_sync, content)
 
         if not ok:
             # 未成功：直接返回尽力产物，不写任何缓存（下次重试）

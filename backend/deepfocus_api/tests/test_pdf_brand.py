@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import io
 import math
 import threading
@@ -402,15 +403,20 @@ def test_first_time_processing_is_globally_serialized(monkeypatch, tmp_path):
         return content + b"-done", True
 
     monkeypatch.setattr(pb, "_process_sync", fake_process)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    monkeypatch.setattr(pb, "_get_process_executor", lambda: executor)
     first = b"%PDF-1.7\n" + b"A" * 2048
     second = b"%PDF-1.7\n" + b"B" * 2048
 
     async def run_both():
         return await asyncio.gather(pb.apply_pdf_brand(first), pb.apply_pdf_brand(second))
 
-    results = asyncio.run(run_both())
-    assert state["peak"] == 1
-    assert results == [first + b"-done", second + b"-done"]
+    try:
+        results = asyncio.run(run_both())
+        assert state["peak"] == 1
+        assert results == [first + b"-done", second + b"-done"]
+    finally:
+        executor.shutdown(wait=True)
 
 
 def test_dominant_raster_prefers_image_actually_painted_by_content_stream():
