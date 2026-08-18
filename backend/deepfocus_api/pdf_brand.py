@@ -18,7 +18,8 @@
   相 2 PyMuPDF（渲染级，物理擦除 + 添加顶部遮盖带 / 独立品牌页脚）
     E. 文字水印：关键词/正则 · 旋转 · 浅灰/低透明 · **重复平铺**（跨 span/跨页去重）
     F. 注释水印：Stamp / 低透明 FreeText / 关键词
-    G. 图片水印：只处理带 SMask 的透明叠加图 / 平铺图；不透明扫描图不做破坏性擦除
+    G. 图片水印：透明叠加图 / 平铺图直接移除；无文字层的整页扫描图用跨页稳定模板
+       识别重复斜水印，只修复模板像素，文字型 PDF 与单页图片一律不做栅格改写
 
 稳健性红线（本次强化）:
   - 单相 try/except 隔离；任一相失败仍尽力产出（至少解密 + 添加品牌标记）。
@@ -40,6 +41,7 @@ import logging
 import math
 import os
 import re
+import threading
 from collections import Counter, OrderedDict
 from pathlib import Path
 
@@ -52,7 +54,7 @@ _CACHE_DIR = Path(os.getenv("PDF_CACHE_DIR", "/opt/deepfocus/pdf_cache"))
 
 # 去水印/打标逻辑版本号。**改动去水印或品牌逻辑时 +1**：并入缓存键，
 # 使已缓存的旧成品自动失效重跑（否则老 PDF 会一直回放旧的弱去水印结果）。
-_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v4")
+_PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v6")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
@@ -62,6 +64,15 @@ _MEM_CACHE_MAX = int(os.getenv("PDF_BRAND_MEM_CACHE", "100"))
 # ── 预热已见集合 ──────────────────────────────────────────────────────────────
 _PREWARM_SEEN: set = set()
 _PREWARM_SEM: asyncio.Semaphore | None = None
+
+# 图片型研报跨页模板识别会同时持有数张全页 RGB 数组。生产预热虽可并发下载，
+# 但这里默认串行，避免 3 篇大扫描件同时处理造成内存尖峰。
+_RASTER_WM_ENABLED = os.getenv("PDF_RASTER_WM_ENABLED", "1").strip().lower() not in {
+    "0", "false", "no",
+}
+_RASTER_WM_MAX_PAGES = int(os.getenv("PDF_RASTER_WM_MAX_PAGES", "60"))
+_RASTER_WM_MAX_PIXELS = int(os.getenv("PDF_RASTER_WM_MAX_PIXELS", "5000000"))
+_RASTER_WM_SEM = threading.Semaphore(max(1, int(os.getenv("PDF_RASTER_WM_CONCURRENCY", "1"))))
 
 # ── 水印关键词（子串匹配）────────────────────────────────────────────────────
 # **高精度红线**：关键词命中会直接物理擦除该文字行（含 apply_redactions 的溢出擦除），
@@ -846,6 +857,328 @@ def _remove_image_watermarks(page: fitz.Page) -> int:
     return len(to_delete)
 
 
+def _dominant_raster_image(page: fitz.Page) -> "tuple[int, int, int] | None":
+    """返回无文字层页面中唯一的整页主图 ``(xref, width, height)``。
+
+    跨页栅格修复只允许作用于这种本来就是图片的页面，绝不把可搜索的文字型 PDF
+    整页栅格化。页面含多张图、主图未覆盖 92% 页面、旋转 / 尺寸异常时全部跳过。
+    """
+    try:
+        text = page.get_text("text").strip()
+        if text and not _is_our_brand(text):
+            return None
+        if page.rotation != 0:
+            return None
+        page_area = _rect_area(page.rect)
+        if page_area <= 0:
+            return None
+        dominant = []
+        for info in page.get_image_info(xrefs=True):
+            xref = int(info.get("xref") or 0)
+            rect = fitz.Rect(info.get("bbox") or (0, 0, 0, 0))
+            width = int(info.get("width") or 0)
+            height = int(info.get("height") or 0)
+            if (xref > 0 and width >= 400 and height >= 500
+                    and _rect_area(rect) >= page_area * 0.92):
+                dominant.append((xref, width, height))
+        if len(dominant) != 1:
+            return None
+        return dominant[0]
+    except Exception:
+        return None
+
+
+def _find_repeated_diagonal_bands(core_mask) -> list[tuple[float, float, int, int, int]]:
+    """在跨页稳定像素中找长斜排文字带，返回 ``(slope,b,x0,x1,half_width)``。
+
+    这是轻量 Radon / Hough 思路：扫描 ±20° 左右的斜率，统计 ``y-m*x`` 投影峰。
+    除了足够长、足够多像素，还要求沿 x 方向存在多个断续笔画；连续实线、水平页眉、
+    页码均不会入选。候选间按共享像素做 NMS，避免同一水印被相邻斜率重复选中。
+    """
+    import numpy as np  # noqa: PLC0415 - 仅图片型 PDF 才加载
+
+    height, width = core_mask.shape
+    ys, xs = np.where(core_mask)
+    if len(xs) < max(180, int(width * 0.35)):
+        return []
+
+    half = max(8, int(round(height / 90)))
+    min_count = max(120, int(width * 0.24))
+    min_span = int(width * 0.25)
+    slopes = np.concatenate((np.linspace(-0.55, -0.20, 15), np.linspace(0.20, 0.55, 15)))
+    candidates = []
+    window = np.ones(2 * half + 1, dtype=np.int32)
+    for slope in slopes:
+        intercepts = np.rint(ys - slope * xs).astype(np.int32)
+        offset = max(0, -int(intercepts.min()) + 2)
+        hist = np.bincount(intercepts + offset)
+        smooth = np.convolve(hist, window, mode="same")
+        for idx in np.argsort(smooth)[::-1][:8]:
+            intercept = float(int(idx) - offset)
+            near = np.abs(ys - slope * xs - intercept) <= half
+            count = int(near.sum())
+            if count < min_count:
+                continue
+            x_near = xs[near]
+            span = int(x_near.max() - x_near.min())
+            median_y = float(np.median(ys[near]))
+            if (span < min_span or median_y < height * 0.18 or median_y > height * 0.90):
+                continue
+            # 文字笔画在同一 x 列通常有多个稳定像素；单根图表斜线约为 1px / 列。
+            # 中文水印字距很紧，不能强求很多空白 run，否则会把整句误判成连续线。
+            if count / max(1, span) < 1.35:
+                continue
+            candidates.append((count, span, float(slope), intercept, near, x_near))
+
+    chosen = []
+    selected_points = None
+    for count, span, slope, intercept, near, x_near in sorted(
+        candidates, key=lambda item: (item[0], item[1]), reverse=True
+    ):
+        if selected_points is not None:
+            overlap = int(np.count_nonzero(near & selected_points)) / max(1, count)
+            if overlap > 0.60:
+                continue
+        selected_points = near.copy() if selected_points is None else (selected_points | near)
+        chosen.append((slope, intercept, int(x_near.min()), int(x_near.max()), half))
+        if len(chosen) >= 6:
+            break
+    return chosen
+
+
+def _neighbor_light_fill(rgb):
+    """用水印笔画四周的较亮像素做快速局部修复，不依赖 OpenCV / SciPy。"""
+    import numpy as np  # noqa: PLC0415
+
+    filled = rgb.copy()
+    height, width = rgb.shape[:2]
+    unit = max(2, int(round(width / 410)))
+    offsets = []
+    # 烘焙水印的中文字形常有 20-35px 宽；只看 12px 邻域会从同一笔画取回灰色，
+    # 造成“检测到了但仍留半截”。多尺度取亮邻居，最终只写回严格 repair 蒙版内。
+    for dist in (unit, unit * 2, unit * 3, unit * 4, unit * 6, unit * 8):
+        offsets.extend((
+            (dist, 0), (-dist, 0), (0, dist), (0, -dist),
+            (dist, dist), (dist, -dist), (-dist, dist), (-dist, -dist),
+        ))
+    for dy, dx in offsets:
+        sy0, sy1 = max(0, -dy), min(height, height - dy)
+        sx0, sx1 = max(0, -dx), min(width, width - dx)
+        dy0, dy1 = sy0 + dy, sy1 + dy
+        dx0, dx1 = sx0 + dx, sx1 + dx
+        np.maximum(
+            filled[dy0:dy1, dx0:dx1],
+            rgb[sy0:sy1, sx0:sx1],
+            out=filled[dy0:dy1, dx0:dx1],
+        )
+    return filled
+
+
+def _diagonal_band_geometry(shape, bands):
+    """把斜排候选扩成覆盖完整字形的布尔区域。"""
+    import numpy as np  # noqa: PLC0415
+
+    height, width = shape
+    geometry = np.zeros((height, width), dtype=bool)
+    for slope, intercept, x0, x1, half in bands:
+        pad_x = max(8, half)
+        pad_y = max(12, int(round(half * 1.55)))
+        start, stop = max(0, x0 - pad_x), min(width, x1 + pad_x + 1)
+        for x in range(start, stop):
+            center = int(round(slope * x + intercept))
+            y0, y1 = max(0, center - pad_y), min(height, center + pad_y + 1)
+            geometry[y0:y1, x] = True
+    return geometry
+
+
+def _dedupe_page_bands(bands, width: int, height: int, sign: int):
+    """同一行水印会被相邻斜率重复命中；只保留纵向分离的最强 3 行。"""
+    selected = []
+    middle_x = width / 2
+    min_gap = height * 0.085
+    for band in bands:
+        slope, intercept, *_ = band
+        if (-1 if slope < 0 else 1) != sign:
+            continue
+        center_y = slope * middle_x + intercept
+        if any(abs(center_y - existing_y) < min_gap for _, existing_y in selected):
+            continue
+        selected.append((band, center_y))
+        if len(selected) >= 3:
+            break
+    return [band for band, _ in selected]
+
+
+def _remove_repeated_raster_watermarks(doc: fitz.Document) -> int:
+    """移除图片型研报中烙进整页图像的重复斜水印。
+
+    安全门同时满足才处理：3-60 页、至少 60% 页面为同尺寸单张整页图、无原生文字层、
+    像素数受限、多数页面检测到同向的长斜排断续字形。首先用所有页面逐像素
+    max/min 推导固定模板；水印逐页位移时，再用全报告主导斜率方向约束单页检测。
+    仅修复跨页近乎恒定的水印核心，或当前页恰好等于“白底模板”的边缘像素；水印覆盖
+    在深色正文上的像素保留，避免把正文抗锯齿误当水印擦掉。
+    """
+    if not _RASTER_WM_ENABLED or len(doc) < 3 or len(doc) > _RASTER_WM_MAX_PAGES:
+        return 0
+
+    try:
+        import numpy as np  # noqa: PLC0415
+    except Exception:
+        return 0
+
+    eligible = []
+    for index, page in enumerate(doc):
+        info = _dominant_raster_image(page)
+        if info is not None:
+            eligible.append((index, *info))
+    if len(eligible) < max(3, math.ceil(len(doc) * 0.60)):
+        return 0
+
+    shapes = Counter((width, height) for _, _, width, height in eligible)
+    (width, height), shape_count = shapes.most_common(1)[0]
+    if (shape_count < max(3, math.ceil(len(doc) * 0.60))
+            or width * height > _RASTER_WM_MAX_PIXELS):
+        return 0
+    targets = [row for row in eligible if row[2:] == (width, height)]
+    # 同一 xref 跨页复用时 replace_image 会一次改多页，模板与逐页修复会互相污染；宁可跳过。
+    if len({xref for _, xref, _, _ in targets}) != len(targets):
+        return 0
+
+    with _RASTER_WM_SEM:
+        max_gray = min_gray = None
+        page_bands = {}
+        sign_score = {-1: 0, 1: 0}
+        sign_pages = {-1: set(), 1: set()}
+        for page_index, xref, _, _ in targets:
+            pix = fitz.Pixmap(doc, xref)
+            if pix.n < 3 or pix.width != width or pix.height != height:
+                return 0
+            rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(height, width, pix.n)[:, :, :3]
+            gray = (
+                rgb[:, :, 0].astype(np.uint16)
+                + rgb[:, :, 1].astype(np.uint16)
+                + rgb[:, :, 2].astype(np.uint16)
+            ) // 3
+            gray = gray.astype(np.uint8)
+            if max_gray is None:
+                max_gray, min_gray = gray.copy(), gray.copy()
+            else:
+                np.maximum(max_gray, gray, out=max_gray)
+                np.minimum(min_gray, gray, out=min_gray)
+
+            # 固定模板抓不住逐页平移的水印；单页先只找中灰色、长斜排的断续字形。
+            spread = rgb.max(axis=2).astype(np.int16) - rgb.min(axis=2).astype(np.int16)
+            page_core = (spread <= 18) & (gray >= 125) & (gray <= 225)
+            edge = max(12, int(round(height * 0.045)))
+            page_core[:edge] = False
+            page_core[-edge:] = False
+            detected = _find_repeated_diagonal_bands(page_core)
+            page_bands[page_index] = detected
+            for slope, _, x0, x1, _ in detected:
+                sign = -1 if slope < 0 else 1
+                sign_score[sign] += max(0, x1 - x0)
+                sign_pages[sign].add(page_index)
+
+        dominant_sign = -1 if sign_score[-1] >= sign_score[1] else 1
+        other_sign = -dominant_sign
+        adaptive_ok = (
+            len(sign_pages[dominant_sign]) >= math.ceil(len(targets) * 0.60)
+            and sign_score[dominant_sign] >= len(targets) * width * 0.30
+            and sign_score[dominant_sign] >= sign_score[other_sign] * 1.35
+        )
+
+        template_gray = max_gray
+        gray_range = max_gray.astype(np.int16) - min_gray.astype(np.int16)
+        core = (template_gray >= 135) & (template_gray <= 220) & (gray_range <= 7)
+        edge = max(12, int(round(height * 0.045)))
+        core[:edge] = False
+        core[-edge:] = False
+        bands = _find_repeated_diagonal_bands(core)
+        geometry = _diagonal_band_geometry((height, width), bands)
+
+        # 白底上的水印边缘会让跨页最大值仍小于 255；正文/图表随页变化，最大值通常回到白色。
+        template = geometry & (template_gray >= 125) & (template_gray < 255)
+        opaque = template & (gray_range <= 7)
+        template_pixels = int(template.sum())
+        stable_ok = (
+            bool(bands)
+            and template_pixels >= max(150, int(width * 0.30))
+            and template_pixels <= width * height * 0.035
+        )
+        if not stable_ok:
+            template[:] = False
+            opaque[:] = False
+            template_pixels = 0
+        if not stable_ok and not adaptive_ok:
+            return 0
+
+        changed_pages = 0
+        adaptive_band_count = 0
+        for page_index, xref, _, _ in targets:
+            pix = fitz.Pixmap(doc, xref)
+            rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(height, width, pix.n)[:, :, :3].copy()
+            current_gray = (
+                rgb[:, :, 0].astype(np.uint16)
+                + rgb[:, :, 1].astype(np.uint16)
+                + rgb[:, :, 2].astype(np.uint16)
+            ) // 3
+            current_delta = np.abs(current_gray.astype(np.int16) - max_gray.astype(np.int16))
+            repair = opaque | (template & (current_delta <= 7))
+            if adaptive_ok:
+                selected = _dedupe_page_bands(
+                    page_bands.get(page_index, []), width, height, dominant_sign
+                )
+                if stable_ok and selected:
+                    # 固定模板已经覆盖的斜带不要再做宽松单页修复；否则正文抗锯齿会被
+                    # 重复处理。自适应层只补模板没有覆盖到的、逐页移动的水印行。
+                    middle_x = width / 2
+                    stable_centers = [
+                        slope * middle_x + intercept
+                        for slope, intercept, *_ in bands
+                        if (-1 if slope < 0 else 1) == dominant_sign
+                    ]
+                    min_gap = height * 0.085
+                    selected = [
+                        band for band in selected
+                        if not any(
+                            abs((band[0] * middle_x + band[1]) - center) < min_gap
+                            for center in stable_centers
+                        )
+                    ]
+                if selected:
+                    adaptive_geometry = _diagonal_band_geometry((height, width), selected)
+                    spread = (
+                        rgb.max(axis=2).astype(np.int16)
+                        - rgb.min(axis=2).astype(np.int16)
+                    )
+                    # 只擦斜带里的浅/中灰中性像素：保留黑色正文核心与彩色图表；
+                    # 上限要覆盖水印的浅色抗锯齿，否则会留下肉眼可见的“幽灵字”。
+                    adaptive = (
+                        adaptive_geometry
+                        & (spread <= 120)
+                        & (current_gray >= 90)
+                        & (current_gray <= 254)
+                    )
+                    if int(adaptive.sum()) <= width * height * 0.025:
+                        repair |= adaptive
+                        adaptive_band_count += len(selected)
+            if int(repair.sum()) < 50:
+                continue
+            filled = _neighbor_light_fill(rgb)
+            rgb[repair] = filled[repair]
+            replacement = fitz.Pixmap(fitz.csRGB, width, height, rgb.tobytes(), False)
+            doc[page_index].replace_image(xref, pixmap=replacement)
+            changed_pages += 1
+
+        logger.info(
+            "[pdf_brand] raster cleaned pages=%d stable_bands=%d stable_pixels=%d "
+            "adaptive=%s adaptive_bands=%d sign=%+d",
+            changed_pages, len(bands) if stable_ok else 0, template_pixels,
+            adaptive_ok, adaptive_band_count, dominant_sign,
+        )
+        return changed_pages
+
+
 def _remove_annots(page: fitz.Page) -> int:
     removed = 0
     try:
@@ -1039,6 +1372,10 @@ def _process_sync(content: bytes, *, add_brand: bool = True) -> tuple[bytes, boo
         except Exception:
             doc = _open_fitz(content)           # working 打不开就用原文再试
             working = content
+        try:
+            _remove_repeated_raster_watermarks(doc)
+        except Exception as exc:
+            logger.debug("[pdf_brand] 跨页图片模板层失败: %s", exc)
         spans_by_page, doc_presence, npages = _gather_text_spans(doc)
         for i, page in enumerate(doc):
             try:

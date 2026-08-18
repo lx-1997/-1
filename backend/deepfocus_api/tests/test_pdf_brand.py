@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import fitz
+import numpy as np
 import pikepdf
 
 from deepfocus_api import pdf_brand as pb
@@ -15,6 +16,54 @@ def _plain_pdf() -> bytes:
     data = doc.tobytes()
     doc.close()
     return data
+
+
+def _image_only_report(*, watermark: bool, shifted: bool = False) -> bytes:
+    """生成多页整图研报；可把固定或逐页平移的斜水印烙进像素。"""
+    raster = fitz.open()
+    angle = math.radians(20)
+    matrix = fitz.Matrix(
+        math.cos(angle), -math.sin(angle), math.sin(angle), math.cos(angle), 0, 0
+    )
+    for index in range(5):
+        vector = fitz.open()
+        page = vector.new_page(width=600, height=800)
+        page.insert_text((55, 90 + index * 38), f"BODY KEEP PAGE {index}", fontsize=18)
+        page.draw_rect(
+            fitz.Rect(55, 150 + index * 25, 500, 156 + index * 25),
+            fill=(0.08, 0.08, 0.08),
+            color=None,
+        )
+        if watermark:
+            shift = (index - 2) * 28 if shifted else 0
+            for pivot in (fitz.Point(15, 460 + shift), fitz.Point(305, 600 + shift)):
+                page.insert_text(
+                    pivot,
+                    "PRIVATE RESEARCH SHUIMU2026",
+                    fontsize=25,
+                    color=(0.604, 0.604, 0.604),
+                    morph=(pivot, matrix),
+                )
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+        vector.close()
+        out_page = raster.new_page(width=600, height=800)
+        out_page.insert_image(out_page.rect, stream=pix.tobytes("png"))
+    data = raster.tobytes(garbage=2, deflate=True)
+    raster.close()
+    return data
+
+
+def _render_rgb_pages(data: bytes) -> list[np.ndarray]:
+    rendered = []
+    with fitz.open(stream=data, filetype="pdf") as doc:
+        for page in doc:
+            pix = page.get_pixmap(alpha=False)
+            rendered.append(
+                np.frombuffer(pix.samples, dtype=np.uint8)
+                .reshape(pix.height, pix.width, pix.n)[:, :, :3]
+                .copy()
+            )
+    return rendered
 
 
 def test_compact_keyword_matches_spaced_channel_watermark():
@@ -189,3 +238,54 @@ def test_legacy_footer_is_upgraded_without_extending_page_again():
         assert page.rect.height == 854
         assert pb._page_has_brand(page)
         assert page.get_text("text").count("www.daocaijing.com") == 2
+
+
+def test_repeated_baked_raster_watermark_is_suppressed_without_rasterizing_text_pdf():
+    source = _image_only_report(watermark=True)
+    clean_reference = _image_only_report(watermark=False)
+    result, ok = pb._process_sync(source, add_brand=False)
+    assert ok
+
+    source_pages = _render_rgb_pages(source)
+    clean_pages = _render_rgb_pages(clean_reference)
+    result_pages = _render_rgb_pages(result)
+    before = np.mean([
+        np.abs(a.astype(np.int16) - b.astype(np.int16)).mean()
+        for a, b in zip(source_pages, clean_pages)
+    ])
+    after = np.mean([
+        np.abs(a.astype(np.int16) - b.astype(np.int16)).mean()
+        for a, b in zip(result_pages, clean_pages)
+    ])
+    assert before > 0.4
+    assert after < before * 0.55
+
+    searchable = fitz.open()
+    for index in range(3):
+        page = searchable.new_page(width=600, height=800)
+        page.insert_text((72, 90), f"SEARCHABLE BODY {index}", fontsize=14)
+    assert pb._remove_repeated_raster_watermarks(searchable) == 0
+    assert "SEARCHABLE BODY" in searchable[0].get_text("text")
+    assert all(not page.get_images(full=True) for page in searchable)
+    searchable.close()
+
+
+def test_page_shifted_baked_raster_watermark_is_suppressed():
+    source = _image_only_report(watermark=True, shifted=True)
+    clean_reference = _image_only_report(watermark=False, shifted=True)
+    result, ok = pb._process_sync(source, add_brand=False)
+    assert ok
+
+    source_pages = _render_rgb_pages(source)
+    clean_pages = _render_rgb_pages(clean_reference)
+    result_pages = _render_rgb_pages(result)
+    before = np.mean([
+        np.abs(a.astype(np.int16) - b.astype(np.int16)).mean()
+        for a, b in zip(source_pages, clean_pages)
+    ])
+    after = np.mean([
+        np.abs(a.astype(np.int16) - b.astype(np.int16)).mean()
+        for a, b in zip(result_pages, clean_pages)
+    ])
+    assert before > 0.4
+    assert after < before * 0.55
