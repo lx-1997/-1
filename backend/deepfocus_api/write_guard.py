@@ -22,6 +22,7 @@ _LIMITS: dict[str, tuple[int, float]] = {
     "feedback": (10, 60),   # AI 答案 👍👎 反馈
     "support": (5, 60),     # 管理员私信
     "react": (30, 60),      # 资讯看多/看空表态
+    "redeem": (5, 60),      # 会员码兑换（成败都计，防连按回车/脚本枚举）
 }
 _HITS: dict[str, list[float]] = defaultdict(list)
 _MAX_KEYS = 4096  # 匿名 key=IP，防 key 无限增长；超出时删最早插入的

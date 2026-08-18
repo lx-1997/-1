@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import DateTime, Integer, String, func, inspect as sa_inspect, select, text, update
@@ -32,7 +32,7 @@ class MembershipCode(Base):
     code: Mapped[str] = mapped_column(String(32), primary_key=True)       # 规范形式：大写无连字符
     tier: Mapped[str] = mapped_column(String(16))                         # premium | lifetime
     days: Mapped[int] = mapped_column(Integer, default=0)                 # premium 的天数；lifetime 为 0
-    kind: Mapped[str] = mapped_column(String(16), default="normal")       # normal | trial（体验卡：每人每天限兑1张、不计付费）
+    kind: Mapped[str] = mapped_column(String(16), default="normal")       # normal | trial（体验权益：每账号终身一次、不计付费）
     note: Mapped[str] = mapped_column(String(120), default="")           # 批次/备注（如「月卡批次1」）
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)        # 兑换者 user_id
@@ -60,13 +60,6 @@ def _ensure_code_columns() -> None:
             conn.execute(text("ALTER TABLE membership_codes ADD COLUMN kind VARCHAR(16) DEFAULT 'normal'"))
 
 
-def _cn_today_start_utc() -> datetime:
-    """今天 0 点（北京时间 UTC+8）对应的 UTC 时刻——用于「每人每天限领一张」的当天判定。"""
-    cn_now = _now() + timedelta(hours=8)
-    cn_midnight = cn_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return cn_midnight - timedelta(hours=8)
-
-
 def normalize(code: str) -> str:
     """归一兑换码：只保留字母数字 + 大写（用户带不带连字符、大小写都能兑）。"""
     return "".join(c for c in (code or "") if c.isalnum()).upper()
@@ -86,7 +79,7 @@ def generate_codes(count: int, tier: str, days: int = 0, note: str = "") -> list
     """批量生成兑换码，返回展示形式（带连字符）列表。
 
     tier 取值：premium（按 days）/ lifetime（永久）/ trial（体验周卡——实为 premium，
-    默认 7 天，且 kind=trial 受「每人每天限兑 1 张」约束、不计为付费转化）。
+    默认 7 天，且 kind=trial 受「每账号终身一次体验权益」约束、不计为付费转化）。
     """
     count = max(1, min(int(count or 1), 500))
     tier = (tier or "premium").strip().lower()
@@ -120,33 +113,43 @@ def generate_codes(count: int, tier: str, days: int = 0, note: str = "") -> list
 def redeem(code: str, user_id: str, username: str) -> dict[str, Any]:
     """原子兑换：成功返回 {ok:True, tier, days, kind}；失败返回 {ok:False, reason}。
 
-    体验卡（kind=trial）额外约束：同一账号每天只能兑换 1 张（reason=trial_daily）。
+    体验卡（kind=trial）额外约束：同一账号终身只能领取/兑换一次体验权益
+    （与 auth_users.trial_claimed_at 共用账号级原子标记，reason=trial_ever）。
     """
     norm = normalize(code)
     uid = (user_id or "").strip()
     if not norm or not uid:
         return {"ok": False, "reason": "empty"}
     with session_scope() as session:
-        # 先取码，判断是否体验卡 + 是否已被用——以便在「认领」前做每日限领校验
+        # 先取码，判断是否体验卡 + 是否已被用——以便在「认领」前做终身一次校验
         row = session.get(MembershipCode, norm)
         if row is None:
             return {"ok": False, "reason": "not_found"}
         kind = (getattr(row, "kind", None) or "normal")
         if row.used_by:
             return {"ok": False, "reason": "self_used" if row.used_by == uid else "used"}
-        # 体验卡：同一账号今天（北京时间）是否已兑过任意体验卡
+        # 体验权益统一为账号终身一次：既拦历史体验卡，也拦已领过登录赠送体验的账号。
+        # 最终占位在认领兑换码之后用条件 UPDATE 完成；若并发输掉账号占位，回滚码的认领。
+        user_model = None
         if kind == "trial":
-            today = _cn_today_start_utc()
-            used_today = session.scalar(
+            used_before = session.scalar(
                 select(func.count()).select_from(MembershipCode).where(
                     MembershipCode.kind == "trial",
                     MembershipCode.used_by == uid,
                     MembershipCode.used_at.isnot(None),
-                    MembershipCode.used_at >= today,
                 )
             ) or 0
-            if used_today >= 1:
-                return {"ok": False, "reason": "trial_daily"}
+            if used_before >= 1:
+                return {"ok": False, "reason": "trial_ever"}
+            # 函数内导入避免 auth ↔ storage 初始化阶段的循环依赖。
+            from .auth import User
+
+            user_model = User
+            user = session.get(User, uid)
+            if user is None:
+                return {"ok": False, "reason": "user_not_found"}
+            if getattr(user, "trial_claimed_at", None) is not None:
+                return {"ok": False, "reason": "trial_ever"}
         # 原子认领：仅当未被使用时才标记成功（并发兜底）
         res = session.execute(
             update(MembershipCode)
@@ -154,6 +157,16 @@ def redeem(code: str, user_id: str, username: str) -> dict[str, Any]:
             .values(used_by=uid, used_by_name=(username or uid)[:120], used_at=_now())
         )
         if res.rowcount == 1:
+            if kind == "trial" and user_model is not None:
+                claimed = session.execute(
+                    update(user_model)
+                    .where(user_model.id == uid, user_model.trial_claimed_at.is_(None))
+                    .values(trial_claimed_at=_now())
+                )
+                if claimed.rowcount != 1:
+                    # 另一并发请求先占到账号的一次性体验资格：本次码认领必须一并撤销。
+                    session.rollback()
+                    return {"ok": False, "reason": "trial_ever"}
             return {"ok": True, "tier": row.tier, "days": int(row.days or 0), "kind": kind}
         # 认领失败（并发被抢）：复查归属
         row2 = session.get(MembershipCode, norm)

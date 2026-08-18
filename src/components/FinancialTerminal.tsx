@@ -1396,7 +1396,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!code || redeemBusyRef.current) return;  // ref 同步拦截连点，避免「第一次成功、第二次报已使用」
     redeemBusyRef.current = true;
     setRedeemBusy(true);
-    logAct('redeem', code.slice(0, 24));
     try {
       const r = await authService.redeemCode(code);
       setMembership(r.membership ?? null);
@@ -1411,7 +1410,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     } catch (e: any) {
       showToast('❌ ' + (e?.message || '兑换失败，请检查兑换码'));
     } finally { redeemBusyRef.current = false; setRedeemBusy(false); }
-  }, [redeemInput, showToast, refreshMembership, logAct]);
+  }, [redeemInput, showToast, refreshMembership]);
   const openBuy = useCallback(async () => {
     setAcctOpen(false);
     logAct('open_buy', '开通/续费会员');   // 购买意向：谁点开了购买页（看板可见）

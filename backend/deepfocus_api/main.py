@@ -1047,7 +1047,7 @@ async function saveCookie(){
     setTimeout(loadZsxq,800);
   }catch(e){ $('#zmsg').innerHTML='<span style="color:#ff5a52">✗ '+esc(e.message)+'</span>'; }
 }
-const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',reset_password:'运营重置密码',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'兑换会员码',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
+const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',reset_password:'运营重置密码',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'提交兑换码',redeem_success:'兑换成功',redeem_repeat:'重复提交兑换码',redeem_failed:'兑换失败',redeem_rate_limited:'兑换过于频繁',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
 function alabel(a){return ACT_LABEL[a]||a;}
 function tshort(s){
   if(!s) return '';
@@ -1967,6 +1967,33 @@ async def admin_grant_membership(
 # --------------------------------------------------------------------------- #
 # 会员兑换码（卡密）：后台批量生成 → 用户自助兑换 → 自动开通（算付费，计入邀请奖励）
 # --------------------------------------------------------------------------- #
+def _log_membership_redeem_result(
+    request: Request,
+    claims: dict[str, Any],
+    action: str,
+    code: str,
+    detail: str = "",
+) -> None:
+    """服务端记录兑换真实结果；审计失败不能影响会员主流程。"""
+    try:
+        uid = str(claims.get("sub") or "")
+        uname = str(claims.get("username") or claims.get("email") or uid)
+        pretty_code = membership_codes.pretty(code)[:24] if code else "空兑换码"
+        target = pretty_code + (f" · {detail[:80]}" if detail else "")
+        ua = request.headers.get("user-agent") or ""
+        metrics_log_activity(
+            actor_kind="user",
+            actor_id=f"u:{uid}",
+            actor_name=uname,
+            action=action,
+            target=target,
+            ip=_client_ip(request),
+            device=("mobile" if _MOBILE_UA_RE.search(ua) else "pc"),
+        )
+    except Exception:  # noqa: BLE001 - 审计不可反向阻断兑换
+        pass
+
+
 @app.post("/api/membership/claim-trial")
 async def membership_claim_trial(request: Request) -> dict[str, Any]:
     """自助领取「登录送 3 天体验会员」：每账号仅一次，原子防重复。"""
@@ -2053,19 +2080,27 @@ async def membership_redeem(request: Request) -> dict[str, Any]:
         body = {}
     code = str(body.get("code") or "").strip()
     if not code:
+        _log_membership_redeem_result(request, claims, "redeem_failed", code, "未输入兑换码")
         raise HTTPException(status_code=422, detail="请输入兑换码")
     uid = str(claims.get("sub", ""))
     uname = str(claims.get("username") or claims.get("email") or uid)
+    from . import write_guard as _wg
+    if not _wg.check_rate("redeem", uid or _client_ip(request)):
+        _log_membership_redeem_result(request, claims, "redeem_rate_limited", code, "1 分钟超过 5 次")
+        raise HTTPException(status_code=429, detail="兑换尝试过于频繁，请 1 分钟后再试")
     res = membership_codes.redeem(code, uid, uname)
     if not res.get("ok"):
         reason = res.get("reason")
         if reason == "self_used":  # 同一账号重复兑换(多为连点)：会员已到账，给确认而非吓人的红叉
             mem = membership_of_username(uname)
+            _log_membership_redeem_result(request, claims, "redeem_repeat", code, "该账号已兑换")
             return {"ok": True, "tier": (mem or {}).get("tier", "premium"), "days": 0, "membership": mem,
                     "already": True, "message": "你已用此兑换码成功开通过，会员已到账，无需重复兑换。"}
-        if reason == "trial_daily":  # 体验卡：每人每天限兑 1 张
-            raise HTTPException(status_code=429, detail="今天已领取过体验卡啦，明天再来领一张～")
+        if reason == "trial_ever":
+            _log_membership_redeem_result(request, claims, "redeem_failed", code, "体验权益已领取过")
+            raise HTTPException(status_code=400, detail="体验会员每个账号仅可领取或兑换一次")
         msg = "兑换码不存在或无效" if reason == "not_found" else ("该兑换码已被使用" if reason == "used" else "兑换失败，请稍后再试")
+        _log_membership_redeem_result(request, claims, "redeem_failed", code, str(reason or "unknown"))
         raise HTTPException(status_code=400, detail=msg)
     # 时长「累加顺延」而非替换：grant_membership 会从现有到期日往后加，不缩短已有会员。
     days = int(res.get("days") or 0)
@@ -2084,6 +2119,8 @@ async def membership_redeem(request: Request) -> dict[str, Any]:
         mem = grant_membership(uname, 0, permanent=True, source="paid")
     else:
         mem = grant_membership(uname, days, source="paid")
+    label = "永久会员" if res["tier"] == "lifetime" else f"{days} 天{'体验' if is_trial else '尊享'}会员"
+    _log_membership_redeem_result(request, claims, "redeem_success", code, label)
     return {"ok": True, "tier": res["tier"], "days": days, "trial": is_trial, "membership": mem}
 
 
