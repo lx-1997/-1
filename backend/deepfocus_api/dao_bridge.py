@@ -30,6 +30,15 @@ from .schemas import RealtimeMessageCreateRequest
 # 英文快讯入库前直译成中文（默认开；设 0 关闭回到原行为）。
 _TRANSLATE_ENABLED = os.getenv("DEEPFOCUS_NEWS_TRANSLATE", "1").strip().lower() in ("1", "true", "yes", "on")
 
+# 长文章先做一次轻量「标题级预读」，让实时流的标题承担文章概括，而不是把原始长标题
+# 直接铺在消息卡片上。失败时完整回退原标题，不阻塞文章入库。
+_ARTICLE_PREVIEW_ENABLED = os.getenv("DEEPFOCUS_ARTICLE_PREVIEW_ENABLED", "1").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+_ARTICLE_PREVIEW_MIN_CHARS = int(os.getenv("DEEPFOCUS_ARTICLE_PREVIEW_MIN_CHARS", "280"))
+_ARTICLE_PREVIEW_MAX_INPUT_CHARS = int(os.getenv("DEEPFOCUS_ARTICLE_PREVIEW_MAX_INPUT_CHARS", "6000"))
+_ARTICLE_PREVIEW_TIMEOUT_SECONDS = float(os.getenv("DEEPFOCUS_ARTICLE_PREVIEW_TIMEOUT_SECONDS", "5"))
+
 def _bridge_config() -> dict:
     """运行时读取环境变量（必须在 load_dotenv() 之后，否则 .env 不生效）。
     首次启动（无断点）时回填 backfill 条给终端初始内容；之后按断点续传不重复。"""
@@ -244,6 +253,78 @@ def _to_request(event: dict) -> RealtimeMessageCreateRequest:
     )
 
 
+def _article_preview_excerpt(content: str, limit: int = _ARTICLE_PREVIEW_MAX_INPUT_CHARS) -> str:
+    """给标题预读截取首尾正文，避免把超长文章全文喂给模型。"""
+    text = (content or "").strip()
+    if len(text) <= limit:
+        return text
+    head = max(1, int(limit * 0.72))
+    tail = max(1, limit - head)
+    return f"{text[:head]}\n……（正文中间部分已省略）……\n{text[-tail:]}"
+
+
+def _normalize_article_preview(data: object, original_title: str) -> Optional[dict[str, str]]:
+    """只接受短、具体的模型标题；模型跑偏时返回 None 触发原标题兜底。"""
+    if not isinstance(data, dict):
+        return None
+    title = str(data.get("title") or data.get("headline") or "").strip()
+    title = title.splitlines()[0].strip().strip('"“”\'‘’`')
+    title = re.sub(r"^(?:标题|展示标题|概括性标题)\s*[:：]\s*", "", title, flags=re.I).strip()
+    title = re.sub(r"\s+", " ", title).rstrip("。！？!?；;:：")
+    if len(title) < 6 or len(title) > 64 or title == original_title:
+        return None
+    summary = str(data.get("summary") or "").strip()
+    return {"title": title, "summary": summary[:120]}
+
+
+async def _maybe_pre_read_article(req: RealtimeMessageCreateRequest) -> RealtimeMessageCreateRequest:
+    """长文章入流前生成概括标题；非文章、短文章或模型失败均原样返回。"""
+    content = (req.content or "").strip()
+    if (
+        not _ARTICLE_PREVIEW_ENABLED
+        or req.topic != "文章"
+        or (len(content) < _ARTICLE_PREVIEW_MIN_CHARS and len(req.title or "") < 80)
+    ):
+        return req
+
+    prompt = (
+        "你是财经资讯编辑，请为下面这篇长文章生成一个用于实时信息流展示的概括性标题。\n"
+        "只根据原始标题和正文，不添加正文没有的数字、事实、结论或投资建议。\n"
+        "标题要体现‘对象/主题 + 最重要的变化或判断’，简洁、客观，控制在 12-32 个中文字符；"
+        "不要带来源前缀，不要写‘文章’‘摘要’‘AI解读’，不要使用夸张或交易建议措辞。\n"
+        "返回严格 JSON，不要 Markdown 或解释文字："
+        '{"title":"概括性标题","summary":"一句话说明概括依据"}\n'
+        f"原始标题：{req.title}\n"
+        f"正文：{_article_preview_excerpt(content)}"
+    )
+    try:
+        from .llm import CloudResearchLLM
+
+        data = await CloudResearchLLM().complete_json(
+            prompt,
+            max_tokens=180,
+            timeout_seconds=_ARTICLE_PREVIEW_TIMEOUT_SECONDS,
+            force_json_first=False,
+        )
+        preview = _normalize_article_preview(data, req.title)
+    except Exception:
+        return req
+    if not preview:
+        return req
+
+    metadata = dict(req.metadata or {})
+    metadata.update(
+        {
+            "article_pre_read": True,
+            "article_original_title": req.title,
+            "article_pre_read_title": preview["title"],
+        }
+    )
+    if preview["summary"]:
+        metadata["article_pre_read_summary"] = preview["summary"]
+    return req.model_copy(update={"title": preview["title"], "metadata": metadata})
+
+
 async def _maybe_translate(req: RealtimeMessageCreateRequest) -> RealtimeMessageCreateRequest:
     """英文快讯 → 中文：译文进 title/content（全链路中文），英文原文留 metadata 备查。
     不需译/超时/失败 → 原样返回，绝不丢消息、绝不阻塞主链路超过 LLM 超时。"""
@@ -362,6 +443,7 @@ async def run_dao_bridge() -> None:
             for ev in events:
                 try:
                     req = await _maybe_translate(_to_request(ev))
+                    req = await _maybe_pre_read_article(req)
                     msg = create_realtime_message(req)
                     # 快讯秒发时 AI 情绪常未就绪 → 记入待回填表，AI 结果落库后更新同条消息
                     # msg 为 None 表示命中内容过滤(斧头/futou)被拦下，跳过回填登记
