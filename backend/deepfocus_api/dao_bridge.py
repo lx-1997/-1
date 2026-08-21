@@ -271,12 +271,26 @@ def _preview_is_source_grounded(title: str, source_text: str) -> bool:
     for token in re.findall(r"[a-z][a-z0-9.+#-]*|\d+(?:\.\d+)?%?", candidate):
         if token not in source:
             return False
-    # 对连续中文短语做保守的 4-gram 覆盖检查，拦住「把 A 公司改成 B 公司」这类幻觉。
+    # 对连续中文短语做保守的 2-gram 覆盖检查，拦住「把 A 公司改成 B 公司」这类幻觉；
+    # 2-gram 比 4-gram 更能容纳标题压缩时的语序变化和同义连接词。
     for run in re.findall(r"[\u4e00-\u9fff]{4,}", title):
-        grams = [run[index:index + 4] for index in range(len(run) - 3)]
-        if grams and sum(gram in source_text for gram in grams) / len(grams) < 0.35:
+        grams = [run[index:index + 2] for index in range(len(run) - 1)]
+        if grams and sum(gram in source for gram in grams) / len(grams) < 0.45:
             return False
     return True
+
+
+def _strip_article_source_prefix(value: str) -> str:
+    return re.sub(r"^(?:路透社|路透早报|彭博社|彭博财经|彭博财经早茶)\s*[:：]\s*", "", value).strip()
+
+
+def _fallback_article_preview(req: RealtimeMessageCreateRequest) -> Optional[dict[str, str]]:
+    """模型没有压缩时，至少移除稳定的来源前缀，避免原始前缀进入展示标题。"""
+    title = _strip_article_source_prefix(req.title or "").rstrip("。！？!?；;:：").strip()
+    original = (req.title or "").strip()
+    if title and title != original and len(title) >= 6:
+        return {"title": title, "summary": ""}
+    return None
 
 
 def _normalize_article_preview(
@@ -290,11 +304,12 @@ def _normalize_article_preview(
     title = str(data.get("title") or data.get("headline") or "").strip()
     title = title.splitlines()[0].strip().strip('"“”\'‘’`')
     title = re.sub(r"^(?:标题|展示标题|概括性标题)\s*[:：]\s*", "", title, flags=re.I).strip()
-    title = re.sub(r"\s+", " ", title).rstrip("。！？!?；;:：")
+    title = _strip_article_source_prefix(re.sub(r"\s+", " ", title)).rstrip("。！？!?；;:：")
+    original_display_title = _strip_article_source_prefix(original_title)
     if (
         len(title) < 6
         or len(title) > 64
-        or title == original_title
+        or title == original_display_title
         or not _preview_is_source_grounded(title, f"{original_title}\n{source_text}")
     ):
         return None
@@ -312,16 +327,25 @@ async def _maybe_pre_read_article(req: RealtimeMessageCreateRequest) -> Realtime
     ):
         return req
 
+    original_display_title = _strip_article_source_prefix(req.title)
+    # 标题已经包含明确主体时，不把正文交给模型作为改写素材，避免模型从正文
+    # 把原标题中的实体替换成正文里的其他实体；“路透早报/彭博财经早茶”等
+    # 泛标题仍需正文来生成概括标题。
+    prompt_body = (
+        "正文仅用于核对，不能从中提取新信息；本次只依据原标题改写。"
+        if len(original_display_title) >= 12
+        else f"正文：{_article_preview_excerpt(content)}"
+    )
     prompt = (
         "你是财经资讯编辑，请为下面这篇长文章生成一个用于实时信息流展示的概括性标题。\n"
-        "只根据原始标题和正文，不添加正文没有的数字、事实、结论或投资建议。\n"
-        "标题要体现‘对象/主题 + 最重要的变化或判断’，简洁、客观，控制在 12-32 个中文字符；"
-        "专名、公司、人名、机构、股票代码、年份、百分比必须原样来自输入，不能替换或猜测；"
-        "不要带来源前缀，不要写‘文章’‘摘要’‘AI解读’，不要使用夸张或交易建议措辞。\n"
+        "只改写原标题，不得从正文引入原标题没有的专名、数字或新事件。\n"
+        "把原标题压缩成 12-28 个中文字符，保留‘主体 + 核心动作/变化’，删除来源前缀和套话；"
+        "专名、公司、人名、机构、股票代码、年份、百分比必须原样来自原标题，不能替换或猜测；"
+        "不要写‘文章’‘摘要’‘AI解读’，不要使用夸张或交易建议措辞。\n"
         "返回严格 JSON，不要 Markdown 或解释文字："
         '{"title":"概括性标题","summary":"一句话说明概括依据"}\n'
         f"原始标题：{req.title}\n"
-        f"正文：{_article_preview_excerpt(content)}"
+        f"{prompt_body}"
     )
     try:
         from .llm import CloudResearchLLM
@@ -335,6 +359,8 @@ async def _maybe_pre_read_article(req: RealtimeMessageCreateRequest) -> Realtime
         preview = _normalize_article_preview(data, req.title, content)
     except Exception:
         return req
+    if not preview:
+        preview = _fallback_article_preview(req)
     if not preview:
         return req
 

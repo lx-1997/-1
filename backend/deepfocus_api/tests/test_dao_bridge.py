@@ -86,3 +86,32 @@ def test_preview_rejects_unsupported_entities(monkeypatch):
     out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
 
     assert out == req
+
+
+def test_preview_strips_source_prefix_and_allows_title_compression(monkeypatch):
+    class RewriterLLM:
+        async def complete_json(self, prompt, **kwargs):
+            return {"title": "路透社：富达国际拟退出中国独资基金业务", "summary": "压缩原标题"}
+
+    monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", RewriterLLM)
+    req = _article_request("富达国际计划退出其在中国的独资基金管理业务。" * 20)
+
+    out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
+
+    assert out.title == "富达国际拟退出中国独资基金业务"
+
+
+def test_preview_falls_back_to_stripped_source_prefix_when_model_keeps_title(monkeypatch):
+    class UnchangedLLM:
+        async def complete_json(self, prompt, **kwargs):
+            return {"title": "彭博社：Meta悄然成为微软最大AI客户之一", "summary": ""}
+
+    monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", UnchangedLLM)
+    req = _article_request("Meta已经成为微软在人工智能领域最大的客户之一。" * 20).model_copy(
+        update={"title": "彭博社：Meta悄然成为微软最大AI客户之一"}
+    )
+
+    out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
+
+    assert out.title == "Meta悄然成为微软最大AI客户之一"
+    assert out.metadata["article_pre_read"] is True
