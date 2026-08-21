@@ -263,7 +263,27 @@ def _article_preview_excerpt(content: str, limit: int = _ARTICLE_PREVIEW_MAX_INP
     return f"{text[:head]}\n……（正文中间部分已省略）……\n{text[-tail:]}"
 
 
-def _normalize_article_preview(data: object, original_title: str) -> Optional[dict[str, str]]:
+def _preview_is_source_grounded(title: str, source_text: str) -> bool:
+    """拒绝模型凭空替换实体/数字；宁可回退原标题，也不把猜测展示给用户。"""
+    source = re.sub(r"\s+", "", (source_text or "")).casefold()
+    candidate = title.casefold()
+    # 英文专名、股票代码、年份、百分比等必须原文出现。
+    for token in re.findall(r"[a-z][a-z0-9.+#-]*|\d+(?:\.\d+)?%?", candidate):
+        if token not in source:
+            return False
+    # 对连续中文短语做保守的 4-gram 覆盖检查，拦住「把 A 公司改成 B 公司」这类幻觉。
+    for run in re.findall(r"[\u4e00-\u9fff]{4,}", title):
+        grams = [run[index:index + 4] for index in range(len(run) - 3)]
+        if grams and sum(gram in source_text for gram in grams) / len(grams) < 0.35:
+            return False
+    return True
+
+
+def _normalize_article_preview(
+    data: object,
+    original_title: str,
+    source_text: str = "",
+) -> Optional[dict[str, str]]:
     """只接受短、具体的模型标题；模型跑偏时返回 None 触发原标题兜底。"""
     if not isinstance(data, dict):
         return None
@@ -271,7 +291,12 @@ def _normalize_article_preview(data: object, original_title: str) -> Optional[di
     title = title.splitlines()[0].strip().strip('"“”\'‘’`')
     title = re.sub(r"^(?:标题|展示标题|概括性标题)\s*[:：]\s*", "", title, flags=re.I).strip()
     title = re.sub(r"\s+", " ", title).rstrip("。！？!?；;:：")
-    if len(title) < 6 or len(title) > 64 or title == original_title:
+    if (
+        len(title) < 6
+        or len(title) > 64
+        or title == original_title
+        or not _preview_is_source_grounded(title, f"{original_title}\n{source_text}")
+    ):
         return None
     summary = str(data.get("summary") or "").strip()
     return {"title": title, "summary": summary[:120]}
@@ -291,6 +316,7 @@ async def _maybe_pre_read_article(req: RealtimeMessageCreateRequest) -> Realtime
         "你是财经资讯编辑，请为下面这篇长文章生成一个用于实时信息流展示的概括性标题。\n"
         "只根据原始标题和正文，不添加正文没有的数字、事实、结论或投资建议。\n"
         "标题要体现‘对象/主题 + 最重要的变化或判断’，简洁、客观，控制在 12-32 个中文字符；"
+        "专名、公司、人名、机构、股票代码、年份、百分比必须原样来自输入，不能替换或猜测；"
         "不要带来源前缀，不要写‘文章’‘摘要’‘AI解读’，不要使用夸张或交易建议措辞。\n"
         "返回严格 JSON，不要 Markdown 或解释文字："
         '{"title":"概括性标题","summary":"一句话说明概括依据"}\n'
@@ -306,7 +332,7 @@ async def _maybe_pre_read_article(req: RealtimeMessageCreateRequest) -> Realtime
             timeout_seconds=_ARTICLE_PREVIEW_TIMEOUT_SECONDS,
             force_json_first=False,
         )
-        preview = _normalize_article_preview(data, req.title)
+        preview = _normalize_article_preview(data, req.title, content)
     except Exception:
         return req
     if not preview:

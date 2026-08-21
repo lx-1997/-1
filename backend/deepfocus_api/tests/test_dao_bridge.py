@@ -38,7 +38,7 @@ def test_long_article_gets_a_concise_preview_title(monkeypatch):
             }
 
     monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", FakeLLM)
-    req = _article_request("中国资本市场运行平稳，机构业务与财富管理出现积极变化。" * 20)
+    req = _article_request("中信证券上半年业绩增长，资本市场业务回暖。" * 20)
 
     out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
 
@@ -69,6 +69,19 @@ def test_preview_failure_keeps_original_article_title(monkeypatch):
 
     monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", FailingLLM)
     req = _article_request("正文内容。" * 100)
+
+    out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
+
+    assert out == req
+
+
+def test_preview_rejects_unsupported_entities(monkeypatch):
+    class HallucinatingLLM:
+        async def complete_json(self, prompt, **kwargs):
+            return {"title": "必和必拓财年净利润下滑15%", "summary": "模型猜测"}
+
+    monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", HallucinatingLLM)
+    req = _article_request("Fortescue利润出现下滑，中国市场竞争仍在持续。" * 20)
 
     out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
 
