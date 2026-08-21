@@ -777,6 +777,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       return LS.read('bbt.feedFilter.v3', '精选');
     } catch { return '精选'; }
   });
+  // 移动快捷导航自己的选中态：不依赖桌面侧栏状态，保证窄屏入口在独立构建中也能工作。
+  const [mobileNavActive, setMobileNavActive] = useState<string | null>(null);
   const [personalPrefsOpen, setPersonalPrefsOpen] = useState(false);
   const [personalInterests, setPersonalInterests] = useState<InterestKey[]>(() => LS.read<InterestKey[]>('bbt.personal.interests.v1', []));
   const [interestSignals, setInterestSignals] = useState<Partial<Record<InterestKey, number>>>(() => LS.read('bbt.personal.signals.v1', {}));
@@ -1256,6 +1258,26 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setAiBusy(false);
   }, [aiInput, aiBusy, logAct]);
   const openAi = useCallback(() => { setAiOpen(true); logAct('tab', 'ai_chat'); }, [logAct]);
+  const mobileNavView = mobileNavActive || (
+    feedFilter === '自选' ? 'stocks' : feedFilter === '研报' ? 'reports' : 'market'
+  );
+  const jumpFromMobileNav = (view: 'market' | 'stocks' | 'reports' | 'ai') => {
+    setMobileNavActive(view);
+    if (view === 'ai') {
+      openAi();
+      return;
+    }
+    if (view === 'market') setActive(null);
+    setFeedFilter(view === 'stocks' ? '自选' : view === 'reports' ? '研报' : '快讯');
+    window.setTimeout(() => gridRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
+  };
+  const openMobileMore = () => {
+    // 桌面版没有侧栏时回退到原“更多”菜单，兼容不同构建。
+    const sideToggle = document.querySelector<HTMLButtonElement>('.bbt-side-toggle');
+    if (sideToggle) sideToggle.click();
+    else setHelpMenuOpen(true);
+    logAct('mobile_nav', 'more');
+  };
   // 深度研判（多智能体辩论：取证→多空立论→交叉反驳→风控→投委会裁决）。纯轮询，灰度白名单。
   const [deepMode, setDeepMode] = useState(false);
   const [deepSymbol, setDeepSymbol] = useState('');
@@ -4248,6 +4270,33 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         )}
         <span className="bbt-status-fn">／ 搜标的 · ↑↓ 切换 · ESC 取消</span>
       </div>
+
+      {/* 移动端高频入口：固定在拇指区，避免每次切换内容都要回到顶部打开侧栏。 */}
+      <nav className="bbt-mobile-nav" aria-label="移动端快捷导航">
+        <button type="button" className={mobileNavView === 'market' ? 'active' : ''}
+          aria-current={mobileNavView === 'market' ? 'page' : undefined}
+          onClick={() => jumpFromMobileNav('market')}>
+          <span aria-hidden="true">◈</span><b>快讯</b>
+        </button>
+        <button type="button" className={mobileNavView === 'stocks' ? 'active' : ''}
+          aria-current={mobileNavView === 'stocks' ? 'page' : undefined}
+          onClick={() => jumpFromMobileNav('stocks')}>
+          <span aria-hidden="true">◌</span><b>自选</b><em>{watchlist.length}</em>
+        </button>
+        <button type="button" className={mobileNavView === 'reports' ? 'active' : ''}
+          aria-current={mobileNavView === 'reports' ? 'page' : undefined}
+          onClick={() => jumpFromMobileNav('reports')}>
+          <span aria-hidden="true">▥</span><b>研报</b>
+        </button>
+        <button type="button" className={mobileNavView === 'ai' ? 'active' : ''}
+          aria-current={mobileNavView === 'ai' ? 'page' : undefined}
+          onClick={() => jumpFromMobileNav('ai')}>
+          <span aria-hidden="true">✦</span><b>AI</b>
+        </button>
+        <button type="button" onClick={openMobileMore}>
+          <span aria-hidden="true">☰</span><b>更多</b>
+        </button>
+      </nav>
 
 
       {newsPreview && (() => {
