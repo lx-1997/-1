@@ -56,10 +56,35 @@ def test_short_or_non_article_does_not_call_preview_model(monkeypatch):
 
     monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", ExplodingLLM)
     short = _article_request("短文章正文")
-    non_article = short.model_copy(update={"topic": "快讯", "content": "长正文。" * 100})
+    non_article = short.model_copy(update={"topic": "研报", "content": "长正文。" * 100})
 
     assert asyncio.run(dao_bridge._maybe_pre_read_article(short)).title == short.title
     assert asyncio.run(dao_bridge._maybe_pre_read_article(non_article)).title == non_article.title
+
+
+def test_long_flash_gets_a_concise_preview_title(monkeypatch):
+    class FakeLLM:
+        async def complete_json(self, prompt, **kwargs):
+            assert "原始标题" in prompt
+            return {
+                "title": "美联储会议纪要显示降息分歧",
+                "summary": "概括快讯核心变化。",
+            }
+
+    monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", FakeLLM)
+    req = _article_request("美联储会议纪要显示官员对降息时点存在分歧。" * 20).model_copy(
+        update={
+            "title": "路透社：美联储会议纪要显示官员对降息时点存在分歧。",
+            "topic": "快讯",
+            "tags": ["快讯"],
+        }
+    )
+
+    out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
+
+    assert out.title == "美联储会议纪要显示降息分歧"
+    assert out.content == req.content
+    assert out.metadata["display_title_pre_read"] is True
 
 
 def test_preview_failure_keeps_original_article_title(monkeypatch):
@@ -115,3 +140,23 @@ def test_preview_falls_back_to_stripped_source_prefix_when_model_keeps_title(mon
 
     assert out.title == "Meta悄然成为微软最大AI客户之一"
     assert out.metadata["article_pre_read"] is True
+
+
+def test_preview_falls_back_to_cleaned_source_wrapper_for_long_flash(monkeypatch):
+    class UnchangedLLM:
+        async def complete_json(self, prompt, **kwargs):
+            return {"title": "【英伟达计划年底前向中国发货AI芯片 - 路透社】", "summary": ""}
+
+    monkeypatch.setattr("deepfocus_api.llm.CloudResearchLLM", UnchangedLLM)
+    req = _article_request("英伟达计划年底前向中国发货AI芯片。" * 100).model_copy(
+        update={
+            "title": "【英伟达计划年底前向中国发货AI芯片 - 路透社】",
+            "topic": "快讯",
+            "tags": ["快讯"],
+        }
+    )
+
+    out = asyncio.run(dao_bridge._maybe_pre_read_article(req))
+
+    assert out.title == "英伟达计划年底前向中国发货AI芯片"
+    assert out.metadata["display_title_pre_read"] is True

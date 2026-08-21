@@ -30,8 +30,8 @@ from .schemas import RealtimeMessageCreateRequest
 # 英文快讯入库前直译成中文（默认开；设 0 关闭回到原行为）。
 _TRANSLATE_ENABLED = os.getenv("DEEPFOCUS_NEWS_TRANSLATE", "1").strip().lower() in ("1", "true", "yes", "on")
 
-# 长文章先做一次轻量「标题级预读」，让实时流的标题承担文章概括，而不是把原始长标题
-# 直接铺在消息卡片上。失败时完整回退原标题，不阻塞文章入库。
+# 长文章/长快讯先做一次轻量「标题级预读」，让实时流的标题承担内容概括，而不是把
+# 原始长标题直接铺在消息卡片上。失败时完整回退原标题，不阻塞实时消息入库。
 _ARTICLE_PREVIEW_ENABLED = os.getenv("DEEPFOCUS_ARTICLE_PREVIEW_ENABLED", "1").strip().lower() in (
     "1", "true", "yes", "on"
 )
@@ -285,8 +285,10 @@ def _strip_article_source_prefix(value: str) -> str:
 
 
 def _fallback_article_preview(req: RealtimeMessageCreateRequest) -> Optional[dict[str, str]]:
-    """模型没有压缩时，至少移除稳定的来源前缀，避免原始前缀进入展示标题。"""
+    """模型没有压缩时，至少移除稳定的来源包装，避免原始格式进入展示标题。"""
     title = _strip_article_source_prefix(req.title or "").rstrip("。！？!?；;:：").strip()
+    title = re.sub(r"^【(.+)】$", r"\1", title).strip()
+    title = re.sub(r"\s*[-—–]\s*(?:路透社|路透|彭博社|彭博)\s*$", "", title).strip()
     original = (req.title or "").strip()
     if title and title != original and len(title) >= 6:
         return {"title": title, "summary": ""}
@@ -318,11 +320,11 @@ def _normalize_article_preview(
 
 
 async def _maybe_pre_read_article(req: RealtimeMessageCreateRequest) -> RealtimeMessageCreateRequest:
-    """长文章入流前生成概括标题；非文章、短文章或模型失败均原样返回。"""
+    """长文章/长快讯入流前生成概括标题；短消息或模型失败均原样返回。"""
     content = (req.content or "").strip()
     if (
         not _ARTICLE_PREVIEW_ENABLED
-        or req.topic != "文章"
+        or req.topic not in ("文章", "快讯")
         or (len(content) < _ARTICLE_PREVIEW_MIN_CHARS and len(req.title or "") < 80)
     ):
         return req
@@ -368,6 +370,7 @@ async def _maybe_pre_read_article(req: RealtimeMessageCreateRequest) -> Realtime
     metadata.update(
         {
             "article_pre_read": True,
+            "display_title_pre_read": True,
             "article_original_title": req.title,
             "article_pre_read_title": preview["title"],
         }
