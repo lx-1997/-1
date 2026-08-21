@@ -18,8 +18,8 @@
 .bbt--anon .bbt-hero {
   padding: 28px 20px 24px;
   background:
-    radial-gradient(circle at 12% 0%, rgba(255, 176, 0, 0.08), transparent 38%),
-    linear-gradient(180deg, rgba(255, 176, 0, 0.025), transparent 82%);
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 38%),
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 2.5%, transparent), transparent 82%);
 }
 
 .bbt--anon .bbt-hero-inner {
@@ -86,9 +86,9 @@
 .bbt .bbt-investor-compass-head > div > span:first-child {
   flex: 0 0 auto;
   padding: 3px 7px;
-  border: 1px solid rgba(16, 163, 127, 0.3);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: 5px;
-  background: rgba(16, 163, 127, 0.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   letter-spacing: 0.06em;
 }
 

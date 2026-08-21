@@ -27,7 +27,7 @@
   place-items: center;
   width: 64px;
   height: 64px;
-  border: 1px solid rgba(16, 163, 127, 0.35);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 50%;
   background: var(--accent-soft);
 }

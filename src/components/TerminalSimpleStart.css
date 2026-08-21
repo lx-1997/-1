@@ -5,7 +5,7 @@
   gap: 22px;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(90deg, rgba(16, 163, 127, .10), rgba(16, 163, 127, 0));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent);
 }
 .bbt-simple-start-copy { min-width: 230px; }
 .bbt-simple-start-copy > span { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }

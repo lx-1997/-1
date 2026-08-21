@@ -248,7 +248,7 @@
 }
 
 .shareholder-change-metric-box--primary {
-  border-color: rgba(16, 163, 127, 0.35);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
   background: var(--accent-soft);
 }
 

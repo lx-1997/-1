@@ -431,7 +431,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
                 <YAxis tick={{ fontSize: 12 }} tickFormatter={value => `${value}B`} />
                 <RechartsTooltip formatter={(value: number) => [`$${value.toFixed(1)}B`, '']} />
                 <Legend />
-                <Line type="monotone" dataKey="export" name="出口" stroke="#0f766e" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="export" name="出口" stroke="#0071e3" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="import" name="进口" stroke="#2563eb" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="balance" name="差额" stroke="#b45309" strokeWidth={2} dot={false} />
               </LineChart>
@@ -454,7 +454,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
                 <YAxis dataKey="name" type="category" tick={{ fontSize: 12 }} width={86} />
                 <RechartsTooltip formatter={(value: number) => [`$${value.toFixed(1)}B`, '']} />
                 <Legend />
-                <Bar dataKey="export" name="累计出口" fill="#0f766e" radius={[0, 3, 3, 0]} />
+                <Bar dataKey="export" name="累计出口" fill="#0071e3" radius={[0, 3, 3, 0]} />
                 <Bar dataKey="import" name="累计进口" fill="#2563eb" radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -480,11 +480,11 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
                 />
                 <Legend />
                 {detailTab === 'exports' ? (
-                  <Line type="monotone" dataKey="value" name="金额" stroke="#0f766e" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="value" name="金额" stroke="#0071e3" strokeWidth={2} dot={false} />
                 ) : (
                   <>
                     <Line type="monotone" dataKey="trade" name="贸易额" stroke="#475569" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="export" name="出口" stroke="#0f766e" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="export" name="出口" stroke="#0071e3" strokeWidth={2} dot={false} />
                     <Line type="monotone" dataKey="import" name="进口" stroke="#2563eb" strokeWidth={2} dot={false} />
                   </>
                 )}

@@ -36,9 +36,9 @@
   flex-shrink: 0;
   background: var(--text-soft);
 }
-.dfx-hd-dot.ready { background: var(--positive); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15); }
-.dfx-hd-dot.degraded { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
-.dfx-hd-dot.not-ready { background: var(--negative); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15); }
+.dfx-hd-dot.ready { background: var(--positive); box-shadow: 0 0 0 3px color-mix(in srgb, var(--positive) 15%, transparent); }
+.dfx-hd-dot.degraded { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 15%, transparent); }
+.dfx-hd-dot.not-ready { background: var(--negative); box-shadow: 0 0 0 3px color-mix(in srgb, var(--negative) 15%, transparent); }
 
 /* 状态 Popover 内容 */
 .dfx-hd-status-panel {
@@ -81,7 +81,7 @@
   line-height: 1.5;
 }
 
-.dfx-hd-note.warn { color: #f59e0b; }
+.dfx-hd-note.warn { color: var(--warning); }
 .dfx-hd-note.block { color: var(--negative); }
 
 /* ⌘K 命令面板入口 */

@@ -665,7 +665,7 @@ const deliverySeries: Array<{ key: DeliverySeriesKey; name: string; color: strin
   { key: 'hbm', name: 'HBM', color: '#6d5bd0', core: true },
   { key: 'optical', name: '光互联', color: '#b45309', core: true },
   { key: 'power', name: '电力设备', color: '#166534', core: true },
-  { key: 'wafer', name: '先进制程', color: '#0f766e' },
+  { key: 'wafer', name: '先进制程', color: '#0071e3' },
   { key: 'substrate', name: 'ABF/载板', color: '#7c3aed' },
   { key: 'pcb', name: 'PCB/T-glass', color: '#be123c' },
   { key: 'ssd', name: 'SSD/NAND', color: '#2563eb' },
