@@ -3284,6 +3284,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const renderNewsRow = (m: RealtimeMessageRecord, pinned = false, wlSyms?: string[], personalWhy?: string) => {
     const isFlash = (m.topic || '') === '快讯';
+    const isArticle = (m.topic || '') === '文章';
+    const splitPreReadTitle = (isArticle || isFlash) && Boolean(
+      m.metadata?.display_title_pre_read || m.metadata?.article_pre_read
+    );
     const canBookmark = (m.topic || '') === '文章';  // 快讯不收藏（用户拍板）；研报走独立的 renderResearchRow，不会传入这里
     const isBm = bookmarks.has(bmId(m));
     return (
@@ -3310,7 +3314,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           // 快讯没有「全文/AI解读」按钮兜底，这条预览就是唯一能读到内容的地方 → 全量显示，不截断；
           // 文章/研报已有按钮可展开全文，这里仍截断省版面，但要带省略号，别让人误以为内容就到此为止。
           const shown = isFlash || tail.length <= 100 ? tail : tail.slice(0, 100) + '…';
-          return <span className="bbt-ntext">{t}{shown ? `　${shown}` : ''}</span>;
+          return (
+            <span className={`bbt-ntext${splitPreReadTitle ? ' bbt-ntext--article' : ''}`}>
+              <span className={splitPreReadTitle ? 'bbt-ntitle' : undefined}>{t}</span>
+              {shown && (
+                <span className={splitPreReadTitle ? 'bbt-npreview' : undefined}>{splitPreReadTitle ? shown : `　${shown}`}</span>
+              )}
+            </span>
+          );
         })()}
         <span className="bbt-nact">
           {canBookmark && <button className={'bbt-nbm' + (isBm ? ' on' : '')} aria-label="收藏" aria-pressed={isBm} title={isBm ? '取消收藏' : '收藏'} onClick={e => { e.stopPropagation(); toggleBookmark(m); }}>{isBm ? '★' : '☆'}</button>}
