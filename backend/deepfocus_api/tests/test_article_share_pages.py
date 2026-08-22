@@ -100,6 +100,14 @@ def _make_futou_flash():
     ))
 
 
+def _make_futou_report():
+    return rm.create_realtime_message(RealtimeMessageCreateRequest(
+        title="受限来源研报", content="受限研报摘要", topic="研报",
+        severity="info", source_name="DAO财经", source_id="lxaarpt88004",
+        source_type="dao-report", tags=["研报"],
+    ))
+
+
 def _make_normal_flash():
     return rm.create_realtime_message(RealtimeMessageCreateRequest(
         title="普通来源快讯", content="普通快讯正文", topic="快讯",
@@ -169,13 +177,15 @@ def test_anonymous_cannot_see_futou_messages(client, monkeypatch):
     """匿名的列表、单条深链、公开落地页和头条全部隐藏；普通来源仍可见。"""
     article = _make_futou_article()
     flash = _make_futou_flash()
+    report = _make_futou_report()
     normal = _make_normal_flash()
 
     listed = {m["id"] for m in client.get("/api/realtime/messages", params={"limit": 20}).json()["messages"]}
-    assert article.id not in listed and flash.id not in listed
+    assert article.id not in listed and flash.id not in listed and report.id not in listed
     assert normal.id in listed
     assert client.get(f"/api/realtime/messages/{article.id}").status_code == 404
     assert client.get(f"/api/realtime/messages/{flash.id}").status_code == 404
+    assert client.get(f"/api/realtime/messages/{report.id}").status_code == 404
     assert client.get(f"/article/{article.id}").status_code == 404
     assert client.get(f"/article/{flash.id}").status_code == 404
 
@@ -183,11 +193,12 @@ def test_anonymous_cannot_see_futou_messages(client, monkeypatch):
     monkeypatch.setattr(main_mod, "_HEADLINES", {
         "kx": [main_mod._hl_pack_msg(flash, "restricted"), main_mod._hl_pack_msg(normal, "normal")],
         "wz": [main_mod._hl_pack_msg(article, "restricted")],
-        "yb": [], "generated_at": "now",
+        "yb": [main_mod._hl_pack_msg(report, "restricted")], "generated_at": "now",
     })
     headlines = client.get("/api/headlines").json()
     assert [m["id"] for m in headlines["kx"]] == [normal.id]
     assert headlines["wz"] == []
+    assert headlines["yb"] == []
     assert article.id not in client.get("/sitemap.xml").text
     assert article.id not in client.get("/feed.xml").text
     assert article.id not in client.get("/articles").text
@@ -209,8 +220,10 @@ def test_exclude_futou_query_keeps_full_limit(client):
             title=f"受限快讯 {i}", content="x", topic="快讯", severity="info",
             source_id=f"lxaa99{i}", source_type="dao-news",
         ))
+    report = _make_futou_report()
     rows = rm.list_realtime_messages(exclude_futoucaixin=True, limit=1)
     assert [m.id for m in rows] == [normal.id]
+    assert rm.is_futoucaixin_message(report)
 
 
 def test_filtered_latest_hides_stale_flash_but_keeps_history_search(client):
@@ -299,6 +312,7 @@ def test_dao2_is_restricted_but_regular_user_can_read(member_client, monkeypatch
     c = member_client
     article = _make_futou_article()
     flash = _make_futou_flash()
+    report = _make_futou_report()
     normal = _make_normal_flash()
 
     dao2 = c.post("/api/auth/register", json={
@@ -310,19 +324,21 @@ def test_dao2_is_restricted_but_regular_user_can_read(member_client, monkeypatch
     dao2_ids = {
         m["id"] for m in c.get("/api/realtime/messages", headers=dao2_headers).json()["messages"]
     }
-    assert article.id not in dao2_ids and flash.id not in dao2_ids
+    assert article.id not in dao2_ids and flash.id not in dao2_ids and report.id not in dao2_ids
     assert normal.id in dao2_ids
     assert c.get(f"/api/realtime/messages/{article.id}", headers=dao2_headers).status_code == 404
+    assert c.get(f"/api/realtime/messages/{report.id}", headers=dao2_headers).status_code == 404
 
     from deepfocus_api import main as main_mod
     monkeypatch.setattr(main_mod, "_HEADLINES", {
         "kx": [main_mod._hl_pack_msg(flash, "restricted"), main_mod._hl_pack_msg(normal, "normal")],
         "wz": [main_mod._hl_pack_msg(article, "restricted")],
-        "yb": [], "generated_at": "now",
+        "yb": [main_mod._hl_pack_msg(report, "restricted")], "generated_at": "now",
     })
     dao2_heads = c.get("/api/headlines", headers=dao2_headers).json()
     assert [m["id"] for m in dao2_heads["kx"]] == [normal.id]
     assert dao2_heads["wz"] == []
+    assert dao2_heads["yb"] == []
 
     reader = c.post("/api/auth/register", json={
         "username": "reader", "password": "password1", "email": "reader@example.com",
@@ -332,11 +348,13 @@ def test_dao2_is_restricted_but_regular_user_can_read(member_client, monkeypatch
     reader_ids = {
         m["id"] for m in c.get("/api/realtime/messages", headers=reader_headers).json()["messages"]
     }
-    assert article.id in reader_ids and flash.id in reader_ids and normal.id in reader_ids
+    assert article.id in reader_ids and flash.id in reader_ids and report.id in reader_ids and normal.id in reader_ids
     assert c.get(f"/api/realtime/messages/{article.id}", headers=reader_headers).status_code == 200
+    assert c.get(f"/api/realtime/messages/{report.id}", headers=reader_headers).status_code == 200
     reader_heads = c.get("/api/headlines", headers=reader_headers).json()
     assert [m["id"] for m in reader_heads["kx"]] == [flash.id, normal.id]
     assert [m["id"] for m in reader_heads["wz"]] == [article.id]
+    assert [m["id"] for m in reader_heads["yb"]] == [report.id]
 
 
 def test_sitemap_route_includes_articles(client):

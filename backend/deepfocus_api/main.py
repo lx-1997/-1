@@ -265,6 +265,7 @@ from .realtime_messages import (
     get_realtime_message,
     init_realtime_message_db,
     is_futoucaixin_message,
+    is_futoucaixin_restricted_user,
     list_realtime_messages,
     publish_data_source_items,
     realtime_message_event_stream,
@@ -5774,6 +5775,7 @@ async def api_headlines(request: Request) -> dict[str, Any]:
         **_HEADLINES,
         "kx": [item for item in (_HEADLINES.get("kx") or []) if not is_futoucaixin_message(item)],
         "wz": [item for item in (_HEADLINES.get("wz") or []) if not is_futoucaixin_message(item)],
+        "yb": [item for item in (_HEADLINES.get("yb") or []) if not is_futoucaixin_message(item)],
     }
 
 
@@ -8328,9 +8330,6 @@ def _article_member_view(m: RealtimeMessageRecord, request: Request) -> Realtime
     return m.model_copy(update={"content": teaser + _ARTICLE_LOCK_NOTE})
 
 
-_FUTOUCAIXIN_RESTRICTED_USERS = {"dao2"}
-
-
 def _filtered_view_flash_max_age_hours() -> int:
     """匿名/失效会话/dao2 的最新流里，旧快讯最多保留多久。
 
@@ -8368,12 +8367,11 @@ def _is_stale_filtered_view_flash(
 
 
 def _should_hide_futoucaixin(request: Request) -> bool:
-    """匿名/失效会话与指定账号不可见 futoucaixin 快讯和文章。"""
+    """匿名/失效会话与指定账号不可见 futoucaixin 的任意资讯。"""
     claims = optional_current_user(request)
     if claims is None:
         return True
-    username = str(claims.get("username") or "").strip().casefold()
-    return username in _FUTOUCAIXIN_RESTRICTED_USERS
+    return is_futoucaixin_restricted_user(claims.get("username"))
 
 
 def _realtime_message_view(
@@ -10230,11 +10228,19 @@ async def dulus_webbridge_inspect(request: DulusWebBridgeInspectRequest) -> Dulu
 
 
 @app.post("/api/dulus/roundtable", response_model=DulusRoundtableResponse)
-async def dulus_roundtable(request: DulusRoundtableRequest) -> DulusRoundtableResponse:
+async def dulus_roundtable(
+    request: DulusRoundtableRequest,
+    _user: Optional[dict] = Depends(optional_current_user),
+) -> DulusRoundtableResponse:
+    from . import agent_tools as _agent_tools
+    _uname = str((_user or {}).get("username") or "").strip()
+    _binding_token = _agent_tools._BINDING_USER.set(_uname)
     try:
         return await run_dulus_roundtable(llm, request)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        _agent_tools._BINDING_USER.reset(_binding_token)
 
 
 @app.post("/api/ai/stock-analysis", response_model=StockAnalysisResponse)
@@ -11334,7 +11340,14 @@ async def deep_research_start(request: Request, symbol: str = "", name: str = ""
     task = await dr.create_task(owner, ifind_used, symbol, name, market)
     if not unlimited:
         metrics_incr(qkey)
-    asyncio.create_task(dr.run_deep_research(task.task_id, symbol, name, task.market, ifind_user=ifind_used))
+    # create_task 会复制当前 context：先注入 owner，让后台取证中的站内资讯工具
+    # 也执行 dao2 的来源隔离；随后立即 reset，不污染当前请求。
+    from . import agent_tools as _agent_tools
+    _binding_token = _agent_tools._BINDING_USER.set(owner)
+    try:
+        asyncio.create_task(dr.run_deep_research(task.task_id, symbol, name, task.market, ifind_user=ifind_used))
+    finally:
+        _agent_tools._BINDING_USER.reset(_binding_token)
     return {"task_id": task.task_id, "status": "pending"}
 
 
@@ -11483,10 +11496,16 @@ def make_weixin_orchestrator_agent_fn():
 async def orchestrator_chat(request: OrchestratorChatRequest, http_request: Request) -> OrchestratorChatResponse:
     # http_request 由 FastAPI 注入（不改 body schema）——仅用于 iFinD 灰度判定。
     _ifind = ifind_enhance_enabled(http_request)
+    from . import agent_tools as _agent_tools
+    _claims = optional_current_user(http_request)
+    _uname = str((_claims or {}).get("username") or "").strip()
+    _binding_token = _agent_tools._BINDING_USER.set(_uname)
     try:
         return await _route_orchestrator_chat(request, _ifind)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        _agent_tools._BINDING_USER.reset(_binding_token)
 
 
 @app.post("/api/risk/greeks", response_model=GreeksResponse)

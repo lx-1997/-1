@@ -37,6 +37,13 @@ _subscribers: set[asyncio.Queue[RealtimeMessageRecord]] = set()
 # 新消息落库+广播后的同步钩子（如离线召回扇出）。解耦：本模块不依赖召回实现。
 _post_hooks: list[Callable[[RealtimeMessageRecord], None]] = []
 
+# 所有资讯出口（HTTP / SSE / AI 工具）共用同一份账号名单，避免分支漂移。
+FUTOUCAIXIN_RESTRICTED_USERS = frozenset({"dao2"})
+
+
+def is_futoucaixin_restricted_user(username: Any) -> bool:
+    return str(username or "").strip().casefold() in FUTOUCAIXIN_RESTRICTED_USERS
+
 
 def subscriber_count() -> int:
     """当前在线的实时快讯 SSE 长连接数（容量监控用：这正是会占满 nginx 连接的那批）。"""
@@ -219,12 +226,12 @@ def list_realtime_messages(
         clauses.append("severity = ?")
         values.append(severity.strip())
     if exclude_futoucaixin:
-        # 匿名用户和受限账号的数据闸：文章可由保留的原文域名识别；
-        # 快讯通常没有 url，生产存量使用 lxaa* source_id（含 lxaanr 文章）标识该上游。
+        # 匿名用户和受限账号的数据闸：按「来源」而非 topic 隔离。
+        # 生产存量使用 lxaa* source_id（lxaa 快讯 / lxaanr 文章 /
+        # lxaarpt 研报）标识该上游；有原文 URL 时再用域名双重识别。
         clauses.append(
-            "NOT (topic IN ('快讯', '文章') AND "
-            "(LOWER(COALESCE(url, '')) LIKE '%futoucaixin%' "
-            "OR LOWER(COALESCE(source_id, '')) LIKE 'lxaa%'))"
+            "NOT (LOWER(COALESCE(url, '')) LIKE '%futoucaixin%' "
+            "OR LOWER(COALESCE(source_id, '')) LIKE 'lxaa%')"
         )
     if q and q.strip():  # 关键词检索全量历史：空格分词，每词命中标题或正文（AND）
         for term in q.strip().split()[:6]:
@@ -279,7 +286,7 @@ def get_realtime_message(message_id: str) -> Optional[RealtimeMessageRecord]:
 
 
 def is_futoucaixin_message(message: Any) -> bool:
-    """识别来自 futoucaixin 上游的快讯/文章。
+    """识别来自 futoucaixin 上游的任意类型资讯。
 
     入库时可见正文会抹去竞品字样，故不能用 title/content 判断；
     结构化 url 和上游 source_id 会保留，是稳定的服务端识别依据。
@@ -289,8 +296,6 @@ def is_futoucaixin_message(message: Any) -> bool:
         get = message.get
     else:
         get = lambda key, default=None: getattr(message, key, default)
-    if str(get("topic", "") or "") not in ("快讯", "文章"):
-        return False
     url = str(get("url", "") or "").strip().lower()
     source_id = str(get("source_id", "") or "").strip().lower()
     return "futoucaixin" in url or source_id.startswith("lxaa")

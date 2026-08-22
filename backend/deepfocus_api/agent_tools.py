@@ -33,9 +33,20 @@ from . import bull_playbook, financial_statements
 from .consensus_source import fetch_analyst_consensus
 from .eastmoney_data import fetch_eastmoney_earnings, fetch_fund_flow
 from .market_data import fetch_market_quotes
-from .realtime_messages import list_realtime_messages
+from .realtime_messages import is_futoucaixin_restricted_user, list_realtime_messages
 from .shared_utils import safe_float
 from .valuation_source import fetch_valuation
+
+
+def _exclude_restricted_news_source() -> bool:
+    """AI 工具也必须遵守账号级资讯隔离。
+
+    账号由服务端入口注入 ContextVar，不放进 tool JSON 参数，因此模型和
+    客户端都不能通过伪造工具参数绕过。
+    """
+    username = (_BINDING_USER.get() or "").strip()
+    return not username or is_futoucaixin_restricted_user(username)
+
 
 ToolHandler = Callable[..., Awaitable[Any]]
 
@@ -440,7 +451,11 @@ async def _tool_assess_long_term_bull(symbol: str, market: Optional[str] = None)
     # 催化剂：扫本站近期与该标的相关内容，按第2章业绩增长关键字分类
     cat_titles: list[str] = []
     try:
-        for m in list_realtime_messages(anyq=symbol, limit=20):
+        for m in list_realtime_messages(
+            anyq=symbol,
+            exclude_futoucaixin=_exclude_restricted_news_source(),
+            limit=20,
+        ):
             t = getattr(m, "title", "") or ""
             if t:
                 cat_titles.append(t)
@@ -533,7 +548,12 @@ async def _tool_search_our_content(query: str = "", days: int = 7, limit: int = 
     anyq = ",".join(terms) if terms else ""
     try:
         # limit 上限放宽到 60，便于「近 24 小时全覆盖」式总结取全近期快讯。
-        msgs = list_realtime_messages(anyq=anyq, since=since, limit=max(1, min(int(limit or 20), 60)))
+        msgs = list_realtime_messages(
+            anyq=anyq,
+            since=since,
+            exclude_futoucaixin=_exclude_restricted_news_source(),
+            limit=max(1, min(int(limit or 20), 60)),
+        )
     except Exception:
         return []
     _TONE = {"warning": "风险/利空", "success": "利好", "info": "中性"}
