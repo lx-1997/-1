@@ -2900,3 +2900,9 @@
   .bbt-mobile-nav button > span { font-size: 17px; }
   .bbt-mobile-nav button > b { font-size: 9px; }
 }
+
+/* 移动端顶栏不再重复占位搜索框：搜索面板仍可通过快捷键 / 或其他入口打开。 */
+@media (max-width: 820px) {
+  .bbt-cmd-input { display: none; }
+  .bbt-with-sidebar .bbt-cmd { grid-template-areas: "toggle brand actions" !important; }
+}
