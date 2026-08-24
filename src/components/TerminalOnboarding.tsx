@@ -5,22 +5,35 @@ import { createPortal } from 'react-dom';
 // 看完/跳过后写 localStorage，不再自动弹；命令栏「?」可随时重看。
 export const ONB_KEY = 'df_onboarded_v1';
 
-interface OnbStep { selector?: string; emoji: string; title: string; body: string; }
+interface OnbStep { selector?: string; selectors?: string[]; emoji: string; title: string; body: string; }
 
 // 精简为 3 步核心动作（搜股→AI 问答→开盯盘）：7 步文字导览在 10 秒心智窗口里讲不完，
 // 反而盖脸劝退——次要功能（研报/微信/邀请）都有常驻入口，让用户用的时候自己发现。
 const STEPS: OnbStep[] = [
-  { selector: '.bbt-cmd-input', emoji: '🔍', title: '第一步：查一只股', body: '输入代码或名称（如 茅台 / 600519），不用登录就能看实时行情、真K线和它的快讯/研报。' },
-  { selector: '.bbt-aiqa-entry', emoji: '🤖', title: '第二步：让 AI 帮你研判', body: '「AI 问答」会自动调行情/估值/资金/研报综合作答——问『它现在贵不贵』试试（免费额度每天都有）。' },
-  { emoji: '🔔', title: '第三步：开盯盘，别错过', body: '把股票加进自选并开启盯盘提醒，你的股有快讯/异动会第一时间通知你；每天早8:30晨报、收盘15:35复盘准时见。随时点右上角 ❔ 重看引导。' },
+  { selectors: ['.bbt-cmd-input', '.bbt-hero-cta-primary'], emoji: '🔍', title: '查一只股', body: '输入代码或名称（如 茅台 / 600519），不用登录就能看实时行情、真K线和它的快讯/研报。' },
+  { selector: '.bbt-aiqa-entry', emoji: '🤖', title: '让 AI 帮你研判', body: '「AI 问答」会自动调行情/估值/资金/研报综合作答——问『它现在贵不贵』试试（免费额度每天都有）。' },
+  { emoji: '🔔', title: '开盯盘，别错过', body: '把股票加进自选并开启盯盘提醒，你的股有快讯/异动会第一时间通知你；每天早8:30晨报、收盘15:35复盘准时见。随时点底部「更多」重看引导。' },
 ];
 
 const PAD = 8;
 const CARD_W = 340;
 
+const isVisibleTarget = (selector: string) => {
+  const el = document.querySelector(selector) as HTMLElement | null;
+  if (!el) return false;
+  const style = window.getComputedStyle(el);
+  const rect = el.getBoundingClientRect();
+  return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+};
+
 const TerminalOnboarding: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  // 仅保留「无目标的欢迎页」+「目标存在的步骤」（如未登录无登录按钮则跳过该步）
-  const [steps] = useState<OnbStep[]>(() => STEPS.filter(s => !s.selector || document.querySelector(s.selector)));
+  // 仅保留「无目标的欢迎页」+「当前视口存在可见目标的步骤」；移动端隐藏顶栏搜索后自动改用 hero 按钮或跳过该步。
+  const [steps] = useState<OnbStep[]>(() => STEPS.flatMap(step => {
+    const candidates = step.selectors || (step.selector ? [step.selector] : []);
+    if (!candidates.length) return [step];
+    const selector = candidates.find(isVisibleTarget);
+    return selector ? [{ ...step, selector }] : [];
+  }));
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const step = steps[i];
@@ -78,16 +91,17 @@ const TerminalOnboarding: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   }
 
   const last = i === steps.length - 1;
+  const stepLabel = `第 ${i + 1} 步：${step.title}`;
 
   return createPortal(
-    <div className="bbt-onb" role="dialog" aria-modal="true" aria-label={step.title} onClick={e => { if (e.target === e.currentTarget) { /* 点遮罩不误关 */ } }}>
+    <div className="bbt-onb" role="dialog" aria-modal="true" aria-label={stepLabel} onClick={e => { if (e.target === e.currentTarget) { /* 点遮罩不误关 */ } }}>
       {spot
         ? <div className="bbt-onb-spot" style={spot} />
         : <div className="bbt-onb-scrim" />}
       <div className="bbt-onb-card" style={{ width: CARD_W, ...cardStyle }} key={i}>
         <button className="bbt-onb-x" onClick={finish} aria-label="跳过引导" title="跳过">✕</button>
         <div className="bbt-onb-emoji">{step.emoji}</div>
-        <div className="bbt-onb-title">{step.title}</div>
+        <div className="bbt-onb-title">{stepLabel}</div>
         <div className="bbt-onb-body">{step.body}</div>
         <div className="bbt-onb-foot">
           <div className="bbt-onb-dots" role="img" aria-label={`第 ${i + 1} / ${steps.length} 步`}>
