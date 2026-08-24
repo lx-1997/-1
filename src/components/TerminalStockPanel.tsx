@@ -172,10 +172,12 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
     setBusy(true);
     try {
       if (t === 'verdict') {
+        // 未登录用户先给一张完整的速判卡，历史轨迹/风险体检与横向数据仍留在登录后。
+        // 这是匿名首个价值时刻，避免“点开就登录”的硬墙，同时控制匿名请求成本。
         const [ts, hist, risk] = await Promise.all([
           apiGet<any>('/api/stock/tear-sheet', { params: { symbol, name }, timeout: 45000 }).catch(() => null),
-          apiGet<any>('/api/data/history', { params: { symbol, kind: 'verdict', limit: 24 } }).catch(() => null),
-          apiGet<any>('/api/stock/risk-check', { params: { symbol } }).catch(() => null),
+          loggedIn ? apiGet<any>('/api/data/history', { params: { symbol, kind: 'verdict', limit: 24 } }).catch(() => null) : Promise.resolve(null),
+          loggedIn ? apiGet<any>('/api/stock/risk-check', { params: { symbol } }).catch(() => null) : Promise.resolve(null),
         ]);
         // /api/data/history 返回 {items:[{recorded_at,payload}]} 新→旧；sparkline 由旧到新渲染 → 倒序
         const histItems = (hist?.items || hist?.points || hist?.data || []) as any[];
@@ -187,12 +189,11 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
         cache.current[key] = r?.data ?? null;
       }
     } finally { setBusy(false); bump(); }
-  }, [symbol, name]);
+  }, [loggedIn, symbol, name]);
 
   const openPanel = useCallback(() => {
-    if (!loggedIn) { onRequireLogin('查看个股速判卡与数据面板'); return; }
     setOpen(true); void load('verdict');
-  }, [loggedIn, onRequireLogin, load]);
+  }, [load]);
 
   // 我的表态（本 symbol）：不走 cache——表态/撤销后必须立刻反映，会话缓存会给用户看陈旧状态
   const loadCalls = useCallback(async () => {
@@ -235,10 +236,11 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
   }, [symbol, callBusy, onLog]);
 
   const switchTab = useCallback((t: TabKey) => {
+    if (!loggedIn && t !== 'verdict') { onRequireLogin('解锁个股完整数据面板'); return; }
     setTab(t);
     if (t === 'calls') { void loadCalls(); return; }
     void load(t);
-  }, [load, loadCalls]);
+  }, [loggedIn, onRequireLogin, load, loadCalls]);
 
   if (!open) {
     return (
@@ -259,6 +261,15 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
         ))}
         <button className="bbt-clear" style={{ marginLeft: 'auto' }} onClick={() => setOpen(false)}>收起 ▴</button>
       </div>
+
+      {!loggedIn && (
+        <div style={{ ...box, margin: '8px 0', borderColor: 'rgba(255,176,46,.45)', background: 'rgba(255,176,46,.06)' }}>
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            <b>先看结论，再决定是否注册。</b> 速判卡免费展示；登录后解锁评级演变、风险体检、龙虎榜/分红/公司新闻，并可保存自选。
+          </div>
+          <button className="bbt-primary-action" style={{ marginTop: 7 }} onClick={() => onRequireLogin('保存自选并解锁完整数据面板')}>登录 / 注册，解锁完整面板</button>
+        </div>
+      )}
 
       {busy && d === undefined && <div className="bbt-empty">加载中…</div>}
 

@@ -1029,6 +1029,7 @@ PUBLIC_EXACT = frozenset(
         "/api/market/quotes",       # 行情报价
         "/api/market/search",       # 标的搜索（命令面板）
         "/api/market/kline",        # 个股日线 K 线（OHLC，终端蜡烛图，免费层）
+        "/api/stock/tear-sheet",    # 个股速判卡首张免费预览；完整历史/横向数据仍由前端登录墙控制
         "/api/market-dashboard",    # 大盘指标盘
         "/api/market-risk-radar",   # A/H/美股市值前20风险预警（只读公开数据）
         "/api/themes/boards",      # A股概念板块涨幅榜（题材导航·免费引流）

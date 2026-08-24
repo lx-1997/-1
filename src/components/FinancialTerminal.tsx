@@ -194,19 +194,8 @@ const IFIND_USERS = new Set(['lx199710']);
 // 前端认标记判断「未解锁」——先展示后要账：不白屏，导语照给，弹升级引导。
 const ARTICLE_LOCK_MARKER = '全文为会员专享内容';
 
-// 创始会员价限时档：每位访客「首次打开起 72 小时」滚动倒计时——永远在走、不会像固定日期那样过期哑火。
-// 持久化到本地：窗口内复访继续倒计时；过期后下次打开顺延新的 72h（紧迫感长期有效）。
-const FOUNDING_PROMO_END = (() => {
-  const WINDOW_MS = 72 * 3600 * 1000;
-  try {
-    const k = 'df_promo_end_v1';
-    const saved = Number(localStorage.getItem(k) || 0);
-    if (saved && saved > Date.now()) return saved;     // 仍在 72h 窗口内 → 续用同一截止点
-    const end = Date.now() + WINDOW_MS;                 // 新窗口：从现在起 72h
-    localStorage.setItem(k, String(end));
-    return end;
-  } catch { return Date.now() + WINDOW_MS; }
-})();
+// 价格展示必须可验证：不再按访客本地时间滚动制造“仅剩 X 小时”的假紧迫感。
+// 真实折扣只来自后端套餐配置；新人加赠仍按注册时间窗口计算。
 // 新人前 3 天加赠：按套餐 key 给额外天数（年卡 +1 个月、半年卡 +15 天）。
 const NEW_USER_BONUS: Record<string, { days: number; label: string }> = {
   year: { days: 30, label: '新人 +1个月' },
@@ -1454,15 +1443,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [logAct]);
   // 当前选中的套餐（个人收款码不含金额，需用户手动输入——把应付金额醒目展示）
   const buySel = useMemo(() => (payCfg?.packages || []).find(p => p.key === buyPkg) || payCfg?.packages?.[0] || null, [payCfg, buyPkg]);
-  // 「限时一周」倒计时：仅购买弹窗打开时每秒走表（关着不空转）
-  const [nowTs, setNowTs] = useState(() => Date.now());
-  useEffect(() => {
-    if (!buyOpen) return;
-    setNowTs(Date.now());
-    const id = window.setInterval(() => setNowTs(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [buyOpen]);
-  const promoLeftMs = FOUNDING_PROMO_END - nowTs;            // >0 表示活动进行中
   // 新人前 3 天：可享加赠（年卡 +1月、半年卡 +15天）
   const isNewUser = useMemo(() => {
     if (!joinedAt) return false;
@@ -3573,14 +3553,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             title="AI 投研问答：自动调行情、估值、快讯、研报和复盘">✨ 问 AI</button>
           {membership?.tier !== 'lifetime' && (() => {
             const isMember = membership?.tier === 'premium';   // 已是尊享会员 → 显示「续费」（可能提前续期），永久会员不显示
-            const promoActive = Date.now() < FOUNDING_PROMO_END;  // 限时福利进行中
-            // 角标优先级：新人(注册前3天)专享 > 限时福利期 > 默认
+            const promoActive = false;  // 价格不以本地滚动倒计时为依据
+            // 角标优先级：新人(注册前3天)专享 > 默认
             const hot = isNewUser ? '🎁新人福利' : promoActive ? '⏳限时福利' : (isMember ? '提前续' : '解锁全部');
             return (
               <button className="bbt-buy-cta"
                       onClick={() => { logAct('open_buy', isMember ? '顶部续费CTA' : '顶部开通会员CTA'); requireLogin(openBuy, isMember ? '续费会员' : '开通会员'); }}
                       aria-label={isMember ? '续费会员' : '开通尊享会员'}
-                      title={isNewUser ? '新人限时福利：低至4折 + 年卡加赠1个月/半年卡加赠15天' : (isMember ? '限时福利期·提前续费更划算' : '开通尊享会员 · 限时低至4折 · 解锁 AI 无限解读/微信快讯推送/文章全文')}>
+                      title={isNewUser ? '新人专享：当前套餐折扣 + 年卡加赠1个月/半年卡加赠15天' : (isMember ? '提前续费，会员权益连续不断' : '开通尊享会员 · 查看公开套餐价 · 解锁 AI 无限解读/微信快讯推送/文章全文')}>
                 💎 {isMember ? '续费会员' : '开通会员'}<span className="bbt-buy-cta-hot">{hot}</span>
               </button>
             );
@@ -5305,17 +5285,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               <span className="bbt-redeem-title">💎 开通 / 续费会员</span>
               <button className="bbt-support-x" onClick={() => closeBuy('点✕关闭')}>✕</button>
             </div>
-            {(() => {  // 创始会员价横幅：最低折扣 + 「限时一周」倒计时（活动期内）
+            {(() => {  // 价格横幅：只展示后端配置中的公开折扣，不制造滚动倒计时
               const discs = (payCfg?.packages || []).filter(p => p.orig && p.orig > p.price).map(p => p.price / (p.orig as number) * 10);
               if (!discs.length) return null;
               const zhe = String(parseFloat(Math.min(...discs).toFixed(1)));  // 4.0→"4"，4.3→"4.3"
-              if (promoLeftMs > 0) {
-                const s = Math.floor(promoLeftMs / 1000);
-                const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-                const p2 = (n: number) => String(n).padStart(2, '0');
-                return <div className="bbt-buy-promo bbt-buy-promo--urgent">🔥 新人限时福利 · 低至 <b>{zhe} 折</b> · 限时<span className="bbt-buy-cd">⏳ 仅剩 {d}天 {p2(h)}:{p2(m)}:{p2(sec)}</span></div>;
-              }
-              return <div className="bbt-buy-promo">🎁 新人福利 · 低至 <b>{zhe} 折</b></div>;
+              return <div className="bbt-buy-promo">🧾 价格透明 · 当前套餐低至 <b>{zhe} 折</b></div>;
             })()}
             {isNewUser && <div className="bbt-buy-newuser">🎁 新人专享（注册前 3 天）：年卡额外送 <b>1 个月</b> · 半年卡额外送 <b>15 天</b></div>}
             <div className="bbt-buy-pkgs">

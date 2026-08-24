@@ -3226,6 +3226,9 @@ async def stock_tear_sheet(
         symbol, name=name, market_cap=market_cap, market=market,
         use_ifind=ifind_enhance_enabled(request),
     )
+    # 匿名首卡只返回确定性证据，避免公开入口触发 LLM 成本；登录用户再补充买方叙述。
+    if not getattr(request.state, "auth_claims", None):
+        return ts
     return await _enhance_tear_sheet_narrative(ts)
 
 
