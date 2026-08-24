@@ -627,12 +627,15 @@ async function loadMarketing(){
   try{ const r=await fetch('/api/metrics/marketing?token='+encodeURIComponent(token)); if(!r.ok) throw new Error(r.status); d=await r.json(); }
   catch(e){ const el=$('#marketing'); if(el) el.innerHTML='<div class="err">营销数据读取失败('+e.message+')</div>'; return; }
   const seg=d.segments||{}; const camps=d.campaigns||[]; const recent=d.recent||[];
+  const mode=d.mode|| (d.master_enabled?'on':'off');
+  const modeOn=mode==='on'||mode==='pilot';
+  const modeLabel=d.mode_label || (mode==='pilot'?'灰度模式（白名单 + 小流量）':mode==='shadow'?'影子模式（只预览）':mode==='on'?'全量模式':'关闭（只预览）');
   const chip=(ok,on,off)=>'<span style="display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;margin-right:8px;background:'+(ok?'rgba(43,217,106,.14)':'rgba(127,140,160,.12)')+';color:'+(ok?'#2bd96a':'#8a94a3')+'">'+(ok?on:off)+'</span>';
   const status='<div class="panel"><h2>📣 自动营销 · 通道与总闸</h2><div style="margin-bottom:8px">'+
-    chip(d.master_enabled,'总闸 已启用','总闸 空转 (env=0)')+
+    chip(modeOn,modeLabel,modeLabel)+
     chip(d.smtp_configured,'邮件SMTP 已配','邮件SMTP 未配')+
     chip(d.weixin_channel_on,'微信通道 开','微信通道 关')+
-    '</div><div class="sub">每用户冷却 '+(d.user_cooldown_days||7)+' 天 · 全引擎日总量上限 '+(d.daily_total_cap||40)+' 封 · 每日 16:50 自动跑一轮（主闸空转时只做预览、不真发）</div></div>';
+    '</div><div class="sub">当前模式：'+esc(modeLabel)+' · 每用户冷却 '+(d.user_cooldown_days||7)+' 天 · 有效日上限 '+(d.effective_daily_total_cap||d.daily_total_cap||40)+' 封 · 每轮灰度上限 '+(d.pilot_run_cap||2)+' 人 · 每日 16:50 自动跑一轮（关闭/影子模式只预览）</div></div>';
   const segCards='<div class="grid">'+
     card('习惯断挡 d7',seg.d7_slipping||0,'amber','注册4-14天·回访过·近72h没来')+
     card('沉睡用户',seg.dormant||0,'blue','注册>14天·活跃过·近14天没来')+
@@ -650,14 +653,14 @@ async function loadMarketing(){
     '</tr>'; }).join('') || '<tr><td colspan=7 class="sub" style="padding:12px">暂无 campaign</td></tr>';
   const campTable='<div class="panel"><h2>🎯 Campaign · 近14日效果 <button class="refresh" id="mktDry">🧪 试跑</button> <button class="refresh" id="mktRun">▶ 执行一轮</button></h2>'+
     '<table><thead><tr><th>名称</th><th>状态</th><th>日上限</th><th>已发</th><th>CTR</th><th>回访率</th><th>操作</th></tr></thead><tbody>'+crows+'</tbody></table>'+
-    '<div class="sub" style="margin-top:8px">CTR=点击/发送 · 回访率=发信后72h内回站/发送 · 默认全部停用，逐个启用即灰度</div></div>';
+    '<div class="sub" style="margin-top:8px">CTR=点击/发送 · 回访率=发信后72h内回站/发送 · 灰度白名单：'+esc((d.pilot_allowlist||['d7_slipping']).join('、'))+' · 默认建议先只启用一个 campaign</div></div>';
   const rrows=recent.map(function(t){ return '<tr><td class="t">'+esc(t.campaign_key||'')+'</td><td>'+esc(t.username||'')+'</td><td>'+esc(t.status||'')+'</td><td>'+(t.clicked_at?'<span class="up">✓</span>':'—')+'</td><td>'+(t.returned_at?'<span class="up">✓</span>':'—')+'</td><td class="c" style="color:#7f8a96;font-weight:400">'+esc((t.sent_at||'').replace('T',' ').slice(0,16))+'</td></tr>'; }).join('') || '<tr><td colspan=6 class="sub" style="padding:12px">暂无触达记录</td></tr>';
   const recentTable='<div class="panel"><h2>📨 最近触达（20条）</h2><table><thead><tr><th>Campaign</th><th>用户</th><th>状态</th><th>点击</th><th>回访</th><th>时间</th></tr></thead><tbody>'+rrows+'</tbody></table></div>';
   $('#marketing').innerHTML=status+segCards+campTable+recentTable;
   document.querySelectorAll('.mkt-toggle').forEach(function(b){ b.onclick=async function(){ b.disabled=true;
     try{ const r=await fetch('/api/admin/marketing/campaign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token,key:b.dataset.key,enabled:b.dataset.en==='1'})}); if(!r.ok) throw new Error(r.status); loadMarketing(); }
     catch(e){ alert('操作失败：'+e.message); b.disabled=false; } }; });
-  const runMkt=async function(dry){ const btn=dry?$('#mktDry'):$('#mktRun'); if(!dry && !confirm('立即执行一轮营销触达？主闸空转时只做预览、不真发。')) return;
+  const runMkt=async function(dry){ const btn=dry?$('#mktDry'):$('#mktRun'); if(!dry && !confirm(mode==='pilot'?'确认执行灰度营销？当前最多发送 '+(d.pilot_run_cap||2)+' 人。':'立即执行一轮营销触达？关闭/影子模式只做预览。')) return;
     btn.disabled=true; const old=btn.textContent; btn.textContent='执行中…';
     try{ const r=await fetch('/api/admin/marketing/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token,dry_run:dry})}); if(!r.ok) throw new Error(r.status); const o=await r.json();
       const pv=(o.preview||[]).slice(0,30).map(function(p){ return '· ['+p.campaign+'] '+p.user+' <'+p.email+'>'; }).join('\\n');

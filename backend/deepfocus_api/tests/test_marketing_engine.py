@@ -125,6 +125,41 @@ def test_master_off_forces_dry_run(isolated, monkeypatch):
         assert c.execute("SELECT COUNT(*) FROM marketing_touches").fetchone()[0] == 0
 
 
+def test_shadow_mode_is_explicit_and_forces_dry_run(isolated, monkeypatch):
+    monkeypatch.setenv("DEEPFOCUS_MARKETING_MODE", "shadow")
+    monkeypatch.setenv("DEEPFOCUS_MARKETING_ENABLED", "1")  # 新模式优先，不能被旧开关绕过
+    me.campaign_set("power_free", enabled=True)
+    _seed_metrics(isolated / "metrics.sqlite3", [("u:d", _days_ago_iso(i)) for i in range(4)])
+    monkeypatch.setattr(me, "list_users", lambda: [_user("d", "d@x.com", 20)])
+    monkeypatch.setattr(me, "_email_smtp_config", lambda: {"sender": "s", "user": "u"})
+    monkeypatch.setattr(me, "_smtp_sendmail", lambda *a, **k: None)
+    out = me.run_marketing_once(dry_run=False)
+    assert out["mode"] == "shadow" and out["master_enabled"] is False
+    assert out["dry_run"] is True and out["sent"] == 0 and len(out["preview"]) == 1
+
+
+def test_pilot_mode_allowlist_and_cap(isolated, monkeypatch):
+    monkeypatch.setenv("DEEPFOCUS_MARKETING_MODE", "pilot")
+    monkeypatch.setenv("DEEPFOCUS_MKT_PILOT_RUN_CAP", "1")
+    monkeypatch.setenv("DEEPFOCUS_MKT_PILOT_DAILY_TOTAL", "1")
+    for key in ("d7_slipping", "dormant", "power_free"):
+        me.campaign_set(key, enabled=True)
+    rows = []
+    users = []
+    for i in range(2):
+        uid = f"d{i}"
+        rows += [(f"u:{uid}", _days_ago_iso(7)), (f"u:{uid}", _days_ago_iso(4))]
+        users.append(_user(uid, f"{uid}@x.com", 7))
+    _seed_metrics(isolated / "metrics.sqlite3", rows)
+    monkeypatch.setattr(me, "list_users", lambda: users)
+    monkeypatch.setattr(me, "_email_smtp_config", lambda: {"sender": "s", "user": "u"})
+    monkeypatch.setattr(me, "_smtp_sendmail", lambda *a, **k: None)
+    out = me.run_marketing_once(dry_run=False, limit=99)
+    assert out["mode"] == "pilot" and out["master_enabled"] is True
+    assert out["dry_run"] is False and out["sent"] == 1
+    assert out["pilot_allowlist"] == ["d7_slipping"]
+
+
 def test_smtp_unset_does_not_write_touches(isolated, monkeypatch):
     monkeypatch.setenv("DEEPFOCUS_MARKETING_ENABLED", "1")
     me.campaign_set("power_free", enabled=True)

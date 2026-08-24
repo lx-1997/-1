@@ -30,7 +30,8 @@ from .shared_utils import utc_now_iso
 - new_no_return（T+1 未回访，t1 窗口）/ expiring（7 天内到期，expiry 窗口）
 
 铁律：
-- 主闸 DEEPFOCUS_MARKETING_ENABLED 默认 '0' → 关时任何调用强制 dry_run（诚实空转，代码可先上生产验证无副作用）。
+- 安全模式 DEEPFOCUS_MARKETING_MODE 默认 off：off/shadow 任何调用强制 dry_run；pilot 仅允许白名单 campaign、每轮 2 人、每日 5 人；on 才按常规上限运行。
+- 兼容旧的 DEEPFOCUS_MARKETING_ENABLED（未设置 MODE 时 1→on、其它→off），升级不会意外打开出站。
 - 频控：suppression 名单 / 每用户 N 天冷却 / 同 campaign M 天不重发 / 每 campaign 日上限 / 全引擎日总量上限。
 - SMTP 未配置：整轮 skipped 且【绝不落 sent】（学 t1_recall 血泪教训，防毒化频控）。
 - 出站：品牌只用 DeepFocus、结尾免责 + 退订 footer、过 compliance.neutralize_text、严禁荐股/买卖措辞。
@@ -57,22 +58,52 @@ _EMAIL_FOOTER = (
 # --------------------------------------------------------------------------- #
 # 配置 / 连接
 # --------------------------------------------------------------------------- #
+_MARKETING_MODES = {"off", "shadow", "pilot", "on"}
+
+
+def _marketing_mode() -> str:
+    """营销安全模式：off/shadow 只预览，pilot 小流量灰度，on 才按常规上限运行。
+
+    新配置优先使用 ``DEEPFOCUS_MARKETING_MODE``；未设置时兼容旧的
+    ``DEEPFOCUS_MARKETING_ENABLED``，避免升级服务后意外改变现有行为。
+    """
+    raw = (os.getenv("DEEPFOCUS_MARKETING_MODE") or "").strip().lower()
+    if raw in _MARKETING_MODES:
+        return raw
+    legacy = (os.getenv("DEEPFOCUS_MARKETING_ENABLED", "0") or "0").strip().lower()
+    return "on" if legacy in ("1", "true", "yes", "on") else "off"
+
+
 def _master_enabled() -> bool:
-    return (os.getenv("DEEPFOCUS_MARKETING_ENABLED", "0") or "0").strip().lower() in ("1", "true", "yes", "on")
+    return _marketing_mode() in ("pilot", "on")
+
+
+def _env_cap(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return max(0, default)
+
+
+def _pilot_daily_total() -> int:
+    return _env_cap("DEEPFOCUS_MKT_PILOT_DAILY_TOTAL", 5)
+
+
+def _pilot_run_cap() -> int:
+    return _env_cap("DEEPFOCUS_MKT_PILOT_RUN_CAP", 2)
+
+
+def _pilot_campaign_allowlist() -> set[str]:
+    raw = (os.getenv("DEEPFOCUS_MKT_PILOT_CAMPAIGNS") or "d7_slipping").strip()
+    return {item.strip() for item in raw.split(",") if item.strip()}
 
 
 def _user_cooldown_days() -> int:
-    try:
-        return max(0, int(os.getenv("DEEPFOCUS_MKT_USER_COOLDOWN_DAYS", "7")))
-    except ValueError:
-        return 7
+    return _env_cap("DEEPFOCUS_MKT_USER_COOLDOWN_DAYS", 7)
 
 
 def _daily_total_cap() -> int:
-    try:
-        return int(os.getenv("DEEPFOCUS_MKT_DAILY_TOTAL", "40"))
-    except ValueError:
-        return 40
+    return _env_cap("DEEPFOCUS_MKT_DAILY_TOTAL", 40)
 
 
 def _connect() -> sqlite3.Connection:
@@ -547,12 +578,16 @@ def attribute_returns(window_hours: int = 72) -> int:
 def run_marketing_once(dry_run: bool = False, limit: Optional[int] = None) -> dict[str, Any]:
     """执行一轮营销触达。dry_run=True 只算「会发给谁」不发不落库。返回结构化 summary，绝不抛出。
 
-    主闸 DEEPFOCUS_MARKETING_ENABLED 关闭时强制 dry_run（诚实空转）。"""
+    off/shadow 模式强制 dry_run；pilot 模式额外套白名单 + 小流量上限。"""
     init_marketing_db()
-    forced_dry = not _master_enabled()
+    mode = _marketing_mode()
+    forced_dry = mode in ("off", "shadow")
     effective_dry = dry_run or forced_dry
+    if mode == "pilot":
+        pilot_cap = _pilot_run_cap()
+        limit = pilot_cap if limit is None else min(max(0, limit), pilot_cap)
     summary: dict[str, Any] = {
-        "dry_run": effective_dry, "master_enabled": not forced_dry,
+        "dry_run": effective_dry, "master_enabled": not forced_dry, "mode": mode,
         "sent": 0, "skipped": 0, "errors": 0, "preview": [], "detail": [],
     }
 
@@ -563,6 +598,13 @@ def run_marketing_once(dry_run: bool = False, limit: Optional[int] = None) -> di
         return summary
 
     campaigns = [c for c in list_campaigns() if c["enabled"] and c["channel"] == "email"]
+    if mode == "pilot":
+        allow = _pilot_campaign_allowlist()
+        campaigns = [c for c in campaigns if c["key"] in allow]
+        summary["pilot_allowlist"] = sorted(allow)
+        if not campaigns:
+            summary["detail"].append("pilot 模式没有启用白名单 campaign（默认只允许 d7_slipping）")
+            return summary
     if not campaigns:
         summary["detail"].append("无启用中的 email campaign（默认全关，看板里开启后灰度）")
         return summary
@@ -582,6 +624,10 @@ def run_marketing_once(dry_run: bool = False, limit: Optional[int] = None) -> di
     max_cd = max([user_cd] + [int(c["cooldown_days"]) for c in campaigns])
     recent_any = _recent_sent_index(max_cd)
     total_cap = _daily_total_cap()
+    if mode == "pilot":
+        pilot_total = _pilot_daily_total()
+        total_cap = pilot_total if total_cap <= 0 else min(total_cap, pilot_total)
+        summary["pilot_daily_cap"] = pilot_total
     total_today = _sent_today_total(today)
     touched_this_run: set[str] = set()
 
@@ -645,12 +691,22 @@ def run_marketing_once(dry_run: bool = False, limit: Optional[int] = None) -> di
 def marketing_stats(days: int = 14) -> dict[str, Any]:
     """看板用：通道状态 + 分群规模 + 各 campaign 触达效果 + 最近触达。绝不抛。"""
     init_marketing_db()
+    mode = _marketing_mode()
+    regular_cap = _daily_total_cap()
+    pilot_cap = _pilot_daily_total()
     out: dict[str, Any] = {
         "master_enabled": _master_enabled(),
+        "mode": mode,
+        "mode_label": {"off": "关闭（只预览）", "shadow": "影子模式（只预览）",
+                        "pilot": "灰度模式（白名单 + 小流量）", "on": "全量模式"}.get(mode, mode),
         "smtp_configured": _email_smtp_config() is not None,
         "weixin_channel_on": (os.getenv("DEEPFOCUS_WEIXIN_CHANNEL", "0") or "0").strip() in ("1", "true", "yes", "on"),
         "user_cooldown_days": _user_cooldown_days(),
-        "daily_total_cap": _daily_total_cap(),
+        "daily_total_cap": regular_cap,
+        "effective_daily_total_cap": min(regular_cap, pilot_cap) if mode == "pilot" and regular_cap > 0 else (pilot_cap if mode == "pilot" else regular_cap),
+        "pilot_daily_cap": pilot_cap,
+        "pilot_run_cap": _pilot_run_cap(),
+        "pilot_allowlist": sorted(_pilot_campaign_allowlist()),
         "segments": {}, "campaigns": [], "recent": [],
     }
     try:
