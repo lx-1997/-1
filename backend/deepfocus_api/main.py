@@ -570,7 +570,7 @@ async function loadGrowth(){
   let d;
   try{ const r=await fetch('/api/metrics/growth?token='+encodeURIComponent(token)); if(!r.ok) throw new Error(r.status); d=await r.json(); }
   catch(e){ const el=$('#growth'); if(el) el.innerHTML='<div class="err">增长分析读取失败('+e.message+')</div>'; return; }
-  const k=d.kpis||{}; const u=k.users||{}; const dau=k.dau||{}; const ret=k.retention||{}; const mon=k.monetization||{};
+  const k=d.kpis||{}; const u=k.users||{}; const dau=k.dau||{}; const ret=k.retention||{}; const mon=k.monetization||{}; const act=k.activation||{};
   const fun=mon.funnel||{};
   const pct=v=>v==null?'—':v+'%';
   // DAU 趋势条（登录用户=绿 叠 匿名=蓝）
@@ -601,6 +601,8 @@ async function loadGrowth(){
       card('次日留存',pct(ret.d1&&ret.d1.rate),'amber','样本 '+((ret.d1&&ret.d1.cohort)||0)+' 人 · 回访 '+((ret.d1&&ret.d1.retained)||0))+
       card('7日留存',pct(ret.d7&&ret.d7.rate),'blue','样本 '+((ret.d7&&ret.d7.cohort)||0)+' 人')+
       card('付费转化率',pct(mon.paid_rate_pct),'purple','付费会员 '+(mon.paid_members||0)+' / 总用户 '+(u.total||0))+
+      card('首日激活率',pct(act.activation_rate_pct),'amber','完成2/3 '+(act.activated_users||0)+' / 访问 '+(act.visitors||0))+
+      card('当前会员',mon.current_members||0,'blue','近7日活跃付费 '+(mon.active_paid_7d||0)+' 人')+
     '</div>'+
     '<div class="two">'+
       '<div class="panel"><h2>📈 近 '+sr.length+' 日 DAU</h2>'+
@@ -611,6 +613,7 @@ async function loadGrowth(){
         fstep('点邀请',fun.invite_click,'#c4b5fd')+
         fstep('领体验卡',fun.claim_trial,'#2bd96a')+
         fstep('打开购买页',fun.open_buy,'#ffb000')+
+        fstep('点「已完成付款」',fun.buy_paid_click,'#f59e0b')+
         fstep('点「我已付款」',fun.buy_contact,'#ff5a52')+
       '</div>'+
     '</div>'+repHtml;

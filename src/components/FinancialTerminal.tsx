@@ -29,6 +29,7 @@ import TerminalZsxqStream from './TerminalZsxqStream';
 import TerminalWeixinBind from './TerminalWeixinBind';
 import TerminalKline from './TerminalKline';
 import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
+import TerminalActivationChecklist from './TerminalActivationChecklist';
 import TerminalInvestorCompass from './TerminalInvestorCompass';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
@@ -3678,6 +3679,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
 
+      <TerminalActivationChecklist
+        loggedIn={!!authUser}
+        hasStock={!!active || watchlist.some(symbol => !DEFAULT_WATCHLIST.includes(symbol))}
+        hasAi={!!aiAnswer.trim()}
+        alertsEnabled={activateDone}
+        onSearch={() => { setPaletteOpen(true); setPq(''); }}
+        onAskAi={() => { openAi(); setAiInput('帮我用简单的话说说：我现在最该关注什么？'); }}
+        onSaveWatchlist={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '添加关注股票')}
+        onEnableAlerts={() => requireLogin(armRecall, '开启盯盘提醒')}
+      />
+
       <section className="bbt-simple-start" aria-label="从这里开始">
         <div className="bbt-simple-start-copy">
           <span>从这里开始</span>
@@ -5390,6 +5402,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               </button>
             )}
             <div className="bbt-buy-trust">
+              {!payCfg?.storefront_url && <span className="bbt-buy-disclaim">当前为人工核验开通：提交付款凭证后通常几分钟内处理；超过 10 分钟未开通可再次私信管理员。</span>}
               <span className="bbt-buy-disclaim">内容仅供研究参考，不构成投资建议；会员为信息服务，不承诺任何收益。</span>
             </div>
             <button className="bbt-buy-redeem" onClick={() => { closeBuy('转去兑换码'); setRedeemInput(''); setRedeemOpen(true); }}>🎟️ 已有兑换码？点这里直接兑换</button>

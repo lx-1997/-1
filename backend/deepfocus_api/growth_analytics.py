@@ -135,18 +135,85 @@ def _activity_days_by_actor(days: int) -> dict[str, set[str]]:
 
 
 def _funnel_counts(days: int) -> dict[str, int]:
-    """转化漏斗：近 N 天各关键动作的去重人数（pageview→领体验→打开购买页→点已付款）。"""
+    """转化漏斗：近 N 天各关键动作的去重人数。
+
+    这里故意保留“动作人数”而不是事件次数：运营要判断的是有多少个用户
+    走到了下一步，不是少数用户重复点击了多少次。
+    """
     since = (datetime.now(BJ_TZ) - timedelta(days=days)).astimezone(timezone.utc).isoformat()
     out: dict[str, int] = {}
     with _metrics_connect() as conn:
         rows = conn.execute(
             "SELECT action, COUNT(DISTINCT actor_id) AS n FROM activity_log"
-            " WHERE ts >= ? AND action IN ('pageview','claim_trial','open_buy','buy_contact','invite_click')"
+            " WHERE ts >= ? AND action IN ("
+            "'pageview','claim_trial','open_buy','buy_paid_click','buy_contact','invite_click',"
+            "'watch_add','select_stock','ai_chat','open_review','signup')"
             " GROUP BY action",
             (since,),
         ).fetchall()
     for r in rows:
         out[r["action"]] = int(r["n"])
+    return out
+
+
+def _activation_funnel(days: int) -> dict[str, Any]:
+    """首日激活漏斗：访问 → 核心动作 2/3 → 购买意向。
+
+    核心动作是“看一只股票（select_stock/watch_add）”“问一次 AI”“打开复盘”。
+    激活定义为同一访客在窗口内完成其中至少两步；这样比只看注册数更接近
+    “用户是否已经形成每天回来解决问题的习惯”。所有数字均为去重人数。
+    """
+    since = (datetime.now(BJ_TZ) - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+    out: dict[str, Any] = {
+        "visitors": 0, "stock_users": 0, "ai_users": 0, "review_users": 0,
+        "activated_users": 0, "activation_rate_pct": None,
+        "buy_paid_click": 0, "buy_contact": 0, "buy_contact_rate_pct": None,
+        "steps": {"stock": 0, "ai": 0, "review": 0},
+    }
+    try:
+        with _metrics_connect() as conn:
+            rows = conn.execute(
+                "SELECT actor_id, action FROM activity_log WHERE ts >= ? AND action IN ("
+                "'pageview','select_stock','watch_add','ai_chat','open_review',"
+                "'buy_paid_click','buy_contact')",
+                (since,),
+            ).fetchall()
+        actions: dict[str, set[str]] = {}
+        for row in rows:
+            actor = str(row["actor_id"] or "").strip()
+            if actor:
+                actions.setdefault(actor, set()).add(str(row["action"] or ""))
+        visitors = {actor for actor, seen in actions.items() if "pageview" in seen}
+        stock_users = {
+            actor for actor, seen in actions.items()
+            if seen.intersection({"select_stock", "watch_add"})
+        }
+        ai_users = {actor for actor, seen in actions.items() if "ai_chat" in seen}
+        review_users = {actor for actor, seen in actions.items() if "open_review" in seen}
+        activated = {
+            actor for actor in visitors
+            if sum(bool(group) for group in (
+                stock_users.intersection({actor}),
+                ai_users.intersection({actor}),
+                review_users.intersection({actor}),
+            )) >= 2
+        }
+        buy_paid = {actor for actor, seen in actions.items() if "buy_paid_click" in seen}
+        buy_contact = {actor for actor, seen in actions.items() if "buy_contact" in seen}
+        out.update({
+            "visitors": len(visitors),
+            "stock_users": len(stock_users),
+            "ai_users": len(ai_users),
+            "review_users": len(review_users),
+            "activated_users": len(activated),
+            "activation_rate_pct": round(len(activated) / len(visitors) * 100, 1) if visitors else None,
+            "buy_paid_click": len(buy_paid),
+            "buy_contact": len(buy_contact),
+            "buy_contact_rate_pct": round(len(buy_contact) / len(buy_paid) * 100, 1) if buy_paid else None,
+            "steps": {"stock": len(stock_users), "ai": len(ai_users), "review": len(review_users)},
+        })
+    except sqlite3.Error as exc:
+        logger.warning("activation funnel 读取失败：%s", exc)
     return out
 
 
@@ -325,6 +392,7 @@ def compute_kpis(days: int = 14) -> dict[str, Any]:
     # —— 付费转化 ——
     paid = sum(1 for u in users if u["membership_source"] == "paid")
     funnel = _funnel_counts(days)
+    activation = _activation_funnel(days)
     paid_rate = round(paid / total_users * 100, 2) if total_users else None
 
     # —— 续费可见性（churn 止血的前提是 churn 可见）——
@@ -339,6 +407,15 @@ def compute_kpis(days: int = 14) -> dict[str, Any]:
         1 for u in users if u["membership_source"] == "paid"
         and (_e := _exp_dt(u)) is not None and now_utc < _e <= now_utc + timedelta(days=7)
     )
+    current_members = sum(1 for u in users if (_e := _exp_dt(u)) is not None and _e > now_utc)
+    paid_ids = {u["id"] for u in users if u["membership_source"] == "paid"}
+    active_paid_7d = len({
+        actor[2:] for actor, ds in actor_days.items()
+        if actor.startswith("u:")
+        and actor[2:] in paid_ids
+        and any(d >= day_list[max(0, days - 7)] for d in ds)
+    })
+    active_paid_rate = round(active_paid_7d / paid * 100, 1) if paid else None
 
     # —— 增长回路（传播 + 邀请质量 + 召回）——
     invited = [u for u in users if u["invited_by"] and u["created_day"] in new_by_day]
@@ -355,13 +432,19 @@ def compute_kpis(days: int = 14) -> dict[str, Any]:
                   "new_by_day": [{"day": d, "n": new_by_day[d]} for d in day_list]},
         "dau": {"today": dau_today, "wau": wau, "series": dau_series},
         "retention": {"d1": retention_d1, "d7": retention_d7},
-        "monetization": {"paid_members": paid, "paid_rate_pct": paid_rate,
+        "activation": activation,
+        "monetization": {"paid_members": paid, "paid_source_members": paid,
+                         "current_members": current_members,
+                         "active_paid_7d": active_paid_7d,
+                         "active_paid_rate_pct": active_paid_rate,
+                         "paid_rate_pct": paid_rate,
                          "paid_expiring_7d": paid_expiring_7d,
                          "funnel": {
                              "visitors": funnel.get("pageview", 0),
                              "invite_click": funnel.get("invite_click", 0),
                              "claim_trial": funnel.get("claim_trial", 0),
                              "open_buy": funnel.get("open_buy", 0),
+                             "buy_paid_click": funnel.get("buy_paid_click", 0),
                              "buy_contact": funnel.get("buy_contact", 0),
                          }},
         "growth_loops": {
@@ -434,6 +517,7 @@ _REPORT_SCHEMA = {
 def _template_report(kpis: dict) -> dict:
     """LLM 不可用时的规则回退：基于阈值给出朴素诊断，诚实标注。"""
     u, dau, ret, mon = kpis["users"], kpis["dau"], kpis["retention"], kpis["monetization"]
+    activation = kpis.get("activation") or {}
     highlights, risks, actions = [], [], []
     if u["new_7d"] > 0:
         highlights.append(f"近7日新增注册 {u['new_7d']} 人")
@@ -444,17 +528,24 @@ def _template_report(kpis: dict) -> dict:
     if d1 is not None and d1 < 20:
         risks.append(f"次日留存仅 {d1}%，新用户首日没有形成使用习惯")
         actions.append("强化新用户首日价值：注册后引导直达速判卡/复盘等核心功能")
+    activation_rate = activation.get("activation_rate_pct")
+    if activation_rate is not None and activation_rate < 25:
+        risks.append(f"首日激活率仅 {activation_rate}%，用户还没完成两步核心动作")
+        actions.append("把‘看股票→问 AI→开启提醒’放在首屏，注册后只引导一个下一步")
     fun = mon["funnel"]
     if fun["open_buy"] > 0 and fun["buy_contact"] == 0:
         risks.append("有用户打开购买页但无人点「我已付款」，价格或支付流程可能有阻力")
         actions.append("复查套餐定价与购买页文案，考虑限时优惠")
+    if fun.get("buy_paid_click", 0) > 0 and fun["buy_contact"] < fun["buy_paid_click"]:
+        actions.append("付款确认后立即展示凭证提交入口，给管理员处理时效承诺，减少付款后的断点")
     if not actions:
         actions.append("保持现有节奏，关注 DAU 与留存趋势变化")
     return {
         "summary": (
             f"总用户 {u['total']}，今日 DAU {dau['today']}（周活 {dau['wau']}），"
             f"次日留存 {d1 if d1 is not None else '—'}%，付费会员 {mon['paid_members']} 人"
-            f"（转化率 {mon['paid_rate_pct'] if mon['paid_rate_pct'] is not None else '—'}%）。"
+            f"（来源付费转化率 {mon['paid_rate_pct'] if mon['paid_rate_pct'] is not None else '—'}%，"
+            f"当前会员 {mon.get('current_members', '—')} 人，首日激活率 {activation.get('activation_rate_pct', '—')}%）。"
         ),
         "highlights": highlights,
         "risks": risks,
