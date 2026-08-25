@@ -471,6 +471,16 @@ function resDayKey(r: ResearchWireItem): string {
   const c = (r.created_at || '').slice(0, 10);
   return c || d || '其他';
 }
+function resDayOrder(key: string): number {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return Number.MIN_SAFE_INTEGER;
+  const value = Date.parse(`${key}T00:00:00`);
+  return Number.isFinite(value) ? value : Number.MIN_SAFE_INTEGER;
+}
+function resRowOrder(r: ResearchWireItem): number {
+  const raw = (r.created_at || r.date || '').trim();
+  const value = Date.parse(raw.length === 10 ? `${raw}T23:59:59` : raw);
+  return Number.isFinite(value) ? value : 0;
+}
 function fmtResGroup(key: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return key || '其他';
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -3989,15 +3999,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 }</div>
               )}
               {(() => {
-                // 按日期分组成「模块」(reportFeed 已按日期倒序)。每个模块=可折叠的一天:默认仅最新一天展开。
+                // 按日期分组成「模块」并显式按日期倒序；不能依赖 reportFeed 输入顺序，
+                // 因为 AI 头条置顶或源端分页可能把旧日期插到今天与昨天之间。
                 // 搜索/选股态:命中通常不多且要一眼看全 → 全部展开,不折叠。
-                const groups: { day: string; items: ResearchWireItem[] }[] = [];
-                const gidx: Record<string, number> = {};
+                const grouped: Record<string, ResearchWireItem[]> = {};
                 resFiltered.forEach(r => {
                   const dk = resDayKey(r);
-                  if (gidx[dk] === undefined) { gidx[dk] = groups.length; groups.push({ day: dk, items: [] }); }
-                  groups[gidx[dk]].items.push(r);
+                  if (!grouped[dk]) grouped[dk] = [];
+                  grouped[dk].push(r);
                 });
+                const groups = Object.entries(grouped)
+                  .map(([day, items]) => ({ day, items: [...items].sort((a, b) => resRowOrder(b) - resRowOrder(a)) }))
+                  .sort((a, b) => resDayOrder(b.day) - resDayOrder(a.day));
                 // ⚠️reportFeed 会把 AI 头条提前(头条可能来自更早一天)→ groups[0] 未必是最新日。
                 // 取「日期最大」的有效日期组当「最新一天」(YYYY-MM-DD 字典序==时间序;'其他'桶忽略)。
                 let latestIdx = 0, latestKey = '';
