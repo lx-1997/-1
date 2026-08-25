@@ -471,10 +471,12 @@ function resDayKey(r: ResearchWireItem): string {
   const c = (r.created_at || '').slice(0, 10);
   return c || d || '其他';
 }
-function resDayOrder(key: string): number {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return Number.MIN_SAFE_INTEGER;
+function resDayOrder(key: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
   const value = Date.parse(`${key}T00:00:00`);
-  return Number.isFinite(value) ? value : Number.MIN_SAFE_INTEGER;
+  // 数据源偶尔把文件名年份带进日期（例如当前 2026 年却出现 2027-06-22）。
+  // 未来日期不是“最新研报”，统一按异常日期桶排到真实日期之后。
+  return Number.isFinite(value) && value <= Date.now() ? value : null;
 }
 function resRowOrder(r: ResearchWireItem): number {
   const raw = (r.created_at || r.date || '').trim();
@@ -3149,16 +3151,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     return () => window.clearTimeout(t);
   }, [newsQuery, logAct]);
 
-  const reportFeed = useMemo(() => {
-    if (resSearchKw) return reports;   // 在线全量检索（手输 或 选中个股）：直接用服务端历史结果
-    // 默认视图：把 AI 评选的研报头条真正排到最顶部（其余保持原顺序）
-    if (ybHeadKeys.size) {
-      const top: ResearchWireItem[] = [], rest: ResearchWireItem[] = [];
-      for (const r of reports) (((r.file_id && ybHeadKeys.has(r.file_id)) || ybHeadKeys.has(r.id)) ? top : rest).push(r);
-      if (top.length) return [...top, ...rest];
-    }
-    return reports;
-  }, [reports, resSearchKw, ybHeadKeys]);
+  // 研报列表保持源端时间顺序；头条只做行内标记，不能把更早日期的报告提到日期分组之前。
+  const reportFeed = useMemo(() => reports, [reports]);
   const isResearch = feedFilter === '研报';        // 研报标签：信息流面板切换为研报视图
   // 名人观点：仅白名单(lx199710)在资讯流加一个「名人观点」标签（研报旁），切到内联名人观点视图。
   const isCelebUser = IFIND_USERS.has((authUser || '').toLowerCase());
@@ -4010,8 +4004,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 });
                 const groups = Object.entries(grouped)
                   .map(([day, items]) => ({ day, items: [...items].sort((a, b) => resRowOrder(b) - resRowOrder(a)) }))
-                  .sort((a, b) => resDayOrder(b.day) - resDayOrder(a.day));
-                // ⚠️reportFeed 会把 AI 头条提前(头条可能来自更早一天)→ groups[0] 未必是最新日。
+                  .sort((a, b) => {
+                    const av = resDayOrder(a.day);
+                    const bv = resDayOrder(b.day);
+                    // 无法解析的日期（例如旧数据里的「06-22」）统一放到最后，
+                    // 避免被 Number.MIN_SAFE_INTEGER 的倒序比较错误地顶到最前面。
+                    if (av === null && bv === null) return a.day.localeCompare(b.day);
+                    if (av === null) return 1;
+                    if (bv === null) return -1;
+                    return bv - av;
+                  });
                 // 取「日期最大」的有效日期组当「最新一天」(YYYY-MM-DD 字典序==时间序;'其他'桶忽略)。
                 let latestIdx = 0, latestKey = '';
                 groups.forEach((g, k) => { if (/^\d{4}-\d{2}-\d{2}$/.test(g.day) && g.day > latestKey) { latestKey = g.day; latestIdx = k; } });
@@ -4029,6 +4031,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                               onClick={() => { if (!forceOpen) toggleResDay(g.day, isLatest); }}>
                         {!forceOpen && <span className="bbt-rgroup-arr" aria-hidden="true">{open ? '▾' : '▸'}</span>}
                         <span className="bbt-rgroup-date">{fmtResGroup(g.day)}</span>
+                        <span className="bbt-rgroup-count">{g.items.length} 篇</span>
                       </button>
                       {open && items.map((r, i) => {
                         // AI 头条 = ybHeadKeys 命中的报告(在哪天都高亮);无头条名单则退化为「最新一天首条」
