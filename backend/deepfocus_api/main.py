@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
 import time
 from contextlib import asynccontextmanager
@@ -5497,7 +5498,16 @@ _LOCAL_PDF_PREWARM_RETRY_AT: dict[str, float] = {}
 
 
 def _trigger_pdf_prewarm(rows: list[dict]) -> None:
-    """fire-and-forget：抓到在线新研报后立即下载、去水印、打标并落成品缓存。"""
+    """fire-and-forget：抓到在线新研报后立即下载、去水印、打标并落成品缓存。
+
+    该入口会被列表刷新和后台 wire refresher 高频调用；生产需要严格限流时可通过
+    ``DEEPFOCUS_RESEARCH_IMMEDIATE_PDF_PREWARM=0`` 关闭，改由
+    ``run_research_prewarm`` 唯一负责自动下载。用户手动打开原文不经过此开关。
+    """
+    if os.getenv("DEEPFOCUS_RESEARCH_IMMEDIATE_PDF_PREWARM", "1").strip().lower() in {
+        "0", "false", "no", "off",
+    }:
+        return
     from .pdf_brand import has_cached_file_id  # noqa: PLC0415
 
     now = time.monotonic()
@@ -7744,6 +7754,10 @@ async def run_research_prewarm() -> None:
     per_cycle = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_PER_CYCLE", "30")))
     gap = float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_GAP_SECONDS", "3"))
     cycle = float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CYCLE_SECONDS", "1800"))
+    jitter_ratio = min(0.45, max(0.0, float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_JITTER_RATIO", "0"))))
+    non_a_only = os.getenv("DEEPFOCUS_RESEARCH_PREWARM_NON_A_ONLY", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     workers = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CONCURRENCY", "2")))
     # 每日下载预算：ZSXQ 有「单自然日下载量」限额，超了会整天拒绝下载。务必远低于其阈值。
     daily_max = int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_DAILY_MAX", "40"))
@@ -7753,7 +7767,10 @@ async def run_research_prewarm() -> None:
     _DL_KEY = "research_pdf_dl"  # 当日 PDF 下载计数（按自然日滚动）
     from .pdf_brand import has_cached_file_id  # noqa: PLC0415 - 判定原文去水印成品是否已落盘
     await asyncio.sleep(25)  # 启动后稍等，让服务与工作台就绪
-    print(f"[prewarm] 启动：并发 {workers}、每日下载上限 {daily_max}（为新报告预留 {fresh_reserve}）、周期 {cycle}s")
+    print(
+        f"[prewarm] 启动：并发 {workers}、每日下载上限 {daily_max}（为新报告预留 {fresh_reserve}）、"
+        f"基准周期 {cycle}s、抖动 ±{jitter_ratio:.0%}、自动范围 {'仅港美/海外' if non_a_only else '全部市场'}"
+    )
     done_counter = {"n": 0}
     banned = {"hit": False}
     failed_fids: set[str] = set()  # 下载成功但解读失败的，本进程内不再重复下载（避免浪费当日预算；重启后再试）
@@ -7824,6 +7841,10 @@ async def run_research_prewarm() -> None:
                 if not fid or fid in failed_fids:
                     continue
                 cached = metrics_get_ai_cache(analysis_cache_key(fid))
+                # 严格排除 A 股：未知市场也不自动下载，避免误把标题含糊的 A 股研报拉下来。
+                # 用户手动打开原文走独立接口，不受这个后台候选过滤影响。
+                if non_a_only and _market_for(fid, str(it.get("title") or ""), cached) not in {"HK", "US"}:
+                    continue
                 if not cached:
                     fresh.append(it)  # 新报告(无缓存)：下载→去水印缓存+AI 解读
                 elif isinstance(cached, dict) and "instruments" not in cached:
@@ -7877,7 +7898,11 @@ async def run_research_prewarm() -> None:
             raise
         except Exception as exc:  # noqa: BLE001
             print(f"[prewarm] 本轮异常：{type(exc).__name__}: {str(exc)[:80]}")
-        await asyncio.sleep(cycle)
+        low = max(60.0, cycle * (1.0 - jitter_ratio))
+        high = max(low, cycle * (1.0 + jitter_ratio))
+        next_delay = random.uniform(low, high) if jitter_ratio else max(60.0, cycle)
+        print(f"[prewarm] 下一轮约 {next_delay / 60:.1f} 分钟后")
+        await asyncio.sleep(next_delay)
 
 
 @app.get("/api/research/search", response_model=ResearchReportSearchResponse)
