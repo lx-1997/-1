@@ -1156,6 +1156,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
+        # 研报原文流由已登录会员先换取 120 秒一次性令牌；浏览器原生 PDF 查看器无法附带
+        # localStorage 里的 Bearer，因此仅让“携带令牌”的请求进入 handler，由 handler 校验绑定与单次消费。
+        if path == "/api/research/wire-file" and request.query_params.get("token"):
+            return await call_next(request)
         if is_public_path(path) or not path.startswith("/api/"):
             return await call_next(request)
 

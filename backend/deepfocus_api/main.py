@@ -5644,37 +5644,159 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
         return raw, ct
 
 
-@app.get("/api/research/wire-file")
-async def api_research_wire_file(request: Request, file_id: str, name: str = "") -> Response:
-    """在线查看研报原文：经同机 Node 工作台解析在线下载链并返回 PDF 字节。
+def _research_preview_http_client() -> httpx.AsyncClient:
+    """创建只用于临时原文预览的直连客户端，禁止读取系统代理。"""
+    return httpx.AsyncClient(
+        trust_env=False,
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=30.0, read=90.0, write=30.0, pool=30.0),
+    )
 
-    版权合规红线：研报原文「去第三方水印 + 换我方水印」分发 = 去除版权管理信息(著作权法53条/DMCA§1202)
-    + 假冒，已退役。默认关闭；合规正路 = df_take 点评 + 不受版权保护的事实数据 + 外链原始发布方。
-    仅在取得授权后才可置 DEEPFOCUS_SERVE_RESEARCH_ORIGINAL=true 重新启用。"""
-    if os.getenv("DEEPFOCUS_SERVE_RESEARCH_ORIGINAL", "false").strip().lower() != "true":
-        raise HTTPException(
-            status_code=410,
-            detail="应版权合规要求，研报原文已不再提供在线查看。请查看我们的「DeepFocus 视角」AI 解读与要点（目标价 / 评级 / 盈利预测），或前往原始发布方获取原文。",
+
+async def _stream_research_online_pdf(file_id: str, name: str = "") -> StreamingResponse:
+    """把工作台的 10 分钟临时预览逐块转发给浏览器，不读取整包、不落盘、不改原文。"""
+    base = f"http://127.0.0.1:{os.getenv('RESEARCH_WORKBENCH_INTERNAL_PORT', '3927')}"
+    safe_name = (name or f"{file_id}.pdf").strip()
+    client = _research_preview_http_client()
+    upstream: Optional[httpx.Response] = None
+    try:
+        preview = await client.post(
+            f"{base}/api/preview",
+            json={"fileId": file_id, "name": safe_name, **zsxq_auth_payload()},
         )
+        preview.raise_for_status()
+        preview_url = str((preview.json() or {}).get("previewUrl") or "").strip()
+        # 只允许工作台自己签发的内存临时路径，避免内部代理被利用为任意 URL 转发器。
+        if not preview_url.startswith("/api/previews/"):
+            raise HTTPException(status_code=502, detail="工作台未返回有效的临时预览地址")
+        request = client.build_request("GET", f"{base}{preview_url}", headers={"Accept": "application/pdf"})
+        upstream = await client.send(request, stream=True)
+        upstream.raise_for_status()
+        content_type = (upstream.headers.get("content-type") or "application/pdf").split(";", 1)[0].strip()
+        if content_type.lower() != "application/pdf":
+            raise HTTPException(status_code=502, detail="临时预览返回的不是 PDF")
+    except Exception:
+        if upstream is not None:
+            await upstream.aclose()
+        await client.aclose()
+        raise
+
+    assert upstream is not None
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in upstream.aiter_raw(64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    headers = {
+        "Content-Disposition": 'inline; filename="report.pdf"',
+        "Cache-Control": "private, no-store, max-age=0",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "X-Research-Preview": "transient-stream",
+    }
+    content_length = upstream.headers.get("content-length")
+    if content_length and content_length.isdigit():
+        headers["Content-Length"] = content_length
+    return StreamingResponse(body(), media_type="application/pdf", headers=headers)
+
+
+# 研报原文一次性访问令牌（120s TTL，单次消费）。前端可先带 JWT 换令牌，随后让浏览器
+# 直接导航到流式 PDF，避免把全文先缓冲成 Blob。
+_PDF_TOKENS: dict[str, dict[str, Any]] = {}
+_SERVE_RESEARCH_ORIGINAL = os.getenv("DEEPFOCUS_SERVE_RESEARCH_ORIGINAL", "false").strip().lower() == "true"
+_RESEARCH_ORIGINAL_RETIRED_MSG = (
+    "应版权合规要求，研报原文已不再提供在线查看。"
+    "请查看我们的「DeepFocus 视角」AI 解读与要点（目标价 / 评级 / 盈利预测），或前往原始发布方获取原文。"
+)
+
+
+def _issue_pdf_token(file_id: str, name: str, username: str) -> str:
+    import uuid as _uuid
+
+    now = time.time()
+    for expired in [key for key, value in _PDF_TOKENS.items() if value["expires_at"] < now]:
+        _PDF_TOKENS.pop(expired, None)
+    token = _uuid.uuid4().hex
+    _PDF_TOKENS[token] = {
+        "file_id": file_id,
+        "name": name,
+        "username": username,
+        "expires_at": now + 120,
+    }
+    return token
+
+
+def _consume_pdf_token(token: str, file_id: str, name: str) -> None:
+    grant = _PDF_TOKENS.pop(token, None)
+    if not grant or grant["expires_at"] < time.time():
+        raise HTTPException(status_code=403, detail="研报预览链接已失效，请重新点击原文")
+    if grant["file_id"] != file_id or grant["name"] != name:
+        raise HTTPException(status_code=403, detail="研报预览链接与原文不匹配")
+
+
+def _pdf_stream_landing(url: str) -> HTMLResponse:
+    """返回极小的过渡页，让现有 Blob 打开逻辑立即切到浏览器原生 PDF 流。"""
+    target = json.dumps(url, ensure_ascii=True)
+    return HTMLResponse(
+        "<!doctype html><meta charset=utf-8><title>正在打开研报原文</title>"
+        "<style>body{background:#07130d;color:#d9f7e6;font:15px system-ui;padding:28px}</style>"
+        "<p>正在建立临时全文预览…</p>"
+        f"<script>location.replace(new URL({target},location.origin).href)</script>",
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
+            "Pragma": "no-cache",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+        },
+    )
+
+
+@app.get("/api/research/pdf-token")
+async def api_research_pdf_token(request: Request, file_id: str = "", name: str = "") -> dict[str, str]:
+    """签发一次性原文流令牌；用于浏览器直接导航，避免前端整包 Blob 缓冲。"""
+    if not _SERVE_RESEARCH_ORIGINAL:
+        raise HTTPException(status_code=410, detail=_RESEARCH_ORIGINAL_RETIRED_MSG)
     claims = require_current_user(request)
     _require_research_original_access(claims)
+    token = _issue_pdf_token(file_id, name, str(claims.get("username") or ""))
+    url = f"/api/research/wire-file?file_id={quote(file_id)}&name={quote(name)}&token={token}"
+    return {"token": token, "url": url}
+
+
+@app.get("/api/research/wire-file")
+async def api_research_wire_file(
+    request: Request, file_id: str, name: str = "", token: str = "",
+) -> Response:
+    """在线查看研报原文：按点击创建临时链接并流式转发，不在 DeepFocus 落盘。
+
+    保留来源原文与原水印；默认关闭，仅在确认在线展示权限后通过
+    DEEPFOCUS_SERVE_RESEARCH_ORIGINAL=true 启用。"""
+    if not _SERVE_RESEARCH_ORIGINAL:
+        raise HTTPException(status_code=410, detail=_RESEARCH_ORIGINAL_RETIRED_MSG)
+    if token:
+        _consume_pdf_token(token, file_id, name)
+    else:
+        claims = require_current_user(request)
+        _require_research_original_access(claims)
+        landing_token = _issue_pdf_token(file_id, name, str(claims.get("username") or ""))
+        landing_url = (
+            f"/api/research/wire-file?file_id={quote(file_id)}&name={quote(name)}&token={landing_token}"
+        )
+        return _pdf_stream_landing(landing_url)
     safe_name = (name or f"{file_id}.pdf").strip()
-    ext = safe_name[safe_name.rfind("."):].lower() if "." in safe_name else ".pdf"
     try:
-        content, content_type = await _fetch_research_online_pdf(file_id, safe_name)
+        response = await _stream_research_online_pdf(file_id, safe_name)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"在线预览失败：{str(exc)[:80]}")
     metrics_incr_research(file_id, safe_name)  # 研报下载/打开计数
-    return Response(
-        content=content,
-        media_type=content_type,
-        headers={
-            "Content-Disposition": f'inline; filename="report{ext}"',
-            "Cache-Control": "no-store",
-        },
-    )
+    return response
 
 
 _MOBILE_UA_RE = re.compile(r"(Mobile|Android|iPhone|iPad|iPod|Windows Phone|HarmonyOS|MicroMessenger)", re.IGNORECASE)
