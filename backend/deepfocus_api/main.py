@@ -6,11 +6,12 @@ import logging
 import os
 import random
 import re
+import subprocess
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Mapping, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form, Request, Response
@@ -171,6 +172,7 @@ from .metrics_store import (
 )
 from . import referral
 from .llm import CloudResearchLLM, extract_citable_sources, tool_agent_to_orchestrator_response
+from .core_agent import CoreAgent, CoreAgentRequest
 from .market_data import fetch_market_quotes, search_market_symbols
 from .market_layers import build_market_data_layer_status
 from .major_event_skill import (
@@ -187,6 +189,7 @@ from .mcp_hub import (
     list_mcp_capabilities,
     list_mcp_servers,
 )
+from .mcp_local import handle_local_mcp_request
 from .model_config import public_model_config, save_model_config, configure_data_source_egress
 from .multi_market_decision import build_multi_market_decision
 from .tear_sheet import (
@@ -219,6 +222,14 @@ from .professional_research import (
     run_professional_eval,
 )
 from .shared_utils import clamp
+from .risk_backtest import run_risk_backtest
+from .research_harness import (
+    is_stock_selection_request,
+    normalize_stock_selection_request,
+    sanitize_stock_selection_context,
+    stock_selection_clarification_text,
+    stock_selection_needs_clarification,
+)
 from .risk_management import (
     calculate_greeks,
     calculate_position_risk,
@@ -267,12 +278,15 @@ from .realtime_messages import (
     init_realtime_message_db,
     is_futoucaixin_message,
     is_futoucaixin_restricted_user,
+    is_tradealpha_message,
     list_realtime_messages,
     publish_data_source_items,
     realtime_message_event_stream,
     register_post_message_hook,
 )
 from .dao_bridge import run_dao_bridge
+from .recall_ingest import run_recall_ingest
+from .source_policy import tradealpha_blocking_enabled
 from . import growth_analytics
 from .recall_subscriptions import (
     create_recall_subscription,
@@ -296,6 +310,7 @@ from .share_snapshots import (
     render_share_page_html,
 )
 from .report_url_ingest import extract_report_url
+from .article_original_text import extract_article_original_text, prewarm_article_original_text
 from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
 from .async_singleflight import AsyncSingleFlight
 from .research_prewarm_policy import research_prewarm_download_cap
@@ -304,7 +319,15 @@ from .research_multi_agent import (
     analysis_cache_key,
     analyze_pdf_adaptive,
 )
-from .research_vision import analyze_news
+from .research_vision import (
+    analyze_news,
+    ensure_logic_lines,
+    ensure_report_depth,
+    normalize_news_result,
+    report_depth_needs_refresh,
+)
+from .research_digest import generate_deep_draft, neutralize_deep_draft, resolve_source_documents
+from .research_cache import deep_draft_cache_key, legacy_deep_draft_cache_key
 
 # 对外 AI 品牌名：不暴露底层模型（如 MiniMax）
 _AI_BRAND = (os.getenv("DEEPFOCUS_AI_BRAND") or "DEEPFOCUS 智能解读").strip()
@@ -548,6 +571,7 @@ async function load(){
     '<div id="dm"><div class="panel"><h2>💬 用户私信</h2><div class="sub">加载中…</div></div></div>'+
     '<div id="syscap"><div class="sub">系统连接容量加载中…</div></div>'+
     '<div id="zsxq"><div class="sub">研报源状态加载中…</div></div>'+
+    '<div id="ftkey"><div class="sub">富途数据源 token 加载中…</div></div>'+
     '<div id="pkeys"><div class="panel"><h2>🔌 合作方 API</h2><div class="sub">加载中…</div></div></div>'+
     '<div id="act"><div class="sub">操作流水加载中…</div></div>'+
     '<div id="rq"><div class="panel"><h2>🤖 复盘 AI 质量</h2><div class="sub">加载中…</div></div></div>'+
@@ -558,6 +582,7 @@ async function load(){
   loadReferrals();
   loadSystem();
   loadZsxq();
+  loadFutouToken();
   loadPartnerKeys();
   loadDM();
   loadMembers();
@@ -1056,6 +1081,34 @@ async function saveCookie(){
     setTimeout(loadZsxq,800);
   }catch(e){ $('#zmsg').innerHTML='<span style="color:#ff5a52">✗ '+esc(e.message)+'</span>'; }
 }
+// ===== 富途数据源 token：快讯/文章实时流的账号 key，过期(拿T-1旧流)时在此替换 =====
+function maskTok(t){ return t ? t.slice(0,8)+'…'+t.slice(-4)+'（'+t.length+'位）' : '未配置'; }
+async function loadFutouToken(){
+  let d;
+  try{ const r=await fetch('/api/metrics/futou-token?token='+encodeURIComponent(token)); if(!r.ok) throw new Error(r.status); d=await r.json(); }
+  catch(e){ $('#ftkey').innerHTML='<div class="panel"><h2>🔑 富途数据源 token</h2><div class="sub">状态读取失败('+e.message+')</div></div>'; return; }
+  const svc=(d.services||[]).map(s=>'<tr><td>'+esc(s.service)+'</td><td class="sub">'+maskTok(s.token)+'</td><td>'+(s.consistent?'<span style="color:#2bd96a">● 一致</span>':'<span style="color:#ff5a52">● 不一致</span>')+'</td></tr>').join('');
+  $('#ftkey').innerHTML=
+    '<div class="panel"><h2>🔑 富途数据源 token（快讯/文章实时流）</h2>'+
+      '<div class="sub" style="margin-bottom:8px">当前生效：<b style="color:#e6ebf2">'+maskTok(d.token)+'</b> · 账号 VIP 过期后会拿到 T-1 旧流（快讯/文章晚一天），在此粘贴新 key 即刻生效</div>'+
+      '<table><thead><tr><th style="text-align:left">爬虫服务</th><th style="text-align:left">token</th><th style="text-align:left">状态</th></tr></thead><tbody>'+svc+'</tbody></table>'+
+      '<div class="sub" style="margin:8px 0 6px">粘贴新 token（来自富途站账号，替换前会先向上游验证实时流）：</div>'+
+      '<input id="ftk" placeholder="02847f25-…-…-…" style="width:100%;background:#0a0d12;color:#cfe;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12px;font-family:inherit"/>'+
+      '<div style="margin-top:8px"><button class="refresh" onclick="saveFutouToken()">✔ 验证并替换（自动重启爬虫）</button> <span id="ftmsg" class="sub"></span></div>'+
+    '</div>';
+}
+async function saveFutouToken(){
+  const v=($('#ftk')&&$('#ftk').value||'').trim();
+  if(v.length<16){ $('#ftmsg').innerHTML='<span style="color:#ff5a52">token 太短</span>'; return; }
+  $('#ftmsg').textContent='验证+替换中…（约10秒）';
+  try{
+    const r=await fetch('/api/metrics/futou-token?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_token:v})});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||r.status);
+    $('#ftmsg').innerHTML='<span style="color:#2bd96a">✓ '+esc(d.probe||'已替换')+' · 已重启 '+esc((d.restarted||[]).join('、'))+'</span>';
+    setTimeout(loadFutouToken,1200);
+  }catch(e){ $('#ftmsg').innerHTML='<span style="color:#ff5a52">✗ '+esc(e.message)+'</span>'; }
+}
 const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',reset_password:'运营重置密码',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'提交兑换码',redeem_success:'兑换成功',redeem_repeat:'重复提交兑换码',redeem_failed:'兑换失败',redeem_rate_limited:'兑换过于频繁',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
 function alabel(a){return ACT_LABEL[a]||a;}
 function tshort(s){
@@ -1230,6 +1283,8 @@ from .schemas import (
     ResearchVisionAnalyzeRequest,
     NewsAnalyzeRequest,
     ResearchVisionAnalysisResponse,
+    ResearchDeepDraftRequest,
+    ResearchDeepDraftResponse,
     CapabilityListResponse,
     CnEarningsDiagnosisRequest,
     CnEarningsDiagnosisResponse,
@@ -1303,6 +1358,7 @@ from .schemas import (
     OptionsSignalResponse,
     OrchestratorChatRequest,
     OrchestratorChatResponse,
+    OrchestratorReasoningStep,
     PremarketOpportunityResponse,
     ProfessionalEvalRunRequest,
     ProfessionalEvalRunResponse,
@@ -1328,6 +1384,7 @@ from .schemas import (
     RecallSubscriptionRecord,
     ShareSnapshotCreateRequest,
     ShareSnapshotRecord,
+    StockSnapshot,
     RealtimeMessageRecord,
     ReportAnalysisRequest,
     SentimentRequest,
@@ -1374,6 +1431,8 @@ from .schemas import (
     BacktestMetricsRequest,
     BacktestMetricsResponse,
     BacktestRecord,
+    RiskBacktestRequest,
+    RiskBacktestResponse,
     QuantLabRequest,
     QuantLabResponse,
     MarketDashboardResponse,
@@ -1389,6 +1448,7 @@ load_dotenv()
 def _safe_workbench_file_path(out: str, filename: str) -> Path:
     root = WORKBENCH_DIR.resolve()
     base = (root / (out or "downloads/海外投行报告")).resolve()
+    _ai_started = time.perf_counter()
     try:
         base.relative_to(root)
     except ValueError as exc:
@@ -1437,7 +1497,7 @@ async def lifespan(app: FastAPI):
     if os.getenv("DEEPFOCUS_WEIXIN_CHANNEL", "0") == "1":
         from .weixin_channel import WeixinChannelManager, make_multiview_fn
         # 争议个股多空深度档：仅在 DEEPFOCUS_WEIXIN_MULTIVIEW=1 灰度时注入 fn（否则 None=不深化）
-        _mv_fn = make_multiview_fn(CloudResearchLLM()) if os.getenv("DEEPFOCUS_WEIXIN_MULTIVIEW", "0") == "1" else None
+        _mv_fn = make_multiview_fn(llm, core_agent=core_agent) if os.getenv("DEEPFOCUS_WEIXIN_MULTIVIEW", "0") == "1" else None
         _WEIXIN_MGR = WeixinChannelManager(agent_fn=make_weixin_orchestrator_agent_fn(), multiview_fn=_mv_fn)
         _WEIXIN_MGR.start()
         print("[weixin] iLink 渠道已启动（多租户扫码即问）")
@@ -1446,7 +1506,32 @@ async def lifespan(app: FastAPI):
     init_metrics_db()  # 站点指标：页面访问 / 研报下载计数
     # 新信号落库广播后，扇出到离线召回订阅（邮件 / Web Push）。
     register_post_message_hook(lambda message: dispatch_recall(message))
+    # 文章收到后立即提取并写入原文缓存；阅读器点击时直接命中成品。
+    register_post_message_hook(prewarm_article_original_text)
     init_mcp_db()
+    local_mcp_url = os.getenv("DEEPFOCUS_LOCAL_MCP_URL", "http://127.0.0.1:8000/mcp").strip()
+    local_mcp_name = "DeepFocus 内置投研 MCP"
+    if not any(
+        server.name == local_mcp_name and str(server.config.get("url") or "") == local_mcp_url
+        for server in list_mcp_servers()
+    ):
+        local_headers = {}
+        if os.getenv("DEEPFOCUS_MCP_LOCAL_TOKEN", "").strip():
+            local_headers["X-MCP-Token"] = os.getenv("DEEPFOCUS_MCP_LOCAL_TOKEN", "").strip()
+        create_mcp_server(
+            McpServerCreateRequest(
+                name=local_mcp_name,
+                transport="streamable_http",
+                description="DeepFocus 自带的只读行情 MCP 服务，支持协议发现与工具调用。",
+                url=local_mcp_url,
+                headers=local_headers,
+                trust_level="internal",
+                risk_level="low",
+                approval_required=False,
+                enabled=True,
+                allowed_tools=["ping", "search_market_symbols", "get_market_quotes"],
+            )
+        )
     init_risk_db()
     init_backtest_db()
     init_dulus_runtime_db()
@@ -1454,6 +1539,8 @@ async def lifespan(app: FastAPI):
     await start_agent_worker()
     # DAO 财经事件桥接：后台轮询 DAO 事件 API → 灌进实时消息流（金融终端用）
     dao_bridge_task = asyncio.create_task(run_dao_bridge())
+    # 独立研报/机构纪要流也接入同一条实时召回链路，FCM 与前台弹窗语义保持一致
+    recall_ingest_task = asyncio.create_task(run_recall_ingest())
     # 缓存预热：定时 force 刷新宏观看板等重外部源，请求只读暖缓存（消除冷取延迟）
     from .cache_warmer import run_cache_warmer
 
@@ -1520,7 +1607,7 @@ async def lifespan(app: FastAPI):
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
-    _bg_tasks = (dao_bridge_task, cache_warmer_task, research_prewarm_task,
+    _bg_tasks = (dao_bridge_task, recall_ingest_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
                  ashare_review_task, morning_briefing_task, watchlist_scan_task, call_settle_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
                  ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task, marketing_task)
@@ -1536,6 +1623,8 @@ async def lifespan(app: FastAPI):
         except (asyncio.TimeoutError, BaseException):
             pass
 
+
+AI_ANSWER_PROTOCOL_VERSION = "research-v4-buy-side"
 
 app = FastAPI(
     title="DeepFocus AI API",
@@ -1556,6 +1645,42 @@ app.add_middleware(
 )
 
 llm = CloudResearchLLM()
+# All user-facing AI paths share this policy/lifecycle boundary.  Specialist
+# analyzers remain adapters behind it so existing response schemas and caches
+# stay compatible during the migration.
+core_agent = CoreAgent(llm)
+
+
+def _attach_core_agent_metadata(response: Any, result: Any) -> Any:
+    """Add non-breaking CoreAgent trace identifiers to typed responses."""
+    if response is None or result is None:
+        return response
+    metadata = {
+        field: value
+        for field, value in (
+            ("core_agent_run_id", getattr(result, "run_id", None)),
+            ("core_agent_protocol_version", getattr(result, "protocol_version", None)),
+            ("core_agent_route", getattr(result, "route", None)),
+        )
+        if value
+    }
+    # A few specialist evaluators intentionally return a plain dict rather
+    # than a Pydantic response.  ``setattr`` silently cannot enrich those;
+    # return a shallow copy so the JSON response carries the same trace
+    # contract as typed adapters.
+    if isinstance(response, Mapping):
+        enriched = dict(response)
+        enriched.update(metadata)
+        return enriched
+    for field, value in metadata.items():
+        if value:
+            try:
+                setattr(response, field, value)
+            except Exception:
+                # Older/third-party response models may be immutable or lack
+                # these optional fields; metadata must never break the reply.
+                pass
+    return response
 
 
 @app.get("/health")
@@ -1566,6 +1691,18 @@ async def health() -> dict:
         "provider": llm.provider_name,
         "model": llm.model,
     }
+
+
+@app.get("/api/agents/core/status")
+async def core_agent_runtime_status() -> dict[str, Any]:
+    """Expose the active CoreAgent contract without returning credentials."""
+    return core_agent.status()
+
+
+@app.post("/mcp", include_in_schema=True)
+async def local_mcp_endpoint(request: Request) -> JSONResponse:
+    """内置只读 Streamable HTTP MCP 端点。"""
+    return await handle_local_mcp_request(request)
 
 
 @app.get("/api/ontology/demo")
@@ -1615,6 +1752,7 @@ async def ontology_content_map(
     messages = list_realtime_messages(
         anyq=aliases,
         exclude_futoucaixin=_should_hide_futoucaixin(request),
+        only_futoucaixin=_should_only_futoucaixin(request),
         limit=max(8, min(int(limit or 48), 120)),
     )
 
@@ -2162,18 +2300,30 @@ async def admin_codes_list(request: Request, token: str = "", only_unused: bool 
 
 
 # --------------------------------------------------------------------------- #
-# 移动 App：版本检查（Capacitor 壳；内容随网站发布自动更新，此接口只管壳本身升级）
+# 移动 App：版本检查（Capacitor 本地资源包；网页和原生能力一起随 APK/AAB 发布）
 # --------------------------------------------------------------------------- #
 @app.get("/api/app/version")
 async def app_version_get() -> dict[str, Any]:
     """安卓壳最新版本信息（公开）。运维改环境变量即可推新版，无需改代码。"""
+    default_apk_url = "https://daocaijing.com/downloads/daocaijing.apk"
+    configured_apk_url = os.getenv(
+        "DAOCJING_ANDROID_APK_URL",
+        os.getenv("DEEPFOCUS_ANDROID_APK_URL", default_apk_url),
+    ).strip()
+    # 更新包必须走 HTTPS；错误配置时回退到站点官方地址，避免把客户端
+    # 更新链路降级成可被篡改的明文下载。
+    apk_url = configured_apk_url if configured_apk_url.lower().startswith("https://") else default_apk_url
     return {
         "android": {
-            "version_code": int(os.getenv("DEEPFOCUS_ANDROID_VERSION_CODE", "1")),
-            "version_name": os.getenv("DEEPFOCUS_ANDROID_VERSION_NAME", "1.0"),
-            "apk_url": os.getenv(
-                "DEEPFOCUS_ANDROID_APK_URL", "https://daocaijing.com/downloads/deepfocus.apk"
+            "version_code": int(os.getenv(
+                "DAOCJING_ANDROID_VERSION_CODE",
+                os.getenv("DEEPFOCUS_ANDROID_VERSION_CODE", "1"),
+            )),
+            "version_name": os.getenv(
+                "DAOCJING_ANDROID_VERSION_NAME",
+                os.getenv("DEEPFOCUS_ANDROID_VERSION_NAME", "1.0.0"),
             ),
+            "apk_url": apk_url,
             "notes": os.getenv("DEEPFOCUS_ANDROID_NOTES", ""),
         }
     }
@@ -2709,7 +2859,11 @@ async def update_model_config(request: ModelConfigRequest) -> ModelConfigRespons
 async def market_quotes(request: Request, symbols: str = "") -> MarketQuoteListResponse:
     requested_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
     # 白名单账号(lx199710)的 A股自选用 iFinD 实时增强（灰度）；其他用户/匿名完全走原链。
-    return attach_data_quality(await fetch_market_quotes(requested_symbols, ifind_user=ifind_enhance_enabled(request)))
+    # fetch_market_quotes now derives quality from every quote (including
+    # mixed-source and delayed snapshots).  Do not re-infer it from the
+    # aggregate provider name here, otherwise a public fallback would be
+    # incorrectly relabelled as live.
+    return await fetch_market_quotes(requested_symbols, ifind_user=ifind_enhance_enabled(request))
 
 
 @app.get("/api/market/search", response_model=MarketSymbolSearchResponse)
@@ -2851,7 +3005,25 @@ async def options_signals(
 
 @app.post("/api/options/ai-analysis", response_model=OptionsAiAnalysisResponse)
 async def options_ai_analysis(request: OptionsAiAnalysisRequest) -> OptionsAiAnalysisResponse:
-    return attach_data_quality(await llm.analyze_options_trend(request))
+    """期权趋势解读走统一 CoreAgent 适配器（保留原有结构化响应）。"""
+    try:
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=request.question or f"期权趋势解读：{request.signal.symbol}",
+                mode="research",
+                context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:16000],
+                stock=request.signal.symbol,
+                channel="web",
+                timeout_seconds=90.0,
+            ),
+            lambda: llm.analyze_options_trend(request),
+            route="options-ai-analysis",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/earnings/calendar", response_model=EarningsCalendarResponse)
@@ -2988,61 +3160,106 @@ def _market_quote_from_ifind(row: dict) -> Optional[MarketQuote]:
     )
 
 
-async def _enhance_tear_sheet_narrative(ts):
+async def _enhance_tear_sheet_narrative(ts, *, llm_adapter: Any = None):
     """用 LLM 把确定性 7 维证据合成 2-3 句买方观点；mock/失败/超时回退模板（verdict/score 不变）。"""
     try:
-        from .llm import CloudResearchLLM
+        # Production endpoints pass the process-wide singleton.  Keeping an
+        # injectable default preserves the helper's old test/extension seam.
+        model = llm_adapter
+        if model is None:
+            from .llm import CloudResearchLLM as _CloudResearchLLM
 
-        llm = CloudResearchLLM()
-        if llm.provider == "mock":
+            model = _CloudResearchLLM()
+        if model.provider == "mock":
             return ts
-        narrative = await llm.synthesize_tear_sheet_narrative(ts)
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"速判卡解读：{ts.name or ts.symbol}",
+                mode="document",
+                context=json.dumps(ts.model_dump(mode="json"), ensure_ascii=False)[:16000],
+                stock=ts.symbol,
+                channel="web",
+                timeout_seconds=45.0,
+            ),
+            lambda: model.synthesize_tear_sheet_narrative(ts),
+            route="tear-sheet-narrative",
+        )
+        narrative = core_result.raw
         if narrative:
             ts.narrative = narrative
-            ts.narrative_provider = llm.provider
+            ts.narrative_provider = model.provider
+        _attach_core_agent_metadata(ts, core_result)
     except Exception:
         pass  # LLM 不可用 → 保留确定性模板叙述
     return ts
 
 
-async def _enhance_review_narrative(obj, *, view, subject):
+async def _enhance_review_narrative(obj, *, view, subject, llm_adapter: Any = None):
     """组合/宏观速判：用 LLM 合成 narrative；mock/失败回退模板（verdict/score 不变）。"""
     try:
-        from .llm import CloudResearchLLM
+        model = llm_adapter
+        if model is None:
+            from .llm import CloudResearchLLM as _CloudResearchLLM
 
-        llm = CloudResearchLLM()
-        if llm.provider == "mock":
+            model = _CloudResearchLLM()
+        if model.provider == "mock":
             return obj
-        narrative = await llm.synthesize_review_narrative(
-            subject=subject,
-            verdict=obj.overall_verdict,
-            score=getattr(obj, "overall_score", getattr(obj, "risk_score", 0)),
-            confidence=obj.confidence,
-            dimensions=obj.dimensions,
-            view=view,
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"{subject}速判解读",
+                mode="document",
+                context=json.dumps(obj.model_dump(mode="json"), ensure_ascii=False)[:16000],
+                channel="web",
+                timeout_seconds=45.0,
+            ),
+            lambda: model.synthesize_review_narrative(
+                subject=subject,
+                verdict=obj.overall_verdict,
+                score=getattr(obj, "overall_score", getattr(obj, "risk_score", 0)),
+                confidence=obj.confidence,
+                dimensions=obj.dimensions,
+                view=view,
+            ),
+            route=f"{view}-review-narrative",
         )
+        narrative = core_result.raw
         if narrative:
             obj.narrative = narrative
-            obj.narrative_provider = llm.provider
+            obj.narrative_provider = model.provider
+        _attach_core_agent_metadata(obj, core_result)
     except Exception:
         pass
     return obj
 
 
-async def _enhance_briefing_headline(briefing):
+async def _enhance_briefing_headline(briefing, *, llm_adapter: Any = None):
     """投研晨报：用 LLM 把宏观×组合×自选股合成晨会纪要 headline；mock/失败回退模板。"""
     try:
-        from .llm import CloudResearchLLM
+        model = llm_adapter
+        if model is None:
+            from .llm import CloudResearchLLM as _CloudResearchLLM
 
-        llm = CloudResearchLLM()
-        if llm.provider == "mock":
+            model = _CloudResearchLLM()
+        if model.provider == "mock":
             return briefing
-        headline = await llm.synthesize_briefing_headline(
-            briefing.macro, briefing.portfolio, getattr(briefing, "watchlist", None)
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective="投研晨报标题解读",
+                mode="document",
+                context=json.dumps(briefing.model_dump(mode="json"), ensure_ascii=False)[:16000],
+                channel="web",
+                timeout_seconds=45.0,
+            ),
+            lambda: model.synthesize_briefing_headline(
+                briefing.macro, briefing.portfolio, getattr(briefing, "watchlist", None)
+            ),
+            route="briefing-headline",
         )
+        headline = core_result.raw
         if headline:
             briefing.headline = headline
-            briefing.headline_provider = llm.provider
+            briefing.headline_provider = model.provider
+        _attach_core_agent_metadata(briefing, core_result)
     except Exception:
         pass
     return briefing
@@ -3236,7 +3453,7 @@ async def stock_tear_sheet(
     # 匿名首卡只返回确定性证据，避免公开入口触发 LLM 成本；登录用户再补充买方叙述。
     if not getattr(request.state, "auth_claims", None):
         return ts
-    return await _enhance_tear_sheet_narrative(ts)
+    return await _enhance_tear_sheet_narrative(ts, llm_adapter=llm)
 
 
 # 速判卡读缓存 TTL（秒）：结论分钟级不变，agent 同一会话反复研判同一标的时免去重建 13 个并发源。
@@ -3513,6 +3730,154 @@ register_tool(AgentTool(
 ))
 
 
+# A 股泛选股的“可核验起点”，不是宣称覆盖全市场。用分散、流动性较高的核心样本池
+# 同口径跑确定性速判，再把评分靠前者交给模型解释；模型不得凭记忆在池外补股票。
+_A_SHARE_SCREEN_POOLS: dict[str, list[tuple[str, str]]] = {
+    "balanced": [
+        ("600900", "长江电力"), ("600036", "招商银行"), ("601088", "中国神华"),
+        ("300750", "宁德时代"), ("002475", "立讯精密"), ("600519", "贵州茅台"),
+    ],
+    "defensive": [
+        ("600900", "长江电力"), ("601088", "中国神华"), ("600036", "招商银行"),
+        ("601318", "中国平安"), ("600519", "贵州茅台"), ("000333", "美的集团"),
+    ],
+    "growth": [
+        ("300750", "宁德时代"), ("002475", "立讯精密"), ("688981", "中芯国际"),
+        ("300308", "中际旭创"), ("002594", "比亚迪"), ("603019", "中科曙光"),
+    ],
+}
+
+
+async def _tool_screen_a_share_candidates(style: str = "balanced", limit: int = 3) -> Any:
+    """从明确披露的核心样本池做同口径初筛；只返回引擎真实算出的候选与数据缺口。"""
+    normalized_style = style if style in _A_SHARE_SCREEN_POOLS else "balanced"
+    pool = _A_SHARE_SCREEN_POOLS[normalized_style]
+    # 复用一次性“行情+估值+财报+共识”快照，两组三只并行；比逐只构建完整 tear-sheet
+    # 快一个数量级（本地实测约 4s vs 50s），更适合聊天首轮。
+    from . import bull_playbook
+    from .agent_tools import _tool_compare_stocks as _compare_snapshots
+    codes = [code for code, _ in pool]
+    left, right = await asyncio.gather(
+        _compare_snapshots(",".join(codes[:3])),
+        _compare_snapshots(",".join(codes[3:])),
+    )
+    rows = [
+        row
+        for bundle in (left, right)
+        for row in ((bundle or {}).get("items") or [])
+        if isinstance(row, dict)
+    ]
+    names = dict(pool)
+
+    def number(value: Any) -> Optional[float]:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def clamp_num(value: Optional[float], low: float, high: float) -> float:
+        return max(low, min(high, value or 0.0))
+
+    scored: list[dict[str, Any]] = []
+    for raw in rows:
+        row = dict(raw)
+        symbol = str(row.get("symbol") or "")
+        row["name"] = names.get(symbol, str(row.get("name") or symbol))
+        valuation = row.get("valuation") if isinstance(row.get("valuation"), dict) else {}
+        financials = row.get("financials") if isinstance(row.get("financials"), dict) else {}
+        consensus = row.get("consensus") if isinstance(row.get("consensus"), dict) else {}
+        revenue_yoy = number(financials.get("revenue_yoy"))
+        profit_yoy = number(financials.get("profit_yoy"))
+        roe_reported = number(financials.get("roe"))
+        roe_annualized = bull_playbook.annualize_ratio(roe_reported, str(financials.get("report_date") or ""))
+        pe = number(valuation.get("pe_ratio"))
+        pb = number(valuation.get("pb_ratio"))
+        score = clamp_num(revenue_yoy, -30, 50) * 0.25 + clamp_num(profit_yoy, -30, 50) * 0.45 + clamp_num(roe_annualized, 0, 25) * 0.3
+        if pe is not None and pe > 0:
+            score += 8 if pe <= 10 else 6 if pe <= 20 else 3 if pe <= 30 else 0 if pe <= 45 else -4
+        if pb is not None and pb > 0:
+            score += 4 if pb <= 1.5 else 2 if pb <= 3 else 0 if pb <= 5 else -2
+        rating = str(consensus.get("consensus_rating") or "")
+        score += 5 if "买入" in rating else 3 if "增持" in rating else 0
+        score -= 2 * len(row.get("data_gaps") or [])
+        scored.append({
+            "symbol": symbol,
+            "name": row["name"],
+            "screen_score": round(score, 1),
+            "quote": row.get("quote"),
+            "valuation": valuation or None,
+            "financials": financials or None,
+            "consensus": consensus or None,
+            "data_gaps": row.get("data_gaps") or [],
+            "score_inputs": {
+                "revenue_yoy": revenue_yoy,
+                "profit_yoy": profit_yoy,
+                "roe_reported_cumulative": roe_reported,
+                "roe_annualized_for_screen": roe_annualized,
+                "report_date": financials.get("report_date"),
+            },
+        })
+    ranked = sorted(scored, key=lambda row: float(row.get("screen_score") or 0), reverse=True)
+    take = max(1, min(int(limit or 3), 5))
+    selected: list[dict[str, Any]] = []
+    if normalized_style == "balanced" and take >= 3:
+        # 均衡型强制跨三类取一只，避免单纯按增速把三个名额全给成长股。
+        for bucket, role in (
+            (("600900", "601088"), "防御"),
+            (("600036", "600519"), "价值"),
+            (("300750", "002475"), "成长"),
+        ):
+            candidates = [row for row in ranked if row.get("symbol") in bucket]
+            if candidates:
+                selected.append({**candidates[0], "selection_role": role})
+    for row in ranked:
+        if len(selected) >= take:
+            break
+        if not any(existing.get("symbol") == row.get("symbol") for existing in selected):
+            fallback_role = "稳健" if normalized_style == "defensive" else "成长" if normalized_style == "growth" else "均衡"
+            selected.append({**row, "selection_role": fallback_role})
+    return {
+        "market": "A股",
+        "style": normalized_style,
+        "universe_scope": "6只分散行业、高流动性核心样本；不是全市场扫描",
+        "evaluated": len(rows),
+        "candidates": selected[:take],
+        "pool_members": [{"symbol": code, "name": name} for code, name in pool],
+        "not_selected_from_pool": [
+            {"symbol": row.get("symbol"), "name": row.get("name"), "screen_score": row.get("screen_score")}
+            for row in ranked if not any(item.get("symbol") == row.get("symbol") for item in selected[:take])
+        ],
+        "all_scores": [
+            {"symbol": row.get("symbol"), "name": row.get("name"), "screen_score": row.get("screen_score")}
+            for row in ranked
+        ],
+        "selection_rule": "综合分只使用本次同口径估值、财报增速、年化ROE、卖方共识和数据缺口；均衡型再按防御/价值/成长各取一只。候选不等于买入建议，池外股票未参与比较。",
+        "measurement_notes": [
+            "financials.roe 是报告期累计值，不得直接表述为全年ROE偏高/偏低；评分使用 score_inputs.roe_annualized_for_screen。",
+            "all_scores 和 not_selected_from_pool 均是样本池内标的，不得写成池外标的。",
+            "quote.is_realtime=false 时必须称非实时行情快照，不得称实时价。",
+        ],
+    }
+
+
+register_tool(AgentTool(
+    name="screen_a_share_candidates",
+    description=(
+        "A股泛选股初筛：从分散行业的6只高流动性核心样本中，同口径计算速判综合分并返回前1~5只。"
+        "用户已明确A股 + 稳健/均衡/成长风格并要求筛候选时，必须先调用本工具；"
+        "答案只能使用 candidates 里的股票，并明确这是核心样本池初筛、不是全市场扫描。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "style": {"type": "string", "enum": ["defensive", "balanced", "growth"], "description": "稳健=defensive，均衡=balanced，进攻/成长=growth"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 5, "description": "返回候选数量，默认3"},
+        },
+    },
+    handler=_tool_screen_a_share_candidates,
+))
+
+
 async def _tool_get_briefing_today() -> Any:
     """投研晨报：市场环境速判 + 组合风险 → 买方一句话行动建议。读缓存(30min)秒回，缺则现算一次再缓存。"""
     from . import data_store
@@ -3570,7 +3935,7 @@ async def portfolio_review() -> PortfolioReviewResponse:
         except Exception:
             pass
     review = build_portfolio_review(summary, sp500_history=sp500, rates_history=rates)
-    return await _enhance_review_narrative(review, view="portfolio", subject="组合")
+    return await _enhance_review_narrative(review, view="portfolio", subject="组合", llm_adapter=llm)
 
 
 async def _gather_macro_inputs() -> dict:
@@ -3616,7 +3981,7 @@ async def _gather_macro_inputs() -> dict:
 async def macro_review() -> MacroReviewResponse:
     """宏观环境速判：市场/波动率/利率/收益率曲线/信用利差/通胀/避险，全部真实公开数据。"""
     review = build_macro_review(**await _gather_macro_inputs())
-    return await _enhance_review_narrative(review, view="macro", subject="宏观环境")
+    return await _enhance_review_narrative(review, view="macro", subject="宏观环境", llm_adapter=llm)
 
 
 @app.get("/api/briefing/today", response_model=BriefingResponse)
@@ -3647,7 +4012,7 @@ async def briefing_today(symbols: str = "") -> BriefingResponse:
             except Exception:
                 symbol_sectors[sym] = None
         briefing.watchlist = build_watchlist_summary(symbol_sectors, macro.overall_verdict)
-    return await _enhance_briefing_headline(briefing)
+    return await _enhance_briefing_headline(briefing, llm_adapter=llm)
 
 
 # ============================================================================ #
@@ -3881,38 +4246,48 @@ async def stock_screen(query: str, symbols: str = "") -> StockScreenResponse:
         fetch_us10y_history,
     )
     from .google_finance import fetch_google_finance_quote
-    from .llm import CloudResearchLLM
     from .nasdaq_data import fetch_nasdaq_earnings, fetch_nasdaq_options
     from .valuation_source import fetch_valuation
 
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()][:10] or _SCREEN_DEFAULT
 
-    llm = CloudResearchLLM()
     parsed = None
+    parse_core_result = None
     if llm.provider != "mock":
         try:
-            parsed = await llm.parse_screen_query(q)
+            parse_core_result = await core_agent.run_adapter(
+                CoreAgentRequest(
+                    objective=f"自然语言选股条件解析：{q}",
+                    mode="snapshot",
+                    context=q[:16000],
+                    channel="web",
+                    timeout_seconds=45.0,
+                ),
+                lambda: llm.parse_screen_query(q),
+                route="stock-screen-query",
+            )
+            parsed = parse_core_result.raw
         except Exception:
             parsed = None
     if not parsed or not parsed.get("criteria"):
-        return StockScreenResponse(
+        return _attach_core_agent_metadata(StockScreenResponse(
             generated_at=datetime.now(timezone.utc),
             query=q,
             criteria_summary="未能解析筛选条件（请在设置配置 AI 模型，或换更明确的表述）",
             provider="rule-template",
-        )
+        ), parse_core_result)
     criteria = [
         StockScreenCriterion(dim=c["dim"], want=c.get("want", "bullish"), label=_SCREEN_DIM_LABELS[c["dim"]])
         for c in parsed["criteria"]
         if isinstance(c, dict) and c.get("dim") in _SCREEN_DIM_LABELS and c.get("want") in ("bullish", "bearish", "neutral")
     ]
     if not criteria:
-        return StockScreenResponse(
+        return _attach_core_agent_metadata(StockScreenResponse(
             generated_at=datetime.now(timezone.utc),
             query=q,
             criteria_summary=parsed.get("summary", ""),
             provider=llm.provider,
-        )
+        ), parse_core_result)
 
     async def _safe(coro, default):
         try:
@@ -3982,7 +4357,7 @@ async def stock_screen(query: str, symbols: str = "") -> StockScreenResponse:
     worst = "mock" if "mock" in levels else ("degraded" if "degraded" in levels else "live")
     overall_dq = next(r.data_quality for r in results if r.data_quality.level == worst)
 
-    return StockScreenResponse(
+    return _attach_core_agent_metadata(StockScreenResponse(
         generated_at=datetime.now(timezone.utc),
         query=q,
         criteria_summary=parsed.get("summary", ""),
@@ -3991,7 +4366,7 @@ async def stock_screen(query: str, symbols: str = "") -> StockScreenResponse:
         scanned=len(results),
         provider=llm.provider,
         data_quality=overall_dq,
-    )
+    ), parse_core_result)
 
 
 @app.get("/api/official-news/cctv", response_model=OfficialNewsResponse)
@@ -4019,12 +4394,18 @@ async def people_digest(figure_id: str, refresh: bool = False) -> PersonDigestRe
             detail=f"未知焦点人物：{figure_id}，可选 {allowed}",
         )
     profile = await fetch_person_voices(figure_id, refresh=refresh)
-    digest, provider = await _synthesize_person_digest(profile, refresh=refresh)
+    core_holder: dict[str, Any] = {}
+    digest, provider = await _synthesize_person_digest(
+        profile,
+        refresh=refresh,
+        llm_adapter=llm,
+        core_result_holder=core_holder,
+    )
     quality = profile.data_quality
     if profile.item_count and provider in {"template", "fallback"}:
         # 有真实条目但只能用确定性模板综述时，标降级而非 live。
         quality = classify_data_quality("template")
-    return PersonDigestResponse(
+    response = PersonDigestResponse(
         id=profile.id,
         name=profile.name,
         digest=digest,
@@ -4033,13 +4414,20 @@ async def people_digest(figure_id: str, refresh: bool = False) -> PersonDigestRe
         generated_at=datetime.now(timezone.utc).isoformat(),
         data_quality=quality,
     )
+    return _attach_core_agent_metadata(response, core_holder.get("result"))
 
 
 _digest_cache: dict[str, tuple[str, str]] = {}
 _DIGEST_CACHE_MAX = 200
 
 
-async def _synthesize_person_digest(profile: PersonProfile, *, refresh: bool = False) -> tuple[str, str]:
+async def _synthesize_person_digest(
+    profile: PersonProfile,
+    *,
+    refresh: bool = False,
+    llm_adapter: Any = None,
+    core_result_holder: Optional[dict[str, Any]] = None,
+) -> tuple[str, str]:
     """把人物近期发言合成一段中性观点综述：LLM 优先，mock/失败回退确定性模板。
 
     成功的 AI 综述按「人物 + 标题哈希」缓存：同一批标题重复打开秒回、不再耗 token；
@@ -4056,8 +4444,12 @@ async def _synthesize_person_digest(profile: PersonProfile, *, refresh: bool = F
             return cached
 
     fallback = _template_person_digest(profile, headlines)
-    llm = CloudResearchLLM()
-    if llm.provider == "mock":
+    model = llm_adapter
+    if model is None:
+        # Keep the old injectable helper seam for offline tests and alternate
+        # callers; HTTP endpoints pass the process-wide singleton explicitly.
+        model = CloudResearchLLM()
+    if model.provider == "mock":
         return (fallback, "template")
 
     bullets = "\n".join(f"- {title}" for title in headlines)
@@ -4070,18 +4462,31 @@ async def _synthesize_person_digest(profile: PersonProfile, *, refresh: bool = F
         '仅返回 JSON：{"digest": "..."}'
     )
     try:
-        data = await llm.complete_json(
-            prompt,
-            max_tokens=600,
-            timeout_seconds=14,
-            force_json_first=True,
-            retry_schema_hint="只需填充 digest 一个字段，2-3 句、不超过 120 字。",
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"人物观点摘要：{profile.name}",
+                mode="document",
+                context=bullets[:12000],
+                channel="web",
+                timeout_seconds=20.0,
+            ),
+            lambda: model.complete_json(
+                prompt,
+                max_tokens=600,
+                timeout_seconds=14,
+                force_json_first=True,
+                retry_schema_hint="只需填充 digest 一个字段，2-3 句、不超过 120 字。",
+            ),
+            route="people-digest",
         )
+        if core_result_holder is not None:
+            core_result_holder["result"] = core_result
+        data = core_result.raw
     except Exception:
         return (fallback, "template")
     digest = (data or {}).get("digest")
     if isinstance(digest, str) and digest.strip():
-        result = (digest.strip(), llm.provider_name)
+        result = (digest.strip(), model.provider_name)
         # 仅缓存真实 AI 综述（模板兜底不缓存，便于 LLM 恢复后自愈）。
         _digest_cache[cache_key] = result
         if len(_digest_cache) > _DIGEST_CACHE_MAX:
@@ -4142,11 +4547,17 @@ async def celebrity_digest(request: Request, celeb_id: str, refresh: bool = Fals
     if profile is None:
         raise HTTPException(status_code=404, detail=f"未知名人：{celeb_id}")
     # 复用人物专题的综述合成器（按属性鸭子调用，CelebrityProfile 字段同构）。
-    digest, provider = await _synthesize_person_digest(profile, refresh=refresh)
+    core_holder: dict[str, Any] = {}
+    digest, provider = await _synthesize_person_digest(
+        profile,
+        refresh=refresh,
+        llm_adapter=llm,
+        core_result_holder=core_holder,
+    )
     quality = profile.data_quality
     if profile.item_count and provider in {"template", "fallback"}:
         quality = classify_data_quality("template")
-    return CelebrityDigestResponse(
+    response = CelebrityDigestResponse(
         id=profile.id,
         name=profile.name,
         digest=digest,
@@ -4155,6 +4566,7 @@ async def celebrity_digest(request: Request, celeb_id: str, refresh: bool = Fals
         generated_at=datetime.now(timezone.utc).isoformat(),
         data_quality=quality,
     )
+    return _attach_core_agent_metadata(response, core_holder.get("result"))
 
 
 @app.get("/api/celebrity/{celeb_id}/more")
@@ -4466,7 +4878,19 @@ async def shareholder_change_scan(request: ShareholderChangeScanRequest) -> Shar
 
 @app.post("/api/skills/shareholder-changes/interpret", response_model=ShareholderChangeInterpretResponse)
 async def shareholder_change_interpret(request: ShareholderChangeInterpretRequest) -> ShareholderChangeInterpretResponse:
-    return await interpret_shareholder_change(request, llm)
+    core_result = await core_agent.run_adapter(
+        CoreAgentRequest(
+            objective=request.question or f"解读股东变动：{request.record.name}（{request.record.symbol}）",
+            mode="document",
+            context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:12000],
+            stock=request.record.symbol,
+            channel="web",
+            timeout_seconds=45.0,
+        ),
+        lambda: interpret_shareholder_change(request, llm),
+        route="shareholder-change-interpret",
+    )
+    return _attach_core_agent_metadata(core_result.raw, core_result)
 
 
 @app.post("/api/skills/cn-earnings/scan", response_model=CnEarningsScanResponse)
@@ -4476,7 +4900,19 @@ async def cn_earnings_scan(request: CnEarningsScanRequest) -> CnEarningsScanResp
 
 @app.post("/api/skills/cn-earnings/diagnose", response_model=CnEarningsDiagnosisResponse)
 async def cn_earnings_diagnose(request: CnEarningsDiagnosisRequest) -> CnEarningsDiagnosisResponse:
-    return await diagnose_cn_earnings(request, llm)
+    core_result = await core_agent.run_adapter(
+        CoreAgentRequest(
+            objective=request.question or f"诊断A股财报：{request.record.name}（{request.record.symbol}）",
+            mode="document",
+            context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:14000],
+            stock=request.record.symbol,
+            channel="web",
+            timeout_seconds=60.0,
+        ),
+        lambda: diagnose_cn_earnings(request, llm),
+        route="cn-earnings-diagnose",
+    )
+    return _attach_core_agent_metadata(core_result.raw, core_result)
 
 
 @app.post("/api/skills/cn-earnings/detail", response_model=CnEarningsRecordDetailResponse)
@@ -4604,22 +5040,44 @@ async def api_interpret_data_item(
 
     try:
         if _is_wechat_public_item(item):
-            result = await llm.analyze_wechat_article(_wechat_article_payload(item))
+            runner = lambda: llm.analyze_wechat_article(_wechat_article_payload(item))
+            route = "data-source-wechat-interpret"
         else:
-            result = await llm.analyze_report(
+            runner = lambda: llm.analyze_report(
                 ReportAnalysisRequest(
                     title=item.title,
                     report_text=item.text,
                     locale="zh-CN",
                 )
             )
+            route = "data-source-report-interpret"
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"解读数据源条目：{item.title or item.id}",
+                mode="document",
+                context=item.text[:16000],
+                attachments=[item.title or item.id],
+                channel="web",
+                timeout_seconds=120.0,
+            ),
+            runner,
+            route=route,
+        )
+        result = _attach_core_agent_metadata(core_result.raw, core_result)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{exc}") from exc
     interpretation = _format_interpretation(result)
     updated = item
     if request.persist:
         updated = update_data_item(item.id, DataSourceItemUpdateRequest(ai_interpretation=interpretation)) or item
-    return DataSourceItemInterpretResponse(item=updated, interpretation=interpretation, result=result)
+    response = DataSourceItemInterpretResponse(
+        item=updated,
+        interpretation=interpretation,
+        result=result,
+    )
+    return _attach_core_agent_metadata(response, core_result)
 
 
 @app.delete("/api/data-sources/items/{item_id}")
@@ -4829,6 +5287,7 @@ async def api_list_professional_metrics(
     report_id: Optional[str] = None,
     symbol: Optional[str] = None,
     metric_key: Optional[str] = None,
+    period: Optional[str] = None,
     limit: int = 100,
 ) -> ProfessionalMetricListResponse:
     return ProfessionalMetricListResponse(
@@ -4836,6 +5295,7 @@ async def api_list_professional_metrics(
             report_id=report_id,
             symbol=symbol,
             metric_key=metric_key,
+            period=period,
             limit=limit,
         )
     )
@@ -4845,7 +5305,24 @@ async def api_list_professional_metrics(
 async def api_professional_rag_query(
     request: ProfessionalRagQueryRequest,
 ) -> ProfessionalRagQueryResponse:
-    return await query_professional_rag(request)
+    try:
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=request.question,
+                mode="research",
+                context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:16000],
+                stock=request.symbol,
+                channel="web",
+                timeout_seconds=90.0,
+            ),
+            lambda: query_professional_rag(request, llm_adapter=llm),
+            route="professional-rag",
+        )
+        return _attach_core_agent_metadata(core_result.raw, core_result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/pro-research/reports/{report_id}/analyze", response_model=ProfessionalReportAnalysisResponse)
@@ -4853,14 +5330,43 @@ async def api_analyze_professional_report(
     report_id: str,
     request: ProfessionalReportAnalysisRequest = ProfessionalReportAnalysisRequest(),
 ) -> ProfessionalReportAnalysisResponse:
-    return await analyze_professional_report(report_id, request)
+    try:
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=request.focus or f"分析专业财报：{report_id}",
+                mode="document",
+                context=f"report_id={report_id}; focus={request.focus or ''}",
+                attachments=[report_id],
+                channel="web",
+                timeout_seconds=120.0,
+            ),
+            lambda: analyze_professional_report(report_id, request, llm_adapter=llm),
+            route="professional-report-analysis",
+        )
+        return _attach_core_agent_metadata(core_result.raw, core_result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/pro-research/evals/run", response_model=ProfessionalEvalRunResponse)
 async def api_run_professional_eval(
     request: ProfessionalEvalRunRequest,
 ) -> ProfessionalEvalRunResponse:
-    return await run_professional_eval(request)
+    core_result = await core_agent.run_adapter(
+        CoreAgentRequest(
+            objective="运行专业财报问答评测",
+            mode="research",
+            context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:12000],
+            attachments=[request.report_id] if request.report_id else [],
+            channel="web",
+            timeout_seconds=180.0,
+        ),
+        lambda: run_professional_eval(request),
+        route="professional-eval",
+    )
+    return _attach_core_agent_metadata(core_result.raw, core_result)
 
 
 _RESEARCH_INFO_CODE_RE = re.compile(r"[A-Za-z0-9]{1,64}")
@@ -5305,14 +5811,14 @@ def _enrich_research_wire_item(item: ResearchWireItem) -> ResearchWireItem:
 
 
 @app.get("/api/research/wire", response_model=ResearchWireResponse)
-async def api_research_wire(request: Request, limit: int = 60, q: str = "", before: str = ""):
+async def api_research_wire(request: Request, limit: int = 60, q: str = "", before: str = "", before_id: str = ""):
     """知识星球「海外投行报告」研报流：终端「研报」面板的数据源。
 
     优先**在线**（同机 Node 工作台直连知识星球：空 q=最新、带 q=搜索），在线不可用时回退本地。
     ⭐每次在线拉取都 upsert 进**持久归档**，最新视图合并「在线最新 + 历史归档」——老研报不再随
-    星球最新窗口滑出而消失；`before=YYYY-MM-DD` 可往回翻更早的历史。每条带 preview_url 可内联预览。"""
+    星球最新窗口滑出而消失；`before=YYYY-MM-DD&before_id=...` 组成稳定游标，可在同一天内安全翻页。每条带 preview_url 可内联预览。"""
     # 响应级缓存：富化(市场分类/标的)有 CPU 成本，几十并发下重复请求同一列表直接命中，避免重复计算
-    _rk = f"{q.strip()}|{limit}|{(before or '').strip()}"
+    _rk = f"{q.strip()}|{limit}|{(before or '').strip()}|{(before_id or '').strip()}"
     _hit = _WIRE_RESP_CACHE.get(_rk)
     if _hit and (time.monotonic() - _hit[0]) < _WIRE_RESP_TTL:
         return _wire_conditional(request, _hit[1])
@@ -5322,7 +5828,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
             research_archive.upsert(online["items"])  # 每次在线结果落归档，累积历史
         # 最新视图(空 q)：合并历史归档 → 能往回翻；搜索(带 q)走在线全索引；带 before 翻更早
         if not q.strip() or (before or "").strip():
-            rows = research_archive.query(limit=limit, query_text=q, before=before) or online.get("items") or []
+            rows = research_archive.query(limit=limit, query_text=q, before=before, before_id=before_id) or online.get("items") or []
             archived = True
         else:
             rows = online.get("items") or []
@@ -5365,7 +5871,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                 _trigger_pdf_prewarm(rows[:5])
             return _wire_conditional(request, _resp)
     except Exception:  # 在线失败（工作台未起/cookie 失效/网络）→ 先试归档，再回退本地抓取舱
-        arch_rows = research_archive.query(limit=limit, query_text=q, before=before)
+        arch_rows = research_archive.query(limit=limit, query_text=q, before=before, before_id=before_id)
         if arch_rows:
             cache_map = metrics_get_ai_cache_many([r["file_id"] for r in arch_rows if r.get("file_id")])
             return _wire_conditional(request, ResearchWireResponse(
@@ -5473,15 +5979,9 @@ async def api_research_workbench_pdf(
 
 
 def _can_read_research_original(claims: dict[str, Any]) -> bool:
-    """研报原文权限真源：有效付费会员 / 管理员 / 原有授权白名单。"""
+    """研报原文权限真源：仅指定账号 lx199710 可访问。"""
     username = str(claims.get("username") or "").strip().lower()
-    if str(claims.get("role") or "").strip().lower() == "admin":
-        return True
-    from . import ifind_api
-    if username in ifind_api.allowed_usernames():
-        return True
-    membership = membership_of_username(username) or {}
-    return membership.get("tier") in ("premium", "lifetime")
+    return username == "lx199710"
 
 
 def _require_research_original_access(claims: dict[str, Any]) -> None:
@@ -5910,13 +6410,18 @@ async def api_metrics_activity(request: Request, token: str = "", actor: str = "
 @app.get("/api/headlines")
 async def api_headlines(request: Request) -> dict[str, Any]:
     """AI 评选的今日头条（快讯/文章/研报各最多 3 条、按重要性排序，附"为什么重要"）。"""
-    if not _should_hide_futoucaixin(request):
-        return _HEADLINES
+    hide_futoucaixin = _should_hide_futoucaixin(request)
+
+    def allowed(item: Any) -> bool:
+        if tradealpha_blocking_enabled() and is_tradealpha_message(item):
+            return False
+        return not (hide_futoucaixin and is_futoucaixin_message(item))
+
     return {
         **_HEADLINES,
-        "kx": [item for item in (_HEADLINES.get("kx") or []) if not is_futoucaixin_message(item)],
-        "wz": [item for item in (_HEADLINES.get("wz") or []) if not is_futoucaixin_message(item)],
-        "yb": [item for item in (_HEADLINES.get("yb") or []) if not is_futoucaixin_message(item)],
+        "kx": [item for item in (_HEADLINES.get("kx") or []) if allowed(item)],
+        "wz": [item for item in (_HEADLINES.get("wz") or []) if allowed(item)],
+        "yb": [item for item in (_HEADLINES.get("yb") or []) if allowed(item)],
     }
 
 
@@ -7121,6 +7626,118 @@ def _require_metrics_token(request: Request, token: str) -> None:
         raise HTTPException(status_code=403, detail="需要有效的 metrics 令牌")
 
 
+# —— 富途上游 token 运营看板管理 ——
+# 背景：富途按账号分发数据流，实时流依赖站长 VIP token。token 写在两台爬虫服务的
+# systemd drop-in 里(9/10 曾因旧 token 拿到 T-1 旧流)。这里提供看板卡片直接换 key：
+# GET 读当前生效值，POST 校验上游可用性后重写 drop-in 并重启两个爬虫服务。
+_FUTOU_TOKEN_SERVICES = ("dao-realinfo.service", "dao-article-futou.service")
+_FUTOU_DROPIN_DIR = "/etc/systemd/system/{svc}.d/override-token.conf"  # svc 已含 .service
+_FUTOU_TOKEN_ENV_RE = re.compile(r"Environment=FUTOU_API_TOKEN=\s*([0-9a-zA-Z-]+)")
+
+
+def _futou_dropin_path(svc: str) -> str:
+    return _FUTOU_DROPIN_DIR.format(svc=svc)
+
+
+def _futou_token_read() -> dict[str, Any]:
+    services: list[dict[str, Any]] = []
+    current = ""
+    for svc in _FUTOU_TOKEN_SERVICES:
+        path = _futou_dropin_path(svc)
+        val = ""
+        try:
+            m = _FUTOU_TOKEN_ENV_RE.search(Path(path).read_text(encoding="utf-8"))
+            if m:
+                val = m.group(1).strip()
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[futou-token] 读 {svc} drop-in 失败: {e}")
+        if val and not current:
+            current = val
+        services.append({
+            "service": svc,
+            "token": val,
+            "consistent": (not current or not val or val == current),
+        })
+    return {"token": current, "services": services}
+
+
+async def _futou_token_probe(token: str) -> tuple[bool, str]:
+    """用上游 realinfoList 验证 token 是否拿到实时流（今日日期 + code=200）。"""
+    url = "https://backend.futoucaixin.cn/api/index/realinfoList"
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "origin": "https://www.futoucaixin.cn",
+        "token": token,
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    }
+    def _probe() -> dict[str, Any]:
+        r = requests.get(url, headers=headers, params={"page": 1, "rows": 1}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    try:
+        data = await asyncio.to_thread(_probe)
+        if data.get("code") != 200:
+            return False, f"上游返回 code={data.get('code')} msg={data.get('msg')}"
+        items = ((data.get("data") or {}).get("grouped_data")) or {}
+        if not items:
+            return False, "上游返回空列表"
+        latest_day = max(items) if items else ""
+        day_items = items.get(latest_day) or []
+        if not day_items:
+            return False, "上游返回空列表"
+        latest_time = str(day_items[0].get("createtime_text") or "")
+        today = datetime.now().strftime("%Y-%m-%d")
+        if latest_time[:10] != today:
+            return False, f"token 只拿到旧流(最新一条 {latest_time[:16]}，非今日)——账号无实时权限"
+        return True, f"实时流正常(最新 {latest_time[:16]})"
+    except Exception as e:
+        return False, f"探测失败: {type(e).__name__}: {e}"
+
+
+@app.get("/api/metrics/futou-token")
+async def api_metrics_futou_token_get(request: Request, token: str = "") -> dict[str, Any]:
+    """富途上游 token 现状（看板卡片，需 metrics 令牌）：各服务生效值 + 一致性。"""
+    _require_metrics_token(request, token)
+    return _futou_token_read()
+
+
+@app.post("/api/metrics/futou-token")
+async def api_metrics_futou_token_set(request: Request, payload: Optional[dict] = None) -> dict[str, Any]:
+    """替换富途上游 token：先探活(必须拿到实时流)，再写两个 drop-in 并重启爬虫。"""
+    _require_metrics_token(request, str((payload or {}).get("token") or ""))
+    new_token = str((payload or {}).get("new_token") or "").strip()
+    if not re.fullmatch(r"[0-9a-zA-Z-]{16,64}", new_token):
+        raise HTTPException(status_code=400, detail="token 格式不合法(需16-64位字母数字连字符)")
+    ok, detail = await _futou_token_probe(new_token)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"token 校验未通过：{detail}")
+    written: list[str] = []
+    for svc in _FUTOU_TOKEN_SERVICES:
+        path = Path(_futou_dropin_path(svc))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"[Service]\nEnvironment=FUTOU_API_TOKEN={new_token}\n", encoding="utf-8")
+        written.append(svc)
+    restarted: list[str] = []
+    errors: list[str] = []
+    for svc in written:
+        rc = subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=30)
+        rc2 = subprocess.run(["systemctl", "restart", svc], capture_output=True, timeout=90)
+        if rc2.returncode != 0:
+            errors.append(f"{svc}: {(rc2.stderr or b'').decode(errors='replace')[:200]}")
+        else:
+            restarted.append(svc)
+    # 写 .api_token 兜底文件(token 刷新链路会用文件兜底)
+    try:
+        Path("/DAO财经/.api_token").write_text(new_token + "\n", encoding="utf-8")
+    except Exception as e:
+        print(f"[futou-token] 写 .api_token 失败: {e}")
+    if errors:
+        raise HTTPException(status_code=500, detail=f"已写入但重启失败: {'; '.join(errors)}")
+    return {"ok": True, "probe": detail, "written": written, "restarted": restarted}
+
+
 @app.get("/api/metrics/growth")
 async def api_metrics_growth(request: Request, token: str = "") -> dict[str, Any]:
     """增长分析（管理员，需 metrics 令牌）：实时 KPI + 最新 AI 分析报告 + 历史报告。"""
@@ -7650,14 +8267,25 @@ async def run_news_prewarm() -> None:
                 title = (m.title or "").strip()
                 content = (m.content or "").strip()
                 url = (m.url or "").strip()
+                # Prewarm with the same cleaned source that the click path
+                # sends to the model. Otherwise a full Bloomberg/Reuters page
+                # gets cached under a different raw-content key and the user
+                # still sees the unclean interpretation on first open.
+                model_content = content
+                try:
+                    original = await extract_article_original_text(m)
+                    if original.content.strip():
+                        model_content = original.content
+                except Exception:  # noqa: BLE001 - keep prewarm best-effort
+                    pass
                 # 太短且无原文链接才跳过；有链接的薄文章正好交给抓全文补料（这类才是「解读简略」的元凶）
                 if len(title + content) < 60 and not url:
                     continue
-                key = "news:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
+                key = "news:v4:" + _hashlib.sha1(f"{title}\n{model_content}".encode("utf-8")).hexdigest()[:20]
                 if metrics_get_ai_cache(key):
                     continue
                 try:
-                    result = await analyze_news(title, content, url=url or None)
+                    result = await analyze_news(title, model_content, url=url or None)
                     metrics_set_ai_cache(key, result)
                     done += 1
                 except asyncio.CancelledError:
@@ -7870,7 +8498,7 @@ async def run_research_prewarm() -> None:
 
     顺序执行 + 间隔，避免压垮模型；每轮只处理若干篇未缓存的，新研报下一轮补上。
     DEEPFOCUS_RESEARCH_PREWARM=0 可关闭。"""
-    if (os.getenv("DEEPFOCUS_RESEARCH_PREWARM", "1").strip().lower() in {"0", "false", "no"}):
+    if (os.getenv("DEEPFOCUS_RESEARCH_PREWARM", "0").strip().lower() in {"0", "false", "no"}):
         print("[prewarm] 研报预解读未启用")
         return
     per_cycle = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_PER_CYCLE", "30")))
@@ -7929,8 +8557,10 @@ async def run_research_prewarm() -> None:
                 return
             try:
                 async with _AI_ANALYZE_SEM:  # 与用户请求共用总闸，防止预热绕过并发上限
+                    # 供应链/行业 deck 的关键标的和风险常在第 5–14 页；预热也必须
+                    # 使用交互式解读同一页数，否则用户命中预热缓存时仍会得到标题级摘要。
                     result = await analyze_pdf_adaptive(
-                        content, title=item.get("title", "研报"), max_pages=4, background=True,
+                        content, title=item.get("title", "研报"), max_pages=14, background=True,
                     )
                 metrics_set_ai_cache(ai_cache_key, result)
                 if ai_cache_key != fid:  # 保留无版本别名给研报博客/头条标的提取
@@ -7967,8 +8597,10 @@ async def run_research_prewarm() -> None:
                 # 用户手动打开原文走独立接口，不受这个后台候选过滤影响。
                 if non_a_only and _market_for(fid, str(it.get("title") or ""), cached) not in {"HK", "US"}:
                     continue
-                if not cached:
-                    fresh.append(it)  # 新报告(无缓存)：下载→去水印缓存+AI 解读
+                if not cached or report_depth_needs_refresh(cached):
+                    # 旧缓存可能只有一句话和几条 bullet；把它当作待重算，
+                    # 否则后台永远不会用新版提示词回填。
+                    fresh.append(it)  # 新报告或旧短缓存：下载→用新版提示词重算
                 elif isinstance(cached, dict) and "instruments" not in cached:
                     migrate.append(it)  # 旧缓存补「提及标的」（市场归类由 _market_for 用 subject 即时算，无需重下载）
                 elif not has_cached_file_id(fid):
@@ -8201,21 +8833,39 @@ async def _generate_research_ai_result(
     *,
     title: str,
     cache_key: str,
+    core_result_holder: Optional[list[Any]] = None,
 ) -> dict[str, Any]:
     """Generate one report analysis per cache key, even across concurrent requests."""
     async def _generate() -> dict[str, Any]:
         # A request may have filled the cache after the endpoint's first lookup.
         if cache_key:
             late_cached = metrics_get_ai_cache(cache_key)
-            if late_cached is not None:
+            # 旧的“首屏级”结果不能阻止会员请求生成新版深度解读；
+            # 完整缓存仍然走秒回路径。
+            if late_cached is not None and not report_depth_needs_refresh(late_cached):
                 return late_cached
         pdf_bytes = await _resolve_research_pdf_bytes(request)
         if not pdf_bytes:
             raise HTTPException(status_code=422, detail="未能获取研报 PDF 内容")
         async with _AI_ANALYZE_SEM:
-            result = await analyze_pdf_adaptive(
-                pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
+            core_result = await core_agent.run_adapter(
+                CoreAgentRequest(
+                    objective=f"解读研报：{title}",
+                    mode="document",
+                    context=f"title={title}; symbol={request.symbol or ''}",
+                    stock=request.symbol,
+                    attachments=[request.filename or request.workbench_filename or "研报.pdf"],
+                    channel="web",
+                    timeout_seconds=150.0,
+                ),
+                lambda: analyze_pdf_adaptive(
+                    pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
+                ),
+                route="report-vision",
             )
+            if core_result_holder is not None:
+                core_result_holder.append(core_result)
+            result = core_result.raw
         if cache_key:
             metrics_set_ai_cache(cache_key, result)
         return result
@@ -8302,6 +8952,40 @@ def _check_agent_quota(user: Optional[dict], request: Optional[Request] = None) 
     return fkey
 
 
+# AI 对话里的「深度研判」是回答模式，不再单独做成会员专属入口：会员/管理员不限次，
+# 非会员每天体验 1 次；匿名按 IP 计数，登录后按账号计数。只在成功返回圆桌答案后扣次。
+_DULUS_DEEP_FREE = int(os.getenv("DEEPFOCUS_FREE_DEEP_ANSWER", "1") or 1)
+
+
+def _check_dulus_deep_quota(user: Optional[dict], request: Optional[Request] = None) -> Optional[str]:
+    if user:
+        if str(user.get("role") or "").strip().lower() == "admin":
+            return None
+        uid = str(user.get("sub") or "")
+        record = get_user_out_by_id(uid)
+        tier = (record.membership or {}).get("tier") if (record and record.membership) else None
+        if tier in ("premium", "lifetime"):
+            return None
+        quota_key = f"q:dulusdeep:{uid}"
+        if metrics_get_daily(quota_key) >= _DULUS_DEEP_FREE:
+            raise HTTPException(status_code=402, detail=f"今日深度研判已用完（非会员每天 {_DULUS_DEEP_FREE} 次）。开通会员畅享无限——{_upgrade_hint()}")
+        return quota_key
+    ip = _client_ip(request) if request is not None else "?"
+    quota_key = f"q:dulusdeep:anon:{ip}"
+    if metrics_get_daily(quota_key) >= _DULUS_DEEP_FREE:
+        raise HTTPException(status_code=403, detail="今日深度研判体验已用完，登录后明天继续使用 🎁")
+    return quota_key
+
+
+def _dulus_deep_quota_left(quota_key: Optional[str]) -> Optional[int]:
+    if not quota_key:
+        return None
+    try:
+        return max(0, _DULUS_DEEP_FREE - metrics_get_daily(quota_key))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @app.post("/api/research/vision-analyze", response_model=ResearchVisionAnalysisResponse)
 async def api_research_vision_analyze(
     request: ResearchVisionAnalyzeRequest,
@@ -8319,12 +9003,26 @@ async def api_research_vision_analyze(
     metrics_incr("ai_research")  # 统计 AI 解读点击次数
     metrics_incr_ai_ref((request.file_id or request.workbench_filename or "").strip(), (request.title or "").strip())  # AI 解读榜
 
-    def _build_response(result: dict[str, Any]) -> ResearchVisionAnalysisResponse:
+    def _build_response(
+        result: dict[str, Any],
+        core_result: Any = None,
+    ) -> ResearchVisionAnalysisResponse:
+        # 兼容旧的短缓存：即使历史结果只有首屏字段，也补齐可展开的逻辑线层；
+        # 六维「综合判断与边界」(df_take) 已下线，历史缓存里的会被剥掉，不会新增内容。
+        result = ensure_report_depth(result)
         from .compliance import neutralize_text as _nz, AI_CONTENT_NOTICE as _AI_NOTICE, has_ai_label as _has_ai  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)，结构化字段不动
         _disc = _nz(result.get("disclaimer", "") or "").strip()
         if not _has_ai(_disc):  # AI 生成内容显式标识(《标识办法》2025-09-01 施行)——含缓存读路径
             _disc = (_disc + "；" if _disc else "") + _AI_NOTICE
-        return ResearchVisionAnalysisResponse(
+        # API 必须原样保留历史缓存和新生成的全部内容；首屏限量与完整展开由前端分层。
+        _bullish = result.get("bullish") or result.get("key_points") or []
+        _bearish = result.get("bearish") or result.get("risks") or []
+        if not isinstance(_bullish, list):
+            _bullish = [_bullish]
+        if not isinstance(_bearish, list):
+            _bearish = [_bearish]
+        _logic_lines = ensure_logic_lines(result).get("logic_lines", [])
+        response = ResearchVisionAnalysisResponse(
             title=title,
             symbol=request.symbol,
             subject=_nz(result.get("subject", "")),
@@ -8332,11 +9030,15 @@ async def api_research_vision_analyze(
             summary=_nz(result.get("summary", "")),
             core_logic=_nz(result.get("core_logic", "")),
             takeaway=_nz(result.get("takeaway", "")),
-            df_take=_nz(result.get("df_take", "")),  # DeepFocus 视角点评（转化创作）
-            bullish=[_nz(x) for x in result.get("bullish", result.get("key_points", []))],
-            bearish=[_nz(x) for x in result.get("bearish", result.get("risks", []))],
-            key_points=[_nz(x) for x in result.get("key_points", [])],
-            risks=[_nz(x) for x in result.get("risks", [])],
+            df_take=_nz(result.get("df_take", "")),  # 研报解读已下线六维判断，历史缓存也已在 ensure_report_depth 剥空
+            logic_lines=[
+                {key: _nz(line.get(key, "")) for key in ("title", "evidence", "chain", "impact", "watch")}
+                for line in _logic_lines if isinstance(line, dict)
+            ],
+            bullish=[_nz(x) for x in _bullish],
+            bearish=[_nz(x) for x in _bearish],
+            key_points=[_nz(x) for x in _bullish],
+            risks=[_nz(x) for x in _bearish],
             instruments=result.get("instruments", []),  # 原文提及个股/标的——曾在此漏传，前端永远拿不到
             market=result.get("market", ""),
             rating=result.get("rating"),
@@ -8350,14 +9052,24 @@ async def api_research_vision_analyze(
                 detail="内容由 AI 生成：自动解读、非逐句溯源，请以原文为准", reasons=["ai-no-citation"],
             ),
         )
+        return _attach_core_agent_metadata(response, core_result)
 
-    if cached_result is not None:
+    # 非会员仍可读取旧缓存（响应层会补齐逻辑线），但会员命中旧短缓存时
+    # 允许继续走一次新版生成，避免被历史结果永久卡住。
+    refresh_cached = cached_result is not None and report_depth_needs_refresh(cached_result)
+    if cached_result is not None and not (refresh_cached and quota_key is None):
         if quota_key: metrics_incr(quota_key)  # 命中缓存也计 1 次（非会员每日免费额度）
         return _build_response(cached_result)
 
     # 走到这里必为会员（非会员未缓存已被 _check_ai_quota 拦下，不会触发生成）
+    core_result_holder: list[Any] = []
     try:
-        result = await _generate_research_ai_result(request, title=title, cache_key=cache_key)
+        result = await _generate_research_ai_result(
+            request,
+            title=title,
+            cache_key=cache_key,
+            core_result_holder=core_result_holder,
+        )
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - 统一转成 502，前端给友好提示
@@ -8366,7 +9078,170 @@ async def api_research_vision_analyze(
     if cache_ref and cache_key != cache_ref:
         metrics_set_ai_cache(cache_ref, result)  # 给研报博客/头条保留最新结构的无版本别名
     if quota_key: metrics_incr(quota_key)
-    return _build_response(result)
+    return _build_response(result, core_result_holder[0] if core_result_holder else None)
+
+
+@app.post("/api/research/deep-draft", response_model=ResearchDeepDraftResponse)
+async def api_research_deep_draft(
+    request: ResearchDeepDraftRequest,
+    http_req: Request,
+    _user: Optional[dict] = Depends(optional_current_user),
+) -> ResearchDeepDraftResponse:
+    """Generate the publication-style research draft.
+
+    The compact ``vision-analyze`` card remains the fast path.  This endpoint
+    uses the same membership gate, cache and global AI semaphore, but stores a
+    separately versioned result so a short historical card can never mask a
+    newly generated long-form draft.
+    """
+    def _valid_cached_draft(value: Any) -> bool:
+        """Reject torn/legacy cache rows before they pass Pydantic defaults.
+
+        ``ResearchDeepDraftResponse`` intentionally has permissive defaults so
+        the renderer can handle an empty, source-missing draft.  That means a
+        bare ``{}`` would technically validate, though it is not a completed
+        cache entry and would make a quota-gated request look like a cache hit.
+        Require the fields emitted by this version of the writer as well as a
+        successful model validation.
+        """
+        if not isinstance(value, dict) or not value:
+            return False
+        if value.get("mode") != "deep_draft":
+            return False
+        if not isinstance(value.get("sections"), list):
+            return False
+        if not isinstance(value.get("source_coverage"), dict):
+            return False
+        try:
+            ResearchDeepDraftResponse.model_validate(value)
+        except Exception:
+            return False
+        return True
+
+    title = (request.title or "研报深度解读").strip()
+    # The interpretation belongs to the source report, not to the requesting
+    # user or presentation metadata.  Keep title/symbol/page-limit changes
+    # from splitting the shared cache; the helper also canonicalises URLs and
+    # workbench paths.  A v2 key is retained as a migration fallback below.
+    cache_key = deep_draft_cache_key(request)
+    legacy_cache_key = legacy_deep_draft_cache_key(request) if cache_key else ""
+    cached_result = metrics_get_ai_cache(cache_key)
+    # A partially written/legacy cache must not be treated as a readable hit:
+    # otherwise an anonymous caller could pass the quota gate and receive a
+    # 500 when the response model validates it.  Members will transparently
+    # regenerate; non-members get the same 402/403 semantics as a cache miss.
+    if not _valid_cached_draft(cached_result):
+        cached_result = None
+    # Migrate a valid v2 row to the source-stable key.  This is deliberately
+    # best-effort: a torn/legacy payload still goes through the normal miss
+    # path and is never exposed just because it exists in SQLite.
+    if cached_result is None and legacy_cache_key:
+        legacy_cached = metrics_get_ai_cache(legacy_cache_key)
+        if _valid_cached_draft(legacy_cached):
+            cached_result = legacy_cached
+            metrics_set_ai_cache(cache_key, legacy_cached)
+    quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None)
+    metrics_incr("ai_research")
+    metrics_incr_ai_ref((request.file_id or request.workbench_filename or request.filename or "").strip(), title)
+
+    def _response(value: Any, core_result: Any = None) -> ResearchDeepDraftResponse:
+        if isinstance(value, ResearchDeepDraftResponse):
+            response = value
+        else:
+            # Cache entries are JSON dictionaries; validation also handles an ISO
+            # generated_at string from ``model_dump(mode='json')``.
+            response = ResearchDeepDraftResponse.model_validate(value or {})
+        # Keep the deep-draft route aligned with the existing AI endpoints:
+        # cached payloads from an older process must still carry an explicit,
+        # user-visible AI disclaimer.  Import lazily to avoid startup cycles.
+        try:
+            from .compliance import AI_CONTENT_NOTICE, ai_label, neutralize_text
+
+            # Cached drafts may have been generated by an older prompt before
+            # the hard wording guard was added.  Re-run it at the response
+            # boundary, then validate back into the typed contract.
+            response = ResearchDeepDraftResponse.model_validate(
+                neutralize_deep_draft(response.model_dump())
+            )
+
+            disc = neutralize_text(response.disclaimer or "").strip()
+            if not any(marker in disc for marker in ("AI 生成", "AI生成", "AI 辅助生成")):
+                disc = ai_label(disc or AI_CONTENT_NOTICE)
+            response.disclaimer = disc
+        except Exception:
+            if "AI 生成" not in (response.disclaimer or ""):
+                response.disclaimer = (response.disclaimer or "") + "\n\n（本内容由 AI 生成，仅供参考，不构成投资建议）"
+        # Keep the public surface on the same brand boundary as the compact
+        # vision endpoint.  The generator may retain the concrete model name
+        # for internal diagnostics, but it must not be exposed in a user-facing
+        # article footer or cached API response.
+        response.provider = _AI_BRAND
+        return _attach_core_agent_metadata(response, core_result)
+
+    core_result_holder: list[Any] = []
+    async def _generate() -> dict[str, Any]:
+        late_cached = metrics_get_ai_cache(cache_key)
+        if _valid_cached_draft(late_cached):
+            # Another waiter may have filled the cache after the first lookup.
+            # Validate that late hit as well; a torn/legacy payload must not be
+            # returned through single-flight and fail response validation for
+            # every concurrent caller.
+            return late_cached
+        if legacy_cache_key:
+            late_legacy = metrics_get_ai_cache(legacy_cache_key)
+            if _valid_cached_draft(late_legacy):
+                metrics_set_ai_cache(cache_key, late_legacy)
+                return late_legacy
+        resolved = resolve_source_documents(request)
+        # Keep the hook easy to replace in tests/alternate archive adapters:
+        # production resolver is async, but a synchronous adapter may return a
+        # ready list directly.
+        if hasattr(resolved, "__await__"):
+            docs = await resolved
+        else:
+            docs = resolved
+        # Keep deep drafts behind the same machine-wide pressure valve as the
+        # existing visual/text analyzer.  The generator itself is source-safe
+        # and has a deterministic fallback for model/provider failures.
+        async with _AI_ANALYZE_SEM:
+            core_result = await core_agent.run_adapter(
+                CoreAgentRequest(
+                    objective=f"生成深度研报稿：{title}",
+                    mode="document",
+                    context=f"symbol={request.symbol or ''}; source_count={len(docs)}",
+                    stock=request.symbol,
+                    attachments=[request.filename or request.workbench_filename or "研报资料"],
+                    channel="web",
+                    timeout_seconds=180.0,
+                ),
+                lambda: generate_deep_draft(request, documents=docs),
+                route="deep-draft",
+            )
+            core_result_holder.append(core_result)
+            result = core_result.raw
+        payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
+        metrics_set_ai_cache(cache_key, payload)
+        # Keep the request-shaped v2 alias during the rollout so an older
+        # backend process (or a rollback) can still reuse this same result.
+        # The source-stable v3 key remains the canonical cross-user entry.
+        if legacy_cache_key and legacy_cache_key != cache_key:
+            metrics_set_ai_cache(legacy_cache_key, payload)
+        return payload
+
+    if isinstance(cached_result, dict) and cached_result:
+        if quota_key:
+            metrics_incr(quota_key)
+        return _response(cached_result)
+
+    try:
+        payload = await _RESEARCH_AI_SINGLEFLIGHT.run(cache_key, _generate)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - keep endpoint error wording stable
+        raise HTTPException(status_code=502, detail=f"深度研报稿生成失败：{str(exc)[:160]}") from exc
+    if quota_key:
+        metrics_incr(quota_key)
+    return _response(payload, core_result_holder[0] if core_result_holder else None)
 
 
 @app.post("/api/news/ai-analyze", response_model=ResearchVisionAnalysisResponse)
@@ -8375,56 +9250,98 @@ async def api_news_ai_analyze(
     http_req: Request,
     _user: Optional[dict] = Depends(optional_current_user),  # 匿名也可：免费体验一次，之后引导登录
 ) -> ResearchVisionAnalysisResponse:
-    """对一条推送文章/快讯做大白话 AI 解读（结构与研报一致，前端复用同一卡片）。按内容缓存。
+    """对一条推送文章/快讯生成面向普通投资者的中性新闻简报。按内容缓存。
 
     付费墙：非会员不触发新生成（省 token），仅命中缓存才放行、每天免费 1 次；会员无限。"""
     import hashlib as _hashlib
     title = (request.title or "").strip()
     content = (request.content or "").strip()
-    cache_key = "news:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
+    # 文章入库后已经在后台预热纯文字原文。带 message_id 时优先使用它，避免
+    # 图片编码残片或只有导语的 content 被误当成完整正文交给模型。
+    original_source_note = ""
+    if request.message_id:
+        source_message = get_realtime_message(request.message_id.strip())
+        if source_message is not None and (source_message.topic or "") == "文章":
+            try:
+                original = await extract_article_original_text(source_message)
+                # The stored-text path is also a cleaning pass. A cleaned
+                # full-page capture is normally shorter than the raw page, so
+                # comparing lengths here accidentally sent Bloomberg/Reuters
+                # navigation and related stories back to the model.
+                if original.content.strip() and (
+                    original.parser != "stored-text" or len(original.content) >= 80
+                ):
+                    content = original.content
+                    original_source_note = "已读取原文全文"
+            except Exception:  # noqa: BLE001 - 保留导语作为降级输入
+                pass
+    # v3 invalidates the old forced-four-line/news-stance interpretation and
+    # keys the result on the actual body sent to the model.
+    cache_key = "news:v4:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
     cached_result = metrics_get_ai_cache(cache_key)  # 先探缓存，决定非会员能否放行
     quota_key = _check_ai_quota(_user, "wz", http_req, cached=cached_result is not None)
     metrics_incr("ai_news")  # 统计文章 AI 解读点击次数
     if title:  # 文章热度榜
         metrics_incr_news_heat("wz:" + _hashlib.sha1(title.encode("utf-8")).hexdigest()[:16], title)
 
-    def _resp(result: dict[str, Any]) -> ResearchVisionAnalysisResponse:
+    def _resp(result: dict[str, Any], core_result: Any = None) -> ResearchVisionAnalysisResponse:
         from .compliance import neutralize_text as _nz, AI_CONTENT_NOTICE as _AI_NOTICE, has_ai_label as _has_ai  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)
+        result = normalize_news_result(result)
         _disc = _nz(result.get("disclaimer", "") or "").strip()
         if not _has_ai(_disc):  # AI 生成内容显式标识(《标识办法》2025-09-01 施行)——含缓存读路径
             _disc = (_disc + "；" if _disc else "") + _AI_NOTICE
-        return ResearchVisionAnalysisResponse(
+        _logic_lines = result.get("logic_lines", [])
+        response = ResearchVisionAnalysisResponse(
             title=title or "新闻解读", subject=_nz(result.get("subject", "")),
             one_liner=_nz(result.get("one_liner", "")), summary=_nz(result.get("summary", "")),
             core_logic=_nz(result.get("core_logic", "")), takeaway=_nz(result.get("takeaway", "")),
             df_take=_nz(result.get("df_take", "")),  # DeepFocus 视角点评（转化创作）
+            logic_lines=[
+                {key: _nz(line.get(key, "")) for key in ("title", "evidence", "chain", "impact", "watch")}
+                for line in _logic_lines if isinstance(line, dict)
+            ],
             bullish=[_nz(x) for x in result.get("bullish", [])], bearish=[_nz(x) for x in result.get("bearish", [])],
             key_points=[_nz(x) for x in result.get("key_points", [])], risks=[_nz(x) for x in result.get("risks", [])],
             instruments=result.get("instruments", []), market=result.get("market", ""),  # 提及个股，曾漏传
             rating=result.get("rating"), target_price=result.get("target_price"),
             confidence=result.get("confidence", 0.5), provider=_AI_BRAND,
             disclaimer=_disc,
-            source_note=result.get("source_note", ""),  # 取料充分度：已读全文/仅据标题，前端诚实展示
+            source_note=original_source_note or result.get("source_note", ""),  # 取料充分度：已读全文/仅据标题，前端诚实展示
             data_quality=DataQuality(
                 level="degraded", label="AI 生成",
                 detail="内容由 AI 生成：自动解读，仅供参考、非投资建议", reasons=["ai-no-citation"],
             ),
         )
+        return _attach_core_agent_metadata(response, core_result)
 
     if cached_result is not None:
         if quota_key: metrics_incr(quota_key)
         return _resp(cached_result)
     # 走到这里必为会员（非会员未缓存已被 _check_ai_quota 拦下，不会触发生成）
+    core_result: Any = None
     try:
         async with _AI_ANALYZE_SEM:  # 并发闸：与研报解读共用，避免小机器过载
-            result = await analyze_news(title, content, url=(request.url or "").strip() or None)
+            core_result = await core_agent.run_adapter(
+                CoreAgentRequest(
+                    objective=f"解读新闻：{title or '未命名资讯'}",
+                    mode="document",
+                    context=content[:12000],
+                    channel="web",
+                    timeout_seconds=150.0,
+                ),
+                lambda: analyze_news(title, content, url=(request.url or "").strip() or None),
+                route="news-vision",
+            )
+            result = core_result.raw
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{exc}") from exc
+    if original_source_note:
+        result["source_note"] = original_source_note
     metrics_set_ai_cache(cache_key, result)
     if quota_key: metrics_incr(quota_key)
-    return _resp(result)
+    return _resp(result, core_result)
 
 
 @app.post("/api/data-sources/agent-crawl", response_model=DataSourceSyncResponse)
@@ -8530,14 +9447,32 @@ def _should_hide_futoucaixin(request: Request) -> bool:
     return is_futoucaixin_restricted_user(claims.get("username"))
 
 
+def _should_only_futoucaixin(request: Request, topic: Optional[str] = None) -> bool:
+    """保留旧参数兼容，但不再把快讯/文章收窄为单一来源。
+
+    当前来源策略是「只屏蔽 TradeAlpha，富途财经和其他来源都保留」；匿名/受限
+    用户的富途财经隐藏仍由 ``_should_hide_futoucaixin`` 单独负责。
+    """
+    return False
+
+
 def _realtime_message_view(
     message: RealtimeMessageRecord,
     request: Request,
     *,
     hide_futoucaixin: Optional[bool] = None,
+    only_futoucaixin: Optional[bool] = None,
 ) -> Optional[RealtimeMessageRecord]:
-    """统一资讯出参闸：先按来源隐藏，再套文章会员墙。"""
+    """统一资讯出参闸：先屏蔽 TradeAlpha、处理账号来源隔离，再套文章会员墙。"""
+    if tradealpha_blocking_enabled() and is_tradealpha_message(message):
+        return None
     hide = _should_hide_futoucaixin(request) if hide_futoucaixin is None else hide_futoucaixin
+    only = (
+        _should_only_futoucaixin(request, getattr(message, "topic", None))
+        if only_futoucaixin is None else only_futoucaixin
+    )
+    if only and (message.topic or "") in {"快讯", "文章"} and not is_futoucaixin_message(message):
+        return None
     if hide and is_futoucaixin_message(message):
         return None
     return _article_member_view(message, request)
@@ -8556,6 +9491,7 @@ async def api_list_realtime_messages(
     limit: int = 80,
 ) -> RealtimeMessageListResponse:
     hide_futoucaixin = _should_hide_futoucaixin(request)
+    only_futoucaixin = _should_only_futoucaixin(request, topic)
     messages = list_realtime_messages(
         symbol=symbol,
         topic=topic,
@@ -8565,6 +9501,7 @@ async def api_list_realtime_messages(
         q=q,
         anyq=anyq,
         exclude_futoucaixin=hide_futoucaixin,
+        only_futoucaixin=only_futoucaixin,
         limit=max(1, min(limit, 200)),
     )
     # 权限不变：该隐藏的 lxaa 仍隐藏，dao2 仍走受限视图。
@@ -8576,7 +9513,10 @@ async def api_list_realtime_messages(
         messages=[
             viewed
             for m in messages
-            if (viewed := _realtime_message_view(m, request, hide_futoucaixin=hide_futoucaixin)) is not None
+            if (viewed := _realtime_message_view(
+                m, request, hide_futoucaixin=hide_futoucaixin,
+                only_futoucaixin=only_futoucaixin,
+            )) is not None
         ]
     )
 
@@ -8597,7 +9537,11 @@ async def api_push_realtime_message(request: RealtimeMessageCreateRequest, http_
 async def api_realtime_message_stream(request: Request) -> StreamingResponse:
     # 会员/来源可见性按连接建立时判定一次，到期或换号由 STREAM_MAX_LIFETIME 重连刷新。
     hide_futoucaixin = _should_hide_futoucaixin(request)
-    transform = lambda m: _realtime_message_view(m, request, hide_futoucaixin=hide_futoucaixin)
+    only_futoucaixin = _should_only_futoucaixin(request)
+    transform = lambda m: _realtime_message_view(
+        m, request, hide_futoucaixin=hide_futoucaixin,
+        only_futoucaixin=only_futoucaixin,
+    )
     return StreamingResponse(
         realtime_message_event_stream(request, transform=transform),
         media_type="text/event-stream",
@@ -8620,6 +9564,29 @@ async def api_get_realtime_message(message_id: str, request: Request) -> Realtim
     if viewed is None:
         raise HTTPException(status_code=404, detail="消息不存在")
     return viewed
+
+
+@app.get("/api/realtime/messages/{message_id}/original-text")
+async def api_get_article_original_text(message_id: str, request: Request) -> dict[str, Any]:
+    """Deep-article original reader: return paragraphs only, never a source PDF/image URL."""
+    message = get_realtime_message(message_id)
+    if message is None or (message.topic or "") != "文章":
+        raise HTTPException(status_code=404, detail="文章不存在或已下线")
+    visible = _realtime_message_view(message, request)
+    if visible is None:
+        raise HTTPException(status_code=404, detail="文章不存在或已下线")
+    if _ARTICLE_LOCK_NOTE in (visible.content or ""):
+        raise HTTPException(status_code=403, detail="开通会员即可阅读文章全文")
+
+    result = await extract_article_original_text(message)
+    return {
+        "id": message.id,
+        "title": message.title,
+        "paragraphs": result.paragraphs,
+        "content": result.content,
+        "parser": result.parser,
+        "truncated": result.truncated,
+    }
 
 
 # ===== 研报「AI 解读」可分享落地页（软墙，分享我们的解读而非第三方原文，见 [[report_share]]）=====
@@ -9371,6 +10338,7 @@ async def public_articles_hub(request: Request, page: int = 1) -> HTMLResponse:
         for m in list_realtime_messages(
             topic="文章",
             exclude_futoucaixin=_should_hide_futoucaixin(request),
+            only_futoucaixin=_should_only_futoucaixin(request, "文章"),
             limit=120,
         )
     ]
@@ -9401,13 +10369,18 @@ async def public_article_page(article_id: str, request: Request) -> HTMLResponse
     article = get_realtime_message(article_id)
     if article is None or (article.topic or "") not in ("文章", "快讯"):
         return HTMLResponse(render_not_found_html(), status_code=404)
+    if tradealpha_blocking_enabled() and is_tradealpha_message(article):
+        return HTMLResponse(render_not_found_html(), status_code=404)
     if _should_hide_futoucaixin(request) and is_futoucaixin_message(article):
+        return HTMLResponse(render_not_found_html(), status_code=404)
+    if _should_only_futoucaixin(request, article.topic) and not is_futoucaixin_message(article):
         return HTMLResponse(render_not_found_html(), status_code=404)
     recent = [
         m.model_dump(mode="json")
         for m in list_realtime_messages(
             topic="文章",
             exclude_futoucaixin=_should_hide_futoucaixin(request),
+            only_futoucaixin=_should_only_futoucaixin(request, "文章"),
             limit=12,
         )
     ]
@@ -9558,10 +10531,17 @@ async def _usearch_stocks(query: str) -> list:
     ]
 
 
-async def _usearch_news(query: str, *, exclude_futoucaixin: bool = False) -> list:
+async def _usearch_news(
+    query: str, *, exclude_futoucaixin: bool = False, only_futoucaixin: bool = False
+) -> list:
     return [
         {"id": m.id, "title": m.title, "topic": m.topic, "created_at": m.created_at}
-        for m in list_realtime_messages(anyq=query, exclude_futoucaixin=exclude_futoucaixin, limit=5)
+        for m in list_realtime_messages(
+            anyq=query,
+            exclude_futoucaixin=exclude_futoucaixin,
+            only_futoucaixin=only_futoucaixin,
+            limit=5,
+        )
     ]
 
 
@@ -9621,7 +10601,11 @@ async def api_universal_search(request: Request, q: str = "") -> dict[str, Any]:
         stocks, news, reports, terms, boards = await asyncio.wait_for(
             asyncio.gather(
                 _safe(_usearch_stocks(query)),
-                _safe(_usearch_news(query, exclude_futoucaixin=_should_hide_futoucaixin(request))),
+                _safe(_usearch_news(
+                    query,
+                    exclude_futoucaixin=_should_hide_futoucaixin(request),
+                    only_futoucaixin=_should_only_futoucaixin(request),
+                )),
                 _safe(_usearch_reports(query)),
                 _safe(_usearch_terms(query)),
                 _safe(_usearch_boards(query)),
@@ -10369,8 +11353,17 @@ async def dulus_tools() -> list[DulusToolRecord]:
 
 
 @app.get("/api/dulus/memory", response_model=DulusMemoryListResponse)
-async def dulus_memory(limit: int = 20, scope: Optional[str] = None) -> DulusMemoryListResponse:
-    return list_dulus_memories(limit=limit, scope=scope)
+async def dulus_memory(
+    limit: int = 20,
+    scope: Optional[str] = None,
+    _user: Optional[dict] = Depends(optional_current_user),
+) -> DulusMemoryListResponse:
+    requested = str(scope or "").strip()
+    if requested.startswith("user:"):
+        username = str((_user or {}).get("username") or (_user or {}).get("id") or "").strip()
+        if not username or requested != f"user:{username}"[:24]:
+            raise HTTPException(status_code=403, detail="无权读取该用户的 AI 历史")
+    return list_dulus_memories(limit=limit, scope=requested or "__shared__")
 
 
 @app.post("/api/dulus/memory", response_model=DulusMemoryRecord)
@@ -10386,13 +11379,61 @@ async def dulus_webbridge_inspect(request: DulusWebBridgeInspectRequest) -> Dulu
 @app.post("/api/dulus/roundtable", response_model=DulusRoundtableResponse)
 async def dulus_roundtable(
     request: DulusRoundtableRequest,
+    http_req: Request,
     _user: Optional[dict] = Depends(optional_current_user),
 ) -> DulusRoundtableResponse:
+    clean_selection_context = sanitize_stock_selection_context(request.objective, request.context)
+    clarification_preflight = stock_selection_needs_clarification(request.objective, clean_selection_context)
+    quota_key = (
+        _check_dulus_deep_quota(_user, http_req)
+        if request.mode == "deep_research" and not clarification_preflight
+        else None
+    )
     from . import agent_tools as _agent_tools
     _uname = str((_user or {}).get("username") or "").strip()
     _binding_token = _agent_tools._BINDING_USER.set(_uname)
     try:
-        return await run_dulus_roundtable(llm, request)
+        # 深度研判与快速 tool-agent 共用同一套 iFinD 灰度判定，避免两个入口拿到
+        # 不同等级的数据；普通账号仍然安全回退到公开数据源。
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=request.objective,
+                mode="roundtable",
+                context=request.context,
+                stock=request.stock,
+                channel="web",
+                ifind_user=ifind_enhance_enabled(http_req),
+                timeout_seconds=240.0,
+            ),
+            lambda: run_dulus_roundtable(
+                llm,
+                request,
+                ifind_user=ifind_enhance_enabled(http_req),
+            ),
+            route="dulus-roundtable",
+        )
+        result = core_result.raw
+        # 只返回“请补充市场/周期/风险偏好”时没有启动圆桌或取数，不消耗深度研判额度。
+        clarification_only = result.decision == "research_more" and not result.turns and not result.tool_traces
+        if quota_key and not clarification_only:
+            metrics_incr(quota_key)
+        if quota_key:
+            result.quota_left = _dulus_deep_quota_left(quota_key)
+        result = _attach_core_agent_metadata(result, core_result)
+        try:
+            if result.synthesis and _user:
+                _owner = str((_user or {}).get('username') or (_user or {}).get('id') or '').strip()
+                create_dulus_memory(DulusMemoryCreateRequest(
+                    scope="user",
+                    hall="ai_chat",
+                    title=request.objective.strip(),
+                    content=result.synthesis,
+                    tags=["deep", "ai_chat", f"owner:{_owner[:80]}"],
+                    source="ai_chat",
+                ))
+        except Exception:
+            logging.getLogger(__name__).warning("ai chat history persistence failed", exc_info=True)
+        return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
@@ -10402,7 +11443,19 @@ async def dulus_roundtable(
 @app.post("/api/ai/stock-analysis", response_model=StockAnalysisResponse)
 async def stock_analysis(request: StockAnalysisRequest) -> StockAnalysisResponse:
     try:
-        return attach_data_quality(await llm.analyze_stock(request))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"个股解读：{request.stock.name or request.stock.symbol}",
+                mode="research",
+                context=request.question or "",
+                stock=request.stock,
+                channel="web",
+                timeout_seconds=90.0,
+            ),
+            lambda: llm.analyze_stock(request),
+            route="stock-analysis",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10410,13 +11463,22 @@ async def stock_analysis(request: StockAnalysisRequest) -> StockAnalysisResponse
 @app.post("/api/ai/sentiment", response_model=SentimentResponse)
 async def sentiment(request: SentimentRequest) -> SentimentResponse:
     try:
-        return attach_data_quality(await llm.score_sentiment(request.text))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective="情绪分析",
+                mode="research",
+                context=request.text[:12000],
+                channel="web",
+            ),
+            lambda: llm.score_sentiment(request.text),
+            route="sentiment",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.post("/api/fingpt/stock-check", response_model=StockCheckResponse)
-async def stock_check(request: StockCheckRequest) -> StockCheckResponse:
+async def _stock_check_impl(request: StockCheckRequest) -> StockCheckResponse:
     posts = request.posts[:10]
     evidence_items = list_data_items(symbol=request.stock.symbol, limit=8, sort="time_desc")
     stock_context = _stock_check_context(request, evidence_items)
@@ -10613,10 +11675,42 @@ async def stock_check(request: StockCheckRequest) -> StockCheckResponse:
     )
 
 
+@app.post("/api/fingpt/stock-check", response_model=StockCheckResponse)
+async def stock_check(request: StockCheckRequest) -> StockCheckResponse:
+    """One-click stock check behind the shared CoreAgent lifecycle."""
+    try:
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"一键检测：{request.stock.name or request.stock.symbol}",
+                mode="research",
+                context=_stock_check_context(request)[:16000],
+                stock=request.stock,
+                channel="web",
+                timeout_seconds=120.0,
+            ),
+            lambda: _stock_check_impl(request),
+            route="stock-check",
+        )
+        return _attach_core_agent_metadata(core_result.raw, core_result)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/fingpt/news-summary", response_model=FinGptTaskResponse)
 async def news_summary(request: NewsSummaryRequest) -> FinGptTaskResponse:
     try:
-        return attach_data_quality(await llm.summarize_news(request))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=request.focus or "总结个股相关新闻",
+                mode="research",
+                context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:12000],
+                stock=request.stock,
+                channel="web",
+            ),
+            lambda: llm.summarize_news(request),
+            route="news-summary",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10624,7 +11718,18 @@ async def news_summary(request: NewsSummaryRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/report-analysis", response_model=FinGptTaskResponse)
 async def report_analysis(request: ReportAnalysisRequest) -> FinGptTaskResponse:
     try:
-        return attach_data_quality(await llm.analyze_report(request))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"资料解读：{request.title or '未命名资料'}",
+                mode="document",
+                context=request.report_text[:12000],
+                stock=request.stock,
+                channel="web",
+            ),
+            lambda: llm.analyze_report(request),
+            route="report-analysis",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10632,7 +11737,17 @@ async def report_analysis(request: ReportAnalysisRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/rag-query", response_model=FinGptTaskResponse)
 async def rag_query(request: RagQueryRequest) -> FinGptTaskResponse:
     try:
-        return attach_data_quality(await llm.rag_query(request))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=request.question,
+                mode="research",
+                context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:16000],
+                channel="web",
+            ),
+            lambda: llm.rag_query(request),
+            route="rag-query",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10640,7 +11755,18 @@ async def rag_query(request: RagQueryRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/forecast", response_model=FinGptTaskResponse)
 async def forecast(request: ForecastRequest) -> FinGptTaskResponse:
     try:
-        return attach_data_quality(await llm.forecast(request))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"预测推演：{request.stock.name or request.stock.symbol}",
+                mode="research",
+                context=request.context or request.horizon,
+                stock=request.stock,
+                channel="web",
+            ),
+            lambda: llm.forecast(request),
+            route="forecast",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10648,7 +11774,17 @@ async def forecast(request: ForecastRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/corridor-risk", response_model=FinGptTaskResponse)
 async def corridor_risk(request: CorridorRiskRequest) -> FinGptTaskResponse:
     try:
-        return attach_data_quality(await llm.corridor_risk(request))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"通道风险：{request.corridor_code}/{request.asset}",
+                mode="research",
+                context=json.dumps(request.model_dump(mode="json"), ensure_ascii=False)[:12000],
+                channel="web",
+            ),
+            lambda: llm.corridor_risk(request),
+            route="corridor-risk",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10656,7 +11792,17 @@ async def corridor_risk(request: CorridorRiskRequest) -> FinGptTaskResponse:
 @app.post("/api/fingpt/agent-brief", response_model=FinGptTaskResponse)
 async def agent_brief(request: AgentBriefRequest) -> FinGptTaskResponse:
     try:
-        return attach_data_quality(await llm.agent_brief(request))
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"Agent复核：{request.role}",
+                mode="research",
+                context=request.context[:16000],
+                channel="web",
+            ),
+            lambda: llm.agent_brief(request),
+            route="agent-brief",
+        )
+        return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10756,7 +11902,21 @@ async def general_chat(request: GeneralChatRequest) -> GeneralChatResponse:
     try:
         await _acquire_fresh_evidence_if_thin(request)  # 主动取数：证据不足时自动爬一轮
         _augment_context_with_retrieval(request)
-        return attach_data_quality(await llm.general_chat(request))
+        core_result = await core_agent.run_chat(
+            CoreAgentRequest(
+                objective=request.message,
+                mode="chat",
+                context=json.dumps(request.context or {}, ensure_ascii=False)[:12000],
+                history=request.history,
+                channel="web",
+            ),
+            legacy_request=request,
+            prefer_tool_agent=False,
+        )
+        if not core_result.ok:
+            raise RuntimeError(core_result.error or "普通聊天未返回结果")
+        response = _attach_core_agent_metadata(core_result.raw, core_result)
+        return attach_data_quality(response)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -10779,7 +11939,20 @@ async def general_chat_stream(request: GeneralChatRequest) -> StreamingResponse:
         if sources:
             yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
         try:
-            async for delta in llm.general_chat_stream(request):
+            # Ordinary chat now crosses the same CoreAgent lifecycle boundary
+            # as research turns.  The legacy request is deliberately passed
+            # through unchanged so the existing SSE contract (delta/done and
+            # source prelude) remains byte-for-byte compatible.
+            async for delta in core_agent.stream_chat(
+                CoreAgentRequest(
+                    objective=request.message,
+                    mode="chat",
+                    context=json.dumps(request.context or {}, ensure_ascii=False)[:12000],
+                    history=request.history,
+                    channel="web",
+                ),
+                legacy_request=request,
+            ):
                 yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
         except Exception as exc:  # noqa: BLE001 — surface the error into the client stream
             yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
@@ -11027,91 +12200,123 @@ async def _maybe_professional_research_chat(
     if not _professional_chat_intent(text):
         return None
 
+    async def _wrapped(runner: Any, *, route: str, mode: str = "document") -> OrchestratorChatResponse:
+        """Keep the in-chat professional skill on the same CoreAgent seam.
+
+        The professional module owns citation retrieval and its optional cloud
+        synthesis; this wrapper owns the request/trace/policy envelope so a
+        chat-triggered skill cannot silently bypass the shared agent.
+        """
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=text,
+                mode=mode,
+                context=f"symbol={(request.stock.symbol if request.stock else '')}; professional_skill=1",
+                stock=request.stock,
+                channel="web",
+                timeout_seconds=120.0,
+            ),
+            runner,
+            route=route,
+        )
+        return _attach_core_agent_metadata(core_result.raw, core_result)
+
     report = _select_professional_chat_report(request)
     if not report:
-        return OrchestratorChatResponse(
-            provider=llm.provider_name,
-            model=llm.model,
-            generated_at=datetime.now(timezone.utc),
-            agent="Orchestrator",
-            engine=request.engine,
-            title="专业财报库",
-            content=(
-                "专业财报能力已经接入决策台，但当前还没有可用的入库报告。"
-                "你可以在这条对话上传财报/研报 PDF，或先到数据源中心入库；入库后我可以直接查指标、给引用、做财报分析和跑评测。"
+        return await _wrapped(
+            lambda: OrchestratorChatResponse(
+                provider=llm.provider_name,
+                model=llm.model,
+                generated_at=datetime.now(timezone.utc),
+                agent="Orchestrator",
+                engine=request.engine,
+                title="专业财报库",
+                content=(
+                    "专业财报能力已经接入决策台，但当前还没有可用的入库报告。"
+                    "你可以在这条对话上传财报/研报 PDF，或先到数据源中心入库；入库后我可以直接查指标、给引用、做财报分析和跑评测。"
+                ),
+                chips=["专业财报库", "待入库", "引用型RAG"],
+                suggested_actions=["上传财报", "入库资料", "查看数据源"],
+                reasoning_trace=_professional_chat_trace(request, report=None, capability="专业财报库"),
+                should_create_task=False,
+                handled_inline=True,
+                confidence=0.72,
             ),
-            chips=["专业财报库", "待入库", "引用型RAG"],
-            suggested_actions=["上传财报", "入库资料", "查看数据源"],
-            reasoning_trace=_professional_chat_trace(request, report=None, capability="专业财报库"),
-            should_create_task=False,
-            handled_inline=True,
-            confidence=0.72,
+            route="professional-catalog",
         )
 
     if re.search(r"评测|回归测试|幻觉|准确率|eval|test", text, re.I):
-        eval_run = await run_professional_eval(ProfessionalEvalRunRequest(report_id=report.id))
-        return OrchestratorChatResponse(
-            provider=llm.provider_name,
-            model=llm.model,
-            generated_at=datetime.now(timezone.utc),
-            agent="Orchestrator",
-            engine=request.engine,
-            title="专业财报评测",
-            content=_format_professional_eval(eval_run),
-            chips=["专业财报库", "评测集", f"通过率{round(eval_run.pass_rate * 100)}%"],
-            suggested_actions=["查看失败用例", "补充黄金集", "重新入库"],
-            reasoning_trace=_professional_chat_trace(request, report=report, capability="专业财报评测"),
-            should_create_task=False,
-            handled_inline=True,
-            confidence=0.84,
-        )
+        async def _run_eval() -> OrchestratorChatResponse:
+            eval_run = await run_professional_eval(ProfessionalEvalRunRequest(report_id=report.id))
+            return OrchestratorChatResponse(
+                provider=llm.provider_name,
+                model=llm.model,
+                generated_at=datetime.now(timezone.utc),
+                agent="Orchestrator",
+                engine=request.engine,
+                title="专业财报评测",
+                content=_format_professional_eval(eval_run),
+                chips=["专业财报库", "评测集", f"通过率{round(eval_run.pass_rate * 100)}%"],
+                suggested_actions=["查看失败用例", "补充黄金集", "重新入库"],
+                reasoning_trace=_professional_chat_trace(request, report=report, capability="专业财报评测"),
+                should_create_task=False,
+                handled_inline=True,
+                confidence=0.84,
+            )
+        return await _wrapped(_run_eval, route="professional-eval")
 
     if re.search(r"分析|解读|体检|质量|红旗|风险|追问|总结|报告|agent", text, re.I):
-        analysis = await analyze_professional_report(
-            report.id,
-            ProfessionalReportAnalysisRequest(focus=text, use_cloud_model=True),
+        async def _run_analysis() -> OrchestratorChatResponse:
+            analysis = await analyze_professional_report(
+                report.id,
+                ProfessionalReportAnalysisRequest(focus=text, use_cloud_model=True),
+                llm_adapter=llm,
+            )
+            return OrchestratorChatResponse(
+                provider=llm.provider_name,
+                model=llm.model,
+                generated_at=datetime.now(timezone.utc),
+                agent="Orchestrator",
+                engine=request.engine,
+                title="专业财报分析",
+                content=_format_professional_analysis(analysis),
+                chips=["专业财报库", "财报分析技能", f"{len(analysis.key_metrics)}个指标"],
+                suggested_actions=["追问指标", "跑评测", "查看引用"],
+                reasoning_trace=_professional_chat_trace(request, report=report, capability="专业财报分析"),
+                should_create_task=False,
+                handled_inline=True,
+                confidence=analysis.confidence,
+            )
+        return await _wrapped(_run_analysis, route="professional-report-chat")
+
+    async def _run_rag() -> OrchestratorChatResponse:
+        rag = await query_professional_rag(
+            ProfessionalRagQueryRequest(
+                question=text,
+                report_id=report.id,
+                symbol=report.symbol,
+                top_k=6,
+                use_cloud_model=True,
+            ),
+            llm_adapter=llm,
         )
+        citation_labels = [citation.citation_id for citation in rag.citations[:4]]
         return OrchestratorChatResponse(
             provider=llm.provider_name,
             model=llm.model,
             generated_at=datetime.now(timezone.utc),
             agent="Orchestrator",
             engine=request.engine,
-            title="专业财报分析",
-            content=_format_professional_analysis(analysis),
-            chips=["专业财报库", "财报分析技能", f"{len(analysis.key_metrics)}个指标"],
-            suggested_actions=["追问指标", "跑评测", "查看引用"],
-            reasoning_trace=_professional_chat_trace(request, report=report, capability="专业财报分析"),
+            title="引用型财报问答",
+            content=rag.answer,
+            chips=["专业财报库", "引用型RAG", *(citation_labels or ["无证据拒答"])],
+            suggested_actions=["继续追问", "分析整份财报", "跑评测"],
+            reasoning_trace=_professional_chat_trace(request, report=report, capability="引用型财报问答"),
             should_create_task=False,
             handled_inline=True,
-            confidence=analysis.confidence,
+            confidence=rag.confidence,
         )
-
-    rag = await query_professional_rag(
-        ProfessionalRagQueryRequest(
-            question=text,
-            report_id=report.id,
-            symbol=report.symbol,
-            top_k=6,
-            use_cloud_model=True,
-        )
-    )
-    citation_labels = [citation.citation_id for citation in rag.citations[:4]]
-    return OrchestratorChatResponse(
-        provider=llm.provider_name,
-        model=llm.model,
-        generated_at=datetime.now(timezone.utc),
-        agent="Orchestrator",
-        engine=request.engine,
-        title="引用型财报问答",
-        content=rag.answer,
-        chips=["专业财报库", "引用型RAG", *(citation_labels or ["无证据拒答"])],
-        suggested_actions=["继续追问", "分析整份财报", "跑评测"],
-        reasoning_trace=_professional_chat_trace(request, report=report, capability="引用型财报问答"),
-        should_create_task=False,
-        handled_inline=True,
-        confidence=rag.confidence,
-    )
+    return await _wrapped(_run_rag, route="professional-rag-chat", mode="research")
 
 
 def _is_research_intent(message: str) -> bool:
@@ -11122,10 +12327,33 @@ def _is_research_intent(message: str) -> bool:
         "怎么样", "怎么看", "如何", "建议", "推荐",
         "财报", "基本面", "估值", "营收", "利润",
         "风险", "仓位", "持仓", "前景", "未来",
+        "行情", "现价", "金价", "黄金", "原油", "比特币", "指数", "涨跌",
         "earning", "financial", "report", "outlook", "risk",
         "季报", "年报", "中报", "业绩",
+        # 多股比较常用「谁更好/更偏向谁」表达投资决策，但不一定带“分析/估值”字样。
+        # 漏判会让网页 AI 对话绕过 tool-agent，退回没有实时取数的普通回答。
+        "对比", "比较", "更偏向", "谁更好", "哪个更好", "谁更值得", "哪个更值得",
+        "怎么选", "选哪只", "排序", "哪家更", "两只谁", "几只谁",
     ]
     return any(kw in msg for kw in research_keywords)
+
+
+def _is_comparison_intent(message: str) -> bool:
+    """识别“谁更好/更偏向谁/怎么选”等投资比较句式。"""
+    msg = (message or "").lower()
+    return bool(re.search(
+        r"对比|比较|更偏向|谁更好|哪个更好|谁更值得|哪个更值得|怎么选|选哪只|排序|哪家更|两只谁|几只谁",
+        msg,
+    ))
+
+
+def _requires_site_evidence(message: str) -> bool:
+    """网页端投研问题需要把公开数据和稻草财经内容放在同一条证据链里。"""
+    msg = (message or "").lower()
+    return _is_comparison_intent(msg) or bool(re.search(
+        r"本站|网站|稻草财经|快讯|文章|研报|机构纪要|纪要|复盘|催化|估值|贵不贵|基本面|财报|前景|风险|值得|怎么样|目标价|目标位|上涨空间|上行空间|半年内|六个月",
+        msg,
+    ))
 
 
 def _is_smalltalk_or_service(message: str) -> bool:
@@ -11138,6 +12366,15 @@ def _is_smalltalk_or_service(message: str) -> bool:
     t = (message or "").strip()
     if not t:
         return False
+    if re.match(r"^(?:你好|您好|哈喽|嗨|hi|hello|hey)", t, re.I) and re.search(
+        r"介绍|你是谁|能做什么|能帮我什么|怎么用", t, re.I
+    ):
+        return True
+    if re.search(r"^(?:你)?能帮我做什么|你有什么功能|这里怎么用|介绍一下你自己", t, re.I):
+        return True
+    # 内部信息套问必须跳过研究 agent，交给确定性拒绝回复。
+    if re.search(r"忽略.*指令|系统提示词|打印.*(?:工具|模型)|内部工具列表", t, re.I | re.S):
+        return True
     # 短问候/应答语(整句很短且以问候/客套词开头)
     if len(t) <= 8 and re.match(
         r"^(你好|您好|哈喽|嗨|hi|hello|hey|在吗|在不在|早|早上好|中午好|下午好|晚上好|"
@@ -11149,7 +12386,7 @@ def _is_smalltalk_or_service(message: str) -> bool:
     # 产品 / 客服 / 计费类(不涉及具体投研)
     if re.search(
         r"怎么(充值|付费|开通|续费|缴费|登录|注册|绑定|解绑|退订)|"
-        r"(会员|vip|套餐|价格|费用|多少钱|资费)(.*?)(多少|价格|怎么(买|开|续)|费用|贵不贵)?|"
+        r"(会员|vip|套餐|资费|订阅)(.*?)(多少|价格|怎么(买|开|续)|费用|贵不贵|多少钱)?|"
         r"如何(充值|付费|开通|续费|缴费|登录|注册)|"
         r"客服|人工|投诉|退款|退费|发票|账号|密码|绑定手机|换绑",
         t,
@@ -11259,6 +12496,13 @@ def _followup_suggestions(question: str, tool_trace: list) -> list[str]:
     措辞只用信息型问法（贵不贵/谁在买卖/分红如何），不用『要不要买』类诱导。"""
     used = {str(t.get("tool") or "") for t in (tool_trace or []) if isinstance(t, dict)}
     sugg: list[str] = []
+    q = str(question or "")
+    if "黄金" in q or "金价" in q:
+        return ["黄金今日涨跌主要受什么驱动？", "美元和美债收益率怎么影响黄金？", "黄金和白银最近谁更强？"]
+    if "原油" in q or "WTI" in q.upper() or "布伦特" in q:
+        return ["原油今日涨跌主要受什么驱动？", "库存和供给端有什么变化？", "油价变化对哪些行业影响最大？"]
+    if "比特币" in q or re.search(r"\bBTC\b", q, re.I):
+        return ["比特币今日涨跌的主要驱动是什么？", "当前波动率处在什么水平？", "比特币和纳指最近联动吗？"]
     stockish = bool(used & {"get_market_quote", "get_valuation", "get_financials", "resolve_symbol",
                             "get_fund_flow", "get_stock_verdict", "get_price_history"})
     if not stockish:
@@ -11281,86 +12525,526 @@ def _followup_suggestions(question: str, tool_trace: list) -> list[str]:
     return sugg[:3]
 
 
+def _roundtable_trace(result: DulusRoundtableResponse) -> list[dict[str, Any]]:
+    """把真实圆桌的取数与专家发言投影成网页可展示的核对轨迹。
+
+    这里只暴露已执行的步骤和简短摘要，不暴露模型隐藏思考链；专家节点是真实
+    ``run_dulus_roundtable`` 返回的参与者，不是前端为了动画虚构的名称。
+    """
+    trace: list[dict[str, Any]] = []
+    for item in (result.tool_traces or []):
+        tool = str(getattr(item, "tool", "") or (item.get("tool") if isinstance(item, dict) else "") or "研究取数")
+        title = str(getattr(item, "title", "") or (item.get("title") if isinstance(item, dict) else "") or tool)
+        output = str(getattr(item, "output", "") or (item.get("output") if isinstance(item, dict) else "") or "")
+        status = str(getattr(item, "status", "") or (item.get("status") if isinstance(item, dict) else "") or "")
+        trace.append({
+            "tool": tool,
+            "ok": status in {"completed", "done", ""},
+            "summary": (output or title)[:220],
+        })
+    for turn in (result.turns or []):
+        participant_id = str(getattr(turn, "participant_id", "") or "专家")
+        participant_name = str(getattr(turn, "participant_name", "") or participant_id)
+        content = str(getattr(turn, "content", "") or "")
+        trace.append({
+            "tool": f"agent_{participant_id}",
+            "ok": True,
+            "summary": f"{participant_name}：{content[:160]}" if content else f"{participant_name} 已完成复核",
+        })
+    trace.append({
+        "tool": "agent_synthesis",
+        "ok": True,
+        "summary": "投研主编已综合事实、研究假设与风险反证",
+    })
+    # 一轮个股研究现在包含公开数据、五类站内资料及行业/同行/上下游扫描；
+    # 保留完整可审计轨迹，避免 24 条硬截断把后面的专家节点/主编节点裁掉。
+    return trace[:48]
+
+
+_RESEARCH_PROGRESS_LABELS = {
+    "compare_stocks": "多股同口径对比",
+    "get_market_quote": "实时行情",
+    "get_valuation": "估值快照",
+    "get_financials": "财报摘要",
+    "get_financial_statements": "财务三表",
+    "get_fund_flow": "资金流向",
+    "get_stock_news": "公司动态",
+    "get_analyst_consensus": "卖方一致预期",
+    "get_stock_announcements": "公司公告",
+    "get_dividend_history": "分红历史",
+    "get_site_fast_news": "稻草财经快讯",
+    "get_site_articles": "稻草财经文章",
+    "get_stock_research": "券商研报",
+    "get_recent_research": "投行研报",
+    "get_institution_notes": "机构纪要",
+    "get_celebrity_views": "名人观点",
+    "get_industry_context": "行业扫描",
+    "get_peer_comparison": "同行候选",
+    "get_supply_chain_context": "上下游线索",
+}
+
+
+def _research_progress_label(tool: str) -> str:
+    return _RESEARCH_PROGRESS_LABELS.get(str(tool or ""), "研究数据")
+
+
+async def _run_web_roundtable(
+    message: str,
+    context: str,
+    stock: Optional[StockSnapshot],
+    ifind_user: bool,
+    progress: Any = None,
+) -> tuple[DulusRoundtableResponse, list[dict[str, Any]]]:
+    """网页自动问答使用的真实多专家圆桌；额度由调用端统一扣减。"""
+    roundtable_request = DulusRoundtableRequest(
+        objective=message.strip(),
+        context=context,
+        stock=stock,
+        participants=["evidence", "research", "risk"],
+        enabled_tools=["market_snapshot", "evidence_lookup", "risk_review", "report_outline"],
+        mode="debate",
+        locale="zh-CN",
+    )
+    core_result = await core_agent.run_adapter(
+        CoreAgentRequest(
+            objective=message.strip(),
+            mode="roundtable",
+            context=context,
+            stock=stock,
+            channel="web",
+            ifind_user=ifind_user,
+            timeout_seconds=240.0,
+        ),
+        lambda: run_dulus_roundtable(
+            llm,
+            roundtable_request,
+            ifind_user=ifind_user,
+            progress=progress,
+        ),
+        route="dulus-roundtable",
+    )
+    result = _attach_core_agent_metadata(core_result.raw, core_result)
+    return result, _roundtable_trace(result)
+
+
 @app.post("/api/agents/tool-research")
 async def tool_research(request: Request, message: str = "", symbol: str = "", name: str = "", history: str = "",
                         _user: Optional[dict] = Depends(optional_current_user)) -> dict[str, Any]:
-    """非流式 AI 原生 tool-use：一次 POST 返回 {ok, answer, tool_trace, suggestions}。
-    与 /stream 同一 agent（iFinD 灰度 + 我们的快讯/研报/复盘工具），但走普通 JSON——经 nginx 比 SSE 稳。
-    参数走 query（与 /stream 一致，axios 以 params 传）。history=[[q,a],...] JSON，web 端多轮记忆。"""
+    """终端统一 AI 对话：复用微信端的 Orchestrator，再映射为网页既有响应结构。
+
+    新版网页把正文放 JSON body，避免附件/长问题塞 query string 触发 nginx 414；query 参数继续兼容旧客户端。
+    history 与附件只进入 LLM 上下文，不参与确定性技能路由，避免历史关键词造成「粘滞技能」。
+    """
+    body: dict[str, Any] = {}
+    use_roundtable = False
+    request_mode = "deep"
+    context_hint = ""
+    try:
+        candidate = await request.json()
+        if isinstance(candidate, dict):
+            body = candidate
+    except Exception:  # noqa: BLE001  旧客户端发空 body / 非 JSON 时继续读 query
+        pass
+    if body:
+        message = str(body.get("message") or message or "")
+        symbol = str(body.get("symbol") or symbol or "")
+        name = str(body.get("name") or name or "")
+        use_roundtable = bool(body.get("roundtable"))
+        request_mode = str(body.get("mode") or ("deep" if use_roundtable else "quick")).lower()
+        raw_context_hint = body.get("context_hint")
+        if isinstance(raw_context_hint, Mapping):
+            context_hint = json.dumps(raw_context_hint, ensure_ascii=False)
+        elif raw_context_hint:
+            context_hint = str(raw_context_hint)
+        context_hint = context_hint.strip()[:16000]
+        raw_history = body.get("history")
+        if isinstance(raw_history, list):
+            history = json.dumps(raw_history[-3:], ensure_ascii=False)
+        elif isinstance(raw_history, str) and raw_history.strip():
+            history = raw_history
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
-    quota_key = _check_agent_quota(_user, request)  # 会员/管理员无限；非会员超额抛 402/403（前端转升级/登录）
+    _ai_started = time.perf_counter()
+    # 仅确认选股范围不启动研究，也不该先被登录/额度墙拦住。
+    preflight_clarification = stock_selection_needs_clarification(
+        message, _history_context_prefix(history)
+    )
+    quota_key = None if preflight_clarification else _check_agent_quota(
+        _user, request
+    )  # 会员/管理员无限；非会员超额抛 402/403（前端转升级/登录）
     _ifind = ifind_enhance_enabled(request)
-    hint_parts = [p for p in (_history_context_prefix(history),) if p]
-    if symbol.strip():
-        hint_parts.insert(0, f"当前标的：{name}（{symbol}）")
-    hint = "\n".join(hint_parts)
+    hint_parts = [p for p in (context_hint, _history_context_prefix(history)) if p]
+    attachment = body.get("attachment") if isinstance(body.get("attachment"), dict) else {}
+    attachment_name = str(attachment.get("filename") or "附件").strip()[:160]
+    attachment_text = str(attachment.get("text") or "").strip()[:12000]
+    if attachment_text:
+        hint_parts.append(f"【用户上传文件：{attachment_name}】\n{attachment_text}")
+    hint = "\n\n".join(hint_parts)
+    stock = StockSnapshot(symbol=symbol.strip(), name=(name or symbol).strip()) if symbol.strip() else None
+    terminal_request = OrchestratorChatRequest(
+        message=message.strip(),
+        stock=stock,
+        attached_files=[attachment_name] if attachment_text else [],
+        reasoning_mode="thinking",
+    )
     # 注入登录用户 → get_my_watchlist 在 web 端活过来（此前 ContextVar 只在微信入口 set，终端会员问"我的自选股"被让去登录）
     from . import agent_tools as _agent_tools
     _uname = str((_user or {}).get("username") or "").strip()
     _tok = _agent_tools._BINDING_USER.set(_uname)
     try:
-        result = await llm.run_tool_agent(question=message, context_hint=hint, ifind_user=_ifind)
+        if use_roundtable:
+            roundtable_result, roundtable_trace = await _run_web_roundtable(
+                message.strip(), hint, stock, _ifind,
+            )
+            answer = (roundtable_result.synthesis or "").strip()
+            if not answer:
+                return {"ok": False, "answer": "", "tool_trace": roundtable_trace, "reason": "多专家圆桌未返回结论"}
+            if quota_key:
+                metrics_incr(quota_key)
+            from .compliance import ai_label as _ai_label
+            from .privacy_guard import scrub_internal_text as _scrub_internal_text
+            return {
+                "ok": True,
+                "answer": _ai_label(_scrub_internal_text(answer), brief=True),
+                "tool_trace": roundtable_trace,
+                "rounds": max(1, len(roundtable_result.turns) + 1),
+                "suggestions": _followup_suggestions(message, roundtable_trace)[:3],
+                "quota_left": _agent_quota_left(quota_key),
+                "route_title": "多专家投研圆桌",
+                "route_chips": ["证据核验", "研究分析", "风险检查", "主编综合"],
+                "answer_protocol_version": AI_ANSWER_PROTOCOL_VERSION,
+                "core_agent_run_id": getattr(roundtable_result, "core_agent_run_id", None),
+                "core_agent_protocol_version": getattr(roundtable_result, "core_agent_protocol_version", None),
+                "core_agent_route": getattr(roundtable_result, "core_agent_route", None),
+                "confidence": float(roundtable_result.confidence or 0.0),
+                "roundtable": roundtable_result.model_dump(mode="json"),
+                "needs_clarification": bool(
+                    roundtable_result.decision == "research_more"
+                    and not roundtable_result.turns
+                    and not roundtable_result.tool_traces
+                ),
+            }
+        routed = await _route_orchestrator_chat(
+            terminal_request,
+            _ifind=_ifind,
+            tool_timeout=float(os.getenv("DEEPFOCUS_WEB_QA_TIMEOUT", "60") or 60),
+            tool_max_rounds=int(os.getenv("DEEPFOCUS_WEB_QA_MAX_ROUNDS", "6") or 6),
+            force_research=(request_mode != "quick") and not _is_smalltalk_or_service(message),
+            # 附件正文已经作为本轮上下文给模型；不要让「专业研报库」抢走问题并去读另一份全局报告。
+            skip_professional=True,
+            context_prefix=hint,
+            enrich_comparison=True,
+        )
     except Exception as exc:  # noqa: BLE001
+        elapsed = int((time.perf_counter() - _ai_started) * 1000)
+        metrics_incr("ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
+        metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
         return {"ok": False, "answer": "", "tool_trace": [], "error": str(exc)[:160]}
     finally:
         _agent_tools._BINDING_USER.reset(_tok)
-    if result and (result.get("answer") or "").strip():
-        if quota_key:
+    answer = (getattr(routed, "content", "") or "").strip()
+    _ai_elapsed_ms = int((time.perf_counter() - _ai_started) * 1000)
+    metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if _ai_elapsed_ms < 15000 else 'lt60s' if _ai_elapsed_ms < 60000 else 'gte60s'}")
+    metrics_incr("ai_deep_completed" if request_mode != "quick" else "ai_quick_completed")
+    try:
+        _trace = getattr(routed, "reasoning_trace", None) or []
+        for _step in _trace:
+            if getattr(_step, "ok", True) is False or (isinstance(_step, dict) and _step.get("ok") is False):
+                metrics_incr("ai_tool_failed")
+            else:
+                metrics_incr("ai_tool_succeeded")
+    except Exception:
+        pass
+    try:
+        if answer and _user:
+            _owner = str((_user or {}).get('username') or (_user or {}).get('id') or '').strip()
+            _tags = [request_mode, 'ai_chat', f'owner:{_owner[:80]}']
+            if attachment_name and attachment_name.strip() != '附件':
+                _attachment_label = re.sub(r"\s+", " ", attachment_name).strip()[:28]
+                _tags.append(f"attachment:{_attachment_label}")
+            create_dulus_memory(DulusMemoryCreateRequest(
+                scope="user",
+                hall="ai_chat", title=message.strip(), content=answer,
+                tags=_tags, source="ai_chat",
+            ))
+    except Exception:
+        pass
+    if answer:
+        needs_clarification = str(getattr(routed, "title", "") or "") == "先确定选股范围"
+        if quota_key and not needs_clarification:
             metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败不扣）
         from .compliance import ai_label as _ai_label
-        return {"ok": True, "answer": _ai_label(result["answer"], brief=True), "tool_trace": result.get("tool_trace", []),
-                "rounds": result.get("rounds", 0),
-                "suggestions": _followup_suggestions(message, result.get("tool_trace", [])),
-                "quota_left": _agent_quota_left(quota_key)}
-    return {"ok": False, "answer": "", "tool_trace": [], "reason": "tool-agent 未返回结果"}
+        from .privacy_guard import scrub_internal_text as _scrub_internal_text
+        trace: list[dict[str, Any]] = []
+        for step in (getattr(routed, "reasoning_trace", None) or []):
+            phase = str(getattr(step, "phase", "") or "")
+            if phase in {"synthesis", "orchestrator"}:
+                continue
+            title = str(getattr(step, "title", "") or "研究步骤")
+            tool_name = title[3:] if title.startswith("调用 ") else title
+            trace.append({
+                "tool": tool_name,
+                "ok": getattr(step, "status", "done") != "error",
+                "summary": str(getattr(step, "detail", "") or "")[:200],
+            })
+        suggestions = list(getattr(routed, "suggested_actions", None) or [])
+        if not suggestions:
+            suggestions = _followup_suggestions(message, trace)
+        return {
+            "ok": True,
+            "answer": _ai_label(_scrub_internal_text(answer), brief=True),
+            "tool_trace": trace,
+            "rounds": max(1, len(trace)),
+            "suggestions": suggestions[:3],
+            "quota_left": _agent_quota_left(quota_key),
+            "route_title": str(getattr(routed, "title", "") or "自动研究"),
+            "route_chips": list(getattr(routed, "chips", None) or [])[:6],
+            "answer_protocol_version": AI_ANSWER_PROTOCOL_VERSION,
+            "core_agent_run_id": getattr(routed, "core_agent_run_id", None),
+            "core_agent_protocol_version": getattr(routed, "core_agent_protocol_version", None),
+            "core_agent_route": getattr(routed, "core_agent_route", None),
+            "confidence": float(getattr(routed, "confidence", 0.0) or 0.0),
+            "needs_clarification": needs_clarification,
+        }
+    return {"ok": False, "answer": "", "tool_trace": [], "reason": "统一研究路由未返回结果"}
 
 
 @app.post("/api/agents/tool-research/stream")
 async def tool_research_stream(request: Request, message: str = "", symbol: str = "", name: str = "", history: str = "",
                                _user: Optional[dict] = Depends(optional_current_user)):
-    """流式 AI 原生 tool-use：边调工具边把进度（tool_start / tool_result）实时推给前端，最后 final/error/fallback。
+    """统一研究路由的 SSE 版：实时发送路由、取数和核对进度，最后返回与 JSON 端点同口径的答案。
 
-    打磨「研究类问题等 15-30 秒」的体验——让用户看到模型正在调哪些工具，而不是干等一个转圈。
-    tool-agent 无答案（未启用 / 不支持）→ 发 fallback，前端回退到非流式 orchestrator-chat。
-    history=[[q,a],...] JSON：web 端多轮记忆（只作 LLM 上下文，不进确定性路由）。
+    新客户端用 JSON body，避免历史/附件超过 URL 长度；query 参数仅用于兼容旧版。
     """
+    body: dict[str, Any] = {}
+    use_roundtable = False
+    request_mode = "deep"
+    context_hint = ""
+    try:
+        candidate = await request.json()
+        if isinstance(candidate, dict):
+            body = candidate
+    except Exception:  # noqa: BLE001 — 旧客户端可能发空 body
+        pass
+    if body:
+        message = str(body.get("message") or message or "")
+        symbol = str(body.get("symbol") or symbol or "")
+        name = str(body.get("name") or name or "")
+        use_roundtable = bool(body.get("roundtable"))
+        request_mode = str(body.get("mode") or ("deep" if use_roundtable else "quick")).lower()
+        raw_context_hint = body.get("context_hint")
+        if isinstance(raw_context_hint, Mapping):
+            context_hint = json.dumps(raw_context_hint, ensure_ascii=False)
+        elif raw_context_hint:
+            context_hint = str(raw_context_hint)
+        context_hint = context_hint.strip()[:16000]
+        raw_history = body.get("history")
+        if isinstance(raw_history, list):
+            history = json.dumps(raw_history[-3:], ensure_ascii=False)
+        elif isinstance(raw_history, str) and raw_history.strip():
+            history = raw_history
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
-    quota_key = _check_agent_quota(_user, request)  # 会员/管理员无限；非会员超额抛 402/403（流前先拦，正常 HTTP 错误）
+    # 仅确认市场/周期/风险偏好时无需登录，也不消耗游客试问。
+    preflight_clarification = stock_selection_needs_clarification(
+        message, _history_context_prefix(history)
+    )
+    quota_key = None if preflight_clarification else _check_agent_quota(
+        _user, request
+    )  # 会员/管理员无限；非会员超额抛 402/403（流前先拦，正常 HTTP 错误）
     _ifind = ifind_enhance_enabled(request)  # 仅白名单(lx199710) A股走 iFinD；匿名/失效 token → False(不抛)
     _uname = str((_user or {}).get("username") or "").strip()  # 闭包捕获：run() 里注入 ContextVar
 
     async def event_generator() -> AsyncIterator[str]:
+        _ai_started = time.perf_counter()
         queue: asyncio.Queue = asyncio.Queue()
 
         async def emit(event_type: str, payload: dict) -> None:
             await queue.put(_sse_frame(event_type, payload))
 
-        hint_parts = [p for p in (_history_context_prefix(history),) if p]
+        hint_parts = [p for p in (context_hint, _history_context_prefix(history)) if p]
+        attachment = body.get("attachment") if isinstance(body.get("attachment"), dict) else {}
+        attachment_name = str(attachment.get("filename") or "附件").strip()[:160]
+        attachment_text = str(attachment.get("text") or "").strip()[:12000]
+        if attachment_text:
+            hint_parts.append(f"【用户上传文件：{attachment_name}】\n{attachment_text}")
         if symbol.strip():
             hint_parts.insert(0, f"当前标的：{name}（{symbol}）")
-        hint = "\n".join(hint_parts)
+        hint = "\n\n".join(hint_parts)
 
         async def run() -> None:
             from . import agent_tools as _agent_tools
             _tok = _agent_tools._BINDING_USER.set(_uname)  # web 登录用户 → get_my_watchlist 可用
             try:
-                result = await llm.run_tool_agent(question=message, context_hint=hint, emit=emit, ifind_user=_ifind)
-                if result and (result.get("answer") or "").strip():
-                    if quota_key:
+                await emit("status", {"message": "正在识别问题并选择研究路径"})
+                stock = StockSnapshot(symbol=symbol.strip(), name=(name or symbol).strip()) if symbol.strip() else None
+                if use_roundtable:
+                    # 这是自动问答的真实多专家路径：统一取数包完成后，证据/研究/风险
+                    # 三个角色并行发言，再由主编综合。状态文案只展示已定义的阶段，
+                    # 不把模型隐藏思考过程伪装成逐字推理。
+                    from .compliance import ai_label as _ai_label
+                    from .privacy_guard import scrub_internal_text as _scrub_internal_text
+                    await emit("status", {"message": "正在组建投研圆桌 · 证据专家先行"})
+
+                    async def emit_research_progress(phase: str, payload: dict[str, Any]) -> None:
+                        """把真实研究取数回传为可审计进度；不转发参数或隐藏思考文本。"""
+                        tool = str(payload.get("tool") or "research_harness")
+                        label = _research_progress_label(tool)
+                        if phase == "start":
+                            await emit("status", {"message": f"正在检索{label}"})
+                            await emit("tool_start", {"tool": tool})
+                            return
+                        await emit("tool_result", {
+                            "tool": tool,
+                            "ok": bool(payload.get("ok")),
+                            "summary": str(payload.get("summary") or "已完成核对")[:220],
+                            "references": list(payload.get("references") or [])[:8],
+                        })
+                        if payload.get("ok"):
+                            await emit("status", {"message": f"已检索{label}，继续交叉核验"})
+                        else:
+                            await emit("status", {"message": f"{label}暂无可用数据，继续检查其他来源"})
+
+                    await emit("tool_start", {"tool": "research_harness"})
+                    roundtable_task = asyncio.create_task(_run_web_roundtable(
+                        message.strip(), hint, stock, _ifind, emit_research_progress,
+                    ))
+                    roundtable_statuses = (
+                        "正在并行读取行情、财报、快讯、文章与研报",
+                        "正在补充行业、同行与上下游线索",
+                        "证据专家正在筛选相关性与数据缺口",
+                        "研究专家正在建立估值与催化逻辑",
+                        "风险专家正在寻找反证与失效条件",
+                        "投研主编正在综合多方观点",
+                    )
+                    status_index = 0
+                    roundtable_started = time.perf_counter()
+                    while not roundtable_task.done():
+                        if status_index < len(roundtable_statuses):
+                            status_message = roundtable_statuses[status_index]
+                            status_index += 1
+                        else:
+                            status_message = f"正在继续核对多源证据（已用 {time.perf_counter() - roundtable_started:.0f} 秒）"
+                        await emit("status", {"message": status_message})
+                        try:
+                            await asyncio.wait_for(asyncio.shield(roundtable_task), timeout=2.5)
+                        except asyncio.TimeoutError:
+                            continue
+                    roundtable_result, roundtable_trace = await roundtable_task
+                    answer = (roundtable_result.synthesis or "").strip()
+                    if answer:
+                        if quota_key:
+                            metrics_incr(quota_key)
+                        for item in roundtable_trace:
+                            # 研究 Harness 的真实数据调用已经在完成时通过 progress 回传；
+                            # 这里只补充汇总轨迹与专家节点，避免思考区重复计数。
+                            item_tool = str(item.get("tool") or "")
+                            if item_tool.startswith("get_") or item_tool in {"compare_stocks"}:
+                                continue
+                            await emit("tool_result", {
+                                "tool": item_tool,
+                                "ok": item.get("ok"),
+                                "summary": item.get("summary", ""),
+                            })
+                        await emit("status", {"message": "多专家已完成交叉核对，正在组织结论"})
+                        await queue.put(_sse_frame("final", {
+                            "answer": _ai_label(_scrub_internal_text(answer), brief=True),
+                            "tool_trace": roundtable_trace,
+                            "rounds": max(1, len(roundtable_result.turns) + 1),
+                            "suggestions": _followup_suggestions(message, roundtable_trace)[:3],
+                            "quota_left": _agent_quota_left(quota_key),
+                            "route_title": "多专家投研圆桌",
+                            "route_chips": ["证据核验", "研究分析", "风险检查", "主编综合"],
+                            "answer_protocol_version": AI_ANSWER_PROTOCOL_VERSION,
+                            "core_agent_run_id": getattr(roundtable_result, "core_agent_run_id", None),
+                            "core_agent_protocol_version": getattr(roundtable_result, "core_agent_protocol_version", None),
+                            "core_agent_route": getattr(roundtable_result, "core_agent_route", None),
+                            "confidence": float(roundtable_result.confidence or 0.0),
+                            "roundtable": roundtable_result.model_dump(mode="json"),
+                            "needs_clarification": bool(
+                                roundtable_result.decision == "research_more"
+                                and not roundtable_result.turns
+                                and not roundtable_result.tool_traces
+                            ),
+                        }))
+                    else:
+                        await queue.put(_sse_frame("fallback", {"reason": "多专家圆桌未返回结论"}))
+                    return
+                routed = await _route_orchestrator_chat(
+                    OrchestratorChatRequest(
+                        message=message.strip(),
+                        stock=stock,
+                        attached_files=[attachment_name] if attachment_text else [],
+                        reasoning_mode="thinking",
+                    ),
+                    _ifind=_ifind,
+                    tool_timeout=float(os.getenv("DEEPFOCUS_WEB_QA_TIMEOUT", "60") or 60),
+                    tool_max_rounds=int(os.getenv("DEEPFOCUS_WEB_QA_MAX_ROUNDS", "6") or 6),
+                    force_research=(request_mode != "quick") and not _is_smalltalk_or_service(message),
+                    skip_professional=True,
+                    context_prefix=hint,
+                    emit=emit,
+                    enrich_comparison=True,
+                )
+                answer = (getattr(routed, "content", "") or "").strip()
+                _ai_elapsed_ms = int((time.perf_counter() - _ai_started) * 1000)
+                metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if _ai_elapsed_ms < 15000 else 'lt60s' if _ai_elapsed_ms < 60000 else 'gte60s'}")
+                metrics_incr("ai_deep_completed" if request_mode != "quick" else "ai_quick_completed")
+                try:
+                    if answer and _user:
+                        _owner = str((_user or {}).get('username') or (_user or {}).get('id') or '').strip()
+                        _tags = [request_mode, 'ai_chat', f'owner:{_owner[:80]}']
+                        if attachment_name and attachment_name.strip() != '附件':
+                            _attachment_label = re.sub(r"\s+", " ", attachment_name).strip()[:28]
+                            _tags.append(f"attachment:{_attachment_label}")
+                        create_dulus_memory(DulusMemoryCreateRequest(
+                            scope="user",
+                            hall="ai_chat", title=message.strip(), content=answer,
+                            tags=_tags, source="ai_chat",
+                        ))
+                except Exception:
+                    pass
+                if answer:
+                    needs_clarification = str(getattr(routed, "title", "") or "") == "先确定选股范围"
+                    if quota_key and not needs_clarification:
                         metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败/fallback 不扣）
                     from .compliance import ai_label as _ai_label
+                    from .privacy_guard import scrub_internal_text as _scrub_internal_text
+                    trace: list[dict[str, Any]] = []
+                    for step in (getattr(routed, "reasoning_trace", None) or []):
+                        phase = str(getattr(step, "phase", "") or "")
+                        if phase in {"synthesis", "orchestrator"}:
+                            continue
+                        title = str(getattr(step, "title", "") or "研究步骤")
+                        tool_name = title[3:] if title.startswith("调用 ") else title
+                        trace.append({
+                            "tool": tool_name,
+                            "ok": getattr(step, "status", "done") != "error",
+                            "summary": str(getattr(step, "detail", "") or "")[:200],
+                        })
+                    suggestions = list(getattr(routed, "suggested_actions", None) or []) or _followup_suggestions(message, trace)
+                    await emit("status", {"message": "已完成交叉核对，正在组织结论"})
                     await queue.put(_sse_frame("final", {
-                        "answer": _ai_label(result["answer"], brief=True),
-                        "tool_trace": result.get("tool_trace", []),
-                        "rounds": result.get("rounds", 0),
-                        "suggestions": _followup_suggestions(message, result.get("tool_trace", [])),
+                        "answer": _ai_label(_scrub_internal_text(answer), brief=True),
+                        "tool_trace": trace,
+                        "rounds": max(1, len(trace)),
+                        "suggestions": suggestions[:3],
                         "quota_left": _agent_quota_left(quota_key),
+                        "route_title": str(getattr(routed, "title", "") or "自动研究"),
+                        "route_chips": list(getattr(routed, "chips", None) or [])[:6],
+                        "answer_protocol_version": AI_ANSWER_PROTOCOL_VERSION,
+                        "core_agent_run_id": getattr(routed, "core_agent_run_id", None),
+                        "core_agent_protocol_version": getattr(routed, "core_agent_protocol_version", None),
+                        "core_agent_route": getattr(routed, "core_agent_route", None),
+                        "confidence": float(getattr(routed, "confidence", 0.0) or 0.0),
+                        "needs_clarification": needs_clarification,
                     }))
                 else:
-                    await queue.put(_sse_frame("fallback", {"reason": "tool-agent 未返回结果"}))
+                    await queue.put(_sse_frame("fallback", {"reason": "统一研究路由未返回结果"}))
             except Exception as exc:
+                elapsed = int((time.perf_counter() - _ai_started) * 1000)
+                metrics_incr("ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
+                metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
                 await queue.put(_sse_frame("error", {"message": str(exc)[:200]}))
             finally:
                 _agent_tools._BINDING_USER.reset(_tok)
@@ -11369,7 +13053,11 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
         task = asyncio.create_task(run())
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=10)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
                 if item is None:
                     break
                 if await request.is_disconnected():
@@ -11522,19 +13210,58 @@ async def _route_orchestrator_chat(
     request: OrchestratorChatRequest,
     _ifind: bool,
     tool_timeout: float = 30.0,
+    tool_max_rounds: int = 4,
     force_research: bool = False,
     skip_professional: bool = False,
     context_prefix: str = "",
+    emit=None,
+    enrich_comparison: bool = False,
 ) -> OrchestratorChatResponse:
     """orchestrator-chat 路由内核（HTTP 端点与微信「扫码即问」共用，避免重复造轮子）：
     依次试技能(股东/财报/重大事件/专业研报) → 研究意图则跑 tool-agent → 有 ticker 则跨模块注入 → 兜底。
-    - tool_timeout：tool-agent 每轮 LLM 超时；微信个股问答多轮取数需更长(传 60)，HTTP 端点用默认 30。
+    - tool_timeout/tool_max_rounds：tool-agent 每轮超时与工具预算；微信/终端个股问答需要更完整的取数链。
     - force_research：微信场景几乎全是投研提问，强制走研究路径(确保调工具取真数)，避免「值得关注吗」这类
       不含意图关键词的问句漏判 _is_research_intent → 落到不取数的朴素 orchestrator。
     - context_prefix：会话历史(多轮追问上下文)。⭐只喂给 LLM(tool-agent / 朴素 orchestrator)帮助理解追问，
-      **绝不参与确定性技能路由(detect_*)**——否则上一轮技能的长答案(满是 增持/减持/股东/A股 等关键词)会让
+    **绝不参与确定性技能路由(detect_*)**——否则上一轮技能的长答案(满是 增持/减持/股东/A股 等关键词)会让
       detector 在后续每一轮反复重命中，造成「某技能触发过一次后，之后问啥都一直调它」(本次修复的根因)。
       故技能路由只看 request.message(当前这条干净问题)。"""
+    # New clients carry contextual material in a separate field.  It is fed
+    # to the model/tool adapter below, never folded into the current message
+    # that deterministic skill detectors inspect.
+    if not context_prefix and getattr(request, "context_hint", ""):
+        context_prefix = str(request.context_hint or "")[:16000]
+    # 全市场候选池问题与单股研判必须硬隔离。即使旧版前端仍传了页面当前标的，也不能
+    # 让「推荐买哪些股票」退化成对该标的一家公司的长篇研究；独立新问同时丢弃上一轮
+    # 主题历史，只有“从上述/这些/其中选”等明确追问才继承候选上下文。
+    if is_stock_selection_request(request.message):
+        context_prefix = sanitize_stock_selection_context(request.message, context_prefix)
+        if request.stock is not None:
+            request = request.model_copy(update={"stock": None})
+        if stock_selection_needs_clarification(request.message, context_prefix):
+            return attach_data_quality(OrchestratorChatResponse(
+                provider=llm.provider_name,
+                model=llm.model,
+                generated_at=datetime.now(timezone.utc),
+                agent="Orchestrator",
+                engine=request.engine,
+                title="先确定选股范围",
+                content=stock_selection_clarification_text(),
+                chips=["不继承页面标的", "等待筛选条件"],
+                suggested_actions=[
+                    "按 A 股、6—12 个月、均衡型筛 3 只",
+                    "按 A 股、1—4 周、进攻型筛 3 只",
+                    "按港美股、1 年以上、稳健型筛 3 只",
+                ],
+                reasoning_trace=[],
+                should_create_task=False,
+                handled_inline=True,
+                confidence=0.95,
+            ))
+        normalized_selection = normalize_stock_selection_request(request.message)
+        if normalized_selection != request.message:
+            request = request.model_copy(update={"message": normalized_selection})
+
     # 全市场扫描类技能仲裁：不再「固定顺序 + 首个命中即短路」(会让上游劣质匹配抢走更合适的下游)，
     # 而是收集所有命中的候选、按特异性打分(命中的子类型越多越具体)，只跑最高分那个；
     # 打平时按声明顺序(股东→财报→事件)兜底。落选者不会触发各自昂贵的巨潮扫描(detect 是纯正则、零成本)。
@@ -11577,14 +13304,90 @@ async def _route_orchestrator_chat(
             )
             # 会话历史经 context_hint 传给 tool-agent(理解追问)，但路由已只看当前问题——历史不再污染技能命中。
             hint = "\n\n".join(p for p in (context_prefix, stock_hint) if p)
-            agent_result = await llm.run_tool_agent(
-                question=request.message, context_hint=hint, ifind_user=_ifind, timeout_seconds=tool_timeout
+            # CoreAgent owns the turn/session policy; the legacy tool loop is
+            # retained as its OpenAI-compatible execution adapter.  Passing
+            # fallback=False keeps this router's established deterministic
+            # fallback order intact when the adapter returns None.
+            require_tool_first = not (
+                (
+                    bool(request.attached_files)
+                    and re.search(r"附件|根据这份|只根据|文档|文件", request.message)
+                    and not re.search(r"现价|行情|今日|最新公告|最新新闻|当前市场", request.message)
+                )
+                or (
+                    bool(context_prefix)
+                    and re.search(r"一句|只给.{0,6}结论|别展开|简短点", request.message)
+                )
             )
+            core_result = await core_agent.run_chat(
+                CoreAgentRequest(
+                    objective=request.message,
+                    mode="research",
+                    context=hint,
+                    stock=request.stock,
+                    attachments=request.attached_files,
+                    channel="web",
+                    ifind_user=_ifind,
+                    timeout_seconds=tool_timeout,
+                    max_rounds=tool_max_rounds,
+                    require_tool_first=require_tool_first,
+                    require_site_evidence=_requires_site_evidence(request.message),
+                ),
+                emit=emit,
+                prefer_tool_agent=True,
+                fallback=False,
+                tool_kwargs={
+                    "audit_final_answer": True,
+                },
+            )
+            agent_result = core_result.raw
             if agent_result:
                 mapped = tool_agent_to_orchestrator_response(
                     agent_result, request, llm.provider_name, llm.model
                 )
                 if mapped:
+                    mapped = _attach_core_agent_metadata(mapped, core_result)
+                    # 微信会员的“多空深度档”不能只留在渠道层；网页比较题也复用同一
+                    # 反证/裁决能力。它只重组已经核验的基础答案，不新增数据。
+                    if (
+                        enrich_comparison
+                        and _is_comparison_intent(request.message)
+                        and os.getenv("DEEPFOCUS_WEB_COMPARISON_MULTIVIEW", "1").lower()
+                        not in {"0", "false", "no", "off"}
+                    ):
+                        try:
+                            # The optional multi-view verdict is itself an AI
+                            # generation.  Keep it behind the same CoreAgent
+                            # lifecycle instead of leaving a second direct
+                            # model call after the tool-agent answer.
+                            multiview_result = await core_agent.run_adapter(
+                                CoreAgentRequest(
+                                    objective=f"多空裁决：{request.message}",
+                                    mode="research",
+                                    context=mapped.content[:12000],
+                                    stock=request.stock,
+                                    history=request.history,
+                                    channel="web",
+                                    timeout_seconds=90.0,
+                                ),
+                                lambda: llm.synthesize_multiview(
+                                    request.message, mapped.content,
+                                ),
+                                route="orchestrator-multiview",
+                                emit=emit,
+                            )
+                            multiview = multiview_result.raw
+                            mapped = _attach_core_agent_metadata(mapped, multiview_result)
+                        except Exception:
+                            multiview = None
+                        if multiview and multiview.strip():
+                            mapped.content = f"{mapped.content.rstrip()}\n\n{multiview.strip()}"
+                            mapped.reasoning_trace.append(OrchestratorReasoningStep(
+                                phase="risk",
+                                title="多空裁决",
+                                detail="基于同一份已核验答案补充反证与失效条件。",
+                                status="done",
+                            ))
                     return attach_data_quality(mapped)
         except Exception:
             pass
@@ -11613,11 +13416,39 @@ async def _route_orchestrator_chat(
                 include_trade=request.include_trade,
             )
             injection = build_injection_block(aggregated)
-            return attach_data_quality(await llm.orchestrator_chat_with_context(request_for_llm, injection))
+            core_result = await core_agent.run_adapter(
+                CoreAgentRequest(
+                    objective=request.message,
+                    mode="research",
+                    context=injection[:16000],
+                    stock=request.stock,
+                    history=request.history,
+                    channel="web",
+                    timeout_seconds=tool_timeout,
+                ),
+                lambda: llm.orchestrator_chat_with_context(request_for_llm, injection),
+                route="orchestrator-context",
+            )
+            return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
         except Exception:
             pass
 
-    return attach_data_quality(await llm.orchestrator_chat(request_for_llm))
+    core_result = await core_agent.run_chat(
+        CoreAgentRequest(
+            objective=request.message,
+            mode="orchestrator",
+            context=context_prefix,
+            stock=request.stock,
+            history=request.history,
+            channel="web",
+            timeout_seconds=tool_timeout,
+        ),
+        legacy_request=request_for_llm,
+        prefer_tool_agent=False,
+    )
+    if not core_result.ok:
+        raise RuntimeError(core_result.error or "统一编排回答未返回结果")
+    return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
 
 
 def make_weixin_orchestrator_agent_fn():
@@ -11625,6 +13456,7 @@ def make_weixin_orchestrator_agent_fn():
     单轮无历史；强制研究路径 + tool-agent 超时放宽(env DEEPFOCUS_WEIXIN_QA_TIMEOUT，默认60)；取 content 作答。
     cache/每日配额/合规中性化仍由 weixin_channel._handle_batch 包在外层，此处只负责产出答案文本。"""
     _wx_timeout = float(os.getenv("DEEPFOCUS_WEIXIN_QA_TIMEOUT", "60") or 60)
+    _wx_rounds = int(os.getenv("DEEPFOCUS_WEIXIN_QA_MAX_ROUNDS", "6") or 6)
 
     async def _agent(question: str, hint: str):
         # ⚠️不要把会话历史(hint)拼进 message——message 会喂给确定性技能路由(detect_*)，历史里上一轮技能的
@@ -11637,6 +13469,7 @@ def make_weixin_orchestrator_agent_fn():
                 OrchestratorChatRequest(message=question),
                 _ifind=False,
                 tool_timeout=_wx_timeout,
+                tool_max_rounds=_wx_rounds,
                 force_research=force_research,
                 skip_professional=True,  # 微信无法上传PDF→跳过IC工作台技能,研报问落到 get_recent_research 读网站缓存
                 context_prefix=hint,     # 会话历史只作 LLM 追问上下文,绝不进技能路由
@@ -11791,6 +13624,12 @@ async def risk_pnl_records(position_id: Optional[str] = None, limit: int = 100) 
     return [PnlRecord(**r) for r in records]
 
 
+@app.post("/api/risk/backtest", response_model=RiskBacktestResponse)
+async def risk_backtest(request: RiskBacktestRequest) -> RiskBacktestResponse:
+    result = await run_risk_backtest(request)
+    return RiskBacktestResponse(**result)
+
+
 @app.post("/api/quant/lab", response_model=QuantLabResponse)
 async def quant_lab(payload: QuantLabRequest, request: Request) -> QuantLabResponse:
     require_current_user(request)
@@ -11930,6 +13769,7 @@ async def market_risk_radar(
 
 @app.post("/api/market-dashboard/analyze", response_model=DashboardAnalysisResponse)
 async def market_dashboard_analyze() -> DashboardAnalysisResponse:
+    """整体市场解读走统一 CoreAgent 适配器，保留原有结构化响应。"""
     dashboard = await fetch_market_dashboard()
     indicators_data = json.dumps(
         [
@@ -11945,16 +13785,33 @@ async def market_dashboard_analyze() -> DashboardAnalysisResponse:
         ],
         ensure_ascii=False,
     )
-    result = await llm.analyze_market_dashboard(
-        title=f"整体信号：{dashboard['overall_signal']} (评分{dashboard['overall_score']})",
-        indicators_json=indicators_data,
-        market_type="global",
-    )
-    return DashboardAnalysisResponse(**result)
+    title = f"整体信号：{dashboard['overall_signal']} (评分{dashboard['overall_score']})"
+    try:
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"市场仪表盘解读：{title}",
+                mode="snapshot",
+                context=indicators_data[:16000],
+                channel="web",
+                timeout_seconds=90.0,
+            ),
+            lambda: llm.analyze_market_dashboard(
+                title=title,
+                indicators_json=indicators_data,
+                market_type="global",
+            ),
+            route="market-dashboard-analysis",
+        )
+        return _attach_core_agent_metadata(DashboardAnalysisResponse(**core_result.raw), core_result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/market-dashboard/ashare/analyze", response_model=DashboardAnalysisResponse)
 async def ashare_dashboard_analyze() -> DashboardAnalysisResponse:
+    """A股市场解读走统一 CoreAgent 适配器，保留原有结构化响应。"""
     dashboard = await fetch_ashare_dashboard()
     indicators_data = json.dumps(
         [
@@ -11970,12 +13827,28 @@ async def ashare_dashboard_analyze() -> DashboardAnalysisResponse:
         ],
         ensure_ascii=False,
     )
-    result = await llm.analyze_market_dashboard(
-        title=f"A股整体信号：{dashboard['overall_signal']} (评分{dashboard['overall_score']})",
-        indicators_json=indicators_data,
-        market_type="ashare",
-    )
-    return DashboardAnalysisResponse(**result)
+    title = f"A股整体信号：{dashboard['overall_signal']} (评分{dashboard['overall_score']})"
+    try:
+        core_result = await core_agent.run_adapter(
+            CoreAgentRequest(
+                objective=f"A股市场仪表盘解读：{title}",
+                mode="snapshot",
+                context=indicators_data[:16000],
+                channel="web",
+                timeout_seconds=90.0,
+            ),
+            lambda: llm.analyze_market_dashboard(
+                title=title,
+                indicators_json=indicators_data,
+                market_type="ashare",
+            ),
+            route="market-dashboard-ashare-analysis",
+        )
+        return _attach_core_agent_metadata(DashboardAnalysisResponse(**core_result.raw), core_result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # ---- 自选股纪律体检(白名单内测·lx199710) ----
