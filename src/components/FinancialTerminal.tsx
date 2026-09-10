@@ -3,6 +3,8 @@ import { apiGet, apiPost } from '../services/apiClient';
 import {
   listRealtimeMessages,
   getRealtimeMessageById,
+  getArticleOriginalText,
+  type ArticleOriginalTextResponse,
   createRealtimeMessageStream,
   createReportShare,
   getReportShareById,
@@ -14,11 +16,33 @@ import {
 import ShareButton from './common/ShareButton';
 import ShareModal, { ShareTarget } from './ShareModal';
 import * as authService from '../services/authService';
-import { runToolResearch, sendAgentFeedback, startDeepResearch, pollDeepResearch, type ToolTraceItem, type DeepTask } from '../services/agentService';
+import { runToolResearch, runToolResearchStream, listDulusMemory, sendAgentFeedback, startDeepResearch, pollDeepResearch, type ToolTraceItem, type DeepTask, type DulusRoundtableResponse, type DulusContentScopeItem } from '../services/agentService';
+import {
+  extractFileText,
+  generateResearchDeepDraft,
+  type ResearchDeepDraftResponse
+} from '../services/researchService';
+import { getZsxqStream, type ZsxqTopic } from '../services/zsxqStreamService';
 import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
 import { loadRecallPrefs, saveRecallPrefs, requestBrowserPermission, evaluateAndNotify, RECALL_PREFS_EVENT, subscribeWebPush, subscribeEmailRecall, getNotificationPermission } from '../utils/signalRecall';
+import {
+  DEFAULT_FOREGROUND_POPUP_TOPICS,
+  FOREGROUND_POPUP_TOPICS,
+  foregroundPopupModeLabel,
+  foregroundPopupTopicLabel,
+  normalizeForegroundPopupKeywords,
+  nextForegroundPopupMode,
+  shouldShowForegroundPopup,
+  type ForegroundPopupMode,
+  type ForegroundPopupTopic,
+} from '../utils/foregroundNewsPopup';
+import { getMobileNavTarget, getMobileNavView, type MobileNavView } from '../utils/mobileNavigation';
 import { copyText } from '../utils/clipboard';
 import { shareImageNative } from '../utils/share';
+import { drawResearchDeepDraftImage, researchDeepDraftToText } from '../utils/researchDeepDraftImage';
+import { normalizeAiConversationHistory } from '../utils/aiConversationHistory';
+import { normalizePublisherName } from '../utils/displayBrand';
+import { getNativeBackgroundStatus, getNativePushToken, nativeBackgroundSupported, openNativeBatterySettings, openNativeNotificationSettings, requestNativeBatteryOptimization, setNativeBackgroundFilters, startNativeBackground, stopNativeBackground } from '../services/nativeBackground';
 import TerminalAuthModal from './TerminalAuthModal';
 import TerminalOnboarding, { ONB_KEY } from './TerminalOnboarding';
 import TerminalHelp from './TerminalHelp';
@@ -30,6 +54,9 @@ import TerminalWeixinBind from './TerminalWeixinBind';
 import TerminalKline from './TerminalKline';
 import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
 import TerminalInvestorCompass from './TerminalInvestorCompass';
+import AccentThemePicker from './AccentThemePicker';
+import ResearchDeepDraft, { type ResearchDeepDraftInput, type ResearchDeepDraftEvidence, type ResearchDeepDraftSource } from './ResearchDeepDraft';
+import ArticleOriginalReader from './ArticleOriginalReader';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
@@ -39,6 +66,8 @@ import './TerminalMobile.css';
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
 const MarketRiskRadar = React.lazy(() => import('./MarketRiskRadar'));
 const QuantLab = React.lazy(() => import('./QuantLab'));
+// 工具页暂时保留实现与其他入口，但先从主侧栏收起，避免导航过于拥挤。
+const SHOW_SIDEBAR_TOOLS = false;
 const QUANT_LAB_PATH = '/quant-lab';
 const isQuantLabPath = () => typeof window !== 'undefined'
   && window.location.pathname.replace(/\/+$/, '') === QUANT_LAB_PATH;
@@ -126,49 +155,158 @@ interface ResearchWireItem {
   instruments?: string[];   // 研报提及的标的（A/美/港股+黄金原油白银比特币），收报时预提取
   market?: string;          // 主要市场 A/HK/US（模型权威判定；空则前端按标题/标的启发式归类）
 }
+interface AiLogicLine {
+  title?: string; evidence?: string; chain?: string; impact?: string; watch?: string;
+}
 interface AiAnalysis {
   title: string; subject?: string; one_liner?: string; summary: string; core_logic?: string; takeaway?: string;
   df_take?: string;   // DeepFocus 视角点评：我方原创独立判断（转化创作，版权安全，盖 DeepFocus 水印）
+  logic_lines?: AiLogicLine[]; // 贯穿式独立逻辑线：事实→传导→影响→验证
   bullish?: string[]; bearish?: string[]; key_points?: string[]; risks?: string[];
   instruments?: string[]; market?: string;   // 原文提及的可交易标的（A/美/港股+黄金原油白银比特币）+ 主要市场
   rating?: string | null; target_price?: string | null; confidence?: number; pages_analyzed?: number; provider?: string;
   source_note?: string;   // 取料充分度：「已读取原文全文」/「⚠ 仅据标题概括」，诚实展示不误导
 }
+interface AiAttachment {
+  filename: string;
+  text: string;
+  charCount: number;
+  truncated: boolean;
+  parser: string;
+}
+
+// 图片型研报的关键结论不一定出现在封面和前几页（供应链/行业 deck 尤其如此）。
+// 后端视觉解读上限为 14 页，前端不要再用 4 页覆盖这个默认值，否则会得到标题级摘要。
+const RESEARCH_AI_MAX_PAGES = 14;
+// Article-style drafts need enough pages to build a real narrative; the old
+// compact vision card remains capped at RESEARCH_AI_MAX_PAGES as a fallback.
+const RESEARCH_DEEP_DRAFT_MAX_PAGES = 32;
+interface AiConversationTurn {
+  id: string;
+  question: string;
+  answer: string;
+  mode: 'quick' | 'deep';
+  updatedAt: number;
+  attachmentName?: string;
+  tools?: ToolTraceItem[];
+  suggestions?: string[];
+  feedback?: '' | 'up' | 'down';
+  deepAnswer?: DulusRoundtableResponse | null;
+  roundtable?: DulusRoundtableResponse | null;
+}
+interface AiConversationRecord {
+  id: string;
+  title: string;
+  question: string;
+  answer: string;
+  mode: 'quick' | 'deep';
+  updatedAt: number;
+  attachmentName?: string;
+  deepAnswer?: DulusRoundtableResponse | null;
+  roundtable?: DulusRoundtableResponse | null;
+  turns?: AiConversationTurn[];
+}
+const AI_CONVERSATIONS_KEY = 'df.ai.conversations.v1';
 
 // 把研报 AI 解读拼成可分享的纯文本正文（落地页/深链阅读用；不带站点脚注，由分享文案/落地页自带品牌）。
 // 分享的是我们自己的解读（增值内容），绝不含第三方研报原文/PDF。
 function aiAnalysisToText(r: AiAnalysis, title: string): string {
-  const bull = (r.bullish?.length ? r.bullish : r.key_points) || [];
-  const bear = (r.bearish?.length ? r.bearish : r.risks) || [];
+  const bull = ((r.bullish?.length ? r.bullish : r.key_points) || []);
+  const bear = ((r.bearish?.length ? r.bearish : r.risks) || []);
+  const lines = (r.logic_lines || []).filter(line => line && (line.title || line.evidence || line.chain || line.impact || line.watch));
   const L: string[] = [];
   if (title) L.push(title);
   const meta = [r.subject && `标的 ${r.subject}`, r.rating && `评级 ${r.rating}`, r.target_price && `目标价 ${r.target_price}`].filter(Boolean) as string[];
   if (meta.length) { L.push(''); L.push(meta.join('  |  ')); }
-  if (r.one_liner) { L.push(''); L.push(`💡 ${r.one_liner}`); }
-  if (r.summary) { L.push('', '【摘要】', r.summary); }
-  if (r.core_logic) { L.push('', '【投资逻辑】', r.core_logic); }
-  if (bull.length) { L.push('', '【利好 · 看涨理由】', ...bull.map((b, i) => `${i + 1}. ${b}`)); }
-  if (bear.length) { L.push('', '【利空 · 风险点】', ...bear.map((b, i) => `${i + 1}. ${b}`)); }
-  if (r.takeaway) { L.push('', `📌 启示：${r.takeaway}`); }
-  if (r.df_take) { L.push('', '【DeepFocus 视角 · 独家点评】', r.df_take); }
+  const conclusion = r.one_liner || r.summary;
+  if (conclusion) { L.push(''); L.push(`💡 ${conclusion}`); }
+  if (r.summary && r.summary.trim() !== conclusion?.trim()) { L.push('', '【报告综述】', r.summary); }
+  if (lines.length) {
+    L.push('', `【DeepFocus 视角 · ${lines.length}条独立逻辑线】`);
+    lines.forEach((line, i) => {
+      L.push(`${i + 1}. ${line.title || `逻辑线 ${i + 1}`}`);
+      if (line.evidence) L.push(`事实：${line.evidence}`);
+      if (line.chain) L.push(`传导：${line.chain}`);
+      if (line.impact) L.push(`影响：${line.impact}`);
+      if (line.watch) L.push(`验证：${line.watch}`);
+    });
+  }
+  if (r.core_logic) { L.push('', '【核心逻辑】', r.core_logic); }
+  if (bull.length) { L.push('', '【关键利好】', ...bull.map((b, i) => `${i + 1}. ${b}`)); }
+  if (bear.length) { L.push('', '【主要风险】', ...bear.map((b, i) => `${i + 1}. ${b}`)); }
+  if (r.takeaway) { L.push('', '【补充启示】', r.takeaway); }
   return L.join('\n').trim();
 }
 
+// 深度稿响应可选带 compact；旧分享/出图动作只认识 AiAnalysis，因此在
+// 后端未附带 compact 时从文章结构生成一个安全的兼容投影。
+const compactFromDeepDraft = (draft: ResearchDeepDraftResponse): AiAnalysis => {
+  const sections = draft.sections || [];
+  const bullish = sections.flatMap(section => section.bullets || []).filter(Boolean).slice(0, 8);
+  const logicLines = sections.flatMap(section => section.logic_lines || []) as AiLogicLine[];
+  const risks = (draft.risks || []).map(item => (
+    typeof item === 'string'
+      ? item
+      : [item.title, item.detail].filter(Boolean).join('：')
+  )).filter(Boolean);
+  const coverage = draft.source_coverage;
+  const sourceNote = coverage?.pages_read
+    ? `已读取原文 ${coverage.pages_read} 页${coverage.chars_read ? `、${coverage.chars_read} 字` : ''}`
+    : undefined;
+  return {
+    title: draft.title,
+    subject: draft.subject || draft.symbol || undefined,
+    one_liner: draft.one_liner,
+    summary: draft.executive_summary || draft.core_conclusion || draft.thesis || '',
+    core_logic: draft.core_conclusion || draft.thesis || undefined,
+    logic_lines: logicLines,
+    bullish,
+    bearish: risks,
+    risks,
+    instruments: draft.instruments || [],
+    confidence: draft.confidence,
+    pages_analyzed: draft.pages_analyzed,
+    provider: draft.provider,
+    source_note: sourceNote,
+    rating: null,
+    target_price: null,
+  };
+};
+
 const SEV_TAG: Record<RealtimeMessageSeverity, string> = { critical: '紧急', warning: '利空', success: '利好', info: '资讯' };
-const STATUS_LABEL: Record<StreamConnectionStatus, string> = { connecting: 'CONNECTING', live: 'LIVE', reconnecting: 'RECONNECTING', closed: 'OFFLINE', error: 'ERROR' };
-// 统一信息流：快讯 / 文章 走 DAO 推送；「研报」标签切到海外投行研报视图（在线搜索 + AI 总结）
-const PRIMARY_FEED_FILTERS = [
-  { key: '精选', label: '和我有关' },
-  { key: '自选', label: '我的股票' },
-  { key: '快讯', label: '市场快讯' },
-  { key: '研究', label: '研究资料' },
-  { key: 'all', label: '全部资讯' },
-];
-const RESEARCH_FEED_FILTERS = [
-  { key: '文章', label: '深度文章' },
-  { key: '机构纪要', label: '机构纪要' },
-  { key: '研报', label: '投行研报' },
-];
+const STATUS_LABEL: Record<StreamConnectionStatus, string> = { connecting: 'CONNECTING', live: 'LIVE', reconnecting: 'RECONNECTING', closed: 'OFFLINE', error: 'ERROR', paused: '后台暂停' };
+const DEEP_SOURCE_LABEL: Record<string, string> = {
+  get_market_quote: '行情快照', get_valuation: '估值快照', get_financials: '财报摘要',
+  get_financial_statements: '财务三表', get_fund_flow: '资金流向', get_stock_news: '公开财经资讯',
+  get_analyst_consensus: '卖方一致预期', get_stock_announcements: '公司公告',
+  get_dividend_history: '分红历史', get_site_fast_news: '稻草财经快讯',
+  get_site_articles: '稻草财经文章', get_stock_research: '公开研报库',
+  get_recent_research: '稻草财经投行研报', get_institution_notes: '稻草财经机构纪要',
+  get_celebrity_views: '名人观点', get_daily_review: '稻草财经复盘', evidence_rag: '站内证据库',
+};
+const humanizeDeepWarning = (warning: string): string => {
+  let text = String(warning || '');
+  Object.entries(DEEP_SOURCE_LABEL).forEach(([key, label]) => { text = text.replace(new RegExp(key, 'g'), label); });
+  return text.replace(/暂无可用数据/g, '暂无命中').replace(/证据库未命中/g, '暂无命中');
+};
+const formatDeepGeneratedAt = (value?: string): string => {
+  if (!value) return '刚刚';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '刚刚';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date).replace(/\//g, '-');
+};
+// 一级内容入口统一由侧栏承载。每个入口只绑定一种内容，避免快讯、文章和研报互相串台。
+const SIDE_FEED_BY_KEY: Record<string, string> = {
+  market: '快讯',
+  articles: '文章',
+  notes: '机构纪要',
+  reports: '研报',
+  stocks: '自选',
+};
+const SIDE_KEY_BY_FEED: Record<string, string> = Object.entries(SIDE_FEED_BY_KEY)
+  .reduce<Record<string, string>>((out, [key, feed]) => { out[feed] = key; return out; }, {});
 type InterestKey = '宏观政策' | 'AI科技' | '新能源' | '医药' | '消费' | '金融地产' | '港美市场' | '商品周期';
 const INTEREST_OPTIONS: { key: InterestKey; label: string; re: RegExp }[] = [
   { key: '宏观政策', label: '宏观政策', re: /(宏观|政策|央行|利率|通胀|GDP|PMI|财政|货币|监管|美联储|降息|加息)/i },
@@ -193,9 +331,10 @@ const IFIND_USERS = new Set(['lx199710']);
 // 文章全文会员墙（2026-08-07 用户拍板）：后端对非会员把文章正文裁成导语 + 此锁定标记（后端 _ARTICLE_LOCK_NOTE），
 // 前端认标记判断「未解锁」——先展示后要账：不白屏，导语照给，弹升级引导。
 const ARTICLE_LOCK_MARKER = '全文为会员专享内容';
+// 研报/资讯前台浮层会遮挡研报列表；保留队列代码兼容后台提醒，但默认不再打断页面阅读。
+// 资讯弹窗已具备级别、主题和关键词过滤；默认开启，用户仍可在“更多 → 弹窗提醒”里关闭。
+const FOREGROUND_NEWS_POPUP_ENABLED = true;
 
-// 价格展示必须可验证：不再按访客本地时间滚动制造“仅剩 X 小时”的假紧迫感。
-// 真实折扣只来自后端套餐配置；新人加赠仍按注册时间窗口计算。
 // 新人前 3 天加赠：按套餐 key 给额外天数（年卡 +1 个月、半年卡 +15 天）。
 const NEW_USER_BONUS: Record<string, { days: number; label: string }> = {
   year: { days: 30, label: '新人 +1个月' },
@@ -203,13 +342,40 @@ const NEW_USER_BONUS: Record<string, { days: number; label: string }> = {
 };
 const NEW_USER_WINDOW_MS = 3 * 24 * 3600 * 1000;  // 注册后 3 天内算「新人」
 
+const HERO_PROOF_CHIP_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '4px 10px',
+  borderRadius: 999,
+  border: '1px solid var(--border-soft)',
+  background: 'rgba(255, 255, 255, 0.03)',
+  color: 'var(--text-soft)',
+  fontSize: 11,
+  fontWeight: 600,
+  lineHeight: 1.4,
+};
+
 // AI 助手用的工具→中文名(供对话/材料/分享复用)。
 const TOOL_LABEL: Record<string, string> = {
   get_market_quote: '实时行情', get_valuation: '估值', get_financials: '财报',
+  get_stock_snapshot: '个股综合快照', compare_stocks: '多股同口径对比', get_market_data: '跨市场行情',
   get_fund_flow: '资金流', get_analyst_consensus: '一致预期', get_stock_verdict: '速判卡',
   get_verdict_history: '历史判定', get_price_history: '价格走势', get_macro_environment: '宏观',
-  get_options_signal: '期权情绪', search_our_content: '检索快讯/文章', get_stock_research: '检索券商研报', get_daily_review: '今日复盘',
+  get_options_signal: '期权情绪', search_our_content: '检索快讯/文章', get_site_fast_news: '稻草财经快讯',
+  get_site_articles: '稻草财经文章', get_stock_research: '检索券商研报', get_recent_research: '投行研报',
+  get_institution_notes: '机构纪要', get_celebrity_views: '名人观点', get_daily_review: '今日复盘',
+  get_industry_context: '行业扫描', get_peer_comparison: '同行候选', get_supply_chain_context: '上下游线索',
+  get_stock_news: '公司动态', get_stock_announcements: '公司公告', get_my_watchlist: '我的自选',
+  research_harness: '统一研究取数', agent_evidence: '证据专家', agent_research: '研究专家',
+  agent_risk: '风险专家', agent_synthesis: '投研主编综合',
 };
+
+const AI_STARTER_PROMPTS = [
+  { tag: '看市场', question: '今天 A 股为什么这样走？' },
+  { tag: '看个股', question: '贵州茅台现在估值贵不贵？' },
+  { tag: '做比较', question: '宁德时代和比亚迪更偏向谁？' },
+] as const;
 
 // 安全 markdown-lite：仅支持 **加粗** / - · 列表 / 1. 有序 / 换行段落；纯 React 元素拼接，
 // 绝不 dangerouslySetInnerHTML 灌 LLM 生文本（防 XSS）。
@@ -224,23 +390,78 @@ function mdInline(text: string, kp: string): React.ReactNode[] {
   if (last < text.length) out.push(text.slice(last));
   return out.length ? out : [text];
 }
-/** AI 问答等待假进度（对数曲线爬到 ~90% 等真结果）：静态文案干等 10-30 秒会让非会员
- * 中途关闭、白白烧掉当日免费额度；进度条 + 阶段文案让等待"看起来在干活"。 */
-function AiFakeProgress() {
-  const [pct, setPct] = useState(4);
+/** 只展示真实执行步骤与已返回的资料引用，不展示模型隐藏思考链。 */
+function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: { status?: string; tools?: ToolTraceItem[]; onStop?: () => void; roundtable?: boolean }) {
+  const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    const t = window.setInterval(() => {
-      setPct(p => (p >= 90 ? 90 : p + Math.max(0.5, (90 - p) * 0.06)));
-    }, 350);
-    return () => window.clearInterval(t);
-  }, []);
-  const stage = pct < 25 ? '正在取实时行情与估值…' : pct < 55 ? '检索我们的快讯 · 研报 · 复盘…' : pct < 80 ? '交叉核对数据、组织观点…' : '快好了，正在成稿…';
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [roundtable]);
+  const activeTools = tools.slice(-4);
+  const roundtableSteps = ['统一取数', '证据专家', '研究专家', '风险专家', '主编综合'];
+  const completedAgents = new Set(activeTools.filter(tool => tool.ok === true).map(tool => tool.tool));
+  const statusStage = status?.includes('主编') || status?.includes('组织结论') ? 4
+    : status?.includes('风险专家') ? 3
+      : status?.includes('研究专家') ? 2
+        : status?.includes('证据专家') ? 1
+          : 0;
+  const traceStage = completedAgents.has('agent_synthesis') ? 4 : completedAgents.has('agent_risk') ? 3 : completedAgents.has('agent_research') ? 2 : completedAgents.has('agent_evidence') ? 1 : 0;
+  const activeRoundtableStep = roundtable
+    ? Math.min(roundtableSteps.length - 1, Math.max(statusStage, traceStage))
+    : 0;
+  const quickSteps = ['理解问题', '核对数据', '组织答案'];
+  const quickStage = status?.match(/核对|取数|检索|Harness|公开资料|数据工具/) ? 1 : status?.match(/组织|结论|回答|完成/) ? 2 : 0;
+  const stageLabels = roundtable ? roundtableSteps : quickSteps;
+  const activeStage = roundtable ? activeRoundtableStep : quickStage;
+  // 这是执行进度的可视化，不代表模型隐藏思考 token；只有收到工具/状态事件
+  // 才推进阶段，避免用“假进度”误导用户。
+  const progressPercent = Math.round((activeStage / Math.max(1, stageLabels.length - 1)) * 100);
+  const auditedScope = Array.from(new Set(tools
+    .map(tool => TOOL_LABEL[tool.tool] || '')
+    .filter(label => label && label !== '统一研究取数' && !label.startsWith('研究数据')))).slice(-8);
+  const latestAudited = [...tools].reverse().find(tool => tool.ok !== undefined && tool.summary);
+  const liveReferences = Array.from(new Map(
+    tools.flatMap(tool => tool.references || [])
+      .filter(reference => reference && reference.title)
+      .map(reference => [
+        reference.id || `${reference.category || ''}:${reference.title}:${reference.source || ''}`,
+        reference,
+      ]),
+  ).values()).slice(-6);
   return (
-    <div className="bbt-empty" style={{ textAlign: 'left' }}>
-      <div>🤖 {stage}（通常 10–30 秒）</div>
-      <div style={{ height: 4, background: 'rgba(255,255,255,.08)', borderRadius: 2, marginTop: 8, overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${Math.round(pct)}%`, background: 'var(--amber,#f5b942)', transition: 'width .3s' }} />
+    <div className="bbt-ai-thinking" role="status" aria-live="polite">
+      <span className="bbt-ai-thinking-mark">✦</span>
+      <div>
+        <b>{status || (roundtable ? '正在组建投研圆桌' : '正在识别你的问题并选择研究路径')}</b>
+        <span className="bbt-ai-thinking-roundtable" aria-label={roundtable ? '多专家协作阶段' : '快速问答执行阶段'}>
+          {stageLabels.map((label, index) => <React.Fragment key={label}>
+            <i className={index < activeStage ? 'is-done' : index === activeStage ? 'is-live' : ''}>{index < activeStage ? '✓ ' : ''}{label}</i>
+            {index < stageLabels.length - 1 && <em aria-hidden="true">›</em>}
+          </React.Fragment>)}
+        </span>
+        <span className="bbt-ai-thinking-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
+          <span style={{ width: `${Math.max(8, progressPercent)}%` }} />
+        </span>
+        <small>{roundtable
+          ? `真实协作 · 已用 ${elapsed} 秒 · 实时核对中，30 秒无进度自动兜底 · 仅展示执行步骤`
+          : `快速问答 · 已用 ${elapsed} 秒 · ${progressPercent >= 67 ? '正在组织回答' : '正在核对可用数据'} · 30 秒无进度自动兜底`}</small>
+        {roundtable && auditedScope.length > 0 && <span className="bbt-ai-thinking-scope"><b>已查范围</b>{auditedScope.map(label => <i key={label}>{label}</i>)}</span>}
+        {roundtable && latestAudited?.summary && <span className="bbt-ai-thinking-latest">最新核对：{latestAudited.summary.slice(0, 118)}</span>}
+        {liveReferences.length > 0 && <span className="bbt-ai-thinking-references" aria-label="已命中的资料">
+          <b>已命中资料</b>
+          {liveReferences.map((reference, index) => <span key={`${reference.id || reference.title}-${index}`} title={reference.detail || reference.title}>
+            <i>{reference.category || '资料'}</i>
+            <strong>{reference.title}</strong>
+            <small>{[reference.source, reference.published_at?.slice(0, 10)].filter(Boolean).join(' · ')}</small>
+          </span>)}
+        </span>}
+        {activeTools.length > 0 ? (
+          <span className="bbt-ai-thinking-tools">{activeTools.map((tool, index) => <i className={tool.ok === false ? 'is-error' : tool.ok === true ? 'is-done' : 'is-live'} key={`${tool.tool}-${index}`}>{TOOL_LABEL[tool.tool] || (tool.tool.startsWith('get_') ? '研究数据' : tool.tool)}{tool.ok === true ? ' ✓' : ''}</i>)}</span>
+        ) : null}
       </div>
+      <i><span /><span /><span /></i>
+      {onStop && <button type="button" className="bbt-ai-thinking-stop" onClick={onStop}>停止</button>}
     </div>
   );
 }
@@ -258,8 +479,49 @@ function Markdownlite({ text }: { text: string }) {
       : <ul key={`ul${k}`} className="bbt-md-ul">{L.items.map((it, j) => <li key={j}>{mdInline(it, `ul${k}-${j}`)}</li>)}</ul>);
     list = null;
   };
-  for (const ln of raw.split('\n')) {
-    const t = ln.trim();
+  const lines = raw.split('\n');
+  const tableCells = (line: string) => line.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const t = lines[lineIndex].trim();
+    const next = (lines[lineIndex + 1] || '').trim();
+    if (t.includes('|') && /^\|?\s*:?-{3,}/.test(next)) {
+      flush();
+      const headers = tableCells(t);
+      const rows: string[][] = [];
+      lineIndex += 2;
+      while (lineIndex < lines.length && lines[lineIndex].includes('|') && lines[lineIndex].trim()) {
+        rows.push(tableCells(lines[lineIndex]));
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+      const k = blocks.length;
+      blocks.push(<div key={`table${k}`} className="bbt-md-table-wrap"><table className="bbt-md-table"><thead><tr>{headers.map((cell, index) => <th key={index}>{mdInline(cell, `table${k}-h${index}`)}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((_, cellIndex) => <td key={cellIndex}>{mdInline(row[cellIndex] || '—', `table${k}-${rowIndex}-${cellIndex}`)}</td>)}</tr>)}</tbody></table></div>);
+      continue;
+    }
+    const heading = t.match(/^#{1,4}\s+(.+)$/);
+    if (heading) {
+      flush();
+      const k = blocks.length;
+      blocks.push(<h3 key={`heading${k}`} className="bbt-md-heading">{mdInline(heading[1], `heading${k}`)}</h3>);
+      continue;
+    }
+    const section = t.match(/^\*\*(结论|核心依据|风险与反证|下一步核验)\*\*[：:]?\s*(.*)$/);
+    if (section) {
+      flush();
+      const sectionKind: Record<string, string> = { '结论': 'conclusion', '核心依据': 'basis', '风险与反证': 'risk', '下一步核验': 'next' };
+      const k = blocks.length;
+      blocks.push(<div key={`section${k}`} className={`bbt-md-section bbt-md-section--${sectionKind[section[1]] || 'basis'}`}><b>{section[1]}</b>{section[2] && <span>{mdInline(section[2], `section${k}`)}</span>}</div>);
+      continue;
+    }
+    const plainSection = t.match(/^(结论|依据|核心依据|风险(?:（[^）]*）)?|风险与反证|下一步核验)[：:]\s*(.*)$/);
+    if (plainSection) {
+      flush();
+      const label = plainSection[1];
+      const kind = label.startsWith('结论') ? 'conclusion' : label.startsWith('风险') ? 'risk' : label.startsWith('下一步') ? 'next' : 'basis';
+      const k = blocks.length;
+      blocks.push(<div key={`plain-section${k}`} className={`bbt-md-section bbt-md-section--${kind}`}><b>{label}</b>{plainSection[2] && <span>{mdInline(plainSection[2], `plain-section${k}`)}</span>}</div>);
+      continue;
+    }
     const ul = t.match(/^[-•·*]\s+(.*)$/);
     const ol = t.match(/^\d+[.)]\s+(.*)$/);
     if (ul) { if (!list || list.ordered) { flush(); list = { ordered: false, items: [] }; } list.items.push(ul[1]); continue; }
@@ -270,6 +532,119 @@ function Markdownlite({ text }: { text: string }) {
   flush();
   return <div className="bbt-md">{blocks}</div>;
 }
+
+const ROUNDTABLE_ROLE_LABEL: Record<string, string> = {
+  evidence: '证据核验', research: '研究判断', risk: '风险检查', operator: '工具执行', synthesis: '主编综合',
+};
+const ROUNDTABLE_ROLE_NOTE: Record<string, string> = {
+  evidence: '只看事实、来源和数据缺口', research: '建立估值、催化与验证逻辑', risk: '寻找反证、失效条件和风险',
+};
+const roundtableDecisionLabel = (decision?: string): string => ({
+  candidate: '证据支持继续研究', watch: '保持观察', research_more: '结论可用，但建议补证据', blocked: '当前证据不足，暂缓判断',
+}[decision || ''] || '多专家综合判断');
+const roundtableConfidenceNote = (confidence: number): string => confidence >= 0.8
+  ? '证据较充分' : confidence >= 0.65 ? '证据基本够用' : confidence >= 0.5 ? '仍有关键缺口' : '仅作初筛参考';
+
+/** 快速问答的专业结果卡：先给结论，再把专家观点、关键事实和可点击来源分层展开。 */
+function AiRoundtableAnswerCard({ answer, result }: { answer: string; result: DulusRoundtableResponse }) {
+  const turns = (result.turns || []).filter(turn => turn.stance !== 'synthesis');
+  const facts = (result.evidence_highlights || []).slice(0, 6);
+  const refs = (result.evidence_references || []).filter(ref => ref.title || ref.source).slice(0, 8);
+  const citable = (result.citable_sources || []).filter(source => source.title || source.source).slice(0, 8);
+  const researchExecuted = Boolean(
+    turns.length || (result.tool_traces || []).length || (result.research_steps || []).length || facts.length || refs.length || citable.length,
+  );
+  const isClarification = result.decision === 'research_more' && !researchExecuted;
+  const sourceNames = new Set([
+    ...(result.sources || []).filter(source => !source.includes('工具轨迹') && !source.includes('当前页面标的')),
+    ...refs.map(ref => ref.source).filter(Boolean) as string[],
+    ...citable.map(source => source.source).filter(Boolean),
+  ]);
+  const citationCount = refs.length || citable.length;
+  const confidence = Math.max(0, Math.min(1, Number(result.confidence || 0)));
+  const scopeOrder = ['快讯', '文章', '研报', '投行研报', '机构纪要', '名人观点', '行业', '同行', '上下游', '公开数据'];
+  const scopeStatus = (item: DulusContentScopeItem): string => {
+    if (item.status === 'not_authorized') return '未授权';
+    if (item.status === 'partial') return typeof item.raw_count === 'number' ? `${item.selected_count ?? 0}/${item.raw_count}` : '部分命中';
+    if (item.status !== 'available') return '无命中';
+    if (typeof item.raw_count === 'number') return `${item.selected_count ?? 0}/${item.raw_count}`;
+    return '已接入';
+  };
+  return (
+    <section className={`bbt-ai-roundtable-card${isClarification ? ' is-clarification' : ''}`} aria-label={isClarification ? '研究条件确认' : '多专家投研回答'}>
+      <header className="bbt-ai-roundtable-card-head">
+        <div>
+          <span className="bbt-ai-roundtable-eyebrow">✦ {isClarification ? '研究前置 · 待补充条件' : '多专家投研圆桌 · 已实际执行'}</span>
+          <h3>{isClarification ? '先确定选股范围' : roundtableDecisionLabel(result.decision)}</h3>
+          <p>{isClarification
+            ? '这一步只是在确认市场、持有周期和风险偏好，尚未执行研究取数，也不会把当前页面的股票带入筛选。'
+            : '证据、研究、风险三个视角已交叉核对，由投研主编整理为最终结论。'}</p>
+        </div>
+        <div className="bbt-ai-roundtable-confidence" title={isClarification ? '尚未开始取数，暂不计算结论置信度' : `置信度 ${Math.round(confidence * 100)}%：${roundtableConfidenceNote(confidence)}`}>
+          <strong>{isClarification ? '—' : `${Math.round(confidence * 100)}%`}</strong>
+          <span>{isClarification ? '等待条件' : roundtableConfidenceNote(confidence)}</span>
+        </div>
+      </header>
+      <div className="bbt-ai-roundtable-meta">
+        {isClarification ? (
+          <span><i>○</i>尚未执行研究取数 · 补充条件后开始</span>
+        ) : <>
+          <span><i>●</i>数据时点 {formatDeepGeneratedAt(result.generated_at)}</span>
+          <span><i>◆</i>{citationCount || '—'} 条可追溯证据</span>
+          <span><i>◈</i>{sourceNames.size || '—'} 个来源</span>
+          <span><i>✓</i>{turns.length || 0} 个专家视角</span>
+        </>}
+      </div>
+      {!isClarification && result.content_scope && <div className="bbt-ai-roundtable-coverage" aria-label="本次实际检索范围">
+        <span>本轮已查</span>
+        {scopeOrder.map(label => {
+          const item = result.content_scope?.[label];
+          if (!item) return null;
+          const tone = item.status === 'available' ? 'ok' : item.status === 'not_authorized' ? 'locked' : item.status === 'partial' ? 'partial' : 'empty';
+          return <i key={label} className={`is-${tone}`} title={item.note || `${label}：${scopeStatus(item)}`}><b>{label}</b>{scopeStatus(item)}</i>;
+        })}
+      </div>}
+      <div className="bbt-ai-roundtable-conclusion">
+        <div className="bbt-ai-roundtable-section-head"><b>{isClarification ? '下一步' : '综合结论'}</b><small>{isClarification ? '补充条件后开始取数' : '主编综合 · 仅基于本次实际取到的资料'}</small></div>
+        <Markdownlite text={answer} />
+      </div>
+      {facts.length > 0 && <section className="bbt-ai-roundtable-facts">
+        <div className="bbt-ai-roundtable-section-head"><b>关键事实</b><small>先看数字，再看判断</small></div>
+        <div className="bbt-ai-roundtable-facts-grid">{facts.map((fact, index) => {
+          const parts = fact.split('：');
+          return <div key={`${fact}-${index}`}><span>{parts[0]}</span><p>{parts.slice(1).join('：') || fact}</p></div>;
+        })}</div>
+      </section>}
+      {turns.length > 0 && <section className="bbt-ai-roundtable-experts">
+        <div className="bbt-ai-roundtable-section-head"><b>三个专家怎么看</b><small>点击展开原始观点摘要</small></div>
+        <div className="bbt-ai-roundtable-expert-grid">{turns.map((turn, index) => (
+          <details key={`${turn.participant_id}-${index}`} open={index === 0} className={`bbt-ai-roundtable-expert is-${turn.stance}`}>
+            <summary><span className="bbt-ai-roundtable-expert-dot" /><b>{ROUNDTABLE_ROLE_LABEL[turn.stance] || turn.participant_name}</b><small>{ROUNDTABLE_ROLE_NOTE[turn.stance] || '独立复核'}</small><em>{Math.round((turn.confidence || 0) * 100)}%</em></summary>
+            <div><Markdownlite text={turn.content} />{turn.risks?.length > 0 && <p className="bbt-ai-roundtable-expert-risk">风险提示：{turn.risks.slice(0, 2).join('；')}</p>}</div>
+          </details>
+        ))}</div>
+      </section>}
+      {(refs.length > 0 || citable.length > 0) && <details className="bbt-ai-roundtable-sources">
+        <summary><span>查看引用依据</span><small>只展示本次实际取到的资料</small><i>展开</i></summary>
+        <div className="bbt-ai-roundtable-source-list">
+          {refs.map((ref, index) => <div className="bbt-ai-roundtable-source" key={`${ref.id || ref.title}-${index}`}>
+            <div><b>{ref.title}</b>{ref.category && <span>{ref.category}</span>}</div>
+            <p>{ref.detail || '已纳入本次研究'}</p>
+            <small>{ref.source || ref.group_label || '研究资料'}{ref.published_at ? ` · ${ref.published_at.slice(0, 10)}` : ''}{typeof ref.credibility === 'number' ? ` · 可信度 ${Math.round(ref.credibility * 100)}%` : ''}</small>
+            {ref.url && <a href={ref.url} target="_blank" rel="noreferrer">查看原文 ↗</a>}
+          </div>)}
+          {!refs.length && citable.map((source, index) => <div className="bbt-ai-roundtable-source" key={`${source.n}-${index}`}>
+            <div><b>[{source.n}] {source.title}</b></div><small>{source.source}{typeof source.credibility === 'number' ? ` · 可信度 ${Math.round(source.credibility * 100)}%` : ''}</small>
+            {source.url && <a href={source.url} target="_blank" rel="noreferrer">查看原文 ↗</a>}
+          </div>)}
+        </div>
+      </details>}
+      {result.warnings?.length > 0 && <div className="bbt-ai-roundtable-warning">⚠ {result.warnings.slice(0, 2).map(humanizeDeepWarning).join('；')}</div>}
+      <footer>仅展示已执行步骤和可复核事实，不展示模型隐藏思考链 · 证据协议 {result.answer_protocol_version === 'research-v3' ? 'v3' : result.answer_protocol_version || 'v3'} · {result.disclaimer || '仅供研究参考，不构成投资建议'}</footer>
+    </section>
+  );
+}
+
 // 去 markdown 标记（出图/复制文字用）。
 function stripMd(text: string): string {
   return (text || '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/^[ \t]*[-•·*]\s+/gm, '· ');
@@ -313,9 +688,23 @@ function isImageUrl(url?: string | null): boolean {
 function isOwnHosted(m?: { url?: string | null; content?: string | null } | null): boolean {
   return /futoucaixin/i.test(m?.url || '') || /futoucaixin/i.test(m?.content || '');
 }
+// TradeAlpha 已停用：前端兼容旧缓存/旧后端响应，避免停用前的消息继续出现在终端。
+function isTradeAlphaMessage(m?: { source_id?: string | null; source_name?: string | null; url?: string | null; content?: string | null; title?: string | null; metadata?: any } | null): boolean {
+  if (!m) return false;
+  const meta = m.metadata && typeof m.metadata === 'object' ? JSON.stringify(m.metadata) : '';
+  return /trade\s*[-_ ]?\s*alpha|alpha\.lxaa\.top/i.test(
+    [m.source_id, m.source_name, m.url, m.title, m.content, meta].filter(Boolean).join(' ')
+  );
+}
 // 清理展示用文案：去掉任意裸链接 + 收尾「请下载PDF查看」赘语 + 抹掉来源品牌字样（知识星球 / 水木调研纪要等）
 function stripUrls(text?: string | null): string {
   return (text || '')
+    // 文章摘要可能是 HTML 片段；只保留文字，并把块级标签转换为空格/换行，
+    // 避免列表和弹层把 <p style=...> 当成正文展示。
+    .replace(/<\s*(?:br|\/p|\/div|\/li|\/h[1-6]|\/blockquote)\b[^>]*>/gi, '\n')
+    .replace(/<\s*[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
     .replace(/https?:\/\/\S+/gi, '')
     .replace(/\s*请下载\s*PDF\s*查看\s*[:：]?\s*$/i, '')
     .replace(/[【\[（(]?\s*(知识星球|水木调研纪要|水木调研|水木纪要|调研纪要)\s*[】\]）)]?[\s:：\-—|·]*/g, '')
@@ -617,12 +1006,54 @@ function dedupeMessages(list: RealtimeMessageRecord[]): RealtimeMessageRecord[] 
   return out;
 }
 
+const FEED_CACHE_KEY = 'bbt.feed_cache.v1';
+const FEED_CACHE_SYNC_KEY = 'bbt.feed_cache_synced_at.v1';
+const FEED_CACHE_LIMIT = 80;
+function loadCachedFeed(): RealtimeMessageRecord[] {
+  const cached = LS.read<unknown>(FEED_CACHE_KEY, []);
+  if (!Array.isArray(cached)) return [];
+  return cached.filter((item): item is RealtimeMessageRecord => Boolean(
+    item && typeof item === 'object' && typeof item.id === 'string' && typeof item.title === 'string'
+      && typeof item.topic === 'string' && typeof item.created_at === 'string'
+  )).filter(item => !isTradeAlphaMessage(item)).slice(0, FEED_CACHE_LIMIT);
+}
+function saveCachedFeed(messages: RealtimeMessageRecord[]) {
+  LS.write(FEED_CACHE_KEY, messages.filter(m => !isTradeAlphaMessage(m)).slice(0, FEED_CACHE_LIMIT));
+  LS.write(FEED_CACHE_SYNC_KEY, Date.now());
+}
+function loadCachedFeedSyncAt(): number | null {
+  const value = Number(LS.read(FEED_CACHE_SYNC_KEY, 0));
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+function formatSyncAge(timestamp: number | null): string {
+  if (!timestamp) return '尚未成功同步';
+  const age = Math.max(0, Date.now() - timestamp);
+  if (age < 10_000) return '刚刚';
+  if (age < 60_000) return `${Math.floor(age / 1000)} 秒前`;
+  if (age < 3_600_000) return `${Math.floor(age / 60_000)} 分钟前`;
+  return `${Math.floor(age / 3_600_000)} 小时前`;
+}
+
 const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const { theme, toggleTheme } = useTheme();   // 深/浅色主题切换（持久化在 localStorage，由 ThemeProvider 写 <html data-theme>）
   // 新手引导显隐状态（自动触发逻辑在各弹窗 state 声明之后，避免 TDZ）
   const [showOnb, setShowOnb] = useState(false);
   const [showHelp, setShowHelp] = useState(false);  // 产品说明书弹层
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);  // 帮助下拉：说明书+新手引导合并入口（用户反馈顶栏太乱）
+  // 终端主导航：高频工作留在侧栏，低频能力收进「研究工具」二级菜单。
+  const [sideNavOpen, setSideNavOpen] = useState(false);
+  const [sideNavCollapsed, setSideNavCollapsed] = useState<boolean>(() => LS.read('bbt.sidebar.collapsed.v1', false));
+  useEffect(() => { LS.write('bbt.sidebar.collapsed.v1', sideNavCollapsed); }, [sideNavCollapsed]);
+  // 聚合型「工作台」已移除：首页直接进入市场快讯，侧栏只保留有明确任务的独立模块。
+  const [sideNavKey, setSideNavKey] = useState(() => {
+    try {
+      const urlTab = new URLSearchParams(window.location.search).get('tab');
+      if (urlTab === 'research') return 'reports';
+      const stored = LS.read<string>('bbt.feedFilter.v3', '快讯');
+      return SIDE_KEY_BY_FEED[stored] || 'market';
+    } catch { return 'market'; }
+  });
+  const [sideToolsOpen, setSideToolsOpen] = useState(false);
   const [showReferral, setShowReferral] = useState(false);  // 邀请得会员弹层
   const [showAiFund, setShowAiFund] = useState(false);      // AI 模拟盘弹层
   const [showWeixinBind, setShowWeixinBind] = useState(false);  // 微信扫码绑定（扫码即问 DeepFocus）
@@ -693,9 +1124,31 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const callsToastRef = useRef(false);   // 进站兑现 toast 每次页面加载至多一次
   const onbShownRef = useRef(false);
   const [onbTick, setOnbTick] = useState(0);
-  const [messages, setMessages] = useState<RealtimeMessageRecord[]>([]);
+  const [messages, setMessages] = useState<RealtimeMessageRecord[]>(loadCachedFeed);
   const [feedBooted, setFeedBooted] = useState(false);  // 快讯首批是否已拉完（之前显示骨架屏而非"暂无"）
   const [feedLoadError, setFeedLoadError] = useState(false);  // 首批拉取失败 → 区分「失败可重试」与「没消息」
+  const [fastNewsLoading, setFastNewsLoading] = useState(false);  // 切到市场快讯时的专题首屏兜底请求
+  const fastNewsRequestRef = useRef(0);
+  const [fastNewsRefresh, setFastNewsRefresh] = useState(0);
+  const messagesRef = useRef<RealtimeMessageRecord[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  const [feedSyncedAt, setFeedSyncedAt] = useState<number | null>(loadCachedFeedSyncAt);
+  const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine);
+  useEffect(() => {
+    const onOnline = () => setBrowserOnline(true);
+    const onOffline = () => setBrowserOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
+  }, []);
+  const feedSyncedAtRef = useRef<number | null>(feedSyncedAt);
+  const markFeedSynced = useCallback(() => {
+    const now = Date.now();
+    // SSE 心跳和 5 秒兜底轮询都可能同时成功，最多每 10 秒刷新一次状态，避免状态栏引起无意义重绘。
+    if (feedSyncedAtRef.current && now - feedSyncedAtRef.current < 10_000) return;
+    feedSyncedAtRef.current = now;
+    setFeedSyncedAt(now);
+  }, []);
   // ===== 快讯语音播报（Web Speech API，纯前端 TTS）=====
   // opt-in 规避浏览器自动播放限制：点击开关=用户手势=解锁音频；只读开启后新到的快讯、按标题去重、防刷屏。
   const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
@@ -768,18 +1221,21 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [resDayFull, setResDayFull] = useState<Set<string>>(new Set());   // 用户点「展开本日剩余」的日期(突破单日初始渲染上限)
   const [histLoading, setHistLoading] = useState(false);        // 正在拉取更旧历史
   const [histDone, setHistDone] = useState(false);              // 已无更多历史
+  // 文章标签翻页回源：更旧批次存在这里而非 searchMsgs——searchMsgs 被 60s 定时校对整体替换，
+  // 历史放那边会在用户翻到第 3 页时被头部快照冲掉（页码内容突然消失）。
+  const [articleHistory, setArticleHistory] = useState<RealtimeMessageRecord[]>([]);
+  const [articleHistDone, setArticleHistDone] = useState(false);  // 文章更旧历史已拉完（服务器再无 before 游标可翻）
   const [searchMsgs, setSearchMsgs] = useState<RealtimeMessageRecord[]>([]);  // 选股/搜索时：服务端全量历史检索结果
   const [searchLoading, setSearchLoading] = useState(false);
   const [status, setStatus] = useState<StreamConnectionStatus>('connecting');
-  // v3 默认进入「为你」：先看少量高相关内容；用户显式切到其它标签后仍记住选择。
+  // 默认进入市场快讯；用户切换到左侧其它内容模块后记住选择。
   const [feedFilter, setFeedFilter] = useState<string>(() => {
     try {
       if (new URLSearchParams(window.location.search).get('tab') === 'research') return '研报';
-      return LS.read('bbt.feedFilter.v3', '精选');
-    } catch { return '精选'; }
+      const stored = LS.read<string>('bbt.feedFilter.v3', '快讯');
+      return ['快讯', '文章', '机构纪要', '研报', '自选'].includes(stored) ? stored : '快讯';
+    } catch { return '快讯'; }
   });
-  // 移动快捷导航自己的选中态：不依赖桌面侧栏状态，保证窄屏入口在独立构建中也能工作。
-  const [mobileNavActive, setMobileNavActive] = useState<string | null>(null);
   const [personalPrefsOpen, setPersonalPrefsOpen] = useState(false);
   const [personalInterests, setPersonalInterests] = useState<InterestKey[]>(() => LS.read<InterestKey[]>('bbt.personal.interests.v1', []));
   const [interestSignals, setInterestSignals] = useState<Partial<Record<InterestKey, number>>>(() => LS.read('bbt.personal.signals.v1', {}));
@@ -787,18 +1243,19 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [flash, setFlash] = useState<Record<string, 'up' | 'down'>>({});
   const [active, setActive] = useState<string | null>(null);
   const [maxed, setMaxed] = useState<'eq' | 'news' | 'res' | 'sig' | null>(null);
-  // 面板折叠（移动端「行情监视」默认收起，腾出资讯/研报空间）
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(
-    (): Record<string, boolean> => (typeof window !== 'undefined' && window.innerWidth <= 820) ? { eq: true } : {}
-  );
+  // 面板折叠：移动端进入任一模块时默认展示完整内容，用户仍可手动收起单个面板。
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const toggleCollapse = useCallback((k: string) => setCollapsed(p => ({ ...p, [k]: !p[k] })), []);
-  const [headsHidden, setHeadsHidden] = useState<boolean>(() => LS.read('bbt.heads_hidden_v2', true));  // v2 重置旧偏好：新版先让实时流成为首屏主角
-  useEffect(() => { LS.write('bbt.heads_hidden_v2', headsHidden); }, [headsHidden]);
+  const [headsHidden, setHeadsHidden] = useState<boolean>(() => LS.read('bbt.heads_hidden_v3', false));
+  useEffect(() => { LS.write('bbt.heads_hidden_v3', headsHidden); }, [headsHidden]);
   // 行情监视列宽（px）可拖拽，记 localStorage；过窄自动隐藏附加列
   const [eqW, setEqW] = useState<number>(() => Math.max(EQ_MIN, Math.min(EQ_MAX, LS.read('bbt.eqw', 330))));
   useEffect(() => { LS.write('bbt.eqw', eqW); }, [eqW]);
   const eqNarrow = eqW < EQ_NARROW;
   const gridRef = useRef<HTMLDivElement>(null);
+  const aiWorkspaceRef = useRef<HTMLElement>(null);
+  const toolWorkspaceRef = useRef<HTMLElement>(null);
+  const reviewWorkspaceRef = useRef<HTMLElement>(null);
   // PDF 内的来源跳转统一落到 ?tab=research：自动打开研报栏目并把它滚进视野。
   useEffect(() => {
     try {
@@ -860,6 +1317,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const resHistLoadedRef = useRef(false);                 // 用户已翻过历史 → 暂停自动刷新(免得把展开的历史收回去)
   const [resSyncedAt, setResSyncedAt] = useState<Date | null>(null);  // 研报最近一次成功同步时刻
   const [newsPreview, setNewsPreview] = useState<RealtimeMessageRecord | null>(null);  // 文章在线预览
+  const [articleOriginal, setArticleOriginal] = useState<ArticleOriginalTextResponse | null>(null);
+  const [articleTextLoading, setArticleTextLoading] = useState(false);
+  const [articleTextError, setArticleTextError] = useState('');
   const [aiReport, setAiReport] = useState<{ title?: string; date?: string } | null>(null);  // AI 解读对象（研报或文章）
   // 研报解读分享：非空=当前 AI 解读是「研报」（带机构/标的 + 原文 preview_url，可生成分享落地页）；null=文章解读
   const [aiReportMeta, setAiReportMeta] = useState<{ org?: string; symbol?: string; preview_url?: string } | null>(null);
@@ -867,19 +1327,32 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [reportShareBusy, setReportShareBusy] = useState(false);
   const [shareModal, setShareModal] = useState<{ open: boolean; target: ShareTarget | null }>({ open: false, target: null });
   const aiRetryRef = useRef<null | (() => void)>(null);
+  // Deep-draft generation can take 30–150s.  A user may open another report
+  // (or close the modal) before the first response returns; this sequence
+  // prevents a stale response from replacing the currently selected report.
+  const aiRequestSeqRef = useRef(0);
   const [shareImgUrl, setShareImgUrl] = useState<string>('');  // 出图兜底预览（长按保存）
   const [aiResult, setAiResult] = useState<AiAnalysis | null>(null);
+  // 研报默认走文章式深度稿；为空时仍使用下面的旧 compact 卡片（兼容旧缓存/灰度后端）。
+  const [aiDeepDraft, setAiDeepDraft] = useState<ResearchDeepDraftInput>(null);
   const [dfExpanded, setDfExpanded] = useState(false);  // DeepFocus 视角深度点评：长文默认收起，点「展开全文」看全
   const [aiLoading, setAiLoading] = useState(false);
+  // 同一会话内重复打开同一条资讯/研报时直接复用已完成的解读；服务端仍负责
+  // 跨用户持久缓存，这里只做前端瞬时缓存，不改变额度口径。
+  const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
   const [aiProgress, setAiProgress] = useState(0);  // AI 解读进度条（按耗时渐近爬升，完成即收）
   const [aiError, setAiError] = useState('');
   const [upgradeOpen, setUpgradeOpen] = useState(false);   // 开通会员引导弹层
   const [upgradeReason, setUpgradeReason] = useState('');
   const [aiCopied, setAiCopied] = useState(false);
   const [aiTextCopied, setAiTextCopied] = useState(false);
+  // 深度研究稿是长文阅读器：桌面默认给更大的出版式画布，并允许一键
+  // 放大到近全屏；普通资讯 AI 解读继续使用原来的紧凑尺寸。
+  const [aiModalExpanded, setAiModalExpanded] = useState(false);
   const [copiedNewsId, setCopiedNewsId] = useState('');
+  const [expandedFlashIds, setExpandedFlashIds] = useState<Set<string>>(new Set());
   const [picks, setPicks] = useState<{ kx?: any; wz?: any; yb?: any } | null>(null);  // AI 评选的头条
-  const [newsQuery, setNewsQuery] = useState('');  // 快讯/文章 模糊搜索
+  const [newsQuery, setNewsQuery] = useState('');  // 当前信息模块的关键词搜索
   const [toast, setToast] = useState('');
   const [shareImgNote, setShareImgNote] = useState('');
   const [shareImgCoarse, setShareImgCoarse] = useState(false);  // 移动端（触屏）：只引导长按
@@ -890,7 +1363,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [paletteLoading, setPaletteLoading] = useState(false);
   const paletteInput = useRef<HTMLInputElement>(null);
   const paletteActiveRef = useRef<HTMLDivElement>(null);
-  const seen = useRef<Set<string>>(new Set());
+  const seen = useRef<Set<string>>(new Set(messages.map(message => message.id)));
   const prevPrice = useRef<Record<string, number>>({});
   const latestTsRef = useRef<string>('');  // 已加载消息的最新时间戳（增量轮询用）
 
@@ -941,11 +1414,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const newsManual = newsQuery.trim();
   const newsAliases = useMemo(() => (active ? stockAliases(active) : []), [active, stockAliases]);
   const newsSearching = !!newsManual || !!active;
-  // 选中个股：切到 ALL、清掉手输搜索，让该股驱动 快讯/文章/研报 的全量历史检索；再点同一支=取消
+  // 选中个股：保留当前左侧模块，只检索该模块的内容；再点同一支=取消
   const selectStock = useCallback((sym: string) => {
     setActive(prev => { if (prev !== sym) logAct('select_stock', sym); return prev === sym ? null : sym; });
-    setFeedFilter('all'); setNewsQuery(''); setResQuery('');
-  }, [logAct]);
+    setFeedFilter(SIDE_FEED_BY_KEY[sideNavKey] || '快讯'); setNewsQuery(''); setResQuery('');
+  }, [logAct, sideNavKey]);
 
   useEffect(() => { LS.write('bbt.feedFilter.v3', feedFilter); }, [feedFilter]);
   useEffect(() => { LS.write('bbt.personal.interests.v1', personalInterests); }, [personalInterests]);
@@ -1037,7 +1510,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const navRef = useRef<string[]>(watchlist);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); setAiReport(null); return; }
+      if (e.key === 'Escape') { setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiModalExpanded(false); return; }
       if (paletteOpen) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -1103,8 +1576,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // ---- 宏观/大盘总览（VIX/利率/汇率/商品/加密/指数）----
   const [macro, setMacro] = useState<Record<string, any>>({});
-  // 宏观条手机默认收起（首屏寸土寸金），点 MACRO 标签展开；桌面默认展开
-  const [macroOpen, setMacroOpen] = useState<boolean>(() => typeof window === 'undefined' || window.innerWidth > 820);
+  // 宏观条移动端也默认展开，保证进入终端后各模块直接可读；用户仍可手动收起。
+  const [macroOpen, setMacroOpen] = useState(true);
   const [macroFailed, setMacroFailed] = useState(false);  // 宏观拉取失败 → 显「暂不可用」而非永久假「加载中」
   const loadMacro = useCallback(async () => {
     try {
@@ -1162,9 +1635,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       let cur = reports;
       for (let guard = 0; guard < 40; guard++) {   // 守护上限:40×60=2400 条,远超归档量,防异常死循环
-        const oldest = cur.length ? (cur[cur.length - 1].date || '').slice(0, 10) : '';
+        const oldestItem = cur.length ? cur[cur.length - 1] : null;
+        const oldest = (oldestItem?.date || '').slice(0, 10);
         if (!oldest) break;
-        const d = await apiGet<{ items: ResearchWireItem[] }>('/api/research/wire', { params: { limit: RES_RECENT_LIMIT, before: oldest } });
+        // 日期可能在一页中间被截断；携带最后一条 id，让后端在同一天内继续翻，不漏掉当天剩余研报。
+        const oldestId = oldestItem ? String(oldestItem.id || '').trim() : '';
+        const d = await apiGet<{ items: ResearchWireItem[] }>('/api/research/wire', { params: { limit: RES_RECENT_LIMIT, before: oldest, ...(oldestId ? { before_id: oldestId } : {}) } });
         const older = d.items || [];
         const seen = new Set(cur.map(keyOf));
         const add = older.filter(it => { const k = keyOf(it); return k && !seen.has(k); });
@@ -1233,52 +1709,498 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiErr, setAiErr] = useState('');
   const [aiSugg, setAiSugg] = useState<string[]>([]);            // 答案后的确定性追问建议（后端按工具轨迹反推）
   const [aiQuotaLeft, setAiQuotaLeft] = useState<number | null>(null);  // 剩余免费次数；null=不限/未知
+  const [guestAiTrialConsumed, setGuestAiTrialConsumed] = useState(() => {
+    try { return localStorage.getItem('df.ai.guest_trial_date') === beijingParts(new Date()).dateStr; } catch { return false; }
+  });
   const [aiFeedback, setAiFeedback] = useState<'' | 'up' | 'down'>(''); // 本条答案已投的反馈
+  const [aiAnswerCopied, setAiAnswerCopied] = useState(false);
+  const [aiLiveStatus, setAiLiveStatus] = useState('');
+  const [aiRoundtableActive, setAiRoundtableActive] = useState(false);
+  const [aiRoundtableMeta, setAiRoundtableMeta] = useState<DulusRoundtableResponse | null>(null);
+  const aiStreamCancelRef = useRef<(() => void) | null>(null);
   const aiHistoryRef = useRef<Array<[string, string]>>([]);      // 最近几轮 [问,答]——多轮追问记忆（会话内）
+  const [aiAnswerMode, setAiAnswerMode] = useState<'quick' | 'deep'>('quick');
+  const [deepAnswer, setDeepAnswer] = useState<DulusRoundtableResponse | null>(null);
+  const deepAnswerNeedsInput = Boolean(
+    deepAnswer?.decision === 'research_more'
+    && !(deepAnswer.turns || []).length
+    && !(deepAnswer.tool_traces || []).length
+    && !(deepAnswer.research_steps || []).length
+  );
+  const [deepAnswerBusy, setDeepAnswerBusy] = useState(false);
+  const [deepAnswerErr, setDeepAnswerErr] = useState('');
+  const [deepAnswerQuotaLeft, setDeepAnswerQuotaLeft] = useState<number | null>(null);
+  const [aiAttachment, setAiAttachment] = useState<AiAttachment | null>(null);
+  const [aiAttachmentBusy, setAiAttachmentBusy] = useState(false);
+  const [aiAttachmentErr, setAiAttachmentErr] = useState('');
+  const aiFileInputRef = useRef<HTMLInputElement>(null);
+  const aiPromptInputRef = useRef<HTMLTextAreaElement>(null);
+  const aiChatBodyRef = useRef<HTMLDivElement>(null);
+  const [aiHistoryCollapsed, setAiHistoryCollapsed] = useState<boolean>(() => LS.read('bbt.ai.history.collapsed.v3', false));
+  useEffect(() => { LS.write('bbt.ai.history.collapsed.v3', aiHistoryCollapsed); }, [aiHistoryCollapsed]);
+  const [aiHistoryQuery, setAiHistoryQuery] = useState('');
+  const [editingAiConversationId, setEditingAiConversationId] = useState<string | null>(null);
+  const [editingAiConversationTitle, setEditingAiConversationTitle] = useState('');
+  const [aiConversations, setAiConversations] = useState<AiConversationRecord[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(AI_CONVERSATIONS_KEY) || '[]');
+      return Array.isArray(parsed) ? normalizeAiConversationHistory(parsed as AiConversationRecord[], 30) : [];
+    } catch { return []; }
+  });
+  const [activeAiConversationId, setActiveAiConversationId] = useState<string | null>(null);
+  const hasSavedAiHistory = useMemo(
+    () => aiConversations.some(record => Boolean(record.answer || record.turns?.some(turn => turn.answer))),
+    [aiConversations],
+  );
+  const filteredAiConversations = useMemo(() => {
+    const query = aiHistoryQuery.trim().toLowerCase();
+    if (!query) return aiConversations;
+    return aiConversations.filter(record => [
+      record.title,
+      record.question,
+      ...(record.turns || []).flatMap(turn => [turn.question, turn.answer]),
+    ].some(text => String(text || '').toLowerCase().includes(query)));
+  }, [aiConversations, aiHistoryQuery]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(AI_CONVERSATIONS_KEY, JSON.stringify(normalizeAiConversationHistory(aiConversations, 30)));
+    } catch { /* 私有模式/额度不足时不影响对话 */ }
+  }, [aiConversations]);
+  // 登录后把服务端的用户级 AI 历史合并进本地会话：跨设备可见，同时复用同一套
+  // question + mode + attachment 去重规则，不会把 quick/deep 或不同附件串成一条。
+  useEffect(() => {
+    if (!authUser) return;
+    let cancelled = false;
+    const loadServerAiHistory = async () => {
+      try {
+        const memories = await listDulusMemory(100, `user:${authUser}`);
+        if (cancelled) return;
+        const serverRecords: AiConversationRecord[] = memories
+          .filter(memory => memory.hall === 'ai_chat' && memory.content?.trim())
+          .map(memory => {
+            const modeTag = (memory.tags || []).find(tag => tag === 'deep' || tag === 'quick' || tag.startsWith('mode:')) || 'quick';
+            const mode: 'quick' | 'deep' = modeTag === 'deep' || modeTag === 'mode:deep' ? 'deep' : 'quick';
+            const attachmentTag = (memory.tags || []).find(tag => tag.startsWith('attachment:')) || '';
+            const updatedAt = Date.parse(memory.created_at) || Date.now();
+            const turn: AiConversationTurn = {
+              id: `server-${memory.id}`,
+              question: memory.title,
+              answer: memory.content,
+              mode,
+              updatedAt,
+              attachmentName: attachmentTag ? attachmentTag.slice('attachment:'.length) : undefined,
+            };
+            return {
+              id: `server-${memory.id}`,
+              title: memory.title.slice(0, 32),
+              question: memory.title,
+              // Deep records may only contain the persisted synthesis (the
+              // structured roundtable payload is intentionally not duplicated
+              // in the memory table); keep the text so opening cross-device
+              // history still shows a usable answer.
+              answer: memory.content,
+              mode,
+              updatedAt,
+              attachmentName: turn.attachmentName,
+              turns: [turn],
+            };
+          });
+        if (serverRecords.length) {
+          setAiConversations(previous => normalizeAiConversationHistory([...serverRecords, ...previous], 30));
+        }
+      } catch {
+        // Server history is an enhancement; local history remains available offline.
+      }
+    };
+    void loadServerAiHistory();
+    return () => { cancelled = true; };
+  }, [authUser]);
+  const rememberAiConversation = useCallback((record: AiConversationRecord) => {
+    setAiConversations(previous => {
+      const existing = previous.find(item => item.id === record.id);
+      const next = { ...existing, ...record, title: existing?.title || record.title, turns: record.turns || existing?.turns };
+      return normalizeAiConversationHistory([next, ...previous.filter(item => item.id !== record.id)], 30);
+    });
+  }, []);
+  const completeAiConversation = useCallback((record: AiConversationRecord, turn: AiConversationTurn) => {
+    setAiConversations(previous => {
+      const existing = previous.find(item => item.id === record.id);
+      const legacyTurns: AiConversationTurn[] = existing?.turns?.length
+        ? existing.turns
+        : (existing?.answer ? [{
+          id: `${existing.id}-legacy`, question: existing.question, answer: existing.answer,
+          mode: existing.mode, updatedAt: existing.updatedAt, attachmentName: existing.attachmentName,
+          deepAnswer: existing.deepAnswer, roundtable: existing.roundtable,
+        }] : []);
+      const turns = [...legacyTurns.filter(item => item.id !== turn.id), turn].slice(-20);
+      const next: AiConversationRecord = {
+        ...existing,
+        ...record,
+        title: existing?.title || record.title,
+        turns,
+      };
+      return normalizeAiConversationHistory([next, ...previous.filter(item => item.id !== record.id)], 30);
+    });
+  }, []);
+  const ensureAiConversationId = useCallback(() => {
+    const id = activeAiConversationId || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    if (!activeAiConversationId) setActiveAiConversationId(id);
+    return id;
+  }, [activeAiConversationId]);
+  const resetAiConversation = useCallback(() => {
+    aiStreamCancelRef.current?.(); aiStreamCancelRef.current = null;
+    setActiveAiConversationId(null);
+    setAiInput(''); setAiQuestion(''); setAiAnswer(''); setAiErr(''); setAiTools([]); setAiSugg([]); setAiFeedback('');
+    setAiLiveStatus(''); setAiRoundtableActive(false); setAiRoundtableMeta(null); setAiAnswerCopied(false); setAiBusy(false);
+    setDeepAnswer(null); setDeepAnswerErr(''); setDeepAnswerQuotaLeft(null); setAiAttachment(null); setAiAttachmentErr(''); setAiAnswerMode('quick');
+    aiHistoryRef.current = [];
+  }, []);
+  const openAiConversation = useCallback((record: AiConversationRecord) => {
+    const turns: AiConversationTurn[] = record.turns?.length ? record.turns : (record.answer ? [{
+      id: `${record.id}-legacy`, question: record.question, answer: record.answer, mode: record.mode,
+      updatedAt: record.updatedAt, attachmentName: record.attachmentName, deepAnswer: record.deepAnswer, roundtable: record.roundtable,
+    }] : []);
+    const latest = turns[turns.length - 1];
+    setActiveAiConversationId(record.id);
+    setAiAnswerMode(latest?.mode === 'deep' ? 'deep' : 'quick');
+    setAiInput(''); setAiQuestion(latest?.question || record.question); setAiAnswer(latest?.mode === 'deep' && latest.deepAnswer ? '' : (latest?.answer || record.answer)); setAiErr(''); setAiTools(latest?.tools || []); setAiSugg(latest?.suggestions || []); setAiFeedback(latest?.feedback || '');
+    setAiLiveStatus(''); setAiRoundtableMeta(latest?.roundtable || null); setAiAnswerCopied(false);
+    setDeepAnswer(latest?.mode === 'deep' ? (latest.deepAnswer || null) : null); setDeepAnswerErr(''); setDeepAnswerQuotaLeft(null); setAiAttachment(null); setAiAttachmentErr('');
+    aiHistoryRef.current = turns.slice(-3).map(turn => [turn.question, turn.answer.slice(0, 500)]);
+  }, []);
+  const renameAiConversation = useCallback((id: string, title: string) => {
+    const clean = title.trim().slice(0, 40);
+    if (clean) setAiConversations(previous => previous.map(record => record.id === id ? { ...record, title: clean } : record));
+    setEditingAiConversationId(null); setEditingAiConversationTitle('');
+  }, []);
+  const removeAiConversation = useCallback((id: string) => {
+    setAiConversations(previous => previous.filter(record => record.id !== id));
+    if (activeAiConversationId === id) resetAiConversation();
+  }, [activeAiConversationId, resetAiConversation]);
+  const rememberAiFeedback = useCallback((verdict: 'up' | 'down') => {
+    if (!activeAiConversationId) return;
+    setAiConversations(previous => previous.map(record => {
+      if (record.id !== activeAiConversationId || !record.turns?.length) return record;
+      return { ...record, turns: record.turns.map((turn, index) => index === record.turns!.length - 1 ? { ...turn, feedback: verdict } : turn) };
+    }));
+  }, [activeAiConversationId]);
+  useEffect(() => () => { aiStreamCancelRef.current?.(); }, []);
+  const activeAiPreviousTurns = useMemo(() => {
+    const record = aiConversations.find(item => item.id === activeAiConversationId);
+    if (!record) return [] as AiConversationTurn[];
+    const turns: AiConversationTurn[] = record.turns?.length ? record.turns : (record.answer ? [{
+      id: `${record.id}-legacy`, question: record.question, answer: record.answer, mode: record.mode,
+      updatedAt: record.updatedAt, attachmentName: record.attachmentName, deepAnswer: record.deepAnswer, roundtable: record.roundtable,
+    }] : []);
+    const latest = turns[turns.length - 1];
+    const currentIsLatest = !!latest && latest.question === aiQuestion
+      && (latest.mode === 'deep' ? !!deepAnswer : latest.answer === aiAnswer);
+    return currentIsLatest ? turns.slice(0, -1) : turns;
+  }, [activeAiConversationId, aiAnswer, aiConversations, aiQuestion, deepAnswer]);
+  useEffect(() => {
+    if (sideNavKey !== 'ai') return;
+    const frame = window.requestAnimationFrame(() => {
+      const body = aiChatBodyRef.current;
+      if (!body) return;
+      // 研究中把视口跟到进度末尾；答案返回后定位到答案开头，避免长结论只露出
+      // 最后一行，让用户误以为正文被截断。用户之后仍可正常向下滚动查看依据和日志。
+      if (aiBusy || deepAnswerBusy || (!aiAnswer && !deepAnswer)) {
+        body.scrollTo({ top: body.scrollHeight, behavior: (aiBusy || deepAnswerBusy) ? 'smooth' : 'auto' });
+        return;
+      }
+      const latest = body.querySelector<HTMLElement>('.bbt-ai-latest-answer');
+      if (latest) body.scrollTo({ top: Math.max(0, latest.offsetTop - 12), behavior: 'auto' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeAiPreviousTurns.length, aiAnswer, aiBusy, aiQuestion, deepAnswer, deepAnswerBusy, sideNavKey]);
+  const attachAiFile = useCallback(async (file: File) => {
+    if (!file) return;
+    setAiAttachmentBusy(true); setAiAttachmentErr('');
+    try {
+      const result = await extractFileText(file);
+      if (!result.text.trim()) throw new Error('文件里没有可读取的文字内容');
+      setAiAttachment({ filename: result.filename || file.name, text: result.text, charCount: result.char_count, truncated: result.truncated, parser: result.parser });
+    } catch (error: any) {
+      setAiAttachment(null);
+      setAiAttachmentErr(error?.response?.data?.detail || error?.message || '文件读取失败，请换一个 PDF、Word、Excel、CSV 或文本文件');
+    } finally { setAiAttachmentBusy(false); }
+  }, []);
   const askAi = useCallback(async (q?: string) => {
     const msg = (q ?? aiInput).trim();
-    if (!msg || aiBusy) return;
-    setAiBusy(true); setAiErr(''); setAiAnswer(''); setAiTools([]); setAiQuestion(msg); setAiSugg([]); setAiFeedback('');
+    if (!msg || aiBusy || deepAnswerBusy) return;
+    // 快速问答必须始终走 quick 路由。此前这里按问题关键词自动打开圆桌，
+    // 导致“宁德时代和比亚迪更偏向谁”这类普通提问也进入深研链路，
+    // SSE 卡住后又与兜底请求竞态，最终用户看到 500。深度圆桌只由顶部模式按钮触发。
+    const useRoundtable = false;
+    const conversationId = ensureAiConversationId();
+    const turnId = `${conversationId}-${Date.now()}`;
+    const attachmentForRequest = aiAttachment;
+    setAiBusy(true); setAiInput(''); setAiErr(''); setDeepAnswerErr(''); setDeepAnswer(null); setAiAnswer(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback('');
+    setAiAnswerCopied(false); setAiRoundtableActive(useRoundtable); setAiLiveStatus(useRoundtable ? '正在组建投研圆桌 · 证据专家先行' : '正在识别问题并选择研究路径');
+    // 先写入一条待完成记录，用户刷新或接口失败时也能在历史侧栏找回这次提问。
+    rememberAiConversation({ id: conversationId, title: msg.slice(0, 32), question: msg, answer: '', mode: 'quick', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename });
     logAct('ai_chat', msg.slice(0, 60));
-    const r = await runToolResearch(msg, '', '', aiHistoryRef.current);
-    if (!r.ok && r.status === 402) {  // 非会员今日免费额度用完 → 升级弹窗（绑当下问题）
-      setUpgradeReason(r.error || '今日免费 AI 问答已用完，开通会员畅享无限');
-      setUpgradeOpen(true); setAiBusy(false); return;
+    // AI 对话是独立工作区，不能把终端当前选中的自选股暗塞进每个问题；否则用户比较 A/B 时
+    // 后台还会收到无关的 C「当前标的」。从个股卡进入 AI 时，入口已把名称+代码写进问题本身。
+    await new Promise<void>(resolve => {
+      let settled = false;
+      let fallbackRunning = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true; aiStreamCancelRef.current = null; setAiBusy(false); setAiRoundtableActive(false); setAiLiveStatus(''); resolve();
+      };
+      const applyResult = (r: Awaited<ReturnType<typeof runToolResearch>>) => {
+        if (settled) return;
+        if (!r.ok && r.status === 402) {
+          setUpgradeReason(r.error || '今日免费 AI 问答已用完，开通会员畅享无限');
+          setUpgradeOpen(true); setAiInput(msg); settle(); return;
+        }
+        if (!r.ok && r.status === 403) {
+          if (!authUserRef.current) {
+            setGuestAiTrialConsumed(true);
+            try { localStorage.setItem('df.ai.guest_trial_date', beijingParts(new Date()).dateStr); } catch { /* */ }
+          }
+          setAiErr(r.error || '游客免费试问已用完，登录即可继续，还送 3 天尊享会员');
+          setAiInput(msg); settle(); return;
+        }
+        if (r.ok && r.answer) {
+          if (!authUserRef.current && !r.needs_clarification) {
+            setGuestAiTrialConsumed(true);
+            try { localStorage.setItem('df.ai.guest_trial_date', beijingParts(new Date()).dateStr); } catch { /* */ }
+          }
+          setAiAnswer(r.answer); setAiTools(r.tool_trace || []); setAiRoundtableMeta(r.roundtable || null); setAiSugg(r.suggestions || []);
+          setAiQuotaLeft(typeof r.quota_left === 'number' ? r.quota_left : null);
+          aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, r.answer.slice(0, 300)]];
+          const completedAt = Date.now();
+          completeAiConversation(
+            { id: conversationId, title: msg.slice(0, 32), question: msg, answer: r.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, roundtable: r.roundtable || null },
+            { id: turnId, question: msg, answer: r.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, tools: r.tool_trace || [], suggestions: r.suggestions || [], roundtable: r.roundtable || null },
+          );
+          setAiAttachment(null); setAiAttachmentErr('');
+        } else {
+          setAiErr(r.error || r.reason || '暂时没有得出结论，换个问法或稍后再试'); setAiInput(msg);
+        }
+        settle();
+      };
+      const runFallback = async (reason?: string) => {
+        if (settled || fallbackRunning) return;
+        fallbackRunning = true;
+        setAiLiveStatus(reason ? '实时连接暂时不稳，正在继续完成研究' : '正在继续完成研究');
+        const result = await runToolResearch(
+          msg, '', '', aiHistoryRef.current,
+          attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
+          { roundtable: false },
+        );
+        applyResult(result);
+      };
+      const cancelTransport = runToolResearchStream({
+        message: msg,
+        roundtable: useRoundtable,
+        history: aiHistoryRef.current,
+        attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
+      }, {
+        onStatus: status => { if (status) setAiLiveStatus(status); },
+        onTool: (event, phase) => {
+          const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
+          setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
+          setAiTools(previous => {
+            if (phase === 'start') return [...previous, { tool: event.tool }].slice(-24);
+            let target = -1;
+            for (let index = previous.length - 1; index >= 0; index -= 1) {
+              if (previous[index].tool === event.tool && previous[index].ok === undefined) { target = index; break; }
+            }
+            if (target < 0) return [...previous, event].slice(-24);
+            return previous.map((item, index) => index === target ? { ...item, ...event } : item);
+          });
+        },
+        onFinal: result => applyResult(result),
+        onFallback: reason => { void runFallback(reason); },
+        onError: (error, status) => {
+          if (status === 402 || status === 403) {
+            applyResult({ ok: false, answer: '', tool_trace: [], error, status });
+          } else {
+            void runFallback(error);
+          }
+        },
+        onDone: () => { if (!settled && !fallbackRunning) void runFallback(); },
+      });
+      aiStreamCancelRef.current = () => {
+        if (settled) return;
+        cancelTransport(); setAiInput(msg); setAiErr('已停止本次研究，问题已保留，可修改后重试。'); settle();
+      };
+    });
+  }, [aiAttachment, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
+  const stopAiResearch = useCallback(() => { aiStreamCancelRef.current?.(); }, []);
+  const askDeepAnswer = useCallback(async (q?: string) => {
+    const msg = (q ?? aiInput).trim();
+    if (!msg || deepAnswerBusy || aiBusy) return;
+    const conversationId = ensureAiConversationId();
+    const turnId = `${conversationId}-deep-${Date.now()}`;
+    const attachmentForRequest = aiAttachment;
+    setDeepAnswerBusy(true); setDeepAnswerErr(''); setAiErr(''); setDeepAnswer(null); setAiAnswer(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback(''); setAiRoundtableActive(true); setAiLiveStatus('正在启动深度研判 · 证据专家先行');
+    // 深度研判也先落一条待完成记录，避免长耗时期间历史侧栏看起来是空的。
+    rememberAiConversation({ id: conversationId, title: msg.slice(0, 32), question: msg, answer: '', mode: 'deep', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename });
+    logAct('deep_answer_start', msg.slice(0, 60));
+    // AI 对话是独立工作区。不能把行情页当前选中的股票暗塞进“推荐买哪些股票”这类
+    // 全市场问题；从个股入口进入时，名称和代码已经明确写在用户问题里，后端会自行解析。
+    const context = [
+      attachmentForRequest ? `用户上传文件：${attachmentForRequest.filename}\n${attachmentForRequest.text.slice(0, 12000)}` : '',
+      aiHistoryRef.current.slice(-3).map(([question, answer]) => `上一轮问题：${question}\n上一轮结论：${answer}`).join('\n'),
+    ].filter(Boolean).join('\n');
+    try {
+      // 深度研判使用与快速问答相同的 SSE 传输层，但明确 roundtable=true。
+      // 这样后端每个阶段/工具结果都能实时进入进度卡，不再在第二步只显示
+      // 一个静态圆点直到 90 秒 JSON 请求结束。
+      const result = await new Promise<import('../services/agentService').ToolResearchResult>((resolve, reject) => {
+        let settled = false;
+        const fail = (message: string, status?: number) => {
+          if (settled) return;
+          settled = true;
+          const error: any = new Error(message || '深度研判流未返回结论');
+          if (status !== undefined) {
+            error.status = status;
+            error.response = { status, data: { detail: message } };
+          }
+          reject(error);
+        };
+        const cancelTransport = runToolResearchStream({
+          message: msg,
+          context_hint: context,
+          roundtable: true,
+          history: aiHistoryRef.current,
+          attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
+        }, {
+          onStatus: status => { if (status) setAiLiveStatus(status); },
+          onTool: (event, phase) => {
+            const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
+            setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
+            setAiTools(previous => {
+              if (phase === 'start') return [...previous, { tool: event.tool }].slice(-24);
+              let target = -1;
+              for (let index = previous.length - 1; index >= 0; index -= 1) {
+                if (previous[index].tool === event.tool && previous[index].ok === undefined) { target = index; break; }
+              }
+              if (target < 0) return [...previous, event].slice(-24);
+              return previous.map((item, index) => index === target ? { ...item, ...event } : item);
+            });
+          },
+          onFinal: finalResult => {
+            if (settled) return;
+            if (!finalResult.ok || !finalResult.answer) {
+              fail(finalResult.error || finalResult.reason || '深度研判未返回结论', finalResult.status);
+              return;
+            }
+            settled = true;
+            resolve(finalResult);
+          },
+          onFallback: reason => fail(reason || '深度研判实时链路未返回结论'),
+          onError: (error, status) => fail(error || '深度研判实时链路失败', status),
+          onDone: () => { if (!settled) fail('深度研判流未返回结论'); },
+        });
+        aiStreamCancelRef.current = () => {
+          if (settled) return;
+          settled = true;
+          cancelTransport();
+          const error: any = new Error('已停止本次研究，问题已保留，可修改后重试。');
+          error.status = 499;
+          error.code = 'AI_USER_CANCELLED';
+          reject(error);
+        };
+      });
+      if (!result.roundtable) throw new Error('深度研判响应缺少圆桌结论');
+      const deepResult = result.roundtable;
+      setDeepAnswer(deepResult);
+      setDeepAnswerQuotaLeft(typeof result.quota_left === 'number'
+        ? result.quota_left
+        : (typeof deepResult.quota_left === 'number' ? deepResult.quota_left : null));
+      aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, deepResult.synthesis.slice(0, 500)]];
+      const completedAt = Date.now();
+      completeAiConversation(
+        { id: conversationId, title: msg.slice(0, 32), question: msg, answer: deepResult.synthesis, mode: 'deep', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, deepAnswer: deepResult },
+        { id: turnId, question: msg, answer: deepResult.synthesis, mode: 'deep', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, deepAnswer: deepResult },
+      );
+      setAiAttachment(null); setAiAttachmentErr('');
+      logAct('deep_answer_done', msg.slice(0, 60));
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail || e?.message || '深度研判暂时不可用，请稍后重试';
+      aiStreamCancelRef.current = null;
+      if (status === 499 || e?.code === 'AI_USER_CANCELLED') {
+        setAiInput(msg);
+        setDeepAnswerErr(detail);
+      } else if (status === 402) {
+        setUpgradeReason(detail);
+        setUpgradeOpen(true);
+      } else if (status === 403) {
+        setDeepAnswerErr(detail || '登录后即可使用每日一次深度研判');
+      } else {
+        // 深研服务异常/超时不能让整个对话失败。自动切换到独立 quick
+        // 路由，并把实际拿到的答案落入同一会话；这样用户至少能先得到
+        // 可用结论，且不会再次触发 roundtable 形成失败循环。
+        // 切换前把进度卡从“圆桌”切到“快速问答”，避免非流式兜底期间
+        // 仍显示圆桌阶段 2 停滞；兜底请求本身仍受独立 90s 超时保护。
+        setAiRoundtableActive(false);
+        setAiLiveStatus('深度研判暂时不可用，正在切换快速问答');
+        try {
+          const fallback = await runToolResearch(
+            msg, '', '', aiHistoryRef.current,
+            attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
+            { roundtable: false, timeoutMs: 90000 },
+          );
+          if (fallback.ok && fallback.answer) {
+            setAiAnswer(fallback.answer);
+            setAiTools(fallback.tool_trace || []);
+            setAiRoundtableMeta(fallback.roundtable || null);
+            setAiSugg(fallback.suggestions || []);
+            setAiQuotaLeft(typeof fallback.quota_left === 'number' ? fallback.quota_left : null);
+            aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, fallback.answer.slice(0, 500)]];
+            const completedAt = Date.now();
+            completeAiConversation(
+              { id: conversationId, title: msg.slice(0, 32), question: msg, answer: fallback.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, roundtable: fallback.roundtable || null },
+              { id: turnId, question: msg, answer: fallback.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, tools: fallback.tool_trace || [], suggestions: fallback.suggestions || [], roundtable: fallback.roundtable || null },
+            );
+            setAiAttachment(null); setAiAttachmentErr('');
+            setDeepAnswerErr(`深度研判暂时不可用，已切换快速问答（${detail.slice(0, 80)}）`);
+            logAct('deep_answer_fallback', msg.slice(0, 60));
+          } else if (fallback.status === 402) {
+            setUpgradeReason(fallback.error || '今日免费 AI 问答已用完，开通会员畅享无限');
+            setUpgradeOpen(true);
+          } else if (fallback.status === 403) {
+            setDeepAnswerErr(fallback.error || '登录后即可继续 AI 问答');
+          } else {
+            setDeepAnswerErr(`${detail}；快速问答也未返回结果，请稍后重试`);
+          }
+        } catch (fallbackError: any) {
+          setDeepAnswerErr(`${detail}；快速问答也失败：${fallbackError?.message || '网络异常'}`);
+        }
+      }
+    } finally {
+      aiStreamCancelRef.current = null;
+      setDeepAnswerBusy(false);
+      setAiRoundtableActive(false);
+      setAiLiveStatus('');
     }
-    if (!r.ok && r.status === 403) {  // 匿名 → 引导登录（送 3 天）
-      setAiErr(r.error || '登录即可继续用 AI 问答，还送 3 天尊享会员 🎁'); setAiBusy(false); return;
-    }
-    if (r.ok && r.answer) {
-      setAiAnswer(r.answer); setAiTools(r.tool_trace || []);
-      setAiSugg(r.suggestions || []);
-      setAiQuotaLeft(typeof r.quota_left === 'number' ? r.quota_left : null);
-      // 会话记忆：记最近 3 轮，追问『那估值呢』才接得上（此前 web 端每问都失忆）
-      aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, r.answer.slice(0, 300)]];
-    }
-    else setAiErr(r.error || r.reason || '暂时没有得出结论，换个问法或稍后再试');
-    setAiBusy(false);
-  }, [aiInput, aiBusy, logAct]);
-  const openAi = useCallback(() => { setAiOpen(true); logAct('tab', 'ai_chat'); }, [logAct]);
-  const mobileNavView = mobileNavActive || (
-    feedFilter === '自选' ? 'stocks' : feedFilter === '研报' ? 'reports' : 'market'
-  );
-  const jumpFromMobileNav = (view: 'market' | 'stocks' | 'reports' | 'ai') => {
-    setMobileNavActive(view);
-    if (view === 'ai') {
-      openAi();
-      return;
-    }
-    if (view === 'market') setActive(null);
-    setFeedFilter(view === 'stocks' ? '自选' : view === 'reports' ? '研报' : '快讯');
-    window.setTimeout(() => gridRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
-  };
-  const openMobileMore = () => {
-    // 桌面版没有侧栏时回退到原“更多”菜单，兼容不同构建。
-    const sideToggle = document.querySelector<HTMLButtonElement>('.bbt-side-toggle');
-    if (sideToggle) sideToggle.click();
-    else setHelpMenuOpen(true);
-    logAct('mobile_nav', 'more');
-  };
+  }, [aiAttachment, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
+  const submitAiQuestion = useCallback((q?: string) => {
+    return void (aiAnswerMode === 'deep' ? askDeepAnswer(q) : askAi(q));
+  }, [aiAnswerMode, askAi, askDeepAnswer]);
+  const primeAiQuestion = useCallback((question: string) => {
+    setAiInput(question);
+    window.requestAnimationFrame(() => {
+      const input = aiPromptInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(question.length, question.length);
+    });
+  }, []);
+  const openAi = useCallback(() => {
+    // 所有 AI 入口统一落到侧栏里的 AI 对话，不再弹出一套重复的深度研判弹窗。
+    setAiOpen(false);
+    setShowOnb(false);
+    setSideNavKey('ai'); setSideNavOpen(false); setSideToolsOpen(false);
+    logAct('tab', 'ai_chat');
+    window.setTimeout(() => aiWorkspaceRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
+  }, [logAct]);
   // 深度研判（多智能体辩论：取证→多空立论→交叉反驳→风控→投委会裁决）。纯轮询，灰度白名单。
   const [deepMode, setDeepMode] = useState(false);
   const [deepSymbol, setDeepSymbol] = useState('');
@@ -1545,14 +2467,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (membership.expires_at) { const ms = new Date(membership.expires_at).getTime() - Date.now(); return ms > 0 ? Math.ceil(ms / 86400000) : 0; }
     return membership.days_left ?? null;
   }, [membership]);
-  // AI 投研问答入口可见性：对所有登录用户开放（让 90% 非会员也能先尝到旗舰「哇时刻」→ 再在超额时转化）。
-  // 后端 /api/agents/tool-research 本就不门控（深度研判更重、仍仅白名单，见 canDeep）；后端轻量日额度为待办的护栏。
-  const canAskAi = (
-    !!authUser
-    || IFIND_USERS.has((authUser || '').toLowerCase())
-    || membership?.tier === 'premium' || membership?.tier === 'lifetime'
-    || isAdmin
-  );
+  // 游客允许免费试问 1 次；后端按 IP 护栏，超额后 403 引导登录。
+  // 登录非会员每日 10 次，会员/管理员不限，所以入口不再提前用登录墙截断首次体验。
   // 组件级会员真值（账号弹层里的 isVip 是块级作用域，别处引用会 TS2304）
   const isMemberVip = membership?.tier === 'premium' || membership?.tier === 'lifetime';
   // 签到 streak：页面加载即拉全量状态（此前 fetchCheckinStatus 全前端零调用点，头部火焰徽章白建）
@@ -1562,8 +2478,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     (async () => { const s = await authService.fetchCheckinStatus(); if (!dead && s) setCheckin(s); })();
     return () => { dead = true; };
   }, [authUser]);
-  // 研报「原文」PDF 入口：有效付费会员 / 管理员 / 原有授权白名单可见；后端再做硬门校验。
-  const canViewResearchOriginal = isMemberVip || isAdmin || IFIND_USERS.has((authUser || '').toLowerCase());
+  // 研报「原文」PDF 入口：仅指定账号可见；后端仍做同口径硬门校验，避免手动拼链接绕过前端。
+  const canViewResearchOriginal = (authUser || '').trim().toLowerCase() === 'lx199710';
   const [authOpen, setAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState('AI 解读');
   // /login 深链：URL 直达登录意图，自动弹登录弹窗（默认登录 tab）并清理 URL，不再让用户面对终端再找按钮
@@ -1607,7 +2523,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     let onboarded = false;
     try { onboarded = !!localStorage.getItem(ONB_KEY); } catch { /* */ }
     if (onboarded) return;
-    const busy = authOpen || inviteOpen || paletteOpen || !!newsPreview || !!aiReport || !!shareImgUrl;
+    // 等首屏数据成功就绪再开始计时；弱网/失败页不叠加教学弹窗。
+    if (!feedBooted || feedLoadError) return;
+    // AI 工作区本身已经有完整的空状态引导，再盖一层新手浮窗会打断提问主路径。
+    const busy = sideNavKey === 'ai' || authOpen || inviteOpen || paletteOpen || !!newsPreview || !!aiReport || !!shareImgUrl;
     if (busy) return;
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
       const onVis = () => { if (document.visibilityState === 'visible') setOnbTick(t => t + 1); };
@@ -1615,9 +2534,23 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       return () => document.removeEventListener('visibilitychange', onVis);
     }
     // 延后到 8s：1.2s 就盖脸打断用户的第一眼探索，先让首屏叙事说话；用户先自己点了什么就更不该打断
-    const t = window.setTimeout(() => { onbShownRef.current = true; setShowOnb(true); }, 8000);
+    const t = window.setTimeout(() => {
+      if (onbShownRef.current) return;
+      onbShownRef.current = true;
+      setShowOnb(true);
+    }, 8000);
     return () => window.clearTimeout(t);
-  }, [authOpen, inviteOpen, paletteOpen, newsPreview, aiReport, shareImgUrl, onbTick]);
+  }, [feedBooted, feedLoadError, sideNavKey, authOpen, inviteOpen, paletteOpen, newsPreview, aiReport, shareImgUrl, onbTick]);
+  useEffect(() => {
+    if (showOnb || onbShownRef.current) return;
+    const suppressAutomaticTour = () => { onbShownRef.current = true; };
+    window.addEventListener('pointerdown', suppressAutomaticTour, { once: true, capture: true });
+    window.addEventListener('keydown', suppressAutomaticTour, { once: true, capture: true });
+    return () => {
+      window.removeEventListener('pointerdown', suppressAutomaticTour, true);
+      window.removeEventListener('keydown', suppressAutomaticTour, true);
+    };
+  }, [showOnb]);
   const openInvite = useCallback(async () => {
     setInviteOpen(true); setInviteData(null);
     try { setInviteData(await authService.fetchInvite()); } catch { /* */ }
@@ -1691,6 +2624,26 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (membership?.tier === 'premium' || membership?.tier === 'lifetime') { run(); return; }
     setUpgradeReason(reason); setUpgradeOpen(true);
   }, [requireLogin, membership]);
+  // 深度文章的“原文”只以段落文本呈现：后端负责提取/转录，浏览器绝不打开或展示源 PDF、图片。
+  const loadArticleText = useCallback(async (m: RealtimeMessageRecord) => {
+    setArticleOriginal(null);
+    setNewsPreview({ ...m, content: '', url: undefined } as RealtimeMessageRecord);
+    setArticleTextLoading(true); setArticleTextError('');
+    try {
+      const original = await getArticleOriginalText(m.id);
+      setArticleOriginal(original);
+      setNewsPreview({ ...m, content: original.content, url: undefined } as RealtimeMessageRecord);
+      if (original.truncated) showToast('原文较长，当前已提取可处理的前段文字');
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || error?.detail || '原文文字提取失败，请稍后重试';
+      setArticleTextError(detail);
+      setArticleOriginal(null);
+      // 服务端不可用时仍展示已入库的文字导语；不再回退到文件预览。
+      setNewsPreview({ ...m, url: undefined } as RealtimeMessageRecord);
+    } finally {
+      setArticleTextLoading(false);
+    }
+  }, [showToast]);
   const openQuantLab = useCallback((pushRoute = true) => {
     setHelpMenuOpen(false);
     setQuantLabOpen(true);
@@ -1793,17 +2746,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (!article) { showToast('该文章不存在或已下线'); return; }
       try { window.history.replaceState({}, '', window.location.pathname + window.location.hash); } catch { /* */ }
       logAct('open_news', `深链·${article.title}`);
-      setNewsPreview(article);
-      if (!(article.content || '').includes(ARTICLE_LOCK_MARKER)) return;  // 会员/管理员：后端已回全文
+      setSideNavKey('articles');
+      setFeedFilter('文章');
+      setNewsPreview({ ...article, url: undefined } as RealtimeMessageRecord);
+      if (!(article.content || '').includes(ARTICLE_LOCK_MARKER)) { void loadArticleText(article); return; }  // 会员/管理员：后端已回全文
       requireMember(async () => {
         const fresh = await getRealtimeMessageById(articleId);
         if (!fresh) return;
-        setNewsPreview(fresh);
+        if (!(fresh.content || '').includes(ARTICLE_LOCK_MARKER)) { void loadArticleText(fresh); return; }
+        setNewsPreview({ ...fresh, url: undefined } as RealtimeMessageRecord);
         // 登录流程走完仍带锁（已登录非会员）→ 续上升级引导，别停在导语
         if ((fresh.content || '').includes(ARTICLE_LOCK_MARKER)) { setUpgradeReason('开通会员解锁文章全文'); setUpgradeOpen(true); }
       }, '开通会员解锁文章全文');
     })();
-  }, [requireMember, logAct, showToast]);
+  }, [requireMember, logAct, showToast, loadArticleText]);
   // 机构纪要分享深链 ?note={id}：/note/{id} 落地页「打开看完整」→ 切到机构纪要模块，并高亮/滚动定位该条(在已加载池内)。
   // 之前落地页 CTA 只开裸 App 首页，收信人点进来落不到对应模块——这是用户反馈的「跳转后到不了对应消息模块」。
   const noteDeepDone = useRef(false);
@@ -1814,6 +2770,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try { noteId = new URLSearchParams(window.location.search).get('note') || ''; } catch { /* */ }
     if (!noteId) return;
     noteDeepDone.current = true;
+    setSideNavKey('notes');
     setFeedFilter('机构纪要');
     setZsxqFocusId(noteId);
     logAct('open_news', `机构纪要深链·${noteId}`);
@@ -1834,6 +2791,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       // 用站内阅读器展示完整 AI 解读（合成一条只读消息：content=我们的解读正文）
       const view = { id: rec.id, title: rec.title, content: rec.summary, topic: '研报', source_name: rec.source_name || '', created_at: rec.created_at || '' } as unknown as RealtimeMessageRecord;
       logAct('open_news', `研报深链·${rec.title}`);
+      setSideNavKey('reports');
+      setFeedFilter('研报');
       if (authUser) { setNewsPreview(view); return; }
       const teaser = { ...view, content: `${(rec.summary || '').slice(0, 120)}……\n\n—— 🔓 登录即可查看完整 AI 解读（用户名+密码即可注册）——` } as RealtimeMessageRecord;
       setNewsPreview(teaser);
@@ -1923,6 +2882,275 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // ---- 自选股按账号同步：未登录走 localStorage（仅本地、互不影响）；登录后绑定账号、跨设备一致 ----
   const watchlistRef = useRef(watchlist);
   const namesRef = useRef(names);
+  // Android WebView 前台通知：按用户偏好过滤并排队展示，突发多条时不再互相覆盖。
+  const [nativeBackgroundEnabled, setNativeBackgroundEnabled] = useState(false);
+  const [nativeBackgroundPermission, setNativeBackgroundPermission] = useState('unknown');
+  const [nativeBackgroundLastSyncAt, setNativeBackgroundLastSyncAt] = useState(0);
+  const [nativeBackgroundLastError, setNativeBackgroundLastError] = useState('');
+  const [nativeFcmToken, setNativeFcmToken] = useState('');
+  const [nativeBatteryOptimizationIgnored, setNativeBatteryOptimizationIgnored] = useState(false);
+  const [nativeBackgroundBusy, setNativeBackgroundBusy] = useState(false);
+  const refreshNativeBackgroundStatus = useCallback(async () => {
+    if (!nativeBackgroundSupported()) return;
+    try {
+      const status = await getNativeBackgroundStatus();
+      setNativeBackgroundEnabled(Boolean(status.enabled));
+      setNativeBackgroundPermission(status.permission || 'unknown');
+      setNativeBackgroundLastSyncAt(Number(status.lastSyncAt || 0));
+      setNativeBackgroundLastError(status.lastError || '');
+      setNativeFcmToken(status.fcmToken || '');
+      setNativeBatteryOptimizationIgnored(Boolean(status.batteryOptimizationIgnored));
+    } catch { /* 原生桥不可用时保持关闭 */ }
+  }, []);
+  useEffect(() => {
+    if (!nativeBackgroundSupported()) return;
+    void refreshNativeBackgroundStatus();
+    const timer = window.setInterval(() => { void refreshNativeBackgroundStatus(); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [refreshNativeBackgroundStatus]);
+  const [newsPopupMode, setNewsPopupMode] = useState<ForegroundPopupMode>(() => {
+    const stored = LS.read<ForegroundPopupMode>('bbt.news_popup_mode.v1', 'all');
+    return ['important', 'all', 'off'].includes(stored) ? stored : 'all';
+  });
+  const [newsPopupTopics, setNewsPopupTopics] = useState<ForegroundPopupTopic[]>(() => {
+    const stored = LS.read<unknown>('bbt.news_popup_topics.v1', DEFAULT_FOREGROUND_POPUP_TOPICS);
+    if (!Array.isArray(stored)) return [...DEFAULT_FOREGROUND_POPUP_TOPICS];
+    return FOREGROUND_POPUP_TOPICS.filter(topic => stored.includes(topic));
+  });
+  const [newsPopupKeywords, setNewsPopupKeywords] = useState<string[]>(() => {
+    const stored = LS.read<unknown>('bbt.news_popup_keywords.v1', []);
+    return Array.isArray(stored) ? normalizeForegroundPopupKeywords(stored) : [];
+  });
+  const [newsPopupKeywordInput, setNewsPopupKeywordInput] = useState('');
+  const [newsPopupFilterOpen, setNewsPopupFilterOpen] = useState(false);
+  const [newsPopupQueue, setNewsPopupQueue] = useState<RealtimeMessageRecord[]>([]);
+  const newsPopup = newsPopupQueue[0] || null;
+  const dismissNewsPopup = useCallback(() => setNewsPopupQueue(queue => queue.slice(1)), []);
+  useEffect(() => {
+    const onNativeNotification = (event: Event) => {
+      const detail = ((event as CustomEvent).detail || {}) as Record<string, string>;
+      if (!detail.title) return;
+      const view = {
+        id: detail.id || `native-${Date.now()}`,
+        title: detail.title,
+        content: detail.content || '',
+        topic: detail.topic || '快讯',
+        severity: 'info',
+        symbol: null,
+        tags: [],
+        metadata: { nativeNotification: true },
+        created_at: new Date().toISOString(),
+        url: detail.url || null,
+      } as unknown as RealtimeMessageRecord;
+      setNewsPreview(view);
+      if (detail.url && typeof window !== 'undefined') {
+        try {
+          const parsed = new URL(detail.url, window.location.origin);
+          const sameSite = parsed.origin === window.location.origin || /(^|\.)daocaijing\.com$/i.test(parsed.hostname);
+          if (sameSite) {
+            window.history.pushState({}, '', `${parsed.pathname || '/'}${parsed.search}${parsed.hash}`);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+        } catch { /* 通知链接异常时仍保留资讯预览 */ }
+      }
+    };
+    window.addEventListener('df:native-notification', onNativeNotification);
+    return () => window.removeEventListener('df:native-notification', onNativeNotification);
+  }, []);
+  const showNewsPopup = useCallback((message: RealtimeMessageRecord) => {
+    if (!FOREGROUND_NEWS_POPUP_ENABLED) return;
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+    // AI 对话是需要连续阅读/输入的专注工作区；快讯仍在后台入流，但不用浮层打断对话。
+    if (document.querySelector('[aria-label="AI 对话工作区"]')) return;
+    if (!shouldShowForegroundPopup(message, newsPopupMode, watchlistRef.current, newsPopupTopics, newsPopupKeywords)) return;
+
+    const activeElement = document.activeElement as HTMLElement | null;
+    const isEditing = activeElement?.matches('input, textarea, [contenteditable="true"]');
+    const blockingDialog = document.querySelector('[aria-modal="true"], .bbt-palette-overlay, .bbt-onb');
+    if (isEditing || blockingDialog) return;
+
+    setNewsPopupQueue(queue => {
+      if (queue.some(item => item.id === message.id || item.title === message.title)) return queue;
+      return [...queue, message].slice(0, 5);
+    });
+  }, [newsPopupMode, newsPopupTopics, newsPopupKeywords]);
+  const zsxqSeenRef = useRef<Set<string>>(new Set());
+  const handleZsxqItems = useCallback((items: ZsxqTopic[]) => {
+    // 首次加载只建立基线，避免用户打开“机构纪要”时历史帖子全部倒灌成弹窗。
+    const initial = zsxqSeenRef.current.size === 0;
+    items.forEach(item => {
+      const id = String(item.id || `${item.create_time}-${item.title}`);
+      if (initial || zsxqSeenRef.current.has(id)) {
+        zsxqSeenRef.current.add(id);
+        return;
+      }
+      zsxqSeenRef.current.add(id);
+      showNewsPopup({
+        id: `zsxq:${id}`,
+        title: item.title || '机构纪要更新',
+        content: String(item.text || '').replace(/\s+/g, ' ').trim().slice(0, 260),
+        topic: '机构纪要',
+        severity: item.digested ? 'warning' : 'info',
+        tags: item.tags || [],
+        metadata: { symbols: [], source: 'zsxq', digested: item.digested },
+        created_at: item.create_time || item.date || new Date().toISOString(),
+      });
+    });
+  }, [showNewsPopup]);
+  // 机构纪要由独立接口提供：只要用户勾选了该类型，即使当前停留在快讯/文章页也会后台轮询并接入弹窗队列。
+  useEffect(() => {
+    if (newsPopupMode === 'off' || !newsPopupTopics.includes('机构纪要')) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await getZsxqStream({ limit: 20, refresh: true });
+        if (!cancelled) handleZsxqItems(response.items || []);
+      } catch { /* 机构纪要接口不可用时不影响其它类型弹窗 */ }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 120000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [handleZsxqItems, newsPopupMode, newsPopupTopics]);
+  useEffect(() => {
+    if (sideNavKey === 'ai') setNewsPopupQueue([]);
+  }, [sideNavKey]);
+  useEffect(() => {
+    if (!newsPopup) return;
+    const timer = window.setTimeout(dismissNewsPopup, 7000);
+    return () => window.clearTimeout(timer);
+  }, [newsPopup, dismissNewsPopup]);
+  const cycleNewsPopupMode = useCallback(() => {
+    const next = nextForegroundPopupMode(newsPopupMode);
+    setNewsPopupMode(next);
+    LS.write('bbt.news_popup_mode.v1', next);
+    if (next === 'off') setNewsPopupQueue([]);
+    logAct('foreground_news_popup', next);
+  }, [newsPopupMode, logAct]);
+  useEffect(() => { LS.write('bbt.news_popup_topics.v1', newsPopupTopics); }, [newsPopupTopics]);
+  useEffect(() => { LS.write('bbt.news_popup_keywords.v1', newsPopupKeywords); }, [newsPopupKeywords]);
+  const toggleNewsPopupTopic = useCallback((topic: ForegroundPopupTopic) => {
+    setNewsPopupTopics(previous => previous.includes(topic)
+      ? previous.filter(item => item !== topic)
+      : [...previous, topic]);
+    setNewsPopupQueue([]);
+    logAct('foreground_news_popup_topic', topic);
+  }, [logAct]);
+  const addNewsPopupKeywords = useCallback((raw: string) => {
+    const incoming = normalizeForegroundPopupKeywords(raw.split(/[,，、\n]+/));
+    if (!incoming.length) return;
+    setNewsPopupKeywords(previous => normalizeForegroundPopupKeywords([...previous, ...incoming]));
+    setNewsPopupKeywordInput('');
+    logAct('foreground_news_popup_keyword', incoming.join('、'));
+  }, [logAct]);
+  const removeNewsPopupKeyword = useCallback((keyword: string) => {
+    setNewsPopupKeywords(previous => previous.filter(item => item !== keyword));
+  }, []);
+  const nativeBackgroundFilters = useMemo(() => ({
+    mode: newsPopupMode,
+    topics: newsPopupTopics,
+    keywords: newsPopupKeywords,
+    watchlist,
+  }), [newsPopupMode, newsPopupTopics, newsPopupKeywords, watchlist]);
+  const [nativeFcmRegistered, setNativeFcmRegistered] = useState(false);
+  const nativeFcmSeverities = useMemo<RealtimeMessageSeverity[]>(() => (
+    newsPopupMode === 'all' ? ['info', 'success', 'warning', 'critical'] : ['success', 'warning', 'critical']
+  ), [newsPopupMode]);
+  const syncNativeFcmSubscription = useCallback(async () => {
+    if (!nativeBackgroundSupported() || !nativeBackgroundEnabled) return false;
+    let token = nativeFcmToken;
+    if (!token) {
+      try {
+        const result = await getNativePushToken();
+        token = result.token || '';
+        if (token) setNativeFcmToken(token);
+      } catch { token = ''; }
+    }
+    if (!token) {
+      setNativeFcmRegistered(false);
+      return false;
+    }
+    try {
+      await apiPost('/api/realtime/recall/subscriptions', {
+        channel: 'fcm',
+        address: token,
+        symbols: watchlist,
+        severities: nativeFcmSeverities,
+        scope: 'watchlist',
+        topics: newsPopupTopics,
+        keywords: newsPopupKeywords,
+        mode: newsPopupMode,
+        label: 'android-fcm-v1',
+      });
+      setNativeFcmRegistered(true);
+      return true;
+    } catch {
+      setNativeFcmRegistered(false);
+      return false;
+    }
+  }, [nativeBackgroundEnabled, nativeFcmSeverities, nativeFcmToken, newsPopupKeywords, newsPopupMode, newsPopupTopics, watchlist]);
+  useEffect(() => {
+    if (!nativeBackgroundEnabled) {
+      setNativeFcmRegistered(false);
+      return;
+    }
+    void syncNativeFcmSubscription();
+  }, [nativeBackgroundEnabled, syncNativeFcmSubscription]);
+  useEffect(() => {
+    if (!nativeBackgroundEnabled) return;
+    setNativeBackgroundFilters(nativeBackgroundFilters).catch(() => { /* 原生服务下一轮读取旧配置，不影响网页 */ });
+  }, [nativeBackgroundEnabled, nativeBackgroundFilters]);
+  const toggleNativeBackground = useCallback(async () => {
+    if (!nativeBackgroundSupported() || nativeBackgroundBusy) return;
+    setNativeBackgroundBusy(true);
+    try {
+      if (nativeBackgroundEnabled) {
+        await stopNativeBackground();
+        setNativeBackgroundEnabled(false);
+        showToast('后台提醒已关闭');
+      } else {
+        // 用户此前选择过“不允许”时，Android 可能不再弹授权框；直接提供系统设置入口。
+        if (nativeBackgroundPermission === 'denied') {
+          await openNativeNotificationSettings();
+          showToast('请在系统通知设置中允许稻财经通知，然后再点击开启');
+          return;
+        }
+        await setNativeBackgroundFilters(nativeBackgroundFilters);
+        const result = await startNativeBackground();
+        setNativeBackgroundEnabled(Boolean(result.enabled));
+        setNativeBackgroundPermission(result.permission || 'granted');
+        if (result.enabled && !nativeBatteryOptimizationIgnored) {
+          try {
+            await requestNativeBatteryOptimization();
+            showToast('✅ 后台提醒已开启；请在系统电池设置中将稻财经设为“不受限制”');
+          } catch {
+            showToast('后台提醒已开启；请手动允许“电池不受限制”');
+          }
+        }
+        void refreshNativeBackgroundStatus();
+        if (!result.enabled) showToast('请允许通知权限后再试');
+      }
+    } catch {
+      void refreshNativeBackgroundStatus();
+      showToast('⚠️ 后台提醒开启失败，请检查通知权限');
+    } finally {
+      setNativeBackgroundBusy(false);
+    }
+  }, [nativeBackgroundBusy, nativeBackgroundEnabled, nativeBackgroundFilters, nativeBackgroundPermission, nativeBatteryOptimizationIgnored, refreshNativeBackgroundStatus, showToast]);
+  const requestNativeBattery = useCallback(async () => {
+    if (!nativeBackgroundSupported()) return;
+    try {
+      await requestNativeBatteryOptimization();
+      window.setTimeout(() => { void refreshNativeBackgroundStatus(); }, 800);
+      showToast('已打开系统电池优化列表，请将稻财经设为“不受限制”');
+    } catch {
+      try {
+        await openNativeBatterySettings();
+        showToast('已打开系统电池优化列表，请将稻财经设为“不受限制”');
+      } catch {
+        showToast('无法打开电池设置，请在系统设置中搜索“电池优化”');
+      }
+    }
+  }, [refreshNativeBackgroundStatus, showToast]);
   const wlHydrating = useRef(false);   // 程序化加载期间抑制回存，避免「加载即回存」抖动
   const wlSaveTimer = useRef<number | undefined>(undefined);
   const scheduleWatchlistSave = useCallback(() => {
@@ -1987,35 +3215,96 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁');
       requireLogin(() => runAiAnalysis(r), 'AI 解读'); return;
     }
+    const requestSeq = ++aiRequestSeqRef.current;
+    const isCurrent = () => aiRequestSeqRef.current === requestSeq;
     logAct('ai_report', r.title);
-    setAiReport(r); setAiResult(null); setAiError(''); setAiLoading(true);
+    // 研报解读的完整层是核心增值内容：结果返回后直接展开，避免用户只看到
+    // 一句话和几条 bullet；文章解读仍保持紧凑展示。
+    setAiReport(r); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false); setAiError(''); setDfExpanded(true); setAiLoading(true);
     setAiReportMeta({ org: (r as any).org || '', symbol: (r.instruments && r.instruments[0]) || '', preview_url: r.preview_url || '' });  // 研报解读→可分享落地页 + 原文按钮
     aiRetryRef.current = () => runAiAnalysis(r);
+    const previewUrl = r.preview_url || '';
+    const fid = r.file_id || (previewUrl.includes('wire-file') ? new URLSearchParams(previewUrl.split('?')[1] || '').get('file_id') : '');
+    const sourceBody: Record<string, any> = { title: r.title, max_pages: RESEARCH_AI_MAX_PAGES };
+    if (fid) { sourceBody.file_id = fid; sourceBody.filename = r.filename; }
+    else { sourceBody.workbench_filename = r.filename; sourceBody.workbench_out = r.out || 'downloads/海外投行报告'; }
+    const cacheKey = `report:${fid || r.filename || r.title}`;
+    const cached = aiInterpretCacheRef.current.get(cacheKey);
+    if (cached) {
+      setAiDeepDraft(cached.deepDraft || null);
+      setAiResult(cached.result);
+      setAiLoading(false);
+      if (!authUserRef.current) markAiFreeUsed();
+      return;
+    }
     try {
-      const body: Record<string, any> = { title: r.title, max_pages: 4 };
-      const fid = r.file_id || (r.preview_url.includes('wire-file') ? new URLSearchParams(r.preview_url.split('?')[1] || '').get('file_id') : '');
-      if (fid) { body.file_id = fid; body.filename = r.filename; }
-      else { body.workbench_filename = r.filename; body.workbench_out = r.out || 'downloads/海外投行报告'; }
-      // 图片型研报首次需多模态解读，30–60s 起；给足超时，避免默认 20s 误判失败
-      const res = await apiPost<AiAnalysis>('/api/research/vision-analyze', body, { timeout: 150000 });
-      setAiResult(res);
+      // 研报主路径：文章式深度稿（默认 32 页，后端上限 60）。
+      // 返回中附带 compact 时复用它；否则从文章结构投影，保证旧分享/出图仍可用。
+      const deep = await generateResearchDeepDraft({
+        ...sourceBody,
+        max_pages: RESEARCH_DEEP_DRAFT_MAX_PAGES,
+        symbol: (r.instruments && r.instruments[0]) || undefined,
+      });
+      if (!isCurrent()) return;
+      const compact = deep.compact || compactFromDeepDraft(deep);
+      setAiDeepDraft(deep as unknown as ResearchDeepDraftInput);
+      setAiResult(compact);
+      aiInterpretCacheRef.current.set(cacheKey, { result: compact, deepDraft: deep as unknown as ResearchDeepDraftInput });
       if (!authUserRef.current) markAiFreeUsed();  // 匿名免费体验已消费 → 下次起需登录
-    } catch (e: any) {
-      const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
+      return;
+    } catch (deepError: any) {
+      if (!isCurrent()) return;
+      const deepStatus = deepError?.response?.status ?? deepError?.status;
+      const deepDetail = deepError?.response?.data?.detail ?? deepError?.detail;
       // 402：登录非会员（未缓存 / 今日免费已用完）→ 升级弹窗
-      if (status === 402) { setAiReport(null); setUpgradeReason(detail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
+      if (deepStatus === 402) { setAiReport(null); setAiDeepDraft(null); setUpgradeReason(deepDetail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
       // 403：匿名（该研报未生成解读 / 今日免费已用完）→ 直接弹注册/登录框（首登用户默认注册+送3天会员），不再只甩一行死提示
-      if (status === 403) {
+      if (deepStatus === 403) {
         setAiReport(null);
+        setAiDeepDraft(null);
         requireLogin(() => runAiAnalysis(r), '登录解读 · 送 3 天尊享会员 🎁'); return;
       }
-      const code = e?.code;
-      if (code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) {
-        setAiError('解读超时了，该研报可能较长。请稍后再点一次（后台仍在解读，通常重试即秒出）。');
-      } else {
-        setAiError(e?.response?.data?.detail || e?.message || 'AI 解读失败，请稍后重试');
+      // 仅在明确的「路由未部署」状态回退旧 compact。502/超时/模型错误不再
+      // 额外烧一次请求，直接把可重试错误交给用户。
+      // A source-level 404 (for example a deleted workbench file) is not a
+      // missing route.  The backend returns 422/502 for those cases; keep the
+      // 404 fallback narrow so we do not burn a second compact request.
+      const routeUnavailable = [405, 501].includes(Number(deepStatus))
+        || (Number(deepStatus) === 404 && (!deepDetail || /^(not found|method not allowed)$/i.test(String(deepDetail).trim())));
+      if (!routeUnavailable) {
+        if (deepError?.code === 'ECONNABORTED' || /timeout/i.test(deepError?.message || '')) {
+          setAiError('深度稿生成超时了，请稍后重试。');
+        } else {
+          setAiError(deepDetail || deepError?.message || '深度稿生成失败，请稍后重试');
+        }
+        return;
       }
-    } finally { setAiLoading(false); }
+      // 灰度/旧后端可能还没有 deep-draft 路由；自动回退旧 compact，避免入口失效。
+      if (!isCurrent()) return;
+      try {
+        const res = await apiPost<AiAnalysis>('/api/research/vision-analyze', sourceBody, { timeout: 150000 });
+        if (!isCurrent()) return;
+        setAiDeepDraft(null);
+        setAiResult(res);
+        aiInterpretCacheRef.current.set(cacheKey, { result: res });
+        if (!authUserRef.current) markAiFreeUsed();
+        return;
+      } catch (e: any) {
+        if (!isCurrent()) return;
+        const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
+        if (status === 402) { setAiReport(null); setAiDeepDraft(null); setUpgradeReason(detail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
+        if (status === 403) {
+          setAiReport(null); setAiDeepDraft(null);
+          requireLogin(() => runAiAnalysis(r), '登录解读 · 送 3 天尊享会员 🎁'); return;
+        }
+        const code = e?.code;
+        if (code === 'ECONNABORTED' || /timeout/i.test(e?.message || '') || /timeout/i.test(deepError?.message || '')) {
+          setAiError('深度稿生成超时了，已保留旧版重试入口。请稍后再点一次（后台缓存完成后通常会更快）。');
+        } else {
+          setAiError(detail || deepDetail || e?.message || deepError?.message || 'AI 解读失败，请稍后重试');
+        }
+      }
+    } finally { if (isCurrent()) setAiLoading(false); }
   }, [requireLogin, logAct, showToast, aiFreeUsed, markAiFreeUsed]);
 
   const runNewsAi = useCallback(async (m: RealtimeMessageRecord) => {
@@ -2023,15 +3312,28 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁');
       requireLogin(() => runNewsAi(m), 'AI 解读'); return;
     }
+    const requestSeq = ++aiRequestSeqRef.current;
+    const isCurrent = () => aiRequestSeqRef.current === requestSeq;
     logAct('ai_news', m.title);
-    setAiReport({ title: m.title, date: (m.created_at || '').slice(0, 10) }); setAiReportMeta(null); setAiResult(null); setAiError(''); setAiCopied(false); setAiLoading(true);
+    setAiReport({ title: m.title, date: (m.created_at || '').slice(0, 10) }); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false); setAiError(''); setAiCopied(false); setDfExpanded(true); setAiLoading(true);
     aiRetryRef.current = () => runNewsAi(m);
+    const cacheKey = `news:${m.id || `${m.title}:${(m.content || '').slice(0, 80)}`}`;
+    const cached = aiInterpretCacheRef.current.get(cacheKey);
+    if (cached) {
+      setAiResult(cached.result);
+      setAiLoading(false);
+      if (!authUserRef.current) markAiFreeUsed();
+      return;
+    }
     try {
       const res = await apiPost<AiAnalysis>('/api/news/ai-analyze',
-        { title: m.title, content: m.content || '', url: m.url || '' }, { timeout: 120000 });
+        { title: m.title, content: m.content || '', url: m.url || '', message_id: m.id }, { timeout: 120000 });
+      if (!isCurrent()) return;
       setAiResult(res);
+      aiInterpretCacheRef.current.set(cacheKey, { result: res });
       if (!authUserRef.current) markAiFreeUsed();
     } catch (e: any) {
+      if (!isCurrent()) return;
       const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
       if (status === 402) { setAiReport(null); setUpgradeReason(detail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
       if (status === 403) {
@@ -2040,7 +3342,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       }
       if (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) setAiError('解读超时了，请重试。');
       else setAiError(e?.response?.data?.detail || e?.message || 'AI 解读失败，请稍后重试');
-    } finally { setAiLoading(false); }
+    } finally { if (isCurrent()) setAiLoading(false); }
   }, [requireLogin, logAct, showToast, aiFreeUsed, markAiFreeUsed]);
 
   // AI 解读进度条：拿不到流式进度，按耗时渐近爬升到 ~94%（文字快、图片慢），完成时面板切走即收。
@@ -2097,20 +3399,35 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     } catch { showToast('⚠️ 复制失败，请重试'); }
   }, [pingMetric, logAct, showToast]);
 
-  const closeAi = useCallback(() => { setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiError(''); setAiCopied(false); setDfExpanded(false); }, []);
+  const closeAi = useCallback(() => {
+    // Invalidate any in-flight deep/news analysis before unmounting the modal.
+    aiRequestSeqRef.current += 1;
+    aiRetryRef.current = null;
+    setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false);
+    setAiError(''); setAiCopied(false); setDfExpanded(false); setAiLoading(false);
+  }, []);
 
   // 研报「原文」：带 JWT 头 fetch 取 PDF Blob → createObjectURL → 新标签打开（会员专享，402 → 升级弹窗）
   const openResearchOriginal = useCallback(async (preview_url: string) => {
     if (!canViewResearchOriginal) return;   // 非会员不发起请求（入口本已隐藏，双保险）
     if (!preview_url || pdfLoadingUrl) return;
+    // 必须在用户点击事件的同步阶段先占住新标签页；等 PDF 异步拉取完再 window.open
+    // 会被浏览器当作弹窗拦截，表现为“点了原文但什么都没打开”。
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) {
+      showToast('浏览器拦截了新窗口，请允许本站弹窗后重试');
+      return;
+    }
+    popup.document.title = '正在加载研报原文…';
     setPdfLoadingUrl(preview_url);
     try {
       const blob = await apiGet<Blob>(preview_url, { responseType: 'blob', timeout: 90000 });
       const blobUrl = URL.createObjectURL(blob);
-      window.open(blobUrl, '_blank', 'noopener,noreferrer');
+      popup.location.href = blobUrl;
       // 不主动 revoke：新标签页的 PDF 「查看 + 下载」都依赖该 blob 存活。过早 revoke（原 60s）会让用户
       // 看一会儿再点下载时 blob 已失效 →「下载失败/请检查互联网连接」。blob 在该标签关闭时由浏览器自动回收。
     } catch (e: any) {
+      try { popup.close(); } catch { /* */ }
       const status = e?.status ?? e?.response?.status;
       const detail = e?.detail ?? e?.response?.data?.detail;
       if (status === 402) {
@@ -2128,6 +3445,29 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     }
   }, [showToast, pdfLoadingUrl, canViewResearchOriginal]);
 
+  // 深度稿证据 chip：优先打开证据自身链接；研报证据没有独立 URL 时打开原文
+  // PDF。页码只作定位提示（不同 PDF 查看器不一定支持可靠的 page fragment）。
+  const openDeepDraftSource = useCallback((source: ResearchDeepDraftEvidence | ResearchDeepDraftSource) => {
+    const url = source.url;
+    if (url && /^https?:\/\//i.test(url)) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (aiReportMeta?.preview_url) {
+      if (!canViewResearchOriginal) {
+        // 研报原文是站长账号白名单能力，不是购买会员即可解锁的权益。
+        // 非白名单用户不应看到“开通会员”弹窗，避免把不可购买的能力误导成会员权益。
+        showToast('研报原文仅对指定账号开放');
+        return;
+      }
+      const page = source.page || (source.pages ? String(source.pages) : '');
+      if (page) showToast(`正在打开原文（可按 ${page} 定位）`);
+      void openResearchOriginal(aiReportMeta.preview_url);
+      return;
+    }
+    showToast('该条证据暂无可打开的原文链接');
+  }, [aiReportMeta?.preview_url, canViewResearchOriginal, openResearchOriginal, showToast]);
+
   // 研报解读「分享」：把当前 AI 解读存成公开软墙落地页 → 拿到 URL → 打开极简分享弹窗（落地页登录看完整解读，引流转化）。
   const shareReportInsight = useCallback(async () => {
     const r = aiResult;
@@ -2135,7 +3475,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setReportShareBusy(true);
     try {
       const title = (aiReport?.title || r.title || '研报解读').trim();
-      const summary = aiAnalysisToText(r, '');  // 正文不含标题（标题已单列），交给落地页/文案承载
+      const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
+      const summary = aiDeepDraft
+        ? researchDeepDraftToText(aiDeepDraft, { title: '', date: aiReport?.date || undefined, site }).slice(0, 6000)
+        : aiAnalysisToText(r, '');  // 深度稿分享正文与阅读器保持一致；旧文章仍走 compact
       const { url } = await createReportShare({
         title,
         summary,
@@ -2149,20 +3492,35 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     } finally {
       setReportShareBusy(false);
     }
-  }, [aiResult, aiReport, aiReportMeta, reportShareBusy, logAct, showToast]);
+  }, [aiResult, aiDeepDraft, aiReport, aiReportMeta, reportShareBusy, logAct, showToast]);
 
   // 分享卡二维码目标：已登录则带上分享者的 ?ref=邀请码（扫码注册归到他名下，拉新闭环）；未登录回退裸站点。
   const qrShareTarget = useCallback((site: string) => (inviteCodeRef.current ? `${site}/?ref=${inviteCodeRef.current}` : site), []);
 
-  // 把解读渲染成分享图片（中文走浏览器字体；右下角二维码 = 可扫的站点链接）
+  // 把解读渲染成适合微信转发的分享图片：研报只保留核心信息，完整正文仍在阅读器里。
   const drawShareCard = useCallback(async (): Promise<Blob | null> => {
     const r = aiResult;
     if (!r) return null;
+    const compactReport = !!aiReportMeta;
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
     let qr: { size: number; matrix: number[][] } | null = null;
     try { qr = await apiGet<{ size: number; matrix: number[][] }>('/api/qr', { params: { data: qrShareTarget(site) } }); } catch { qr = null; }
-    const bull = (r.bullish?.length ? r.bullish : r.key_points) || [];
-    const bear = (r.bearish?.length ? r.bearish : r.risks) || [];
+    const clip = (value: string, max: number) => {
+      const text = String(value || '').trim();
+      return text.length > max ? text.slice(0, max).trimEnd() + '…' : text;
+    };
+    const allBull = (r.bullish?.length ? r.bullish : r.key_points) || [];
+    const allBear = (r.bearish?.length ? r.bearish : r.risks) || [];
+    const logicLines = (r.logic_lines || [])
+      .filter(line => line && (line.title || line.evidence || line.chain || line.impact || line.watch))
+      .slice(0, compactReport ? 4 : 8);
+    const bull = compactReport ? allBull.slice(0, 4) : allBull;
+    const bear = compactReport ? allBear.slice(0, 4) : allBear;
+    const reportConclusion = r.one_liner || r.summary || '';
+    const hasDeepReport = compactReport && !!(
+      r.logic_lines?.length || r.takeaway || allBull.length > 4 || allBear.length > 4
+      || (r.summary && r.summary.trim() !== reportConclusion.trim())
+    );
 
     const cv = document.createElement('canvas');
     const ctx = cv.getContext('2d');
@@ -2183,19 +3541,28 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const push = (lines: string[], font: string, lh: number, color: string, mt = 0, bullet?: string) => {
       items.push({ lines, font, lh, color, mt, bullet }); h += mt + lines.length * lh;
     };
-    push(['DEEPFOCUS 金融终端 · AI 速读'], F(15, '700'), 24, '#ffb000');
+    push([compactReport ? 'DEEPFOCUS 金融终端 · AI 速读' : 'DEEPFOCUS 金融终端 · AI 新闻简报'], F(15, '700'), 24, '#ffb000');
     push(wrap(aiReport?.title || r.title || '', F(21, '700'), maxW), F(21, '700'), 31, '#f4ecd6', 8);
     if (aiReport?.date) push([`🗓 ${aiReport.date}`], F(13, '400'), 20, '#8a8463', 4);
     const chips = [r.subject && `标的 ${r.subject}`, r.rating && `评级 ${r.rating}`, r.target_price && `目标价 ${r.target_price}`].filter(Boolean).join('　｜　');
     if (chips) push(wrap(chips, F(15, '700'), maxW), F(15, '700'), 25, '#9fc0ff', 12);
-    if (r.one_liner) push(wrap('💡 ' + r.one_liner, F(17, '700'), maxW), F(17, '700'), 28, '#ffd980', 14);
-    if (r.summary) { push(['一句话看懂'], F(13, '700'), 22, '#a78bfa', 16); push(wrap(r.summary, F(15), maxW), F(15), 26, '#e2e5ea', 4); }
-    if (r.core_logic) { push(['🔑 投资逻辑'], F(13, '700'), 22, '#a78bfa', 16); push(wrap(r.core_logic, F(15), maxW), F(15), 26, '#e2e5ea', 4); }
-    if (bull.length) { push(['✅ 利好'], F(14, '700'), 23, '#5fe39a', 16); bull.forEach(b => push(wrap(b, F(15), maxW - 18), F(15), 25, '#d6f0e0', 3, '▲')); }
-    if (bear.length) { push(['⚠️ 利空'], F(14, '700'), 23, '#ff8a8a', 16); bear.forEach(b => push(wrap(b, F(15), maxW - 18), F(15), 25, '#f0d0d0', 3, '▼')); }
-    if (r.takeaway) { push(wrap('📌 启示：' + r.takeaway, F(15, '700'), maxW), F(15, '700'), 26, '#ffd980', 16); }
-    // DeepFocus 视角点评：我方原创独立判断（盖品牌、做厚价值）——视觉上用品牌琥珀醒目区分
-    if (r.df_take) { push(['◆ DeepFocus 视角 · 独家点评'], F(14, '700'), 23, '#ffb000', 18); push(wrap(r.df_take, F(15), maxW), F(15), 26, '#ffe7b0', 4); }
+    const conclusion = r.one_liner || (compactReport ? r.summary : '');
+    if (conclusion) push(wrap((compactReport ? '💡 ' : '核心结论：') + clip(conclusion, compactReport ? 360 : 520), F(17, '700'), maxW), F(17, '700'), 28, '#ffd980', 14);
+    if (r.summary && r.summary.trim() !== reportConclusion.trim()) { push([compactReport ? '🧾 综合综述' : '🧾 事件摘要'], F(13, '700'), 22, '#a78bfa', 16); push(wrap(clip(r.summary, compactReport ? 700 : 1_200), F(15), maxW), F(15), 26, '#e2e5ea', 4); }
+    if (logicLines.length) {
+      push(wrap(compactReport ? `🧭 独立逻辑线拆解（${logicLines.length}条）` : '🧩 关键信息链（仅列原文明确内容）', F(14, '700'), maxW), F(14, '700'), 23, '#9fc9f0', 16);
+      logicLines.forEach((line, index) => {
+        const title = `${index + 1}. ${line.title || `逻辑线 ${index + 1}`}`;
+        push(wrap(title, F(14, '700'), maxW), F(14, '700'), 23, '#dceeff', 3);
+        const detail = [line.evidence && `事实：${line.evidence}`, line.chain && `${compactReport ? '传导' : '关联'}：${line.chain}`, line.impact && `影响：${line.impact}`, line.watch && `验证：${line.watch}`].filter(Boolean).join('　');
+        if (detail) push(wrap(clip(detail, compactReport ? 300 : 520), F(13), maxW - 10), F(13), 22, '#c9dbea', 1);
+      });
+    }
+    if (r.core_logic) { push([compactReport ? '🔑 核心逻辑' : '🔑 影响逻辑'], F(13, '700'), 22, '#a78bfa', 16); push(wrap(clip(r.core_logic, compactReport ? 600 : 1_000), F(15), maxW), F(15), 26, '#e2e5ea', 4); }
+    if (bull.length) { push([compactReport ? '✅ 关键利好' : '✅ 积极因素（原文）'], F(14, '700'), 23, '#5fe39a', 16); bull.forEach(b => push(wrap(clip(b, compactReport ? 180 : 360), F(15), maxW - 18), F(15), 25, '#d6f0e0', 3, '▲')); }
+    if (bear.length) { push([compactReport ? '⚠️ 主要风险' : '⚠️ 风险与不确定性'], F(14, '700'), 23, '#ff8a8a', 16); bear.forEach(b => push(wrap(clip(b, compactReport ? 180 : 360), F(15), maxW - 18), F(15), 25, '#f0d0d0', 3, '▼')); }
+    if (!compactReport && r.takeaway) { push(wrap('📌 关注重点：' + clip(r.takeaway, 520), F(15, '700'), maxW), F(15, '700'), 26, '#ffd980', 16); }
+    if (hasDeepReport) { push(wrap('◇ 完整深度解读已保留 · 扫码展开查看更多利好与风险', F(13, '700'), maxW), F(13, '700'), 22, '#ffd980', 16); }
     const footTop = h + 18;
     const qrSize = qr ? 100 : 0;
     h = footTop + Math.max(qrSize, 76) + PAD;
@@ -2235,19 +3602,38 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     ctx.font = F(12); ctx.fillStyle = '#8a93a0'; ctx.fillText('扫码访问 · ' + site.replace(/^https?:\/\//, ''), PAD, footTop + 40);
     ctx.font = F(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('AI 自动解读 · 仅供参考，非投资建议', PAD, footTop + 60);
     return await new Promise<Blob | null>(res => cv.toBlob(res, 'image/png'));
-  }, [aiResult, aiReport, qrShareTarget]);
+  }, [aiResult, aiReport, aiReportMeta, qrShareTarget]);
+
+  // 深度稿出图必须读取正在展示的文章对象，而不是 aiResult 的旧 compact
+  // 投影。二维码仍沿用现有分享目标；二维码接口失败时长图照常生成。
+  const drawDeepDraftCard = useCallback(async (): Promise<Blob | null> => {
+    if (!aiDeepDraft) return null;
+    const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
+    let qr: { size: number; matrix: number[][] } | null = null;
+    try { qr = await apiGet<{ size: number; matrix: number[][] }>('/api/qr', { params: { data: qrShareTarget(site) } }); } catch { qr = null; }
+    return drawResearchDeepDraftImage(aiDeepDraft, {
+      title: aiReport?.title || undefined,
+      date: aiReport?.date || undefined,
+      site,
+      qr,
+      width: 960,
+      scale: 2,
+    });
+  }, [aiDeepDraft, aiReport, qrShareTarget]);
 
   const [aiImgBusy, setAiImgBusy] = useState(false);
   const shareAiImage = useCallback(async () => {
     setAiImgBusy(true);
     try {
+      // 微信转发优先使用紧凑卡片，避免把完整 32 页研报塞进一张超长图。
+      // 完整研报仍可在当前阅读器中查看和复制文字。
       const blob = await drawShareCard();
       if (!blob) { showToast('⚠️ 图片生成失败，请重试'); return; }
       pingMetric('copy_image');
       const coarse = typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
       // 移动端优先原生分享面板（可直接发朋友圈/好友/存图）；不支持/失败再回退长按弹图
       if (coarse) {
-        const r = await shareImageNative(blob, { filename: 'DeepFocus.png', title: 'DeepFocus 金融终端', text: aiReport?.title || 'DeepFocus · AI 解读' });
+        const r = await shareImageNative(blob, { filename: 'DeepFocus-微信分享图.png', title: 'DeepFocus 金融终端', text: aiReport?.title || 'DeepFocus · AI 解析' });
         if (r === 'shared') return;
       }
       // 桌面：尝试直接复制图片到剪贴板（部分浏览器如 Firefox 不支持 → 抛错走弹图）
@@ -2268,10 +3654,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setShareImgCoarse(coarse);
       setShareImgUrl(await blobToDataUrl(blob));
       setShareImgNote(coarse
-        ? '👇 长按下方图片，选择「存储图像 / 保存到相册」或「分享」'
+        ? '👇 长按图片保存到相册，再发到微信；也可直接点「分享」'
         : '右键图片选择「图片另存为」，或点下方「下载图片」');
     } finally { setAiImgBusy(false); }
-  }, [drawShareCard, pingMetric, showToast]);
+  }, [aiDeepDraft, aiReport, drawDeepDraftCard, drawShareCard, pingMetric, showToast]);
 
   // 把图片呈现给用户：桌面复制剪贴板，移动端/不支持则弹图长按保存
   const presentImage = useCallback(async (blob: Blob, okToast: string) => {
@@ -2836,8 +4222,29 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const copyAiResult = useCallback(async () => {
     const r = aiResult;
     if (!r) return;
-    const bull = (r.bullish?.length ? r.bullish : r.key_points) || [];
-    const bear = (r.bearish?.length ? r.bearish : r.risks) || [];
+    // 与图片导出保持同一数据源：深度稿正文可能远超 compact 投影，不能
+    // 再从 aiResult 拼接，否则复制出来的文字会丢掉章节/表格/跟踪项。
+    if (aiDeepDraft) {
+      const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
+      const deepText = researchDeepDraftToText(aiDeepDraft, {
+        title: aiReport?.title || undefined,
+        date: aiReport?.date || undefined,
+        site,
+      });
+      if (await copyText(deepText)) {
+        setAiTextCopied(true); window.setTimeout(() => setAiTextCopied(false), 1800);
+        pingMetric('copy_text'); logAct('copy', aiReport?.title); showToast('✅ 深度解读已复制');
+      } else {
+        setAiTextCopied(false); showToast('⚠️ 复制失败，请手动选择文本');
+      }
+      return;
+    }
+    const compactReport = !!aiReportMeta;
+    const allBull = (r.bullish?.length ? r.bullish : r.key_points) || [];
+    const allBear = (r.bearish?.length ? r.bearish : r.risks) || [];
+    const logicLines = (r.logic_lines || []).filter(line => line && (line.title || line.evidence || line.chain || line.impact || line.watch));
+    const bull = allBull;
+    const bear = allBear;
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
     const L: string[] = [];
     L.push(`📊 AI 解读 | ${aiReport?.title || r.title || ''}`);
@@ -2845,14 +4252,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const meta = [r.subject && `标的 ${r.subject}`, r.rating && `评级 ${r.rating}`, r.target_price && `目标价 ${r.target_price}`].filter(Boolean);
     if (meta.length) { L.push(''); L.push(meta.join('  |  ')); }
     if (r.instruments?.length) { L.push('', `📈 提及个股：${r.instruments.join('、')}`); }
-    if (r.one_liner) { L.push(''); L.push(`💡 ${r.one_liner}`); }
-    if (r.summary) { L.push('', '【摘要】', r.summary); }
-    if (r.core_logic) { L.push('', '【投资逻辑】', r.core_logic); }
-    if (bull.length) { L.push('', '【利好】', ...bull.map((b, i) => `${i + 1}. ${b}`)); }
-    if (bear.length) { L.push('', '【利空】', ...bear.map((b, i) => `${i + 1}. ${b}`)); }
-    if (r.takeaway) { L.push('', `📌 启示：${r.takeaway}`); }
-    if (r.df_take) { L.push('', '【DeepFocus 视角 · 独家点评】', r.df_take); }
-    L.push('', '——————————', `DeepFocus 终端 · AI 速读 · 提前发现`, site);
+    const conclusion = r.one_liner || (compactReport ? r.summary : '');
+    if (conclusion) { L.push(''); L.push(compactReport ? `💡 ${conclusion}` : `【核心结论】${conclusion}`); }
+    if (r.summary && r.summary.trim() !== (conclusion || '').trim()) { L.push('', compactReport ? '【综合综述】' : '【事件摘要】', r.summary); }
+    if (logicLines.length) {
+      L.push('', compactReport ? `【DeepFocus 视角 · ${logicLines.length}条独立逻辑线】` : '【关键信息链 · 仅列原文明确内容】');
+      logicLines.forEach((line, i) => {
+        L.push(`${i + 1}. ${line.title || `逻辑线 ${i + 1}`}`);
+        if (line.evidence) L.push(`事实：${line.evidence}`);
+        if (line.chain) L.push(`${compactReport ? '传导' : '关联'}：${line.chain}`);
+        if (line.impact) L.push(`影响：${line.impact}`);
+        if (line.watch) L.push(`验证：${line.watch}`);
+      });
+    }
+    if (r.core_logic) { L.push('', compactReport ? '【核心逻辑】' : '【影响逻辑】', r.core_logic); }
+    if (bull.length) { L.push('', compactReport ? '【关键利好】' : '【积极因素（原文）】', ...bull.map((b, i) => `${i + 1}. ${b}`)); }
+    if (bear.length) { L.push('', compactReport ? '【主要风险】' : '【风险与不确定性】', ...bear.map((b, i) => `${i + 1}. ${b}`)); }
+    if (!compactReport && r.takeaway) { L.push('', `📌 关注重点：${r.takeaway}`); }
+    L.push('', '——————————', compactReport ? 'DeepFocus 终端 · AI 速读 · 提前发现' : 'DeepFocus 终端 · AI 新闻简报', site);
     const text = L.join('\n');
     try {
       if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); }
@@ -2864,7 +4281,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setAiTextCopied(true); window.setTimeout(() => setAiTextCopied(false), 1800);
       pingMetric('copy_text'); logAct('copy', aiReport?.title); showToast('✅ 已复制文字');
     } catch { setAiTextCopied(false); showToast('⚠️ 复制失败，请手动选择文本'); }
-  }, [aiResult, aiReport, pingMetric, logAct, showToast]);
+  }, [aiResult, aiDeepDraft, aiReport, aiReportMeta, pingMetric, logAct, showToast]);
 
   // ---- 命令面板远程搜索(去抖)----
   // 统一搜索：股票之外顺带聚合 快讯/研报/板块/名词学堂（/api/search/universal，端点缺失时优雅回退纯股票搜索）——
@@ -2897,38 +4314,117 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const mergeMessages = useCallback((incoming: RealtimeMessageRecord[]) => {
     setMessages(prev => {
-      const fresh = incoming.filter(m => m && !seen.current.has(m.id));
+      const allowed = incoming.filter(m => m && !isTradeAlphaMessage(m));
+      const fresh = allowed.filter(m => m && !seen.current.has(m.id));
       // 已见 id 的重广播 = 字段更新（如 AI 情绪回填升级标签）→ 原地替换
-      const updates = incoming.filter(m => m && seen.current.has(m.id));
+      const updates = allowed.filter(m => m && seen.current.has(m.id));
       let next = prev;
       if (updates.length) {
         const byId = new Map(updates.map(m => [m.id, m]));
         next = next.map(m => byId.get(m.id) || m);
       }
-      if (!fresh.length) return updates.length ? next : prev;
+      if (!fresh.length) {
+        if (updates.length) saveCachedFeed(next);
+        return updates.length ? next : prev;
+      }
       fresh.forEach(m => seen.current.add(m.id));
-      return [...fresh, ...next].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, MAX_KEEP);
+      const merged = [...fresh, ...next].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, MAX_KEEP);
+      saveCachedFeed(merged);
+      return merged;
     });
   }, []);
   const loadInitial = useCallback(async () => {
     try {
-      const initial = await listRealtimeMessages({ limit: 150 });
-      seen.current = new Set(initial.map(m => m.id));
-      setMessages([...initial].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, MAX_KEEP));
+      const initial = (await listRealtimeMessages({ limit: 150 })).filter(m => !isTradeAlphaMessage(m));
+      initial.forEach(message => seen.current.add(message.id));
+      setMessages(previous => {
+        const byId = new Map([...previous, ...initial].map(message => [message.id, message]));
+        const sorted = Array.from(byId.values())
+          .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+          .slice(0, MAX_KEEP);
+        saveCachedFeed(sorted);
+        return sorted;
+      });
+      markFeedSynced();
       setFeedLoadError(false);
     } catch { setFeedLoadError(true); } finally { setFeedBooted(true); }  // 首批拉取结束（成败皆算）→ 撤掉骨架屏
-  }, []);
+  }, [markFeedSynced]);
   useEffect(() => {
     loadInitial();
     // 实时信号同时喂两条线：①渲染快讯列表；②盯盘召回——自选股出快讯/异动时把用户叫回来。
     // evaluateAndNotify 内部按最新偏好自判：未开启盯盘(browserEnabled=false)时为廉价空操作，
     // 开启后仅对自选命中 + 级别匹配 + 标签页不可见时弹一次(模块级去重)。读 watchlistRef 取最新自选。
-    const stream = createRealtimeMessageStream({
-      onMessage: m => { mergeMessages([m]); evaluateAndNotify(m, watchlistRef.current); },
-      onStatus: setStatus,
-    });
-    return () => stream.close();
-  }, [loadInitial, mergeMessages]);
+    let stream: { close: () => void } | null = null;
+    const openStream = () => {
+      if (document.visibilityState === 'hidden') {
+        setStatus('paused');
+        return;
+      }
+      stream?.close();
+      stream = createRealtimeMessageStream({
+        onMessage: m => {
+          if (isTradeAlphaMessage(m)) return;
+          const isFresh = !seen.current.has(m.id);
+          mergeMessages([m]);
+          setFeedLoadError(false);
+          evaluateAndNotify(m, watchlistRef.current);
+          if (isFresh) showNewsPopup(m);
+        },
+          onStatus: nextStatus => {
+            setStatus(nextStatus);
+            if (nextStatus === 'live') {
+              markFeedSynced();
+              setFeedLoadError(false);
+            } else if (nextStatus === 'error' || nextStatus === 'closed') {
+              setFeedLoadError(true);
+            }
+          },
+      });
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stream?.close();
+        stream = null;
+        setStatus('paused');
+      } else {
+        openStream();
+      }
+    };
+    openStream();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stream?.close();
+      stream = null;
+    };
+  }, [loadInitial, markFeedSynced, mergeMessages, showNewsPopup]);
+
+  // 市场快讯不能只依赖 SSE：用户从其它工作区点进来时，实时流可能尚未完成首连，
+  // 这时首屏会短暂拿不到任何消息。切到「市场快讯」立即按 topic 补拉并合并进同一消息池，
+  // 同时用请求序号忽略用户快速切换产生的过期响应，避免旧结果覆盖当前视图。
+  const loadFastNews = useCallback(async () => {
+    const requestId = fastNewsRequestRef.current + 1;
+    fastNewsRequestRef.current = requestId;
+    setFastNewsLoading(true);
+    setFeedLoadError(false);
+    try {
+      const result = (await listRealtimeMessages({ topic: '快讯', limit: 200 }))
+        .filter(message => !isTradeAlphaMessage(message));
+      if (requestId !== fastNewsRequestRef.current) return;
+      mergeMessages(result);
+      markFeedSynced();
+      setFeedLoadError(false);
+    } catch {
+      if (requestId === fastNewsRequestRef.current && messagesRef.current.length === 0) setFeedLoadError(true);
+    } finally {
+      if (requestId === fastNewsRequestRef.current) setFastNewsLoading(false);
+    }
+  }, [markFeedSynced, mergeMessages]);
+
+  useEffect(() => {
+    if (sideNavKey !== 'market' || feedFilter !== '快讯') return;
+    void loadFastNews();
+  }, [feedFilter, fastNewsRefresh, loadFastNews, sideNavKey]);
 
   // 离线召回补订阅:对「已开启盯盘 + 已授权通知」的用户(尤其 Web Push/VAPID 上线前点过盯盘的老用户),
   // 打开页面即静默补上 Web Push 订阅(subscribeWebPush 幂等、失败安静)。这是把关页用户叫回来的命脉,
@@ -2948,13 +4444,55 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 用于角标真实计数 + 「文章」标签展示全部，而非只展示混进窗口的那几篇。
   const [articles, setArticles] = useState<RealtimeMessageRecord[]>([]);
   const loadArticles = useCallback(async () => {
-    try { setArticles(await listRealtimeMessages({ topic: '文章', limit: 200 })); } catch { /* */ }
-  }, []);
+    try {
+      setArticles((await listRealtimeMessages({ topic: '文章', limit: 200 })).filter(m => !isTradeAlphaMessage(m)));
+      markFeedSynced();
+    } catch { /* 保留上一批文章，下一轮自动重试 */ }
+  }, [markFeedSynced]);
   useEffect(() => {
     loadArticles();
-    const t = window.setInterval(loadArticles, 120000);
+    // 文章通常不走快讯 SSE，按分钟校对一次，避免“全部/精选/自选”视图滞后两分钟。
+    const t = window.setInterval(loadArticles, 60000);
     return () => window.clearInterval(t);
   }, [loadArticles]);
+  // 文章/研报来自各自的轮询接口，不一定经过快讯 SSE；用首次快照建立基线，后续新增条目复用同一弹窗筛选。
+  const articlePopupSeenRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const initial = articlePopupSeenRef.current.size === 0;
+    articles.forEach(article => {
+      const id = String(article.id || `${article.created_at}-${article.title}`);
+      if (initial || articlePopupSeenRef.current.has(id)) {
+        articlePopupSeenRef.current.add(id);
+        return;
+      }
+      articlePopupSeenRef.current.add(id);
+      showNewsPopup(article);
+    });
+  }, [articles, showNewsPopup]);
+  const reportPopupSeenRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const initial = reportPopupSeenRef.current.size === 0;
+    reports.forEach(report => {
+      const key = String(report.id || report.file_id || `${report.created_at}-${report.title}`);
+      if (initial || reportPopupSeenRef.current.has(key)) {
+        reportPopupSeenRef.current.add(key);
+        return;
+      }
+      reportPopupSeenRef.current.add(key);
+      showNewsPopup({
+        id: `report:${key}`,
+        title: report.title || '研报更新',
+        content: [report.org, report.hashtag, ...(report.instruments || [])].filter(Boolean).join(' · ').slice(0, 260),
+        topic: '研报',
+        severity: 'info',
+        symbol: report.instruments?.[0] || null,
+        tags: report.instruments || [],
+        metadata: { org: report.org, instruments: report.instruments || [] },
+        created_at: report.created_at || report.date || new Date().toISOString(),
+        url: report.preview_url || null,
+      });
+    });
+  }, [reports, showNewsPopup]);
 
   const personalization = useMemo(() => {
     const pool = dedupeMessages([...dedupedMessages, ...articles])
@@ -3044,9 +4582,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       try {
         const since = latestTsRef.current;
         const latest = await listRealtimeMessages(since ? { since, limit: 60 } : { limit: 60 });
-        if (!cancelled && latest.length) mergeMessages(latest);
-      } catch { /* 忽略，下轮重试 */ }
+        if (!cancelled) {
+          markFeedSynced();
+          // 增量轮询只要成功返回，就说明资讯接口已经恢复；否则首次失败留下的错误态
+          // 会一直占着首屏，直到用户手动刷新或重新切换模块。
+          setFeedLoadError(false);
+          if (latest.length) mergeMessages(latest);
+        }
+      } catch {
+        if (!cancelled) setFeedLoadError(true);
+      }
     };
+    // 首次请求和 SSE 建连是并行的；给首批请求一次短暂的自动补偿，避免刚点进市场快讯
+    // 时恰好撞上后端冷启动/网络抖动，只能靠用户手动刷新才能看到内容。
+    const bootstrapRetry = window.setTimeout(() => poll(true), 1200);
     const timer = window.setInterval(() => poll(), 5000);
     const onVisible = () => { if (document.visibilityState === 'visible') poll(true); };  // 回前台立即校对，不受放缓约束
     const onOnline = () => poll(true);
@@ -3055,11 +4604,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     window.addEventListener('focus', onVisible);
     return () => {
       cancelled = true; window.clearInterval(timer);
+      window.clearTimeout(bootstrapRetry);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('focus', onVisible);
     };
-  }, [mergeMessages]);
+  }, [markFeedSynced, mergeMessages]);
 
   // 何时改用「服务端取数」：搜索/选股时(全量历史检索)，或在「文章」标签(文章在实时流里稀疏，需按主题向服务器要)
   const useServerFeed = useMemo(() => newsSearching || feedFilter === '文章' || feedFilter === '自选', [newsSearching, feedFilter]);
@@ -3068,9 +4618,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const _aliasKey = newsAliases.join(',');
   useEffect(() => {
     if (!useServerFeed) { setSearchMsgs([]); setSearchLoading(false); return; }
-    setSearchLoading(true);
     let cancelled = false;
+    let firstRun = true;
+    let requestInFlight = false;
     const run = async () => {
+      if (cancelled || requestInFlight) return;
+      requestInFlight = true;
+      if (firstRun) setSearchLoading(true);
       try {
         const params: RealtimeMessageFilters = { limit: feedFilter === '自选' ? 400 : 200 };
         if (newsManual) params.q = newsManual;
@@ -3078,13 +4632,43 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         else if (_aliasKey) params.anyq = _aliasKey;
         if (feedFilter === '文章' || feedFilter === '快讯') params.topic = feedFilter;
         const r = await listRealtimeMessages(params);
-        if (!cancelled) setSearchMsgs(r);
-      } catch { if (!cancelled) setSearchMsgs([]); }
-      finally { if (!cancelled) setSearchLoading(false); }
+        if (!cancelled) {
+          setSearchMsgs(r);
+          markFeedSynced();
+        }
+      } catch {
+        // 定时校对失败时保留上一批文章，避免一次短暂网络抖动把“深度文章”清成空白；
+        // 只有首次加载失败才回到空结果态，由页面的加载/重试提示接管。
+        if (!cancelled && firstRun) setSearchMsgs([]);
+      }
+      finally {
+        if (!cancelled && firstRun) setSearchLoading(false);
+        firstRun = false;
+        requestInFlight = false;
+      }
     };
     const t = window.setTimeout(run, newsManual ? 300 : 0);  // 手输去抖；选股/切标签即时
-    return () => { cancelled = true; window.clearTimeout(t); };
-  }, [useServerFeed, newsManual, _aliasKey, feedFilter, watchlistAliasKey]);
+    // 「深度文章」不经过快讯 SSE，首次请求后必须继续校对；否则用户停留在该页时
+    // 新文章要等到手动切换标签/刷新页面才出现。手动关键词搜索不轮询，避免覆盖用户正在看的结果。
+    const articleTimer = feedFilter === '文章' && !newsManual
+      ? window.setInterval(() => { void run(); }, 60000)
+      : undefined;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && feedFilter === '文章' && !newsManual) void run();
+    };
+    const onOnline = () => {
+      if (feedFilter === '文章' && !newsManual) void run();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      if (articleTimer !== undefined) window.clearInterval(articleTimer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [useServerFeed, newsManual, _aliasKey, feedFilter, watchlistAliasKey, markFeedSynced]);
 
   const feed = useMemo(() => {
     if (feedFilter === '自选') return watchlistFeed;   // 自选 tab：匹配自选股的快讯/文章，时间倒序
@@ -3092,6 +4676,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     // 服务端取数态用服务端结果；常态(ALL/快讯)用实时流已加载消息
     let base = (useServerFeed ? dedupeMessages(searchMsgs) : dedupedMessages)
       .filter(m => m.topic !== '信号' && m.source_type !== 'dao-signal' && m.topic !== '研报');
+    // 文章同时有“按 topic 的服务端结果”和常驻文章快照两条来源；合并后即使其中一条
+    // 短暂超时，另一条仍能把新文章及时呈现出来。选股/关键词检索态不合并，避免串入无关文章。
+    if (feedFilter === '文章' && !newsSearching) {
+      // 翻页回源的更旧批次一起并入：searchMsgs 只有最新 ~200 条，翻页靠 articleHistory 向历史延伸。
+      const pool = articles.length ? [...base, ...articles] : base;
+      base = dedupeMessages([...pool, ...articleHistory]).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    }
     if (feedFilter === 'all' || feedFilter === '精选') {
       // 「全部」浏览态 = 实时流(快讯+文章) ∪ 全量文章（文章在窗口里稀疏，并入后口径一致）。
       // ⚠ 搜索/选股态绝不并入：searchMsgs 已是服务端按关键词过滤的结果，再混入未过滤的全量文章
@@ -3103,7 +4694,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       base = base.filter(m => m.topic === feedFilter);
     }
     return base;
-  }, [dedupedMessages, searchMsgs, useServerFeed, feedFilter, watchlistFeed, articles, newsSearching, personalization.items]);
+  }, [dedupedMessages, searchMsgs, useServerFeed, feedFilter, watchlistFeed, articles, newsSearching, personalization.items, articleHistory]);
 
   // 资讯列表（ALL/快讯/文章 排除已置顶头条；自选 tab 与选股/搜索态显示全部命中）
   const newsRows = useMemo(
@@ -3126,6 +4717,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     // 离开第 1 页 → 冻结此刻最新时间为锚点(没有则用首行时间);回到第 1 页 → 解冻恢复实时
     if (p <= 1) setFeedAnchor(null);
     else setFeedAnchor(prev => prev || (newsRows[0]?.created_at || null));
+    // 文章标签：服务端快照只有最新 ~200 条，按 before 游标向历史补拉更旧批次
+    // (不写进 searchMsgs——60s 定时校对会整体替换它，历史批次会被冲掉)
+    if (feedFilter === '文章' && !newsSearching && p * pageSize > newsRows.length && !articleHistDone && !histLoading) {
+      setHistLoading(true);
+      try {
+        const oldest = newsRows.length ? newsRows[newsRows.length - 1].created_at : undefined;
+        const older = await listRealtimeMessages({ topic: '文章', ...(oldest ? { before: oldest } : {}), limit: 200 });
+        const known = new Set([...searchMsgs, ...articles, ...articleHistory].map(m => m.id));
+        const fresh = older.filter(o => !known.has(o.id));
+        if (fresh.length) setArticleHistory(prev => dedupeMessages([...prev, ...older]));
+        // <200 或回源没带来任何新行(全是重复) → 标记到底,避免「下一页」点了没反应卡死
+        if (older.length < 200 || fresh.length === 0) setArticleHistDone(true);
+      } catch { /* 下轮再试 */ } finally { setHistLoading(false); }
+    }
     if (!useServerFeed && p * pageSize > newsRows.length && !histDone && !histLoading) {
       setHistLoading(true);
       try {
@@ -3139,10 +4744,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       } catch { /* 下轮再试 */ } finally { setHistLoading(false); }
     }
     setNewsPage(Math.max(1, p));
-  }, [useServerFeed, pageSize, newsRows, histDone, histLoading, messages, mergeMessages]);
+  }, [feedFilter, newsSearching, useServerFeed, pageSize, newsRows, histDone, histLoading, articleHistDone, articleHistory, searchMsgs, articles, messages, mergeMessages]);
 
-  // 切换标签/搜索/选股/改每页 时，资讯回到第 1 页(并解冻锚点)
-  useEffect(() => { setNewsPage(1); setFeedAnchor(null); }, [feedFilter, newsManual, active, pageSize]);
+  // 切换标签/搜索/选股/改每页 时，资讯回到第 1 页(并解冻锚点)；文章历史批次随之作废重拉
+  useEffect(() => { setNewsPage(1); setFeedAnchor(null); setArticleHistory([]); setArticleHistDone(false); }, [feedFilter, newsManual, active, pageSize]);
   // 资讯搜索：去抖后记一条流水（≥2 字，避免逐键噪音）
   useEffect(() => {
     const q = newsQuery.trim();
@@ -3159,14 +4764,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 机构纪要：用户拍板放开给所有人含匿名(2026-07-06)——不需登录即可见；名人观点仍限白名单。
   // (后端匿名只给缓存首页护共享星球 cookie；登录用户完整搜索/翻页)
   const canViewZsxq = true;
-  // 一级按用户任务分；深度文章 / 机构纪要 / 投行研报收进「研究」二级，避免七种内容同层竞争。
-  const researchFeedFilters = [
-    RESEARCH_FEED_FILTERS[0],
-    ...(canViewZsxq ? [RESEARCH_FEED_FILTERS[1]] : []),
-    RESEARCH_FEED_FILTERS[2],
-    ...(isCelebUser ? [{ key: '名人观点', label: '名人观点' }] : []),
-  ];
-  const isResearchGroup = researchFeedFilters.some(f => f.key === feedFilter);
   const isCelebrity = isCelebUser && feedFilter === '名人观点';  // 非白名单恒 false（防 localStorage 残留越权）
   const isZsxqStream = canViewZsxq && feedFilter === '机构纪要'; // 机构调研纪要帖子流（所有登录用户）
 
@@ -3194,27 +4791,34 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // 研报行（研报 tab 与 ALL 选股态共用）
   const renderResearchRow = (r: ResearchWireItem, isHead = false) => (
-    <div key={r.id + r.filename} className={`bbt-rrow${isHead ? ' bbt-rrow--pin' : ''}`} onClick={() => runAiAnalysis(r)} title="点开 AI 解读">
+    <div key={r.id + r.filename} className={`bbt-rrow${isHead ? ' bbt-rrow--pin' : ''}`} onClick={() => runAiAnalysis(r)} title="AI解析研报">
       <span className="bbt-rdate">{isHead ? <><span className="bbt-pin-badge">★ 头条</span><span className="bbt-rdate-d">{(r.date || fmtReportDate(r.created_at) || '').slice(-5)}</span></> : (r.date || fmtReportDate(r.created_at))}</span>
       <span className="bbt-rmid"><span className="bbt-rtitle">{stripUrls(r.title) || r.title}</span>{instChips(r.instruments)}</span>
       <span className="bbt-nact">
         <button className={'bbt-nbm' + (bookmarks.has(bmId(r)) ? ' on' : '')} aria-label="收藏" aria-pressed={bookmarks.has(bmId(r))} title={bookmarks.has(bmId(r)) ? '取消收藏' : '收藏'} onClick={e => { e.stopPropagation(); toggleBookmark(r, '研报'); }}>{bookmarks.has(bmId(r)) ? '★' : '☆'}</button>
-        <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); runAiAnalysis(r); }}>AI 解读</button>
+        <button className="bbt-nai" title="AI解析研报" onClick={e => { e.stopPropagation(); runAiAnalysis(r); }}>AI解析</button>
         {r.preview_url && canViewResearchOriginal && <button className="bbt-nsrc" title="查看研报原文 PDF（会员）" disabled={pdfLoadingUrl === r.preview_url} onClick={e => { e.stopPropagation(); openResearchOriginal(r.preview_url); }}>{pdfLoadingUrl === r.preview_url ? '加载中…' : '原文'}</button>}
       </span>
     </div>
   );
 
   // 头条行（快讯/文章/研报通用）
+  const openArticleContent = useCallback((m: RealtimeMessageRecord) => {
+    requireMember(() => {
+      logAct('open_news', m.title);
+      void loadArticleText(m);
+    }, '开通会员即可读全文原文');
+  }, [requireMember, logAct, loadArticleText]);
+
   const headlineRow = (kind: 'kx' | 'wz' | 'yb', m: any) => {
     const tag = kind === 'kx' ? '快讯' : kind === 'wz' ? '文章' : '研报';
     // 时间与非头条一致：快讯/文章=发布时刻 HH:MM:SS（前导列）；研报=日期 MM-DD
     const time = kind === 'yb'
       ? ((m.date || fmtReportDate(m.created_at) || '').length >= 10 ? (m.date || '').slice(5) : (m.date || fmtReportDate(m.created_at) || ''))
       : fmtTimeSmart(m.created_at);
-    const onClick = kind === 'yb' ? () => runAiAnalysis(m) : kind === 'wz' ? () => runNewsAi(m) : () => copyNews(m);
+    const onClick = kind === 'yb' ? () => runAiAnalysis(m) : kind === 'wz' ? () => openArticleContent(m) : () => copyNews(m);
     return (
-      <div key={'hl-' + kind + (m.id || m.filename)} className={`bbt-nrow bbt-nrow--click bbt-nrow--pin pin-${kind}`} onClick={onClick} title={kind === 'kx' ? '点击复制' : '点开 AI 解读'}>
+      <div key={'hl-' + kind + (m.id || m.filename)} className={`bbt-nrow bbt-nrow--click bbt-nrow--pin pin-${kind}`} onClick={onClick} title={kind === 'kx' ? '点击复制' : kind === 'wz' ? '点开原文' : 'AI解析研报'}>
         <span className="bbt-pin-badge">★ 头条</span>
         <span className="bbt-ntime">{time}</span>
         <span className={`bbt-htag c-${kind}`}>{tag}</span>
@@ -3228,11 +4832,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           {kind === 'kx'
             ? <button className="bbt-nsrc" title="复制" onClick={e => { e.stopPropagation(); copyNews(m); }}>{copiedNewsId === m.id ? '✓' : '复制'}</button>
             : <>
-                <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); kind === 'yb' ? runAiAnalysis(m) : runNewsAi(m); }}>AI 解读</button>
+                <button className="bbt-nai" title={kind === 'yb' ? 'AI解析研报' : 'AI 解读'} onClick={e => { e.stopPropagation(); kind === 'yb' ? runAiAnalysis(m) : runNewsAi(m); }}>{kind === 'yb' ? 'AI解析' : 'AI 解读'}</button>
                 {kind === 'yb' && m.preview_url && canViewResearchOriginal && <button className="bbt-nsrc" title="查看研报原文 PDF（会员）" disabled={pdfLoadingUrl === m.preview_url} onClick={e => { e.stopPropagation(); openResearchOriginal(m.preview_url); }}>{pdfLoadingUrl === m.preview_url ? '加载中…' : '原文'}</button>}
                 {kind === 'wz' && (articleOriginalUrl(m)
                   ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
-                  : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button> : null))}
+                  : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); openArticleContent(m); }}>全文</button> : null))}
                 {/* 头条文章也可分享（与普通文章行一致：公开落地页 /article/{id} 软墙引流）；研报不给分享(第三方版权) */}
                 {kind === 'wz' && (
                   <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
@@ -3277,29 +4881,39 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     );
   };
 
-  // 查看原文：图片型原文(整篇截图) → 站内查看器(自动适配宽度、可读)；普通链接 → 新标签页打开
+  // 查看原文：统一走站内纯文字阅读器，不打开、更不展示 PDF 或图片文件。
   const openOriginal = (m: RealtimeMessageRecord) => {
-    requireMember(() => {
-      logAct('open_news', m.title);
-      const u = articleOriginalUrl(m);  // url 字段为空时兜底取正文里的链接(如飞书纪要)
-      if (isImageUrl(u)) setNewsPreview(u === m.url ? m : ({ ...m, url: u } as RealtimeMessageRecord));
-      else if (u) window.open(u, '_blank', 'noopener');
-      else setNewsPreview(m);
-    }, '开通会员即可读全文原文');
+    openArticleContent(m);
   };
 
   const renderNewsRow = (m: RealtimeMessageRecord, pinned = false, wlSyms?: string[], personalWhy?: string) => {
     const isFlash = (m.topic || '') === '快讯';
     const isArticle = (m.topic || '') === '文章';
-    const splitPreReadTitle = (isArticle || isFlash) && Boolean(
+    // 文章无论是否带 AI 预读元数据，都采用“标题 + 正文摘要”两层排版；
+    // 之前只有预读成功的文章才拆行，普通文章因此退化成标题正文连在一行。
+    const splitTitleBody = isArticle || (isFlash && Boolean(
       m.metadata?.display_title_pre_read || m.metadata?.article_pre_read
-    );
+    ));
     const canBookmark = (m.topic || '') === '文章';  // 快讯不收藏（用户拍板）；研报走独立的 renderResearchRow，不会传入这里
     const isBm = bookmarks.has(bmId(m));
+    const flashExpanded = isFlash && expandedFlashIds.has(m.id);
+    const toggleFlash = () => setExpandedFlashIds(prev => {
+      const next = new Set(prev);
+      if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+      return next;
+    });
     return (
-      <div key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}${personalWhy ? ' bbt-nrow--personal' : ''}`}
-        onClick={() => { learnFromMessage(m); return isFlash ? copyNews(m) : runNewsAi(m); }}
-        title={isFlash ? '点击复制' : '点开 AI 解读'}>
+      <article key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${isArticle ? ' bbt-nrow--article' : ''}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}${personalWhy ? ' bbt-nrow--personal' : ''}`}
+        tabIndex={0}
+        aria-label={`${isFlash ? '快讯' : '资讯'}：${stripUrls(m.title) || m.title}`}
+        onKeyDown={event => {
+          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+          event.preventDefault();
+          learnFromMessage(m);
+          if (isFlash) copyNews(m); else openArticleContent(m);
+        }}
+        onClick={() => { learnFromMessage(m); return isFlash ? copyNews(m) : openArticleContent(m); }}
+        title={isFlash ? '点击正文展开/收起；点击其它区域复制' : '点开原文'}>
         {pinned && <span className="bbt-pin-badge">★ 头条</span>}
         {wlSyms && wlSyms.length > 0 && <span className="bbt-wl-badge" title={`点击查看 ${nameOf(wlSyms[0])}`} onClick={e => { e.stopPropagation(); selectStock(wlSyms[0]); }}>★ 自选 {wlSyms.slice(0, 2).map(s => nameOf(s)).join('·')}{wlSyms.length > 2 ? ` +${wlSyms.length - 2}` : ''}</span>}
         <span className="bbt-ntime">{fmtTimeSmart(m.created_at)}</span>
@@ -3314,20 +4928,44 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-ntopic">{`{${m.topic || '资讯'}}`}</span>
         {personalWhy && <span className="bbt-personal-why">{personalWhy}</span>}
         {(() => {
-          const t = stripUrls(m.title) || m.title;
+          const rawTitle = stripUrls(m.title) || m.title;
+          const t = isArticle
+            ? (stripUrls(String(m.metadata?.article_pre_read_title || rawTitle)).trim() || rawTitle)
+            : rawTitle;
           // 专题聚合稿：正文以样板头(财经新闻专题|日期/导读摘要…)开场，直接接在标题后=一坨噪音 → 取导读首条当预览
-          const tail = isDigestArticle(m) ? digestLede(m.content) : newsBodyTail(t, stripUrls(m.content));
-          // 快讯没有「全文/AI解读」按钮兜底，这条预览就是唯一能读到内容的地方 → 全量显示，不截断；
-          // 文章/研报已有按钮可展开全文，这里仍截断省版面，但要带省略号，别让人误以为内容就到此为止。
-          const shown = isFlash || tail.length <= 100 ? tail : tail.slice(0, 100) + '…';
+          const metadataSummary = isArticle ? stripUrls(String(m.metadata?.article_pre_read_summary || '')).trim() : '';
+          const tail = metadataSummary || (isDigestArticle(m) ? digestLede(m.content) : newsBodyTail(t, stripUrls(m.content)));
+          // 快讯正文默认收起，点击正文或「展开」再看全文；文章/研报已有按钮可展开全文，这里只保留短预览。
+          const flashHasMore = isFlash && tail.length > 120;
+          const shown = isFlash
+            ? (flashExpanded || !flashHasMore ? tail : tail.slice(0, 120).trimEnd() + '…')
+            : (tail.length <= 100 ? tail : tail.slice(0, 100) + '…');
           return (
-            <span className={`bbt-ntext${splitPreReadTitle ? ' bbt-ntext--article' : ''}`}>
-              <span className={splitPreReadTitle ? 'bbt-ntitle' : undefined}>{t}</span>
+            <span
+              className={`bbt-ntext${splitTitleBody ? ' bbt-ntext--article' : ''}${isFlash && flashHasMore ? ' bbt-ntext--flash' : ''}`}
+              onClick={isFlash && flashHasMore ? e => { e.stopPropagation(); toggleFlash(); } : undefined}
+            >
+              <span className={splitTitleBody ? 'bbt-ntitle' : undefined}>{t}</span>
               {shown && (
-                <span className={splitPreReadTitle ? 'bbt-npreview' : undefined}>{splitPreReadTitle ? shown : `　${shown}`}</span>
+                <span className={splitTitleBody ? 'bbt-npreview' : undefined}>{splitTitleBody ? shown : `　${shown}`}</span>
               )}
             </span>
           );
+        })()}
+        {isFlash && (() => {
+          const tail = isDigestArticle(m) ? digestLede(m.content) : newsBodyTail(stripUrls(m.title) || m.title, stripUrls(m.content));
+          return tail.length > 120 ? (
+            <button
+              type="button"
+              className="bbt-nexpand"
+              aria-expanded={flashExpanded}
+              onClick={e => { e.stopPropagation(); setExpandedFlashIds(prev => {
+                const next = new Set(prev);
+                if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+                return next;
+              }); }}
+            >{flashExpanded ? '收起正文 ▴' : '展开正文 ▾'}</button>
+          ) : null;
         })()}
         <span className="bbt-nact">
           {canBookmark && <button className={'bbt-nbm' + (isBm ? ' on' : '')} aria-label="收藏" aria-pressed={isBm} title={isBm ? '取消收藏' : '收藏'} onClick={e => { e.stopPropagation(); toggleBookmark(m); }}>{isBm ? '★' : '☆'}</button>}
@@ -3340,11 +4978,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           ) : (
             <>
               <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); runNewsAi(m); }}>AI 解读</button>
-              {/* 文章：有外链→"原文"新标签；无外链→"全文"站内阅读器(文章始终显示，内容空时至少能看标题)。研报走独立的 renderResearchRow，不会传入这里 */}
+              {/* 文章原文统一进入站内纯文字阅读器；研报仍走独立的 renderResearchRow。 */}
               {articleOriginalUrl(m)
                 ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
                 : (m.topic === '文章'
-                  ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); requireMember(() => { logAct('open_news', m.title); setNewsPreview(m); }, '开通会员即可读全文原文'); }}>全文</button>
+                  ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); openArticleContent(m); }}>全文</button>
                   : null)}
               {/* 文章分享：链接指向公开落地页 /article/{id}（软墙，全文会员专享）。span 兜住冒泡，不触发整行的 AI 解读 */}
               {m.topic === '文章' && (
@@ -3373,7 +5011,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </>
           )}
         </span>
-      </div>
+      </article>
     );
   };
 
@@ -3454,12 +5092,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const activeName = active ? nameOf(active) : null;
 
   const paletteCommands = [
-    { id: 'news', label: 'NEWS · 全部资讯', run: () => { setFeedFilter('all'); setActive(null); } },
-    { id: 'kx', label: '快讯 · 只看快讯', run: () => setFeedFilter('快讯') },
-    { id: 'wz', label: '文章 · 只看文章', run: () => setFeedFilter('文章') },
-    { id: 'risk', label: 'RISK · 跨市场风险预警', run: () => { setRiskRadarOpen(true); logAct('tab', 'risk-radar'); } },
-    { id: 'quant', label: 'QUANT · QuantLab 量化系统', run: () => requireLogin(() => openQuantLab(), '使用 QuantLab 量化系统') },
-    { id: 'clr', label: 'CLR · 清除标的/筛选', run: () => { setActive(null); setFeedFilter('all'); } },
+    { id: 'news', label: 'NEWS · 市场快讯', run: () => { setSideNavKey('market'); setFeedFilter('快讯'); setActive(null); } },
+    { id: 'kx', label: '快讯 · 只看快讯', run: () => { setSideNavKey('market'); setFeedFilter('快讯'); } },
+    { id: 'wz', label: '文章 · 深度文章', run: () => { setSideNavKey('articles'); setFeedFilter('文章'); } },
+    { id: 'note', label: '纪要 · 机构纪要', run: () => { setSideNavKey('notes'); setFeedFilter('机构纪要'); } },
+    { id: 'yb', label: '研报 · 投行研报', run: () => { setSideNavKey('reports'); setFeedFilter('研报'); } },
+    { id: 'risk', label: 'RISK · 跨市场风险预警', run: () => openSideTool('risk') },
+    { id: 'quant', label: 'QUANT · QuantLab 量化系统', run: () => openSideTool('strategy') },
+    { id: 'clr', label: 'CLR · 清除标的/筛选', run: () => { setSideNavKey('market'); setActive(null); setFeedFilter('快讯'); } },
   ];
   const pqLow = pq.trim().toLowerCase();
   // 空查询时不堆自选/命令(否则"搜索添加"一打开先列一堆已有股，像在跳转而非添加)；输入后才出匹配
@@ -3490,7 +5130,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const rec = n as RealtimeMessageRecord;
         // 文章全文会员专享（2026-08-07）：过会员门后按 id 拉单条（后端对非会员裁剪，不会泄漏）；快讯照旧直接预览
         if ((rec.topic || '') === '文章') {
-          requireMember(() => { void getRealtimeMessageById(rec.id).then(full => setNewsPreview(full || rec)); }, '开通会员阅读文章全文');
+          requireMember(() => { void getRealtimeMessageById(rec.id).then(full => { void loadArticleText(full || rec); }); }, '开通会员阅读文章全文');
           return;
         }
         setNewsPreview(rec);
@@ -3524,8 +5164,64 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     : (authUser && trialClaimable) ? 'trial-claim'
     : null;
 
+  // 侧边栏是工作区切换，不是页内锚点：先切换视图，再等一帧把对应模块
+  // 放到内容区顶部，避免 smooth scroll 停在旧页面底部、露出页脚造成“模块串台”。
+  const focusSideModule = (key: string, nextFeed?: string) => {
+    setSideNavKey(key);
+    setSideNavOpen(false);
+    setSideToolsOpen(false);
+    if (nextFeed) setFeedFilter(nextFeed);
+    if (key === 'market' && nextFeed === '快讯') setFastNewsRefresh(value => value + 1);
+    window.setTimeout(() => {
+      const target = key === 'ai' ? aiWorkspaceRef.current : key === 'review' ? reviewWorkspaceRef.current : key === 'risk' || key === 'strategy' ? toolWorkspaceRef.current : gridRef.current;
+      target?.scrollIntoView({ behavior: 'auto', block: 'start' });
+    }, 0);
+  };
+  const openSideTool = (key: 'risk' | 'strategy') => {
+    setActive(null);
+    setRiskRadarOpen(false);
+    setQuantLabOpen(false);
+    setSideNavKey(key);
+    setSideNavOpen(false);
+    setSideToolsOpen(true);
+    logAct('tab', key === 'risk' ? 'risk-radar' : 'quant-lab');
+    window.setTimeout(() => toolWorkspaceRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
+  };
+  const aiWorkspaceBusy = aiBusy || deepAnswerBusy;
+  const guestAiTrialUsed = !authUser && (guestAiTrialConsumed || aiQuotaLeft === 0);
+  const mobileNavView = getMobileNavView(sideNavKey, feedFilter);
+  const jumpFromMobileNav = (view: MobileNavView) => {
+    if (view === 'ai') {
+      openAi();
+      return;
+    }
+    setActive(null);
+    const target = getMobileNavTarget(view);
+    focusSideModule(target.sideNavKey, target.feedFilter);
+  };
+  const openMobileMore = () => {
+    // 底部「更多」是手机的功能抽屉，不应只打开侧栏导航；弹窗偏好、语音和新手引导都在这里。
+    setSideNavOpen(false);
+    setHelpMenuOpen(true);
+    logAct('mobile_nav', 'more');
+  };
+  const sidebarConnectionLabel = !browserOnline
+    ? '设备当前离线'
+    : status === 'live' && !feedLoadError
+      ? '行情/资讯连接正常'
+      : status === 'paused'
+        ? '后台暂停，回前台更新'
+        : status === 'connecting' || status === 'reconnecting'
+          ? '正在连接资讯服务'
+          : '资讯服务暂不可用';
+  const sidebarConnectionClass = !browserOnline || status === 'error' || status === 'closed' || feedLoadError
+    ? 'is-error'
+    : status === 'live'
+      ? 'is-live'
+      : 'is-pending';
+
   return (
-    <div className={`bbt${authUser ? '' : ' bbt--anon'}`}>
+    <div className={`bbt bbt-with-sidebar bbt-side-${sideNavKey}${authUser ? '' : ' bbt--anon'}${sideNavOpen ? ' bbt-side-open' : ''}${sideNavCollapsed ? ' bbt-side-collapsed' : ''}`}>
       {pdfLoadingUrl && (
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}}>
           <div style={{background:'#141e30',border:'1px solid #263348',borderRadius:12,padding:'28px 40px',textAlign:'center',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>
@@ -3538,11 +5234,66 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           </div>
         </div>
       )}
+      <aside className="bbt-side-nav" aria-label="主导航">
+        <div className="bbt-side-brand">
+          <span className="bbt-side-brand-mark" aria-hidden="true">稻</span>
+          <span className="bbt-side-brand-copy"><strong>稻财经</strong><small>DEEPFOCUS AI</small></span>
+        </div>
+        <button type="button" className="bbt-side-collapse" onClick={() => setSideNavCollapsed(value => !value)} aria-label={sideNavCollapsed ? '展开主导航' : '收起主导航'} title={sideNavCollapsed ? '展开主导航' : '收起主导航'}><span>{sideNavCollapsed ? '›' : '‹'}</span><b>{sideNavCollapsed ? '展开' : '收起'}</b></button>
+        <div className="bbt-side-kicker">主菜单</div>
+        <nav className="bbt-side-menu">
+          <button type="button" title="我的股票" className={`bbt-side-item${sideNavKey === 'stocks' ? ' active' : ''}`} onClick={() => focusSideModule('stocks', '自选')}>
+            <span className="bbt-side-icon">◌</span><span>我的股票</span><em>{watchlist.length}</em>
+          </button>
+          <button type="button" title="AI 对话" className={`bbt-side-item${sideNavKey === 'ai' ? ' active' : ''}`} onClick={() => focusSideModule('ai')}>
+            <span className="bbt-side-icon">✦</span><span>AI 对话</span><i>AI</i>
+          </button>
+        </nav>
+        <div className="bbt-side-divider" />
+        <div className="bbt-side-kicker">信息</div>
+        <nav className="bbt-side-menu">
+          <button type="button" title="市场快讯" className={`bbt-side-item${sideNavKey === 'market' ? ' active' : ''}`} onClick={() => { setActive(null); focusSideModule('market', '快讯'); }}>
+            <span className="bbt-side-icon">◈</span><span>市场快讯</span>
+          </button>
+          <button type="button" title="每日复盘" className={`bbt-side-item${sideNavKey === 'review' ? ' active' : ''}`} onClick={() => focusSideModule('review')}>
+            <span className="bbt-side-icon">◷</span><span>每日复盘</span>
+          </button>
+        </nav>
+        <div className="bbt-side-kicker bbt-side-kicker--nested">研究资料</div>
+        <nav className="bbt-side-menu bbt-side-research-menu">
+          <button type="button" title="深度文章" className={`bbt-side-item${sideNavKey === 'articles' ? ' active' : ''}`} onClick={() => focusSideModule('articles', '文章')}>
+            <span className="bbt-side-icon">▤</span><span>深度文章</span>
+          </button>
+          <button type="button" title="机构纪要" className={`bbt-side-item${sideNavKey === 'notes' ? ' active' : ''}`} onClick={() => focusSideModule('notes', '机构纪要')}>
+            <span className="bbt-side-icon">⌁</span><span>机构纪要</span>
+          </button>
+          <button type="button" title="投行研报" className={`bbt-side-item${sideNavKey === 'reports' ? ' active' : ''}`} onClick={() => focusSideModule('reports', '研报')}>
+            <span className="bbt-side-icon">▥</span><span>投行研报</span>
+          </button>
+        </nav>
+        {SHOW_SIDEBAR_TOOLS && <>
+          <div className="bbt-side-divider" />
+          <button type="button" className={`bbt-side-section-toggle${sideToolsOpen ? ' open' : ''}`} onClick={() => setSideToolsOpen(value => !value)} aria-expanded={sideToolsOpen}>
+            <span className="bbt-side-icon">⊞</span><span>工具</span><b>›</b>
+          </button>
+          {sideToolsOpen && <div className="bbt-side-submenu">
+            <button type="button" className={sideNavKey === 'risk' ? 'active' : ''} onClick={() => openSideTool('risk')}><span>◒</span>风险雷达</button>
+            <button type="button" className={sideNavKey === 'strategy' ? 'active' : ''} onClick={() => { openSideTool('strategy'); if (!authUser) { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); } }}><span>⌁</span>策略实验室</button>
+          </div>}
+        </>}
+        <div className="bbt-side-spacer" />
+        <div className={`bbt-side-status ${sidebarConnectionClass}`} title={`资讯连接状态 · 最近同步 ${formatSyncAge(feedSyncedAt)}`}><span className="bbt-side-status-dot" />{sidebarConnectionLabel}</div>
+        <AccentThemePicker compact />
+        <button type="button" className="bbt-side-foot" onClick={() => { setSideNavOpen(false); toggleTheme(); }}><span>{theme === 'dark' ? '☼' : '☾'}</span>{theme === 'dark' ? '浅色模式' : '深色模式'}</button>
+      </aside>
+      <button type="button" className="bbt-side-scrim" aria-label="关闭导航" onClick={() => setSideNavOpen(false)} />
       <div className="bbt-cmd">
+        <button type="button" className="bbt-side-toggle" aria-label="打开导航" aria-expanded={sideNavOpen} onClick={() => setSideNavOpen(value => !value)}>☰</button>
         <span className="bbt-brand">
-          <span className="bbt-cmd-key">DEEPFOCUS</span>
+          <span className="bbt-cmd-key">稻草财经</span>
           <span className="bbt-cmd-amber">金融终端</span>
-          <span className="bbt-cmd-tagline" title="实时快讯、自选盯盘与 AI 研判">实时快讯 · 自选盯盘 · AI 研判</span>
+          <span className="bbt-cmd-tagline" title="DeepFocus AI · 实时快讯、自选盯盘与 AI 研判">DeepFocus AI · 实时快讯 · 自选盯盘 · AI 研判</span>
+          <span className="bbt-mobile-brand" aria-label="稻草财经">稻草财经</span>
         </span>
         <nav className="bbt-cmd-nav" aria-label="主导航">
           <a href="/review" title="每个交易日自动生成的大盘复盘">每日复盘</a>
@@ -3550,10 +5301,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <a href="/articles" title="财经资讯文章">财经资讯</a>
           <a href="/ai-fund" title="AI 策略模拟盘业绩">策略业绩</a>
         </nav>
-        <span className="bbt-cmd-input" onClick={() => { setPaletteOpen(true); setPq(''); }} title="搜索股票、行业或资讯（点击，或按 /）"><span className="bbt-cmd-mag" aria-hidden="true">⌕</span>{active ? <b>{active} {activeName}</b> : <span className="bbt-cmd-ph">搜索股票、行业或资讯</span>}<span className="bbt-cmd-kbd">/</span></span>
+        <button type="button" className="bbt-cmd-input" onClick={() => { setPaletteOpen(true); setPq(''); }} aria-label="搜索股票、行业或资讯" title="搜索股票、行业或资讯（点击，或按 /）"><span className="bbt-cmd-mag" aria-hidden="true">⌕</span>{active ? <b>{active} {activeName}</b> : <span className="bbt-cmd-ph">搜索股票、行业或资讯</span>}<span className="bbt-cmd-kbd">/</span></button>
         <span className="bbt-cmd-right">
           <button className="bbt-review-entry bbt-aiqa-entry bbt-primary-action"
-            onClick={() => (canAskAi ? openAi() : requireLogin(openAi, 'AI 投研问答'))}
+            onClick={() => focusSideModule('ai')}
             title="AI 投研问答：自动调行情、估值、快讯、研报和复盘">✨ 问 AI</button>
           {membership?.tier !== 'lifetime' && (() => {
             const isMember = membership?.tier === 'premium';   // 已是尊享会员 → 显示「续费」（可能提前续期），永久会员不显示
@@ -3576,17 +5327,96 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <div className="bbt-acct-mask" onClick={() => setHelpMenuOpen(false)} />
                 <div className="bbt-acct-pop bbt-more-pop" onClick={e => e.stopPropagation()}>
                   <div className="bbt-more-mobile-head"><b>更多功能</b><button type="button" aria-label="关闭更多功能" onClick={() => setHelpMenuOpen(false)}>×</button></div>
+                  <div className="bbt-more-section">我的工作区</div>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); focusSideModule('stocks', '自选'); }}>◌ 我的股票{watchlist.length ? ` · ${watchlist.length} 只` : ''}</button>
                   <div className="bbt-more-section">研究工具</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openReview(); }}>📊 A股收盘复盘{authUser && checkin && checkin.streak > 0 ? ` · 连续 ${checkin.streak} 天` : ''}</button>
-                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setRiskRadarOpen(true); logAct('tab', 'risk-radar'); }}>🛡️ 跨市场风险预警 · A/H/美Top20</button>
-                  <button className="bbt-acct-row" onClick={() => requireLogin(() => openQuantLab(), '使用 QuantLab 量化系统')}>🧪 QuantLab 量化系统 · 信号/仓位/回测</button>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openSideTool('risk'); }}>🛡️ 跨市场风险预警 · A/H/美Top20</button>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openSideTool('strategy'); if (!authUser) { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); } }}>🧪 QuantLab 量化系统 · 信号/仓位/回测</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }}>🤖 AI 模拟盘</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_ontology', '投资本体'); window.location.href = '/ontology'; }}>🧬 决策本体</button>
                   {groupCfg?.enabled !== false && <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openGroup(); }}>💬 用户交流群{!groupSeen ? ' · 免费' : ''}</button>}
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }}>🎁 邀请好友{refAvail > 0 ? ` · ${refAvail} 份奖励` : ''}</button>
                   <div className="bbt-more-section">偏好与帮助</div>
+                  <button
+                    className="bbt-acct-row"
+                    onClick={toggleNativeBackground}
+                    disabled={!nativeBackgroundSupported() || nativeBackgroundBusy}
+                    title={nativeBackgroundSupported() ? '在 App 内一键申请通知权限并开启后台提醒；FCM 实时推送，轮询兜底' : '仅 Android App 支持后台常驻提醒'}
+                  >
+                    {nativeBackgroundSupported() ? (nativeBackgroundEnabled ? '🟢' : '⚪') : '📱'} 后台常驻提醒 · {nativeBackgroundSupported() ? (nativeBackgroundBusy ? '处理中…' : nativeBackgroundEnabled ? (nativeFcmRegistered ? '已开启 · FCM 实时' : nativeFcmToken ? '已开启 · FCM 注册中' : nativeBackgroundLastError ? '已开启 · 自动重试' : '已开启 · FCM 未配置，轮询兜底') : nativeBackgroundPermission === 'denied' ? '去开启通知权限' : '点击开启') : '仅安卓'}
+                  </button>
+                  {nativeBackgroundSupported() && nativeBackgroundEnabled && (
+                    <button className="bbt-acct-row" onClick={requestNativeBattery} title="打开系统电池优化设置，由你选择稻财经的后台策略">
+                      {nativeBatteryOptimizationIgnored ? '🔋' : '⚡'} 电池后台策略 · {nativeBatteryOptimizationIgnored ? '不受限制' : '打开系统设置'}
+                    </button>
+                  )}
+                  {FOREGROUND_NEWS_POPUP_ENABLED && <>
+                    <button
+                      className="bbt-acct-row"
+                      aria-expanded={newsPopupFilterOpen}
+                      onClick={() => setNewsPopupFilterOpen(open => !open)}
+                    >
+                      🔔 弹窗提醒 · {foregroundPopupModeLabel[newsPopupMode]} · {newsPopupTopics.length} 类{newsPopupKeywords.length ? ` · ${newsPopupKeywords.length} 个关键词` : ''}
+                    </button>
+                    {newsPopupFilterOpen && (
+                      <div className="bbt-popup-filter" onClick={event => event.stopPropagation()}>
+                      <div className="bbt-popup-filter-label">提醒级别</div>
+                      <div className="bbt-popup-mode-list" role="group" aria-label="弹窗提醒级别">
+                        {(['important', 'all', 'off'] as ForegroundPopupMode[]).map(mode => (
+                          <button
+                            key={mode}
+                            type="button"
+                            className={`bbt-popup-mode${newsPopupMode === mode ? ' is-active' : ''}`}
+                            aria-pressed={newsPopupMode === mode}
+                            onClick={() => {
+                              setNewsPopupMode(mode);
+                              LS.write('bbt.news_popup_mode.v1', mode);
+                              if (mode === 'off') setNewsPopupQueue([]);
+                              logAct('foreground_news_popup', mode);
+                            }}
+                          >{foregroundPopupModeLabel[mode]}</button>
+                        ))}
+                      </div>
+                      <div className="bbt-popup-filter-label">内容类型（可多选）</div>
+                      <div className="bbt-popup-topic-list" role="group" aria-label="弹窗内容类型">
+                        {FOREGROUND_POPUP_TOPICS.map(topic => (
+                          <button
+                            key={topic}
+                            type="button"
+                            className={`bbt-popup-topic${newsPopupTopics.includes(topic) ? ' is-active' : ''}`}
+                            aria-pressed={newsPopupTopics.includes(topic)}
+                            onClick={() => toggleNewsPopupTopic(topic)}
+                          >{newsPopupTopics.includes(topic) ? '✓ ' : ''}{foregroundPopupTopicLabel[topic]}</button>
+                        ))}
+                      </div>
+                      <div className="bbt-popup-filter-label">关键词（可多选，命中任意一个就弹窗）</div>
+                      <form className="bbt-popup-keyword-form" onSubmit={event => { event.preventDefault(); addNewsPopupKeywords(newsPopupKeywordInput); }}>
+                        <input
+                          value={newsPopupKeywordInput}
+                          onChange={event => setNewsPopupKeywordInput(event.target.value)}
+                          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addNewsPopupKeywords(newsPopupKeywordInput); } }}
+                          placeholder="如 AI、苹果、降息"
+                          aria-label="添加弹窗关键词"
+                          maxLength={40}
+                        />
+                        <button type="submit" disabled={!newsPopupKeywordInput.trim()}>添加</button>
+                      </form>
+                      {newsPopupKeywords.length > 0 ? (
+                        <div className="bbt-popup-keyword-chips" aria-label="已选关键词">
+                          {newsPopupKeywords.map(keyword => (
+                            <button key={keyword} type="button" className="bbt-popup-keyword-chip" onClick={() => removeNewsPopupKeyword(keyword)} title={`移除关键词 ${keyword}`}>
+                              {keyword} ×
+                            </button>
+                          ))}
+                        </div>
+                      ) : <div className="bbt-popup-filter-hint">未选择关键词 = 按内容类型接收全部匹配内容</div>}
+                      </div>
+                    )}
+                  </>}
                   {ttsSupported && <button className="bbt-acct-row" onClick={toggleTts}>{ttsOn ? '🔊 关闭快讯语音播报' : '🔈 开启快讯语音播报'}</button>}
                   <button className="bbt-acct-row" onClick={() => { logAct('theme', theme === 'dark' ? 'light' : 'dark'); toggleTheme(); }}>{theme === 'dark' ? '☀️ 切换到浅色主题' : '🌙 切换到深色主题'}</button>
+                  <AccentThemePicker />
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setShowHelp(true); }}>📖 产品说明书</button>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setShowOnb(true); }}>❔ 新手引导</button>
                 </div>
@@ -3662,7 +5492,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   </span>
                 );
               })()
-            : <button className="bbt-acct-in" title="登录解锁 AI 解读" onClick={() => { setAuthReason('AI 解读'); setAuthOpen(true); }}>登录</button>}
+            : <button className="bbt-acct-in" title="登录账号" onClick={() => { setAuthReason('登录'); setLoginDeepLink(true); setAuthOpen(true); }}>登录</button>}
         </span>
       </div>
 
@@ -3670,12 +5500,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       {!authUser && (
         <div className="bbt-hero">
           <div className="bbt-hero-inner">
-            <h1 className="bbt-hero-title">先看清你的股票，再决定下一步</h1>
-            <p className="bbt-hero-sub">把股票变化、关键资讯和市场风险收在一起；不需要先学会一堆工具。</p>
+            <h1 className="bbt-hero-title">今天先看什么</h1>
+            <p className="bbt-hero-sub">自选变化、市场快讯和 AI 研判，集中在一个工作台。</p>
             <div className="bbt-hero-ctas">
-              <button type="button" className="bbt-hero-cta bbt-hero-cta-primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 看看一只股票</button>
-              <button type="button" className="bbt-hero-cta" onClick={() => { setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>★ 看我的股票</button>
-              <a className="bbt-hero-cta" href="/review">📊 看今天市场</a>
+              <button type="button" className="bbt-hero-cta bbt-hero-cta-primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 搜索一只股票</button>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              <span style={HERO_PROOF_CHIP_STYLE}>自选有动静第一时间提醒</span>
+              <span style={HERO_PROOF_CHIP_STYLE}>晨报 / 复盘按交易日节律推送</span>
+              <span style={HERO_PROOF_CHIP_STYLE}>AI 问答带上下文、附件和证据</span>
             </div>
             <div className="bbt-hero-alt">想深入研究？直接问 AI；专业数据和策略工具收在「更多」里。</div>
           </div>
@@ -3685,18 +5518,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <section className="bbt-simple-start" aria-label="从这里开始">
         <div className="bbt-simple-start-copy">
           <span>从这里开始</span>
-          <h2>今天最值得你花时间看的，只有三件事</h2>
-          <p>先看和你有关的股票，再看市场；需要时再让 AI 帮你拆解。</p>
+          <h2>先看自选，再看市场，最后让 AI 把证据说透</h2>
+          <p>把最该处理的三件事排前面：我的股票、今天市场、我现在该问什么。</p>
         </div>
         <div className="bbt-simple-start-actions">
           <button type="button" onClick={() => { setActive(null); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-            <b>我的股票</b><span>发生了什么？</span>
+            <b>我的股票</b><span>看变化与风险</span>
           </button>
           <button type="button" onClick={() => openReview()}>
-            <b>今天市场</b><span>热点和风险在哪？</span>
+            <b>今天市场</b><span>晨报和复盘先看</span>
           </button>
           <button type="button" onClick={() => { openAi(); setAiInput('帮我用简单的话说说：我现在最该关注什么？'); }}>
-            <b>问 AI</b><span>用一句话问清楚</span>
+            <b>问 AI</b><span>带着上下文回答</span>
           </button>
         </div>
       </section>
@@ -3817,7 +5650,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             })()}
             {/* 查股→结论一步直达：AI 解读是产品的"哇时刻"，此前离主路径隔 3 步+重复输入 */}
             <button className="bbt-nai" title="让 AI 综合行情/估值/资金/研报速判这只股"
-              onClick={() => { openAi(); const q = `${nameOf(active) || active}(${active}) 现在怎么样？`; setAiInput(q); void askAi(q); }}>⚡ AI 速判</button>
+              onClick={() => {
+                openAi();
+                const q = `${nameOf(active) || active}(${active}) 现在怎么样？`;
+                setAiInput(q);
+                if (guestAiTrialUsed) requireLogin(() => void askAi(q), 'AI 投研问答');
+                else void askAi(q);
+              }}>⚡ AI 速判</button>
             {/* 取消选中已有两条路（资讯面板筛选 chip 上的 ✕、再点一次已选中的自选行），这里不再放第三个重复按钮 */}
           </div>
         );
@@ -3828,9 +5667,363 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       {active && <TerminalStockPanel symbol={active} name={nameOf(active)} loggedIn={!!authUser} username={authUser} onLog={logAct}
         onRequireLogin={why => requireLogin(() => { /* 登录后用户再点一次展开 */ }, why)} />}
 
+      {sideNavKey === 'risk' && (
+        <section ref={toolWorkspaceRef} className="bbt-tool-workspace bbt-tool-workspace--risk" aria-label="风险雷达工作区">
+          <React.Suspense fallback={<div className="bbt-risk-radar-loading">正在加载风险雷达…</div>}>
+            <MarketRiskRadar />
+          </React.Suspense>
+        </section>
+      )}
+
+      {sideNavKey === 'strategy' && (
+        <section ref={toolWorkspaceRef} className="bbt-tool-workspace bbt-tool-workspace--strategy" aria-label="策略实验室工作区">
+          {authUser ? (
+            <React.Suspense fallback={<div className="bbt-risk-radar-loading">正在加载策略实验室…</div>}>
+              <QuantLab defaultSymbols={watchlist} />
+            </React.Suspense>
+          ) : (
+            <div className="bbt-tool-gate" role="region" aria-label="登录后使用策略实验室">
+              <div className="bbt-tool-gate-mark">⌁</div>
+              <div className="bbt-tool-gate-copy">
+                <div className="bbt-tool-eyebrow">STRATEGY LAB</div>
+                <h1>把一个想法，跑成一份可复核的计划</h1>
+                <p>登录后可以读取你的自选，选择策略、回测区间和风控边界，并查看信号、目标仓位与成交审计。</p>
+              </div>
+              <button type="button" className="bbt-tool-gate-cta" onClick={() => { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); }}>登录并开始</button>
+              <div className="bbt-tool-gate-features">
+                <span><b>01</b>真实历史行情</span>
+                <span><b>02</b>成本与滑点回放</span>
+                <span><b>03</b>止损、敞口与回撤约束</span>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {sideNavKey === 'review' && (
+        <section ref={reviewWorkspaceRef} className="bbt-review-workspace" aria-label="每日复盘工作区">
+          <header className="bbt-review-workspace-head">
+            <div>
+              <div className="bbt-review-workspace-eyebrow">DAILY MARKET REVIEW</div>
+              <h1>每日复盘</h1>
+              <p>把大盘、板块、个股与 DeepFocus 提前发现的线索，集中收在一个独立模块里。</p>
+            </div>
+            <button type="button" className="bbt-review-workspace-open" onClick={() => openReview()}>打开完整复盘 ↗</button>
+          </header>
+          {reviewToday ? (() => {
+            const rIsToday = reviewToday.date === new Date().toLocaleDateString('en-CA');
+            const narrative = reviewToday.narrative || {};
+            return (
+              <article className="bbt-review-workspace-card" onClick={() => openReview()} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openReview(); }}>
+                <div className="bbt-review-workspace-card-top">
+                  <span className="bbt-review-workspace-card-ico">📊</span>
+                  <div className="bbt-review-workspace-card-main">
+                    <div className="bbt-review-workspace-card-meta">{rIsToday ? '今日 ' : ''}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}</div>
+                    <h2>{narrative.one_liner || '今日市场复盘已准备好'}</h2>
+                    <p>{narrative.plain || '点击查看大盘、板块、资金与个股的完整复盘。'}</p>
+                  </div>
+                  <span className="bbt-review-workspace-card-go">查看完整复盘 ↗</span>
+                </div>
+                {(reviewToday.our_edge || []).length > 0 && (
+                  <div className="bbt-review-workspace-edge">⭐ DeepFocus 提前发现 · {(reviewToday.our_edge || []).length} 条线索</div>
+                )}
+                <div className="bbt-review-workspace-card-foot">数据 + AI 综述 · 仅供研究参考，不构成投资建议</div>
+              </article>
+            );
+          })() : (
+            <div className="bbt-review-workspace-empty">
+              <span>📊</span><h2>今日复盘正在准备</h2><p>交易日 15:35 后自动更新，也可以稍后从这里重新查看。</p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {sideNavKey === 'ai' && (
+        <section ref={aiWorkspaceRef} className="bbt-ai-workspace" aria-label="AI 对话工作区">
+          <header className="bbt-ai-workspace-head">
+            <div>
+              <div className="bbt-ai-workspace-eyebrow">DEEPFOCUS RESEARCH RUNTIME · 证据驱动研究</div>
+              <h1>AI 投研助手</h1>
+              <p>把问题交给研究引擎：先锁定范围，再查数据、核证据、过风险，最后给结论。</p>
+            </div>
+            <div className="bbt-ai-workspace-head-actions">
+              <span className="bbt-ai-live"><i />证据研究链路在线</span>
+              <button type="button" onClick={resetAiConversation}>＋ 新会话</button>
+            </div>
+          </header>
+          <div className="bbt-ai-harness-guide" aria-label="证据驱动研究流程">
+            <div className="bbt-ai-harness-guide-copy"><b>一条研究链路</b><span>每个结论都能回到数据与来源</span></div>
+            <div className="bbt-ai-harness-steps">
+              <span><i>01</i>理解问题</span><b>→</b><span><i>02</i>统一取数</span><b>→</b><span><i>03</i>证据核验</span><b>→</b><span><i>04</i>风险复核</span><b>→</b><span className="is-final"><i>05</i>综合结论</span>
+            </div>
+          </div>
+          <div className={`bbt-ai-workspace-grid ${hasSavedAiHistory ? `bbt-ai-workspace-grid--history${aiHistoryCollapsed ? ' bbt-ai-workspace-grid--history-collapsed' : ''}` : 'bbt-ai-workspace-grid--single'}`}>
+            {hasSavedAiHistory && <aside className="bbt-ai-history-panel" aria-label="AI 历史记录">
+              <div className="bbt-ai-history-head"><span className="bbt-ai-history-label">历史记录</span><div className="bbt-ai-history-head-actions"><button type="button" className="bbt-ai-history-new" onClick={resetAiConversation} aria-label="新建会话" title="新建会话">＋</button><button type="button" className="bbt-ai-history-collapse" onClick={() => setAiHistoryCollapsed(value => !value)} aria-label={aiHistoryCollapsed ? '展开历史记录' : '收起历史记录'} title={aiHistoryCollapsed ? '展开历史记录' : '收起历史记录'}>{aiHistoryCollapsed ? '›' : '‹'}</button></div></div>
+              {!aiHistoryCollapsed && <div className="bbt-ai-history-search"><span>⌕</span><input value={aiHistoryQuery} onChange={event => setAiHistoryQuery(event.target.value)} placeholder="搜索会话" aria-label="搜索 AI 历史会话" />{aiHistoryQuery && <button type="button" onClick={() => setAiHistoryQuery('')} aria-label="清空搜索">×</button>}</div>}
+              {aiConversations.length === 0 ? (
+                <div className="bbt-ai-history-empty">完成一次提问后，<br />会话会保存在这里</div>
+              ) : (
+                <div className="bbt-ai-history-list">
+                  {filteredAiConversations.map(record => (
+                    <div key={record.id} className={`bbt-ai-history-item${activeAiConversationId === record.id ? ' is-active' : ''}`}>
+                      {editingAiConversationId === record.id ? (
+                        <input className="bbt-ai-history-rename" value={editingAiConversationTitle} autoFocus maxLength={40} aria-label="修改会话名称" onChange={event => setEditingAiConversationTitle(event.target.value)} onBlur={() => renameAiConversation(record.id, editingAiConversationTitle)} onKeyDown={event => {
+                          if (event.key === 'Enter') renameAiConversation(record.id, editingAiConversationTitle);
+                          if (event.key === 'Escape') { setEditingAiConversationId(null); setEditingAiConversationTitle(''); }
+                        }} />
+                      ) : <button type="button" className="bbt-ai-history-item-main" onClick={() => openAiConversation(record)}>
+                        <span className="bbt-ai-history-item-title">{record.title}</span>
+                        <span className="bbt-ai-history-item-meta">{record.answer || record.turns?.some(turn => turn.answer) ? `${record.turns?.length || 1} 轮对话` : '未完成'} · {new Date(record.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
+                        {record.attachmentName && <span className="bbt-ai-history-item-file">📎 {record.attachmentName}</span>}
+                      </button>}
+                      {editingAiConversationId !== record.id && <span className="bbt-ai-history-item-actions">
+                        <button type="button" onClick={() => { setEditingAiConversationId(record.id); setEditingAiConversationTitle(record.title); }} aria-label={`重命名${record.title}`} title="重命名">✎</button>
+                        <button type="button" onClick={() => removeAiConversation(record.id)} aria-label={`删除${record.title}`} title="删除">×</button>
+                      </span>}
+                    </div>
+                  ))}
+                  {filteredAiConversations.length === 0 && <div className="bbt-ai-history-empty">没找到匹配的会话</div>}
+                </div>
+              )}
+            </aside>}
+            <main className="bbt-ai-chat-panel">
+              <div className="bbt-ai-chat-head">
+                <div className="bbt-ai-chat-head-copy"><span>{aiQuestion ? '本轮对话' : '新对话'}</span><span>{aiQuestion ? '会记住最近三轮上下文' : '准备就绪'}</span></div>
+                <div className="bbt-ai-mode-switch" role="group" aria-label="AI回答模式">
+                  <button type="button" className={aiAnswerMode === 'quick' ? 'on' : ''} onClick={() => setAiAnswerMode('quick')}>⚡ 快速问答</button>
+                  <button type="button" className={aiAnswerMode === 'deep' ? 'on' : ''} onClick={() => {
+                    if (!isMemberVip && !isAdmin && !IFIND_USERS.has(authUser || '')) {
+                      setUpgradeReason('🔬 深度研判（取证→多空辩论→风控→投委会裁决的 AI 深度报告）是会员专属功能，开通即用。');
+                      setUpgradeOpen(true);
+                      return;
+                    }
+                    setAiAnswerMode('deep');
+                  }}>🔬 深度研判<small>{isMemberVip || isAdmin || IFIND_USERS.has(authUser || '') ? '会员' : '锁定'}</small></button>
+                </div>
+              </div>
+              <div ref={aiChatBodyRef} className="bbt-ai-chat-body">
+                {!aiQuestion && !aiAnswer && !deepAnswer && !aiWorkspaceBusy && (
+                  <div className="bbt-ai-welcome">
+                    <div className="bbt-ai-welcome-mark">✦</div>
+                    <h2>像问分析师一样，直接问</h2>
+                    <p>不用挑模式。我会自动核对行情、财报与站内资料，先说结论，再列依据和风险。</p>
+                    <div className="bbt-ai-sugg-grid">
+                      {AI_STARTER_PROMPTS.map(item => (
+                        <button key={item.question} type="button" onClick={() => primeAiQuestion(item.question)}>
+                          <small>{item.tag}</small><b>{item.question}</b><span>↘</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="bbt-ai-welcome-proof" aria-label="AI 研究能力">
+                      <span><i>●</i>先查数据</span>
+                      <span><i>●</i>支持连续追问</span>
+                      <span><i>●</i>答案标明核对内容</span>
+                    </div>
+                  </div>
+                )}
+                {activeAiPreviousTurns.map(turn => <React.Fragment key={turn.id}>
+                  <div className="bbt-ai-message bbt-ai-message--user bbt-ai-message--prior"><span>你</span><p>{turn.question}</p></div>
+                  <div className="bbt-ai-message bbt-ai-message--assistant bbt-ai-message--prior"><span>AI</span><div><Markdownlite text={turn.answer} /><button type="button" className="bbt-ai-prior-copy" onClick={() => { void copyText(turn.answer).then(ok => { if (ok) showToast('已复制这条回答'); }); }}>复制</button></div></div>
+                  {turn.tools && turn.tools.length > 0 && <div className="bbt-ai-context-trace bbt-ai-context-trace--prior"><span>已核对</span>{turn.tools.slice(0, 4).map((tool, i) => <b key={`${turn.id}-${tool.tool || 'tool'}-${i}`}>{TOOL_LABEL[tool.tool] || tool.tool}</b>)}</div>}
+                  <div className="bbt-ai-turn-divider" />
+                </React.Fragment>)}
+                {aiQuestion && <div className="bbt-ai-message bbt-ai-message--user"><span>你</span><p>{aiQuestion}</p></div>}
+                {aiAttachmentErr && <div className="bbt-ai-workspace-error">⚠ {aiAttachmentErr}</div>}
+                {aiWorkspaceBusy && <AiResearchProgress status={aiLiveStatus} tools={aiTools} roundtable={aiRoundtableActive} onStop={aiBusy || deepAnswerBusy ? stopAiResearch : undefined} />}
+                {aiErr && <div className="bbt-ai-workspace-error"><span>⚠ {aiErr}</span>{!authUser && /登录|试问/.test(aiErr) && <button type="button" onClick={() => requireLogin(() => void submitAiQuestion(), 'AI 投研问答')}>登录后继续</button>}</div>}
+                {aiAnswer && <div className="bbt-ai-latest-answer">{aiRoundtableMeta
+                  ? <AiRoundtableAnswerCard answer={aiAnswer} result={aiRoundtableMeta} />
+                  : <div className="bbt-ai-message bbt-ai-message--assistant"><span>AI</span><div><Markdownlite text={aiAnswer} /></div></div>}
+                </div>}
+                {deepAnswerErr && <div className="bbt-ai-workspace-error">⚠ {deepAnswerErr}</div>}
+                {deepAnswer && (
+                  <div className={`bbt-ai-latest-answer bbt-ai-deep-answer${deepAnswerNeedsInput ? ' is-clarification' : ''}`}>
+                    <div className="bbt-ai-deep-answer-head"><span>{deepAnswerNeedsInput ? '先确定选股范围' : '🔬 深度研判结论'}</span><span>{deepAnswerNeedsInput ? '补充条件后开始查证' : `${deepAnswer.decision === 'candidate' ? '可继续研究' : deepAnswer.decision === 'watch' ? '保持观察' : deepAnswer.decision === 'blocked' ? '暂缓判断' : '需要补证据'} · 置信 ${Math.round((deepAnswer.confidence || 0) * 100)}%`}</span></div>
+                    {!deepAnswerNeedsInput && (() => {
+                      const refs = deepAnswer.evidence_references || [];
+                      const citationCount = refs.length || (deepAnswer.citable_sources || []).length;
+                      const sourceNames = new Set([
+                        ...refs.map(ref => ref.source).filter(Boolean),
+                        ...deepAnswer.sources.filter(source => !source.includes('工具轨迹') && !source.includes('当前页面标的')),
+                      ]);
+                      return <div className="bbt-ai-deep-meta" aria-label="研判数据概览">
+                        <span><i>●</i>数据时点 {formatDeepGeneratedAt(deepAnswer.generated_at)}</span>
+                        <span><i>◆</i>{citationCount || '—'} 条证据</span>
+                        <span><i>◈</i>{sourceNames.size || '—'} 个来源</span>
+                        <span className={`bbt-ai-deep-meta-status is-${deepAnswer.decision}`}>{deepAnswer.decision === 'candidate' ? '可继续研究' : deepAnswer.decision === 'watch' ? '保持观察' : deepAnswer.decision === 'blocked' ? '暂缓判断' : '需要补证据'}</span>
+                      </div>;
+                    })()}
+                    <div className="bbt-ai-deep-answer-synthesis"><div className="bbt-ai-deep-section-label">{deepAnswerNeedsInput ? '还需要你选择' : '综合判断'}</div><Markdownlite text={deepAnswer.synthesis} /></div>
+                    {(deepAnswer.research_steps || []).length > 0 && <div className="bbt-ai-deep-workflow" aria-label="本次研究路径">
+                      <div className="bbt-ai-deep-section-head"><span>研究路径</span><small>已执行的取数与证据归纳</small></div>
+                      <div className="bbt-ai-deep-workflow-track">
+                        {(deepAnswer.research_steps || []).map((step, index) => <React.Fragment key={step.id || `${step.label}-${index}`}>
+                          <div className={`bbt-ai-deep-workflow-step is-${step.status || 'completed'}`} title={step.detail || step.label}>
+                            <span className="bbt-ai-deep-workflow-dot">{step.status === 'completed' ? '✓' : step.status === 'blocked' ? '!' : '·'}</span>
+                            <b>{step.label}</b>
+                            {typeof step.count === 'number' && step.count > 0 && <i>{step.count}</i>}
+                          </div>
+                          {index < (deepAnswer.research_steps || []).length - 1 && <span className="bbt-ai-deep-workflow-link" aria-hidden="true">›</span>}
+                        </React.Fragment>)}
+                      </div>
+                      <div className="bbt-ai-deep-workflow-note">仅展示已执行的研究步骤和可复核事实，不展示模型隐藏思考链。</div>
+                    </div>}
+                    {(deepAnswer.evidence_highlights || []).length > 0 && <div className="bbt-ai-deep-facts">
+                      <div className="bbt-ai-deep-section-head"><span>关键事实</span><small>来自本次研究数据包</small></div>
+                      <div className="bbt-ai-deep-facts-grid">{(deepAnswer.evidence_highlights || []).map((fact, index) => <div className="bbt-ai-deep-fact" key={`${fact}-${index}`}><span>{fact.split('：', 1)[0]}</span><p>{fact.includes('：') ? fact.slice(fact.indexOf('：') + 1) : fact}</p></div>)}</div>
+                    </div>}
+                    {deepAnswer.content_scope && Object.keys(deepAnswer.content_scope).length > 0 && (() => {
+                      const scopeOrder = ['快讯', '文章', '研报', '投行研报', '机构纪要', '名人观点', '行业', '同行', '上下游', '公开数据'];
+                      const scopeStatus = (item: { status?: string; raw_count?: number; selected_count?: number }) => {
+                        if (item.status === 'not_authorized') return '未授权';
+                        if (item.status !== 'available') return '无命中';
+                        if (typeof item.raw_count === 'number') return `${item.selected_count ?? 0}/${item.raw_count}`;
+                        return '已接入';
+                      };
+                      return <div className="bbt-ai-deep-coverage" aria-label="本次研判资料覆盖">
+                        <span className="bbt-ai-deep-coverage-label">资料覆盖</span>
+                        {scopeOrder.map(label => {
+                          const item = deepAnswer.content_scope?.[label];
+                          if (!item) return null;
+                          return <span key={label} className={`bbt-ai-deep-coverage-chip is-${item.status === 'available' ? 'ok' : item.status === 'not_authorized' ? 'locked' : 'empty'}`} title={item.note || `${label}：${scopeStatus(item)}`}>
+                            <b>{label}</b><i>{scopeStatus(item)}</i>
+                          </span>;
+                        })}
+                      </div>;
+                    })()}
+                    {(() => {
+                      const storedRefs = deepAnswer.evidence_references || [];
+                      const fallbackRefs = deepAnswer.tool_traces.filter(trace => trace.status === 'completed').slice(0, 8).map((trace, index) => {
+                        const isPlatform = /site_|recent_research|institution_notes|celebrity_views/.test(trace.tool);
+                        return {
+                          id: `trace-fallback-${trace.tool}-${index}`,
+                          group: isPlatform ? 'platform' : 'external',
+                          group_label: isPlatform ? '稻草财经平台' : '外部公开数据',
+                          category: DEEP_SOURCE_LABEL[trace.tool] || trace.title,
+                          title: DEEP_SOURCE_LABEL[trace.tool] || trace.title,
+                          detail: trace.output || '已执行该研究步骤',
+                          source: '', url: '', published_at: '', credibility: null,
+                        };
+                      });
+                      const refs = storedRefs.length ? storedRefs : fallbackRefs;
+                      const platformRefs = refs.filter(ref => ref.group === 'platform');
+                      const externalRefs = refs.filter(ref => ref.group !== 'platform');
+                      const citations = deepAnswer.citable_sources || [];
+                      if (!refs.length && !citations.length) return null;
+                      const renderRef = (ref: typeof refs[number], index: number) => (
+                        <div className="bbt-ai-deep-reference" key={`${ref.id || ref.title}-${index}`}>
+                          <div className="bbt-ai-deep-reference-main">
+                            <b>{ref.title}</b>
+                            {ref.category && <span>{ref.category}</span>}
+                          </div>
+                          {ref.detail && <p>{ref.detail}</p>}
+                          <div className="bbt-ai-deep-reference-meta">
+                            {ref.source && <span>{ref.source}</span>}
+                            {ref.published_at && <span>{ref.published_at.slice(0, 16).replace('T', ' ')}</span>}
+                            {typeof ref.credibility === 'number' && <span>可信度 {Math.round(ref.credibility * 100)}%</span>}
+                            {ref.url && <a href={ref.url} target="_blank" rel="noreferrer">查看原文 ↗</a>}
+                          </div>
+                        </div>
+                      );
+                      const renderGroup = (label: string, items: typeof refs, tone: string) => items.length > 0 && (
+                        <div className={`bbt-ai-deep-reference-group is-${tone}`}>
+                          <div className="bbt-ai-deep-reference-group-head"><b>{label}</b><i>{items.length} 条</i></div>
+                          <div className="bbt-ai-deep-reference-list">{items.slice(0, 5).map(renderRef)}</div>
+                          {items.length > 5 && <small className="bbt-ai-deep-reference-more">已展示最相关的 5 条，其余 {items.length - 5} 条已纳入研判</small>}
+                        </div>
+                      );
+                      return <details className="bbt-ai-deep-citations" aria-label="本次回答引用依据">
+                        <summary><span>查看引用依据</span><small>{refs.length + citations.length} 条站内与外部资料</small><i>展开</i></summary>
+                        <div className="bbt-ai-deep-citations-body">
+                          <div className="bbt-ai-deep-citation-note">只展示本次实际取到的资料；默认收起，避免证据列表淹没结论。</div>
+                          {renderGroup('稻草财经平台', platformRefs, 'platform')}
+                          {renderGroup('外部公开数据 / 资料', externalRefs, 'external')}
+                          {citations.length > 0 && <div className="bbt-ai-deep-reference-group is-evidence">
+                            <div className="bbt-ai-deep-reference-group-head"><b>可追溯证据库</b><i>{citations.length} 条</i></div>
+                            <div className="bbt-ai-deep-reference-list">{citations.slice(0, 4).map((citation, index) => (
+                              <div className="bbt-ai-deep-reference" key={`citation-${citation.n}-${index}`}>
+                                <div className="bbt-ai-deep-reference-main"><b>[{citation.n}] {citation.title}</b><span>{citation.source}</span></div>
+                                <div className="bbt-ai-deep-reference-meta">
+                                  {typeof citation.credibility === 'number' && <span>可信度 {Math.round(citation.credibility * 100)}%</span>}
+                                  {citation.url && <a href={citation.url} target="_blank" rel="noreferrer">查看原文 ↗</a>}
+                                </div>
+                              </div>
+                            ))}</div>
+                          </div>}
+                        </div>
+                      </details>;
+                    })()}
+                    <details className="bbt-ai-deep-evidence">
+                      <summary><span>分析视角与技术日志</span><small>{deepAnswer.turns.filter(turn => turn.participant_id !== 'synthesis').length} 个分析视角 · {deepAnswer.tool_traces.filter(trace => trace.status === 'completed').length} 项数据调用</small><i>展开</i></summary>
+                      <div className="bbt-ai-deep-evidence-body">
+                        <div className="bbt-ai-deep-answer-turns">
+                          {deepAnswer.turns.filter(turn => turn.participant_id !== 'synthesis').map(turn => (
+                            <div className="bbt-ai-deep-turn" key={turn.participant_id}>
+                              <div><b>{turn.stance === 'evidence' ? '证据核验' : turn.stance === 'research' ? '研究判断' : '风险检查'}</b><span>{turn.stance === 'evidence' ? '取证' : turn.stance === 'research' ? '研究' : '风控'}</span></div>
+                              <p>{turn.content}</p>
+                              {turn.risks.length > 0 && <small>风险：{turn.risks.slice(0, 2).join('；')}</small>}
+                            </div>
+                          ))}
+                        </div>
+                        {deepAnswer.tool_traces.length > 0 && <div className="bbt-ai-deep-trace"><span>执行步骤</span>{deepAnswer.tool_traces.filter(trace => trace.status === 'completed').slice(0, 6).map(trace => <b key={trace.tool}>{DEEP_SOURCE_LABEL[trace.tool] || trace.title}</b>)}</div>}
+                        {deepAnswer.sources.length > 0 && <div className="bbt-ai-deep-trace"><span>数据通道</span>{deepAnswer.sources.slice(0, 5).map((source, i) => <b key={`${source}-${i}`}>{source}</b>)}</div>}
+                        {deepAnswer.warnings.length > 0 && <div className="bbt-ai-workspace-error">⚠ {deepAnswer.warnings.slice(0, 2).map(humanizeDeepWarning).join('；')}</div>}
+                      </div>
+                    </details>
+                    <div className="bbt-ai-composer-note">{deepAnswer.disclaimer || '多角色 AI 综合生成 · 仅供研究参考，不构成投资建议'}</div>
+                  </div>
+                )}
+                {(aiAnswer || deepAnswer?.synthesis) && !aiWorkspaceBusy && <div className="bbt-ai-answer-actions" aria-label="回答操作">
+                  <button type="button" onClick={() => { const text = aiAnswer || deepAnswer?.synthesis || ''; void copyText(text).then(ok => { if (ok) { setAiAnswerCopied(true); showToast('已复制回答'); window.setTimeout(() => setAiAnswerCopied(false), 1800); } }); }}>{aiAnswerCopied ? '✓ 已复制' : '⎘ 复制'}</button>
+                  <button type="button" onClick={() => { if (aiQuestion) void submitAiQuestion(aiQuestion); }} title="会作为新的一轮回答并计入今日额度">↻ 重新生成</button>
+                  <span className="bbt-ai-answer-actions-divider" />
+                  <button type="button" className={aiFeedback === 'up' ? 'is-active' : ''} disabled={!!aiFeedback} onClick={() => { const answer = aiAnswer || deepAnswer?.synthesis || ''; setAiFeedback('up'); rememberAiFeedback('up'); sendAgentFeedback(aiQuestion, answer, 'up', aiTools); }} aria-label="这条回答有帮助">👍{aiFeedback === 'up' ? ' 有帮助' : ''}</button>
+                  <button type="button" className={aiFeedback === 'down' ? 'is-active is-down' : ''} disabled={!!aiFeedback} onClick={() => { const answer = aiAnswer || deepAnswer?.synthesis || ''; setAiFeedback('down'); rememberAiFeedback('down'); sendAgentFeedback(aiQuestion, answer, 'down', aiTools); showToast('已收到反馈，我们会改进这个答案'); }} aria-label="这条回答需要改进">👎{aiFeedback === 'down' ? ' 已记录' : ''}</button>
+                </div>}
+                {!aiWorkspaceBusy && aiTools.length > 0 && <details className="bbt-ai-context-details">
+                  <summary><span>✓ 已执行 {aiTools.length} 次数据调用</span><small>查看核对记录</small></summary>
+                  <div>{aiTools.slice(0, 8).map((tool, index) => <p key={`${tool.tool || 'tool'}-${index}`} className={tool.ok === false ? 'is-error' : ''}><b>{TOOL_LABEL[tool.tool] || (tool.tool.startsWith('get_') ? '研究数据' : tool.tool)}</b><span>{tool.summary || (tool.ok === false ? '本项数据暂不可用' : '已完成核对')}</span></p>)}</div>
+                </details>}
+                {aiAnswer && !aiWorkspaceBusy && aiSugg.length > 0 && <div className="bbt-ai-followups">
+                  <span className="bbt-ai-followups-label">继续追问</span>
+                  {aiSugg.map(s => <button key={s} type="button" onClick={() => {
+                    primeAiQuestion(s);
+                    if (guestAiTrialUsed) requireLogin(() => void submitAiQuestion(s), 'AI 投研问答');
+                    else void submitAiQuestion(s);
+                  }}>{s} →</button>)}
+                </div>}
+              </div>
+              {aiAttachment && <div className="bbt-ai-attachment-chip"><span>📎 {aiAttachment.filename} · 已读取 {aiAttachment.charCount.toLocaleString()} 字{aiAttachment.truncated ? '（已截取）' : ''}</span><button type="button" onClick={() => setAiAttachment(null)} aria-label="移除附件">×</button></div>}
+              <div className="bbt-ai-composer">
+                <div className="bbt-ai-auto-route" title="AI 会根据问题自动选择行情、财务、资讯、研报或市场扫描能力"><i>✦</i><span>自动</span></div>
+                <button type="button" className="bbt-ai-attach" onClick={() => aiFileInputRef.current?.click()} disabled={aiAttachmentBusy || aiWorkspaceBusy} title="上传 PDF、Word、Excel、CSV 或文本文件">{aiAttachmentBusy ? '读取中…' : '📎'}</button>
+                <input ref={aiFileInputRef} className="bbt-ai-file-input" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.markdown,.json,.log" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void attachAiFile(file); }} />
+                <textarea ref={aiPromptInputRef} rows={1} value={aiInput} aria-label="向 AI 投研助手提问" placeholder="问行情、估值、财报，或比较几只股票…" onChange={e => setAiInput(e.target.value)} onKeyDown={e => {
+                  if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+                  e.preventDefault();
+                  if (!aiInput.trim()) return;
+                  if (guestAiTrialUsed) requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
+                  else void submitAiQuestion();
+                }} />
+                <button type="button" className="bbt-ai-send" aria-label={authUser ? '发送问题' : guestAiTrialUsed ? '登录后继续' : '免费试问'} onClick={() => {
+                  if (guestAiTrialUsed) requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
+                  else void submitAiQuestion();
+                }} disabled={aiWorkspaceBusy || aiAttachmentBusy || !aiInput.trim()}>{aiWorkspaceBusy ? (aiAnswerMode === 'deep' ? '研判中…' : '核对中…') : authUser ? '发送 ↗' : guestAiTrialUsed ? '登录继续' : '免费试问 ↗'}</button>
+              </div>
+              {!authUser ? (
+                <div className="bbt-ai-composer-note is-login">{guestAiTrialUsed ? '游客试问已用；登录后每日 10 次。' : '游客可免费试问 1 次；登录后每日 10 次，会话保存在本机。'}<button type="button" onClick={() => requireLogin(() => aiPromptInputRef.current?.focus(), 'AI 投研问答')}>登录</button></div>
+              ) : (
+                <div className="bbt-ai-composer-note">Enter 发送 · Shift + Enter 换行{aiQuotaLeft !== null ? ` · 今日剩余 ${aiQuotaLeft} 次` : ''} · 仅供研究参考</div>
+              )}
+            </main>
+          </div>
+        </section>
+      )}
+
       <div ref={gridRef} className={`bbt-grid${maxed ? ' bbt-grid--maxed' : ''}`} style={{ ['--eqw' as any]: `${eqW}px` }}>
         {/* 行情监视 */}
-        <section className={`bbt-panel${maxed && maxed !== 'eq' ? ' bbt-hide' : ''}${collapsed.eq ? ' bbt-panel--collapsed' : ''}${(eqNarrow && maxed !== 'eq') ? ' bbt-eq--narrow' : ''}`}>
+        <section className={`bbt-panel bbt-watchlist-panel${maxed && maxed !== 'eq' ? ' bbt-hide' : ''}${collapsed.eq ? ' bbt-panel--collapsed' : ''}${(eqNarrow && maxed !== 'eq') ? ' bbt-eq--narrow' : ''}`}>
           <div className="bbt-ph" onClick={e => { if ((e.target as HTMLElement).closest('button')) return; if (window.innerWidth <= 820) toggleCollapse('eq'); }}>
             <button className="bbt-collapse-btn" aria-label="自选股票" aria-expanded={!collapsed.eq} title={collapsed.eq ? '展开' : '收起'} onClick={() => toggleCollapse('eq')}>{collapsed.eq ? '▸' : '▾'}</button>
 <span className="bbt-eq-en">MY STOCKS · </span>我的股票 <span className="bbt-breadth"><b className="bbt-up">{breadthUp}▲</b> <b className="bbt-down">{breadthDown}▼</b></span>
@@ -3842,7 +6035,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   const syms = watchlist.slice(0, 12);
                   const q = `帮我体检这些自选股，逐只给出看多/看空/中性的判断和一句话关键理由，最后指出最需要重点关注的 1-2 只：${syms.map(s => `${nameOf(s)}(${s})`).join('、')}`;
                   logAct('ai_watchlist_checkup', `自选体检×${syms.length}`);
-                  openAi(); setAiInput(q); void askAi(q);
+                  openAi(); setAiInput(q);
+                  if (guestAiTrialUsed) requireLogin(() => void askAi(q), 'AI 投研问答');
+                  else void askAi(q);
                 }}>🩺</button>
             )}
             <button className="bbt-max-btn" title={eqNarrow ? '加宽（显示全部列）' : '收窄'} onClick={() => setEqW(eqNarrow ? 460 : 260)}>{eqNarrow ? '⇥' : '⇤'}</button>
@@ -3879,45 +6074,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </section>
 
         {/* 可拖拽分隔条：拖动调整行情监视列宽 */}
-        <div className="bbt-split" onMouseDown={startEqDrag} onTouchStart={startEqDrag} title="拖动调整宽度" />
+        <div className="bbt-split bbt-grid-split" onMouseDown={startEqDrag} onTouchStart={startEqDrag} title="拖动调整宽度" />
 
         {/* 资讯 + 研报（研报作为「快讯」旁的标签，统一信息流）*/}
-        <section className={`bbt-panel${maxed && maxed !== 'news' ? ' bbt-hide' : ''}${collapsed.news ? ' bbt-panel--collapsed' : ''}`}>
+        <section className={`bbt-panel bbt-news-panel${maxed && maxed !== 'news' ? ' bbt-hide' : ''}${collapsed.news ? ' bbt-panel--collapsed' : ''}`}>
           <div className="bbt-ph">
             <button className="bbt-collapse-btn" aria-label="实时资讯" aria-expanded={!collapsed.news} title={collapsed.news ? '展开' : '收起'} onClick={() => toggleCollapse('news')}>{collapsed.news ? '▸' : '▾'}</button>
-            {isCelebrity ? '名人观点' : isZsxqStream ? '机构纪要' : isResearch ? '研究资料' : feedFilter === '文章' ? '深度文章' : feedFilter === '精选' ? '和我有关的资讯' : feedFilter === '自选' ? '我的股票发生了什么' : '今天市场发生什么'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
-            <span className="bbt-filters" role="tablist" aria-label="资讯任务分类">{PRIMARY_FEED_FILTERS.map(f => {
-              const selected = f.key === '研究' ? isResearchGroup : feedFilter === f.key;
-              return (
-                <button key={f.key} role="tab" aria-selected={selected} data-cat={f.key}
-                  className={`bbt-chip ${selected ? 'on' : ''}`}
-                  onClick={() => {
-                    const next = f.key === '研究' ? (isResearchGroup ? feedFilter : '文章') : f.key;
-                    if (feedFilter !== next) logAct('tab', f.label);
-                    setFeedFilter(next);
-                  }}>
-                  {f.label}
-                </button>
-              );
-            })}</span>
+            {isCelebrity ? '名人观点' : isZsxqStream ? '机构纪要' : isResearch ? '投行研报' : feedFilter === '文章' ? '深度文章' : feedFilter === '精选' ? '和我有关的资讯' : feedFilter === '自选' ? '我的股票发生了什么' : '市场快讯'}{active && <span className="bbt-active-filter">▣ {activeName} 相关 <button className="bbt-clear" aria-label="清除标的筛选" title="清除筛选" onClick={() => setActive(null)}>✕</button></span>}
             <button className="bbt-max-btn" title={maxed === 'news' ? '还原' : '最大化'} onClick={() => setMaxed(maxed === 'news' ? null : 'news')}>{maxed === 'news' ? '⤡' : '⤢'}</button>
           </div>
-
-          {isResearchGroup && (
-            <div className="bbt-research-nav" role="tablist" aria-label="研究资料分类">
-              <span className="bbt-research-nav-label">研究资料</span>
-              {researchFeedFilters.map(f => (
-                <button key={f.key} role="tab" aria-selected={feedFilter === f.key}
-                  className={'bbt-research-nav-btn' + (feedFilter === f.key ? ' on' : '')}
-                  onClick={() => {
-                    if (feedFilter !== f.key) logAct('research_tab', f.label);
-                    setFeedFilter(f.key);
-                  }}>
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          )}
 
           {feedFilter === '精选' && !active && !newsQuery.trim() && (
             <div className="bbt-personal">
@@ -3934,7 +6099,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               </div>
               <div className="bbt-personal-actions">
                 <button className="bbt-personal-btn" aria-expanded={personalPrefsOpen} onClick={() => setPersonalPrefsOpen(v => !v)}>调整兴趣 {personalPrefsOpen ? '▴' : '▾'}</button>
-                <button className="bbt-personal-btn primary" onClick={() => setFeedFilter('all')}>查看全部 {personalization.total} 条</button>
+                <button className="bbt-personal-btn primary" onClick={() => { setSideNavKey('market'); setFeedFilter('快讯'); }}>查看全部快讯</button>
               </div>
               {personalPrefsOpen && (
                 <div className="bbt-personal-prefs">
@@ -3969,7 +6134,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           {!isResearch && !isCelebrity && !isZsxqStream && (
             <div className="bbt-res-bar">
               <span className="bbt-res-search">
-                <input className="bbt-res-input" value={newsQuery} placeholder="🔍 搜快讯 / 文章（关键词，可空格多词）…" onChange={e => setNewsQuery(e.target.value)} />
+                <input className="bbt-res-input" value={newsQuery}
+                  placeholder={feedFilter === '快讯' ? '🔍 搜索快讯（关键词，可空格多词）…' : feedFilter === '文章' ? '🔍 搜索深度文章（关键词，可空格多词）…' : '🔍 搜索资讯（关键词，可空格多词）…'}
+                  onChange={e => setNewsQuery(e.target.value)} />
                 {newsQuery && <button className="bbt-clear" aria-label="清除搜索" title="清除搜索" onClick={() => setNewsQuery('')}>✕</button>}
               </span>
               {newsQuery.trim() && <span className="bbt-breadth bbt-mute">{feed.length} 条</span>}
@@ -3979,7 +6146,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           {isCelebrity ? (
             <TerminalCelebrityViews inline />
           ) : isZsxqStream ? (
-            <TerminalZsxqStream inline loggedIn={!!authUser} focusId={zsxqFocusId} onRequireLogin={() => requireLogin(() => {}, '登录查看更早机构纪要')} />
+            <TerminalZsxqStream inline loggedIn={!!authUser} focusId={zsxqFocusId} onItems={handleZsxqItems} onRequireLogin={() => requireLogin(() => {}, '登录查看更早机构纪要')} />
           ) : isResearch ? (
             <div className="bbt-res">
               {resFiltered.length === 0 && (
@@ -4089,7 +6256,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   </div>
                 );
               })()}
-              {!feedBooted && feed.length === 0 && !newsSearching && feedFilter !== '自选' && (
+              {(!feedBooted || (feedFilter === '快讯' && fastNewsLoading && feed.length === 0)) && feed.length === 0 && !newsSearching && feedFilter !== '自选' && (
                 <div className="bbt-skel" aria-hidden="true">
                   {Array.from({ length: 8 }, (_, i) => (
                     <div className="bbt-skel-row" key={i} style={{ animationDelay: `${i * 0.08}s` }}>
@@ -4098,16 +6265,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   ))}
                 </div>
               )}
-              {feedBooted && feed.length === 0 && feedLoadError && !active && !newsQuery.trim() && feedFilter !== '自选' && (
-                <div className="bbt-empty">资讯加载失败，请检查网络后重试
+              {feedBooted && feedLoadError && messages.length > 0 && !active && !newsQuery.trim() && feedFilter !== '自选' && (
+                <div className="bbt-feed-stale" role="status">
+                  <span>⚠️ {browserOnline ? '资讯服务暂不可用' : '设备当前离线'} · 正在展示本地缓存 · 最近同步 {formatSyncAge(feedSyncedAt)}</span>
+                  <button className="bbt-retry-btn" onClick={() => { setFeedBooted(false); loadInitial(); }}>↻ 重试</button>
+                </div>
+              )}
+              {feedBooted && feed.length === 0 && messages.length === 0 && feedLoadError && !active && !newsQuery.trim() && feedFilter !== '自选' && (
+                <div className="bbt-empty bbt-empty--error" role="alert"><b>{browserOnline ? '资讯服务暂不可用' : '设备当前离线'}</b><span>恢复网络后点击重试，系统会自动重新连接。</span>
                   <button className="bbt-retry-btn" onClick={() => { setFeedBooted(false); loadInitial(); }}>↻ 重新加载</button>
                 </div>
               )}
-              {feedBooted && feed.length === 0 && !(feedLoadError && !active && !newsQuery.trim() && feedFilter !== '自选') && (feedFilter === '自选' ? !watchlist.length : (newsSearching || (heads.kx.length + heads.wz.length + heads.yb.length) === 0)) && <div className="bbt-empty">{
+              {feedBooted && !fastNewsLoading && feed.length === 0 && !(feedLoadError && messages.length === 0 && !active && !newsQuery.trim() && feedFilter !== '自选') && (feedFilter === '自选' ? !watchlist.length : (newsSearching || (heads.kx.length + heads.wz.length + heads.yb.length) === 0)) && <div className="bbt-empty">{
                 feedFilter === '自选' ? '还没有自选股 · 点左侧 ＋ 添加后，这里按个股分组看相关资讯'
                   : searchLoading ? '检索中…'
-                    : newsQuery.trim() ? `无「${newsQuery.trim()}」相关快讯/文章`
-                      : active ? `无 ${activeName} 相关快讯/文章` : '暂无最新资讯 · 开市后实时滚动更新'}</div>}
+                    : newsQuery.trim() ? `无「${newsQuery.trim()}」相关${feedFilter === '快讯' ? '快讯' : feedFilter === '文章' ? '深度文章' : '资讯'}`
+                      : active ? `无 ${activeName} 相关${feedFilter === '快讯' ? '快讯' : feedFilter === '文章' ? '深度文章' : '资讯'}` : '暂无最新快讯 · 开市后实时滚动更新'}</div>}
               {/* ⭐内容优先：真实资讯头条放在本区最上面(用户反馈"把大家关注的新闻放在最上面")，
                   运营/激活类卡片(开启盯盘/复盘)统一挪到本区末尾，见下方 */}
               {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && renderHeads([...heads.kx.map((m: any) => headlineRow('kx', m)), ...heads.wz.map((m: any) => headlineRow('wz', m)), ...heads.yb.map((m: any) => headlineRow('yb', m))])}
@@ -4202,13 +6375,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   return (<>
                     {personalization.items.map(m => renderNewsRow(m, false, undefined, personalization.reasons.get(m.id)))}
                     {hidden > 0 && (
-                      <button className="bbt-personal-more" onClick={() => { logAct('personal_show_all', String(hidden)); setFeedFilter('all'); }}>
-                        其余 {hidden} 条已收好　查看全部资讯 →
+                      <button className="bbt-personal-more" onClick={() => { logAct('personal_show_all', String(hidden)); setSideNavKey('market'); setFeedFilter('快讯'); }}>
+                        其余 {hidden} 条已收好　查看市场快讯 →
                       </button>
                     )}
                   </>);
                 }
-                const hasMore = !useServerFeed && !histDone;  // 实时流态(ALL/快讯)：服务器可能还有更旧历史可翻
+                // 实时流态(ALL/快讯)：服务器可能还有更旧历史可翻；文章标签(服务端态)按 articleHistDone 判断
+                const hasMore = feedFilter === '文章' && !newsSearching
+                  ? !articleHistDone
+                  : (!useServerFeed && !histDone);
                 const shown = pagedRows.slice((newsPageCur - 1) * pageSize, newsPageCur * pageSize);
                 return (<>
                   {shown.map(m => renderNewsRow(m, false, undefined))}
@@ -4237,19 +6413,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   </div>
                 </div>
               )}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && reviewToday && (() => {
-                const rIsToday = reviewToday.date === new Date().toLocaleDateString('en-CA');  // 仅当复盘日=真今天才叫「今日」（周末/节假日显示最近交易日，不误标）
-                return (
-                <div className="bbt-review-card" onClick={() => openReview()} role="button" title={`查看 A股${reviewToday.session_label || '复盘'} · ${reviewToday.date}`}>
-                  <span className="bbt-review-card-ico">📊</span>
-                  <div className="bbt-review-card-main">
-                    <div className="bbt-review-card-t">{rIsToday ? '今日 ' : ''}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}{(reviewToday.our_edge || []).length > 0 ? <span className="bbt-review-card-edge">含「DeepFocus 提前发现」{(reviewToday.our_edge || []).length} 条</span> : null}</div>
-                    <div className="bbt-review-card-sub">{(reviewToday.narrative || {}).one_liner || '点击查看大盘·板块·个股 × 我们的资讯复盘'}</div>
-                  </div>
-                  <span className="bbt-review-card-go">查看 →</span>
-                </div>
-                );
-              })()}
             </div>
           )}
           {isResearch && <div className="bbt-pf">海外投行研报{resQuery.trim() ? ` · 检索「${resQuery.trim()}」` : ''} · <span className={resLoading ? 'bbt-up' : ''}>{resLoading ? '● 同步中…' : `每分钟自动同步${resSyncedAt ? ` · 同步于 ${fmtTime(resSyncedAt.toISOString())}` : ''}`}</span> · 点条目 → AI 解读</div>}
@@ -4258,7 +6421,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
       <div className="bbt-status">
         <span className="bbt-status-disc">⚠ 仅供研究与教育用途，不构成投资建议，据此操作风险自负</span>
-        <span className={`bbt-conn c-${status}`} title="快讯实时推送连接状态">● {STATUS_LABEL[status]}</span>
+        <span className={`bbt-conn c-${status}`} title={`快讯实时推送连接状态 · 最近同步 ${formatSyncAge(feedSyncedAt)}`}>● {STATUS_LABEL[status]}</span>
+        <span className="bbt-sync-meta" title="资讯数据最近一次成功同步时间">资讯同步 {formatSyncAge(feedSyncedAt)}</span>
         {/* 自选面板被"最大化其它面板"挤没时，这里是唯一还能看到涨跌家数的地方；平时已在自选面板头部显示过，不重复。
             右侧原始的 NEWS/RES/EQ 计数是内部调试信息，对用户无意义，去掉。 */}
         {maxed && maxed !== 'eq' && (
@@ -4267,22 +6431,27 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-status-fn">／ 搜标的 · ↑↓ 切换 · ESC 取消</span>
       </div>
 
-      {/* 移动端高频入口：固定在拇指区，避免每次切换内容都要回到顶部打开侧栏。 */}
-      <nav className="bbt-mobile-nav" aria-label="移动端快捷导航">
+      {/* 移动端内容入口：把四类研究资料固定在拇指区，避免用户必须先打开侧栏才能找到。 */}
+      <nav className="bbt-mobile-nav" aria-label="移动端内容导航">
         <button type="button" className={mobileNavView === 'market' ? 'active' : ''}
           aria-current={mobileNavView === 'market' ? 'page' : undefined}
           onClick={() => jumpFromMobileNav('market')}>
           <span aria-hidden="true">◈</span><b>快讯</b>
         </button>
-        <button type="button" className={mobileNavView === 'stocks' ? 'active' : ''}
-          aria-current={mobileNavView === 'stocks' ? 'page' : undefined}
-          onClick={() => jumpFromMobileNav('stocks')}>
-          <span aria-hidden="true">◌</span><b>自选</b><em>{watchlist.length}</em>
+        <button type="button" className={mobileNavView === 'articles' ? 'active' : ''}
+          aria-current={mobileNavView === 'articles' ? 'page' : undefined}
+          onClick={() => jumpFromMobileNav('articles')}>
+          <span aria-hidden="true">▤</span><b>深度文章</b>
+        </button>
+        <button type="button" className={mobileNavView === 'notes' ? 'active' : ''}
+          aria-current={mobileNavView === 'notes' ? 'page' : undefined}
+          onClick={() => jumpFromMobileNav('notes')}>
+          <span aria-hidden="true">⌁</span><b>机构纪要</b>
         </button>
         <button type="button" className={mobileNavView === 'reports' ? 'active' : ''}
           aria-current={mobileNavView === 'reports' ? 'page' : undefined}
           onClick={() => jumpFromMobileNav('reports')}>
-          <span aria-hidden="true">▥</span><b>研报</b>
+          <span aria-hidden="true">▥</span><b>投行研报</b>
         </button>
         <button type="button" className={mobileNavView === 'ai' ? 'active' : ''}
           aria-current={mobileNavView === 'ai' ? 'page' : undefined}
@@ -4296,10 +6465,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
 
       {newsPreview && (() => {
-        const isImg = isImageUrl(newsPreview.url);
+        const isArticlePreview = newsPreview.topic === '文章';
+        const isImg = !isArticlePreview && isImageUrl(newsPreview.url);
         return (
-        <div className="bbt-doc-overlay" onMouseDown={() => setNewsPreview(null)}>
-          <div className={`bbt-doc ${isImg ? 'bbt-doc--img' : 'bbt-doc--text'}`} onMouseDown={e => e.stopPropagation()}>
+        <div className={`bbt-doc-overlay${isArticlePreview ? ' bbt-doc-overlay--article' : ''}`} onMouseDown={() => setNewsPreview(null)}>
+          <div className={`bbt-doc ${isImg ? 'bbt-doc--img' : isArticlePreview ? 'bbt-doc--article' : 'bbt-doc--text'}`} onMouseDown={e => e.stopPropagation()}>
             <div className="bbt-doc-bar">
               {(newsPreview.severity === 'critical' || newsPreview.severity === 'warning' || newsPreview.severity === 'success') && <span className={`bbt-ntag tag-${newsPreview.severity}`}>{SEV_TAG[newsPreview.severity]}</span>}
               <span className="bbt-doc-tag">{newsPreview.topic || '资讯'}</span>
@@ -4309,20 +6479,37 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </div>
             <div className="bbt-news-actions">
               <button className="bbt-news-btn bbt-news-btn--ai" onClick={() => runNewsAi(newsPreview)}>✦ AI 解读</button>
-              {newsPreview.url && <a className="bbt-news-btn bbt-news-btn--src" href={newsPreview.url} target="_blank" rel="noopener noreferrer">{isImg ? '原图新窗口 ↗' : '查看原文 ↗'}</a>}
+              {!isArticlePreview && newsPreview.url && !isImg && <a className="bbt-news-btn bbt-news-btn--src" href={newsPreview.url} target="_blank" rel="noopener noreferrer">查看原文 ↗</a>}
             </div>
             {isImg ? (
               <div className="bbt-doc-img-wrap">
                 <img className="bbt-doc-img" src={newsPreview.url as string} alt={stripUrls(newsPreview.title) || newsPreview.title} loading="lazy" />
-                {stripUrls(newsPreview.source_name) && <div className="bbt-doc-src">来源 · {stripUrls(newsPreview.source_name)}</div>}
+                {normalizePublisherName(stripUrls(newsPreview.source_name)) && <div className="bbt-doc-src">来源 · {normalizePublisherName(stripUrls(newsPreview.source_name))}</div>}
               </div>
+            ) : isArticlePreview ? (
+              <ArticleOriginalReader
+                title={stripUrls(newsPreview.title) || newsPreview.title}
+                sourceName={normalizePublisherName(stripUrls(newsPreview.source_name))}
+                createdAt={newsPreview.created_at}
+                paragraphs={articleOriginal?.id === newsPreview.id ? articleOriginal.paragraphs : undefined}
+                content={articleOriginal?.id === newsPreview.id ? articleOriginal.content : newsPreview.content}
+                loading={articleTextLoading}
+                error={articleTextError}
+                parser={articleOriginal?.id === newsPreview.id ? articleOriginal.parser : undefined}
+                truncated={articleOriginal?.id === newsPreview.id ? articleOriginal.truncated : false}
+                onRetry={() => { void loadArticleText(newsPreview); }}
+              />
             ) : (
               <div className="bbt-doc-text">
                 <h3 className="bbt-doc-h">{stripUrls(newsPreview.title) || newsPreview.title}</h3>
-                {isDigestArticle(newsPreview)
+                {isArticlePreview && articleTextLoading
+                  ? <div className="bbt-doc-body">正在提取原文文字并按段落排版…</div>
+                  : isArticlePreview && articleTextError
+                    ? <div className="bbt-doc-body">{articleTextError}<br /><button className="bbt-news-btn bbt-news-btn--src" onClick={() => { void loadArticleText(newsPreview); }}>重试提取</button></div>
+                    : isDigestArticle(newsPreview)
                   ? renderDigestBody(newsPreview.content)
                   : <div className="bbt-doc-body">{stripUrls(newsPreview.content) || '（暂无正文，点「✦ AI 解读」获取要点）'}</div>}
-                {stripUrls(newsPreview.source_name) && <div className="bbt-doc-src">来源 · {stripUrls(newsPreview.source_name)}</div>}
+                {normalizePublisherName(stripUrls(newsPreview.source_name)) && <div className="bbt-doc-src">来源 · {normalizePublisherName(stripUrls(newsPreview.source_name))}</div>}
               </div>
             )}
           </div>
@@ -4331,27 +6518,74 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       })()}
 
       {aiReport && (
-        <div className="bbt-doc-overlay" onMouseDown={closeAi}>
-          <div className="bbt-doc bbt-doc--ai" onMouseDown={e => e.stopPropagation()}>
+        <div className={`bbt-doc-overlay${aiReportMeta ? ' bbt-doc-overlay--deep' : ''}${aiModalExpanded ? ' bbt-doc-overlay--expanded' : ''}`} onMouseDown={closeAi}>
+          <div
+            className={`bbt-doc bbt-doc--ai${aiReportMeta ? ' bbt-doc--deep' : ''}${aiModalExpanded ? ' bbt-doc--expanded is-expanded' : ''}`}
+            onMouseDown={e => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={aiReportMeta ? 'AI 深度稿' : 'AI 解读'}
+          >
             <div className="bbt-doc-bar">
-              <span className="bbt-doc-tag bbt-ai-tag">✦ AI 解读</span>
+              <span className="bbt-doc-tag bbt-ai-tag">{aiReportMeta ? '✦ AI 深度稿' : '✦ AI 解读'}</span>
               <span className="bbt-doc-title" title={aiReport.title}>{aiReport.title}</span>
               {aiReport.date && <span className="bbt-doc-meta">🗓 {aiReport.date}</span>}
+              {aiReportMeta && (
+                <button
+                  type="button"
+                  className="bbt-doc-expand"
+                  onClick={() => setAiModalExpanded(value => !value)}
+                  aria-expanded={aiModalExpanded}
+                  aria-label={aiModalExpanded ? '还原深度稿窗口大小' : '放大深度稿窗口'}
+                  title={aiModalExpanded ? '还原窗口' : '放大窗口'}
+                >
+                  {aiModalExpanded ? '↙ 还原' : '⛶ 放大'}
+                </button>
+              )}
               {aiResult && <button className="bbt-doc-copy" onClick={shareAiImage} disabled={aiImgBusy}>{aiImgBusy ? '生成中…' : '🖼 图片'}</button>}
               <button className="bbt-doc-close" onClick={closeAi} aria-label="关闭">✕ 关闭</button>
             </div>
-            <div className="bbt-ai-body">
+            <div className={`bbt-ai-body${aiDeepDraft ? ' bbt-ai-body--deep' : ''}`}>
+              {aiDeepDraft ? (
+                <div className="bbt-ai-deep-wrap">
+                  <ResearchDeepDraft
+                    draft={aiDeepDraft}
+                    loading={aiLoading}
+                    error={aiError || null}
+                    onRetry={() => aiRetryRef.current?.()}
+                    onClose={closeAi}
+                    onSourceClick={openDeepDraftSource}
+                    className="research-deep-draft--embedded"
+                  />
+                </div>
+              ) : <>
               {aiLoading && (
                 <div className="bbt-ai-loading">
-                  <div className="bbt-ai-load-head"><span>✦ AI 正在解读…</span><span className="bbt-ai-load-pct">{Math.round(aiProgress)}%</span></div>
+                  <div className="bbt-ai-load-head"><span>✦ {aiReportMeta ? '正在生成深度研报稿…' : 'AI 正在解读…'}</span><span className="bbt-ai-load-pct">{Math.round(aiProgress)}%</span></div>
                   <div className="bbt-ai-bar"><div className="bbt-ai-bar-fill" style={{ width: `${aiProgress}%` }} /></div>
-                  <div className="bbt-ai-load-hint">文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）</div>
+                  <div className="bbt-ai-load-stages" aria-label="AI 解读阶段">
+                    {(aiReportMeta ? ['读取原文', '提炼事实', '组织逻辑', '核对风险', '生成结论'] : ['读取内容', '提炼要点', '生成解读']).map((stage, index) => (
+                      <span key={stage} className={index === 0 ? 'is-active' : ''}><i>{index + 1}</i>{stage}</span>
+                    ))}
+                  </div>
+                  <div className="bbt-ai-load-hint">{aiReportMeta ? '正在读取最多 32 页并整理证据、章节与跟踪项；通常需要几十秒' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
                 </div>
               )}
               {!aiLoading && aiError && <div className="bbt-empty bbt-ai-err">⚠ {aiError}</div>}
               {!aiLoading && aiResult && (() => {
-                const bull = aiResult.bullish?.length ? aiResult.bullish : (aiResult.key_points || []);
-                const bear = aiResult.bearish?.length ? aiResult.bearish : (aiResult.risks || []);
+                const compactReport = !!aiReportMeta;
+                const newsReport = !compactReport;
+                const allBull = aiResult.bullish?.length ? aiResult.bullish : (aiResult.key_points || []);
+                const allBear = aiResult.bearish?.length ? aiResult.bearish : (aiResult.risks || []);
+                const bull = compactReport ? allBull.slice(0, 4) : allBull;
+                const bear = compactReport ? allBear.slice(0, 4) : allBear;
+                const conclusion = aiResult.one_liner || (compactReport ? aiResult.summary : '');
+                const logicLines = (aiResult.logic_lines || []).filter(line => line && (line.title || line.evidence || line.chain || line.impact || line.watch));
+                const deepText = compactReport ? [
+                  allBull.length > 4 ? `【其他利好】\n${allBull.slice(4).map((item, i) => `${i + 5}. ${item}`).join('\n')}` : '',
+                  allBear.length > 4 ? `【其他风险】\n${allBear.slice(4).map((item, i) => `${i + 5}. ${item}`).join('\n')}` : '',
+                  aiResult.takeaway ? `【补充启示】${aiResult.takeaway}` : '',
+                ].filter(Boolean).join('\n\n') : '';
                 return (
                 <>
                   {(aiResult.subject || aiResult.rating || aiResult.target_price) && (
@@ -4367,32 +6601,45 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       {aiResult.instruments.map((t, i) => <span key={t + i} className="bbt-ai-inst">{t}</span>)}
                     </div>
                   )}
-                  {aiResult.one_liner && <div className="bbt-ai-oneliner">💡 {aiResult.one_liner}</div>}
-                  {aiResult.summary && <><div className="bbt-ai-h">一句话看懂</div><div className="bbt-ai-sum">{aiResult.summary}</div></>}
-                  {aiResult.core_logic && <><div className="bbt-ai-h bbt-ai-h--logic">🔑 投资逻辑</div><div className="bbt-ai-sum">{aiResult.core_logic}</div></>}
-                  {bull.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bull">✅ 利好 · 看涨理由</div><ul className="bbt-ai-list bbt-ai-bull">{bull.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
-                  {bear.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bear">⚠️ 利空 · 风险点</div><ul className="bbt-ai-list bbt-ai-risk">{bear.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
-                  {aiResult.takeaway && <div className="bbt-ai-takeaway"><b>📌 一句话启示</b>{aiResult.takeaway}</div>}
-                  {aiResult.df_take && (() => {
-                    const dft = aiResult.df_take!.trim();
-                    const long = dft.length > 220;
+                  {conclusion && <div className={`bbt-ai-oneliner${newsReport ? ' bbt-ai-oneliner--news' : ''}`}>
+                    {newsReport ? <b>核心结论</b> : '💡 '}{conclusion}
+                  </div>}
+                  {aiResult.summary && aiResult.summary.trim() !== (conclusion || '').trim() && <><div className="bbt-ai-h">🧾 {newsReport ? '事件摘要' : '综合综述'}</div><div className="bbt-ai-sum">{aiResult.summary}</div></>}
+                  {logicLines.length > 0 && <div className="bbt-ai-logic-lines">
+                    <div className="bbt-ai-logic-lines-h"><b>{newsReport ? '🧩 关键信息链' : '🧭 DeepFocus 视角 · 独立逻辑线拆解'}</b><span>{newsReport ? '仅列原文明确内容' : `${logicLines.length}条并行演化`}</span></div>
+                    {logicLines.map((line, index) => <div className="bbt-ai-logic-line" key={`${line.title || 'line'}-${index}`}>
+                      <div className="bbt-ai-logic-line-title"><span>{index + 1}</span><b>{line.title || `逻辑线 ${index + 1}`}</b></div>
+                      {line.evidence && <div><em>事实</em>{line.evidence}</div>}
+                      {line.chain && <div><em>{newsReport ? '关联' : '传导'}</em>{line.chain}</div>}
+                      {line.impact && <div><em>影响</em>{line.impact}</div>}
+                      {line.watch && <div><em>验证</em>{line.watch}</div>}
+                    </div>)}
+                  </div>}
+                  {aiResult.core_logic && <><div className="bbt-ai-h bbt-ai-h--logic">🔑 {compactReport ? '核心逻辑' : '影响逻辑'}</div><div className="bbt-ai-sum">{aiResult.core_logic}</div></>}
+                  {deepText && (() => {
+                    const dft = deepText.trim();
+                    const long = dft.length > (compactReport ? 120 : 220);
                     const show = dfExpanded || !long;
                     return (
-                      <div className="bbt-ai-dftake">
-                        <div className="bbt-ai-dftake-h"><b>DeepFocus 视角</b><span className="bbt-ai-dftake-badge">独家点评</span></div>
+                      <div className={`bbt-ai-dftake${compactReport ? ' bbt-ai-dftake--report' : ''}`}>
+                        <div className="bbt-ai-dftake-h"><b>{compactReport ? '完整解读' : 'DeepFocus 综合判断'}</b><span className="bbt-ai-dftake-badge">{compactReport ? '原文补充' : '独家点评'}</span></div>
                         <div className={`bbt-ai-dftake-body${show ? '' : ' bbt-ai-dftake-body--clip'}`}>{dft}</div>
-                        {long && <button className="bbt-ai-dftake-more" onClick={() => setDfExpanded(v => !v)}>{show ? '收起 ▴' : '展开全文 ▾'}</button>}
+                        {long && <button className="bbt-ai-dftake-more" onClick={() => setDfExpanded(v => !v)}>{show ? '收起 ▴' : (compactReport ? '展开完整解读 ▾' : '展开全文 ▾')}</button>}
                       </div>
                     );
                   })()}
+                  {bull.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bull">✅ {compactReport ? '关键利好' : '积极因素（原文）'}</div><ul className="bbt-ai-list bbt-ai-bull">{bull.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
+                  {bear.length > 0 && <><div className="bbt-ai-h bbt-ai-h--bear">⚠️ {compactReport ? '主要风险' : '风险与不确定性'}</div><ul className="bbt-ai-list bbt-ai-risk">{bear.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
+                  {!compactReport && aiResult.takeaway && <div className="bbt-ai-takeaway"><b>📌 关注重点</b>{aiResult.takeaway}</div>}
                   <div className="bbt-ai-foot">{aiResult.provider || 'AI'} 解读 · 仅供参考、非投资建议、无逐句溯源{typeof aiResult.confidence === 'number' ? ` · 置信 ${Math.round((aiResult.confidence || 0) * 100)}%` : ''}{aiResult.source_note ? ` · ${aiResult.source_note}` : ''}</div>
                 </>
                 );
               })()}
+              </>}
             </div>
             {!aiLoading && (
               <div className="bbt-ai-actions">
-                {aiResult && <button className="bbt-ai-btn bbt-ai-btn--img" onClick={shareAiImage} disabled={aiImgBusy}>{aiImgBusy ? '生成图片中…' : (aiCopied ? '✓ 已复制图片' : '🖼 复制为图片')}</button>}
+                {aiResult && <button className="bbt-ai-btn bbt-ai-btn--img" onClick={shareAiImage} disabled={aiImgBusy}>{aiImgBusy ? '生成微信分享图…' : (aiCopied ? '✓ 图片已复制' : '🖼 微信分享图')}</button>}
                 {aiResult && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={copyAiResult}>{aiTextCopied ? '✓ 已复制文字' : '⧉ 复制为文字'}</button>}
                 {/* 研报解读才给「分享」和「原文」；文章解读不给（文章走行内 /article 分享） */}
                 {aiResult && aiReportMeta && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={shareReportInsight} disabled={reportShareBusy}>{reportShareBusy ? '生成链接中…' : '🔗 分享解读'}</button>}
@@ -4418,9 +6665,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <div className="bbt-doc-overlay" onMouseDown={closeShareImg}>
           <div className="bbt-shareimg" onMouseDown={e => e.stopPropagation()}>
             <div className={`bbt-shareimg-tip${shareImgCoarse ? ' bbt-shareimg-tip--big' : ''}`}>{shareImgNote || '👇 长按图片，选择「存储图像 / 保存到相册」或「分享」'}</div>
-            <img className="bbt-shareimg-img" src={shareImgUrl} alt="AI 解读分享图" />
+            <img className="bbt-shareimg-img" src={shareImgUrl} alt="研报微信分享图" />
             <div className="bbt-ai-actions">
-              {!shareImgCoarse && <a className="bbt-ai-btn bbt-ai-btn--img" href={shareImgUrl} download="AI解读.png">⬇ 下载图片</a>}
+              {!shareImgCoarse && <a className="bbt-ai-btn bbt-ai-btn--img" href={shareImgUrl} download="DeepFocus-微信分享图.png">⬇ 下载图片</a>}
               <button className="bbt-ai-btn bbt-ai-btn--close" onClick={closeShareImg}>关闭</button>
             </div>
           </div>
@@ -4428,6 +6675,33 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       )}
 
       {toast && <div className="bbt-toast">{toast}</div>}
+
+      {FOREGROUND_NEWS_POPUP_ENABLED && newsPopup && sideNavKey !== 'ai' && (
+        <div
+          className={`bbt-news-popup bbt-news-popup--${newsPopup.severity}`}
+          role={newsPopup.severity === 'critical' ? 'alert' : 'status'}
+          aria-live={newsPopup.severity === 'critical' ? 'assertive' : 'polite'}
+          onClick={() => {
+            setNewsPreview(newsPopup);
+            dismissNewsPopup();
+          }}
+        >
+          <div className="bbt-news-popup-head">
+            <span className="bbt-news-popup-label">⚡ {foregroundPopupTopicLabel[newsPopup.topic as ForegroundPopupTopic] || newsPopup.topic || '资讯'}</span>
+            {newsPopup.symbol && <span className="bbt-news-popup-symbol">{newsPopup.symbol}</span>}
+            {newsPopupQueue.length > 1 && <span className="bbt-news-popup-queue">另有 {newsPopupQueue.length - 1} 条</span>}
+            <button
+              type="button"
+              className="bbt-news-popup-close"
+              aria-label="关闭快讯弹窗"
+              onClick={event => { event.stopPropagation(); dismissNewsPopup(); }}
+            >×</button>
+          </div>
+          <div className="bbt-news-popup-title">{newsPopup.title}</div>
+          {newsPopup.content && <div className="bbt-news-popup-content">{newsPopup.content}</div>}
+          <div className="bbt-news-popup-hint">点击查看详情 · 7 秒后自动收起</div>
+        </div>
+      )}
 
       {pushNudge && (
         <div className="bbt-pushnudge" role="dialog" aria-label="开启盯盘提醒">
@@ -4541,7 +6815,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <TerminalAuthModal
         open={authOpen}
         reason={authReason}
-        initialMode={loginDeepLink ? 'login' : undefined}
+        initialMode={(loginDeepLink || authReason.startsWith('AI')) ? 'login' : undefined}
         onClose={() => { setAuthOpen(false); setLoginDeepLink(false); }}
         onAuthed={onAuthed}
       />
@@ -5157,7 +7431,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <div className="bbt-ai-sugg">{sugg.map(s => <button key={s} className="bbt-ai-sugg-item" onClick={() => { setAiInput(s); askAi(s); }}>{s}</button>)}</div>
               )}
               {aiQuestion && (aiAnswer || aiBusy || aiErr) && <div className="bbt-ai-q"><span className="bbt-ai-q-tag">问</span>{aiQuestion}</div>}
-              {aiBusy && <AiFakeProgress />}
+              {aiBusy && <AiResearchProgress status={aiLiveStatus} tools={aiTools} onStop={stopAiResearch} />}
               {aiErr && <div className="bbt-empty">{aiErr}</div>}
               {aiAnswer && <div className="bbt-ai-answer"><Markdownlite text={aiAnswer} /></div>}
               {!aiBusy && aiTools.length > 0 && <ToolTrace trace={aiTools} />}

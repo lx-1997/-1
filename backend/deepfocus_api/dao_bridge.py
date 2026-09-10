@@ -5,7 +5,9 @@
 启用：环境变量 DEEPFOCUS_DAO_BRIDGE_ENABLED=1
 源地址：DEEPFOCUS_DAO_API_URL（默认 http://127.0.0.1:8765，本地开发可用 SSH 隧道映射）
 鉴权：DEEPFOCUS_DAO_API_TOKEN（DAO 服务器 .api_server_token 的值）
-轮询：DEEPFOCUS_DAO_BRIDGE_POLL_SECONDS（默认 300 秒，即 5 分钟）
+轮询：北京时间 08:00–24:00 每 60 秒一次，其余时间每 180 秒一次。
+可用 DEEPFOCUS_DAO_BRIDGE_DAY_POLL_SECONDS / DEEPFOCUS_DAO_BRIDGE_NIGHT_POLL_SECONDS
+调整两个时段的间隔；DEEPFOCUS_DAO_BRIDGE_TIMEZONE 默认 Asia/Shanghai。
 """
 from __future__ import annotations
 
@@ -13,8 +15,10 @@ import asyncio
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import sqlite3
 
@@ -26,6 +30,7 @@ import time
 from . import news_translate
 from .realtime_messages import create_realtime_message, update_realtime_message_fields
 from .schemas import RealtimeMessageCreateRequest
+from .source_policy import is_tradealpha_source, tradealpha_blocking_enabled
 
 # 英文快讯入库前直译成中文（默认开；设 0 关闭回到原行为）。
 _TRANSLATE_ENABLED = os.getenv("DEEPFOCUS_NEWS_TRANSLATE", "1").strip().lower() in ("1", "true", "yes", "on")
@@ -46,12 +51,51 @@ def _bridge_config() -> dict:
         "enabled": os.getenv("DEEPFOCUS_DAO_BRIDGE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on"),
         "url": os.getenv("DEEPFOCUS_DAO_API_URL", "http://127.0.0.1:8765").rstrip("/"),
         "token": os.getenv("DEEPFOCUS_DAO_API_TOKEN", "").strip(),
-        "poll": float(os.getenv("DEEPFOCUS_DAO_BRIDGE_POLL_SECONDS", "300")),
+        "poll_day": float(os.getenv("DEEPFOCUS_DAO_BRIDGE_DAY_POLL_SECONDS", "60")),
+        "poll_night": float(os.getenv("DEEPFOCUS_DAO_BRIDGE_NIGHT_POLL_SECONDS", "180")),
+        "timezone": os.getenv("DEEPFOCUS_DAO_BRIDGE_TIMEZONE", "Asia/Shanghai").strip() or "Asia/Shanghai",
         "backfill": int(os.getenv("DEEPFOCUS_DAO_BRIDGE_BACKFILL", "40")),
         # 同机部署：直读 DAO 的 SQLite 库（绕过 dao_api 的 http.server，最稳）；
         # 留空则走 HTTP API（Mac 开发经 SSH 隧道）。
         "db_path": os.getenv("DEEPFOCUS_DAO_DB_PATH", "").strip(),
     }
+
+
+def _bridge_poll_timezone(name: str = "Asia/Shanghai"):
+    """返回轮询使用的时区；极简运行环境没有 tzdata 时回退到中国标准时间。"""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return timezone(timedelta(hours=8))
+
+
+def _bridge_poll_delay_seconds(
+    now: Optional[datetime] = None,
+    *,
+    day_seconds: float = 60.0,
+    night_seconds: float = 180.0,
+    timezone_name: str = "Asia/Shanghai",
+) -> float:
+    """计算下一轮延迟，并在 08:00/24:00 边界提前醒来。
+
+    仅按固定间隔 sleep 会在边界前启动时跨过整个时段（例如 07:59 后睡 3 分钟），
+    所以取「当前时段间隔」和「距离下个边界」的较小值，保证切换时段立即生效。
+    """
+    tz = _bridge_poll_timezone(timezone_name)
+    current = datetime.now(tz) if now is None else now
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=tz)
+    else:
+        current = current.astimezone(tz)
+
+    start = current.replace(hour=8, minute=0, second=0, microsecond=0)
+    midnight = current.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    if current < start:
+        interval, boundary = night_seconds, start
+    else:
+        interval, boundary = day_seconds, midnight
+    remaining = max(1.0, (boundary - current).total_seconds())
+    return max(1.0, min(float(interval), remaining))
 
 
 _DB_COLS = ("id", "type", "source_id", "title", "content", "url", "source_time", "inserted_at")
@@ -184,6 +228,22 @@ _BRACKET_HEAD_RE = re.compile(r"^\s*【([^】]{1,60})】")
 _SENT_END = "。！？!?\n"
 
 
+def _event_source_field(event: dict, keys: tuple[str, ...], nested_keys: tuple[str, ...]) -> str:
+    """兼容 DAO 事件将来源作为字符串或 ``{name,url}`` 对象返回。"""
+    for key in keys:
+        value = event.get(key)
+        if isinstance(value, dict):
+            for nested_key in nested_keys:
+                nested = str(value.get(nested_key) or "").strip()
+                if nested:
+                    return nested
+        else:
+            text = str(value or "").strip()
+            if text:
+                return text
+    return ""
+
+
 def _clean_title(title: str, content: str) -> str:
     """修复上游标题退化：lxaa 快讯源常把正文截前 120 字塞进 title（与正文重复且截断），
     导致卡片/复制/分享把标题+正文各显示一次 = "重复且都不全"。
@@ -228,12 +288,28 @@ def _to_request(event: dict) -> RealtimeMessageCreateRequest:
     ai_sent = str(event.get("ai_sentiment") or "").strip()
     ai_impact = str(event.get("ai_impact") or "").strip()
     severity = _ai_severity(ai_sent, ai_impact) or _severity(title, etype)
+    upstream_source_name = _event_source_field(
+        event, ("source_name", "source", "provider", "publisher", "origin"),
+        ("name", "label", "title", "source_name", "provider"),
+    )
+    upstream_source_url = _event_source_field(
+        event, ("source_url", "provider_url", "origin_url", "source"),
+        ("url", "source_url", "provider_url", "origin_url"),
+    )
     metadata = {
         "dao_event_id": event.get("id"),
         "dao_type": etype,
         "source_time": event.get("source_time") or "",
         "inserted_at": event.get("inserted_at"),
     }
+    # 保留 DAO 原始来源字段，供来源策略、看板审计和后续精确拆分使用。
+    if upstream_source_name:
+        metadata["upstream_source_name"] = upstream_source_name
+    if upstream_source_url:
+        metadata["upstream_source_url"] = upstream_source_url
+    raw_metadata = event.get("metadata")
+    if isinstance(raw_metadata, dict):
+        metadata["upstream_metadata"] = raw_metadata
     if ai_sent:
         metadata["ai_sentiment"] = ai_sent
     if ai_impact:
@@ -242,7 +318,7 @@ def _to_request(event: dict) -> RealtimeMessageCreateRequest:
         title=title,
         content=content,
         source_id=str(event.get("source_id") or event.get("id") or ""),
-        source_name="DAO财经",
+        source_name=upstream_source_name or "DAO财经",
         source_type=meta["source_type"],
         symbol=_resolve_symbol(title, content),  # 个股级召回的地基：命中自选股才有"盯盘=回访"
         topic=meta["topic"],
@@ -474,11 +550,15 @@ async def run_dao_bridge() -> None:
     if not cfg["enabled"]:
         print("[dao-bridge] 未启用（DEEPFOCUS_DAO_BRIDGE_ENABLED=0），跳过")
         return
-    url, token, poll, backfill = cfg["url"], cfg["token"], cfg["poll"], cfg["backfill"]
+    url, token, backfill = cfg["url"], cfg["token"], cfg["backfill"]
+    poll_day, poll_night, poll_timezone = cfg["poll_day"], cfg["poll_night"], cfg["timezone"]
     db_path = cfg["db_path"]
     use_db = bool(db_path) and os.path.exists(db_path)
     src = f"sqlite:{db_path}" if use_db else url
-    print(f"[dao-bridge] 启动：源={src} 轮询={poll}s 模式={'直读DB' if use_db else 'HTTP'}")
+    print(
+        f"[dao-bridge] 启动：源={src} 轮询=08:00-24:00 每{poll_day:g}s，"
+        f"其余时间每{poll_night:g}s（{poll_timezone}）模式={'直读DB' if use_db else 'HTTP'}"
+    )
     loop = asyncio.get_event_loop()
     after_id = _load_after_id()
     pending_ai: dict[int, tuple[str, float]] = {}  # dao_event_id -> (message_id, 放弃时限)
@@ -497,6 +577,24 @@ async def run_dao_bridge() -> None:
                 events = await loop.run_in_executor(None, _fetch_events_sync, url, token, after_id)
             for ev in events:
                 try:
+                    eid = int(ev.get("id") or after_id)
+                    if tradealpha_blocking_enabled() and is_tradealpha_source(
+                        source_id=ev.get("source_id"),
+                        source_name=ev.get("source_name") or ev.get("source") or ev.get("provider") or ev.get("publisher"),
+                        source_type=ev.get("type"),
+                        url=ev.get("url") or ev.get("source_url") or ev.get("provider_url"),
+                        metadata={
+                            **(ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}),
+                            "source": ev.get("source"),
+                            "provider": ev.get("provider"),
+                        },
+                        title=ev.get("title"),
+                        content=ev.get("content"),
+                    ):
+                        print(f"[source-policy] DAO 事件跳过 TradeAlpha id={eid}")
+                        if eid > after_id:
+                            after_id = eid
+                        continue
                     req = await _maybe_translate(_to_request(ev))
                     req = await _maybe_pre_read_article(req)
                     msg = create_realtime_message(req)
@@ -538,5 +636,12 @@ async def run_dao_bridge() -> None:
             raise
         except Exception as e:
             cause = e.__cause__ or e.__context__
-            print(f"[dao-bridge] 拉取失败（{poll}s 后重试）: {type(e).__name__}: {e} | cause={type(cause).__name__ if cause else None}: {cause}")
-        await asyncio.sleep(poll)
+            retry_delay = _bridge_poll_delay_seconds(
+                day_seconds=poll_day, night_seconds=poll_night, timezone_name=poll_timezone,
+            )
+            print(f"[dao-bridge] 拉取失败（{retry_delay:g}s 后重试）: {type(e).__name__}: {e} | cause={type(cause).__name__ if cause else None}: {cause}")
+        await asyncio.sleep(
+            _bridge_poll_delay_seconds(
+                day_seconds=poll_day, night_seconds=poll_night, timezone_name=poll_timezone,
+            )
+        )
