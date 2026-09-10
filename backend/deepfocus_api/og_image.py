@@ -129,4 +129,4 @@ def qa_card(qa: dict[str, Any], slug: str) -> bytes:
 
 
 def generic_card() -> bytes:
-    return cached("generic", lambda: render_og("DeepFocus 投研工作台", "A股复盘 · 个股证据速判 · 投研问答", []))
+    return cached("generic", lambda: render_og("DeepFocus 投研工作台", "A股 · 港股 · 美股复盘 · 个股证据速判 · 投研问答", []))

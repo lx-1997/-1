@@ -1,5 +1,5 @@
 import { Stock } from '../types';
-import { apiGet, apiPost, getApiBaseUrls } from './apiClient';
+import { apiGet, apiPost, DF_WEB_TOKEN, getApiBaseUrls } from './apiClient';
 
 // === agentTaskService types ===
 
@@ -137,6 +137,8 @@ export interface InvestmentTaskResult {
 
 export interface OrchestratorChatRequest {
   message: string;
+  /** Context sent separately so backend intent detectors only see the live question. */
+  context_hint?: string;
   history?: Array<{
     role: 'user' | 'assistant';
     content: string;
@@ -276,6 +278,16 @@ export interface DulusAgentTurn {
   tool_traces: DulusToolTrace[];
 }
 
+export interface DulusContentScopeItem {
+  module: string;
+  status: 'available' | 'no_data' | 'not_authorized' | string;
+  raw_count?: number;
+  selected_count?: number;
+  top_tags?: string[];
+  available?: string[];
+  note?: string;
+}
+
 export interface DulusRoundtableResponse {
   provider: string;
   model: string;
@@ -293,6 +305,29 @@ export interface DulusRoundtableResponse {
   citable_sources?: ChatCitationSource[];
   confidence: number;
   disclaimer: string;
+  /** 深度研判模式的非会员当日剩余次数；会员/管理员为 null。 */
+  quota_left?: number | null;
+  /** 本次研究实际扫描与选入的资料覆盖，按模块独立展示。 */
+  content_scope?: Record<string, DulusContentScopeItem>;
+  /** 可审计研究路径：只包含已执行的取数/筛选/复核步骤，不是隐藏思维链。 */
+  research_steps?: Array<{ id: string; label: string; status: string; detail?: string; count?: number }>;
+  /** 来自本次研究数据包的关键事实摘要。 */
+  evidence_highlights?: string[];
+  /** 面向用户的引用依据，按站内资料/外部公开数据分组。 */
+  evidence_references?: Array<{
+    id?: string;
+    group?: string;
+    group_label?: string;
+    category?: string;
+    title: string;
+    detail?: string;
+    source?: string;
+    url?: string;
+    published_at?: string;
+    credibility?: number | null;
+  }>;
+  /** 前后端答案协议版本，便于识别线上是否已切到证据治理后的输出。 */
+  answer_protocol_version?: string;
 }
 
 export interface DulusMemoryCreateRequest {
@@ -447,23 +482,54 @@ export function runGeneralChatStream(
 
 // AI 原生 tool-use（非流式 JSON）：一次返回答案 + 用了哪些工具。走 apiClient(axios)——自动带 Authorization
 // (iFinD 灰度靠它识别 lx199710)、有同源回退，比 SSE 流式经 nginx 稳。这是终端 AI 问答采用的可靠通道。
-export interface ToolTraceItem { tool: string; ok?: boolean; summary?: string; args?: any; }
+export interface ToolReference {
+  id?: string;
+  category?: string;
+  title: string;
+  detail?: string;
+  source?: string;
+  url?: string;
+  published_at?: string;
+}
+export interface ToolTraceItem { tool: string; ok?: boolean; summary?: string; args?: any; references?: ToolReference[]; }
 export interface ToolResearchResult {
   ok: boolean; answer: string; tool_trace: ToolTraceItem[]; rounds?: number; reason?: string; error?: string; status?: number;
   suggestions?: string[];       // 基于本次工具轨迹的确定性追问建议（零 token）
   quota_left?: number | null;   // 本次回答后剩余免费次数；null=会员不限
+  route_title?: string;         // Orchestrator 实际选择的回答/技能路径
+  route_chips?: string[];
+  confidence?: number;
+  needs_clarification?: boolean; // 只是在确认市场/周期/风险偏好，不消耗免费问答额度
+  /** 研究类快速问答使用的真实圆桌元数据：专家观点、证据和来源，供前端做可复核展示。 */
+  roundtable?: DulusRoundtableResponse | null;
+  answer_protocol_version?: string;
+  core_agent_run_id?: string;
+  core_agent_protocol_version?: string;
+  core_agent_route?: string;
 }
 export async function runToolResearch(
   message: string, symbol = '', name = '',
   history: Array<[string, string]> = [],   // 最近几轮 [问,答]——web 端多轮记忆（后端只喂 LLM，不进确定性路由）
+  attachment?: { filename: string; text: string },
+  options?: { roundtable?: boolean; context_hint?: string; timeoutMs?: number },
 ): Promise<ToolResearchResult> {
-  const params: Record<string, string> = { message, symbol, name };
-  if (history.length) {
-    try { params.history = JSON.stringify(history.slice(-3)); } catch { /* 序列化失败就当无历史 */ }
+  const normalizedMessage = message.trim();
+  if (!normalizedMessage) {
+    return { ok: false, answer: '', tool_trace: [], error: '请输入问题后再发送', status: 400 };
   }
-  const qs = new URLSearchParams(params).toString();
   try {
-    return await apiPost<ToolResearchResult>(`/api/agents/tool-research?${qs}`, {});
+    // 正文/附件进 JSON body；message 同时放入短 query 参数，兼容尚未切换到 JSON 解析的旧线上后端。
+    // 只带问题/标的元数据，不把 history/附件放进 URL，避免 CDN/nginx 长度限制。
+    const legacyQuery = new URLSearchParams({ message: normalizedMessage, symbol, name }).toString();
+    return await apiPost<ToolResearchResult>(`/api/agents/tool-research?${legacyQuery}`, {
+      message: normalizedMessage,
+      symbol,
+      name,
+      roundtable: Boolean(options?.roundtable),
+      ...(options?.context_hint ? { context_hint: options.context_hint.slice(0, 16000) } : {}),
+      history: history.slice(-3),
+      ...(attachment?.text ? { attachment: { filename: attachment.filename, text: attachment.text } } : {}),
+    }, { timeout: Math.max(5000, Math.min(90000, options?.timeoutMs ?? 90000)) });
   } catch (e: any) {
     // 带上 HTTP 状态码：402(非会员额度用完→升级)/403(匿名→登录)，前端据此分流
     return { ok: false, answer: '', tool_trace: [], error: e?.response?.data?.detail || e?.message || '请求失败', status: e?.response?.status };
@@ -523,56 +589,188 @@ export async function pollDeepResearch(taskId: string): Promise<DeepTask> {
 
 // AI 原生 tool-use 流式研究：边调工具(行情/估值/iFinD/搜我们的资讯/复盘)边推进度，最后给答案。
 // 手动带 Authorization 头——iFinD 灰度按登录用户名识别(lx199710)。返回 cancel 函数。
-export interface ToolEvent { tool: string; ok?: boolean; summary?: string; }
+export interface ToolEvent { tool: string; ok?: boolean; summary?: string; references?: ToolReference[]; }
 export function runToolResearchStream(
-  payload: { message: string; symbol?: string; name?: string },
+  payload: {
+    message: string;
+    /** Optional context kept out of deterministic skill routing. */
+    context_hint?: string;
+    symbol?: string;
+    name?: string;
+    /** 研究类网页问答走真实的证据/研究/风险专家圆桌。 */
+    roundtable?: boolean;
+    history?: Array<[string, string]>;
+    attachment?: { filename: string; text: string };
+  },
   handlers: {
     onTool?: (e: ToolEvent, phase: 'start' | 'result') => void;
-    onFinal?: (answer: string, trace: ToolEvent[], rounds: number) => void;
+    onStatus?: (status: string) => void;
+    onFinal?: (result: ToolResearchResult) => void;
     onFallback?: (reason: string) => void;
-    onError?: (error: string) => void;
+    onError?: (error: string, status?: number) => void;
     onDone?: () => void;
   }
 ): () => void {
-  const base = getApiBaseUrls()[0];
   const token = (() => { try { return window.localStorage.getItem('auth_token') || ''; } catch { return ''; } })();
-  const qs = new URLSearchParams({ message: payload.message, symbol: payload.symbol || '', name: payload.name || '' }).toString();
   const ctrl = new AbortController();
+  let stopped = false;
+  let terminal = false;
+  // 只负责通知调用方切换通道，不在 service 内部偷偷再发一次请求。
+  // 旧实现这里和 FinancialTerminal 的 onFallback 各发一遍兜底请求，竞态时会
+  // 重复扣额度、互相覆盖答案，并把一次正常降级放大成 500/403。
+  // This is an *idle* guard, not a total request deadline.  Harness can take
+  // 15–45s on a cold start; the backend emits heartbeat status frames, so a
+  // 30s quiet window catches a genuinely dead stream without racing a healthy
+  // run and issuing a duplicate, quota-consuming fallback request.
+  // Quick问答要尽快切换兜底；深度圆桌允许更长的安静窗口，后端会持续发送
+  // 阶段状态，避免真实取数尚未结束时被前端误判为“卡死”并重复扣额度。
+  const STREAM_IDLE_TIMEOUT_MS = payload.roundtable ? 90000 : 30000;
+  let timeout: number | undefined;
+  const clearTimeoutGuard = () => {
+    if (timeout !== undefined) window.clearTimeout(timeout);
+    timeout = undefined;
+  };
+  const armTimeoutGuard = () => {
+    clearTimeoutGuard();
+    timeout = window.setTimeout(() => {
+      if (stopped || terminal) return;
+      terminal = true;
+      handlers.onFallback?.('实时研究响应超时，正在切换快速通道');
+      // 取消当前流；兜底请求由调用方统一发起，保证最多只有一个。
+      ctrl.abort();
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+  const normalizedMessage = payload.message.trim();
+  if (!normalizedMessage) {
+    clearTimeoutGuard();
+    terminal = true;
+    handlers.onError?.('请输入问题后再发送', 400);
+    handlers.onDone?.();
+    return () => { stopped = true; ctrl.abort(); };
+  }
+  armTimeoutGuard();
   (async () => {
+    let lastError = 'AI 服务连接失败';
     try {
-      const resp = await fetch(`${base}/api/agents/tool-research/stream?${qs}`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: ctrl.signal,
-      });
-      if (!resp.ok || !resp.body) { handlers.onError?.(`请求失败 (${resp.status})`); return; }
-      const reader = resp.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-      let evt = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() || '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) { evt = line.slice(7).trim(); continue; }
-          if (!line.startsWith('data: ')) continue;
-          let d: any; try { d = JSON.parse(line.slice(6)); } catch { continue; }
-          if (evt === 'tool_start') handlers.onTool?.({ tool: d.tool }, 'start');
-          else if (evt === 'tool_result') handlers.onTool?.({ tool: d.tool, ok: d.ok, summary: d.summary }, 'result');
-          else if (evt === 'final') handlers.onFinal?.(d.answer || '', d.tool_trace || [], d.rounds || 0);
-          else if (evt === 'fallback') handlers.onFallback?.(d.reason || '');
-          else if (evt === 'error') handlers.onError?.(d.message || '出错了');
+      for (const base of getApiBaseUrls()) {
+        let receivedEvent = false;
+        try {
+          // 同时保留 message query，兼容尚未部署 JSON body 解析的旧线上后端。
+          const legacyQuery = new URLSearchParams({
+            message: normalizedMessage,
+            symbol: payload.symbol || '',
+            name: payload.name || '',
+          }).toString();
+          const resp = await fetch(`${base}/api/agents/tool-research/stream?${legacyQuery}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-DF-Web': DF_WEB_TOKEN,
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              message: normalizedMessage,
+              ...(payload.context_hint ? { context_hint: payload.context_hint.slice(0, 16000) } : {}),
+              symbol: payload.symbol || '',
+              name: payload.name || '',
+              roundtable: Boolean(payload.roundtable),
+              history: (payload.history || []).slice(-3),
+              ...(payload.attachment?.text ? { attachment: payload.attachment } : {}),
+            }),
+            signal: ctrl.signal,
+          });
+          armTimeoutGuard();
+          if (!resp.ok) {
+            let detail = `请求失败 (${resp.status})`;
+            try {
+              const data = await resp.json();
+              detail = typeof data?.detail === 'string' ? data.detail : detail;
+            } catch { /* 保留 HTTP 状态提示 */ }
+            clearTimeoutGuard();
+            terminal = true;
+            handlers.onError?.(detail, resp.status);
+            return;
+          }
+          if (!resp.body) throw new Error('无法读取实时响应');
+          const reader = resp.body.getReader();
+          const dec = new TextDecoder();
+          let buffer = '';
+          while (!stopped) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            // 服务器会定期发 status/keep-alive；按“无活动”而非总耗时计时，
+            // 真实圆桌持续有进度时不会被误切到快速通道。
+            armTimeoutGuard();
+            buffer += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+            const frames = buffer.split('\n\n');
+            buffer = frames.pop() || '';
+            for (const frame of frames) {
+              if (!frame.trim() || frame.trimStart().startsWith(':')) continue;
+              const eventType = frame.split('\n').find(line => line.startsWith('event: '))?.slice(7).trim() || '';
+              const dataText = frame.split('\n').filter(line => line.startsWith('data: ')).map(line => line.slice(6)).join('\n');
+              if (!dataText) continue;
+              let data: any; try { data = JSON.parse(dataText); } catch { continue; }
+              armTimeoutGuard();
+              receivedEvent = true;
+              if (eventType === 'status') handlers.onStatus?.(String(data.message || ''));
+              else if (eventType === 'tool_start') handlers.onTool?.({ tool: data.tool }, 'start');
+              else if (eventType === 'tool_result') handlers.onTool?.({
+                tool: data.tool,
+                ok: data.ok,
+                summary: data.summary,
+                references: Array.isArray(data.references) ? data.references : [],
+              }, 'result');
+              else if (eventType === 'final') {
+                terminal = true;
+                clearTimeoutGuard();
+                handlers.onFinal?.({
+                ok: true,
+                answer: data.answer || '',
+                tool_trace: data.tool_trace || [],
+                rounds: data.rounds || 0,
+                suggestions: data.suggestions || [],
+                quota_left: typeof data.quota_left === 'number' ? data.quota_left : null,
+                route_title: data.route_title,
+                route_chips: data.route_chips || [],
+                confidence: data.confidence,
+                needs_clarification: Boolean(data.needs_clarification),
+                roundtable: data.roundtable || null,
+                answer_protocol_version: data.answer_protocol_version,
+                core_agent_run_id: data.core_agent_run_id,
+                core_agent_protocol_version: data.core_agent_protocol_version,
+                core_agent_route: data.core_agent_route,
+                });
+              }
+              else if (eventType === 'fallback') {
+                terminal = true;
+                clearTimeoutGuard();
+                handlers.onFallback?.(data.reason || '');
+              }
+              else if (eventType === 'error') {
+                clearTimeoutGuard();
+                terminal = true;
+                handlers.onError?.(data.message || '出错了');
+              }
+            }
+          }
+          reader.releaseLock();
+          clearTimeoutGuard();
+          handlers.onDone?.();
+          return;
+        } catch (error: any) {
+          if (error?.name === 'AbortError' || stopped) return;
+          lastError = error?.message || lastError;
+          // 一旦收到过实时事件，就不换源重放整次请求，避免重复扣额度。
+          if (receivedEvent) break;
         }
       }
-      handlers.onDone?.();
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') handlers.onError?.(err?.message || 'AI 服务连接失败');
+      clearTimeoutGuard();
+      if (!stopped && !terminal) { terminal = true; handlers.onError?.(lastError); }
+    } catch (error: any) {
+      if (error?.name !== 'AbortError' && !stopped) handlers.onError?.(error?.message || lastError);
     }
   })();
-  return () => ctrl.abort();
+  return () => { stopped = true; clearTimeoutGuard(); ctrl.abort(); };
 }
 
 export async function getAgentTask(taskId: string): Promise<InvestmentTaskRecord> {
@@ -672,11 +870,17 @@ export async function getDulusTools(): Promise<DulusToolRecord[]> {
 }
 
 export async function runDulusRoundtable(payload: DulusRoundtableRequest): Promise<DulusRoundtableResponse> {
-  return apiPost<DulusRoundtableResponse>('/api/dulus/roundtable', payload, { timeout: 60000 });
+  // 深研是增强路径，不能把对话锁死到后端的 240 秒上限；调用方会在
+  // 超时后切换到独立 quick 路由，确保用户始终能先拿到可用结论。
+  // Harness 冷启动/工具锁竞争时可能超过 45s；后端会持续记录进度，90s
+  // 给真实圆桌足够完成时间，同时仍保留 askDeepAnswer 的明确错误兜底路径。
+  return apiPost<DulusRoundtableResponse>('/api/dulus/roundtable', payload, { timeout: 90000 });
 }
 
-export async function listDulusMemory(limit = 20): Promise<DulusMemoryRecord[]> {
-  const response = await apiGet<DulusMemoryListResponse>(`/api/dulus/memory?limit=${limit}`);
+export async function listDulusMemory(limit = 20, scope?: string): Promise<DulusMemoryRecord[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (scope) query.set('scope', scope);
+  const response = await apiGet<DulusMemoryListResponse>(`/api/dulus/memory?${query.toString()}`);
   return response.memories;
 }
 
@@ -793,6 +997,7 @@ export interface ToolStep {
   tool: string;
   ok?: boolean;
   summary?: string;
+  references?: ToolReference[];
 }
 
 /**
@@ -800,78 +1005,26 @@ export interface ToolStep {
  * onFallback 表示 tool-agent 未返回结果（未启用/不支持），调用方应回退非流式 orchestrator-chat。
  */
 export function streamToolResearch(
-  params: { message: string; symbol?: string; name?: string },
+  params: { message: string; symbol?: string; name?: string; context_hint?: string },
   handlers: {
     onToolStart?: (tool: string) => void;
-    onToolResult?: (tool: string, ok: boolean, summary: string) => void;
+    onToolResult?: (tool: string, ok: boolean, summary: string, references: ToolReference[]) => void;
     onFinal?: (answer: string, toolTrace: ToolStep[]) => void;
     onFallback?: () => void;
     onError?: (msg: string) => void;
   }
 ): () => void {
-  const apiBaseUrl = getApiBaseUrls()[0];
-  let aborted = false;
-
-  const run = async () => {
-    try {
-      const qs = new URLSearchParams({
-        message: params.message,
-        symbol: params.symbol || '',
-        name: params.name || '',
-      });
-      const response = await fetch(`${apiBaseUrl}/api/agents/tool-research/stream?${qs.toString()}`, {
-        method: 'POST',
-      });
-      if (!response.ok) {
-        handlers.onError?.(`HTTP ${response.status}`);
-        return;
-      }
-      const reader = response.body?.getReader();
-      if (!reader) {
-        handlers.onError?.('无法读取流');
-        return;
-      }
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (!aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        let etype = '';
-        let data = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            etype = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            data = line.slice(6).trim();
-          } else if (line.trim() === '' && data) {
-            try {
-              const p = JSON.parse(data);
-              if (etype === 'tool_start') handlers.onToolStart?.(p.tool);
-              else if (etype === 'tool_result') handlers.onToolResult?.(p.tool, !!p.ok, p.summary || '');
-              else if (etype === 'final') handlers.onFinal?.(p.answer || '', p.tool_trace || []);
-              else if (etype === 'fallback') handlers.onFallback?.();
-              else if (etype === 'error') handlers.onError?.(p.message || '出错');
-            } catch {
-              // skip malformed
-            }
-            etype = '';
-            data = '';
-          }
-        }
-      }
-      reader.releaseLock();
-    } catch (err: any) {
-      if (!aborted) handlers.onError?.(err.message || 'SSE 连接失败');
-    }
-  };
-
-  run();
-  return () => {
-    aborted = true;
-  };
+  let terminalEvent = false;
+  return runToolResearchStream(params, {
+    onTool: (event, phase) => {
+      if (phase === 'start') handlers.onToolStart?.(event.tool);
+      else handlers.onToolResult?.(event.tool, !!event.ok, event.summary || '', event.references || []);
+    },
+    onFinal: result => { terminalEvent = true; handlers.onFinal?.(result.answer, result.tool_trace || []); },
+    onFallback: () => { terminalEvent = true; handlers.onFallback?.(); },
+    onError: message => { terminalEvent = true; handlers.onError?.(message); },
+    onDone: () => { if (!terminalEvent) handlers.onFallback?.(); },
+  });
 }
 
 export function subscribeResearchLoop(

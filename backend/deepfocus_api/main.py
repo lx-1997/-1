@@ -4661,7 +4661,7 @@ def _brand_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
         d.text((x, y), "DeepFocus", font=_font(int(bar_h * 0.32)), fill=(255, 255, 255),
                stroke_width=1, stroke_fill=(255, 255, 255))
         y += int(bar_h * 0.36)
-        d.text((x, y), "比券商早一步的 A股快讯 · AI 投研终端", font=_font(int(bar_h * 0.185)), fill=(227, 169, 79))
+        d.text((x, y), "比券商早一步的市场快讯 · AI 投研终端", font=_font(int(bar_h * 0.185)), fill=(227, 169, 79))
         y += int(bar_h * 0.245)
         d.text((x, y), "daocaijing.com  |  扫码看更多机构纪要 →", font=_font(int(bar_h * 0.155)), fill=(150, 160, 175))
         try:
