@@ -55,6 +55,100 @@ def test_clamp_confidence_and_str_list():
     assert rv._as_str_list("solo", 5) == ["solo"]
 
 
+def test_report_prompt_asks_for_neutral_restatement_without_six_dimension_block():
+    prompt = rv._build_text_prompt("某公司深度", "TEST", "正文" * 300)
+    assert '"core_logic"' in prompt
+    assert "首屏字段" in prompt
+    assert '"logic_lines"' in prompt
+    assert "中性" in prompt  # 解读定位：中性、完整地复述研报重点
+    for label in ("事实", "传导", "影响", "验证"):
+        assert label in prompt
+    # 六维「综合判断与边界」已下线，提示词不得再要求生成
+    assert '"df_take"' not in prompt
+    for label in ("成立前提", "反方与遗漏", "行业/周期", "敏感变量", "横向参照", "跟踪清单"):
+        assert label not in prompt
+
+
+def test_compact_report_normalization_caps_first_screen_but_keeps_deep_analysis():
+    data = {
+        "one_liner": "偏多：盈利预测上调",
+        "bullish": ["利好1", "利好2", "利好3", "利好4", "利好5"],
+        "bearish": ["风险1", "风险2", "风险3", "风险4", "风险5"],
+        "takeaway": "重复启示",
+        "df_take": "【成立前提】需求持续。\n【跟踪清单】跟踪订单。",
+    }
+    result = rv._normalize_result(
+        data, provider="test", pages=1, disclaimer="", compact_report=True,
+    )
+    assert result["bullish"] == ["利好1", "利好2", "利好3", "利好4"]
+    assert result["bearish"] == ["风险1", "风险2", "风险3", "风险4"]
+    assert result["takeaway"] == ""
+    assert result["df_take"] == ""  # 六维 df_take 已下线，研报解读不再输出
+
+
+def test_ensure_report_depth_strips_legacy_six_dimension_cache():
+    result = rv.ensure_report_depth({
+        "one_liner": "偏多：供应链信号改善",
+        "core_logic": "需求改善可能带动设备与测试环节。",
+        "bullish": ["报告提及多环节出现积极信号"],
+        "bearish": ["报告未提供盈利预测变化"],
+        "df_take": "【成立前提】需求持续。\n【反方与遗漏】原文未提及。",
+    })
+    assert result["df_take"] == ""
+    assert len(result["logic_lines"]) >= 1  # 逻辑线层仍会兜底补齐
+    assert "无风险提示不等于" not in result["df_take"]
+
+
+def test_prompts_are_source_bound_and_do_not_request_independent_commentary():
+    report_prompt = rv._build_text_prompt("某公司", "TEST", "正文" * 100)
+    news_prompt = rv._build_news_prompt("标题", "正文" * 100)
+    for prompt in (report_prompt, news_prompt):
+        assert "原文未提及" in prompt
+        assert "不得根据常识" in prompt or "不能根据常识" in prompt
+        assert "不是给出独立点评" in prompt or "不得加入报告之外的原创判断" in prompt
+
+
+def test_news_format_is_neutral_and_does_not_fabricate_four_logic_lines():
+    prompt = rv._build_news_prompt("苹果 Mac 与 AI 硬件", "正文" * 100)
+    assert "不要把标题或单一正面措辞改写成‘看多/看空’" in prompt
+    assert "logic_lines 最多3条" in prompt
+
+    result = rv._normalize_result(
+        {
+            "one_liner": "***报道***&#x6807;题称苹果 Mac 获得 AI 硬件成功",
+            "summary": "事件摘要",
+            "core_logic": "",
+            "bullish": [],
+            "bearish": [],
+            "logic_lines": [{"title": "Mac", "evidence": "原文事实"}],
+        },
+        provider="test", pages=0, disclaimer="", logic_line_limit=3, backfill_logic_lines=False,
+    )
+    result = rv.normalize_news_result(result)
+    assert len(result["logic_lines"]) == 1
+    assert result["one_liner"] == "报道标题称苹果 Mac 获得 AI 硬件成功"
+
+
+def test_integrated_logic_lines_are_normalized_and_backfilled():
+    result = rv._normalize_result({
+        "summary": "四条线共同影响结论。",
+        "core_logic": "需求增长传导到订单和利润。",
+        "bullish": ["供给改善", "价格稳定"],
+        "bearish": ["需求不及预期"],
+        "logic_lines": [{
+            "name": "需求线", "fact": "订单增加", "mechanism": "订单增加→出货提升",
+            "beneficiaries": "相关公司", "trigger": "跟踪下季度出货",
+        }],
+    }, provider="test", pages=0, disclaimer="", compact_report=False)
+    assert len(result["logic_lines"]) >= 4
+    first = result["logic_lines"][0]
+    assert first["title"] == "需求线"
+    assert first["evidence"] == "订单增加"
+    assert first["chain"] == "订单增加→出货提升"
+    assert first["impact"] == "相关公司"
+    assert first["watch"] == "跟踪下季度出货"
+
+
 # --- analyze_pdf_vision ----------------------------------------------------
 
 def test_analyze_pdf_vision_parses_json(monkeypatch):

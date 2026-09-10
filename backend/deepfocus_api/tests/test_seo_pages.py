@@ -157,6 +157,28 @@ def test_compare_page():
     assert 'content="noindex,nofollow"' in thin  # 任一薄 → noindex
 
 
+def test_research_blog_keeps_complete_analysis_collapsed_by_default():
+    page = seo_pages.render_research_blog_post_html({
+        "fid": "r1", "title": "某公司深度", "org": "某机构", "date": "2026-08-18",
+        "interp": {
+            "one_liner": "偏多：利润预测上调",
+            "summary": "这是历史缓存里的详细综述，应收起但不能丢失。",
+            "core_logic": "需求回暖带动产能利用率与利润率上行。",
+            "df_take": "这是旧缓存里的六维深度解读，已下线，不应再渲染。",
+            "bullish": ["利好1", "利好2", "利好3", "利好4", "利好5"],
+            "bearish": ["风险1", "风险2", "风险3", "风险4", "风险5"],
+        },
+    }, recent=[])
+    assert "核心逻辑" in page and "关键利好" in page and "主要风险" in page
+    assert "<details" in page and "展开完整深度解读" in page
+    assert "收起但不能丢失" in page
+    assert "详细综述" in page
+    assert "利好4" in page and "利好5" in page and "风险5" in page
+    # 六维「综合判断与边界」已下线：历史缓存里的 df_take 不再渲染
+    assert "综合判断与边界" not in page
+    assert "不应再渲染" not in page
+
+
 def test_og_image_renders_png():
     from deepfocus_api import og_image
     png = og_image.render_og("测试标题", "副标题", ["上证 -2%"])

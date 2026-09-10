@@ -1071,10 +1071,25 @@ def _blog_extract(interp: dict[str, Any]) -> dict[str, Any]:
                 return [nz(x) for x in v if str(x).strip()]
         return []
 
+    raw_lines = interp.get("logic_lines")
+    logic_lines: list[dict[str, str]] = []
+    if isinstance(raw_lines, dict):
+        raw_lines = [raw_lines]
+    if isinstance(raw_lines, list):
+        for item in raw_lines[:6]:
+            if not isinstance(item, dict):
+                continue
+            logic_lines.append({
+                key: nz(item.get(key)) for key in ("title", "evidence", "chain", "impact", "watch")
+            })
+
     return {
         "one_liner": nz(interp.get("one_liner")),
-        "df_take": nz(interp.get("df_take")),      # 视觉通道才有：原创独家点评（版权最安全，优先打头）
         "summary": nz(interp.get("summary")),
+        "core_logic": nz(interp.get("core_logic")),
+        "takeaway": nz(interp.get("takeaway")),
+        "df_take": nz(interp.get("df_take")),
+        "logic_lines": logic_lines,
         "key_points": lst("key_points"),
         "bullish": lst("bullish"),
         "bearish": lst("bearish", "risks"),
@@ -1099,21 +1114,51 @@ def render_research_blog_post_html(post: dict[str, Any], recent: list[dict[str, 
 
     if d["one_liner"]:
         parts.append(f'<div class="tldr"><b>一句话看懂</b>：{_esc(d["one_liner"])}</div>')
-    if d["df_take"]:  # 有原创点评则打头——「AI 解读博客」最核心、版权最安全的原创增量
-        parts.append(f'<h2>DeepFocus 视角</h2><div class="lead">{_esc(d["df_take"])}</div>')
-    if d["summary"]:
-        parts.append(f'<h2>解读综述</h2><p>{_esc(d["summary"])}</p>')
+    # 旧缓存可能只有 summary；仅在没有 one_liner 时兜底，避免两段重复结论。
+    elif d["summary"]:
+        parts.append(f'<div class="tldr"><b>核心结论</b>：{_esc(d["summary"])}</div>')
+    if d["logic_lines"]:
+        cards: list[str] = []
+        for index, line in enumerate(d["logic_lines"], 1):
+            body = "".join(
+                f'<p><b>{label}</b>：{_esc(line.get(key) or "")}</p>'
+                for label, key in (("事实", "evidence"), ("传导", "chain"), ("影响", "impact"), ("验证", "watch"))
+                if line.get(key)
+            )
+            cards.append(f'<div class="dim"><h3>{index}. {_esc(line.get("title") or f"逻辑线 {index}")}</h3>{body}</div>')
+        parts.append('<h2>DeepFocus 视角 · 独立逻辑线拆解</h2>' + "".join(cards))
+    if d["core_logic"]:
+        parts.append(f'<h2>核心逻辑</h2><p>{_esc(d["core_logic"])}</p>')
 
     highlights = d["key_points"] or d["bullish"]
     if highlights:
         lis = "".join(f"<li>{_esc(k)}</li>" for k in highlights[:4])
-        parts.append(f'<h2>速读 · 核心要点</h2><div class="dim"><ul style="margin:0;padding-left:18px">{lis}</ul></div>')
+        parts.append(f'<h2>关键利好</h2><div class="dim"><ul style="margin:0;padding-left:18px">{lis}</ul></div>')
 
     if d["bearish"]:  # 风险/分歧另一面，保持客观平衡（合规上比单边看多更稳）
-        lis = "".join(f"<li>{_esc(b)}</li>" for b in d["bearish"][:3])
-        parts.append('<h2>风险与需要留意的地方</h2>'
+        lis = "".join(f"<li>{_esc(b)}</li>" for b in d["bearish"][:4])
+        parts.append('<h2>主要风险</h2>'
                      '<div class="dim" style="border-left:3px solid #ef4444">'
                      f'<ul style="margin:0;padding-left:18px;color:#c7ccd1">{lis}</ul></div>')
+
+    deep_parts: list[str] = []
+    if d["summary"] and d["one_liner"] and d["summary"].strip() != d["one_liner"].strip():
+        deep_parts.append(f'<h3>报告综述</h3><p>{_esc(d["summary"])}</p>')
+    if len(highlights) > 4:
+        extra = "".join(f"<li>{_esc(k)}</li>" for k in highlights[4:])
+        deep_parts.append(f'<h3>其他利好</h3><ul>{extra}</ul>')
+    if len(d["bearish"]) > 4:
+        extra = "".join(f"<li>{_esc(b)}</li>" for b in d["bearish"][4:])
+        deep_parts.append(f'<h3>其他风险</h3><ul>{extra}</ul>')
+    if d["takeaway"]:
+        deep_parts.append(f'<h3>补充启示</h3><p>{_esc(d["takeaway"])}</p>')
+    # 六维「综合判断与边界」(df_take) 已下线：研报解读只做中性复述，历史缓存里的该字段不再渲染。
+    if deep_parts:
+        parts.append(
+            '<details style="margin:18px 0"><summary style="cursor:pointer;font-weight:700">'
+            '展开完整深度解读（报告综述·更多利好与风险）'
+            f'</summary><div style="margin-top:12px">{"".join(deep_parts)}</div></details>'
+        )
 
     if d["rating"] or d["target"]:
         rows = ""
