@@ -177,6 +177,23 @@ def _nfkc(s: str) -> str:
 # 命中它们时绝不能把输入解析成母公司A股代码(会返回另一家公司的数据)。保守只列强信号后缀，避免误伤"中信证券股份"等同主体全名。
 _DISTINCT_ENTITY_SUFFIXES = ("国际", "电子", "微电子", "半导体")
 
+# A 股公司全名恰好与提问常用谓语短语同形（300785「值得买」）：「建滔集团值得买吗」
+# 「茅台值得买吗」里它是谓语而非标的。命中此类名时必须看上下文：若其后紧跟疑问/
+# 口语收尾（吗/么/不/？……），当次包含命中作废，把机会让给句中真正的公司名。
+_PHRASE_LIKE_NAMES = {"值得买"}
+_PHRASE_TAIL_RE = re.compile(r"^(?:吗|么|呢|不|啊|？|\?|。|，|,|$)")
+
+
+def _is_phrase_predicate(t: str, name: str) -> bool:
+    """「值得买」这类短语型公司名在 t 里是否以谓语形态出现（后接疑问收尾）。"""
+    if name not in _PHRASE_LIKE_NAMES:
+        return False
+    for m in re.finditer(re.escape(name), t):
+        tail = t[m.end():]
+        if _PHRASE_TAIL_RE.match(tail):
+            return True
+    return False
+
 
 def _extends_to_distinct_entity(t: str, n: str) -> bool:
     """t 中 n 之后紧跟 国际/电子/半导体 等后缀 → n 其实是更长的另一家主体名的前缀，不应解析成 n。"""
@@ -216,6 +233,8 @@ def resolve_to_code(text: str) -> "str | None":
                 contained.append((s, c))
     # 过滤"被延伸成另一家主体"的误命中：比亚迪电子→比亚迪、中国软件国际→中国软件(返回的是另一家公司数据)。
     contained = [(n, c) for n, c in contained if not _extends_to_distinct_entity(t, n)]
+    # 过滤短语型名称的谓语命中：「茅台值得买吗」里「值得买」是谓语，作废后才能轮到「茅台」。
+    contained = [(n, c) for n, c in contained if not _is_phrase_predicate(t, n)]
     if contained:
         contained.sort(key=lambda x: len(x[0]), reverse=True)
         return contained[0][1]

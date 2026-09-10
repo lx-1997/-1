@@ -20,6 +20,7 @@ def names(monkeypatch):
     sni._ingest({
         "长电科技": "600584", "亿纬锂能": "300014", "概伦电子": "688206",
         "宁德时代": "300750", "思源电气": "002028", "长城汽车": "601633",
+        "值得买": "300785",
     })
     return None
 
@@ -36,6 +37,28 @@ def test_resolve_to_code_variants(names):
     assert r("长") is None                            # 歧义前缀不猜(长电/长城)
     assert r("不存在的某票") is None                  # 查不到→None
     assert r("") is None
+
+
+def test_phrase_like_name_is_predicate_not_symbol(names):
+    """回归：「值得买」既是 A 股公司全名，又是提问谓语。
+
+    「建滔集团值得买吗」「宁德时代值得买吗」里的「值得买」是谓语，
+    绝不能因为它比句中真实公司名更长(3字>2字)而抢走标的解析；
+    「值得买怎么看」「值得买公司分析」才是真的在问 300785。
+    """
+    r = sni.resolve_to_code
+    # 谓语形态：包含命中作废，轮到句中真实公司名
+    assert r("宁德时代值得买吗") == "300750"
+    assert r("亿纬锂能值得买吗") == "300014"
+    assert r("概伦电子现在值得买吗") == "688206"
+    # 问的是另一家(如港股)时不再被 300785 劫持 → None 交给港/美股解析层
+    assert r("建滔集团值得买吗") is None
+    assert r("腾讯值得买吗") is None
+    # 真问 300785：句首即公司名 / 明确主语结构 / 带代码
+    assert r("值得买怎么看") == "300785"
+    assert r("值得买公司深度分析") == "300785"
+    assert r("值得买值得买吗") == "300785"
+    assert r("300785值得买吗") == "300785"
 
 
 def test_search_names_candidates(names):
