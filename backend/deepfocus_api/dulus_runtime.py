@@ -555,6 +555,9 @@ async def run_dulus_roundtable(
             "get_industry_context": "行业扫描",
             "get_peer_comparison": "同行候选",
             "get_supply_chain_context": "上下游线索",
+            "get_market_structure": "大盘结构硬数据（指数/成交额/涨跌家数/涨停梯队）",
+            "get_market_data": "全球行情快照",
+            "get_daily_review": "稻草财经复盘",
             "compare_stocks": "多股同口径对比",
         }
         for trace in packet.get("traces") or []:

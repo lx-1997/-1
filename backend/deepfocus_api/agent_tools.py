@@ -736,6 +736,31 @@ register_tool(AgentTool(
 ))
 
 
+async def _tool_get_market_structure() -> Any:
+    """A股市场结构硬数据：指数涨跌/两市成交额vs昨日/涨跌家数/涨停跌停/板块分布+主力净额/连板梯队。
+    盘中问也能拿到当时的真实快照。回答『今天股市为什么这样走/量能如何/赚钱效应』必须先取本工具。"""
+    from .ashare_review import gather_market_structure
+    d = await gather_market_structure()
+    # 有任一硬数据块就算可用（各部分独立降级）
+    if not (d.get("indices") or d.get("breadth", {}).get("total") or d.get("turnover") or d.get("sectors_top")):
+        return None
+    return d
+
+
+register_tool(AgentTool(
+    name="get_market_structure",
+    description=(
+        "获取 A股市场结构【硬数据快照】：①主要指数收盘点位与涨跌幅（上证/深成/创业板/沪深300/科创50/北证50）"
+        "②两市成交额（亿元）及对比昨日增减 ③全市场涨跌家数（涨/跌/平）④涨停/跌停家数 ⑤行业板块领涨领跌及"
+        "主力资金净额（亿元）⑥涨停连板梯队（最高几板/龙头股）。盘中查询为当时快照。"
+        "回答『今天股市为什么这样走』『今天量能/成交如何』『市场赚钱效应』『涨跌家数/涨停数』"
+        "『板块怎么轮动』等大盘盘面问题时，**必须先调本工具拿官方行情数字**，与资讯/复盘叙述交叉印证后作答。"
+    ),
+    parameters={"type": "object", "properties": {}},
+    handler=_tool_get_market_structure,
+))
+
+
 async def _tool_get_recent_research(query: str = "", limit: int = 8) -> Any:
     """汇总本平台「海外投行研报」近期条目 + 我们已缓存的 AI 解读（命中预解读缓存即返回 ai_summary，绝不重算/不下载）。
     query 留空=最新一批，带关键词=检索某主题。用于『近期研报总结』『某主题研报怎么看』。"""

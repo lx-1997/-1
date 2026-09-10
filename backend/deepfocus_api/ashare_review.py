@@ -79,63 +79,82 @@ def session_label(session: str) -> str:
     return _SESSION_LABEL.get(session, "复盘")
 
 
-def _clist_url(fs: str, fields: str, fid: str, po: str, pn: int, pz: int) -> str:
+_EM_CLIST_HOSTS = ("push2.eastmoney.com", "push2delay.eastmoney.com")
+
+
+def _clist_url(fs: str, fields: str, fid: str, po: str, pn: int, pz: int, host: str = _EM_CLIST_HOSTS[0]) -> str:
     return (
-        "https://push2.eastmoney.com/api/qt/clist/get"
+        f"https://{host}/api/qt/clist/get"
         f"?pn={pn}&pz={pz}&po={po}&np=1&fltt=2&invt=2&fid={fid}"
         f"&fs={fs}&fields={fields}"
     )
 
 
 async def _em_clist(fs: str, fields: str, *, fid: str = "f3", po: str = "1", pz: int = 60) -> list[dict]:
-    """东财 clist 单页拉取（按 fid 排序，po=1 降序/0 升序）。直连绕代理；失败 → []。"""
-    try:
-        async with httpx.AsyncClient(trust_env=False, timeout=15.0) as client:
-            r = await client.get(_clist_url(fs, fields, fid, po, 1, pz), headers=_HEADERS)
-        if r.status_code != 200:
-            return []
-        diff = (((r.json() or {}).get("data") or {}).get("diff")) or []
-        if isinstance(diff, dict):
-            diff = list(diff.values())
-        return [d for d in diff if isinstance(d, dict)]
-    except Exception:
-        return []
+    """东财 clist 单页拉取（按 fid 排序，po=1 降序/0 升序）。直连绕代理；失败 → []。
+
+    host 兜底链：push2 对生产 IP 间歇性直接断连（2026-09-10 实测 RemoteProtocolError，
+    板块/涨跌家数整段空 → 复盘落了 breadth=None 的半成品）。push2delay 是同一接口的
+    延时行情镜像，行情字段（f3/f62/f104/f105/f106）收盘后与 push2 一致，作为兜底。"""
+    for host in _EM_CLIST_HOSTS:
+        try:
+            async with httpx.AsyncClient(trust_env=False, timeout=15.0) as client:
+                r = await client.get(_clist_url(fs, fields, fid, po, 1, pz, host), headers=_HEADERS)
+            if r.status_code != 200:
+                continue
+            diff = (((r.json() or {}).get("data") or {}).get("diff")) or []
+            if isinstance(diff, dict):
+                diff = list(diff.values())
+            rows = [d for d in diff if isinstance(d, dict)]
+            if rows:
+                return rows
+        except Exception:
+            continue
+    return []
 
 
 async def _em_clist_all(fs: str, fields: str, *, fid: str = "f3", po: str = "1", max_rows: int = 6000) -> list[dict]:
-    """东财 clist 全量分页拉取（单页上限 100，按 total 并发翻页）。用于全市场涨跌统计。失败 → 已取到的。"""
+    """东财 clist 全量分页拉取（单页上限 100，按 total 并发翻页）。用于全市场涨跌统计。失败 → 已取到的。
+
+    host 兜底链同 _em_clist（push2 断连 → push2delay）。"""
     page_sz = 100
     out: list[dict] = []
-    try:
-        async with httpx.AsyncClient(trust_env=False, timeout=15.0) as client:
-            r = await client.get(_clist_url(fs, fields, fid, po, 1, page_sz), headers=_HEADERS)
-            data = ((r.json() or {}).get("data") or {})
-            total = int(data.get("total") or 0)
-            first = data.get("diff") or []
-            if isinstance(first, dict):
-                first = list(first.values())
-            out.extend([d for d in first if isinstance(d, dict)])
-            pages = min((min(total, max_rows) + page_sz - 1) // page_sz, 80)
-            # 其余页并发拉（分批 12，避免触发限频）
-            rest = list(range(2, pages + 1))
-            for i in range(0, len(rest), 12):
-                batch = rest[i:i + 12]
-                results = await asyncio.gather(
-                    *[client.get(_clist_url(fs, fields, fid, po, pn, page_sz), headers=_HEADERS) for pn in batch],
-                    return_exceptions=True,
-                )
-                for resp in results:
-                    if isinstance(resp, Exception):
-                        continue
-                    try:
-                        diff = (((resp.json() or {}).get("data") or {}).get("diff")) or []
-                        if isinstance(diff, dict):
-                            diff = list(diff.values())
-                        out.extend([d for d in diff if isinstance(d, dict)])
-                    except Exception:
-                        continue
-    except Exception:
-        pass
+    for host in _EM_CLIST_HOSTS:
+        try:
+            async with httpx.AsyncClient(trust_env=False, timeout=15.0) as client:
+                r = await client.get(_clist_url(fs, fields, fid, po, 1, page_sz, host), headers=_HEADERS)
+                if r.status_code != 200:
+                    continue
+                data = ((r.json() or {}).get("data") or {})
+                total = int(data.get("total") or 0)
+                first = data.get("diff") or []
+                if isinstance(first, dict):
+                    first = list(first.values())
+                out.extend([d for d in first if isinstance(d, dict)])
+                if not out:
+                    continue  # 该 host 首页空 → 换下一个 host 重试
+                pages = min((min(total, max_rows) + page_sz - 1) // page_sz, 80)
+                # 其余页并发拉（分批 12，避免触发限频）
+                rest = list(range(2, pages + 1))
+                for i in range(0, len(rest), 12):
+                    batch = rest[i:i + 12]
+                    results = await asyncio.gather(
+                        *[client.get(_clist_url(fs, fields, fid, po, pn, page_sz, host), headers=_HEADERS) for pn in batch],
+                        return_exceptions=True,
+                    )
+                    for resp in results:
+                        if isinstance(resp, Exception):
+                            continue
+                        try:
+                            diff = (((resp.json() or {}).get("data") or {}).get("diff")) or []
+                            if isinstance(diff, dict):
+                                diff = list(diff.values())
+                            out.extend([d for d in diff if isinstance(d, dict)])
+                        except Exception:
+                            continue
+                return out
+        except Exception:
+            continue
     return out
 
 
@@ -1598,6 +1617,167 @@ def review_for_date(date_str: str) -> Optional[dict]:
         if p.get("date") == date_str:
             return p
     return None
+
+
+# --------------------------------------------------------------------------- #
+# 市场结构硬数据（供深度研究的 market-level 问题用：指数/成交额/涨跌家数/涨跌停/
+# 板块分布/资金主线——全部结构化数字，非叙述文本）。复盘的 build_review 面向
+# 「收盘出稿」，这里是「随问随取」，盘中问也能拿到当时的真实结构。
+# --------------------------------------------------------------------------- #
+
+_SINA_KLINE_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer": "https://finance.sina.com.cn/"}
+
+
+async def _sina_turnover(symbol: str = "sh000001", days: int = 2) -> list[dict]:
+    """指数日线（含成交额，单位元）：[{date, close, amount}]。
+
+    主源：腾讯 newfqkline（[date,open,close,high,low,vol,{},换手,amount万元,...]，
+    有历史成交额 → 支撑「对比昨日」）；兜底：新浪 kline + 新浪 hq 快照（只有当日）。
+    东财 push2his 对生产 IP 间歇断连、新浪 kline 无 amount 字段，故腾讯为首选。
+    失败 → []。"""
+    tencent_symbol = symbol.replace("sh", "sh").replace("sz", "sz")
+    out: list[dict] = []
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            r = await client.get(
+                "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
+                params={"param": f"{tencent_symbol},day,,,{days},qfq"},
+                headers=_SINA_KLINE_HEADERS,
+            )
+        d = ((r.json() or {}).get("data") or {}).get(tencent_symbol) or {}
+        for row in (d.get("day") or []):
+            if len(row) < 3:
+                continue
+            amt_wan = _num(row[8]) if len(row) > 8 else None
+            out.append({
+                "date": str(row[0]),
+                "close": _num(row[2]),
+                "amount": (amt_wan * 1e4) if amt_wan is not None else None,
+            })
+    except Exception:
+        out = []
+    if out:
+        return out
+    # 兜底：新浪 kline（无 amount）+ 新浪 hq 快照第 10 列补当日成交额
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            r = await client.get(
+                f"https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20d=/CN_MarketDataService.getKLineData"
+                f"?symbol={symbol}&scale=240&ma=no&datalen={days}",
+                headers=_SINA_KLINE_HEADERS,
+            )
+        m = re.search(r"\((\[.*\])\)", r.text, re.S)
+        rows = json.loads(m.group(1)) if m else []
+        out = [{"date": d.get("day"), "close": _num(d.get("close")), "amount": _num(d.get("amount"))} for d in rows]
+    except Exception:
+        out = []
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            hq = await client.get(f"https://hq.sinajs.cn/list={symbol}", headers=_SINA_KLINE_HEADERS)
+        m = re.search(r'="([^"]*)"', hq.text or "")
+        if m:
+            parts = m.group(1).split(",")
+            if len(parts) >= 11:
+                amt = _num(parts[9])
+                if out and amt:
+                    out[-1] = {**out[-1], "amount": out[-1].get("amount") or amt}
+                elif not out and amt:
+                    out = [{"date": None, "close": _num(parts[3]), "amount": amt}]
+    except Exception:
+        pass
+    return [d for d in out if d.get("date")]
+
+
+def _yi(amount: Any) -> Optional[float]:
+    """元 → 亿元（保留整数）。"""
+    f = _num(amount)
+    return round(f / 1e8, 0) if f is not None else None
+
+
+async def gather_market_structure() -> dict:
+    """市场结构硬数据一屏（指数+涨跌幅+收盘点位 / 两市成交额及对比昨日 / 涨跌家数 /
+    涨停跌停家数 / 行业板块领涨领跌+主力净额 / 连板梯队高度）。
+
+    各部分独立降级（缺哪块就置 None，绝不因单源失败整体为空）。
+    板块/涨跌家数走 _gather_sectors_breadth（已带 push2delay 兜底）；
+    指数走 _gather_indices（东财/新浪多级兜底）；成交额走新浪 kline
+    （上证 sh000001 + 深证综指 sz399106 之和 = 两市成交额）。"""
+    now = cn_now()
+    # 顺序跑三组采集（各 _gather_* 内部已做温柔间隔；对外部源不并发轰炸）
+    indices = await _gather_indices()
+    sectors, breadth, board_pcts = await _gather_sectors_breadth()
+    await asyncio.sleep(0.2)
+    movers = await _gather_movers()
+    breadth["limit_up"] = movers.get("limit_up")
+    breadth["limit_down"] = movers.get("limit_down")
+
+    # 两市成交额：上证 + 深证综指（新浪 kline，稳定）；无则置 None
+    sse_kl = await _sina_turnover("sh000001", days=3)
+    sz_kl = await _sina_turnover("sz399106", days=3)
+    turnover: Optional[dict] = None
+    try:
+        if sse_kl and sz_kl:
+            today_sse, today_sz = sse_kl[-1], sz_kl[-1]
+            prev_sse = sse_kl[-2] if len(sse_kl) >= 2 else None
+            prev_sz = sz_kl[-2] if len(sz_kl) >= 2 else None
+            amt = (today_sse.get("amount") or 0) + (today_sz.get("amount") or 0)
+            if amt:
+                turnover = {"date": today_sse.get("date"), "amount_yi": _yi(amt)}
+                if prev_sse and prev_sz and (prev_sse.get("amount") or prev_sz.get("amount")):
+                    prev_amt = (prev_sse.get("amount") or 0) + (prev_sz.get("amount") or 0)
+                    if prev_amt:
+                        turnover["prev_date"] = prev_sse.get("date")
+                        turnover["prev_amount_yi"] = _yi(prev_amt)
+                        turnover["delta_pct"] = round((amt / prev_amt - 1) * 100, 1)
+    except Exception:
+        turnover = None
+
+    # 连板梯队（东财 push2ex 涨停池；失败降级为空）
+    ladder_summary: Optional[dict] = None
+    try:
+        from .theme_navigation import fetch_limit_up_ladder
+        d = await fetch_limit_up_ladder(limit=12)
+        if d.get("ladder"):
+            ladder_summary = {
+                "date": d.get("date"), "limit_up_total": d.get("count"),
+                "max_boards": max((s.get("boards") or 0) for s in d["ladder"]),
+                "top": [
+                    {"name": s.get("name"), "boards": s.get("boards"), "days_ct": s.get("days_ct"), "industry": s.get("industry")}
+                    for s in d["ladder"][:6]
+                ],
+            }
+    except Exception:
+        ladder_summary = None
+
+    def _fmt_flow(v: Any) -> Optional[float]:
+        f = _num(v)
+        return round(f / 1e8, 1) if f is not None else None
+
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "generated_at": now.isoformat(),
+        "as_of": f"{now.strftime('%H:%M')} 北京时间（盘中为当时快照，收盘后为收盘数据）",
+        "indices": [
+            {"name": i.get("name"), "close": i.get("close"), "pct": i.get("pct")}
+            for i in (indices or [])
+        ],
+        "turnover": turnover,
+        "breadth": {k: breadth.get(k) for k in ("advancers", "decliners", "flat", "limit_up", "limit_down", "total")},
+        "sectors_top": [
+            {"name": b.get("name"), "pct": b.get("pct"), "main_net_inflow_yi": _fmt_flow(b.get("main_flow")), "leader": b.get("leader")}
+            for b in ((sectors or {}).get("top") or [])[:8]
+        ],
+        "sectors_bottom": [
+            {"name": b.get("name"), "pct": b.get("pct"), "main_net_inflow_yi": _fmt_flow(b.get("main_flow"))}
+            for b in ((sectors or {}).get("bottom") or [])[:5]
+        ],
+        "ladder": ladder_summary,
+        "note": (
+            "数据源：东财 push2/push2delay + 新浪（指数收盘点位与涨跌幅、两市成交额=上证+深证综指、"
+            "行业板块涨跌与主力净额、全市场涨跌家数、涨停池连板梯队）。全部为官方行情原始数字，"
+            "引用时请按本结构照实陈述；缺项为 None 时如实说『暂缺』，不得编造。"
+        ),
+    }
 
 
 async def traded_today() -> bool:
