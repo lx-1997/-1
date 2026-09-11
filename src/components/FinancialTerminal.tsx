@@ -6497,6 +6497,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 error={articleTextError}
                 parser={articleOriginal?.id === newsPreview.id ? articleOriginal.parser : undefined}
                 truncated={articleOriginal?.id === newsPreview.id ? articleOriginal.truncated : false}
+                sourceImageUrl={articleOriginal?.id === newsPreview.id ? articleOriginal.source_image_url : undefined}
                 onRetry={() => { void loadArticleText(newsPreview); }}
               />
             ) : (

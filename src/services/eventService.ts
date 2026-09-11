@@ -296,6 +296,24 @@ export async function getRealtimeMessageById(id: string): Promise<RealtimeMessag
   }
 }
 
+/** 深度文章原文：会员且源是截图/PDF 时带一次性令牌的源文件 URL（真原文直出）；
+ * 文字段落是 AI 提取副本，仅作回退与无障碍用途。 */
+export interface ArticleOriginalTextResponse {
+  id: string;
+  title: string;
+  paragraphs: string[];
+  content: string;
+  parser: string;
+  truncated: boolean;
+  source_image_url?: string;
+}
+
+export async function getArticleOriginalText(id: string): Promise<ArticleOriginalTextResponse> {
+  return apiGet<ArticleOriginalTextResponse>(`/api/realtime/messages/${encodeURIComponent(id)}/original-text`, {
+    timeout: 120000,
+  });
+}
+
 // ===== 研报「AI 解读」分享（软墙落地页，分享我们自己的解读、不外露第三方原文）=====
 export interface ReportShareRecord {
   id: string;

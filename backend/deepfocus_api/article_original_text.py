@@ -888,6 +888,34 @@ def _put_cached(key: str, result: ArticleOriginalText) -> None:
     _ARTICLE_TEXT_CACHE[key] = (time.monotonic(), result)
 
 
+def article_source_file_url(message: RealtimeMessageRecord) -> str:
+    """返回文章的原始文件直链（截图/PDF）；网页型来源返回空串。
+
+    前端用它做「真原文」直出渲染；空串表示该文章没有文件形态的原文，
+    继续走文字提取阅读器。"""
+    for url in _source_urls(message):
+        if _file_like_url(url) and _media_is_image_or_pdf(url):
+            return url
+    return ""
+
+
+def _media_is_image_or_pdf(url: str) -> bool:
+    suffix = Path(urlparse(url).path).suffix.lower()
+    if suffix in _IMAGE_SUFFIXES or suffix in _PDF_SUFFIXES:
+        return True
+    return "/uploads/" in url or "/upload/" in url
+
+
+def looks_like_article_image(url: str, raw_head: bytes) -> bool:
+    if raw_head.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"RIFF")):
+        return True
+    return Path(urlparse(url).path).suffix.lower() in _IMAGE_SUFFIXES
+
+
+async def download_article_source(url: str) -> _DownloadedSource:
+    return await _download_source(url)
+
+
 async def extract_article_original_text(message: RealtimeMessageRecord) -> ArticleOriginalText:
     """Return only readable article text; this function never exposes source bytes."""
     source_urls = _source_urls(message)

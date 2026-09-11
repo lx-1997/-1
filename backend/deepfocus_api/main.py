@@ -310,7 +310,13 @@ from .share_snapshots import (
     render_share_page_html,
 )
 from .report_url_ingest import extract_report_url
-from .article_original_text import extract_article_original_text, prewarm_article_original_text
+from .article_original_text import (
+    article_source_file_url,
+    download_article_source,
+    extract_article_original_text,
+    looks_like_article_image,
+    prewarm_article_original_text,
+)
 from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
 from .async_singleflight import AsyncSingleFlight
 from .research_prewarm_policy import research_prewarm_download_cap
@@ -9579,6 +9585,16 @@ async def api_get_article_original_text(message_id: str, request: Request) -> di
         raise HTTPException(status_code=403, detail="开通会员即可阅读文章全文")
 
     result = await extract_article_original_text(message)
+    # 会员原文直出：源文件是截图/PDF 时签发一次性令牌，前端直接渲染原始文件，
+    # 文字段落退化为回退/无障碍副本——「原文」就是上游原始文件本身，不是 AI 转写。
+    source_image_url = ""
+    if _claims_is_member(current_claims(request)):
+        source_url = article_source_file_url(message)
+        if source_url:
+            token = _issue_article_source_token(message.id, source_url)
+            source_image_url = (
+                f"/api/realtime/messages/{quote(message.id)}/source-file?token={token}"
+            )
     return {
         "id": message.id,
         "title": message.title,
@@ -9586,7 +9602,81 @@ async def api_get_article_original_text(message_id: str, request: Request) -> di
         "content": result.content,
         "parser": result.parser,
         "truncated": result.truncated,
+        "source_image_url": source_image_url,
     }
+
+
+# ── 文章源文件一次性令牌（沿用研报 wire-file 的单次消费模式）────────────────────
+_ARTICLE_SOURCE_TOKENS: dict[str, dict[str, Any]] = {}
+_ARTICLE_SOURCE_TOKEN_TTL = 600
+
+
+def _issue_article_source_token(message_id: str, source_url: str) -> str:
+    import uuid as _uuid
+
+    now = time.time()
+    for expired in [key for key, value in _ARTICLE_SOURCE_TOKENS.items() if value["expires_at"] < now]:
+        _ARTICLE_SOURCE_TOKENS.pop(expired, None)
+    token = _uuid.uuid4().hex
+    _ARTICLE_SOURCE_TOKENS[token] = {
+        "message_id": message_id,
+        "source_url": source_url,
+        "expires_at": now + _ARTICLE_SOURCE_TOKEN_TTL,
+    }
+    return token
+
+
+def _consume_article_source_token(token: str, message_id: str) -> dict[str, Any]:
+    grant = _ARTICLE_SOURCE_TOKENS.pop(token, None)
+    if not grant or grant["expires_at"] < time.time():
+        raise HTTPException(status_code=403, detail="原文预览链接已失效，请重新打开文章")
+    if grant["message_id"] != message_id:
+        raise HTTPException(status_code=403, detail="原文预览链接与文章不匹配")
+    return grant
+
+
+@app.get("/api/realtime/messages/{message_id}/source-file")
+async def api_get_article_source_file(message_id: str, request: Request, token: str = "") -> Response:
+    """会员文章源文件直出：仅凭一次性令牌转发原始截图/PDF，不在本服务落盘。
+
+    与研报 wire-file 同一模式：令牌单次消费、短时有效；URL 每次打开文章重新签发，
+    因此不落库、不入公开数据仓——浏览器拿到的是渲染流，而不是可分享的源地址。"""
+    if not token:
+        raise HTTPException(status_code=403, detail="原文预览链接已失效，请重新打开文章")
+    grant = _consume_article_source_token(token, message_id)
+    message = get_realtime_message(message_id)
+    if message is None or (message.topic or "") != "文章":
+        raise HTTPException(status_code=404, detail="文章不存在或已下线")
+    visible = _realtime_message_view(message, request)
+    if visible is None:
+        raise HTTPException(status_code=404, detail="文章不存在或已下线")
+    if _ARTICLE_LOCK_NOTE in (visible.content or ""):
+        raise HTTPException(status_code=403, detail="开通会员即可阅读文章全文")
+    source_url = str(grant.get("source_url") or "")
+    if source_url != article_source_file_url(message):
+        # 令牌签发后源被更新（重抓/换图）→ 旧令牌指向的文件已不是当前原文，拒发。
+        raise HTTPException(status_code=403, detail="原文已更新，请重新打开文章")
+    try:
+        downloaded = await download_article_source(source_url)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="原文文件读取失败，请稍后重试") from exc
+    media_type = (downloaded.content_type or "").split(";", 1)[0].strip().lower()
+    if not (media_type.startswith("image/") or media_type == "application/pdf"):
+        media_type = "image/png" if looks_like_article_image(source_url, downloaded.raw[:16]) else "application/pdf"
+        if media_type == "application/pdf" and not downloaded.raw.startswith(b"%PDF-"):
+            raise HTTPException(status_code=415, detail="原文文件格式暂不支持在线预览")
+    return Response(
+        content=downloaded.raw,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 # ===== 研报「AI 解读」可分享落地页（软墙，分享我们的解读而非第三方原文，见 [[report_share]]）=====
