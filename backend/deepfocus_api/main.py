@@ -9647,11 +9647,15 @@ async def api_get_article_source_file(message_id: str, request: Request, token: 
     message = get_realtime_message(message_id)
     if message is None or (message.topic or "") != "文章":
         raise HTTPException(status_code=404, detail="文章不存在或已下线")
-    visible = _realtime_message_view(message, request)
+    # 令牌本身就是授权凭证：<img>/<object> 请求不会带 Authorization Bearer，
+    # 不能再要求请求方同时是已登录会员（那会把所有合法的会员图片请求误判为匿名
+    # 而隐藏 futou 文章）。会员身份已在签发 original-text 时校验过——非会员根本
+    # 拿不到令牌；这里不能再从请求身份推导会员资格：锁注检查对无 Bearer 的
+    # img 请求恒为「非会员」，会把令牌合法的渲染请求误拒成 403。
+    # 保留的检查：TradeAlpha 屏蔽、令牌单次消费 + 绑定文章 + 绑定当前源文件。
+    visible = _realtime_message_view(message, request, hide_futoucaixin=False)
     if visible is None:
         raise HTTPException(status_code=404, detail="文章不存在或已下线")
-    if _ARTICLE_LOCK_NOTE in (visible.content or ""):
-        raise HTTPException(status_code=403, detail="开通会员即可阅读文章全文")
     source_url = str(grant.get("source_url") or "")
     if source_url != article_source_file_url(message):
         # 令牌签发后源被更新（重抓/换图）→ 旧令牌指向的文件已不是当前原文，拒发。
