@@ -14,7 +14,7 @@
 
   const SOURCE_ORIGIN = "https://www.jdbinvesting.com";
   const MIRROR_ORIGIN = "https://daocaijing.com";
-  const VERSION = "2026.09.14.7";
+  const VERSION = "2026.09.14.9";
   // The shell snapshot is enough for the home and tracking surfaces.  The
   // transcript payload is large, so only request it when a reader opens a
   // content-heavy route (or signals intent by hovering/focusing a card).
@@ -570,16 +570,18 @@
     // 原站期权到期格式 Sep18'26（月日'年）
     const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const contractName = (leg) => {
-      if (String(leg.positionType || "").toUpperCase() !== "OPTION") return leg.ticker || "";
+      // 原站合约行 = ticker 大字 + 下一行 "Sep18'26 470 PUT"（不重复 ticker）
       const parts = String(leg.expirationDate || "").split("/");
       const label = parts.length === 3 ? MONTHS[Number(parts[1]) - 1] + String(Number(parts[2])) + "'" + parts[0].slice(2) : "";
-      return [leg.ticker, label, leg.strikePrice ?? "--", leg.optionType].filter(Boolean).join(" ");
+      return [label, leg.strikePrice ?? "--", leg.optionType].filter(Boolean).join(" ");
     };
     const money = (value) => (value === null || value === undefined || value === "") ? "--" : (Number(value) < 0 ? "-$" + Math.abs(value) : "$" + value);
     // 一行持仓腿：代号（含合约）/ 类型 / 操作 / 数量 / 价格 —— 对齐原站关联持仓表
     const legRow = (leg, action) => '<tr><td><b>' + escape(leg.ticker || "--") + '</b>' + (String(leg.positionType || "").toUpperCase() === "OPTION" ? '<span class="trade-contract">' + escape(contractName(leg)) + '</span>' : "") + '</td><td>' + escape(String(leg.positionType || "").toUpperCase() === "OPTION" ? "期权" : "股票") + '</td><td>' + escape(action || (leg.action || "")) + '</td><td>' + escape(leg.volume ?? "--") + '</td><td>' + escape(money(leg.price)) + '</td></tr>';
-    const positionTable = (legs, action) => legs.length
-      ? '<table class="trade-positions"><thead><tr><th>代号</th><th>类型</th><th>操作</th><th>数量</th><th>价格</th></tr></thead><tbody>' + legs.map((leg) => legRow(leg, action)).join("") + '</tbody></table>'
+    const positionTable = (legs, action, groupLabel) => legs.length
+      ? '<table class="trade-positions"><thead><tr><th>代号</th><th>类型</th><th>操作</th><th>数量</th><th>价格</th></tr></thead><tbody>'
+        + (groupLabel ? '<tr class="trade-pt-group"><td colspan="5">' + escape(groupLabel) + '</td></tr>' : '')
+        + legs.map((leg) => legRow(leg, action)).join("") + '</tbody></table>'
       : '<p class="trade-locked">本笔未附持仓明细。</p>';
 
     // 最新 open 仓位：每只 ticker 取其最新帖子的 previousPositions 快照。
@@ -591,6 +593,15 @@
       }
     }
     const openLegs = [...openPositionsByTicker.values()].flat().slice(0, 30);
+    // open 仓位表对齐原站六列：代号/类型/数量/价格/最近交易时间/关注
+    const openPositionTable = openLegs.length
+      ? '<table class="trade-positions trade-open-positions"><thead><tr><th>代号</th><th>类型</th><th>数量</th><th>价格</th><th>最近交易时间</th><th>关注</th></tr></thead><tbody>'
+        + openLegs.map((leg) => {
+          const followed = typeof state !== "undefined" && state.followed?.has(leg.ticker);
+          return '<tr><td><b>' + escape(leg.ticker || "--") + '</b>' + (String(leg.positionType || "").toUpperCase() === "OPTION" ? '<span class="trade-contract">' + escape(contractName(leg)) + '</span>' : "") + '</td><td>' + escape(String(leg.positionType || "").toUpperCase() === "OPTION" ? "期权" : "股票") + '</td><td>' + escape(leg.volume ?? "--") + '</td><td>' + escape(money(leg.price)) + '</td><td>' + escape(leg.lastUpdatedAt || "--") + '</td><td><button class="watch-btn mini' + (followed ? " on" : "") + '" data-watch="' + escape(leg.ticker || "") + '">' + (followed ? "★" : "☆") + '</button></td></tr>';
+        }).join("")
+        + '</tbody></table>'
+      : '<p class="trade-locked">当前同步快照里没有 open 仓位数据。</p>';
 
     const cards = posts.slice(0, 60).map((post, index) => {
       const type = String(post.positionType || (post.transactions?.[0]?.positionType || "STOCK")).toUpperCase();
@@ -598,24 +609,38 @@
       const hasOptionLeg = txLegs.some((tx) => String(tx.positionType || "").toUpperCase() === "OPTION");
       // 原站 tab 语义：期权 = 交易含期权腿；股票 = positionType 为 STOCK 的频道流
       const feed = hasOptionLeg ? "option" : (type === "STOCK" ? "stock" : "channel");
-      const linkedName = post.linkedPT?.displayName || (post.ticker ? post.ticker + (txLegs.length > 1 ? " Combo" : "") : "");
-      const philosophy = (post.tradingPhilosophy || []).join(" ");
-      const summaryLine = (post.tradingPhilosophy || []).find((line) => /赚了|亏了|获利|止损/.test(line)) || (post.tradingPlan || [])[0] || "";
+      const actionLabel = actionCN[post.sourceAction] || post.sourceAction || "交易";
+      // 原站关联持仓表上方的分组行（如 "MSFT Combo"）
+      const linkedPTName = post.linkedPT?.displayName || (txLegs.length > 1 ? (post.ticker || "") + " Combo" : "");
       const detailSections = [];
-      if (summaryLine) detailSections.push('<div class="trade-detail-block"><h4>交易说明</h4>' + (post.tradingPhilosophy || []).map((line) => '<p>' + escape(line) + '</p>').join("") + '</div>');
+      if ((post.tradingPhilosophy || []).length) detailSections.push('<div class="trade-detail-block"><h4>交易说明</h4>' + post.tradingPhilosophy.map((line) => '<p>' + escape(line) + '</p>').join("") + '</div>');
       if ((post.tradingPlan || []).length) detailSections.push('<div class="trade-detail-block"><h4>交易计划</h4>' + post.tradingPlan.map((line) => '<p>' + escape(line) + '</p>').join("") + '</div>');
       if (post.riskLevel) detailSections.push('<div class="trade-detail-block"><h4>风险提示（' + escape(post.riskLevel) + '/5）</h4>' + (post.riskWarning || []).map((line) => '<p>' + escape(line) + '</p>').join("") + '</div>');
       const detail = detailSections.join("");
-      return '<article class="trade-card card' + (detail ? "" : " trade-locked") + '" data-trade-index="' + index + '" data-trade-type="' + escape(type) + '" data-trade-feed="' + escape(feed) + '">'
-        + '<div class="trade-head"><div class="trade-meta"><span>美投君</span><span>' + escape(post.createdAt || "") + '</span><span>' + escape(actionCN[post.sourceAction] || post.sourceAction || "交易") + '</span></div>'
-        + (linkedName ? '<button class="trade-linked" data-trade-toggle="' + index + '">' + escape(linkedName) + ' ⌄</button>' : '<button class="action" data-trade-toggle="' + index + '">查看详情⌄</button>')
-        + '<h3 class="trade-ticker">' + escape(post.ticker || "--") + '</h3><span class="tag trade-type-tag">' + escape(type) + '</span></div>'
-        + '<div class="trade-detail" id="trade-detail-' + index + '">'
-        + (txLegs.length ? '<div class="trade-detail-block"><h4>查看关联持仓</h4>' + positionTable(txLegs) + '</div>' : '<div class="trade-subscribe"><p>本笔交易的实时持仓明细仅向原站订阅用户披露（镜像同步的可见部分未包含此帖）。</p><a class="primary-inline" href="' + SOURCE_ORIGIN + '/meitouquan/trades" target="_blank" rel="noreferrer">去原站查看</a></div>')
-        + detail
-        + (philosophy ? "" : "")
+      // 原站图标（内嵌原站同款 SVG path / 图片资源），与 TransactionPost.tsx 结构对齐
+      const rolloverIcon = '<svg class="trade-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6m6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26"></path></svg>';
+      const likeIcon = '<svg class="trade-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3m-4.4 15.55-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05"></path></svg>';
+      const commentIcon = '<img class="trade-action-icon-img" alt="comment" loading="lazy" width="14" height="14" src="assets/coments_dark.svg">';
+      const commentLabel = post.numComment ? "评论 " + escape(post.numComment) : "添加评论";
+      return '<article class="trade-card card" data-trade-index="' + index + '" data-trade-type="' + escape(type) + '" data-trade-feed="' + escape(feed) + '">'
+        // CardHeader: avatar + 美投君/日期 + 右上动作图标（Rollover 循环箭头）
+        + '<div class="trade-head"><img class="trade-avatar" src="assets/mt-channel-logo.jpeg" alt="美投君">'
+        + '<div class="trade-meta"><span class="trade-author">美投君</span><span class="trade-date">' + escape(post.createdAt || "") + '</span></div>'
+        + '<div class="trade-action-badge">' + rolloverIcon + '<span>' + escape(actionLabel) + '</span></div>'
         + '</div>'
-        + '<div class="qa-actions"><button data-trade-action="like">点赞 ' + escape(post.likes ?? 0) + '</button><button data-trade-action="comment">评论 ' + escape(post.numComment ?? 0) + '</button><button data-trade-action="watch">有调整提醒我</button></div>'
+        // CardContent: ticker 大字 + 类型 chip + 关联持仓/订阅提示，全部直出（原站无折叠交互）
+        + '<div class="trade-body"><div class="trade-title-row"><p class="trade-ticker">' + escape(post.ticker || "--") + '</p><span class="trade-chip trade-chip-' + escape(type.toLowerCase()) + '">' + escape(type) + '</span></div>'
+        + '<div class="trade-detail" id="trade-detail-' + index + '">'
+        + (txLegs.length || detail
+          ? (txLegs.length ? '<div class="trade-detail-block"><h4>查看关联持仓</h4>' + positionTable(txLegs, null, linkedPTName) + '</div>' : "") + detail
+          : '<div class="trade-subscribe"><p>本笔交易的实时持仓明细仅向原站订阅用户披露（镜像同步的可见部分未包含此帖）。</p><a class="primary-inline" href="' + SOURCE_ORIGIN + '/meitouquan/trades" target="_blank" rel="noreferrer">去原站查看</a></div>')
+        + '</div></div>'
+        // CardActions: 点赞(心形图标) / 评论(svg 图片图标) / 有调整提醒我(实心主色按钮)
+        + '<div class="qa-actions trade-actions">'
+        + '<button class="trade-react-btn" data-trade-action="like">' + likeIcon + '<span>点赞' + (post.likes ? " " + escape(post.likes) : "") + '</span></button>'
+        + '<button class="trade-react-btn" data-trade-action="comment">' + commentIcon + '<span>' + commentLabel + '</span></button>'
+        + '<button class="trade-follow-btn" data-trade-action="watch">有调整提醒我</button>'
+        + '</div>'
         + '</article>';
     }).join("");
     const emptyCard = posts.length ? "" : '<article class="trade-card card"><div class="trade-head"><h3 class="trade-ticker">--</h3></div><p class="trade-locked">实战操作数据尚未同步完成，稍后会随 15 分钟一次的快照刷新出现。</p></article>';
@@ -630,12 +655,14 @@
       return (days > 0 ? days + " 天 " : "") + clock;
     })();
     return '<div class="page parity-module-page parity-trades-page"><div class="parity-route-head"><div><div class="crumb"><span class="back">‹</span><span>美投君 · 交易分享</span></div><h1>实战操作</h1><p>同步 PRO+ 实战操作记录：关联持仓、风险提示、交易计划与交易说明。</p></div>' + syncChip() + '</div>'
-      + '<section class="parity-panel"><div class="filter-tabs trade-tabs">'
+      + '<div class="trade-layout">'
+      + '<section class="parity-panel trade-feed-panel"><div class="filter-tabs trade-tabs">'
       + '<button class="active" data-trade-filter="all">频道交易</button><button data-trade-filter="option">期权</button><button data-trade-filter="stock">股票</button>'
       + '</div><div class="trade-list">' + (cards || emptyCard) + '</div><div class="trade-more">更多</div></section>'
-      + '<section class="parity-panel open-position"><div class="section-head"><div><h2>美投君的 open 仓位</h2><p>更新时间：' + escape(updatedLabel) + '</p></div></div>'
-      + (openLegs.length ? positionTable(openLegs, "持有") : '<p class="trade-locked">当前同步快照里没有 open 仓位数据。</p>')
-      + '</section>'
+      + '<aside class="parity-panel open-position trade-open-panel"><div class="section-head"><div><h2>美投君的 open 仓位</h2><p>更新时间：' + escape(updatedLabel) + '</p></div></div>'
+      + openPositionTable
+      + '</aside>'
+      + '</div>'
       + '<div class="parity-disclosure"><strong>数据说明：</strong>关联持仓、风险提示、交易计划与交易说明同步自原站实战操作接口；历史帖最多展示 60 笔，互动数据为同步时刻的快照。</div></div>';
   }
 
@@ -645,23 +672,11 @@
   // DOM 捕获顺序是 window → document → … → 目标：在 window 捕获阶段接管，
   // 才能稳定先于 patch 处理器拿到 trade 控件的点击。
   window.addEventListener("click", (event) => {
-    const target = event.target?.closest?.("[data-trade-toggle],[data-trade-filter],[data-trade-action]");
+    const target = event.target?.closest?.("[data-trade-filter],[data-trade-action]");
     if (!target || !target.closest(".parity-trades-page")) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
-
-    if (target.hasAttribute("data-trade-toggle")) {
-      const card = target.closest(".trade-card");
-      const open = card?.classList.toggle("open");
-      // 关联持仓按钮（.trade-linked）保留名称，只换箭头；普通按钮换文案
-      if (target.classList.contains("trade-linked")) {
-        target.textContent = target.textContent.replace(/\s*[⌄⌃]\s*$/, open ? " ⌃" : " ⌄");
-      } else {
-        target.textContent = open ? "收起详情⌃" : "查看详情⌄";
-      }
-      return;
-    }
 
     if (target.hasAttribute("data-trade-filter")) {
       const page = target.closest(".parity-trades-page");
@@ -678,8 +693,11 @@
 
     const kind = target.dataset.tradeAction;
     if (kind === "like") {
+      // 只更新文字 span，保住按钮里内嵌的心形 SVG 图标
+      const span = target.querySelector("span");
       const count = Number((target.textContent.match(/\d+/) || [0])[0]) + 1;
-      target.textContent = "点赞 " + count;
+      if (span) span.textContent = "点赞 " + count;
+      else target.textContent = "点赞 " + count;
     } else if (typeof window.toast === "function") {
       window.toast(kind === "watch" ? "已开启调整提醒" : "评论入口已打开");
     }
