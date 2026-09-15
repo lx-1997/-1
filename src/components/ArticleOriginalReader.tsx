@@ -94,20 +94,6 @@ const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
           </figure>
         )}
 
-        {source.takeaways.length > 0 && (
-          <section className="bbt-article-reader__takeaways" aria-label="文章要点">
-            <div className="bbt-article-reader__section-label"><span>AI TAKEAWAYS</span><em>先看这 {source.takeaways.length} 个要点</em></div>
-            <ol>
-              {source.takeaways.map((paragraph, index) => (
-                <li key={`takeaway-${index}`}>
-                  <p>{paragraph.text}</p>
-                  <OriginalToggle paragraph={paragraph} />
-                </li>
-              ))}
-            </ol>
-          </section>
-        )}
-
         <div className="bbt-article-reader__body">
           {source.sections.map((section, sectionIndex) => (
             <section key={`section-${sectionIndex}`} className="bbt-article-reader__section">
