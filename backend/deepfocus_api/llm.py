@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -208,8 +209,34 @@ class _ThinkingStripper:
         return out
 
 
+# 回答被 token 上限截断时追加给用户的明示（宁可不说完，也不给半句话）。
+# 触发条件仅 finish_reason == "length"：正常收尾（stop）不会出现该提示。
+_TRUNCATION_NOTICE = "\n\n（这条回答触达了单次输出上限，被截断在这里。可以回复「继续」，我从断点接着写完。）"
+
+
 def _clean_display_text(value: Any) -> str:
     return _display_role_text(_strip_thinking_blocks(value)).strip()
+
+
+def _openai_tool_specs_compat(
+    *,
+    extra_tools: dict[str, Any] | None = None,
+    whitelist_user: bool = False,
+) -> list[dict[str, Any]]:
+    """按 agent_tools 实际签名调 openai_tool_specs，缺参数时降级而不是抛异常。
+
+    ``whitelist_user`` 是较新的白名单门控参数；旧版 agent_tools 没有它。这里用签名
+    探测而不是硬编码版本或宽泛的 except TypeError（后者会把函数内部的真实 TypeError
+    也吞掉）：不支持就退回不带门控的清单，绝不因为一个可选参数让整个 tool-agent 抛错
+    ——异常会被上层 broad except 静默吞掉，表现为"研究问题悄悄退化成普通聊天"。
+    """
+    try:
+        supports_whitelist = "whitelist_user" in inspect.signature(openai_tool_specs).parameters
+    except (TypeError, ValueError):
+        supports_whitelist = False
+    if supports_whitelist:
+        return openai_tool_specs(extra_tools=extra_tools, whitelist_user=whitelist_user)
+    return openai_tool_specs(extra_tools=extra_tools)
 
 
 class CloudResearchLLM:
@@ -663,7 +690,11 @@ class CloudResearchLLM:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": 1200 if context_block else 900,
+            # 900/1200 是 MiniMax-M3 时代按"每 token 都烧钱"定的预算，对 qwen3.6-flash
+            # 明显偏小：一次分点长回答(约 3500 中文字)会在 sentence 中间被 finish_reason=length
+            # 砍断，用户看到的就是"回复说一半就没了"。实测关掉隐藏思考后 3200/2600 足够写完整篇，
+            # 且生成耗时仍在 28s 超时以内（普通聊天非流式路径）。
+            "max_tokens": 3200 if context_block else 2600,
         }
         if _is_kimi_switchable_thinking_model(self.model):
             payload["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -686,6 +717,8 @@ class CloudResearchLLM:
         content = _strip_thinking_blocks(response.choices[0].message.content or "")
         if not content:
             content = "我在。你继续说。"
+        if response.choices[0].finish_reason == "length":
+            content += _TRUNCATION_NOTICE
         return GeneralChatResponse(
             provider=self.provider_name,
             model=self.model,
@@ -711,11 +744,17 @@ class CloudResearchLLM:
 
         stripper = _ThinkingStripper()
         emitted = False
+        truncated = False
         async for chunk in stream:
             try:
-                delta = chunk.choices[0].delta.content or ""
+                choice = chunk.choices[0]
             except (AttributeError, IndexError):
-                delta = ""
+                continue
+            if choice.finish_reason == "length":
+                # 流式迭代里最后一个带 choices 的 chunk 会带 finish_reason，能在不引入
+                # 额外延迟的前提下判断"这是被砍断的"而不是"说完了"。
+                truncated = True
+            delta = choice.delta.content or ""
             if not delta:
                 continue
             visible = stripper.feed(delta)
@@ -726,6 +765,9 @@ class CloudResearchLLM:
         if tail:
             emitted = True
             yield tail
+        if truncated:
+            emitted = True
+            yield _TRUNCATION_NOTICE
         if not emitted:
             yield "我在。你继续说。"
 
@@ -1299,7 +1341,7 @@ class CloudResearchLLM:
                 for name, tool in mcp_tools.items()
                 if name in allowed_names and name not in TOOL_REGISTRY
             }
-        tool_specs = openai_tool_specs(extra_tools=mcp_tools, whitelist_user=ifind_user)
+        tool_specs = _openai_tool_specs_compat(extra_tools=mcp_tools, whitelist_user=ifind_user)
         if allowed_names is not None:
             tool_specs = [
                 spec for spec in tool_specs
