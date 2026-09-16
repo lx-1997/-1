@@ -661,6 +661,18 @@ def _build_news_prompt(title: Optional[str], content: str) -> str:
     )
 
 
+def _title_only_one_liner(title: Optional[str]) -> str:
+    """正文不可得时的降级概括：只复述标题本身，不引入任何新事实。
+
+    聚合类条目经常只有标题、正文留在原文链接且抓不到。此时宁可给用户一句
+    "据标题"的诚实概括，也不该把整条 AI 解读判成失败（用户看到 502 会反复重试）。
+    """
+    text = (title or "").strip()
+    if not text:
+        return "该条目未提供正文，无法解读。"
+    return f"该条目仅有标题、原文正文不可得，据标题概括：{text}"
+
+
 async def analyze_news(title: Optional[str], content: str, url: Optional[str] = None) -> dict[str, Any]:
     """对一条财经新闻做大白话 AI 解读，返回与研报同构的结构（可复用同一前端卡片）。
 
@@ -698,14 +710,29 @@ async def analyze_news(title: Optional[str], content: str, url: Optional[str] = 
     data = await llm.complete_json(
         _build_news_prompt(title, body), max_tokens=3600, timeout_seconds=70,
     )
-    result = _normalize_result(
-        data,
-        provider=llm.model,
-        pages=0,
-        disclaimer=_TEXT_DISCLAIMER,
-        logic_line_limit=3,
-        backfill_logic_lines=False,
-    )
+    # 正文太薄(只有标题)时，模型常按"不得编造"的纪律返回全空字段（实测 one_liner/
+    # summary 均为空串）。原样交给 _normalize_result 会抛「模型未返回可用解读」→ 接口
+    # 502，用户看到"AI 解读失败"且重试同样失败。这里降级为只用标题本身的一句话概括
+    # （不新增任何事实），并把 source_note 标成"仅据标题"，让前端照常展示取材边界。
+    try:
+        result = _normalize_result(
+            data,
+            provider=llm.model,
+            pages=0,
+            disclaimer=_TEXT_DISCLAIMER,
+            logic_line_limit=3,
+            backfill_logic_lines=False,
+        )
+    except RuntimeError:
+        result = _normalize_result(
+            {"one_liner": _title_only_one_liner(title)},
+            provider=llm.model,
+            pages=0,
+            disclaimer=_TEXT_DISCLAIMER,
+            logic_line_limit=3,
+            backfill_logic_lines=False,
+        )
+        source_note = source_note or "⚠ 原文信息有限，本解读仅据标题概括，未逐条核验"
     result = normalize_news_result(result)
     if source_note:
         result["source_note"] = source_note
