@@ -7,13 +7,18 @@ export const ONB_KEY = 'df_onboarded_v1';
 
 interface OnbStep { selector?: string; selectors?: string[]; emoji: string; title: string; body: string; }
 
-// 精简为 3 步核心动作（搜股→AI 问答→开盯盘）：7 步文字导览在 10 秒心智窗口里讲不完，
-// 反而盖脸劝退——次要功能（研报/微信/邀请）都有常驻入口，让用户用的时候自己发现。
+// 首步为无锚点价值步（讲清免费可得的当日价值），其后点亮搜索/AI 问答（免登录即可体验），末步把盯盘讲诚实：
+// 晨报免费，自选快讯/异动推送、复盘推送与文章全文为会员权益——不把会员功能当普遍福利承诺。
 const STEPS: OnbStep[] = [
+  { emoji: '👋', title: '先看今天市场', body: '实时快讯、每日复盘免登录直接看；深度文章先读导语，会员解锁全文。看到感兴趣的标的，用搜索或 AI 继续深挖。' },
   { selectors: ['.bbt-cmd-input', '.bbt-hero-cta-primary'], emoji: '🔍', title: '查一只股', body: '输入代码或名称（如 茅台 / 600519），不用登录就能看实时行情、真K线和它的快讯/研报。' },
   { selector: '.bbt-aiqa-entry', emoji: '🤖', title: '让 AI 帮你研判', body: '「AI 问答」会自动调行情/估值/资金/研报综合作答——问『它现在贵不贵』试试（免费额度每天都有）。' },
-  { emoji: '🔔', title: '开盯盘，别错过', body: '把股票加进自选并开启盯盘提醒，你的股有快讯/异动会第一时间通知你；每天早8:30晨报、收盘15:35复盘准时见。随时点底部「更多」重看引导。' },
+  { emoji: '🔔', title: '开盯盘 · 晨报免费见', body: '把股票加进自选并绑定微信，每个交易日早 8:30 晨报免费推送；自选快讯/异动提醒、每日复盘推送与深度文章全文为会员权益，需要时在「更多」里升级。随时点「更多」重看本引导。' },
 ];
+
+// 兜底欢迎步：窄屏(≤820px)隐藏顶栏搜索、登录用户无 hero 时锚点步会被过滤，不足 2 步时补在前面，
+// 防止导览塌缩成单张订阅推销卡。
+const WELCOME_FALLBACK: OnbStep = { emoji: '👋', title: '欢迎', body: '实时快讯、每日复盘免登录直接看；深度文章先读导语，会员解锁全文。点底部「更多」可随时重看本引导。' };
 
 const PAD = 8;
 const CARD_W = 340;
@@ -28,12 +33,15 @@ const isVisibleTarget = (selector: string) => {
 
 const TerminalOnboarding: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   // 仅保留「无目标的欢迎页」+「当前视口存在可见目标的步骤」；移动端隐藏顶栏搜索后自动改用 hero 按钮或跳过该步。
-  const [steps] = useState<OnbStep[]>(() => STEPS.flatMap(step => {
-    const candidates = step.selectors || (step.selector ? [step.selector] : []);
-    if (!candidates.length) return [step];
-    const selector = candidates.find(isVisibleTarget);
-    return selector ? [{ ...step, selector }] : [];
-  }));
+  const [steps] = useState<OnbStep[]>(() => {
+    const visible = STEPS.flatMap(step => {
+      const candidates = step.selectors || (step.selector ? [step.selector] : []);
+      if (!candidates.length) return [step];
+      const selector = candidates.find(isVisibleTarget);
+      return selector ? [{ ...step, selector }] : [];
+    });
+    return visible.length >= 2 ? visible : [WELCOME_FALLBACK, ...visible];
+  });
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const step = steps[i];
@@ -80,12 +88,13 @@ const TerminalOnboarding: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+  const cardWidth = Math.min(CARD_W, Math.max(280, vw - 24));
   let cardStyle: React.CSSProperties;
   if (!spot) {
     cardStyle = { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' };
   } else {
     const placeBelow = spot.top + spot.height + 190 < vh;
-    const left = Math.min(Math.max(12, spot.left + spot.width / 2 - CARD_W / 2), vw - CARD_W - 12);
+    const left = Math.min(Math.max(12, spot.left + spot.width / 2 - cardWidth / 2), vw - cardWidth - 12);
     const top = placeBelow ? spot.top + spot.height + 14 : Math.max(12, spot.top - 14 - 176);
     cardStyle = { left, top };
   }
@@ -94,11 +103,11 @@ const TerminalOnboarding: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const stepLabel = `第 ${i + 1} 步：${step.title}`;
 
   return createPortal(
-    <div className="bbt-onb" role="dialog" aria-modal="true" aria-label={stepLabel} onClick={e => { if (e.target === e.currentTarget) { /* 点遮罩不误关 */ } }}>
+    <div className="bbt-onb" role="dialog" aria-modal="true" aria-live="polite" aria-label={stepLabel} onClick={e => { if (e.target === e.currentTarget) { /* 点遮罩不误关 */ } }}>
       {spot
         ? <div className="bbt-onb-spot" style={spot} />
         : <div className="bbt-onb-scrim" />}
-      <div className="bbt-onb-card" style={{ width: CARD_W, ...cardStyle }} key={i}>
+      <div className="bbt-onb-card" style={{ width: cardWidth, ...cardStyle }} key={i}>
         <button className="bbt-onb-x" onClick={finish} aria-label="跳过引导" title="跳过">✕</button>
         <div className="bbt-onb-emoji">{step.emoji}</div>
         <div className="bbt-onb-title">{stepLabel}</div>
