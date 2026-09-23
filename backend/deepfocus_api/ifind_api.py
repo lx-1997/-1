@@ -25,6 +25,42 @@ DEFAULT_INDICATORS = "latest,changeRatio,open,high,low,amount,volume,pe_ttm,pb,t
 
 _lock = threading.Lock()
 _access: dict = {"token": "", "expired_time": ""}  # 进程内缓存
+_refresh_fail_until = 0.0  # 换新失败退避：在此之前不再打 get_access_token（防烧掉当日获取配额）
+_loaded_token_file = False  # 磁盘 token 只在首次调用时恢复一次
+
+# access_token 落盘：跨进程/跨重启共享一次获取。iFinD 对「当日获取次数」有硬配额（-1305），
+# 多进程各自换新 + 每次重启重取会把配额瞬间烧光 → 全天无行情、模拟盘空转（2026-09-22 实证）。
+from pathlib import Path  # noqa: E402
+
+_TOKEN_FILE = Path(
+    os.getenv("DEEPFOCUS_DATA_DIR") or (Path(__file__).resolve().parents[1] / "data")
+) / ".ifind_access_token.json"
+
+
+def _load_token_file() -> None:
+    """从磁盘恢复未过期的 access_token（进程启动时；留 1 天余量与内存缓存一致）。"""
+    try:
+        import json  # noqa: PLC0415
+        raw = json.loads(_TOKEN_FILE.read_text(encoding="utf-8"))
+        tok = str(raw.get("token") or "").strip()
+        exp = _parse_dt(str(raw.get("expired_time") or ""))
+        if tok and exp and (exp - _now()).total_seconds() >= 86400 and not _access["token"]:
+            _access["token"] = tok
+            _access["expired_time"] = str(raw.get("expired_time") or "")
+    except Exception:  # noqa: BLE001 - 落盘缓存缺失/损坏不影响正常换取
+        pass
+
+
+def _save_token_file() -> None:
+    try:
+        import json  # noqa: PLC0415
+        _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _TOKEN_FILE.write_text(
+            json.dumps({"token": _access["token"], "expired_time": _access["expired_time"]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _refresh_token() -> str:
@@ -58,7 +94,7 @@ def _parse_dt(s: str) -> Optional[datetime]:
 
 
 def _fetch_access_token() -> Optional[str]:
-    """用 refresh_token 换取新的 access_token，写入缓存。失败返回 None。"""
+    """用 refresh_token 换取新的 access_token，写入缓存与磁盘。失败返回 None 并进入 10min 退避。"""
     rt = _refresh_token()
     if not rt:
         return None
@@ -70,19 +106,29 @@ def _fetch_access_token() -> Optional[str]:
         if tok:
             _access["token"] = tok
             _access["expired_time"] = data.get("expired_time") or ""
+            _save_token_file()
             return tok
     except Exception:  # noqa: BLE001
         pass
+    # 失败退避：-1305「当日获取次数超限」等场景下反复重试只会继续空转；10min 后再试（次日配额重置自然恢复）。
+    global _refresh_fail_until
+    _refresh_fail_until = time.monotonic() + 600.0
     return None
 
 
 def _access_token() -> Optional[str]:
-    """返回可用 access_token：有「带到期时间且未临期」的缓存直接用；否则用 refresh 换新（拿到真实到期时间）。
-    refresh 失败才回退到 env 种子 token。线程安全。"""
+    """返回可用 access_token：磁盘/进程缓存「带到期时间且未临期」直接用；否则用 refresh 换新（失败有 10min 退避）。"""
+    global _loaded_token_file
     with _lock:
+        if not _loaded_token_file:
+            _loaded_token_file = True
+            _load_token_file()
         exp = _parse_dt(_access["expired_time"])
         if _access["token"] and exp and (exp - _now()).total_seconds() >= 86400:
             return _access["token"]  # 缓存有效（留 1 天余量）
+        if time.monotonic() < _refresh_fail_until:
+            # 退避期内不打 get_access_token（配额型失败重试无意义）；回退磁盘/env 种子 token。
+            return _access["token"] or (os.getenv("DEEPFOCUS_IFIND_ACCESS_TOKEN") or "").strip() or None
         tok = _fetch_access_token()  # 首次/临期/无到期信息 → 换取（顺带拿到 expired_time，使后续续期可判定）
         if tok:
             return tok
@@ -217,4 +263,5 @@ def cached_single_quote(symbol: str, ttl: float = _QUOTE_CACHE_TTL) -> Optional[
 
 def access_token_status() -> dict:
     """运维自检：是否配置 + 当前缓存 token 到期时间（不返回 token 本身）。"""
-    return {"enabled": enabled(), "has_token": bool(_access["token"]), "expired_time": _access["expired_time"]}
+    return {"enabled": enabled(), "has_token": bool(_access["token"]), "expired_time": _access["expired_time"],
+            "refresh_backoff": max(0, round(_refresh_fail_until - time.monotonic()))}
