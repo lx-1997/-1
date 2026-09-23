@@ -33,7 +33,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 
 from .llm import CloudResearchLLM
-from .research_vision import _strip_brand_text, extract_pdf_ocr_text
+from .research_vision import _strip_brand_text, analyze_pdf_vision, extract_pdf_ocr_text
 from .research_multi_agent import analyze_pdf_adaptive
 from .research_workbench import WORKBENCH_DIR
 from .schemas import (
@@ -61,6 +61,7 @@ _MAX_PROMPT_CHARS = 58_000
 # occupy the global semaphore indefinitely after the browser has given up.
 _DEEP_LLM_CALL_TIMEOUT_SECONDS = 100
 _DEEP_LLM_TOTAL_TIMEOUT_SECONDS = 315
+_DEEP_VISION_MAX_PAGES = 6
 _MAX_SECTION_COUNT = 12
 _MAX_PARAGRAPHS_PER_SECTION = 8
 _MAX_BULLETS_PER_SECTION = 8
@@ -1100,6 +1101,8 @@ def _fallback_from_compact(
     compact: dict[str, Any],
     request: ResearchDeepDraftRequest,
     docs: list[SourceDocument],
+    *,
+    disclaimer: str = _FALLBACK_DISCLAIMER,
 ) -> ResearchDeepDraftResponse:
     """Turn an existing compact vision result into a safe deep-draft shape."""
 
@@ -1128,7 +1131,7 @@ def _fallback_from_compact(
         "instruments": compact.get("instruments") or [],
         "confidence": min(_clamp(compact.get("confidence"), 0.25), 0.55),
     }
-    response = _base_response(request, docs, data=data, provider="vision-compact-fallback", disclaimer=_FALLBACK_DISCLAIMER)
+    response = _base_response(request, docs, data=data, provider="vision-compact-fallback", disclaimer=disclaimer)
     # ``page_texts`` is empty for image-only PDFs, but the compact visual
     # analyzer reports how many rendered pages it actually saw.  Preserve that
     # coverage instead of returning the misleading default zero.
@@ -1185,10 +1188,25 @@ async def generate_deep_draft(
             # A model outage should never erase the readable source extraction.
             pass
 
-    # Image-only PDFs are intentionally not sent through the vision path here:
-    # long reports can otherwise spend minutes rendering and waiting on a
-    # multi-page image request. Fall through to the deterministic text/source
-    # response and state clearly that no image interpretation was performed.
+    # Image-only PDFs (no extractable text layer) skip the text path above.
+    # Short scans still deserve a real read: the vision analyzer renders at
+    # most _DEEP_VISION_MAX_PAGES pages, so page-gate it to keep long scans
+    # from spending minutes here, then reuse the compact-card converter.
+    if not text_docs:
+        total_pages = sum(max(0, int(doc.total_pages or 0)) for doc in docs)
+        vision_bytes = next((doc.pdf_bytes for doc in docs if doc.pdf_bytes), b"")
+        if vision_bytes and 0 < total_pages <= _DEEP_VISION_MAX_PAGES:
+            try:
+                compact = await asyncio.wait_for(
+                    analyze_pdf_vision(vision_bytes, title=request.title, symbol=request.symbol),
+                    timeout=_DEEP_LLM_TOTAL_TIMEOUT_SECONDS,
+                )
+                if isinstance(compact, dict) and compact:
+                    return _fallback_from_compact(compact, request, docs, disclaimer=_DISCLAIMER)
+            except Exception:
+                # Vision is best-effort; the deterministic skeleton below stays
+                # honest about what could and could not be read.
+                pass
 
     # Deterministic fallback.  It is intentionally honest about missing
     # semantics: excerpts are labelled source text, while unsupported thesis,
