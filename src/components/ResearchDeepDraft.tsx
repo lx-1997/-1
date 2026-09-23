@@ -676,14 +676,17 @@ const EvidenceChips: React.FC<EvidenceChipsProps> = ({ evidence, onSourceClick }
       <span className="research-deep-draft__evidence-label"><FileSearchOutlined /> 证据</span>
       {evidence.map((item, index) => {
         const page = item.page !== null && item.page !== undefined ? pageLabel(item.page) : pageLabel(item.pages);
-        const label = item.label || item.source || `来源 ${index + 1}`;
+        // label 为空时直接用页码作主标签，避免出现“来源 1 · 第 16 页”这类冗余标注
+        const label = item.label || item.source || page || `来源 ${index + 1}`;
+        const showPage = Boolean(page) && label !== page;
         const text = item.excerpt || item.quote || '';
-        const content = text ? `${label}${page ? ` · ${page}` : ''}\n${text}` : `${label}${page ? ` · ${page}` : ''}`;
+        const heading = showPage ? `${label} · ${page}` : label;
+        const content = text ? `${heading}\n${text}` : heading;
         const chip = (
           <span className="research-deep-draft__evidence-chip" key={item.id || `${label}-${index}`}>
             <LinkOutlined />
             <span>{label}</span>
-            {page && <b>{page}</b>}
+            {showPage && <b>{page}</b>}
             {text && <small className="research-deep-draft__evidence-excerpt">{text}</small>}
           </span>
         );
@@ -694,7 +697,7 @@ const EvidenceChips: React.FC<EvidenceChipsProps> = ({ evidence, onSourceClick }
                 type="button"
                 className="research-deep-draft__evidence-button"
                 onClick={() => onSourceClick(item)}
-                aria-label={`打开证据：${label}${page ? `，${page}` : ''}`}
+                aria-label={`打开证据：${heading}`}
               >{chip}</button>
             ) : chip}
           </Tooltip>
