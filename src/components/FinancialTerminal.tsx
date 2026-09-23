@@ -370,7 +370,7 @@ const TOOL_LABEL: Record<string, string> = {
   get_institution_notes: '机构纪要', get_celebrity_views: '名人观点', get_daily_review: '今日复盘',
   get_industry_context: '行业扫描', get_peer_comparison: '同行候选', get_supply_chain_context: '上下游线索',
   get_stock_news: '公司动态', get_stock_announcements: '公司公告', get_my_watchlist: '我的自选',
-  research_harness: '统一研究取数', agent_evidence: '证据专家', agent_research: '研究专家',
+  research_harness: '统一研究取数', 'deepseek-harness': '站内研究助手', agent_evidence: '证据专家', agent_research: '研究专家',
   agent_risk: '风险专家', agent_synthesis: '投研主编综合',
 };
 
