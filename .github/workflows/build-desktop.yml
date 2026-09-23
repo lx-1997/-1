@@ -1,0 +1,44 @@
+name: Build Daocaijing Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: mac
+            command: npm run desktop:pack:mac
+            artifact: daocaijing-macos
+          - os: windows-2022
+            target: win
+            command: npm run desktop:pack:win
+            artifact: daocaijing-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+      - run: npm ci
+      - name: Build installer
+        shell: bash
+        run: ${{ matrix.command }}
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.blockmap
+          if-no-files-found: error

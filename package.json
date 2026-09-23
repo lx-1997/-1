@@ -1,7 +1,8 @@
 {
-  "name": "trading-client",
+  "name": "daocaijing-client",
   "version": "1.0.0",
-  "description": "A modern trading client similar to LongBridge",
+  "description": "Daocaijing 金融终端：AI 投研、实时行情与风险分析",
+  "author": "Daocaijing Team",
   "main": "public/electron.js",
   "homepage": "./",
   "scripts": {
@@ -15,6 +16,11 @@
     "research-workbench": "npm --prefix modules/research-workbench run tool",
     "tradingagents:install": "bash scripts/install-tradingagents-runtime.sh",
     "build": "react-scripts build",
+    "build:desktop": "node scripts/build-target.js desktop",
+    "build:android": "node scripts/build-target.js android",
+    "android:debug": "npm run build:android && node scripts/android-build.js assembleDebug",
+    "android:release": "npm run build:android && node scripts/android-build.js assembleRelease",
+    "android:aab": "npm run build:android && node scripts/android-build.js bundleRelease",
     "test": "react-scripts test",
     "test:ci": "CI=true react-scripts test --watchAll=false",
     "lint": "npx tsc --noEmit",
@@ -22,8 +28,10 @@
     "eject": "react-scripts eject",
     "electron": "electron .",
     "electron-dev": "ELECTRON_IS_DEV=1 electron .",
-    "electron-pack": "electron-builder",
-    "preelectron-pack": "npm run research-workbench:install && npm run build"
+    "desktop:pack": "npm run research-workbench:install && npm run build:desktop && electron-builder",
+    "desktop:pack:mac": "npm run research-workbench:install && npm run build:desktop && electron-builder --mac --universal",
+    "desktop:pack:win": "npm run research-workbench:install && npm run build:desktop && electron-builder --win --x64",
+    "electron-pack": "npm run desktop:pack"
   },
   "dependencies": {
     "@ant-design/icons": "^5.2.6",
@@ -42,7 +50,6 @@
     "antd": "^5.12.8",
     "axios": "^1.6.2",
     "dayjs": "^1.11.18",
-    "electron-is-dev": "^2.0.0",
     "i18next": "^22.5.1",
     "i18next-browser-languagedetector": "^7.2.2",
     "react": "^18.2.0",
@@ -85,28 +92,38 @@
     ]
   },
   "build": {
-    "appId": "com.trading.client",
-    "productName": "Trading Client",
+    "appId": "com.daocaijing.app",
+    "productName": "Daocaijing",
+    "artifactName": "daocaijing-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "extraMetadata": {
+      "name": "daocaijing-client",
+      "productName": "Daocaijing",
+      "dependencies": {}
+    },
     "directories": {
       "output": "dist"
     },
     "files": [
       "build/**/*",
       "public/electron.js",
-      "modules/research-workbench/**/*",
-      "node_modules/**/*"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "public/logo512.png",
+      "requestedExecutionLevel": "asInvoker"
     },
     "mac": {
       "target": "dmg",
-      "icon": "build/icon.icns"
+      "icon": "public/logo512.png",
+      "category": "public.app-category.finance"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "build/icon.png"
+      "icon": "public/logo512.png",
+      "category": "Finance"
     }
   }
 }

@@ -116,16 +116,45 @@ const lightComponents: any = {
   Tag: {}
 };
 
+const accentColors = {
+  blue: { dark: '#0a84ff', light: '#007aff', darkRgb: '10,132,255', lightRgb: '0,122,255' },
+  graphite: { dark: '#8e8e93', light: '#636366', darkRgb: '142,142,147', lightRgb: '99,99,102' },
+  purple: { dark: '#bf5af2', light: '#af52de', darkRgb: '191,90,242', lightRgb: '175,82,222' },
+  green: { dark: '#30d158', light: '#248a3d', darkRgb: '48,209,88', lightRgb: '36,138,61' },
+  orange: { dark: '#ff9f0a', light: '#c93400', darkRgb: '255,159,10', lightRgb: '201,52,0' },
+} as const;
+
 const AppShell: React.FC = () => {
-  const { theme } = useTheme();
+  const { theme, accentTheme } = useTheme();
   const isDark = theme === 'dark';
+  const accentChoice = accentColors[accentTheme];
+  const accent = isDark ? accentChoice.dark : accentChoice.light;
+  const accentRgb = isDark ? accentChoice.darkRgb : accentChoice.lightRgb;
+  const accentSoft = `rgba(${accentRgb},${isDark ? 0.14 : 0.1})`;
+  const baseComponents = isDark ? darkComponents : lightComponents;
+  const themedComponents = {
+    ...baseComponents,
+    Menu: {
+      ...baseComponents.Menu,
+      darkItemSelectedBg: `rgba(${accentRgb},${isDark ? 0.14 : 0.2})`,
+      darkItemSelectedColor: isDark ? accent : '#ffffff',
+    },
+    Tabs: { ...baseComponents.Tabs, inkBarColor: accent },
+    Input: { ...baseComponents.Input, activeBorderColor: accent },
+    Select: { ...baseComponents.Select, optionSelectedBg: accentSoft },
+    Alert: {
+      ...baseComponents.Alert,
+      colorInfoBg: `rgba(${accentRgb},0.1)`,
+      colorInfoBorder: `rgba(${accentRgb},0.22)`,
+    },
+  };
   return (
     <ConfigProvider
       locale={zhCN}
       theme={{
         algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
-        token: isDark ? darkToken : lightToken,
-        components: isDark ? darkComponents : lightComponents
+        token: { ...(isDark ? darkToken : lightToken), colorPrimary: accent, colorInfo: accent },
+        components: themedComponents
       }}
     >
       <AntdApp><App /></AntdApp>

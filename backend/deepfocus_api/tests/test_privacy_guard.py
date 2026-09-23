@@ -56,3 +56,25 @@ def test_scrub_text_idempotent_and_preserves_normal():
     assert pg.scrub_internal_text(s) == s
     once = pg.scrub_internal_text("据 iFinD 数据")
     assert pg.scrub_internal_text(once) == once  # 幂等
+
+
+def test_scrub_text_removes_http_diagnostics_and_internal_skill_names():
+    raw = "已调用 skill：shareholder.change.scan。提示：公开站点返回 403 Forbidden。"
+    out = pg.scrub_internal_text(raw)
+    assert "shareholder.change.scan" not in out
+    assert "403" not in out and "Forbidden" not in out
+    prices = pg.scrub_internal_text("目标价 563.56 元，区间 500–656 元")
+    assert "563.56" in prices and "500" in prices and "656" in prices
+
+
+def test_scrub_text_hides_underlying_model_brand():
+    out = pg.scrub_internal_text("以上数据均由 MiniMax-M3 模型基于公开数据生成")
+    assert "MiniMax" not in out
+    assert "AI 模型" in out
+
+
+def test_scrub_internal_fields_drops_warnings_and_sanitizes_error():
+    raw = {"ok": False, "warnings": ["Eastmoney 403 Forbidden"], "error": "server token leaked"}
+    out = pg.scrub_internal_fields(raw)
+    assert "warnings" not in out
+    assert out["error"] == "暂时无法获取"

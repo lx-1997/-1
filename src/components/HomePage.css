@@ -745,6 +745,18 @@
 }
 
 @media (max-width: 720px) {
+  .dfx-home-topbar { padding: 10px 14px; min-height: 48px; }
+  .dfx-home-hero { padding: 16px 14px 8vh; }
+  .dfx-home-greeting h1 { font-size: 25px; }
+  .dfx-home-greeting p { font-size: 14px; }
+  .dfx-home-thread { padding: 16px 14px 8px; }
+  .dfx-home-msg-body { font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+  .dfx-home-composer { border-radius: 18px; padding: 10px 10px 8px; }
+  .dfx-home-composer textarea { font-size: 16px; line-height: 1.5; max-height: 160px; }
+  .dfx-home-composer-foot { gap: 8px; flex-wrap: wrap; }
+  .dfx-home-composer-hint { font-size: 11px; }
+  .dfx-home-dock { padding: 8px 10px max(10px, env(safe-area-inset-bottom)); }
+  .dfx-home-grounding { max-width: 100%; overflow-x: auto; }
   .dfx-home-launcher-grid {
     grid-template-columns: 1fr;
   }

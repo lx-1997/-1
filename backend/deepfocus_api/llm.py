@@ -5,6 +5,7 @@ import base64
 import hashlib
 import inspect
 import json
+import logging
 import os
 import re
 import time
@@ -39,6 +40,16 @@ from .schemas import (
     StockAnalysisResponse,
 )
 
+
+logger = logging.getLogger(__name__)
+
+# tool-agent 同题短期结果缓存：token 成本大头。个人化问题（我的/自选/持仓等措辞或
+# get_my_watchlist 调用）绝不读写缓存；命中时回放完整 tool_trace，调用方无感知。
+_TOOL_ANSWER_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_TOOL_ANSWER_TTL_SECONDS = 300.0
+_TOOL_ANSWER_CACHE_MAX = 300
+_PERSONAL_QUESTION_RE = re.compile(r"我的|自选|持仓|仓位|账户|关注列表")
+_PERSONAL_TOOLS = frozenset({"get_my_watchlist"})
 
 ORCHESTRATOR_ROLE = "Orchestrator"
 CORE_ROLE_NAMES = ["Orchestrator", "Evidence", "Analyst", "Risk"]
@@ -291,9 +302,12 @@ class CloudResearchLLM:
             # 所有槽均在冷却时，允许一轮半开探测，避免永久熔断。
             self._pool_cooldowns.clear()
             available = pool
-        start = self._pool_cursor % len(available)
-        self._pool_cursor = (self._pool_cursor + 1) % len(available)
-        return available[start:] + available[:start]
+        # The first configured slot is the product's preferred model. Keep it
+        # first on every healthy request; fall through to later slots only
+        # when it is cooling down after a retryable provider failure.
+        # This makes a Qwen-primary/GLM-backup pool behave as advertised and
+        # avoids silently consuming the backup quota on ordinary traffic.
+        return available
 
     @staticmethod
     def _pool_slot_key(config: dict[str, Any]) -> str:
@@ -366,6 +380,13 @@ class CloudResearchLLM:
                 extra = dict(request_payload.get("extra_body") or {})
                 extra.setdefault("enable_thinking", False)
                 request_payload["extra_body"] = extra
+            elif str(request_payload.get("model") or "").lower().startswith("glm-"):
+                # Zhipu GLM-5.3-Flash is always a thinking model, but its
+                # OpenAI-compatible endpoint supports disabling the hidden
+                # reasoning stream with this provider-specific shape.
+                extra = dict(request_payload.get("extra_body") or {})
+                extra.setdefault("thinking", {"type": "disabled"})
+                request_payload["extra_body"] = extra
             try:
                 # 单槽走可替换的 _client()，兼容现有注入式测试；多槽按候选显式建 client。
                 client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
@@ -373,6 +394,22 @@ class CloudResearchLLM:
                     client.chat.completions.create(**request_payload),
                     timeout=timeout_seconds,
                 )
+                # Some Qwen-compatible endpoints return only hidden reasoning
+                # when the completion budget is exhausted. Treat an empty
+                # public answer as a failed slot so the configured backup can
+                # produce the user-visible result.
+                try:
+                    message = response.choices[0].message
+                    content = getattr(message, "content", None)
+                    reasoning = getattr(message, "reasoning_content", None)
+                    # 带 tool_calls 的推理轮(content=None+reasoning)是正常取数步骤，不是预算耗尽。
+                    if (not str(content or "").strip() and str(reasoning or "").strip()
+                            and not getattr(message, "tool_calls", None)):
+                        empty_error = RuntimeError("模型返回空正文")
+                        empty_error.status_code = 502
+                        raise empty_error
+                except (AttributeError, IndexError):
+                    pass
                 self._recover_pool_slot(candidate)
                 return response
             except Exception as exc:
@@ -861,7 +898,8 @@ class CloudResearchLLM:
                     pass
             if data_store is not None:
                 try:
-                    data_store.record("narr", fp_key, narrative)
+                    # 请求路径上的 SQLite 写入挪到线程，避免阻塞事件循环。
+                    await asyncio.to_thread(data_store.record, "narr", fp_key, narrative)
                 except Exception:
                     pass
             return narrative
@@ -1297,6 +1335,20 @@ class CloudResearchLLM:
         if self.provider == "mock":
             return None
 
+        q_norm = question.strip()
+        cache_key = (
+            hashlib.sha1(f"{q_norm}\x00{context_hint}\x00{ifind_user}".encode("utf-8")).hexdigest()
+            if q_norm and not _PERSONAL_QUESTION_RE.search(q_norm)
+            else ""
+        )
+        if cache_key:
+            cached_entry = _TOOL_ANSWER_CACHE.get(cache_key)
+            if cached_entry and (time.time() - cached_entry[0]) <= _TOOL_ANSWER_TTL_SECONDS:
+                logger.info("tool-agent answer cache hit: %s", q_norm[:48])
+                return {**cached_entry[1], "cached": True}
+            if cached_entry:
+                _TOOL_ANSWER_CACHE.pop(cache_key, None)
+
         # 研究方法与工具路由解耦：先把用户问题翻译成期限、预期差和验证要求，
         # 再由现有 tool-agent 决定具体取数。这样短周期财报题不会被默认套成长线框架，
         # 单股泛问也会透明披露本轮采用的投资期限假设。
@@ -1305,7 +1357,8 @@ class CloudResearchLLM:
 
         research_mandate = build_buy_side_mandate(question, context_hint)
         deep_research_answer = research_mandate.key_variable_target >= 15
-        answer_token_budget = 2200 if deep_research_answer else 1400
+        # 与 general_chat 对齐(3200/2600)：深研长答案 2200/1400 实测会在结尾被 max_tokens 截断。
+        answer_token_budget = 3200 if deep_research_answer else 2600
         target_price_question = bool(re.search(
             r"目标价|目标位|上涨空间|上行空间|半年内|六个月|未来\s*(?:半年|6\s*个?月|一年|12\s*个?月)",
             question,
@@ -1513,7 +1566,7 @@ class CloudResearchLLM:
 
         def result_payload(answer: str, rounds: int, truncated: bool) -> dict[str, Any]:
             """Keep the user-visible answer unchanged while exposing quality signals for evals."""
-            return {
+            payload = {
                 "answer": answer,
                 "tool_trace": trace,
                 "rounds": rounds,
@@ -1521,6 +1574,16 @@ class CloudResearchLLM:
                 "research_mandate": research_mandate.to_dict(),
                 "protocol_issues": answer_protocol_issues(research_mandate, answer),
             }
+            if cache_key and answer.strip() and not any(
+                item.get("tool") in _PERSONAL_TOOLS for item in trace
+            ):
+                if len(_TOOL_ANSWER_CACHE) >= _TOOL_ANSWER_CACHE_MAX:
+                    oldest = min(_TOOL_ANSWER_CACHE, key=lambda k: _TOOL_ANSWER_CACHE[k][0])
+                    _TOOL_ANSWER_CACHE.pop(oldest, None)
+                _TOOL_ANSWER_CACHE[cache_key] = (time.time(), {
+                    **payload, "tool_trace": [dict(item) for item in trace],
+                })
+            return payload
 
         async def audit_answer(draft: str) -> str:
             """发布前只删错、不补事实的审校轮。"""
@@ -1830,8 +1893,11 @@ class CloudResearchLLM:
                 (round_index + 1) if bundle_finalized else max_rounds,
                 not bundle_finalized,
             )
-        except Exception:
+        except Exception as exc:
             # 工具不被模型支持、超时或任何异常 → 回退既有路径。
+            # 不再静默：落日志 + 给流式端点发 status 事件，便于排障与前端提示。
+            logger.warning("run_tool_agent failed, fallback to legacy path: %s: %s", type(exc).__name__, str(exc)[:200])
+            await _safe_emit(emit, "status", {"message": "工具链路异常，已切换至通用回答路径", "level": "warning"})
             return None
 
     async def orchestrator_chat(self, request: OrchestratorChatRequest) -> OrchestratorChatResponse:
@@ -2184,12 +2250,15 @@ def _is_retryable_pool_error(exc: Exception) -> bool:
         status = int(status) if status is not None else None
     except (TypeError, ValueError):
         status = None
-    if status in {401, 403, 408, 409, 425, 429} or (status is not None and status >= 500):
+    # 402 is used by several OpenAI-compatible providers for exhausted
+    # balance/subscription quota. Treat it like rate limiting so a depleted
+    # primary slot can fail over to the next configured model.
+    if status in {402, 401, 403, 408, 409, 425, 429} or (status is not None and status >= 500):
         return True
     text = str(exc).lower()
     return any(marker in text for marker in (
         "timeout", "timed out", "connection", "connecterror", "temporarily unavailable",
-        "rate limit", "too many requests", "quota", "token plan", "overloaded",
+        "rate limit", "too many requests", "quota", "insufficient balance", "token plan", "overloaded",
         "bad gateway", "gateway timeout", "service unavailable", "unauthorized",
         "authentication", "invalid_api_key",
     ))

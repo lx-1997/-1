@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from . import db
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,7 +25,7 @@ DB_PATH = Path(
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

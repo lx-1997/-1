@@ -10,7 +10,9 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.7.2'
+        // AGP 8.10 is the first line with official API 36 support and matches
+        // the Gradle 8.11.1 wrapper used by this project.
+        classpath 'com.android.tools.build:gradle:8.10.0'
         classpath 'com.google.gms:google-services:4.4.2'
 
         // NOTE: Do not place your application dependencies here; they belong

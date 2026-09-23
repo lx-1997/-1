@@ -12,6 +12,7 @@ import {
   ContentOntologyItem,
   ContentOntologyMap,
 } from '../services/ontologyService';
+import { normalizePublisherName } from '../utils/displayBrand';
 import './ContentSemanticMap.css';
 
 type MapMode = 'graph' | 'matrix';
@@ -317,7 +318,7 @@ const ContentSemanticMap: React.FC<ContentSemanticMapProps> = ({ data }) => {
                     <span>
                       <i style={{ background: CONTENT_TYPE_COLORS[item.content_type] }} />
                       <strong>{item.title}</strong>
-                      <small>{item.content_type_label} · {item.source_name || 'DAO财经'}</small>
+                      <small>{item.content_type_label} · {normalizePublisherName(item.source_name) || '稻草财经'}</small>
                     </span>
                     {data.facets.map(facet => (
                       <span className="semantic-matrix-cell" key={facet.facet}>
@@ -351,7 +352,7 @@ const ContentSemanticMap: React.FC<ContentSemanticMapProps> = ({ data }) => {
               <h4>{selectedItem.title}</h4>
               <p>{selectedItem.summary || '该内容暂无摘要，仍可通过标签和原始对象继续追溯。'}</p>
               <dl>
-                <div><dt>来源</dt><dd>{selectedItem.source_name || 'DAO财经'}</dd></div>
+                <div><dt>来源</dt><dd>{normalizePublisherName(selectedItem.source_name) || '稻草财经'}</dd></div>
                 <div><dt>时间</dt><dd>{formatTime(selectedItem.published_at)}</dd></div>
                 <div><dt>标签</dt><dd>{selectedItem.tag_count}</dd></div>
                 <div><dt>语义维度</dt><dd>{selectedItem.facet_count}</dd></div>

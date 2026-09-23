@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ uses the platform splash API; keep the launch frame branded and dark. -->
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_brand</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+    </style>
+</resources>

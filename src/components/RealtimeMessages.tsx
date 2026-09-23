@@ -69,7 +69,8 @@ const statusMeta: Record<StreamConnectionStatus, { text: string; badge: 'process
   live: { text: '监听中', badge: 'success' },
   reconnecting: { text: '重连中', badge: 'warning' },
   closed: { text: '已断开', badge: 'default' },
-  error: { text: '异常', badge: 'error' }
+  error: { text: '异常', badge: 'error' },
+  paused: { text: '后台暂停', badge: 'default' }
 };
 
 const topicLabel: Record<string, string> = {

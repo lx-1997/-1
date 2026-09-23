@@ -54,6 +54,7 @@ const providerOptions = [
   { value: 'mock', label: 'Mock 本地演示' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'minimax', label: 'MiniMax' },
+  { value: 'deepseek', label: 'DeepSeek' },
   { value: 'openai-compatible', label: 'OpenAI-compatible' },
   { value: 'cloud', label: 'Cloud compatible' }
 ];
@@ -62,6 +63,7 @@ const modelOptions: Record<string, string[]> = {
   mock: ['mock-research-analyst'],
   openai: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4.1'],
   minimax: ['MiniMax-M3'],
+  deepseek: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro', 'deepseek-v4-flash'],
   'openai-compatible': ['gpt-4o-mini', 'deepseek-chat', 'qwen-plus', 'moonshot-v1-8k'],
   cloud: ['gpt-4o-mini', 'deepseek-chat', 'qwen-plus', 'moonshot-v1-8k']
 };
@@ -70,6 +72,7 @@ const providerDefaults: Record<string, { model: string; base_url: string }> = {
   mock: { model: 'mock-research-analyst', base_url: '' },
   openai: { model: 'gpt-4o-mini', base_url: '' },
   minimax: { model: 'MiniMax-M3', base_url: 'https://api.minimaxi.com/v1' },
+  deepseek: { model: 'deepseek-chat', base_url: 'https://api.deepseek.com/v1' },
   'openai-compatible': { model: 'gpt-4o-mini', base_url: '' },
   cloud: { model: 'gpt-4o-mini', base_url: '' }
 };

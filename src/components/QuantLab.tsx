@@ -5,6 +5,7 @@ import {
   App as AntdApp,
   Button,
   Card,
+  Collapse,
   Col,
   ConfigProvider,
   DatePicker,
@@ -52,7 +53,7 @@ import {
   QuantStrategyKey,
   startQuantLabJob,
 } from '../services/quantService';
-import { useTheme } from '../context/ThemeContext';
+import { ACCENT_THEME_OPTIONS, useTheme } from '../context/ThemeContext';
 import './QuantLab.css';
 
 const { RangePicker } = DatePicker;
@@ -367,11 +368,26 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
           }}
         >
           <Row gutter={12}>
-            <Col xs={24} md={10}><Form.Item name="name" label="方案名称" rules={[{ required: true, message: '请输入方案名称' }]}><Input /></Form.Item></Col>
-            <Col xs={12} md={7}><Form.Item name="market" label="市场识别"><Select onChange={handleMarketChange} options={[{ value: 'AUTO', label: '自动识别（支持混合）' }, { value: 'US', label: '美股' }, { value: 'CN', label: 'A股' }, { value: 'HK', label: '港股' }]} /></Form.Item></Col>
-            <Col xs={12} md={7}><Form.Item label="策略" required><Select value={strategyKey} onChange={setStrategyKey} options={STRATEGY_OPTIONS.map(option => ({ value: option.value, label: option.label }))} /></Form.Item></Col>
+            <Col xs={24} md={14}><Form.Item name="name" label="方案名称" rules={[{ required: true, message: '请输入方案名称' }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={10}><Form.Item name="market" label="市场识别"><Select onChange={handleMarketChange} options={[{ value: 'AUTO', label: '自动识别（支持混合）' }, { value: 'US', label: '美股' }, { value: 'CN', label: 'A股' }, { value: 'HK', label: '港股' }]} /></Form.Item></Col>
           </Row>
-          <Paragraph type="secondary" style={{ marginBottom: 8 }}>{STRATEGY_OPTIONS.find(option => option.value === strategyKey)?.desc}</Paragraph>
+          <Form.Item label="策略方向" required>
+            <div className="quant-strategy-grid" role="radiogroup" aria-label="选择策略方向">
+              {STRATEGY_OPTIONS.map(option => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={strategyKey === option.value}
+                  className={`quant-strategy-option${strategyKey === option.value ? ' is-active' : ''}`}
+                  onClick={() => setStrategyKey(option.value)}
+                >
+                  <strong>{option.label}</strong>
+                  <span>{option.desc}</span>
+                </button>
+              ))}
+            </div>
+          </Form.Item>
           <Form.Item name="symbols" label="交易标的" rules={[{ required: true, message: '请输入至少一个标的代码' }]} extra="多个代码用逗号或空格分隔；A股支持 600519 / 000001.SZ，港股支持 00700 / 00700.HK，美股支持 AAPL。"><Input placeholder="AAPL, MSFT, 600519, 00700" /></Form.Item>
 
           <Row gutter={12}>
@@ -387,29 +403,35 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
             <Col xs={12} md={3}><Form.Item name="allow_short" label="允许做空" valuePropName="checked"><Switch /></Form.Item></Col>
             <Col xs={12} md={3}><Form.Item name="allow_reentry" label="风控后重入" valuePropName="checked"><Switch /></Form.Item></Col>
           </Row>
-
-          <Row gutter={12}>
-            <Col xs={12} md={6}><Form.Item name="commission_bps" label="单边佣金 (bps)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="slippage_bps" label="单边滑点 (bps)"><InputNumber style={{ width: '100%' }} min={0} max={500} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="short_borrow_bps" label="年化借券费 (bps)"><InputNumber disabled={!allowShort} style={{ width: '100%' }} min={0} max={5000} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="min_trade_notional" label="最小交易金额"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
-          </Row>
-
-          <Form.Item name="sector_map" label="行业映射（可选）" extra="用于行业敞口约束，例如 AAPL=科技,MSFT=科技,JPM=金融"><Input.TextArea rows={2} placeholder="AAPL=科技, MSFT=科技, JPM=金融" /></Form.Item>
-
-          <Row gutter={12}>
-            <Col xs={12} md={6}><Form.Item name="max_position_size_pct" label="单仓上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="max_total_exposure_pct" label="总敞口上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="max_short_exposure_pct" label="空头上限 (%)"><InputNumber disabled={!allowShort} style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="max_sector_exposure_pct" label="行业上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-          </Row>
-          <Row gutter={12}>
-            <Col xs={12} md={6}><Form.Item name="max_drawdown_pct" label="最大回撤 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="daily_loss_limit_pct" label="单日亏损 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={4}><Form.Item name="stop_loss_pct" label="止损 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-            <Col xs={12} md={4}><Form.Item name="take_profit_pct" label="止盈 (%)"><InputNumber style={{ width: '100%' }} min={0} max={200} /></Form.Item></Col>
-            <Col xs={12} md={4}><Form.Item name="cooldown_days" label="冷却天数"><InputNumber style={{ width: '100%' }} min={0} max={252} /></Form.Item></Col>
-          </Row>
+          <Collapse
+            className="quant-advanced-collapse"
+            items={[{
+              key: 'advanced',
+              label: '高级设置：执行成本与风控边界（可选）',
+              children: <>
+                <Row gutter={12}>
+                  <Col xs={12} md={6}><Form.Item name="commission_bps" label="单边佣金 (bps)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={12} md={6}><Form.Item name="slippage_bps" label="单边滑点 (bps)"><InputNumber style={{ width: '100%' }} min={0} max={500} /></Form.Item></Col>
+                  <Col xs={12} md={6}><Form.Item name="short_borrow_bps" label="年化借券费 (bps)"><InputNumber disabled={!allowShort} style={{ width: '100%' }} min={0} max={5000} /></Form.Item></Col>
+                  <Col xs={12} md={6}><Form.Item name="min_trade_notional" label="最小交易金额"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
+                </Row>
+                <Form.Item name="sector_map" label="行业映射（可选）" extra="用于行业敞口约束，例如 AAPL=科技,MSFT=科技,JPM=金融"><Input.TextArea rows={2} placeholder="AAPL=科技, MSFT=科技, JPM=金融" /></Form.Item>
+                <Row gutter={12}>
+                  <Col xs={12} md={6}><Form.Item name="max_position_size_pct" label="单仓上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={12} md={6}><Form.Item name="max_total_exposure_pct" label="总敞口上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={12} md={6}><Form.Item name="max_short_exposure_pct" label="空头上限 (%)"><InputNumber disabled={!allowShort} style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={12} md={6}><Form.Item name="max_sector_exposure_pct" label="行业上限 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                </Row>
+                <Row gutter={12}>
+                  <Col xs={12} md={6}><Form.Item name="max_drawdown_pct" label="最大回撤 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={12} md={6}><Form.Item name="daily_loss_limit_pct" label="单日亏损 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={12} md={4}><Form.Item name="stop_loss_pct" label="止损 (%)"><InputNumber style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
+                  <Col xs={12} md={4}><Form.Item name="take_profit_pct" label="止盈 (%)"><InputNumber style={{ width: '100%' }} min={0} max={200} /></Form.Item></Col>
+                  <Col xs={12} md={4}><Form.Item name="cooldown_days" label="冷却天数"><InputNumber style={{ width: '100%' }} min={0} max={252} /></Form.Item></Col>
+                </Row>
+              </>
+            }]}
+          />
         </Form>
       </Card>
 
@@ -507,9 +529,10 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
 };
 
 const QuantLab: React.FC<QuantLabProps> = props => {
-  const { theme } = useTheme();
+  const { theme, accentTheme } = useTheme();
+  const accentOption = ACCENT_THEME_OPTIONS.find(option => option.value === accentTheme) || ACCENT_THEME_OPTIONS[0];
   return (
-    <ConfigProvider theme={{ algorithm: theme === 'dark' ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm, token: { colorPrimary: '#10a37f', borderRadius: 8, fontSize: 13 } }}>
+    <ConfigProvider theme={{ algorithm: theme === 'dark' ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm, token: { colorPrimary: theme === 'dark' ? accentOption.dark : accentOption.light, borderRadius: 10, fontSize: 13 } }}>
       <AntdApp><QuantLabContent {...props} /></AntdApp>
     </ConfigProvider>
   );

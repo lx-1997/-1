@@ -4,6 +4,7 @@ import html
 import json
 import os
 import sqlite3
+from . import db
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -184,7 +185,7 @@ def render_not_found_html() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

@@ -23,11 +23,10 @@ import {
 } from '@ant-design/icons';
 import { useModuleContext, ModuleContextData } from '../contexts/ModuleContext';
 import { runOrchestratorChat, streamToolResearch } from '../services/agentService';
-import AgentLoopStream from './AgentLoopStream';
-import type { LoopResearchEvent, OrchestratorReasoningStep, ToolStep } from '../services/agentService';
-import { shouldRunStockResearch, isResearchMessage } from '../utils/chatRouting';
+import type { OrchestratorReasoningStep, ToolStep } from '../services/agentService';
+import { isResearchMessage } from '../utils/chatRouting';
 import Markdown from './common/Markdown';
-import ReasoningTrace from './common/ReasoningTrace';
+import ReasoningTrace, { formatToolLabel } from './common/ReasoningTrace';
 
 const { Text, Paragraph } = Typography;
 
@@ -64,8 +63,6 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loopSymbol, setLoopSymbol] = useState<string | null>(null);
-  const [loopQuestion, setLoopQuestion] = useState<string | null>(null);
   const [streamingTools, setStreamingTools] = useState<ToolStep[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<any>(null);
@@ -82,20 +79,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
     }
   }, [messages, loading]);
 
-  const sendMessage = useCallback(async () => {
-    const trimmed = input.trim();
-    if (!trimmed || loading || loopSymbol) return;
+  const sendMessage = useCallback(async (rawInput?: string) => {
+    // 推荐问题点击时直接传入文本，不能依赖 setInput 的异步状态更新；
+    // 否则发送函数可能捕获到旧的空 input，后端会收到 message: ""。
+    const trimmed = (rawInput ?? input).trim();
+    if (!trimmed || loading) return;
     setInput('');
     const userMsg: ChatMessage = { role: 'user', content: trimmed };
     setMessages(prev => [...prev, userMsg]);
-
-    const symbol = shouldRunStockResearch(trimmed);
-    if (symbol) {
-      setLoopSymbol(symbol);
-      setLoopQuestion(trimmed);
-      setLoading(true);
-      return;
-    }
 
     setLoading(true);
 
@@ -103,7 +94,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
       role: m.role as 'user' | 'assistant',
       content: m.content,
     }));
-    // Orchestrator 不收 context 字段，故把模块上下文折进 message，避免丢失上下文感知。
+    // 模块上下文单独传入 context_hint，避免把上下文关键词混进当前问题而污染意图识别。
     const contextSummary = buildContextSummary(currentContext);
     // 当前模块的标的：研究类追问（消息里无显式 ticker，不会被路由去研究 Loop）时，让 tool-agent
     // 知道该查哪只股票（如正看 AAPL 时问「估值贵吗」）。
@@ -111,20 +102,26 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
       typeof currentContext?.data?.symbol === 'string' ? (currentContext.data.symbol as string) : '';
     const ctxName =
       typeof currentContext?.data?.name === 'string' ? (currentContext.data.name as string) : '';
-    const messageWithCtx = contextSummary ? `【当前模块上下文】\n${contextSummary}\n\n${trimmed}` : trimmed;
 
-    // ① 有标的 + 研究意图 → 流式 tool-agent：实时显示模型在调哪些工具，打磨「等 15-30 秒」的体验。
-    //    onFallback/onError 时回退 ② 非流式 orchestrator（保留技能路由/聚合，不丢能力）。
-    if (ctxSymbol && isResearchMessage(trimmed)) {
+    // ① 所有研究类问题统一走 SSE 研究路由：即使没有当前模块标的，也让后端自己解析
+    //    中文股票名/多股比较并展示真实取数进度。此前只有「已有标的 + 研究关键词」才走这里，
+    //    「宁德时代和比亚迪更偏向谁」会意外落到普通 orchestrator，体验和证据链都不稳定。
+    //    onFallback/onError 时再回退 ② 非流式 orchestrator。
+    if (isResearchMessage(trimmed)) {
       setStreamingTools([]);
       const streamed = await new Promise<boolean>((resolve) => {
         streamToolResearch(
-          { message: messageWithCtx, symbol: ctxSymbol, name: ctxName },
+          {
+            message: trimmed,
+            symbol: ctxSymbol,
+            name: ctxName,
+            ...(contextSummary ? { context_hint: contextSummary } : {}),
+          },
           {
             onToolStart: (tool) => setStreamingTools(prev => [...prev, { tool }]),
-            onToolResult: (tool, ok, summary) =>
+            onToolResult: (tool, ok, summary, references) =>
               setStreamingTools(prev =>
-                prev.map(s => (s.tool === tool && s.ok === undefined ? { ...s, ok, summary } : s)),
+                prev.map(s => (s.tool === tool && s.ok === undefined ? { ...s, ok, summary, references } : s)),
               ),
             onFinal: (answer, toolTrace) => {
               setMessages(prev => [...prev, {
@@ -154,7 +151,8 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
 
     try {
       const resp = await runOrchestratorChat({
-        message: messageWithCtx,
+        message: trimmed,
+        ...(contextSummary ? { context_hint: contextSummary } : {}),
         history,
         engine: 'deepfocus',
         mode: 'research',
@@ -176,44 +174,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
     } finally {
       setLoading(false);
     }
-  }, [input, loading, messages, currentContext, loopSymbol]);
-
-  const handleLoopComplete = useCallback((final: LoopResearchEvent) => {
-    const rec = final.recommendation;
-    const recLabels: Record<string, string> = {
-      strong_buy: '强烈看好', buy: '看好', hold: '中性', reduce: '偏谨慎', sell: '看淡', strong_sell: '强烈看淡',
-    };
-    const recLabel = recLabels[rec || ''] || '中性';
-    const lines: string[] = [];
-
-    lines.push(`**分析评分：${recLabel}** | 置信度 ${Math.round((final.confidence || 0) * 100)}%`);
-    if (final.executive_summary) {
-      lines.push('');
-      lines.push(final.executive_summary);
-    }
-    if (final.target_rationale) {
-      lines.push(`_依据：${final.target_rationale}_`);
-    }
-    if (final.key_catalysts?.length) {
-      lines.push('\n**关键催化剂**');
-      final.key_catalysts.forEach((c: string) => lines.push(`- ${c}`));
-    }
-    if (final.data_issues?.length) {
-      lines.push('\n**数据提示**');
-      final.data_issues.forEach((d: string) => lines.push(`- ${d}`));
-    }
-
-    setMessages(prev => [...prev, { role: 'assistant', content: lines.join('\n') }]);
-    setLoopSymbol(null);
-    setLoopQuestion(null);
-    setLoading(false);
-  }, []);
-
-  const handleLoopCancel = useCallback(() => {
-    setLoopSymbol(null);
-    setLoopQuestion(null);
-    setLoading(false);
-  }, []);
+  }, [input, loading, messages, currentContext]);
 
   const clearChat = useCallback(() => {
     setMessages([]);
@@ -228,6 +189,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
   }, [sendMessage]);
 
   const ctxSummary = buildContextSummary(currentContext);
+  const streamingReferences = Array.from(new Map(
+    streamingTools.flatMap(tool => tool.references || [])
+      .filter(reference => reference && reference.title)
+      .map(reference => [
+        reference.id || `${reference.category || ''}:${reference.title}:${reference.source || ''}`,
+        reference,
+      ]),
+  ).values()).slice(-6);
 
   const suggestions = currentContext ? [
     `分析当前${currentContext.title}的主要信号`,
@@ -240,15 +209,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
   ];
 
   const sendSuggestion = useCallback((text: string) => {
-    setInput(text);
-    setTimeout(() => {
-      setInput(prev => {
-        if (prev === text) {
-          sendMessage();
-        }
-        return prev;
-      });
-    }, 50);
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    void sendMessage(trimmed);
   }, [sendMessage]);
 
   if (!open) return null;
@@ -276,7 +239,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <RobotOutlined style={{ fontSize: 18, color: 'var(--accent)' }} />
-          <Text strong style={{ fontSize: 15 }}>DeepFocus AI</Text>
+          <Text strong style={{ fontSize: 15 }}>AI 投研助手</Text>
         </div>
         <Space>
           <Tooltip title="清空对话">
@@ -289,8 +252,8 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
       {currentContext && (
         <div style={{
           padding: '8px 16px',
-          background: 'rgba(59,130,246,0.08)',
-          borderBottom: '1px solid rgba(59,130,246,0.18)',
+          background: 'var(--accent-soft)',
+          borderBottom: '1px solid color-mix(in srgb, var(--accent) 18%, var(--border))',
           display: 'flex',
           alignItems: 'center',
           gap: 6,
@@ -300,7 +263,16 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
             上下文已注入：{currentContext.title}
           </Text>
           {currentContext.data && Object.keys(currentContext.data).length > 0 && (
-            <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', margin: 0 }}>
+            <Tag
+              style={{
+                fontSize: 10,
+                lineHeight: '16px',
+                margin: 0,
+                color: 'var(--accent)',
+                borderColor: 'color-mix(in srgb, var(--accent) 32%, var(--border))',
+                background: 'var(--accent-soft)',
+              }}
+            >
               {Object.keys(currentContext.data).length} 项数据
             </Tag>
           )}
@@ -316,7 +288,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <RobotOutlined style={{ fontSize: 48, color: 'var(--text-muted)', marginBottom: 16 }} />
             <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-              任何模块的 AI 原生助手
+              结合公开数据与稻草财经内容，给你有依据的投研回答。
             </Paragraph>
             {currentContext && (
               <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 16 }}>
@@ -353,7 +325,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
                   size={32}
                   icon={msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
                   style={{
-                    backgroundColor: msg.role === 'user' ? 'var(--info)' : 'var(--positive)',
+                    backgroundColor: msg.role === 'user' ? 'var(--info)' : 'var(--accent)',
                     flexShrink: 0,
                   }}
                 />
@@ -377,21 +349,13 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
                 </div>
               </div>
             ))}
-            {loopSymbol && loopQuestion && (
-              <AgentLoopStream
-                symbol={loopSymbol}
-                question={loopQuestion}
-                onComplete={handleLoopComplete}
-                onCancel={handleLoopCancel}
-              />
-            )}
-            {!loopSymbol && loading && (
+            {loading && (
               <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                <Avatar size={32} icon={<RobotOutlined />} style={{ backgroundColor: 'var(--positive)', flexShrink: 0 }} />
+                <Avatar size={32} icon={<RobotOutlined />} style={{ backgroundColor: 'var(--accent)', flexShrink: 0 }} />
                 {streamingTools.length > 0 ? (
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 4 }}>
                     <div style={{ marginBottom: 4 }}>
-                      <ThunderboltOutlined style={{ marginRight: 4 }} />正在调用工具研究…
+                      <ThunderboltOutlined style={{ marginRight: 4 }} />正在核对公开行情与站内资料…
                     </div>
                     {streamingTools.map((s, i) => (
                       <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 2 }}>
@@ -405,11 +369,23 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
                           )}
                         </span>
                         <span>
-                          {s.tool}
+                          {formatToolLabel(s.tool)}
                           {s.summary ? ` — ${s.summary}` : ''}
                         </span>
                       </div>
                     ))}
+                    {streamingReferences.length > 0 && (
+                      <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+                        <div style={{ marginBottom: 4, color: 'var(--text-secondary)' }}>已命中的资料</div>
+                        {streamingReferences.map((reference, i) => (
+                          <div key={`${reference.id || reference.title}-${i}`} title={reference.detail || reference.title} style={{ display: 'flex', gap: 5, marginBottom: 3, lineHeight: 1.45 }}>
+                            <Tag color="blue" style={{ margin: 0, fontSize: 10, lineHeight: '17px' }}>{reference.category || '资料'}</Tag>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reference.title}</span>
+                            {(reference.source || reference.published_at) && <Text type="secondary" style={{ flexShrink: 0, fontSize: 10 }}>{[reference.source, reference.published_at?.slice(0, 10)].filter(Boolean).join(' · ')}</Text>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <Spin size="small" />
@@ -438,7 +414,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
           <Button
             type="primary"
             icon={<SendOutlined />}
-            onClick={sendMessage}
+            onClick={() => void sendMessage()}
             loading={loading}
             disabled={!input.trim()}
           />

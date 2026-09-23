@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from . import db
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from typing import Optional
@@ -24,7 +25,7 @@ BJ_TZ = timezone(timedelta(hours=8))
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(RECALL_DB_PATH)
+    conn = db.connect(RECALL_DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

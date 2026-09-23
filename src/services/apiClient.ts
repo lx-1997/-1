@@ -1,4 +1,5 @@
 import axios, { AxiosRequestConfig, Method } from 'axios';
+import { Capacitor } from '@capacitor/core';
 
 const configuredApiBaseUrl = process.env.REACT_APP_API_BASE_URL?.replace(/\/$/, '');
 let preferredApiBaseUrl: string | null = null;
@@ -107,6 +108,13 @@ export function getApiBaseUrls(): string[] {
 
   if (configuredApiBaseUrl) {
     candidates.push(configuredApiBaseUrl);
+  }
+
+  // Capacitor APK 内的页面 hostname 是 localhost，但 API 不在手机本机。
+  // 原生网络通道已绕过 WebView CORS，因此只保留构建时写入的正式 API，
+  // 不要再竞速 127.0.0.1:8300 / localhost:8300 这两条必然失败的地址。
+  if (Capacitor.isNativePlatform()) {
+    return uniqueValues(candidates.length ? candidates : ['https://daocaijing.com']);
   }
 
   let onRealDomain = false;

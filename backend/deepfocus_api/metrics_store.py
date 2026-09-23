@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from . import db
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ _PRAGMA_DONE = False
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=8)
+    conn = db.connect(DB_PATH, timeout=8)
     conn.row_factory = sqlite3.Row
     # WAL：并发读不阻塞写、写不阻塞读，几十并发下避免「database is locked」与互锁停顿
     try:
@@ -34,7 +35,32 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def get_ai_cache_many(refs: list[str]) -> dict[str, dict[str, Any]]:
+def _ai_cache_fresh(created_at: Any, max_age_seconds: float | None = None) -> bool:
+    """Return whether an AI cache row is still inside the configured retention window.
+
+    Reads and writes use the same boundary so an expired row can never pass the
+    quota gate as a cache hit.  ``max_age_seconds`` is an optional per-call
+    override; otherwise ``DEEPFOCUS_AI_CACHE_MAX_AGE_DAYS`` controls retention.
+    A non-positive setting preserves the historical no-expiry read behavior.
+    """
+    if max_age_seconds is None:
+        try:
+            days = float(os.getenv("DEEPFOCUS_AI_CACHE_MAX_AGE_DAYS", "0") or 0)
+        except (TypeError, ValueError):
+            days = 0
+        max_age_seconds = days * 86400 if days > 0 else None
+    if max_age_seconds is None:
+        return True
+    try:
+        parsed = datetime.fromisoformat(str(created_at or "").replace("Z", "+00:00"))
+        parsed = parsed.replace(tzinfo=parsed.tzinfo or timezone.utc)
+        return (datetime.now(timezone.utc) - parsed).total_seconds() <= float(max_age_seconds)
+    except (TypeError, ValueError, OverflowError):
+        # A malformed timestamp is not a valid fresh cache entry.
+        return False
+
+
+def get_ai_cache_many(refs: list[str], max_age_seconds: float | None = None) -> dict[str, dict[str, Any]]:
     """批量取多篇 AI 解读缓存（一次 SQL，避免逐条查询在并发下压垮 SQLite）。"""
     clean = [str(r).strip() for r in refs if str(r or "").strip()]
     if not clean:
@@ -47,8 +73,10 @@ def get_ai_cache_many(refs: list[str]) -> dict[str, dict[str, Any]]:
             for i in range(0, len(clean), 400):
                 chunk = clean[i:i + 400]
                 ph = ",".join("?" * len(chunk))
-                rows = conn.execute(f"SELECT ref, payload FROM ai_analysis_cache WHERE ref IN ({ph})", chunk).fetchall()
+                rows = conn.execute(f"SELECT ref, payload, created_at FROM ai_analysis_cache WHERE ref IN ({ph})", chunk).fetchall()
                 for r in rows:
+                    if not _ai_cache_fresh(r["created_at"], max_age_seconds):
+                        continue
                     try:
                         out[r["ref"]] = _json.loads(r["payload"])
                     except Exception:  # noqa: BLE001
@@ -320,16 +348,16 @@ def incr_research(ref: str, title: str = "", by: int = 1) -> None:
     incr("research_download", by)
 
 
-def get_ai_cache(ref: str) -> dict[str, Any] | None:
-    """取研报 AI 解读缓存（研报 PDF 静态，按 file_id/文件名长期缓存，命中即秒回）。"""
+def get_ai_cache(ref: str, max_age_seconds: float | None = None) -> dict[str, Any] | None:
+    """取 AI 解读缓存；可按配置自动拒绝超过保留期的旧结果。"""
     import json as _json
     ref = (ref or "").strip()
     if not ref:
         return None
     try:
         with _connect() as conn:
-            row = conn.execute("SELECT payload FROM ai_analysis_cache WHERE ref = ?", (ref,)).fetchone()
-            if row:
+            row = conn.execute("SELECT payload, created_at FROM ai_analysis_cache WHERE ref = ?", (ref,)).fetchone()
+            if row and _ai_cache_fresh(row["created_at"], max_age_seconds):
                 return _json.loads(row["payload"])
     except (sqlite3.Error, ValueError):
         pass

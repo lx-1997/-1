@@ -637,10 +637,33 @@ def make_agent_fn(llm: Any) -> AgentFn:
     return _agent
 
 
-def make_multiview_fn(llm: Any) -> MultiviewFn:
-    """把 CloudResearchLLM.synthesize_multiview 适配成 MultiviewFn（返回深度档文本或 None）。"""
+def make_multiview_fn(llm: Any, *, core_agent: Any = None) -> MultiviewFn:
+    """把多空深度档适配成 MultiviewFn。
+
+    ``core_agent`` 是生产入口传入的统一 CoreAgent；省略时保留旧的
+    直接 LLM 适配行为，方便离线单测和第三方调用者平滑迁移。
+    """
     async def _mv(question: str, base_answer: str) -> Optional[str]:
-        return await llm.synthesize_multiview(question, base_answer)
+        if core_agent is None:
+            return await llm.synthesize_multiview(question, base_answer)
+        try:
+            from .core_agent import CoreAgentRequest
+
+            result = await core_agent.run_adapter(
+                CoreAgentRequest(
+                    objective=f"多空裁决：{question}",
+                    mode="research",
+                    context=base_answer[:12000],
+                    channel="weixin",
+                    timeout_seconds=90.0,
+                ),
+                lambda: llm.synthesize_multiview(question, base_answer),
+                route="weixin-multiview",
+            )
+            value = result.raw
+            return value if isinstance(value, str) else None
+        except Exception:
+            return None
     return _mv
 
 

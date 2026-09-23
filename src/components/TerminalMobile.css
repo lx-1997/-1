@@ -1,11 +1,51 @@
 /* Mobile-first overrides for the terminal home. Kept separate from the desktop terminal stylesheet. */
+.bbt-mobile-brand { display: none; }
+.bbt-cmd-input { box-sizing: border-box; font: inherit; text-align: left; }
+
+@media (max-width: 820px) {
+  .bbt-with-sidebar .bbt-cmd,
+  .bbt--anon.bbt-with-sidebar .bbt-cmd {
+    grid-template-columns: 44px minmax(52px, 1fr) max-content;
+    gap: 7px 8px;
+    padding-top: calc(8px + env(safe-area-inset-top));
+  }
+  .bbt-brand > .bbt-cmd-key,
+  .bbt-brand > .bbt-cmd-amber,
+  .bbt-brand > .bbt-cmd-tagline { display: none; }
+  .bbt-brand > .bbt-mobile-brand {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-strong);
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: .4px;
+  }
+  .bbt-side-toggle { width: 44px; height: 44px; }
+  .bbt-cmd-input { height: 44px; }
+  .bbt-cmd-right .bbt-primary-action,
+  .bbt-cmd-right .bbt-more-btn { display: none !important; }
+  .bbt-cmd-right .bbt-buy-cta,
+  .bbt-cmd-right .bbt-acct-in,
+  .bbt-cmd-right .bbt-acct-trigger { min-height: 44px; }
+  .bbt-cmd-right .bbt-acct-in { min-width: 44px; padding-right: 10px; padding-left: 10px; }
+
+  .bbt-nact button,
+  .bbt-news-actions button,
+  .bbt-news-actions a,
+  .bbt-pager button,
+  .bbt-retry-btn { min-height: 42px; }
+  .bbt-cmd-input:focus-visible,
+  .bbt-mobile-nav button:focus-visible,
+  .bbt-nact button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+}
+
 @media (max-width: 560px) {
-  .bbt-cmd { position: sticky; top: 0; z-index: 40; padding: 6px 10px 8px; box-shadow: 0 3px 14px rgba(0, 0, 0, .24); }
+  .bbt-cmd { position: sticky; top: 0; z-index: 40; padding: calc(6px + env(safe-area-inset-top)) 10px 8px; box-shadow: 0 3px 14px rgba(0, 0, 0, .24); }
   .bbt-cmd-nav { display: none; }
   .bbt-cmd-right { gap: 4px; }
   .bbt-cmd-right .bbt-primary-action { width: auto; min-width: 0; height: 34px; padding: 0 10px; color: #d9f8ff; font-size: 12px !important; }
   .bbt-cmd-right .bbt-primary-action::before { display: none; }
-  .bbt-cmd-input { height: 38px; }
+  .bbt-cmd-input { height: 44px; }
 
   /* “更多” must not inherit the desktop popover anchor on a narrow screen. */
   .bbt-more-pop {
@@ -15,6 +55,9 @@
     bottom: 10px;
     left: 10px;
     width: auto;
+    /* Sticky header 可能让 fixed 子元素按自身高度计算；显式高度确保菜单不会被压成一条窄带。 */
+    height: calc(100dvh - 142px);
+    min-height: 0;
     max-height: none;
     padding: 10px;
     border-radius: 14px;
@@ -25,6 +68,11 @@
   .bbt-more-mobile-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 9px; border-bottom: 1px solid var(--line); color: var(--text-strong); font-size: 15px; }
   .bbt-more-mobile-head button { width: 36px; height: 36px; border: 0; border-radius: 8px; background: var(--surface-muted); color: var(--text); font-size: 24px; line-height: 1; cursor: pointer; }
   .bbt-more-pop .bbt-acct-row { min-height: 44px; padding: 10px 9px; font-size: 14px; line-height: 1.35; }
+  .bbt-popup-filter { padding: 10px 9px; }
+  .bbt-popup-mode, .bbt-popup-topic { min-height: 38px; font-size: 13px; }
+  .bbt-popup-keyword-form input { height: 42px; font-size: 16px; }
+  .bbt-popup-keyword-form button { min-height: 42px; font-size: 13px; }
+  .bbt-popup-keyword-chip { min-height: 34px; font-size: 13px; }
 
   .bbt-simple-start { gap: 10px; padding: 12px 10px 14px; }
   .bbt-simple-start-copy { min-width: 0; }

@@ -48,6 +48,15 @@ def _exclude_restricted_news_source() -> bool:
     return not username or is_futoucaixin_restricted_user(username)
 
 
+def _only_futoucaixin_news_source() -> bool:
+    """兼容旧调用参数：当前策略不再把 AI 资料收窄为单一来源。
+
+    资讯列表统一只屏蔽 TradeAlpha；富途财经和其他来源都保留。匿名/受限账号
+    对富途财经的隔离仍由 ``_exclude_restricted_news_source`` 负责。
+    """
+    return False
+
+
 ToolHandler = Callable[..., Awaitable[Any]]
 
 
@@ -84,6 +93,43 @@ def list_tools() -> list[AgentTool]:
 # 白名单专属工具：只对白名单用户出现在工具清单里，其他用户连工具名/描述都看不到（防灰度内容如名人观点被套问泄露）。
 _WHITELIST_ONLY_TOOLS = {"get_celebrity_views"}
 
+# 中文用户默认指向主要上市地。A 股大盘由 stock_name_index 覆盖；
+# 这里只补高频港/美股，避免模型凭记忆把「阿里」一会儿解析成 BABA、
+# 一会儿又变 09988，导致横向对比币种与报表口径不一致。
+_KNOWN_CROSS_MARKET_SYMBOLS = {
+    "建滔集团": "00148", "建滔": "00148",
+    "快手": "01024", "快手-w": "01024", "快手－w": "01024",
+    "腾讯": "00700", "腾讯控股": "00700",
+    "阿里": "09988", "阿里巴巴": "09988", "阿里巴巴-w": "09988",
+    "美团": "03690", "美团-w": "03690",
+    "英伟达": "NVDA", "英达": "NVDA",
+    "苹果": "AAPL", "微软": "MSFT", "特斯拉": "TSLA",
+}
+
+
+def _known_symbol(value: str) -> str | None:
+    key = (value or "").strip().lower().replace(" ", "")
+    return _KNOWN_CROSS_MARKET_SYMBOLS.get(key)
+
+
+def resolve_known_symbol(value: str) -> str | None:
+    """从整句问题中解析内置的港/美股名称；用于研究前置层锁定标的。"""
+    text = (value or "").strip()
+    exact = _known_symbol(text)
+    if exact:
+        return exact
+    normalized = text.lower().replace(" ", "")
+    for name, code in sorted(_KNOWN_CROSS_MARKET_SYMBOLS.items(), key=lambda item: len(item[0]), reverse=True):
+        if name.lower().replace(" ", "") in normalized:
+            return code
+    return None
+
+
+def known_symbol_name(symbol: str) -> str:
+    """按内置跨市场映射反查公司名。"""
+    code = str(symbol or "").strip().upper()
+    return next((name for name, value in _KNOWN_CROSS_MARKET_SYMBOLS.items() if str(value).upper() == code), "")
+
 
 def _binding_whitelisted() -> bool:
     """当前提问用户(经 _BINDING_USER 注入，如微信绑定用户)是否在白名单(复用 iFinD 白名单，默认 lx199710)。"""
@@ -116,6 +162,10 @@ def _coerce_symbol_arg(arguments: dict[str, Any] | None) -> dict[str, Any] | Non
         return arguments
     sym = arguments.get("symbol")
     if isinstance(sym, str) and sym.strip():
+        known = _known_symbol(sym)
+        if known:
+            arguments = {**arguments, "symbol": known}
+            sym = known
         try:
             from .stock_name_index import resolve_to_code
             code = resolve_to_code(sym)
@@ -129,7 +179,7 @@ def _coerce_symbol_arg(arguments: dict[str, Any] | None) -> dict[str, Any] | Non
         try:
             from .stock_name_index import resolve_to_code
             parts = [p.strip() for p in _re.split(r"[,，、\s]+", syms) if p.strip()]
-            coerced = [(resolve_to_code(p) or p) for p in parts]
+            coerced = [(_known_symbol(p) or resolve_to_code(p) or p) for p in parts]
             if parts and coerced != parts:
                 arguments = {**arguments, "symbols": ",".join(coerced)}
         except Exception:  # noqa: BLE001
@@ -225,6 +275,25 @@ async def _tool_get_analyst_consensus(symbol: str, market: Optional[str] = None)
             from .cn_consensus import fetch_cn_consensus
             res = await fetch_cn_consensus(symbol, market)
             if res:
+                # 东财港股聚合表可能对覆盖稀疏的标的返回多年以前的记录。
+                # 目标价/评级一旦超过 18 个月就不能与当前行情拼接，更不能当作
+                # “半年内目标价”回答；保留明确的缺口说明，让上层去查本站研报/纪要。
+                dates = _re.findall(r"20\d{2}-\d{2}-\d{2}", str(res.get("period") or ""))
+                if dates:
+                    try:
+                        age_days = (_dt.now(_tz.utc).date() - _dt.fromisoformat(dates[-1]).date()).days
+                    except (TypeError, ValueError):
+                        age_days = 0
+                    if age_days > 540:
+                        return {
+                            "symbol": res.get("symbol") or str(symbol).strip(),
+                            "name": res.get("name"),
+                            "market": res.get("market") or market,
+                            "currency": res.get("currency"),
+                            "period": res.get("period"),
+                            "data_quality": "stale_excluded",
+                            "note": "卖方共识时点超过18个月，目标价与评级已排除",
+                        }
                 return res
         except Exception:  # noqa: BLE001
             pass
@@ -307,13 +376,13 @@ register_tool(AgentTool(
 register_tool(AgentTool(
     name="get_valuation",
     description="获取市值与估值（总市值/流通市值、市盈率 TTM 即 pe_ratio 与动态即 pe_dynamic 双口径、PB/PS/PEG、美股远期PE/股息率/beta）。"
-                "A/港股的市值/PB/动态PE取自行情页实时口径，与用户在东财/同花顺看到的一致；market_cap 单位为元、另附 market_cap_yi(亿元)直接展示。美/A/港股通用。",
+                "A/港股为公开行情页口径；market_cap 单位为元、另附 market_cap_yi(亿元)直接展示。美/A/港股通用。",
     parameters=_SYMBOL_MARKET_SCHEMA,
     handler=_tool_get_valuation,
 ))
 register_tool(AgentTool(
     name="get_analyst_consensus",
-    description="获取卖方一致预期：目标价、较现价空间、评级共识(买入/增持家数)。美股+A股+港股均覆盖(A/港股取东财机构评级与平均目标价，注意目标价币种)。",
+    description="获取卖方一致预期：目标价、较现价空间、评级共识(买入/增持家数)。美股+A股+港股均覆盖，必须注意目标价币种与数据时点。",
     parameters=_SYMBOL_MARKET_SCHEMA,
     handler=_tool_get_analyst_consensus,
 ))
@@ -328,7 +397,7 @@ register_tool(AgentTool(
 ))
 register_tool(AgentTool(
     name="get_dividend_history",
-    description="查询A股个股最近几期分红送转(每10股送X转Y派Z元、股息率、股权登记日/除权除息日、分红进度)。问『XX分红多少/股息率/派息/送转/除权日』时调用；返回东财F10官方方案，防编造分红数字。仅A股。",
+    description="查询A股个股最近几期分红送转(每10股送X转Y派Z元、股息率、股权登记日/除权除息日、分红进度)。问『XX分红多少/股息率/派息/送转/除权日』时调用；返回公开披露方案，防止编造分红数字。仅A股。",
     parameters={"type": "object", "properties": {
         "symbol": {"type": "string", "description": "A股代码(中文名会自动归一)，如 600519"},
         "limit": {"type": "integer", "description": "返回最近几期，默认 6(上限 40)"},
@@ -377,21 +446,24 @@ register_tool(AgentTool(
 
 
 async def _tool_resolve_symbol(query: str = "") -> Any:
-    """把股票【中文名称/片段】解析成标准【A 股代码】候选（精确→前缀→子串）。"""
+    """把股票【中文名称/片段】解析成标准代码候选。"""
+    known = _known_symbol(query)
+    if known:
+        market = "港股" if known.isdigit() and len(known) == 5 else "美股"
+        return {"matches": [{"name": query.strip(), "code": known, "market": market}]}
     from . import stock_name_index
     cands = stock_name_index.search_names(query, limit=8)
     if not cands:
-        return {"matches": [], "note": f"未找到与「{query}」匹配的 A 股标的；若是港股/美股请直接用代码(如 00700/AAPL)"}
+        return {"matches": [], "note": f"未找到与「{query}」匹配的唯一上市标的，请补充完整名称或代码"}
     return {"matches": cands}
 
 
 register_tool(AgentTool(
     name="resolve_symbol",
     description=(
-        "把股票【中文名称】解析成标准【代码】(A 股)。当用户用中文名提到某只 A 股(如『长电科技』『亿纬锂能』『概伦电子』)、"
+        "把股票【中文名称】解析成标准【代码】，覆盖 A/港/美股高频标的。当用户用中文名提到某只股票、"
         "或多轮对话里用『他/它/这只/这个票』指代某只股时，**先调本工具拿到准确代码，再去调行情/估值/财报等数据工具**——"
-        "绝不要凭记忆猜 A 股代码(猜错=取数全错)。返回候选 {name,code,market}，多个时按相关度排序、挑最贴切的；"
-        "为空说明没匹配到。港股/美股可直接用代码(00700/AAPL)，无需本工具。"
+        "绝不要凭记忆猜代码(猜错=取数全错)。返回候选 {name,code,market}，多个时按相关度排序；为空才请用户补代码。"
     ),
     parameters={
         "type": "object",
@@ -401,6 +473,162 @@ register_tool(AgentTool(
         "required": ["query"],
     },
     handler=_tool_resolve_symbol,
+))
+
+
+def _compact_fields(value: Any, keys: tuple[str, ...]) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    out = {key: value.get(key) for key in keys if value.get(key) is not None}
+    return out or None
+
+
+def _financial_period_key(report_date: Any) -> str | None:
+    """把财报截止日归一成可比较的报告期键。
+
+    compare_stocks 取的是每家公司各自最新财报；如果不把 03-31/06-30
+    明确标成 Q1/H1，模型很容易把“都有营收同比”误写成“同口径”。
+    财报源目前只保证 report_date，因此这里不猜财报发布日，只按截止日归类。
+    """
+    text = str(report_date or "").strip()[:10]
+    try:
+        date = _dt.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+    period = {3: "Q1", 6: "H1", 9: "Q3", 12: "FY"}.get(date.month)
+    return f"{date.year}-{period}" if period else f"{date.year}-{date.month:02d}"
+
+
+async def _tool_compare_stocks(symbols: str = "") -> Any:
+    """2~4 股比较数据包；明确区分共同报告期和各自最新报告期。"""
+    parts = [p.strip() for p in _re.split(r"[,，、\s]+", symbols or "") if p.strip()][:4]
+    if not parts:
+        return {"items": [], "note": "请提供股票名称或代码"}
+
+    async def one(symbol: str) -> dict[str, Any]:
+        quote, valuation, financials, consensus = await asyncio.gather(
+            _tool_get_market_quote(symbol),
+            _tool_get_valuation(symbol),
+            _tool_get_financials(symbol),
+            _tool_get_analyst_consensus(symbol),
+            return_exceptions=True,
+        )
+        qrow = None
+        if isinstance(quote, dict) and isinstance(quote.get("quotes"), list) and quote["quotes"]:
+            qrow = quote["quotes"][0]
+        vrow = valuation if isinstance(valuation, dict) else None
+        frow = financials if isinstance(financials, dict) else None
+        crow = consensus if isinstance(consensus, dict) else None
+        gaps: list[str] = []
+        # 历史覆盖很少的标的可能返回多年前的目标价。这种数字
+        # 不只是「置信度低」，而是不应再进入当前比较表，否则模型会
+        # 拿 2017 年目标价与 2026 年市值混用。
+        if crow:
+            period = str(crow.get("period") or "")
+            dates = _re.findall(r"20\d{2}-\d{2}-\d{2}", period)
+            try:
+                stale = bool(dates) and (_dt.now(_tz.utc).date() - _dt.fromisoformat(dates[-1]).date()).days > 540
+            except (ValueError, TypeError):
+                stale = False
+            if stale:
+                crow = None
+                gaps.append("卖方共识时点过旧，已排除")
+        name = (frow or {}).get("name") or (crow or {}).get("name") or (qrow or {}).get("name") or symbol
+        if qrow is None:
+            gaps.append("实时行情暂不可用")
+        if vrow is None:
+            gaps.append("估值暂不可用")
+        if frow is None:
+            gaps.append("最新财报暂不可用")
+        financial_projection = _compact_fields(frow, ("report_date", "revenue_yoy", "profit_yoy", "roe", "gross_margin", "eps"))
+        if financial_projection:
+            period_key = _financial_period_key(financial_projection.get("report_date"))
+            if period_key:
+                financial_projection["period_key"] = period_key
+                financial_projection["period_label"] = period_key.replace("-", " ")
+        return {
+            "symbol": symbol,
+            "name": name,
+            "quote": _compact_fields(qrow, (
+                "price", "change_percent", "currency", "market_time", "fetched_at", "is_realtime",
+                "pe_ttm", "wk52_high", "wk52_low", "market_cap",
+            )),
+            "valuation": _compact_fields(vrow, ("market_cap_yi", "pe_ratio", "pe_dynamic", "pb_ratio", "ps_ratio", "peg", "currency")),
+            "financials": financial_projection,
+            "consensus": _compact_fields(crow, ("consensus_rating", "rating_summary", "report_count", "period", "avg_target_price", "target_price_low", "target_price_high", "currency")),
+            "data_gaps": gaps,
+        }
+
+    items = await asyncio.gather(*(one(symbol) for symbol in parts))
+    periods_by_symbol = {
+        str(item.get("symbol") or ""): ((item.get("financials") or {}).get("period_key"))
+        for item in items
+    }
+    periods = {period for period in periods_by_symbol.values() if period}
+    all_have_period = len(items) < 2 or all(periods_by_symbol.values())
+    strictly_comparable = len(items) < 2 or (all_have_period and len(periods) == 1)
+    comparison_basis = {
+        "is_strictly_comparable": strictly_comparable,
+        "financials": "common_period" if strictly_comparable and len(items) >= 2 else (
+            "not_applicable_single" if len(items) < 2 else "latest_each_company"
+        ),
+        "snapshot_fields": ["price", "market_cap", "pe_ratio", "pb_ratio", "ps_ratio", "currency"],
+        "blocked_financial_fields": [] if strictly_comparable else [
+            "revenue_yoy", "profit_yoy", "roe", "gross_margin", "eps", "peg",
+        ],
+        "periods_by_symbol": periods_by_symbol,
+        "warning": "财报截止期不同；营收/利润增速、ROE、毛利率和 EPS 只能分别展示，不得横向排名。"
+        if not strictly_comparable and len(items) >= 2 else "",
+    }
+    for item in items:
+        financials = item.get("financials")
+        if isinstance(financials, dict):
+            financials["same_period_as_peers"] = strictly_comparable
+
+    return {
+        "items": items,
+        "comparison_basis": comparison_basis,
+        "comparison_rule": (
+            "行情/估值按当前快照比较；财务字段只有 comparison_basis.is_strictly_comparable=true "
+            "时才可横向排名。若为 false，必须分别标注每家公司 report_date/period_label，"
+            "不得写‘同口径’、‘同一报告期’或据此比较 ROE/增速。某项为 null 就标注数据缺口，不得自行补数。"
+        ),
+    }
+
+
+register_tool(AgentTool(
+    name="compare_stocks",
+    description=(
+        "对 2~4 只股票一次性并行获取行情、估值、各自最新财报与卖方共识；"
+        "工具会明确返回财报是否为共同报告期，不能把‘各自最新’默认称为同口径。"
+        "用户问『A和B谁更值得关注』『三家排序』等比较题时必须优先只调本工具，"
+        "不要再为每只股散调四组工具。支持逗号分隔的中文名或代码。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"symbols": {"type": "string", "description": "2~4 只股，逗号分隔，如：宁德时代,比亚迪"}},
+        "required": ["symbols"],
+    },
+    handler=_tool_compare_stocks,
+))
+
+
+async def _tool_get_stock_snapshot(symbol: str, market: Optional[str] = None) -> Any:
+    """单股常用数据并行快照；market 保留为通用 schema 兼容参数。"""
+    bundle = await _tool_compare_stocks(symbol)
+    items = bundle.get("items") if isinstance(bundle, dict) else None
+    return items[0] if isinstance(items, list) and items else None
+
+
+register_tool(AgentTool(
+    name="get_stock_snapshot",
+    description=(
+        "一次并行获取单只股票的行情、当前估值、最新财报与卖方共识精简包。"
+        "问『估值贵不贵/值不值得关注/财报后还有空间吗』时优先只调本工具，"
+        "不要再分别散调行情、估值、财报、共识四个工具。支持常见中文名和代码。"
+    ),
+    parameters=_SYMBOL_MARKET_SCHEMA,
+    handler=_tool_get_stock_snapshot,
 ))
 
 
@@ -454,6 +682,7 @@ async def _tool_assess_long_term_bull(symbol: str, market: Optional[str] = None)
         for m in list_realtime_messages(
             anyq=symbol,
             exclude_futoucaixin=_exclude_restricted_news_source(),
+            only_futoucaixin=_only_futoucaixin_news_source(),
             limit=20,
         ):
             t = getattr(m, "title", "") or ""
@@ -523,7 +752,7 @@ async def _tool_assess_long_term_bull(symbol: str, market: Optional[str] = None)
 register_tool(AgentTool(
     name="get_financial_statements",
     description="获取个股三张报表关键项 + 现金流八类型：经营/投资/筹资活动现金流量净额、capex、自由现金流、"
-                "利润含金量、扣非、毛利率、ROE。需要现金流结构/盈利质量/是否现金奶牛时用。多源回退(iFinD优先东财兜底)，仅 A股。",
+                "利润含金量、扣非、毛利率、ROE。需要现金流结构/盈利质量/是否现金奶牛时用。公开数据多源回退，仅 A股。",
     parameters=_SYMBOL_MARKET_SCHEMA,
     handler=_tool_get_financial_statements,
 ))
@@ -537,9 +766,14 @@ register_tool(AgentTool(
 ))
 
 
-async def _tool_search_our_content(query: str = "", days: int = 7, limit: int = 12) -> Any:
-    """检索/汇总「我们网站」近期发布的快讯/文章（关键词匹配标题或正文；**query 留空=按时间取近期最新全部**，适合「近期快讯总结」）。
-    文章附带我们已缓存的 AI 解读（命中预解读缓存即返回 ai_summary，不重算）。用于判断我们是否提前覆盖某主线/驱动，可多次换词深挖。"""
+async def _tool_search_our_content(
+    query: str = "", days: int = 7, limit: int = 12, topic: str = ""
+) -> Any:
+    """检索/汇总「我们网站」近期发布的快讯/文章。
+
+    ``topic`` 是可选的内容类型过滤器。保留一个通用工具兼容旧的 AI 对话，深度
+    Harness 则通过下面两个专用别名分别取快讯和文章，避免两个模块在数据包里互相覆盖。
+    """
     import hashlib as _hashlib
     from .metrics_store import get_ai_cache
     since = (_dt.now(_tz.utc) - _td(days=max(1, min(int(days or 7), 30)))).strftime("%Y-%m-%dT%H:%M:%S")
@@ -552,18 +786,32 @@ async def _tool_search_our_content(query: str = "", days: int = 7, limit: int = 
             anyq=anyq,
             since=since,
             exclude_futoucaixin=_exclude_restricted_news_source(),
+            only_futoucaixin=_only_futoucaixin_news_source(),
             limit=max(1, min(int(limit or 20), 60)),
         )
     except Exception:
         return []
     _TONE = {"warning": "风险/利空", "success": "利好", "info": "中性"}
     out: list[dict[str, Any]] = []
+    seen_content: set[str] = set()
+    topic_filter = str(topic or "").strip()
+    if topic_filter not in {"", "快讯", "文章"}:
+        topic_filter = ""
     for m in msgs:
         topic = getattr(m, "topic", "") or ""
         if topic not in ("快讯", "文章", "研报"):
             continue
+        if topic_filter and topic != topic_filter:
+            continue
         title = (getattr(m, "title", "") or "")[:80]
         content = _re.sub(r"https?://\S+", "", getattr(m, "content", "") or "").strip()
+        #采集源可能重复推送同一篇文章；按规范化标题+正文指纹去重。
+        norm_title = _re.sub(r"\s+", "", title.casefold())
+        norm_content = _re.sub(r"\s+", "", content)
+        dedup_key = _hashlib.sha1(f"{norm_title}\n{norm_content}".encode("utf-8")).hexdigest()
+        if dedup_key in seen_content:
+            continue
+        seen_content.add(dedup_key)
         sev = getattr(m, "severity", "") or ""
         item: dict[str, Any] = {
             "title": title,
@@ -595,10 +843,539 @@ register_tool(AgentTool(
         "properties": {
             "query": {"type": "string", "description": "检索关键词，如『黄金 央行 增持』『固态电池』；**留空=取近期最新全部**"},
             "days": {"type": "integer", "description": "回溯天数，默认 7"},
-            "limit": {"type": "integer", "description": "最多返回条数，默认 12（上限 20）"},
+            "limit": {"type": "integer", "description": "最多返回条数，默认 12（上限 60）"},
+            "topic": {"type": "string", "enum": ["快讯", "文章"], "description": "可选：只返回快讯或文章"},
         },
     },
     handler=_tool_search_our_content,
+))
+
+
+async def _tool_get_site_fast_news(query: str = "", days: int = 7, limit: int = 12) -> Any:
+    """深度研究专用：只取稻草财经站内快讯。"""
+    return await _tool_search_our_content(query=query, days=days, limit=limit, topic="快讯")
+
+
+register_tool(AgentTool(
+    name="get_site_fast_news",
+    description=(
+        "只检索稻草财经站内的【快讯】模块，返回标题、摘要、发布时间和方向标签。"
+        "不会混入文章或研报；用于深度研究时与公开行情、公告和财报交叉核验。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "股票代码/名称或主题关键词；留空取近期快讯"},
+            "days": {"type": "integer", "description": "回溯天数，默认 7"},
+            "limit": {"type": "integer", "description": "最多返回条数，默认 12（上限 60）"},
+        },
+    },
+    handler=_tool_get_site_fast_news,
+))
+
+
+async def _tool_get_site_articles(query: str = "", days: int = 30, limit: int = 12) -> Any:
+    """深度研究专用：只取稻草财经站内文章。"""
+    return await _tool_search_our_content(query=query, days=days, limit=limit, topic="文章")
+
+
+register_tool(AgentTool(
+    name="get_site_articles",
+    description=(
+        "只检索稻草财经站内的【文章】模块，返回标题、摘要、发布时间、方向标签和已有 AI 解读。"
+        "不会混入快讯或研报；用于深度研究时与其他站内内容和公开数据综合。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "股票代码/名称或主题关键词；留空取近期文章"},
+            "days": {"type": "integer", "description": "回溯天数，默认 30"},
+            "limit": {"type": "integer", "description": "最多返回条数，默认 12（上限 60）"},
+        },
+    },
+    handler=_tool_get_site_articles,
+))
+
+
+def _recent_cutoff(days: int) -> tuple[_dt, str]:
+    """Return a UTC cutoff and ISO string for bounded recent-content scans."""
+    window_days = max(1, min(int(days or 2), 30))
+    cutoff = _dt.now(_tz.utc) - _td(days=window_days)
+    return cutoff, cutoff.isoformat()
+
+
+def _parse_source_datetime(value: Any) -> Optional[_dt]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = _dt.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S"):
+            try:
+                parsed = _dt.strptime(raw[:19], fmt)
+                break
+            except ValueError:
+                parsed = None
+        if parsed is None:
+            return None
+    return parsed.replace(tzinfo=parsed.tzinfo or _tz.utc)
+
+
+async def _recent_site_content(
+    *, query: str = "", days: int = 2, topic: str, limit: int = 200,
+) -> dict[str, Any]:
+    """Read all locally indexed realtime items in a time window, page by page.
+
+    The normal site-content tool intentionally caps a single answer at 60 rows.  A
+    cross-source digest must first establish coverage, so it pages the SQLite
+    index (which is cheap) until the cutoff or the safety cap and returns explicit
+    scan metadata alongside the compact rows.
+    """
+    from .metrics_store import get_ai_cache
+    import hashlib as _hashlib
+
+    cutoff, since_iso = _recent_cutoff(days)
+    cap = max(1, min(int(limit or 200), 500))
+    terms = [t for t in _re.split(r"[\s,，、/|]+", str(query or "")) if len(t) >= 2][:8]
+    anyq = ",".join(terms) if terms else ""
+    rows: list[dict[str, Any]] = []
+    before = ""
+    pages = 0
+    scanned = 0
+    unknown_dates = 0
+    complete = False
+    visibility = "visible"
+    raw_available = False
+    while pages < 20 and len(rows) < cap:
+        page = list_realtime_messages(
+            topic=topic,
+            anyq=anyq,
+            since=since_iso,
+            before=before,
+            exclude_futoucaixin=_exclude_restricted_news_source(),
+            only_futoucaixin=_only_futoucaixin_news_source(),
+            limit=200,
+        )
+        pages += 1
+        if not page:
+            # 匿名/受限账号可能看到空页，但库里实际有同窗口的富途快讯。
+            # 只做数量探针，不返回受限标题/正文，避免诊断信息绕过内容隔离。
+            if _exclude_restricted_news_source():
+                try:
+                    raw_probe = list_realtime_messages(
+                        topic=topic,
+                        anyq=anyq,
+                        since=since_iso,
+                        before=before,
+                        exclude_futoucaixin=False,
+                        only_futoucaixin=False,
+                        limit=1,
+                    )
+                    raw_available = bool(raw_probe)
+                except Exception:  # noqa: BLE001
+                    raw_available = False
+            visibility = "access_filtered" if raw_available else "empty"
+            complete = True
+            break
+        scanned += len(page)
+        for msg in page:
+            published = getattr(msg, "created_at", "") or ""
+            parsed = _parse_source_datetime(published)
+            if parsed is None:
+                unknown_dates += 1
+                continue
+            if parsed < cutoff:
+                complete = True
+                continue
+            title = (getattr(msg, "title", "") or "")[:80]
+            content = _re.sub(r"https?://\S+", "", getattr(msg, "content", "") or "").strip()
+            item: dict[str, Any] = {
+                "id": str(getattr(msg, "id", "") or ""),
+                "title": title,
+                "topic": topic,
+                "snippet": content[:420] if content and content != title else "",
+                "published_at": published,
+                "tone": {"warning": "风险/利空", "success": "利好", "info": "中性"}.get(
+                    getattr(msg, "severity", "") or "", "中性"
+                ),
+            }
+            if topic == "文章":
+                raw_title = (getattr(msg, "title", "") or "").strip()
+                raw_content = (getattr(msg, "content", "") or "").strip()
+                if len(raw_title + raw_content) >= 60:
+                    cached = get_ai_cache(
+                        "news:" + _hashlib.sha1(f"{raw_title}\n{raw_content}".encode("utf-8")).hexdigest()[:20]
+                    )
+                    if cached:
+                        item["ai_summary"] = (cached.get("summary") or cached.get("one_liner") or "")[:300]
+            rows.append(item)
+            if len(rows) >= cap:
+                break
+        oldest = getattr(page[-1], "created_at", "") or ""
+        oldest_dt = _parse_source_datetime(oldest)
+        if complete or len(rows) >= cap or len(page) < 200 or not oldest_dt or oldest_dt < cutoff:
+            complete = complete or bool(oldest_dt and oldest_dt < cutoff) or len(page) < 200
+            break
+        before = str(oldest)
+    return {
+        "items": rows,
+        "count": len(rows),
+        "coverage": {
+            "window_days": max(1, min(int(days or 2), 30)),
+            "since": since_iso,
+            "scanned_count": scanned,
+            "matched_count": len(rows),
+            "pages": pages,
+            "complete": bool(complete),
+            "unknown_dates": unknown_dates,
+            "visibility": visibility,
+            "raw_available": raw_available,
+            "ingestion_status": "ok" if rows else ("access_filtered" if raw_available else "empty"),
+        },
+        "source": "稻草财经" if topic in {"快讯", "文章"} else topic,
+    }
+
+
+async def _recent_wire_content(*, query: str = "", days: int = 2, limit: int = 200) -> dict[str, Any]:
+    """Read and date-filter the complete currently indexed overseas research pool."""
+    from .research_wire import fetch_research_wire_online
+    from .metrics_store import get_ai_cache_many
+
+    cutoff, since_iso = _recent_cutoff(days)
+    cap = max(1, min(int(limit or 200), 500))
+    try:
+        online = await fetch_research_wire_online(limit=500, query=str(query or ""))
+    except Exception as exc:  # noqa: BLE001
+        return {"items": [], "count": 0, "coverage": {"window_days": days, "since": since_iso, "complete": False, "error": type(exc).__name__}, "source": "稻草财经投行研报"}
+    terms = [t.casefold() for t in _re.split(r"[\s,，、/|]+", str(query or "")) if len(t) >= 2][:8]
+    source_items = list((online or {}).get("items") or [])
+    cache_map = get_ai_cache_many([str(r.get("file_id") or "").strip() for r in source_items if r.get("file_id")])
+    out: list[dict[str, Any]] = []
+    unknown_dates = 0
+    for row in source_items:
+        title = str(row.get("title") or "").strip()
+        hay = f"{title} {row.get('org') or ''}".casefold()
+        if terms and not any(term in hay for term in terms):
+            continue
+        published = str(row.get("created_at") or row.get("date") or "")[:40]
+        parsed = _parse_source_datetime(published)
+        if parsed is None:
+            unknown_dates += 1
+            continue
+        if parsed < cutoff:
+            continue
+        fid = str(row.get("file_id") or "").strip()
+        cached = cache_map.get(fid) or {}
+        out.append({
+            "id": fid or str(row.get("id") or ""),
+            "title": title[:120],
+            "org": row.get("org") or "",
+            "date": row.get("date") or published,
+            "published_at": published,
+            "file_id": fid,
+            "ai_summary": ((cached.get("summary") or cached.get("one_liner") or "")[:300]) or None,
+        })
+        if len(out) >= cap:
+            break
+    return {
+        "items": out,
+        "count": len(out),
+        "coverage": {
+            "window_days": max(1, min(int(days or 2), 30)),
+            "since": since_iso,
+            "scanned_count": len(source_items),
+            "matched_count": len(out),
+            "complete": len(source_items) < 500,
+            "unknown_dates": unknown_dates,
+        },
+        "source": "稻草财经投行研报",
+    }
+
+
+async def _tool_get_recent_content_digest(query: str = "", days: int = 2, limit: int = 200) -> Any:
+    """统一扫描最近窗口的快讯、文章、本地研报、投行研报和机构纪要。
+
+    This is the auditable path for questions such as “总结最近两天所有机构纪要”:
+    all five retrieval channels use the same cutoff, every source returns scan coverage, and
+    the full set is fed through the persistent ontology index before compacting
+    the model-facing evidence.
+    """
+    cap = max(20, min(int(limit or 200), 500))
+    news, articles, local_reports, reports, notes = await asyncio.gather(
+        _recent_site_content(query=query, days=days, topic="快讯", limit=cap),
+        _recent_site_content(query=query, days=days, topic="文章", limit=cap),
+        _recent_site_content(query=query, days=days, topic="研报", limit=cap),
+        _recent_wire_content(query=query, days=days, limit=cap),
+        _tool_get_institution_notes(query=query, days=days, limit=cap, scan_limit=500),
+        return_exceptions=True,
+    )
+    payloads = {"快讯": news, "文章": articles, "研报": local_reports, "投行研报": reports, "机构纪要": notes}
+    result: dict[str, Any] = {"window_days": max(1, min(int(days or 2), 30)), "query": query or "", "sources": {}}
+    for label, value in payloads.items():
+        if isinstance(value, Exception):
+            result["sources"][label] = {"items": [], "count": 0, "coverage": {"complete": False, "error": type(value).__name__}}
+        else:
+            result["sources"][label] = value
+    # Persist and rank every row before reducing the model-facing view.  This is
+    # the same deterministic index used by stock research, with no LLM call.
+    try:
+        from .research_index import build_research_index
+        modules = {
+            "get_site_fast_news": result["sources"]["快讯"].get("items", []),
+            "get_site_articles": result["sources"]["文章"].get("items", []),
+            "get_stock_research": result["sources"]["研报"].get("items", []),
+            "get_recent_research": result["sources"]["投行研报"].get("items", []),
+            "get_institution_notes": result["sources"]["机构纪要"].get("items", []),
+        }
+        indexed = build_research_index(modules, objective=query, stock=None, persist_annotations=True)
+        result["index"] = {
+            "raw_items": indexed.get("stats", {}).get("raw_items", 0),
+            "deduped_items": indexed.get("stats", {}).get("deduped_items", 0),
+            "selected_items": indexed.get("stats", {}).get("selected_items", 0),
+            "annotation_version": indexed.get("stats", {}).get("annotation_version", ""),
+            "coverage": indexed.get("coverage", {}),
+        }
+        result["analysis"] = indexed.get("analysis", {})
+        result["evidence"] = indexed.get("digest", [])[:24]
+    except Exception as exc:  # noqa: BLE001
+        result["index"] = {"error": type(exc).__name__}
+        result["analysis"] = {}
+        result["evidence"] = []
+    result["coverage"] = {
+        label: value.get("coverage", {}) if isinstance(value, dict) else {}
+        for label, value in result["sources"].items()
+    }
+    result["coverage_complete"] = all(bool(item.get("complete")) for item in result["coverage"].values())
+    return result
+
+
+register_tool(AgentTool(
+    name="get_recent_content_digest",
+    description=(
+        "严格按同一时间窗口全量扫描并索引稻草财经【快讯、文章、研报（含投行研报）、机构纪要】。"
+        "回答‘最近两天/最近N天全部内容、机构纪要总结、四类资料汇总’时必须优先使用；"
+        "返回每类 scanned_count/matched_count/pages/complete 和去重后的证据索引。"
+        "它只做真实资料读取与索引，不调用 AI；之后再基于返回证据总结。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "可选主题/公司关键词；留空=窗口内全部"},
+            "days": {"type": "integer", "description": "回溯天数，默认 2，最大 30"},
+            "limit": {"type": "integer", "description": "每类最多返回条数，默认 200，最大 500"},
+        },
+    },
+    handler=_tool_get_recent_content_digest,
+))
+
+
+def _cross_market_name(symbol: str) -> str:
+    code = str(symbol or "").strip().upper()
+    for name, value in _KNOWN_CROSS_MARKET_SYMBOLS.items():
+        if str(value).upper() == code:
+            return name
+    return ""
+
+
+def _entity_content_rows(rows: Any, *, name: str, symbol: str) -> list[dict[str, Any]]:
+    """从关键词 OR 召回结果中保留明确提及该主体的条目，防止行业词带回无关快讯。"""
+    if not isinstance(rows, list):
+        return []
+    anchors = [str(value or "").strip().casefold() for value in (name, symbol) if str(value or "").strip()]
+    if not anchors:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        hay = f"{item.get('title') or ''} {item.get('snippet') or ''}".casefold()
+        if any(anchor in hay for anchor in anchors):
+            out.append(item)
+    return out
+
+
+async def _tool_get_industry_context(
+    symbol: str,
+    market: Optional[str] = None,
+    name: str = "",
+) -> Any:
+    """获取个股行业归属，并检索站内行业/竞争格局资料。"""
+    display = (name or _cross_market_name(symbol) or symbol or "").strip()
+    mk = (market or "").upper()
+    themes: dict[str, Any] = {}
+    if mk in {"", "CN"} and _re.fullmatch(r"\d{6}", str(symbol or "").strip()):
+        try:
+            from .theme_navigation import fetch_stock_themes
+            themes = await fetch_stock_themes(str(symbol).strip()) or {}
+        except Exception:  # noqa: BLE001 - 行业归属是增强层，失败不阻断主研究
+            themes = {}
+    query = f"{display} 行业 竞争格局".strip()
+    try:
+        rows = await _tool_search_our_content(query=query, days=180, limit=8)
+        rows = _entity_content_rows(rows, name=display, symbol=str(symbol or ""))
+    except Exception:  # noqa: BLE001
+        rows = []
+    industry = str(themes.get("industry") or "").strip()
+    board = str(themes.get("board") or "").strip()
+    return {
+        "symbol": str(symbol or "").strip(),
+        "name": display,
+        "market": mk,
+        "industry": industry,
+        "board": board,
+        "items": rows if isinstance(rows, list) else [],
+        "source": "东方财富行业归属 + 稻草财经行业资料",
+        "note": "行业归属为公开板块事实；行业文章只作背景资料，不等同于公司直接证据。"
+        if industry or board or rows else "暂无行业归属或行业资料命中",
+    }
+
+
+register_tool(AgentTool(
+    name="get_industry_context",
+    description=(
+        "获取个股公开行业/板块归属，并检索站内行业与竞争格局资料。行业归属是事实，"
+        "行业文章只作为背景，不把行业消息冒充公司公告或财报。A股行业归属覆盖最完整；港股若无结构化归属会如实标注缺口。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "股票代码，如 600519、00700、00148"},
+            "market": {"type": "string", "enum": ["US", "CN", "HK"]},
+            "name": {"type": "string", "description": "可选，公司名称"},
+        },
+        "required": ["symbol"],
+    },
+    handler=_tool_get_industry_context,
+))
+
+
+async def _tool_get_peer_comparison(
+    symbol: str,
+    market: Optional[str] = None,
+    name: str = "",
+    limit: int = 5,
+) -> Any:
+    """从确定性行业板块成员中列出可比同行候选；不把候选名单当成估值结论。"""
+    code = str(symbol or "").strip()
+    display = (name or _cross_market_name(code) or code).strip()
+    mk = (market or "").upper()
+    industry = ""
+    board = ""
+    peers: list[dict[str, Any]] = []
+    if mk in {"", "CN"} and _re.fullmatch(r"\d{6}", code):
+        try:
+            from .theme_navigation import fetch_board_stocks, fetch_stock_themes, find_board_by_name
+            themes = await fetch_stock_themes(code) or {}
+            industry = str(themes.get("industry") or "").strip()
+            board = str(themes.get("board") or "").strip()
+            board_ref = await find_board_by_name(industry or board)
+            if board_ref:
+                members = await fetch_board_stocks(board_ref["code"], limit=max(8, min(int(limit or 5) + 2, 30)))
+                for item in members:
+                    peer_code = str(item.get("code") or "").strip()
+                    if not peer_code or peer_code == code:
+                        continue
+                    peer_name = str(item.get("name") or peer_code).strip()
+                    peers.append({
+                        "symbol": peer_code,
+                        "name": peer_name,
+                        "title": f"{peer_name}（{board_ref.get('name') or industry or '同行板块'}成员）",
+                        "summary": f"公开板块成员；最新涨跌幅 {item.get('pct') if item.get('pct') is not None else '暂无'}。",
+                        "source_name": "东方财富行业板块",
+                        "published_at": "",
+                        "url": "",
+                    })
+                    if len(peers) >= max(1, min(int(limit or 5), 8)):
+                        break
+        except Exception:  # noqa: BLE001
+            peers = []
+    return {
+        "symbol": code,
+        "name": display,
+        "market": mk,
+        "industry": industry,
+        "board": board,
+        "items": peers,
+        "selection_basis": "公开行业板块成员，仅作为可比候选；估值/财务需另行按同一口径取数。",
+        "note": (
+            "已找到公开行业板块成员，后续应逐只核对估值、报告期与盈利质量。"
+            if peers else
+            "当前没有可验证的结构化同行名单；不会把文章中被提及的公司直接当作可比同行。"
+        ),
+    }
+
+
+register_tool(AgentTool(
+    name="get_peer_comparison",
+    description=(
+        "获取公开行业板块中的同行候选名单，用于后续估值与盈利质量横向核对。"
+        "候选名单不是推荐；若没有结构化板块成员，必须标注暂无可比同行，不得凭文章提及关系猜测。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "股票代码"},
+            "market": {"type": "string", "enum": ["US", "CN", "HK"]},
+            "name": {"type": "string", "description": "可选，公司名称"},
+            "limit": {"type": "integer", "description": "同行候选数，默认 5"},
+        },
+        "required": ["symbol"],
+    },
+    handler=_tool_get_peer_comparison,
+))
+
+
+async def _tool_get_supply_chain_context(
+    symbol: str,
+    market: Optional[str] = None,
+    name: str = "",
+) -> Any:
+    """检索公司上下游、原材料、客户与价格传导相关资料，返回线索而非臆测关系。"""
+    display = (name or _cross_market_name(symbol) or symbol or "").strip()
+    query = f"{display} 供应链 上游 下游 原材料 客户 价格".strip()
+    try:
+        rows = await _tool_search_our_content(query=query, days=180, limit=12)
+        rows = _entity_content_rows(rows, name=display, symbol=str(symbol or ""))
+    except Exception:  # noqa: BLE001
+        rows = []
+    items = rows if isinstance(rows, list) else []
+    upstream_terms = _re.compile(r"上游|原材料|成本|供应商|供给|价格", _re.I)
+    downstream_terms = _re.compile(r"下游|客户|需求|订单|终端|售价|传导", _re.I)
+    upstream = [item for item in items if upstream_terms.search(f"{item.get('title', '')} {item.get('snippet', '')}")]
+    downstream = [item for item in items if downstream_terms.search(f"{item.get('title', '')} {item.get('snippet', '')}")]
+    return {
+        "symbol": str(symbol or "").strip(),
+        "name": display,
+        "market": (market or "").upper(),
+        "items": items,
+        "upstream_count": len(upstream),
+        "downstream_count": len(downstream),
+        "queries": ["上游/原材料/供应商", "下游/客户/需求/价格传导"],
+        "source": "稻草财经产业链资料",
+        "note": (
+            "已检索上下游关键词；关系仍需以公司公告、合同/客户披露或行业数据复核。"
+            if items else "暂无上下游相关资料命中，不对供应链关系作推断。"
+        ),
+    }
+
+
+register_tool(AgentTool(
+    name="get_supply_chain_context",
+    description=(
+        "检索站内与公司上游原材料、供应商、下游客户、需求和价格传导相关的资料。"
+        "返回的是可核验线索与命中数，不会凭常识臆测供应链关系；最终判断必须回到公告/财报/行业数据。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "description": "股票代码"},
+            "market": {"type": "string", "enum": ["US", "CN", "HK"]},
+            "name": {"type": "string", "description": "可选，公司名称"},
+        },
+        "required": ["symbol"],
+    },
+    handler=_tool_get_supply_chain_context,
 ))
 
 
@@ -697,7 +1474,7 @@ register_tool(AgentTool(
     name="get_stock_research",
     description=(
         "检索券商研报（东方财富研报库，按个股代码，覆盖近 2 年，返回标题/机构/评级/日期）。"
-        "核实卖方机构对该股的覆盖与最新观点——『我们网站能查到的研报』主力来源。**仅 A股有券商研报覆盖；港股/美股几乎查不到(东财研报库对港美股基本为空)，对港美股不要反复空跑本工具**。"
+        "核实卖方机构对该股的覆盖与最新观点。**仅 A股有较完整的券商研报覆盖；港股/美股基本为空，对港美股不要反复空跑本工具**。"
     ),
     parameters=_SYMBOL_MARKET_SCHEMA,
     handler=_tool_get_stock_research,
@@ -744,6 +1521,8 @@ async def _tool_get_market_structure() -> Any:
     # 有任一硬数据块就算可用（各部分独立降级）
     if not (d.get("indices") or d.get("breadth", {}).get("total") or d.get("turnover") or d.get("sectors_top")):
         return None
+    d["source"] = d.get("source") or "公开 A 股行情快照"
+    d["retrieved_at_beijing"] = d.get("retrieved_at_beijing") or d.get("generated_at")
     return d
 
 
@@ -800,6 +1579,156 @@ register_tool(AgentTool(
         },
     },
     handler=_tool_get_recent_research,
+))
+
+
+async def _tool_get_institution_notes(
+    query: str = "", limit: int = 8, days: int = 30, scan_limit: int = 500,
+) -> Any:
+    """检索稻草财经【机构纪要】信息流。
+
+    机构纪要由独立的知识星球流模块提供，和研报 PDF、站内文章是不同内容类型。
+    这里只投影标题、正文摘要、日期和标签，避免把第三方帖子链接/图片直接塞进模型上下文。
+    上游不可用时返回空结果，由 Harness 在研究缺口中明确标注，不阻断其余公开数据。
+    """
+    from .zsxq_stream import fetch_stream, recent_share_topics
+
+    q = str(query or "").strip()[:80]
+    n = max(1, min(int(limit or 8), 500))
+    scan_cap = max(n, min(int(scan_limit or 500), 1000))
+    cutoff, since_iso = _recent_cutoff(days)
+    raw_items: list[dict[str, Any]] = []
+    before = ""
+    pages = 0
+    scanned = 0
+    complete = False
+    unknown_dates = 0
+    fallback_used = False
+    # Explicitly page the ZSXQ cursor until the requested cutoff.  The old
+    # one-page call was fast but could silently omit older notes on busy days.
+    while pages < 30 and len(raw_items) < scan_cap:
+        payload: dict[str, Any] | None = None
+        try:
+            payload = await fetch_stream(
+                keyword=q,
+                limit=min(40, max(n, 20)),
+                end_time=before,
+                use_cache=(pages == 0),
+            )
+        except Exception:  # noqa: BLE001 - 机构纪要是可选资料源，不拖垮深度研判
+            payload = None
+        page_items = (payload or {}).get("items") if isinstance(payload, dict) else None
+        if not isinstance(page_items, list):
+            # 服务器重启或工作台暂不可用时，仍尽量使用已经公开落库的最近摘要。
+            if pages == 0:
+                fallback_used = True
+                page_items = recent_share_topics(limit=min(scan_cap, 500))
+            else:
+                page_items = []
+        if not page_items:
+            complete = True
+            break
+        pages += 1
+        scanned += len(page_items)
+        raw_items.extend(item for item in page_items if isinstance(item, dict))
+        oldest_raw = page_items[-1] if isinstance(page_items[-1], dict) else {}
+        oldest = str(oldest_raw.get("create_time") or oldest_raw.get("date") or "")
+        oldest_dt = _parse_source_datetime(oldest)
+        next_before = str((payload or {}).get("next_before") or "").strip() if isinstance(payload, dict) else ""
+        has_more = bool((payload or {}).get("has_more")) if isinstance(payload, dict) else False
+        if fallback_used:
+            # Persisted share summaries are a recovery snapshot, not proof that
+            # the upstream two-day window was fully scanned.
+            complete = False
+            break
+        if (oldest_dt and oldest_dt < cutoff) or not has_more or not next_before:
+            complete = bool(oldest_dt and oldest_dt < cutoff) or not has_more
+            break
+        before = next_before
+
+    out: list[dict[str, Any]] = []
+    # 代码查询必须按数字边界匹配，避免 00148 误命中 300148（天舟文化）。
+    # 多个关键词采用 OR 语义，兼容“代码 + 公司名”的自然提问。
+    query_tokens = [t for t in _re.split(r"[\s,，、/|]+", q.casefold()) if t]
+
+    def _matches_query(hay: str) -> bool:
+        if not query_tokens:
+            return True
+        for token in query_tokens:
+            if token.isdigit():
+                variants = {token}
+                if len(token) < 5:
+                    variants.add(token.zfill(5))
+                if len(token) < 6:
+                    variants.add(token.zfill(6))
+                if any(_re.search(rf"(?<!\d){_re.escape(v)}(?!\d)", hay) for v in variants):
+                    return True
+            elif token in hay:
+                return True
+        return False
+
+    seen: set[tuple[str, str]] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        text = str(item.get("text") or item.get("lead") or "").strip()
+        hay = f"{title} {text}".casefold()
+        if not _matches_query(hay):
+            continue
+        date = str(item.get("date") or item.get("create_time") or "")[:32]
+        parsed_date = _parse_source_datetime(date)
+        if parsed_date is None:
+            unknown_dates += 1
+            continue
+        if parsed_date < cutoff:
+            continue
+        dedupe_key = (title.casefold(), date)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        out.append({
+            "title": title[:100],
+            "summary": text[:420],
+            "date": date,
+            "tags": [str(t)[:30] for t in (item.get("tags") or [])[:8]],
+        })
+        if len(out) >= n:
+            break
+    return {
+        "items": out,
+        "count": len(out),
+        "source": "稻草财经机构纪要",
+        "coverage": {
+            "window_days": max(1, min(int(days or 7), 30)),
+            "since": since_iso,
+            "scanned_count": scanned,
+            "matched_count": len(out),
+            "pages": pages,
+            "complete": bool(complete),
+            "unknown_dates": unknown_dates,
+            "fallback_used": fallback_used,
+        },
+    }
+
+
+register_tool(AgentTool(
+    name="get_institution_notes",
+    description=(
+        "检索稻草财经独立的【机构纪要】模块（调研纪要/电话会纪要/动态点评）。"
+        "它与快讯、文章、研报分开取数；返回标题、正文摘要、日期和标签。"
+        "没有命中时必须如实标注，不得把研报或快讯冒充机构纪要。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "股票代码/名称或关键词；留空取最近纪要"},
+            "limit": {"type": "integer", "description": "最多返回条数，默认 8（上限 500）"},
+            "days": {"type": "integer", "description": "严格回溯天数，默认 30；回答最近两天时传 2"},
+            "scan_limit": {"type": "integer", "description": "最多扫描条数，默认 500，用于防止上游异常放大"},
+        },
+    },
+    handler=_tool_get_institution_notes,
 ))
 
 
@@ -981,10 +1910,20 @@ async def _tool_get_market_data(query: str = "") -> Any:
         pass
     if not items:
         return None
+    raw_as_of = glob.get("generated_at") or ash.get("generated_at")
+    as_of_beijing = raw_as_of
+    if raw_as_of:
+        try:
+            parsed = _dt.fromisoformat(str(raw_as_of).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=_tz.utc)
+            as_of_beijing = parsed.astimezone(_tz(_td(hours=8))).isoformat()
+        except (ValueError, TypeError):
+            pass
     return {
-        "as_of": glob.get("generated_at") or ash.get("generated_at"),
+        "snapshot_generated_at_beijing": as_of_beijing,
         "quotes": items,
-        "note": "实时价格快照（美股/港股/商品在其休市时段为最近一个交易日收盘价，as_of 是抓取时刻非行情时刻，勿据此当盘中实时报）；只据 price 与 change_pct 如实陈述当前价位与今日涨跌，不要凭记忆断言历史新高/新低/创纪录。",
+        "note": "价格快照（美股/港股/商品在其休市时段为最近一个交易日收盘价；snapshot_generated_at_beijing 是北京时间的抓取时刻，不是行情成交时刻）；只据 price 与 change_pct 陈述当前价位与今日涨跌，不得凭记忆断言历史新高/新低/创纪录。",
     }
 
 
@@ -1020,14 +1959,24 @@ async def _tool_get_celebrity_views(query: str = "") -> Any:
     except Exception:  # noqa: BLE001
         return None
     q = (query or "").strip()
+    terms = [t.casefold() for t in _re.split(r"[\s,，、/|]+", q) if len(t.strip()) >= 2]
     out: list[dict[str, Any]] = []
     for fg in (data.get("figures") or []):
         name = fg.get("name") or ""
-        if q and q not in name and q not in (fg.get("org") or "") and q not in (fg.get("role") or ""):
-            continue
         latest = [{"title": it.get("title", ""), "summary": (it.get("body") or "")[:220],
                    "date": it.get("published_at") or it.get("reported_date")}
                   for it in (fg.get("items") or [])[:4]]
+        if q:
+            # 深度研判传入“代码 + 公司名”。名人资料的相关标的通常出现在帖子标题/正文，
+            # 不一定出现在人物姓名里，所以按任一有效词过滤，而不是要求整句精确命中。
+            identity = f"{name} {fg.get('org') or ''} {fg.get('role') or ''}".casefold()
+            matched = [item for item in latest if any(
+                term in f"{item.get('title') or ''} {item.get('summary') or ''}".casefold()
+                for term in terms
+            )]
+            if not matched and not any(term in identity for term in terms):
+                continue
+            latest = matched or latest
         out.append({"name": name, "role": fg.get("role") or fg.get("org") or "",
                     "digest": fg.get("digest") or "", "latest": latest})
     if not out:

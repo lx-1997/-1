@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from typing import Any, AsyncIterator, Optional
@@ -46,6 +47,14 @@ MODULE_NAMES: dict[str, str] = {
 
 AVAILABLE_MODULES = list(MODULE_NAMES)
 
+logger = logging.getLogger(__name__)
+
+# 同股同题研究结论短期缓存：命中时 0 次采集+0 次 LLM，直接回放最终结论事件。
+# 该端点无鉴权、持仓/证据均为全局数据，跨用户复用安全；结论类内容 30 分钟内未实质失效。
+_LOOP_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_LOOP_CACHE_TTL_SECONDS = 1800.0
+_LOOP_CACHE_MAX = 200
+
 
 def _sse(event_type: str, payload: dict[str, Any], event_id: str | None = None) -> str:
     lines = []
@@ -62,11 +71,12 @@ def _safe_list(val: Any, max_items: int = 8) -> list[str]:
     return []
 
 
-async def _call_json(llm: CloudResearchLLM, prompt: str, max_tokens: int = 1400, timeout: int = 40) -> dict[str, Any]:
+async def _call_json(llm: CloudResearchLLM, prompt: str, max_tokens: int = 1400, timeout: int = 40) -> tuple[dict[str, Any], str | None]:
+    """返回 (结果, 错误)。失败不再静默吞掉：错误原样上抛给调用方发 degraded 事件。"""
     try:
-        return await llm.complete_json(prompt, max_tokens=max_tokens, timeout_seconds=timeout)
-    except Exception:
-        return {}
+        return await llm.complete_json(prompt, max_tokens=max_tokens, timeout_seconds=timeout), None
+    except Exception as e:
+        return {}, str(e)[:120]
 
 
 def _scoping_prompt(symbol: str, question: str) -> str:
@@ -216,10 +226,35 @@ async def run_agent_research_loop(
     sym = symbol.upper().strip()
     t0 = time.time()
 
+    cache_key = f"{sym}\x00{question.strip().lower()}"
+    cache_entry = _LOOP_CACHE.get(cache_key)
+    if cache_entry and (time.time() - cache_entry[0]) > _LOOP_CACHE_TTL_SECONDS:
+        _LOOP_CACHE.pop(cache_key, None)
+        cache_entry = None
+
     yield _sse("loop_start", {
         "loop_id": loop_id, "symbol": sym, "question": question,
         "generated_at": utc_now_iso(),
     })
+
+    if cache_entry is not None:
+        logger.info("agent_loop[%s] research cache hit: %s %s", loop_id, sym, question[:48])
+        final_evt = dict(cache_entry[1])
+        final_evt["elapsed_seconds"] = round(time.time() - t0, 1)
+        final_evt["cached"] = True
+        yield _sse("research_synthesize", final_evt)
+        yield _sse("research_done", {
+            "loop_id": loop_id,
+            "total_rounds": final_evt.get("total_rounds", 0),
+            "modules_gathered": final_evt.get("modules_gathered", []),
+            "elapsed_seconds": final_evt["elapsed_seconds"],
+            "recommendation": final_evt.get("recommendation", "hold"),
+            "conviction": final_evt.get("conviction", "medium"),
+            "confidence": final_evt.get("confidence", 0),
+            "degraded": bool(final_evt.get("degraded")),
+            "cached": True,
+        })
+        return
 
     gathered: set[str] = set()
     all_findings: list[dict[str, Any]] = []
@@ -236,7 +271,15 @@ async def run_agent_research_loop(
             break
 
         if round_num == 1:
-            scope = await _call_json(llm, _scoping_prompt(sym, question), max_tokens=800, timeout=PLAN_TIMEOUT)
+            scope, scope_err = await _call_json(llm, _scoping_prompt(sym, question), max_tokens=800, timeout=PLAN_TIMEOUT)
+            if scope_err:
+                logger.warning("agent_loop[%s] scope LLM failed: %s", loop_id, scope_err)
+                yield _sse("research_degraded", {
+                    "loop_id": loop_id, "round": round_num, "phase": "scope",
+                    "phase_label": PHASE_DISPLAY["scope"],
+                    "detail": f"研究规划模型调用失败，按默认模块顺序继续：{scope_err}",
+                    "status": "error",
+                })
             plan_order = _safe_list(scope.get("modules_order"), max_items=5) or remaining
             framework = str(scope.get("research_framework", "") or f"{sym} 系统性投研")
             scoping = str(scope.get("scoping_rationale", "") or "按行情→基本面→风险优先级")
@@ -308,10 +351,19 @@ async def run_agent_research_loop(
         })
 
         prev_findings = "; ".join(f.get("key_insight", "") for f in all_findings[-2:])
-        analysis = await _call_json(llm, _analyze_prompt(sym, question, block_text, prev_findings),
-                                    max_tokens=1400, timeout=ANALYZE_TIMEOUT)
+        analysis, analyze_err = await _call_json(llm, _analyze_prompt(sym, question, block_text, prev_findings),
+                                                 max_tokens=1400, timeout=ANALYZE_TIMEOUT)
+        if analyze_err:
+            logger.warning("agent_loop[%s] analyze LLM failed (round %s): %s", loop_id, round_num, analyze_err)
+            yield _sse("research_degraded", {
+                "loop_id": loop_id, "round": round_num, "phase": "analyze",
+                "phase_label": PHASE_DISPLAY["analyze"],
+                "detail": f"第{round_num}轮模型分析失败，沿用已采集数据综合：{analyze_err}",
+                "status": "error",
+            })
 
-        key_insight = str(analysis.get("key_insight", "") or "分析完成")
+        key_insight = str(analysis.get("key_insight", "") or (
+            "本轮模型分析未返回，结论以已采集数据为准" if analyze_err else "分析完成"))
         conf_gain = min(0.4, max(0.05, safe_float(analysis.get("confidence_contribution"), default=0.18) or 0.18))
         cumulative_confidence = min(1.0, cumulative_confidence + conf_gain)
         need_another = bool(analysis.get("need_another_round", False))
@@ -384,19 +436,28 @@ async def run_agent_research_loop(
             break
 
     full_text = "\n---\n".join(all_data_blocks)
-    synth = await _call_json(llm, _synthesize_prompt(sym, question, all_findings, full_text, citable_sources),
-                             max_tokens=2200, timeout=SYNTHESIZE_TIMEOUT)
+    synth, synth_err = await _call_json(llm, _synthesize_prompt(sym, question, all_findings, full_text, citable_sources),
+                                        max_tokens=2200, timeout=SYNTHESIZE_TIMEOUT)
+    if synth_err:
+        logger.warning("agent_loop[%s] synthesize LLM failed: %s", loop_id, synth_err)
+        yield _sse("research_degraded", {
+            "loop_id": loop_id, "phase": "synthesize",
+            "phase_label": PHASE_DISPLAY["synthesize"],
+            "detail": f"结论合成模型调用失败，以下为默认模板非完整研究结论：{synth_err}",
+            "status": "error",
+        })
 
     thesis = synth.get("thesis", {}) or {}
     risk_matrix = synth.get("risk_matrix", {}) or {}
     elapsed = round(time.time() - t0, 1)
     final_confidence = safe_float(synth.get("confidence"), default=cumulative_confidence) or 0
 
-    yield _sse("research_synthesize", {
+    final_evt = {
         "loop_id": loop_id, "phase": "synthesize",
         "phase_label": PHASE_DISPLAY["synthesize"],
         "title": "研究完成",
-        "executive_summary": str(synth.get("executive_summary", "") or "分析完成"),
+        "executive_summary": str(synth.get("executive_summary", "") or (
+            f"结论合成模型调用失败，以下为{sym}已采集数据的默认模板，非完整研究结论。" if synth_err else "分析完成")),
         "recommendation": str(synth.get("recommendation", "") or "hold"),
         "conviction": str(synth.get("conviction", "") or "medium"),
         "target_rationale": str(synth.get("target_rationale", "") or ""),
@@ -421,16 +482,24 @@ async def run_agent_research_loop(
                            "label": "事件风险", "detail": str(risk_matrix.get("event_risk", {}).get("detail", ""))},
         },
         "key_catalysts": _safe_list(synth.get("key_catalysts"), max_items=4),
-        "data_issues": _safe_list(synth.get("data_issues"), max_items=3),
+        "data_issues": (_safe_list(synth.get("data_issues"), max_items=3)
+                        + (["结论合成模型调用失败，本结论为默认模板非完整研究"] if synth_err else []))[:4],
         "next_steps": _safe_list(synth.get("next_steps"), max_items=3),
         "confidence": round(final_confidence, 2),
+        "degraded": bool(synth_err),
         "sources": _safe_list(synth.get("sources"), max_items=6) or sorted(gathered),
         "citable_sources": citable_sources,  # 编号可引用证据（带 url+可信度），前端渲染可溯源来源列表
         "total_rounds": len(all_findings),
         "modules_gathered": sorted(gathered),
         "elapsed_seconds": elapsed,
         "status": "done",
-    })
+    }
+    if not synth_err:
+        if len(_LOOP_CACHE) >= _LOOP_CACHE_MAX:
+            oldest = min(_LOOP_CACHE, key=lambda k: _LOOP_CACHE[k][0])
+            _LOOP_CACHE.pop(oldest, None)
+        _LOOP_CACHE[cache_key] = (time.time(), dict(final_evt))
+    yield _sse("research_synthesize", final_evt)
 
     yield _sse("research_done", {
         "loop_id": loop_id,
@@ -440,4 +509,5 @@ async def run_agent_research_loop(
         "recommendation": str(synth.get("recommendation", "") or "hold"),
         "conviction": str(synth.get("conviction", "") or "medium"),
         "confidence": round(final_confidence, 2),
+        "degraded": bool(synth_err),
     })

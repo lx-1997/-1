@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+from . import db
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -33,6 +34,7 @@ from .schemas import (
 )
 from .shareholder_change_skill import detect_shareholder_change_request, scan_shareholder_changes
 from .shared_utils import utc_now_iso, safe_int
+from .source_policy import is_tradealpha_source, tradealpha_blocking_enabled
 
 
 
@@ -194,6 +196,13 @@ def create_data_source(request: DataSourceCreateRequest) -> DataSourceRecord:
     init_data_source_db()
     if request.source_type in {"server_api", "market_api", "web_page"} and not request.url:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="该数据源类型需要配置 URL。")
+    if tradealpha_blocking_enabled() and is_tradealpha_source(
+        source_name=request.name,
+        source_type=request.source_type,
+        url=request.url,
+        metadata={"description": request.description, "notes": request.notes},
+    ):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="TradeAlpha 来源已被停用，不能登记或抓取。")
 
     timestamp = utc_now_iso()
     source_id = str(uuid.uuid4())
@@ -413,6 +422,8 @@ async def capture_agent_web_page(request: DataSourceSyncRequest) -> DataSourceIt
 async def capture_agent_web_pages(request: DataSourceSyncRequest) -> tuple[DataSourceRecord, list[DataSourceItemRecord]]:
     if not request.url:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="需要提供网页 URL。")
+    if tradealpha_blocking_enabled() and is_tradealpha_source(url=request.url):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="TradeAlpha 来源已被停用，不能抓取。")
     source_id = _ensure_builtin_source(
         name="Agent 自主抓取",
         source_type="agent_crawl",
@@ -986,6 +997,13 @@ async def _fetch_source_items(
     if not raw_url:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="数据源缺少 URL。")
     url = _render_template(str(raw_url), symbol=request.symbol, query=request.query)
+    if tradealpha_blocking_enabled() and is_tradealpha_source(
+        source_name=source.name,
+        source_type=source.source_type,
+        url=url,
+        metadata=config,
+    ):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="TradeAlpha 来源已被停用，不能同步。")
     _validate_http_url(url)
 
     method = str(config.get("method") or "GET").upper()
@@ -1631,6 +1649,15 @@ def _store_data_item(
     credibility_score: float,
     collected_at: Optional[str],
 ) -> DataSourceItemRecord:
+    if tradealpha_blocking_enabled() and is_tradealpha_source(
+        source_name=source_name,
+        source_type=source_type,
+        url=url,
+        metadata=metadata,
+        title=title,
+        content=text,
+    ):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="TradeAlpha 资料已被来源策略拦截。")
     init_data_source_db()
     timestamp = utc_now_iso()
     item_id = str(uuid.uuid4())
@@ -1949,7 +1976,7 @@ def _update_source(source_id: str, **updates: Any) -> None:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

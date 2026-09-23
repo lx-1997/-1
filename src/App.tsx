@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useRef, useReducer, useState } from 'react';
 import { App as AntdApp, Layout } from 'antd';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import TradingLayout from './components/TradingLayout';
 import Login from './components/Login';
 import AIChatPanel from './components/AIChatPanel';
 import SignalRecallListener from './components/SignalRecallListener';
 import AppUpdateChecker from './components/AppUpdateChecker';
+import LegalPage from './components/LegalPage';
 import { ModuleContextProvider } from './contexts/ModuleContext';
 import { CartItem, Comment, Post, Product, Stock, User, ViewType } from './types';
 import { getMarketQuotes, MarketSymbolCandidate } from './services/marketService';
@@ -62,6 +65,27 @@ const App: React.FC = () => {
     window.localStorage.setItem(STOCK_POOL_STORAGE_KEY, JSON.stringify(appState.stocks));
   }, [appState.stocks, appState.user]);
 
+  // 原生返回键和通知/分享链接都走浏览器历史栈，避免 Android 直接退出应用或
+  // 点击链接后停留在旧页面。网页端不注册这些监听器。
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || typeof window === 'undefined') return undefined;
+    let removeBack: (() => void) | null = null;
+    let removeUrl: (() => void) | null = null;
+    void CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (canGoBack && window.history.length > 1) window.history.back();
+      else void CapacitorApp.exitApp();
+    }).then(handle => { removeBack = () => { void handle.remove(); }; });
+    void CapacitorApp.addListener('appUrlOpen', ({ url }) => {
+      try {
+        const parsed = new URL(url);
+        const path = `${parsed.pathname || '/'}${parsed.search}${parsed.hash}`;
+        window.history.pushState({}, '', path);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      } catch { /* 非法或非 HTTP 链接交给系统处理 */ }
+    }).then(handle => { removeUrl = () => { void handle.remove(); }; });
+    return () => { removeBack?.(); removeUrl?.(); };
+  }, []);
+
   // 社区/商城 UGC 本地持久化：写操作（发帖/评论/点赞/评分/购买/下单/余额变动）后落盘，刷新不丢。
   useEffect(() => {
     if (!appState.user || typeof window === 'undefined') {
@@ -114,7 +138,12 @@ const App: React.FC = () => {
 
       if (options.notify) {
         const hasRealtimeQuote = response.quotes.some(quote => quote.is_realtime);
-        message.success(`${hasRealtimeQuote ? '实时' : '最新'}行情已更新：${response.quotes.length} 个标的`);
+        if (response.data_quality && response.data_quality.level !== 'live') {
+          const qualityHint = response.data_quality.label || '非实时/混合行情';
+          message.warning(`${qualityHint}已更新：${response.quotes.length} 个标的；${response.data_quality.detail || '请核对行情时间与来源'}`);
+        } else {
+          message.success(`${hasRealtimeQuote ? '实时' : '最新'}行情已更新：${response.quotes.length} 个标的`);
+        }
       }
     } catch (error) {
       console.warn('Market data refresh failed:', error);
@@ -562,6 +591,8 @@ const App: React.FC = () => {
       <Layout className="trading-layout">
         <Content>
           <Routes>
+            <Route path="/privacy" element={<LegalPage kind="privacy" />} />
+            <Route path="/terms" element={<LegalPage kind="terms" />} />
             <Route
               path="/login"
               element={

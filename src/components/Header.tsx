@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons';
 import { AppState, Stock, ViewType } from '../types';
 import RechargeModal from './RechargeModal';
+import AccentThemePicker from './AccentThemePicker';
 import { SystemReadiness, getSystemReadiness } from '../services/infrastructureService';
 import { countStocksBySegment } from '../utils/marketSegments';
 import { useTheme } from '../context/ThemeContext';
@@ -280,6 +281,7 @@ const Header: React.FC<HeaderProps> = ({
                 <Button type="text" block icon={theme === 'dark' ? <SunOutlined /> : <MoonOutlined />} onClick={toggleTheme} style={{ justifyContent: 'flex-start', textAlign: 'left', color: 'var(--text-muted)' }}>
                   {theme === 'dark' ? '浅色模式' : '深色模式'}
                 </Button>
+                <AccentThemePicker />
               </div>
             </div>
           )}

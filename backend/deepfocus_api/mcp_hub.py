@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from . import db
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -515,7 +516,7 @@ def _ensure_tool_allowed(config: dict[str, Any], tool_name: str) -> None:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

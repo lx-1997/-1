@@ -50,6 +50,7 @@ import {
 } from '@ant-design/icons';
 import { getApiBaseUrls, apiPost, apiGet } from '../services/apiClient';
 import CenterShell from './common/CenterShell';
+import RiskBacktestPanel from './RiskBacktestPanel';
 import './BacktestCenter.css';
 
 const { Text } = Typography;
@@ -339,11 +340,11 @@ const BacktestCenter: React.FC = () => {
   const eqStart = eqCurve?.[0] || detailRecord?.initial_capital || 100000;
   const eqEnd = eqCurve?.[eqCurve.length - 1] || eqStart;
 
-  return (
+  const strategyTab = (
     <CenterShell
       icon={<ExperimentOutlined />}
       title="策略回测中心"
-      subtitle={<><RocketOutlined /> 4种策略引擎 · yfinance真实数据 · SSE实时反馈</>}
+      subtitle={<><RocketOutlined /> 策略回测 + 风控回放 · yfinance真实数据 · SSE实时反馈</>}
       actions={(
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadRecords}>刷新</Button>
@@ -566,6 +567,16 @@ const BacktestCenter: React.FC = () => {
         )}
       </Modal>
     </CenterShell>
+  );
+
+  return (
+    <Tabs
+      defaultActiveKey="strategy"
+      items={[
+        { key: 'strategy', label: '策略回测', children: strategyTab },
+        { key: 'risk', label: '风控回测', children: <RiskBacktestPanel /> },
+      ]}
+    />
   );
 };
 

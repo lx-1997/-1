@@ -22,6 +22,21 @@ type HealthTone = 'green' | 'yellow' | 'red';
 
 const normalizeSymbol = (value: string) => value.trim().toUpperCase().replace(/\.(SH|SZ|HK)$/, '');
 
+const metricChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '2px 8px',
+  borderRadius: 999,
+  border: '1px solid var(--border-soft)',
+  background: 'var(--surface-muted)',
+  color: 'var(--text-soft)',
+  fontSize: 10,
+  fontWeight: 600,
+  lineHeight: 1.4,
+  whiteSpace: 'nowrap',
+};
+
 function healthFor(symbol: string, quote: TerminalQuote | undefined, companies: MarketRiskCompany[]) {
   const company = companies.find(item => normalizeSymbol(item.symbol) === normalizeSymbol(symbol));
   if (company?.risk_level === 'red' || company?.risk_level === 'orange') {
@@ -65,11 +80,23 @@ const TerminalInvestorCompass: React.FC<TerminalInvestorCompassProps> = ({
     name: names[symbol] || symbol,
     ...healthFor(symbol, quotes[symbol], companies),
   })), [symbols, names, quotes, companies]);
+  const watchCount = symbols.length;
+  const riskCount = healthItems.filter(item => item.tone !== 'green').length;
+  const opportunityCount = loggedIn ? themes.length : 0;
 
   return (
     <section className="bbt-investor-compass" aria-label="我的股票和市场机会">
       <div className="bbt-investor-compass-head">
-        <div><span>今天先看什么</span><h2>你的股票和市场机会</h2></div>
+        <div>
+          <span>今天先看什么</span>
+          <h2>先看和你有关的变化，再找下一笔机会</h2>
+          <p>把自选、风险和市场信号收束成一个面板，不必先穿过一堆工具。</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            <span style={metricChipStyle}>自选 {watchCount}</span>
+            <span style={metricChipStyle}>留意 {riskCount}</span>
+            <span style={metricChipStyle}>{loggedIn ? `机会 ${opportunityCount}` : '登录后看机会'}</span>
+          </div>
+        </div>
         <button type="button" onClick={() => void load()} disabled={loading}>{loading ? '更新中…' : '更新'}</button>
       </div>
       <div className="bbt-investor-compass-grid">

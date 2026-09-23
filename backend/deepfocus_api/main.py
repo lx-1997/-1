@@ -1487,6 +1487,24 @@ def _allowed_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    def _spawn_bg(name: str, factory):
+        """受监管后台任务：异常崩溃自动重启（指数退避 5s→300s 封顶）+ 结构化日志。
+
+        单进程把全部后台循环挂 lifespan，任一裸崩=该链路静默停摆；监管器保证自愈。
+        正常 return（如 env 总闸关闭自退）视为有意退出，不重启；cancel（关停）向上透传。"""
+        async def _runner():
+            delay = 5.0
+            while True:
+                try:
+                    await factory()
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logging.exception("后台任务 %s 崩溃，%.0fs 后重启", name, delay)
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 300.0)
+        return asyncio.create_task(_runner(), name=f"bg:{name}")
     configure_data_source_egress()  # 数据源域名绕过出网代理（封锁环境下仍能直连取数）
     init_auth()  # 建认证表（统一存储层）+ 按 env 预置管理员
     init_task_db()
@@ -1544,64 +1562,64 @@ async def lifespan(app: FastAPI):
     await warm_research_workbench()
     await start_agent_worker()
     # DAO 财经事件桥接：后台轮询 DAO 事件 API → 灌进实时消息流（金融终端用）
-    dao_bridge_task = asyncio.create_task(run_dao_bridge())
+    dao_bridge_task = _spawn_bg("dao_bridge", run_dao_bridge)
     # 独立研报/机构纪要流也接入同一条实时召回链路，FCM 与前台弹窗语义保持一致
-    recall_ingest_task = asyncio.create_task(run_recall_ingest())
+    recall_ingest_task = _spawn_bg("recall_ingest", run_recall_ingest)
     # 缓存预热：定时 force 刷新宏观看板等重外部源，请求只读暖缓存（消除冷取延迟）
     from .cache_warmer import run_cache_warmer
 
-    cache_warmer_task = asyncio.create_task(run_cache_warmer())
+    cache_warmer_task = _spawn_bg("cache_warmer", run_cache_warmer)
     # 研报预解读：后台把最新研报逐篇 AI 解读并缓存，用户点开即秒回
-    research_prewarm_task = asyncio.create_task(run_research_prewarm())
+    research_prewarm_task = _spawn_bg("research_prewarm", run_research_prewarm)
     # 研报列表缓存保活：让研报面板每次加载都秒开
-    wire_refresher_task = asyncio.create_task(run_wire_refresher())
+    wire_refresher_task = _spawn_bg("wire_refresher", run_wire_refresher)
     # 文章 AI 预解读：拉取到的文章后台预先解读并缓存
-    news_prewarm_task = asyncio.create_task(run_news_prewarm())
+    news_prewarm_task = _spawn_bg("news_prewarm", run_news_prewarm)
     # AI 头条评选：华尔街视角挑真正重要的头条
-    headline_task = asyncio.create_task(run_headline_picker())
+    headline_task = _spawn_bg("headline_picker", run_headline_picker)
     # 研报登录态健康监测：cookie 失效即看板红灯 + 邮件告警
-    zsxq_health_task = asyncio.create_task(run_zsxq_health())
+    zsxq_health_task = _spawn_bg("zsxq_health", run_zsxq_health)
     # 微信桥接(gewechat)登录态健康监测：每 5min 探活，掉线即邮件告警提醒重新扫码
-    wechat_health_task = asyncio.create_task(run_wechat_health())
+    wechat_health_task = _spawn_bg("wechat_health", run_wechat_health)
     # 连接容量监控：每 3min 看在线 SSE 长连接/句柄占用，逼近上限即邮件告警（防 SSE 打满 nginx 致全站 502）
-    capacity_monitor_task = asyncio.create_task(run_capacity_monitor())
+    capacity_monitor_task = _spawn_bg("capacity_monitor", run_capacity_monitor)
     # AI 解读缓存：每日清理过期(默认 >90 天)条目，防长期累积
-    cache_pruner_task = asyncio.create_task(run_cache_pruner())
+    cache_pruner_task = _spawn_bg("cache_pruner", run_cache_pruner)
     # A股收盘复盘：每个交易日 15:35 生成「大盘+板块+个股 × 我们提前发现的资讯」复盘
-    ashare_review_task = asyncio.create_task(run_ashare_review())
+    ashare_review_task = _spawn_bg("ashare_review", run_ashare_review)
     # 投研晨报：每个交易日盘前 08:30 推送「宏观×组合」晨会一句话 → 全员盯盘送达（每日盘前回访仪式）
-    morning_briefing_task = asyncio.create_task(run_morning_briefing())
+    morning_briefing_task = _spawn_bg("morning_briefing", run_morning_briefing)
     # 收盘自选巡检：每交易日 15:12 全体自选并集 × 确定性异动（|涨跌|≥5% / 龙虎榜）→「异动」聚合消息
-    watchlist_scan_task = asyncio.create_task(run_watchlist_scan())
+    watchlist_scan_task = _spawn_bg("watchlist_scan", run_watchlist_scan)
     # 战绩闭环:每交易日 15:40 自动兑现到期表态(env 总闸 DEEPFOCUS_CALLS_ENABLED 默认关=纯空转)
-    call_settle_task = asyncio.create_task(run_call_settlement())
+    call_settle_task = _spawn_bg("call_settlement", run_call_settlement)
     # 增长分析师：每日 16:20 自动计算 KPI（用户/留存/日活/付费转化）+ AI 改进建议 → 运营看板
     growth_analytics.init_growth_db()
-    growth_analyst_task = asyncio.create_task(run_growth_analyst())
+    growth_analyst_task = _spawn_bg("growth_analyst", run_growth_analyst)
     from .checkin import init_checkin_db
     init_checkin_db()  # 连续看复盘签到表
     ai_fund.init_ai_fund_db()  # A股 AI 模拟盘（虚拟基金）账户表
     init_ontology_db()  # 投资本体 MVP：实体/别名/关系/演示动作审计
     # AI 模拟盘交易员：A股交易时段内每 30min 跑一轮多因子决策（自动模拟买卖），展示给大家看
-    ai_fund_task = asyncio.create_task(run_ai_fund_trader())
+    ai_fund_task = _spawn_bg("ai_fund_trader", run_ai_fund_trader)
     from .partner_api import init_partner_db
     init_partner_db()  # 合作方/开发者 API（自有内容对外）
     # T+1 召回：每日 10:30 给「注册 24~72h 未回访且留邮箱」的新用户发带当日复盘内容的召回邮件
-    t1_recall_task = asyncio.create_task(run_t1_recall())
+    t1_recall_task = _spawn_bg("t1_recall", run_t1_recall)
     # 到期转化：每日 11:00 给「会员 48h 内到期、非付费、留邮箱」的用户发续费提醒（最高意向时刻）
-    expiry_reminder_task = asyncio.create_task(run_expiry_reminder())
+    expiry_reminder_task = _spawn_bg("expiry_reminder", run_expiry_reminder)
     # 合作方 API 续费/对账告警：每日 09:30 给管理员汇总近配额/近到期/待收款
-    partner_alert_task = asyncio.create_task(run_partner_billing_alerts())
+    partner_alert_task = _spawn_bg("partner_billing_alerts", run_partner_billing_alerts)
     # A股名称→代码表：启动后拉取并每日刷新，供路由识别「个股提问」（防全市场扫描技能误触发）
-    stock_name_task = asyncio.create_task(run_stock_name_refresh())
+    stock_name_task = _spawn_bg("stock_name_refresh", run_stock_name_refresh)
     # 搜索/AI 引擎主动提交：每 30min diff sitemap 把新 URL 推给百度主动推送 + IndexNow（冷启动收录加速）
-    seo_submit_task = asyncio.create_task(run_seo_submit())
+    seo_submit_task = _spawn_bg("seo_submit", run_seo_submit)
     # SEO 预热：后台把热门个股速判卡提前 build 落库，让 sitemap 一开始就有真实优质页（不必等爬虫触发）
-    seo_prewarm_task = asyncio.create_task(run_seo_prewarm())
+    seo_prewarm_task = _spawn_bg("seo_prewarm", run_seo_prewarm)
     # 资讯断供 watchdog：交易时段快讯 45min 无入库即告警（富投 token 静默失效已实证两次整天空转）
-    feed_watchdog_task = asyncio.create_task(run_feed_watchdog())
+    feed_watchdog_task = _spawn_bg("feed_watchdog", run_feed_watchdog)
     # 微信定时推送：每 30s 扫到点的定时计划（群发 quasi_push / 个性化 push_to_user）——仅渠道开启时实际发
-    weixin_sched_task = asyncio.create_task(run_wechat_scheduled_push())
+    weixin_sched_task = _spawn_bg("wechat_scheduled_push", run_wechat_scheduled_push)
     # 自动营销引擎：每日 16:50（增长报告 16:20 之后）对流失/沉睡/高活跃免费用户做分群召回邮件——
     # 主闸 DEEPFOCUS_MARKETING_ENABLED 默认关=纯空转，看板里灰度开启 campaign 后才真发（部署与启用解耦）
     try:
@@ -1609,7 +1627,7 @@ async def lifespan(app: FastAPI):
         init_marketing_db()
     except Exception as _mkt_exc:  # noqa: BLE001 - 建表失败不阻断启动
         print(f"[marketing] init 跳过：{type(_mkt_exc).__name__}")
-    marketing_task = asyncio.create_task(run_marketing_engine())
+    marketing_task = _spawn_bg("marketing_engine", run_marketing_engine)
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
@@ -8866,6 +8884,7 @@ async def _generate_research_ai_result(
                 ),
                 lambda: analyze_pdf_adaptive(
                     pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
+                    text_only=True,
                 ),
                 route="report-vision",
             )
@@ -9244,7 +9263,16 @@ async def api_research_deep_draft(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - keep endpoint error wording stable
-        raise HTTPException(status_code=502, detail=f"深度研报稿生成失败：{str(exc)[:160]}") from exc
+        logger.exception("deep-draft generation failed: title=%s source=%s", title[:120], (request.file_id or request.workbench_filename or request.filename or "")[:160])
+        # Provider outages, including upstream 402 balance exhaustion, must
+        # not turn a readable report into a blank error card. The generator
+        # has an honest deterministic source-only fallback; return it with low
+        # confidence and explicit coverage instead of inventing conclusions.
+        try:
+            fallback = await generate_deep_draft(request, documents=[], source_error=str(exc)[:160])
+            return _response(fallback)
+        except Exception:
+            raise HTTPException(status_code=502, detail=f"深度研报稿生成失败：{str(exc)[:160]}") from exc
     if quota_key:
         metrics_incr(quota_key)
     return _response(payload, core_result_holder[0] if core_result_holder else None)
@@ -9446,10 +9474,10 @@ def _is_stale_filtered_view_flash(
 
 
 def _should_hide_futoucaixin(request: Request) -> bool:
-    """匿名/失效会话与指定账号不可见 futoucaixin 的任意资讯。"""
+    """仅对明确受限账号隐藏该来源；匿名访客仍可看站内最新快讯和文章。"""
     claims = optional_current_user(request)
     if claims is None:
-        return True
+        return False
     return is_futoucaixin_restricted_user(claims.get("username"))
 
 
@@ -13064,6 +13092,16 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                     else:
                         await queue.put(_sse_frame("fallback", {"reason": "多专家圆桌未返回结论"}))
                     return
+                # 大盘问题先把硬行情快照注入本轮上下文。这样即使模型工具调用
+                # 短暂超时，回答仍然有真实指数、成交额和涨跌家数可引用。
+                if not stock and re.search(r"大盘|盘面|A股|股市|指数|行情|怎么走|为什么这样", message):
+                    try:
+                        from .ashare_review import gather_market_structure
+                        market_structure = await asyncio.wait_for(gather_market_structure(), timeout=10.0)
+                        if market_structure:
+                            hint = f"{hint}\n\n【本轮预取的A股市场硬数据】{json.dumps(market_structure, ensure_ascii=False)}"
+                    except Exception:
+                        pass
                 routed = await _route_orchestrator_chat(
                     OrchestratorChatRequest(
                         message=message.strip(),

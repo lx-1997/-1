@@ -1,0 +1,14 @@
+{
+  "server": "root@39.105.214.141",
+  "remoteEnvFile": "/etc/meitou-mirror.env",
+  "minRemainingHours": 8,
+  "freshTokenHours": 6,
+  "autoHeal": true,
+  "alerts": {
+    "macos": true,
+    "serverchanKey": "",
+    "barkUrl": "",
+    "wecomWebhook": "",
+    "genericWebhook": ""
+  }
+}

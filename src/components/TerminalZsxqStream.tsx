@@ -158,7 +158,11 @@ const CommentsBlock: React.FC<{ item: ZsxqTopic }> = ({ item }) => {
 const COLLAPSE_CHARS = 420; // 长帖默认折叠的字符阈值
 
 // 单条帖子卡片：作者/日期/精华 + 正文(长帖折叠) + 图片(可放大) + 评论 + 原文出处。
-const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void; focused?: boolean }> = ({ item, onZoom, focused = false }) => {
+const TopicRow: React.FC<{
+  item: ZsxqTopic;
+  onZoom: (url: string) => void;
+  focused?: boolean;
+}> = ({ item, onZoom, focused = false }) => {
   const [expanded, setExpanded] = useState(false);
   const cleanText = cleanSourceBrand(item.text || '');
   const long = cleanText.length > COLLAPSE_CHARS;
@@ -192,8 +196,9 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void; focus
         <div className="tzs-imgs">
           {item.images.map((u, i) => (
             <button type="button" className="tzs-img-btn" key={i} onClick={() => onZoom((item.image_fulls && item.image_fulls[i]) || u)} title="点击放大">
-              {/* 知识星球图床有 referer 防盗链：必须 no-referrer */}
-              <img className="tzs-img" src={u} alt="" loading="lazy" referrerPolicy="no-referrer" />
+              {/* 缩略图与灯箱统一走后端代理：直连星球图床会被 Referer 防盗链换成占位图，
+                  且占位图一旦进浏览器缓存会按 URL 持续回放（no-referrer 也救不回） */}
+              <img className="tzs-img" src={zsxqImg(u)} alt="" loading="lazy" />
             </button>
           ))}
         </div>
@@ -204,7 +209,7 @@ const TopicRow: React.FC<{ item: ZsxqTopic; onZoom: (url: string) => void; focus
   );
 };
 
-const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onRequireLogin?: () => void; focusId?: string }> = ({ inline = false, loggedIn = false, onRequireLogin, focusId }) => {
+const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onRequireLogin?: () => void; focusId?: string; onItems?: (items: ZsxqTopic[]) => void }> = ({ inline = false, loggedIn = false, onRequireLogin, focusId, onItems }) => {
   const [data, setData] = useState<ZsxqStreamResponse | null>(null);
   const [pool, setPool] = useState<ZsxqTopic[]>([]);
   const [group, setGroup] = useState('');
@@ -227,6 +232,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
       const res = await getZsxqStream({ group: opts.group, q: opts.q, limit: 20, refresh: opts.refresh });
       setData(res);
       setPool(res.items);
+      onItems?.(res.items);
       setGroup(res.group);
       cursorRef.current = res.next_before || '';
       hasMoreRef.current = Boolean(res.has_more);
@@ -237,10 +243,9 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [onItems]);
 
   useEffect(() => { void load({}); }, [load]);
-
   // 分享深链定位:切到本模块后,若目标纪要在已加载池内→滚动居中+短暂高亮;不在池内则只落在模块(已达「跳到对应模块」)
   const [activeFocus, setActiveFocus] = useState('');
   useEffect(() => { if (focusId) setActiveFocus(focusId); }, [focusId]);
@@ -275,6 +280,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
       const known = new Set(pool.map(i => i.id));
       const fresh = res.items.filter(i => !known.has(i.id));
       if (fresh.length) setPool(prev => [...prev, ...fresh]);
+      if (fresh.length) onItems?.(fresh);
       const nextCursor = res.next_before || '';
       // 游标没推进（如匿名态被后端忽略 before、退化成重复首页）→ 判定已到头，别让按钮无限空转
       // （之前的隐患：hasMore 只看 next_before 是否非空，游标原地不动时会一直"能点却什么都不加载"）。
@@ -286,7 +292,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
     } finally {
       setMore(false);
     }
-  }, [more, group, applied, pool]);
+  }, [more, group, applied, pool, onItems]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && zoom) { e.preventDefault(); setZoom(null); } };

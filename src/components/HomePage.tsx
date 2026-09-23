@@ -7,17 +7,23 @@ import {
   SearchOutlined,
   SendOutlined,
   ShareAltOutlined,
-  TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import type { AppState, Product, Stock, ViewType } from '../types';
+import type { OrchestratorReasoningStep } from '../services/agentService';
 import type { MarketSymbolCandidate } from '../services/marketService';
 import { useModuleContext } from '../contexts/ModuleContext';
-import { runGeneralChatStream, runDulusRoundtable, LoopResearchEvent, DulusRoundtableResponse, ChatCitationSource } from '../services/agentService';
+import {
+  runGeneralChatStream,
+  runToolResearchStream,
+  runDulusRoundtable,
+  DulusRoundtableResponse,
+  ChatCitationSource,
+} from '../services/agentService';
 import { uploadDataFile } from '../services/infrastructureService';
-import { getGreeting, shouldRunStockResearch } from '../utils/chatRouting';
+import { getGreeting, isResearchMessage } from '../utils/chatRouting';
 import { archiveConversation } from '../utils/conversationMemory';
-import { logDecision, autoResolveWithPrices } from '../utils/decisionJournal';
+import { autoResolveWithPrices } from '../utils/decisionJournal';
 import { buildHomeSuggestions } from '../utils/homeSuggestions';
 import CitableSources from './common/CitableSources';
 import {
@@ -27,12 +33,12 @@ import {
   serializeContextForPrompt,
   ContextProviderInput,
 } from '../utils/agentContextProviders';
-import AgentLoopStream from './AgentLoopStream';
 import Markdown from './common/Markdown';
 import RoundtableMessage from './RoundtableMessage';
 import ShareModal, { ShareTarget } from './ShareModal';
 import InvestorCompass from './home/InvestorCompass';
 import './HomePage.css';
+import ReasoningTrace from './common/ReasoningTrace';
 
 type AgentMode = 'analyst' | 'roundtable';
 
@@ -47,6 +53,7 @@ interface ChatMessage {
   sources?: ChatCitationSource[];
   /** 流式期间的临时状态文案（如「正在检索最新资料…」），有正文后清除。 */
   status?: string;
+  reasoning?: OrchestratorReasoningStep[];
 }
 
 /** 把后端/网络错误转成对用户友好的提示。 */
@@ -87,36 +94,6 @@ interface HomePageProps {
   isMarketDataRefreshing: boolean;
 }
 
-const recommendationLabels: Record<string, string> = {
-  strong_buy: '强烈看好',
-  buy: '看好',
-  hold: '中性',
-  reduce: '偏谨慎',
-  sell: '看淡',
-  strong_sell: '强烈看淡',
-};
-
-/** 把一次深研 Loop 的结果格式化成一条 assistant 消息。 */
-function formatLoopResult(final: LoopResearchEvent): string {
-  const recLabel = recommendationLabels[final.recommendation || ''] || '中性';
-  const lines: string[] = [
-    `分析评分：${recLabel} ｜ 置信度 ${Math.round((final.confidence || 0) * 100)}%`,
-  ];
-  if (final.executive_summary) {
-    lines.push('', final.executive_summary);
-  }
-  if (final.target_rationale) {
-    lines.push(`依据：${final.target_rationale}`);
-  }
-  if (final.key_catalysts?.length) {
-    lines.push('', '关键催化剂：', ...final.key_catalysts.map(c => `· ${c}`));
-  }
-  if (final.data_issues?.length) {
-    lines.push('', '数据提示：', ...final.data_issues.map(d => `· ${d}`));
-  }
-  return lines.join('\n');
-}
-
 /** 把一条 AI 回答（分析师 / 通用问答 / 圆桌）转成可分享的结论文案。 */
 function buildShareTarget(messages: ChatMessage[], index: number): ShareTarget {
   const msg = messages[index];
@@ -150,9 +127,8 @@ const HomePage: React.FC<HomePageProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>(loadStoredMessages);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [agentMode, setAgentMode] = useState<AgentMode>('analyst');
-  const [loopSymbol, setLoopSymbol] = useState<string | null>(null);
-  const [loopQuestion, setLoopQuestion] = useState<string | null>(null);
+  // 统一入口：后端自动决定取证深度与核验步骤。
+  const [agentMode] = useState<AgentMode>('analyst');
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [quickSymbol, setQuickSymbol] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -266,7 +242,7 @@ const HomePage: React.FC<HomePageProps> = ({
   }, [appState.stocks]);
 
   const greeting = useMemo(() => getGreeting(), []);
-  const hasConversation = messages.length > 0 || Boolean(loopSymbol);
+  const hasConversation = messages.length > 0;
   // 个性化建议：回到空首页时按自选股/历史判断/最近讨论重新生成（AI 原生「记得住你」）。
   const suggestions = useMemo(
     () => buildHomeSuggestions(appState.stocks, Date.now()),
@@ -278,7 +254,7 @@ const HomePage: React.FC<HomePageProps> = ({
     if (hasConversation && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, loading, loopSymbol, hasConversation]);
+  }, [messages, loading, hasConversation]);
 
   useEffect(() => {
     // 流式进行中不频繁写盘，结束后再持久化最近 40 条。
@@ -305,7 +281,7 @@ const HomePage: React.FC<HomePageProps> = ({
 
   const submit = useCallback(async (raw: string) => {
     const trimmed = raw.trim();
-    if (!trimmed || loading || loopSymbol) {
+    if (!trimmed || loading) {
       return;
     }
 
@@ -343,16 +319,9 @@ const HomePage: React.FC<HomePageProps> = ({
       return;
     }
 
-    // 分析师 Agent · 能识别出标的的研究类问题 → 走个股深研 Loop（流式）。
-    const researchSymbol = shouldRunStockResearch(trimmed);
-    if (researchSymbol) {
-      setLoopSymbol(researchSymbol);
-      setLoopQuestion(trimmed);
-      setLoading(true);
-      return;
-    }
-
-    // 分析师 Agent · 其余走通用问答（流式）。
+    // 分析师 Agent：研究类问题和通用问答共享同一个 CoreAgent 入口。
+    // 研究请求走 tool-research SSE（真实取数 + 工具轨迹），不可用时回退到
+    // 通用流式问答；不再在浏览器侧启动独立的 research-loop Agent。
     setLoading(true);
     const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }));
     const context = await buildAgentContext(trimmed);
@@ -365,61 +334,100 @@ const HomePage: React.FC<HomePageProps> = ({
       usedLabels.push(`附件×${readyAttachments.length}`);
     }
 
+    const contextNote = serializeContextForPrompt(context);
+    const focusedSymbol = typeof context.focused_symbol === 'string' ? context.focused_symbol : '';
+    const researchSymbol = appState.selectedStock?.symbol || focusedSymbol || '';
+    const researchName = appState.selectedStock?.name || '';
+
     // 先放一个空的 assistant 气泡，token 到达后逐步填充；记录本次可见信息集用于溯源。
     setMessages(prev => [...prev, { role: 'assistant', content: '', contextUsed: usedLabels }]);
 
-    streamCancelRef.current = runGeneralChatStream(
-      { message: trimmed, history, context, locale: 'zh-CN' },
-      {
-        onDelta: (text) => setLastAssistant(last => ({ ...last, content: last.content + text, status: undefined })),
-        onSources: (sources) => setLastAssistant(last => ({ ...last, sources })),
-        onStatus: (status) => setLastAssistant(last => (last.content ? last : { ...last, status })),
-        onDone: () => {
-          setLoading(false);
-          streamCancelRef.current = null;
-        },
-        onError: (error) => {
-          setLastAssistant(last => (
-            last.content ? last : { ...last, content: humanizeError(error), error: true }
-          ));
-          setLoading(false);
-          streamCancelRef.current = null;
-        },
-      }
-    );
-  }, [loading, loopSymbol, messages, agentMode, appState.selectedStock, buildAgentContext, attachments, enabledSources]);
+    const startGeneralStream = () => {
+      streamCancelRef.current = runGeneralChatStream(
+        { message: trimmed, history, context, locale: 'zh-CN' },
+        {
+          onDelta: (text) => setLastAssistant(last => ({ ...last, content: last.content + text, status: undefined })),
+          onSources: (sources) => setLastAssistant(last => ({ ...last, sources })),
+          onStatus: (status) => setLastAssistant(last => (last.content ? last : { ...last, status })),
+          onDone: () => {
+            setLoading(false);
+            streamCancelRef.current = null;
+          },
+          onError: (error) => {
+            setLastAssistant(last => (
+              last.content ? last : { ...last, content: humanizeError(error), error: true }
+            ));
+            setLoading(false);
+            streamCancelRef.current = null;
+          },
+        }
+      );
+    };
 
-  const handleLoopComplete = useCallback((final: LoopResearchEvent) => {
-    // 深研结论转入对话历史时，保留可引用证据来源（带 url+可信度），与分析师快答一致地可溯源。
-    setMessages(prev => [...prev, {
-      role: 'assistant',
-      content: formatLoopResult(final),
-      sources: final.citable_sources && final.citable_sources.length > 0 ? final.citable_sources : undefined,
-    }]);
-    // 自我进化：把这次深研判断自动记入决策日志，供日后召回 + 置信度校准。
-    const decisionSymbol = final.symbol || loopSymbol;
-    if (decisionSymbol && final.recommendation) {
-      // 记录当时价格（自选股快照里有则填），供日后价格可用时自动判定兑现。
-      const priceAtLog = appState.stocks.find(s => s.symbol === decisionSymbol)?.currentPrice ?? null;
-      logDecision({
-        symbol: decisionSymbol,
-        action: final.recommendation,
-        confidence: final.confidence ?? 0,
-        thesis: final.executive_summary || final.target_rationale || '',
-        now: Date.now(),
-        priceAtLog: typeof priceAtLog === 'number' && priceAtLog > 0 ? priceAtLog : null,
-      });
+    if (isResearchMessage(trimmed)) {
+      let terminal = false;
+      streamCancelRef.current = runToolResearchStream(
+        {
+          message: trimmed,
+          ...(contextNote ? { context_hint: contextNote } : {}),
+          symbol: researchSymbol,
+          name: researchName,
+          history: history.map(item => [item.role, item.content] as [string, string]),
+          ...(readyAttachments[0]
+            ? { attachment: { filename: readyAttachments[0].name, text: readyAttachments[0].content } }
+            : {}),
+        },
+        {
+          onTool: event => setLastAssistant(last => ({
+            ...last,
+            status: event.tool ? `正在核对 ${event.tool}…` : '正在核对公开数据…',
+            reasoning: [
+              ...(last.reasoning || []),
+              { phase: 'tool', title: event.tool || '数据源', detail: event.ok === undefined ? '已发起检索' : (event.ok ? '已返回结果' : '数据源暂不可用'), status: event.ok === undefined ? 'working' : (event.ok ? 'done' : 'error') },
+            ],
+          })),
+          onStatus: status => setLastAssistant(last => (last.content ? last : { ...last, status, reasoning: [...(last.reasoning || []), { phase: 'research', title: status, detail: '', status: 'working' }] })),
+          onFinal: result => {
+            terminal = true;
+            const cited = result.roundtable?.citable_sources;
+            setLastAssistant(last => ({
+              ...last,
+              content: result.answer || '研究流程已完成，但暂未生成可用结论。',
+              status: undefined,
+              sources: cited && cited.length > 0 ? cited : last.sources,
+            }));
+            setLoading(false);
+            streamCancelRef.current = null;
+          },
+          // 后端未启用 tool-agent 时，复用同一上下文走通用 CoreAgent 流式投影。
+          onFallback: () => {
+            if (terminal) return;
+            terminal = true;
+            startGeneralStream();
+          },
+          onError: error => {
+            if (terminal) return;
+            terminal = true;
+            setLastAssistant(last => (
+              last.content ? last : { ...last, content: humanizeError(error), error: true, status: undefined }
+            ));
+            setLoading(false);
+            streamCancelRef.current = null;
+          },
+          onDone: () => {
+            // 某些旧后端只关闭连接而不发 fallback；此时不要把占位气泡永久留在加载态。
+            if (!terminal) {
+              terminal = true;
+              startGeneralStream();
+            }
+          },
+        }
+      );
+      return;
     }
-    setLoopSymbol(null);
-    setLoopQuestion(null);
-    setLoading(false);
-  }, [loopSymbol, appState.stocks]);
 
-  const handleLoopCancel = useCallback(() => {
-    setLoopSymbol(null);
-    setLoopQuestion(null);
-    setLoading(false);
-  }, []);
+    startGeneralStream();
+  }, [loading, messages, agentMode, appState.selectedStock, buildAgentContext, attachments, enabledSources]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -473,8 +481,6 @@ const HomePage: React.FC<HomePageProps> = ({
     // 自我记忆：开新对话前把当前会话归档进历史库，供日后「记忆」provider 召回。
     archiveConversation(messages.map(m => ({ role: m.role, content: m.content })), Date.now());
     setMessages([]);
-    setLoopSymbol(null);
-    setLoopQuestion(null);
     setLoading(false);
     try {
       window.localStorage.removeItem(CHAT_STORAGE_KEY);
@@ -483,12 +489,10 @@ const HomePage: React.FC<HomePageProps> = ({
     }
   };
 
-  // 中断进行中的生成（流式问答或深研 Loop），保留已生成内容。
+  // 中断进行中的生成（通用或研究 CoreAgent 流式投影），保留已生成内容。
   const stopGenerating = () => {
     streamCancelRef.current?.();
     streamCancelRef.current = null;
-    setLoopSymbol(null);
-    setLoopQuestion(null);
     setLoading(false);
     // 若停在还没有任何输出的空 assistant 气泡，移除它（避免留空白）。
     setMessages(prev => {
@@ -557,26 +561,9 @@ const HomePage: React.FC<HomePageProps> = ({
       </div>
       <div className="dfx-home-composer-foot">
         <div className="dfx-home-mode" role="tablist" aria-label="Agent 模式">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={agentMode === 'analyst'}
-            className={`dfx-home-mode-btn${agentMode === 'analyst' ? ' active' : ''}`}
-            onClick={() => setAgentMode('analyst')}
-            title="把行情、资料和风险汇总成一个清晰结论"
-          >
-            <BulbOutlined /> 帮我分析
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={agentMode === 'roundtable'}
-            className={`dfx-home-mode-btn${agentMode === 'roundtable' ? ' active' : ''}`}
-            onClick={() => setAgentMode('roundtable')}
-            title="用正反两面检查一个判断是否站得住"
-          >
-            <TeamOutlined /> 多角度分析
-          </button>
+          <span className="dfx-home-mode-btn active" title="自动检索行情、站内资料、Meitou 和风险证据后给出结论">
+            <BulbOutlined /> 智能投研
+          </span>
         </div>
         <span className="dfx-home-composer-hint">
           已挂载 {enabledSources.size} 个上下文源
@@ -625,7 +612,7 @@ const HomePage: React.FC<HomePageProps> = ({
           <div className="dfx-home-hero">
             <div className="dfx-home-greeting">
               <h1>{greeting}{appState.user?.username ? `，${appState.user.username}` : ''}</h1>
-              <p>先看看你的股票和市场机会；需要时，用一句话问 AI。</p>
+              <p>先把你的自选、市场信号和 AI 结论放在一起；需要时再往下拆。</p>
             </div>
 
             <InvestorCompass
@@ -648,7 +635,7 @@ const HomePage: React.FC<HomePageProps> = ({
                     goQuickSheet(quickSymbol);
                   }
                 }}
-                placeholder="输入代码或名称，看看这只股票怎么样"
+                placeholder="输入代码或名称，先看这只股票今天值不值得管"
                 aria-label="搜股直达速判"
               />
               <button type="button" onClick={() => goQuickSheet(quickSymbol)} disabled={!quickSymbol.trim()}>
@@ -691,6 +678,9 @@ const HomePage: React.FC<HomePageProps> = ({
                             />
                           : msg.content}
                     {msg.role === 'assistant' && (
+                      <ReasoningTrace steps={msg.reasoning} defaultOpen={Boolean(loading && i === messages.length - 1)} />
+                    )}
+                    {msg.role === 'assistant' && (
                       <CitableSources
                         sources={msg.sources}
                         label={msg.error ? '已检索到来源（生成中断，可重试）' : '来源'}
@@ -703,7 +693,7 @@ const HomePage: React.FC<HomePageProps> = ({
                     )}
                     {isStreamingPlaceholder && (
                       <span className="dfx-home-thinking">
-                        {msg.status || (agentMode === 'roundtable' ? '圆桌讨论中…' : '思考中…')}
+                        {msg.status || '正在检索并核验资料…'}
                       </span>
                     )}
                     {!msg.roundtable && !msg.error && msg.role === 'assistant' && msg.content && loading && i === messages.length - 1 && (
@@ -734,14 +724,6 @@ const HomePage: React.FC<HomePageProps> = ({
               );
             })}
 
-            {loopSymbol && loopQuestion && (
-              <AgentLoopStream
-                symbol={loopSymbol}
-                question={loopQuestion}
-                onComplete={handleLoopComplete}
-                onCancel={handleLoopCancel}
-              />
-            )}
           </div>
         )}
       </div>

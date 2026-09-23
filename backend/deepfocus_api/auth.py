@@ -1053,6 +1053,7 @@ PUBLIC_EXACT = frozenset(
         # 仅当结果已缓存才放行、每天免费 1 次（匿名按 IP），未缓存/超额 → 403(匿名引导登录)/402(非会员引导开通)。
         # 会员无限。注意：放行的是 analyze（须带 body 走配额），研报原文 wire-file 仍须登录、不在此列。
         "/api/research/vision-analyze",
+        "/api/research/deep-draft",  # 深度研报稿：handler 复用 _check_ai_quota 精细把关
         "/api/news/ai-analyze",
         "/api/metrics/pageview",    # 匿名打点
         "/api/metrics/event",       # 匿名打点

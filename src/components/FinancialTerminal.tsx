@@ -42,6 +42,7 @@ import { shareImageNative } from '../utils/share';
 import { drawResearchDeepDraftImage, researchDeepDraftToText } from '../utils/researchDeepDraftImage';
 import { normalizeAiConversationHistory } from '../utils/aiConversationHistory';
 import { normalizePublisherName } from '../utils/displayBrand';
+import { visiblePoll } from '../utils/visiblePoll';
 import { getNativeBackgroundStatus, getNativePushToken, nativeBackgroundSupported, openNativeBatterySettings, openNativeNotificationSettings, requestNativeBatteryOptimization, setNativeBackgroundFilters, startNativeBackground, stopNativeBackground } from '../services/nativeBackground';
 import TerminalAuthModal from './TerminalAuthModal';
 import TerminalOnboarding, { ONB_KEY } from './TerminalOnboarding';
@@ -180,7 +181,9 @@ interface AiAttachment {
 const RESEARCH_AI_MAX_PAGES = 14;
 // Article-style drafts need enough pages to build a real narrative; the old
 // compact vision card remains capped at RESEARCH_AI_MAX_PAGES as a fallback.
-const RESEARCH_DEEP_DRAFT_MAX_PAGES = 32;
+// Keep first paint within a practical mobile wait window; the backend cache
+// remains source-stable and can be reused for later full refreshes.
+const RESEARCH_DEEP_DRAFT_MAX_PAGES = 18;
 interface AiConversationTurn {
   id: string;
   question: string;
@@ -372,9 +375,9 @@ const TOOL_LABEL: Record<string, string> = {
 };
 
 const AI_STARTER_PROMPTS = [
-  { tag: '看市场', question: '今天 A 股为什么这样走？' },
-  { tag: '看个股', question: '贵州茅台现在估值贵不贵？' },
-  { tag: '做比较', question: '宁德时代和比亚迪更偏向谁？' },
+  { tag: '看市场', question: '昨天 A 股复盘里最该注意什么？' },
+  { tag: '看板块', question: '最近哪些板块的资金在流入？' },
+  { tag: '筛股票', question: '帮我初筛几只稳健型的 A 股候选' },
 ] as const;
 
 // 安全 markdown-lite：仅支持 **加粗** / - · 列表 / 1. 有序 / 换行段落；纯 React 元素拼接，
@@ -1502,7 +1505,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       try { const d = await apiGet<any>('/api/headlines'); if (!cancelled) setPicks(d || null); } catch { /* 回退本地规则 */ }
     };
     load();
-    const t = window.setInterval(load, 180000);
+    const t = visiblePoll(() => void load(), 180000);
     return () => { cancelled = true; window.clearInterval(t); };
   }, []);
 
@@ -1587,7 +1590,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setMacro(map); setMacroFailed(false);
     } catch { setMacroFailed(true); }  // 慢数据，下轮自动重试
   }, []);
-  useEffect(() => { loadMacro(); const t = window.setInterval(loadMacro, 60000); return () => window.clearInterval(t); }, [loadMacro]);
+  useEffect(() => { loadMacro(); const t = visiblePoll(() => void loadMacro(), 60000); return () => window.clearInterval(t); }, [loadMacro]);
 
   // ---- 研报流（海外投行报告）：空关键词=最新，带关键词=在线全局检索 ----
   const loadReports = useCallback(async (q: string | string[] = '') => {
@@ -1655,7 +1658,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!kws.length) {
       loadReports('');
       // 自动同步最新;但用户正在翻历史(resHistLoadedRef)时跳过,免得把展开的更早研报收回去
-      const t = window.setInterval(() => { if (!resHistLoadedRef.current) loadReports(''); }, 60000);
+      const t = visiblePoll(() => { if (!resHistLoadedRef.current) loadReports(''); }, 60000);
       return () => window.clearInterval(t);
     }
     const t = window.setTimeout(() => { loadReports(kws); logAct('search', '研报:' + kws.join('+')); }, 350);
@@ -2448,7 +2451,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (supportOpen) authService.fetchSupportThread().then(m => { setSupportMsgs(m); supportUnreadRef.current = 0; setSupportUnread(0); }).catch(() => {});
       else authService.fetchSupportUnread().then(n => applySupportUnread(n, true)).catch(() => {});  // 新回复到达 → 弹提示
     };
-    const id = window.setInterval(tick, 45000);
+    const id = visiblePoll(tick, 45000);
     return () => window.clearInterval(id);
   }, [authUser, supportOpen, applySupportUnread]);
   // 管理员：轮询「用户发来的未读私信数」→ 主页醒目提醒（立即一次 + 每 45s）
@@ -2458,7 +2461,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const tick = () => apiGet<{ unread: number }>('/api/admin/support/unread-count')
       .then(r => { if (alive) setAdminUnread((r && r.unread) || 0); }).catch(() => {});
     tick();
-    const id = window.setInterval(tick, 45000);
+    const id = visiblePoll(tick, 45000);
     return () => { alive = false; window.clearInterval(id); };
   }, [authUser, isAdmin]);
   // 尊享会员剩余天数：从到期时间实时算（自然每天递减），回退后端 days_left
@@ -2624,6 +2627,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (membership?.tier === 'premium' || membership?.tier === 'lifetime') { run(); return; }
     setUpgradeReason(reason); setUpgradeOpen(true);
   }, [requireLogin, membership]);
+  // 兑换码登录网关：兑换必须落在具体账号上。未登录先弹登录，登录成功后自动续兑，
+  // 避免拿着卡密的匿名用户直接撞 401 报错流失。
+  const submitRedeemGated = useCallback(() => {
+    if (!authUserRef.current) { requireLogin(() => { void submitRedeem(); }, '兑换会员码需先登录'); return; }
+    void submitRedeem();
+  }, [requireLogin, submitRedeem]);
   // 深度文章的“原文”只以段落文本呈现：后端负责提取/转录，浏览器绝不打开或展示源 PDF、图片。
   const loadArticleText = useCallback(async (m: RealtimeMessageRecord) => {
     setArticleOriginal(null);
@@ -3008,7 +3017,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       } catch { /* 机构纪要接口不可用时不影响其它类型弹窗 */ }
     };
     void poll();
-    const timer = window.setInterval(() => { void poll(); }, 120000);
+    const timer = visiblePoll(() => { void poll(); }, 120000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [handleZsxqItems, newsPopupMode, newsPopupTopics]);
   useEffect(() => {
@@ -3265,11 +3274,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         requireLogin(() => runAiAnalysis(r), '登录解读 · 送 3 天尊享会员 🎁'); return;
       }
       // 仅在明确的「路由未部署」状态回退旧 compact。502/超时/模型错误不再
-      // 额外烧一次请求，直接把可重试错误交给用户。
+      // 深度稿是增强层；模型或 PDF 解析超时先回退到轻量视觉卡，
+      // 保证用户至少拿到一份带来源说明的结果。
       // A source-level 404 (for example a deleted workbench file) is not a
       // missing route.  The backend returns 422/502 for those cases; keep the
       // 404 fallback narrow so we do not burn a second compact request.
-      const routeUnavailable = [405, 501].includes(Number(deepStatus))
+      const deepTimedOut = deepError?.code === 'ECONNABORTED' || /timeout/i.test(deepError?.message || '');
+      const routeUnavailable = [405, 408, 501, 502, 504].includes(Number(deepStatus)) || deepTimedOut
         || (Number(deepStatus) === 404 && (!deepDetail || /^(not found|method not allowed)$/i.test(String(deepDetail).trim())));
       if (!routeUnavailable) {
         if (deepError?.code === 'ECONNABORTED' || /timeout/i.test(deepError?.message || '')) {
@@ -4050,7 +4061,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       try { const r = await listRealtimeMessages({ anyq: watchlistAliasKey, limit: 400 }); if (!cancelled) setWlAllMsgs(r); } catch { /* 拉取失败保留上次，不影响使用 */ }
     };
     loadWl();
-    const t = window.setInterval(loadWl, 120000);
+    const t = visiblePoll(loadWl, 120000);
     return () => { cancelled = true; window.clearInterval(t); };
   }, [watchlistAliasKey]);
   const watchlistAll = useMemo(() => matchWatchlist(dedupeMessages(wlAllMsgs)), [matchWatchlist, wlAllMsgs]);
@@ -4452,7 +4463,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => {
     loadArticles();
     // 文章通常不走快讯 SSE，按分钟校对一次，避免“全部/精选/自选”视图滞后两分钟。
-    const t = window.setInterval(loadArticles, 60000);
+    const t = visiblePoll(() => void loadArticles(), 60000);
     return () => window.clearInterval(t);
   }, [loadArticles]);
   // 文章/研报来自各自的轮询接口，不一定经过快讯 SSE；用首次快照建立基线，后续新增条目复用同一弹窗筛选。
@@ -4596,7 +4607,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     // 首次请求和 SSE 建连是并行的；给首批请求一次短暂的自动补偿，避免刚点进市场快讯
     // 时恰好撞上后端冷启动/网络抖动，只能靠用户手动刷新才能看到内容。
     const bootstrapRetry = window.setTimeout(() => poll(true), 1200);
-    const timer = window.setInterval(() => poll(), 5000);
+    const timer = visiblePoll(() => poll(), 5000);
     const onVisible = () => { if (document.visibilityState === 'visible') poll(true); };  // 回前台立即校对，不受放缓约束
     const onOnline = () => poll(true);
     document.addEventListener('visibilitychange', onVisible);
@@ -4651,7 +4662,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     // 「深度文章」不经过快讯 SSE，首次请求后必须继续校对；否则用户停留在该页时
     // 新文章要等到手动切换标签/刷新页面才出现。手动关键词搜索不轮询，避免覆盖用户正在看的结果。
     const articleTimer = feedFilter === '文章' && !newsManual
-      ? window.setInterval(() => { void run(); }, 60000)
+      ? visiblePoll(() => { void run(); }, 60000)
       : undefined;
     const onVisible = () => {
       if (document.visibilityState === 'visible' && feedFilter === '文章' && !newsManual) void run();
@@ -5790,16 +5801,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <main className="bbt-ai-chat-panel">
               <div className="bbt-ai-chat-head">
                 <div className="bbt-ai-chat-head-copy"><span>{aiQuestion ? '本轮对话' : '新对话'}</span><span>{aiQuestion ? '会记住最近三轮上下文' : '准备就绪'}</span></div>
-                <div className="bbt-ai-mode-switch" role="group" aria-label="AI回答模式">
-                  <button type="button" className={aiAnswerMode === 'quick' ? 'on' : ''} onClick={() => setAiAnswerMode('quick')}>⚡ 快速问答</button>
-                  <button type="button" className={aiAnswerMode === 'deep' ? 'on' : ''} onClick={() => {
-                    if (!isMemberVip && !isAdmin && !IFIND_USERS.has(authUser || '')) {
-                      setUpgradeReason('🔬 深度研判（取证→多空辩论→风控→投委会裁决的 AI 深度报告）是会员专属功能，开通即用。');
-                      setUpgradeOpen(true);
-                      return;
-                    }
-                    setAiAnswerMode('deep');
-                  }}>🔬 深度研判<small>{isMemberVip || isAdmin || IFIND_USERS.has(authUser || '') ? '会员' : '锁定'}</small></button>
+                <div className="bbt-ai-mode-switch" aria-label="智能投研">
+                  <span className="bbt-ai-mode-single">✦ 智能投研</span>
                 </div>
               </div>
               <div ref={aiChatBodyRef} className="bbt-ai-chat-body">
@@ -6009,7 +6012,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <button type="button" className="bbt-ai-send" aria-label={authUser ? '发送问题' : guestAiTrialUsed ? '登录后继续' : '免费试问'} onClick={() => {
                   if (guestAiTrialUsed) requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
                   else void submitAiQuestion();
-                }} disabled={aiWorkspaceBusy || aiAttachmentBusy || !aiInput.trim()}>{aiWorkspaceBusy ? (aiAnswerMode === 'deep' ? '研判中…' : '核对中…') : authUser ? '发送 ↗' : guestAiTrialUsed ? '登录继续' : '免费试问 ↗'}</button>
+                }} disabled={aiWorkspaceBusy || aiAttachmentBusy || !aiInput.trim()}>{aiWorkspaceBusy ? '投研中…' : authUser ? '发送 ↗' : guestAiTrialUsed ? '登录继续' : '免费试问 ↗'}</button>
               </div>
               {!authUser ? (
                 <div className="bbt-ai-composer-note is-login">{guestAiTrialUsed ? '游客试问已用；登录后每日 10 次。' : '游客可免费试问 1 次；登录后每日 10 次，会话保存在本机。'}<button type="button" onClick={() => requireLogin(() => aiPromptInputRef.current?.focus(), 'AI 投研问答')}>登录</button></div>
@@ -7291,7 +7294,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       )}
 
       {aiOpen && (() => {
-        const sugg = ['今天 A 股大盘怎么样？', '贵州茅台现在估值贵不贵？', '我们最近覆盖了哪些固态电池/AI 算力的资讯？'];
         // 深度研判从 1 人白名单放开到会员（后端 _require_deep_user 硬门：会员 3 次/天+当日跨用户缓存；白名单不限次+iFinD 取证）
         const canDeep = isMemberVip || isAdmin || IFIND_USERS.has(authUser || '');
         const dv = deepTask?.result;
@@ -7429,7 +7431,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 </div>
               )}
               {!aiAnswer && !aiBusy && !aiTools.length && !aiErr && (
-                <div className="bbt-ai-sugg">{sugg.map(s => <button key={s} className="bbt-ai-sugg-item" onClick={() => { setAiInput(s); askAi(s); }}>{s}</button>)}</div>
+                <div className="bbt-ai-sugg">{aiSugg.map(s => <button key={s} className="bbt-ai-sugg-item" onClick={() => { setAiInput(s); askAi(s); }}>{s}</button>)}</div>
               )}
               {aiQuestion && (aiAnswer || aiBusy || aiErr) && <div className="bbt-ai-q"><span className="bbt-ai-q-tag">问</span>{aiQuestion}</div>}
               {aiBusy && <AiResearchProgress status={aiLiveStatus} tools={aiTools} onStop={stopAiResearch} />}
@@ -7700,8 +7702,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <input className="bbt-redeem-input" value={redeemInput} autoFocus
               placeholder="如 ABCD-EFGH-JKMN（大小写、连字符均可）"
               onChange={e => setRedeemInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submitRedeem(); }} />
-            <button className="bbt-redeem-go" onClick={submitRedeem} disabled={redeemBusy || !redeemInput.trim()}>{redeemBusy ? '兑换中…' : '立即兑换'}</button>
+              onKeyDown={e => { if (e.key === 'Enter') submitRedeemGated(); }} />
+            <button className="bbt-redeem-go" onClick={submitRedeemGated} disabled={redeemBusy || !redeemInput.trim()}>{redeemBusy ? '兑换中…' : '立即兑换'}</button>
           </div>
         </div>
       )}

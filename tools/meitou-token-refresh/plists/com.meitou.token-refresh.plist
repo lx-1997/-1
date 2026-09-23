@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.meitou.token-refresh</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/.meitou-refresh/bin/run.sh</string>
+    <string>refresh</string>
+  </array>
+  <!-- 每 6 小时检查一次；token 还有 >8h 时脚本会直接跳过，不启动浏览器 -->
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.meitou-refresh/logs/launchd-refresh.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.meitou-refresh/logs/launchd-refresh.err.log</string>
+</dict>
+</plist>

@@ -84,8 +84,8 @@ const TerminalAuthModal: React.FC<TerminalAuthModalProps> = ({ open, onClose, on
     <div className="bbt-auth-backdrop" onClick={onClose}>
       <form className="bbt-auth" onClick={e => e.stopPropagation()} onSubmit={submit}>
         <div className="bbt-auth-head">
-          <span className="bbt-auth-key">DEEPFOCUS</span>
-          <span className="bbt-auth-amber">{isRegister ? '注册账号' : '登录终端'}</span>
+          <span className="bbt-auth-key">稻草财经</span>
+          <span className="bbt-auth-amber">{isRegister ? '注册账号' : '登录账号'}</span>
           <button type="button" className="bbt-auth-x" onClick={onClose} aria-label="关闭">✕</button>
         </div>
 

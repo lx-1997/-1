@@ -1,7 +1,9 @@
 ext {
     minSdkVersion = 23
-    compileSdkVersion = 35
-    targetSdkVersion = 35
+    // Google Play 的 2026 新应用/更新门槛为 API 36；Android 15 的
+    // dataSync 前台服务限制也按 targetSdk >= 35 生效。
+    compileSdkVersion = 36
+    targetSdkVersion = 36
     androidxActivityVersion = '1.9.2'
     androidxAppCompatVersion = '1.7.0'
     androidxCoordinatorLayoutVersion = '1.2.0'

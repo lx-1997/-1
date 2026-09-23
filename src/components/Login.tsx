@@ -11,7 +11,7 @@ interface LoginProps {
   demoLoginEnabled?: boolean;
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin, onRegister, isLoading, demoLoginEnabled = true }) => {
+const Login: React.FC<LoginProps> = ({ onLogin, onRegister, isLoading, demoLoginEnabled = false }) => {
   const [form] = Form.useForm();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const registerEnabled = typeof onRegister === 'function';
@@ -36,8 +36,8 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, isLoading, demoLogin
         <div className="login-brand">
           <span className="login-mark"><FireOutlined /></span>
           <div>
-            <Title level={4} style={{ color: '#ffffff', margin: 0 }}>深度焦点</Title>
-            <Text style={{ color: 'var(--text-muted)' }}>DeepFocus Investment Terminal</Text>
+            <Title level={4} style={{ color: '#ffffff', margin: 0 }}>Daocaijing</Title>
+            <Text style={{ color: 'var(--text-muted)' }}>AI Investment Terminal</Text>
           </div>
         </div>
 
@@ -76,7 +76,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, isLoading, demoLogin
               {isRegister ? '注册账号' : '登录工作台'}
             </Title>
             <Text type="secondary">
-              {isRegister ? '创建深度焦点投研账号' : '进入深度焦点投研终端'}
+              {isRegister ? '创建 Daocaijing 投研账号' : '进入 Daocaijing 投研终端'}
             </Text>
           </div>
 
@@ -176,6 +176,11 @@ const Login: React.FC<LoginProps> = ({ onLogin, onRegister, isLoading, demoLogin
           )}
         </Space>
       </Card>
+      <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
+        <a href="/privacy" style={{ color: 'inherit' }}>隐私政策</a>
+        <span aria-hidden="true"> · </span>
+        <a href="/terms" style={{ color: 'inherit' }}>用户协议</a>
+      </div>
       </main>
     </div>
   );

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from . import db
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -41,7 +42,7 @@ MAX_PERSONAL_PER_USER = 1
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     # 该库被扫描任务(to_thread 工作线程)与入站口令处理(事件循环)并发写；给个 busy_timeout，
     # 让偶发写锁竞争等待而非立刻抛 "database is locked"（默认 busy_timeout=0）。

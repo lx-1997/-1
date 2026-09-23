@@ -1,0 +1,107 @@
+.df-accent-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, .1));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface-raised, #202126) 72%, transparent);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif;
+}
+
+.df-accent-picker__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-soft, #86868b);
+  font-size: 11px;
+}
+
+.df-accent-picker__head b {
+  color: var(--text-muted, #a1a1a6);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.df-accent-picker__options {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+.df-accent-picker__options button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.df-accent-picker__options button:hover {
+  background: color-mix(in srgb, var(--text, #f5f5f7) 7%, transparent);
+}
+
+.df-accent-picker__options button:active {
+  transform: scale(.94);
+}
+
+.df-accent-picker__options button:focus-visible {
+  outline: 2px solid var(--accent, #0a84ff);
+  outline-offset: 1px;
+}
+
+.df-accent-picker__options button.is-active {
+  border-color: color-mix(in srgb, var(--accent, #0a84ff) 62%, transparent);
+  background: var(--accent-soft, rgba(10, 132, 255, .14));
+}
+
+.df-accent-picker__options button > span {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, .78);
+  border-radius: 50%;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .32);
+}
+
+[data-theme="light"] .df-accent-picker__options button > span {
+  border-color: rgba(255, 255, 255, .94);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .18);
+}
+
+.df-accent-picker.is-compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-color: color-mix(in srgb, var(--shell-accent, var(--accent)) 12%, transparent);
+  background: color-mix(in srgb, var(--shell-accent, var(--accent)) 5%, transparent);
+}
+
+.df-accent-picker.is-compact .df-accent-picker__head {
+  flex: 0 0 auto;
+  color: var(--mute, var(--text-soft));
+  font-size: 10px;
+}
+
+.df-accent-picker.is-compact .df-accent-picker__head span { display: none; }
+.df-accent-picker.is-compact .df-accent-picker__head b { color: var(--text-soft, #a1a1a6); font-size: 0; }
+.df-accent-picker.is-compact .df-accent-picker__head b::before { content: '主色'; font-size: 9px; font-weight: 500; }
+.df-accent-picker.is-compact .df-accent-picker__options { flex: 1 1 auto; gap: 3px; }
+
+.df-accent-picker.is-compact .df-accent-picker__options button {
+  height: 22px;
+}
+.df-accent-picker.is-compact .df-accent-picker__options button > span { width: 12px; height: 12px; border-width: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .df-accent-picker__options button { transition: none; }
+}

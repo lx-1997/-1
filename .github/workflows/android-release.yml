@@ -1,0 +1,93 @@
+name: Daocaijing Android release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" == "$GITHUB_REF_NAME" ]]; then version="1.0.${GITHUB_RUN_NUMBER}"; fi
+          echo "name=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36 SDK
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Install signing material
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo 'ANDROID_KEYSTORE_BASE64 is required'; exit 1; }
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo 'ANDROID_KEYSTORE_PASSWORD is required'; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo 'ANDROID_KEY_ALIAS is required'; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo 'ANDROID_KEY_PASSWORD is required'; exit 1; }
+          mkdir -p android/keystore
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/keystore/daocaijing-release.keystore
+          cat > android/keystore.properties <<EOF
+          storeFile=keystore/daocaijing-release.keystore
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
+      - name: Install Firebase configuration
+        env:
+          FCM_GOOGLE_SERVICES_JSON: ${{ secrets.FCM_GOOGLE_SERVICES_JSON }}
+        run: |
+          test -n "$FCM_GOOGLE_SERVICES_JSON" || { echo 'FCM_GOOGLE_SERVICES_JSON is required for a release build'; exit 1; }
+          printf '%s' "$FCM_GOOGLE_SERVICES_JSON" > android/app/google-services.json
+
+      - name: Build signed AAB and APK
+        env:
+          DAOCJING_ANDROID_VERSION_CODE: ${{ github.run_number }}
+          DAOCJING_ANDROID_VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          npm run build:android
+          node scripts/android-build.js bundleRelease
+          node scripts/android-build.js assembleRelease
+
+      - name: Verify APK signature and identity
+        run: |
+          build_tools="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$ANDROID_HOME/build-tools/$build_tools/apksigner" verify --verbose android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/$build_tools/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -E "package: name='com.daocaijing.app'|targetSdkVersion:='36'"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daocaijing-${{ steps.version.outputs.name }}
+          path: |
+            android/app/build/outputs/bundle/release/app-release.aab
+            android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error

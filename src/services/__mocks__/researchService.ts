@@ -53,3 +53,10 @@ export const summarizeResearchWorkbenchHits = jest.fn();
 export const startResearchWorkbenchDownload = jest.fn();
 
 export const listResearchWorkbenchDownloads = jest.fn();
+
+// Deep-draft rollout: keep existing component tests that auto-mock this
+// service from failing at import time when FinancialTerminal starts importing
+// the new generator.  Individual tests can override the resolved article.
+export const generateResearchDeepDraft = jest.fn();
+
+export const visionAnalyzeReport = jest.fn();

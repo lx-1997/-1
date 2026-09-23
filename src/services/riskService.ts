@@ -165,6 +165,66 @@ export interface PnlSummaryResponse {
   avg_holding_days: number;
 }
 
+export interface RiskBacktestRules {
+  max_position_size_pct: number;
+  max_total_exposure_pct: number;
+  max_sector_exposure_pct: number;
+  max_drawdown_pct: number;
+  daily_loss_limit_pct: number;
+  stop_loss_pct: number;
+  take_profit_pct: number;
+  cooldown_days: number;
+  allow_reentry: boolean;
+}
+
+export interface RiskBacktestRequest {
+  name: string;
+  market?: string;
+  symbols: string[];
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  benchmark: string;
+  rules: RiskBacktestRules;
+  sector_map?: Record<string, string>;
+}
+
+export interface RiskBacktestEvent {
+  date: string;
+  type: string;
+  message: string;
+  symbol?: string | null;
+  value?: number | null;
+}
+
+export interface RiskBacktestResponse {
+  generated_at: string;
+  name: string;
+  market: string;
+  symbols: string[];
+  benchmark: string;
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  rules: RiskBacktestRules;
+  metrics: {
+    risk: Record<string, any>;
+    baseline: Record<string, any>;
+    benchmark: Record<string, any>;
+    improvement: Record<string, number>;
+    rule_hits: Record<string, number>;
+    summary: string;
+  };
+  events: RiskBacktestEvent[];
+  trades_log: Array<Record<string, any>>;
+  equity_curve: number[];
+  baseline_curve: number[];
+  benchmark_curve: number[];
+  dates: string[];
+  data_sources: Record<string, string>;
+  disclaimer: string;
+}
+
 export interface PositionCreateRequest {
   symbol: string;
   name?: string;
@@ -300,6 +360,15 @@ export async function getPnlRecords(positionId?: string, limit?: number): Promis
     if (positionId) params.position_id = positionId;
     if (limit) params.limit = limit;
     const resp = await axios.get(`${API_BASE()}/api/risk/pnl/records`, { params });
+    return resp.data;
+  } catch (error) {
+    throw new Error(formatErrorMessage(error));
+  }
+}
+
+export async function runRiskBacktest(request: RiskBacktestRequest): Promise<RiskBacktestResponse> {
+  try {
+    const resp = await axios.post(`${API_BASE()}/api/risk/backtest`, request);
     return resp.data;
   } catch (error) {
     throw new Error(formatErrorMessage(error));

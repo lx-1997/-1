@@ -48,6 +48,8 @@ export interface MarketQuoteListResponse {
   provider: string;
   fetched_at: string;
   warnings: string[];
+  /** Backend-derived freshness/provenance label; absent on legacy cached responses. */
+  data_quality?: DataQuality;
 }
 
 export interface MarketSymbolSearchResponse {
@@ -258,6 +260,10 @@ export interface OptionsAiAnalysisResponse {
   risk_notes: string[];
   suggested_action: string;
   disclaimer: string;
+  data_quality?: DataQuality;
+  core_agent_run_id?: string;
+  core_agent_protocol_version?: string;
+  core_agent_route?: string;
 }
 
 // === premarketOpportunityService types ===

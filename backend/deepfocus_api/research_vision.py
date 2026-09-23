@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import subprocess
 from html import unescape as _html_unescape
 from typing import Any, Optional
 
@@ -82,6 +83,7 @@ RENDER_DPI = 120  # 适度降低 DPI：渲染更快、图更小、推理更快�
 MAX_VISION_PAGES = 14  # 厚 deck(如高盛十大产业主线 46 页)的重点标的在更深的页，读 6-8 页抽不到→读到 ~14 页才能抽出 NVDA/MSFT 等
 MIN_TEXT_CHARS = 400  # 文本层够多时走快速文本通道（~5-10s），否则回退视觉（~30-50s）
 MAX_TEXT_CHARS = 7000
+OCR_MAX_PAGES = 32
 _VISION_DISCLAIMER = "本结论基于研报页面图像的 AI 视觉解读，非逐句溯源，可能遗漏或误读，请以原文为准。"
 _TEXT_DISCLAIMER = "本结论基于研报文本的 AI 摘要，可能遗漏图表信息，请以原文为准。"
 
@@ -553,6 +555,31 @@ def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int = MAX_VISION_PAGES) -> 
     return _strip_brand_text("\n".join(parts))
 
 
+def extract_pdf_ocr_text(pdf_bytes: bytes, *, max_pages: int = OCR_MAX_PAGES) -> str:
+    """OCR scanned PDF pages into plain text; never asks a vision model to interpret them."""
+    if not pdf_bytes:
+        return ""
+    parts: list[str] = []
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            for index in range(min(max(1, int(max_pages)), OCR_MAX_PAGES, doc.page_count)):
+                page = doc.load_page(index)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                try:
+                    proc = subprocess.run(
+                        ["tesseract", "stdin", "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+                        input=pix.tobytes("png"), capture_output=True, timeout=12, check=False,
+                    )
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    return ""
+                text = (proc.stdout or b"").decode("utf-8", "ignore").strip()
+                if text:
+                    parts.append(f"[第 {index + 1} 页]\n{text}")
+    except Exception:
+        return ""
+    return _strip_brand_text("\n\n".join(parts))[:MAX_TEXT_CHARS * 8]
+
+
 def _build_text_prompt(title: Optional[str], symbol: Optional[str], text: str) -> str:
     target = " ".join(part for part in [title, symbol] if part)
     return (
@@ -578,14 +605,19 @@ async def analyze_pdf_text(
     except Exception as exc:  # PDF 损坏/文本层读取失败属于视觉回退条件，模型调用失败不属于
         raise PdfTextUnavailable("无法读取 PDF 文本层，转视觉解读") from exc
     if len(text) < MIN_TEXT_CHARS:
-        raise PdfTextUnavailable("文本层过少，转视觉解读")
+        text = await asyncio.to_thread(extract_pdf_ocr_text, pdf_bytes, max_pages=max_pages)
+        if len(text) < MIN_TEXT_CHARS:
+            raise PdfTextUnavailable("未提取到可用文字")
 
     llm = CloudResearchLLM()
     if llm.provider == "mock":
         raise RuntimeError("当前为本地演示模型，无法做 AI 解读；请配置云端模型。")
 
+    # Text reports should stay on the fast path. The schema is compact-report
+    # shaped, so a 2.4k completion budget is enough and avoids long reasoning
+    # tails on Qwen/GLM that make the UI look stuck.
     data = await llm.complete_json(
-        _build_text_prompt(title, symbol, text), max_tokens=3600, timeout_seconds=75,
+        _build_text_prompt(title, symbol, text), max_tokens=2400, timeout_seconds=45,
     )
     return _normalize_result(
         data, provider=llm.model, pages=min(max_pages, MAX_VISION_PAGES), disclaimer=_TEXT_DISCLAIMER,
@@ -707,8 +739,11 @@ async def analyze_news(title: Optional[str], content: str, url: Optional[str] = 
     llm = CloudResearchLLM()
     if llm.provider == "mock":
         raise RuntimeError("当前为本地演示模型，无法做 AI 解读；请配置云端模型。")
+    # News has fewer fields than a report and should feel instant. Keep the
+    # output budget below the report budget; normalization supplies empty
+    # optional arrays instead of waiting for padded prose.
     data = await llm.complete_json(
-        _build_news_prompt(title, body), max_tokens=3600, timeout_seconds=70,
+        _build_news_prompt(title, body), max_tokens=1800, timeout_seconds=30,
     )
     # 正文太薄(只有标题)时，模型常按"不得编造"的纪律返回全空字段（实测 one_liner/
     # summary 均为空串）。原样交给 _normalize_result 会抛「模型未返回可用解读」→ 接口
@@ -738,7 +773,7 @@ async def analyze_news(title: Optional[str], content: str, url: Optional[str] = 
         result["source_note"] = source_note
     if data_store is not None:
         try:
-            data_store.record("news_ai", cache_key, result)
+            await asyncio.to_thread(data_store.record, "news_ai", cache_key, result)
         except Exception:
             pass
     return result

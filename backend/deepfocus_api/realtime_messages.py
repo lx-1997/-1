@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import sqlite3
+from . import db
 import uuid
+from collections.abc import Awaitable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional
@@ -13,6 +16,11 @@ from fastapi import Request
 
 from .shared_utils import utc_now_iso
 from .news_filter import discard_reason, scrub
+from .source_policy import (
+    is_futoucaixin_source,
+    is_tradealpha_source,
+    tradealpha_blocking_enabled,
+)
 from .schemas import (
     DataSourceItemRecord,
     RealtimeMessageCreateRequest,
@@ -29,13 +37,34 @@ DB_PATH = Path(
 
 MAX_MESSAGES = int(os.getenv("DEEPFOCUS_REALTIME_MAX_MESSAGES", "20000"))
 MAX_SUBSCRIBERS = int(os.getenv("DEEPFOCUS_REALTIME_MAX_SUBSCRIBERS", "300"))
+# 富途财讯在生产库中是数字 source_id，以原文域名作稳定识别。
+_FUTOUCAIXIN_SQL = (
+    "(LOWER(COALESCE(url, '')) LIKE '%futoucaixin%')"
+)
+# lxaa* 是生产事件库中 TradeAlpha/lxaa 源的稳定编号；兼容显式品牌/域名。
+_TRADEALPHA_SQL = (
+    "(LOWER(COALESCE(source_id, '')) LIKE 'lxaa%' "
+    "OR LOWER(COALESCE(url, '')) LIKE '%alpha.lxaa.top%' "
+    "OR LOWER(COALESCE(source_id, '')) LIKE '%tradealpha%' "
+    "OR LOWER(COALESCE(source_id, '')) LIKE '%trade_alpha%' "
+    "OR LOWER(COALESCE(source_id, '')) LIKE '%trade-alpha%' "
+    "OR LOWER(COALESCE(source_name, '')) LIKE '%tradealpha%' "
+    "OR LOWER(COALESCE(source_name, '')) LIKE '%trade alpha%' "
+    "OR LOWER(COALESCE(source_name, '')) LIKE '%trade-alpha%' "
+    "OR LOWER(COALESCE(metadata_json, '')) LIKE '%tradealpha%' "
+    "OR LOWER(COALESCE(metadata_json, '')) LIKE '%trade alpha%' "
+    "OR LOWER(COALESCE(metadata_json, '')) LIKE '%trade-alpha%' "
+    "OR LOWER(COALESCE(metadata_json, '')) LIKE '%alpha.lxaa.top%' "
+    "OR LOWER(COALESCE(title, '')) LIKE '%tradealpha%' "
+    "OR LOWER(COALESCE(content, '')) LIKE '%tradealpha%')"
+)
 # SSE 最大存活时长(秒)：长连接到点主动收尾，让浏览器原生 EventSource 重连。
 # 作用=回收「后台/已离开标签页长期占用的连接槽」，防止 200 总量上限被僵尸连接永久占满。
 # 活跃用户重连无感(几秒);移动端被挂起的后台页则借机彻底释放槽位。0/负数=不限(回退旧行为)。
 STREAM_MAX_LIFETIME_SECONDS = int(os.getenv("DEEPFOCUS_REALTIME_STREAM_MAX_LIFETIME", "1500"))
 _subscribers: set[asyncio.Queue[RealtimeMessageRecord]] = set()
 # 新消息落库+广播后的同步钩子（如离线召回扇出）。解耦：本模块不依赖召回实现。
-_post_hooks: list[Callable[[RealtimeMessageRecord], None]] = []
+_post_hooks: list[Callable[[RealtimeMessageRecord], Any]] = []
 
 # 所有资讯出口（HTTP / SSE / AI 工具）共用同一份账号名单，避免分支漂移。
 FUTOUCAIXIN_RESTRICTED_USERS = frozenset({"dao2"})
@@ -50,10 +79,20 @@ def subscriber_count() -> int:
     return len(_subscribers)
 
 
-def register_post_message_hook(hook: Callable[[RealtimeMessageRecord], None]) -> None:
+def register_post_message_hook(hook: Callable[[RealtimeMessageRecord], Any]) -> None:
     """注册一个「新消息后置钩子」。重复注册同一个 hook 不会叠加。"""
     if hook not in _post_hooks:
         _post_hooks.append(hook)
+
+
+async def _consume_async_post_hook(result: Awaitable[Any]) -> None:
+    """Consume an async post hook without creating unhandled-task warnings."""
+    try:
+        await result
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - a post hook must never affect ingestion
+        pass
 
 
 def _run_post_hooks(message: RealtimeMessageRecord) -> None:
@@ -72,9 +111,20 @@ def _run_post_hooks(message: RealtimeMessageRecord) -> None:
     for hook in list(_post_hooks):
         try:
             if loop is not None:
-                loop.run_in_executor(None, hook, message)  # 挪出事件循环，绝不阻塞主链路
+                # Async hooks stay on the caller's loop. This is important for
+                # hooks backed by AsyncSingleFlight: running them through
+                # asyncio.run() in a worker thread would bind their in-flight
+                # task to a different loop than the HTTP reader uses.
+                if inspect.iscoroutinefunction(hook):
+                    result = hook(message)
+                    if inspect.isawaitable(result):
+                        loop.create_task(_consume_async_post_hook(result))
+                else:
+                    loop.run_in_executor(None, hook, message)  # 挪出事件循环，绝不阻塞主链路
             else:
-                hook(message)
+                result = hook(message)
+                if inspect.isawaitable(result):
+                    asyncio.run(_consume_async_post_hook(result))
         except Exception:  # 调度/执行失败绝不影响消息创建/广播主链路
             pass
 
@@ -108,7 +158,21 @@ def init_realtime_message_db() -> None:
 
 
 def create_realtime_message(request: RealtimeMessageCreateRequest) -> Optional[RealtimeMessageRecord]:
-    # 内容过滤：①引流广告 ②垃圾/非新闻(反爬提示、域名喊话页) ③可见处出现竞品词(futou/斧头) → 整条拦下(不入库/不广播/不召回)；
+    # 来源策略先于内容清洗：TradeAlpha 的品牌字样会在 news_filter.scrub 中被抹掉，
+    # 若先 scrub 再判断就会把已停用来源误当成普通资料保留下来。
+    if tradealpha_blocking_enabled() and is_tradealpha_source(
+        source_id=request.source_id,
+        source_name=request.source_name,
+        source_type=request.source_type,
+        url=request.url,
+        metadata=request.metadata,
+        title=request.title,
+        content=request.content,
+    ):
+        print(f"[source-policy] 拦截 TradeAlpha 来源 | {(request.title or '')[:60]}")
+        return None
+    # 内容过滤：①来源策略先拦 TradeAlpha ②引流广告 ③垃圾/非新闻(反爬提示、域名喊话页)
+    # ④可见处出现竞品词(futou/斧头) → 整条拦下(不入库/不广播/不召回)；
     # 只在结构化 url 里夹带竞品域名的正经研报不拦——由下方 scrub 抹域名后照常保留。
     reason = discard_reason(request.title or "", request.content or "")
     if reason:
@@ -211,6 +275,8 @@ def list_realtime_messages(
     q: Optional[str] = None,
     anyq: Optional[str] = None,
     exclude_futoucaixin: bool = False,
+    only_futoucaixin: bool = False,
+    exclude_tradealpha: bool = True,
     limit: int = 80,
 ) -> list[RealtimeMessageRecord]:
     init_realtime_message_db()
@@ -227,12 +293,16 @@ def list_realtime_messages(
         values.append(severity.strip())
     if exclude_futoucaixin:
         # 匿名用户和受限账号的数据闸：按「来源」而非 topic 隔离。
-        # 生产存量使用 lxaa* source_id（lxaa 快讯 / lxaanr 文章 /
-        # lxaarpt 研报）标识该上游；有原文 URL 时再用域名双重识别。
-        clauses.append(
-            "NOT (LOWER(COALESCE(url, '')) LIKE '%futoucaixin%' "
-            "OR LOWER(COALESCE(source_id, '')) LIKE 'lxaa%')"
-        )
+        # 富途财讯由 futoucaixin 原文域名识别；数字 source_id 不单独作证据。
+        clauses.append(f"NOT {_FUTOUCAIXIN_SQL}")
+    if only_futoucaixin:
+        # 终端的新口径：快讯 / 文章只留富途财经；topic 为空时保留研报、纪要等其他类型。
+        if topic and topic.strip() in {"快讯", "文章"}:
+            clauses.append(_FUTOUCAIXIN_SQL)
+        elif not topic:
+            clauses.append(f"(topic NOT IN ('快讯', '文章') OR {_FUTOUCAIXIN_SQL})")
+    if exclude_tradealpha and tradealpha_blocking_enabled():
+        clauses.append(f"NOT {_TRADEALPHA_SQL}")
     if q and q.strip():  # 关键词检索全量历史：空格分词，每词命中标题或正文（AND）
         for term in q.strip().split()[:6]:
             like = f"%{term}%"
@@ -296,9 +366,32 @@ def is_futoucaixin_message(message: Any) -> bool:
         get = message.get
     else:
         get = lambda key, default=None: getattr(message, key, default)
-    url = str(get("url", "") or "").strip().lower()
-    source_id = str(get("source_id", "") or "").strip().lower()
-    return "futoucaixin" in url or source_id.startswith("lxaa")
+    return is_futoucaixin_source(
+        source_id=get("source_id"),
+        source_name=get("source_name"),
+        source_type=get("source_type"),
+        url=get("url"),
+        metadata=get("metadata"),
+        title=get("title"),
+        content=get("content"),
+    )
+
+
+def is_tradealpha_message(message: Any) -> bool:
+    """识别实时消息中的 TradeAlpha 来源（用于出参闸和前端兼容）。"""
+    if isinstance(message, dict):
+        get = message.get
+    else:
+        get = lambda key, default=None: getattr(message, key, default)
+    return is_tradealpha_source(
+        source_id=get("source_id"),
+        source_name=get("source_name"),
+        source_type=get("source_type"),
+        url=get("url"),
+        metadata=get("metadata"),
+        title=get("title"),
+        content=get("content"),
+    )
 
 
 def publish_data_source_items(
@@ -360,6 +453,8 @@ async def realtime_message_event_stream(
                 yield _sse_event("heartbeat", {"created_at": utc_now_iso()})
                 continue
             out = transform(message) if transform is not None else message
+            if out is not None and tradealpha_blocking_enabled() and is_tradealpha_message(out):
+                continue
             if out is None:
                 continue
             yield _sse_event("realtime-message", out.model_dump(mode="json"))
@@ -368,7 +463,7 @@ async def realtime_message_event_stream(
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=8)
+    conn = db.connect(DB_PATH, timeout=8)
     conn.row_factory = sqlite3.Row
     try:  # WAL：并发读写不互锁（实时流持续写入 + 多用户并发读）
         conn.execute("PRAGMA journal_mode=WAL")

@@ -118,6 +118,24 @@ npm run build
 npm run electron-pack
 ```
 
+### Daocaijing 客户端（Android / Windows / macOS）
+
+客户端复用同一套 React 前端：Android 使用 Capacitor，Windows/macOS 使用 Electron。发布构建默认把前端资源打进安装包，API 请求走 `https://daocaijing.com`。
+
+```bash
+# macOS Universal 安装包（Apple Silicon + Intel）
+npm run desktop:pack:mac
+
+# Windows x64 安装包
+npm run desktop:pack:win
+
+# Android 调试 APK / 发布包
+npm run android:debug
+npm run android:release
+```
+
+完整的签名、公证和发布说明见 [`docs/客户端发布.md`](docs/客户端发布.md)。
+
 ## 📁 项目结构
 
 更完整的阅读顺序和模块边界见 `docs/code-structure.md`。

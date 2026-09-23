@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from . import db
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Optional, Tuple
@@ -274,7 +275,7 @@ def bj_day_utc_range(day: str) -> Tuple[str, str]:
 # ============================ 台账(独立 sqlite3,风格照 weixin_schedule) ============================
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     # 结算扫描任务(to_thread 工作线程)与 API 请求(事件循环)并发写;busy_timeout 让偶发写锁竞争
     # 等待而非立刻抛 "database is locked"(默认 busy_timeout=0)。

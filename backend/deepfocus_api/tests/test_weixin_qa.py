@@ -218,10 +218,10 @@ def test_weixin_orchestrator_agent_fn(monkeypatch):
 
     captured: dict = {}
 
-    async def fake_route(request, _ifind, tool_timeout=30.0, force_research=False,
+    async def fake_route(request, _ifind, tool_timeout=30.0, tool_max_rounds=4, force_research=False,
                          skip_professional=False, context_prefix=""):
         captured.update(msg=request.message, ifind=_ifind, timeout=tool_timeout,
-                        force=force_research, skip=skip_professional, ctx=context_prefix)
+                        rounds=tool_max_rounds, force=force_research, skip=skip_professional, ctx=context_prefix)
         return _Resp()
 
     monkeypatch.setattr(main, "_route_orchestrator_chat", fake_route)
@@ -230,6 +230,7 @@ def test_weixin_orchestrator_agent_fn(monkeypatch):
     assert captured["force"] is True                   # 微信强制研究路径(避免漏判意图)
     assert captured["skip"] is True                    # 微信跳过"上传PDF入库"专业研报技能(否则抢截研报问)
     assert captured["timeout"] >= 60                   # tool-agent 超时已放宽
+    assert captured["rounds"] >= 6                    # 比较/个股取数链有足够的工具轮次
     assert captured["ifind"] is False
     assert captured["msg"] == "茅台怎么样"
     assert captured["ctx"] == ""                        # 无历史时 context_prefix 为空

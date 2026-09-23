@@ -29,7 +29,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ appState }) => {
             <Title level={3}>系统设置</Title>
             <Text>{user?.username || '投资者'} · {user?.email || '本地演示账户'}</Text>
             <div className="profile-settings-tags">
-              <Tag color="cyan">DeepFocus</Tag>
+              <Tag color="cyan">稻财经</Tag>
               <Tag color="green">全局模型</Tag>
               <Tag color="blue">本机配置</Tag>
             </div>
@@ -52,7 +52,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ appState }) => {
               </label>
               <label>
                 <Text type="secondary">邮箱</Text>
-                <Input value={user?.email || 'demo@deepfocus.local'} readOnly />
+                <Input value={user?.email || 'demo@daocaijing.local'} readOnly />
               </label>
               <label>
                 <Text type="secondary">账户余额</Text>

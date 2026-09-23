@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from . import db
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from typing import Any, Optional
@@ -107,7 +108,7 @@ def _daily_total_cap() -> int:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(RECALL_DB_PATH)
+    conn = db.connect(RECALL_DB_PATH)
     conn.row_factory = sqlite3.Row
     # 与 t1/expiry/settle_push_log 同库并发写：给 busy_timeout（学 weixin_schedule.py），
     # 让偶发写锁竞争等待而非立刻抛 "database is locked"。
@@ -255,7 +256,7 @@ def _activity_profile() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     try:
         week_cut = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        with sqlite3.connect(METRICS_DB_PATH, timeout=8) as conn:
+        with db.connect(METRICS_DB_PATH, timeout=8) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT actor_id,"
@@ -546,7 +547,7 @@ def attribute_returns(window_hours: int = 72) -> int:
         if not touches:
             return 0
         # 逐条查 metrics 库该用户发信后的首个活跃（触达量不大，逐条足够；失败静默）
-        with sqlite3.connect(METRICS_DB_PATH, timeout=8) as mconn:
+        with db.connect(METRICS_DB_PATH, timeout=8) as mconn:
             mconn.row_factory = sqlite3.Row
             for t in touches:
                 try:

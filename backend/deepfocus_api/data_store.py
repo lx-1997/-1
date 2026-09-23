@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from . import db
 import time
 from contextvars import ContextVar
 from pathlib import Path
@@ -36,7 +37,7 @@ DB_PATH = Path(
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

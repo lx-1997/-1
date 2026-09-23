@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 
-from deepfocus_api import agent_tools, ai_fund, data_store
+from deepfocus_api import agent_tools, ai_fund, data_store, stock_name_index, cn_consensus
 
 
 def run(tool: str, **args):
@@ -21,6 +21,57 @@ def test_new_tools_registered():
         assert n in agent_tools.TOOL_REGISTRY, n
         assert n in specs, n
     assert "get_people_spotlight" not in agent_tools.TOOL_REGISTRY  # 已撤除(Google News 在 prod 不可达)
+
+
+def test_comparison_tool_and_cold_start_symbols_are_registered():
+    specs = {s["function"]["name"] for s in agent_tools.openai_tool_specs()}
+    assert "compare_stocks" in specs and "get_stock_snapshot" in specs
+    assert stock_name_index.resolve_to_code("五粮液") == "000858"
+    args = agent_tools._coerce_symbol_arg({"symbols": "建滔集团,快手,宁德时代"})
+    assert args["symbols"] == "00148,01024,300750"
+
+
+def test_stale_cn_consensus_is_excluded_from_agent_evidence(monkeypatch):
+    async def stale(symbol, market=None):
+        return {
+            "symbol": "00148", "name": "建滔集团", "market": "港股", "currency": "HKD",
+            "period": "近期，截至2017-04-01", "avg_target_price": 24.32,
+            "rating_summary": {"增持": 7},
+        }
+
+    monkeypatch.setattr(cn_consensus, "fetch_cn_consensus", stale)
+    out = run("get_analyst_consensus", symbol="00148", market="HK")
+    assert out["ok"] is True
+    assert out["data"]["data_quality"] == "stale_excluded"
+    assert "avg_target_price" not in out["data"]
+    assert "rating_summary" not in out["data"]
+
+
+def test_comparison_tool_returns_compact_same_basis_bundle(monkeypatch):
+    async def quote(symbol, market=None):
+        return {"quotes": [{"price": 10, "change_percent": 1, "currency": "CNY", "provider": "hidden"}]}
+
+    async def valuation(symbol, market=None):
+        return {"market_cap_yi": 100, "pe_ratio": 12, "currency": "CNY", "provider": "hidden"}
+
+    async def financials(symbol, market=None):
+        return {"name": symbol, "report_date": "2026-06-30", "profit_yoy": 8, "blob": "drop"}
+
+    async def consensus(symbol, market=None):
+        return {"period": "近期，截至2026-08-01", "avg_target_price": 15, "source": "hidden"}
+
+    monkeypatch.setattr(agent_tools, "_tool_get_market_quote", quote)
+    monkeypatch.setattr(agent_tools, "_tool_get_valuation", valuation)
+    monkeypatch.setattr(agent_tools, "_tool_get_financials", financials)
+    monkeypatch.setattr(agent_tools, "_tool_get_analyst_consensus", consensus)
+
+    out = run("compare_stocks", symbols="宁德时代,比亚迪")
+    assert out["ok"] is True and len(out["data"]["items"]) == 2
+    first = out["data"]["items"][0]
+    assert first["symbol"] == "300750" and first["valuation"]["pe_ratio"] == 12
+    assert "provider" not in str(first) and "blob" not in str(first)
+    single = run("get_stock_snapshot", symbol="英伟达")
+    assert single["ok"] is True and single["data"]["symbol"] == "NVDA"
 
 
 def test_ai_fund_snapshot_projection(monkeypatch):

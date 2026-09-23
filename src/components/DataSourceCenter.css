@@ -38,3 +38,28 @@
   overflow: auto;
   overflow-wrap: anywhere;
 }
+
+.data-source-dashboard-card .ant-card-body {
+  padding-top: 12px;
+}
+
+.data-source-policy-tile {
+  min-height: 106px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.data-source-policy-tile .ant-typography h3,
+.data-source-policy-tile h3 {
+  margin: 4px 0;
+}
+
+.data-source-policy-tile--retained {
+  border-color: color-mix(in srgb, #52c41a 42%, var(--border));
+}
+
+.data-source-policy-tile--blocked {
+  border-color: color-mix(in srgb, #ff4d4f 42%, var(--border));
+}

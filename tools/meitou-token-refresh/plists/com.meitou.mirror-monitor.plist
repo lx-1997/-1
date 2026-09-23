@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.meitou.mirror-monitor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/.meitou-refresh/bin/run.sh</string>
+    <string>monitor</string>
+  </array>
+  <!-- 每 30 分钟看一次镜像站公开快照；降级连续两次即告警，并尝试自动续期 -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.meitou-refresh/logs/launchd-monitor.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.meitou-refresh/logs/launchd-monitor.err.log</string>
+</dict>
+</plist>

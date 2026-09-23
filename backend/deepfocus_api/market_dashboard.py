@@ -86,7 +86,7 @@ def _build_indicator(
     key: str,
     name: str,
     category: str,
-    value: float,
+    value: Optional[float],
     unit: str = "",
     change: Optional[float] = None,
     change_pct: Optional[float] = None,
@@ -101,7 +101,7 @@ def _build_indicator(
         "key": key,
         "name": name,
         "category": category,
-        "value": round(value, 4),
+        "value": round(value, 4) if value is not None else None,
         "unit": unit,
         "change": round(change, 4) if change is not None else None,
         "change_pct": round(change_pct, 4) if change_pct is not None else None,
@@ -856,7 +856,7 @@ async def fetch_market_dashboard(force: bool = False) -> dict[str, Any]:
 
     def _make(name: str, key: str, category: str, value: Optional[float], template: dict, change: Optional[float] = None, change_pct: Optional[float] = None, source: str = "Yahoo Finance / Stooq") -> dict[str, Any]:
         if value is None:
-            return _build_indicator(key, name, category, 0, signal="neutral", status="数据暂不可用", source=source)
+            return _build_indicator(key, name, category, None, signal="neutral", status="数据暂不可用", source=source)
         interp = template.get("interpret", lambda v: "")(value)
         sig_fn = template.get("signal", lambda v: "neutral")
         sig = sig_fn(value)
@@ -1242,7 +1242,7 @@ async def fetch_ashare_dashboard(force: bool = False) -> dict[str, Any]:
 
     def _make(name: str, key: str, value: Optional[float], template: dict, change_pct: Optional[float] = None, source: str = "东方财富 / 腾讯 / Yahoo") -> dict[str, Any]:
         if value is None or value == 0:
-            return _build_indicator(key, name, "a_share", 0, signal="neutral", status="数据暂不可用", source=source)
+            return _build_indicator(key, name, "a_share", None, signal="neutral", status="数据暂不可用", source=source)
         interp = template.get("interpret", lambda v: "")(value)
         sig_fn = template.get("signal", lambda v: "neutral")
         sig = sig_fn(value)

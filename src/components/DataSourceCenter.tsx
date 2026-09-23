@@ -80,6 +80,25 @@ interface DataSourceCenterProps {
   appState: AppState;
 }
 
+type SourceDisplayScope = 'all' | 'retained' | 'blocked';
+type SourcePolicy = 'retained' | 'blocked';
+
+const sourcePolicyOf = (source: DataSourceRecord): SourcePolicy => {
+  const text = [
+    source.name,
+    source.description,
+    source.config?.url,
+    source.config?.notes,
+    source.config?.source_name
+  ].filter(Boolean).join(' ');
+  return /trade\s*[-_ ]?\s*alpha|alpha\.lxaa\.top/i.test(text) ? 'blocked' : 'retained';
+};
+
+const sourcePolicyMeta: Record<SourcePolicy, { label: string; color: string }> = {
+  retained: { label: '保留', color: 'green' },
+  blocked: { label: '已屏蔽', color: 'red' }
+};
+
 const typeMeta: Record<DataSourceType, { text: string; color: string }> = {
   server_api: { text: '服务器接口', color: 'blue' },
   market_api: { text: '行情 API', color: 'purple' },
@@ -242,6 +261,8 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
   const [sourceTypeFilter, setSourceTypeFilter] = useState<DataSourceType | undefined>();
   const [sourceIdFilter, setSourceIdFilter] = useState<string | undefined>();
   const [tagFilter, setTagFilter] = useState<string | undefined>();
+  const [sourceDisplayScope, setSourceDisplayScope] = useState<SourceDisplayScope>('all');
+  const [selectedDisplaySourceIds, setSelectedDisplaySourceIds] = useState<string[]>([]);
   const [itemSort, setItemSort] = useState<DataSourceSort>('time_desc');
   const [uploadMeta, setUploadMeta] = useState({ symbol: appState.stocks[0]?.symbol || '', title: '', tags: '' });
   const [crawlUrl, setCrawlUrl] = useState('');
@@ -283,6 +304,35 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
       count: sources.filter(source => source.category === category).length
     })).filter(item => item.count > 0);
   }, [sources]);
+
+  const sourcePolicyStats = useMemo(() => {
+    const blocked = sources.filter(source => sourcePolicyOf(source) === 'blocked').length;
+    return {
+      retained: sources.length - blocked,
+      blocked,
+      total: sources.length
+    };
+  }, [sources]);
+
+  const dashboardSources = useMemo(() => {
+    return sources.filter(source => (
+      sourceDisplayScope === 'all' || sourcePolicyOf(source) === sourceDisplayScope
+    ));
+  }, [sourceDisplayScope, sources]);
+
+  const dashboardItems = useMemo(() => {
+    const scopeIds = new Set(dashboardSources.map(source => source.id));
+    const selected = selectedDisplaySourceIds.length ? new Set(selectedDisplaySourceIds) : null;
+    return items.filter(item => {
+      if (sourceDisplayScope !== 'all' && !scopeIds.has(item.source_id)) return false;
+      return !selected || selected.has(item.source_id);
+    });
+  }, [dashboardSources, items, selectedDisplaySourceIds, sourceDisplayScope]);
+
+  useEffect(() => {
+    const available = new Set(dashboardSources.map(source => source.id));
+    setSelectedDisplaySourceIds(prev => prev.filter(id => available.has(id)));
+  }, [dashboardSources]);
 
   const loadData = async (overrides?: Partial<{
     symbol: string;
@@ -657,7 +707,7 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
     });
   };
 
-  const sourceOptions = sources.map(source => ({
+  const sourceOptions = sources.filter(source => sourcePolicyOf(source) === 'retained').map(source => ({
     value: source.id,
     label: `${source.name} · ${categoryMeta[source.category]?.text || source.category}`
   }));
@@ -713,8 +763,8 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
         <Card>
           <Row gutter={[16, 16]} align="middle">
             <Col xs={24} lg={12}>
-              <Title level={3} style={{ margin: 0 }}>工具链：数据与证据</Title>
-              <Text type="secondary">统一管理本地文件、远端资料、网页抓取和核心链路可引用的证据标签</Text>
+              <Title level={3} style={{ margin: 0 }}>数据源看板：数据与证据</Title>
+              <Text type="secondary">统一管理来源策略、展示选择、本地文件、远端资料和可引用的证据标签</Text>
             </Col>
             <Col xs={24} lg={12}>
               <Row gutter={12}>
@@ -725,6 +775,68 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
               </Row>
             </Col>
           </Row>
+        </Card>
+
+        <Card
+          className="data-source-dashboard-card"
+          title={<Space><DatabaseOutlined />数据源选择看板</Space>}
+          extra={<Text type="secondary">控制下方来源表和资料资产的展示范围</Text>}
+        >
+          <Space direction="vertical" size={14} style={{ width: '100%' }}>
+            <Alert
+              type="success"
+              showIcon
+              message="来源策略已生效"
+              description="TradeAlpha（含 alpha.lxaa.top）不再接收、不再展示；futoucaixin 保留，其他来源继续保留。lxaa* 仅作为富途财经历史编号，不会被误屏蔽。"
+            />
+            <Space wrap>
+              <Tag color="green">futoucaixin · 保留</Tag>
+              <Tag color="red">TradeAlpha · 屏蔽</Tag>
+              <Tag color="blue">其他来源 · 保留</Tag>
+            </Space>
+            <Row gutter={[12, 12]}>
+              <Col xs={24} sm={8}>
+                <div className="data-source-policy-tile data-source-policy-tile--retained">
+                  <Text type="secondary">保留来源</Text>
+                  <Title level={3}>{sourcePolicyStats.retained}</Title>
+                  <Text>富途财经及其他已登记来源</Text>
+                </div>
+              </Col>
+              <Col xs={24} sm={8}>
+                <div className="data-source-policy-tile data-source-policy-tile--blocked">
+                  <Text type="secondary">TradeAlpha</Text>
+                  <Title level={3}>已屏蔽</Title>
+                  <Text>新消息不入库，历史不主动删除</Text>
+                </div>
+              </Col>
+              <Col xs={24} sm={8}>
+                <div className="data-source-policy-tile">
+                  <Text type="secondary">当前展示资料</Text>
+                  <Title level={3}>{dashboardItems.length}</Title>
+                  <Text>{selectedDisplaySourceIds.length ? '已按勾选来源筛选' : '全部保留来源'}</Text>
+                </div>
+              </Col>
+            </Row>
+            <Row gutter={[12, 12]} align="middle">
+              <Col xs={24} md={8}>
+                <Select
+                  value={sourceDisplayScope}
+                  onChange={value => setSourceDisplayScope(value as SourceDisplayScope)}
+                  options={[
+                    { value: 'all', label: '显示全部来源' },
+                    { value: 'retained', label: '只看保留来源' },
+                    { value: 'blocked', label: '只看已屏蔽来源' }
+                  ]}
+                  style={{ width: '100%' }}
+                />
+              </Col>
+              <Col xs={24} md={16}>
+                <Text type="secondary">
+                  在下方“数据源选择与状态”表中勾选来源，可进一步只查看这些来源的资料；不勾选表示查看当前范围内全部资料。
+                </Text>
+              </Col>
+            </Row>
+          </Space>
         </Card>
 
         <CorpusOverview
@@ -1073,14 +1185,19 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
           <Col xs={24} xl={16}>
             <Space direction="vertical" size={16} style={{ width: '100%' }}>
               <Card
-                title={<Space><DatabaseOutlined />数据源元素</Space>}
+                title={<Space><DatabaseOutlined />数据源选择与状态</Space>}
                 extra={<Button icon={<ReloadOutlined />} loading={loading} onClick={() => loadData()}>刷新</Button>}
               >
                 <Table
                   size="small"
                   rowKey="id"
-	                  dataSource={sources}
-	                  pagination={{ pageSize: 6 }}
+	                  dataSource={dashboardSources}
+                  rowSelection={{
+                    selectedRowKeys: selectedDisplaySourceIds,
+                    onChange: keys => setSelectedDisplaySourceIds(keys.map(String)),
+                    getCheckboxProps: record => ({ disabled: sourcePolicyOf(record) === 'blocked' })
+                  }}
+                  pagination={{ pageSize: 6 }}
 	                  tableLayout="fixed"
 	                  scroll={{ x: 820 }}
 	                  columns={[
@@ -1115,8 +1232,16 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
 	                      title: '状态',
 	                      dataIndex: 'status',
 	                      width: 78,
-                      render: value => <Tag color={value === 'active' ? 'green' : value === 'error' ? 'red' : 'default'}>{value}</Tag>
-                    },
+	                      render: value => <Tag color={value === 'active' ? 'green' : value === 'error' ? 'red' : 'default'}>{value}</Tag>
+	                    },
+	                    {
+	                      title: '展示策略',
+	                      width: 92,
+	                      render: (_, record) => {
+	                        const policy = sourcePolicyOf(record);
+	                        return <Tag color={sourcePolicyMeta[policy].color}>{sourcePolicyMeta[policy].label}</Tag>;
+	                      }
+	                    },
                     {
 	                      title: '条目',
 	                      dataIndex: 'items_count',
@@ -1285,13 +1410,13 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                       action={<Button size="small" onClick={() => loadData()}>查看历史匹配</Button>}
                     />
                   )}
-                  {items.length === 0 ? (
+                  {dashboardItems.length === 0 ? (
                     <Alert type="info" showIcon message="暂无匹配资料" />
                   ) : (
                     <Table
                       size="small"
                       rowKey="id"
-	                      dataSource={items}
+                      dataSource={dashboardItems}
 	                      pagination={{ pageSize: 8 }}
 	                      tableLayout="fixed"
 	                      scroll={{ x: 860 }}

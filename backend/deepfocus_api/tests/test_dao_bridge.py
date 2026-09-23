@@ -1,19 +1,34 @@
 import asyncio
+from datetime import datetime
 
 from deepfocus_api import dao_bridge
 from deepfocus_api.schemas import RealtimeMessageCreateRequest
 
 
-def test_bridge_poll_defaults_to_five_minutes(monkeypatch):
-    monkeypatch.delenv("DEEPFOCUS_DAO_BRIDGE_POLL_SECONDS", raising=False)
+def test_bridge_poll_defaults_to_day_and_night_windows(monkeypatch):
+    monkeypatch.delenv("DEEPFOCUS_DAO_BRIDGE_DAY_POLL_SECONDS", raising=False)
+    monkeypatch.delenv("DEEPFOCUS_DAO_BRIDGE_NIGHT_POLL_SECONDS", raising=False)
 
-    assert dao_bridge._bridge_config()["poll"] == 300.0
+    cfg = dao_bridge._bridge_config()
+    assert cfg["poll_day"] == 60.0
+    assert cfg["poll_night"] == 180.0
 
 
-def test_bridge_poll_can_be_overridden(monkeypatch):
-    monkeypatch.setenv("DEEPFOCUS_DAO_BRIDGE_POLL_SECONDS", "600")
+def test_bridge_poll_windows_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("DEEPFOCUS_DAO_BRIDGE_DAY_POLL_SECONDS", "45")
+    monkeypatch.setenv("DEEPFOCUS_DAO_BRIDGE_NIGHT_POLL_SECONDS", "240")
 
-    assert dao_bridge._bridge_config()["poll"] == 600.0
+    cfg = dao_bridge._bridge_config()
+    assert cfg["poll_day"] == 45.0
+    assert cfg["poll_night"] == 240.0
+
+
+def test_bridge_poll_delay_uses_beijing_windows_and_wakes_at_boundaries():
+    assert dao_bridge._bridge_poll_delay_seconds(datetime.fromisoformat("2026-08-26T07:00:00+08:00")) == 180.0
+    assert dao_bridge._bridge_poll_delay_seconds(datetime.fromisoformat("2026-08-26T07:59:30+08:00")) == 30.0
+    assert dao_bridge._bridge_poll_delay_seconds(datetime.fromisoformat("2026-08-26T08:00:00+08:00")) == 60.0
+    assert dao_bridge._bridge_poll_delay_seconds(datetime.fromisoformat("2026-08-26T23:59:30+08:00")) == 30.0
+    assert dao_bridge._bridge_poll_delay_seconds(datetime.fromisoformat("2026-08-27T00:00:00+08:00")) == 180.0
 
 
 def _article_request(content: str) -> RealtimeMessageCreateRequest:

@@ -1,4 +1,5 @@
 import { apiGet, apiPost, apiDelete, getApiBaseUrls, DF_WEB_TOKEN } from './apiClient';
+import { Capacitor } from '@capacitor/core';
 
 // === majorEventService types ===
 
@@ -185,7 +186,7 @@ export interface ShareholderChangeInterpretResponse {
 // === realtimeMessageService types ===
 
 export type RealtimeMessageSeverity = 'info' | 'success' | 'warning' | 'critical';
-export type StreamConnectionStatus = 'connecting' | 'live' | 'reconnecting' | 'closed' | 'error';
+export type StreamConnectionStatus = 'connecting' | 'live' | 'reconnecting' | 'closed' | 'error' | 'paused';
 
 export interface RealtimeMessageRecord {
   id: string;
@@ -354,6 +355,51 @@ export function createRealtimeMessageStream(options: {
   onStatus: (status: StreamConnectionStatus) => void;
   onError?: (error: unknown) => void;
 }): { close: () => void } {
+  // Android WebView 的 EventSource 仍受 CORS 限制，即使普通 axios 已经
+  // 走 CapacitorHttp。原生端用同一增量接口轮询，保持实时召回/快讯列表
+  // 的行为，同时避免 SSE 连接持续报网络错误。
+  if (Capacitor.isNativePlatform()) {
+    let closed = false;
+    let timer: number | undefined;
+    let cursor = new Date().toISOString();
+    let polling = false;
+    let connected = false;
+
+    const poll = async () => {
+      if (closed || polling) return;
+      polling = true;
+      try {
+        if (!connected) options.onStatus('connecting');
+        const messages = await listRealtimeMessages({ since: cursor, limit: 60 });
+        if (closed) return;
+        // 服务端按 created_at 倒序返回；推进游标时取最晚一条，避免重复。
+        for (const message of [...messages].reverse()) {
+          options.onMessage(message);
+          if (message.created_at && message.created_at > cursor) cursor = message.created_at;
+        }
+        connected = true;
+        options.onStatus('live');
+      } catch (error) {
+        if (!closed) {
+          options.onError?.(error);
+          options.onStatus('reconnecting');
+        }
+      } finally {
+        polling = false;
+        if (!closed) timer = window.setTimeout(poll, 5000);
+      }
+    };
+
+    void poll();
+    return {
+      close: () => {
+        closed = true;
+        if (timer) window.clearTimeout(timer);
+        options.onStatus('closed');
+      }
+    };
+  }
+
   // EventSource 不能带自定义头 → 用 ?w= 查询参数携带前端标识（nginx 校验）
   const urls = options.url?.trim() ? [options.url.trim()] : getApiBaseUrls().map(baseUrl => `${baseUrl}/api/realtime/messages/stream?w=${DF_WEB_TOKEN}`);
   let closed = false;
@@ -413,10 +459,11 @@ export function createRealtimeMessageStream(options: {
   };
 }
 
-// === 信号召回 · 离线通道订阅（邮件 / Web Push）===
+// === 信号召回 · 离线通道订阅（邮件 / Web Push / Android FCM）===
 
-export type RecallChannel = 'email' | 'webpush';
+export type RecallChannel = 'email' | 'webpush' | 'fcm';
 export type RecallSubscriptionScope = 'watchlist' | 'all';
+export type RecallPopupMode = 'important' | 'all' | 'off';
 
 export interface RecallSubscriptionCreate {
   channel: RecallChannel;
@@ -425,6 +472,9 @@ export interface RecallSubscriptionCreate {
   severities?: RealtimeMessageSeverity[];
   scope?: RecallSubscriptionScope;
   label?: string;
+  topics?: string[];
+  keywords?: string[];
+  mode?: RecallPopupMode;
 }
 
 export interface RecallSubscriptionRecord {
@@ -435,6 +485,9 @@ export interface RecallSubscriptionRecord {
   severities: RealtimeMessageSeverity[];
   scope: RecallSubscriptionScope;
   label?: string | null;
+  topics?: string[];
+  keywords?: string[];
+  mode?: RecallPopupMode;
   active: boolean;
   created_at: string;
 }

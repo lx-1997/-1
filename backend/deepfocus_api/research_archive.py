@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from . import db
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,7 +28,7 @@ _MAX_ARCHIVE = int(os.getenv("DEEPFOCUS_RESEARCH_ARCHIVE_MAX", "8000"))  # 容�
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")
@@ -82,8 +83,8 @@ def upsert(items: list[dict[str, Any]]) -> int:
         return 0
 
 
-def query(limit: int = 400, query_text: str = "", before: str = "") -> list[dict[str, Any]]:
-    """按 date 倒序返回归档研报（原始 dict）。query_text→标题模糊匹配；before(YYYY-MM-DD)→只取更早的(翻页)。失败→[]。"""
+def query(limit: int = 400, query_text: str = "", before: str = "", before_id: str = "") -> list[dict[str, Any]]:
+    """按 date/id 倒序返回归档研报；before+before_id 组成稳定游标，避免同一天被截断后漏项。"""
     try:
         init_archive()
         clauses, params = [], []
@@ -91,13 +92,19 @@ def query(limit: int = 400, query_text: str = "", before: str = "") -> list[dict
         if q:
             clauses.append("title LIKE ?"); params.append(f"%{q}%")
         bf = (before or "").strip()
+        bid = (before_id or "").strip()
         if bf:
-            clauses.append("date < ?"); params.append(bf)
+            if bid:
+                # 分页不能只用 date < before：一页若在某天中间截断，下一页会跳过该天剩余条目。
+                clauses.append("(date < ? OR (date = ? AND id < ?))")
+                params.extend([bf, bf, bid])
+            else:
+                clauses.append("date < ?"); params.append(bf)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(max(1, min(int(limit or 400), 2000)))
         with _connect() as conn:
             rows = conn.execute(
-                f"SELECT payload FROM research_archive {where} ORDER BY date DESC, archived_at DESC LIMIT ?", params
+                f"SELECT payload FROM research_archive {where} ORDER BY date DESC, id DESC LIMIT ?", params
             ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:

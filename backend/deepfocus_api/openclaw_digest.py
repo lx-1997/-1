@@ -54,11 +54,12 @@ async def build_digest(hours: int = 12) -> dict[str, Any]:
     for m in list_realtime_messages(topic="文章", since=since_iso, limit=100):
         title = (m.title or "").strip()
         content = (m.content or "").strip()
-        cache_key = "news:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
+        cache_key = "news:v2:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
         cached = _get_ai_cache(cache_key)
         item: dict[str, Any] = {"time": m.created_at, "title": title, "url": m.url or ""}
         if cached:
             item["summary"] = cached.get("summary") or cached.get("one_liner") or ""
+            item["logic_lines"] = cached.get("logic_lines") or []
             item["df_take"] = cached.get("df_take") or ""
             item["pending"] = False
         else:
@@ -83,6 +84,7 @@ async def build_digest(hours: int = 12) -> dict[str, Any]:
         }
         if cached:
             item["summary"] = cached.get("summary") or cached.get("one_liner") or ""
+            item["logic_lines"] = cached.get("logic_lines") or []
             item["df_take"] = cached.get("df_take") or ""
             item["rating"] = cached.get("rating")
             item["pending"] = False

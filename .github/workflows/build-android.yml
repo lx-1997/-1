@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Daocaijing Android APK
 
 on:
   push:
@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Setup Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
@@ -22,38 +22,24 @@ jobs:
     - name: Install dependencies
       run: npm ci
     
-    - name: Build React app
-      run: npm run build
-    
     - name: Setup Java
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '11'
+        java-version: '21'
     
     - name: Setup Android SDK
-      uses: android-actions/setup-android@v2
+      uses: android-actions/setup-android@v3
+
+    - name: Install Android API 36 SDK
+      run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
     
-    - name: Install Capacitor
-      run: npm install @capacitor/core @capacitor/cli @capacitor/android
-    
-    - name: Initialize Capacitor
-      run: |
-        npx cap init "深度焦点" "com.deepfocus.trading" --web-dir=build
-        npx cap add android
-    
-    - name: Build APK
-      run: |
-        cd android
-        ./gradlew assembleDebug
+    - name: Sync Capacitor and build APK
+      run: npm run android:debug
     
     - name: Upload APK
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: app-debug.apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
-
-
-
-
 

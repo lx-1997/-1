@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sqlite3
+from . import db
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -228,7 +229,7 @@ def _db_path() -> Path:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
+    conn = db.connect(_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")   # 公开读端点与写 tick 并发时不至于直接 database is locked
     conn.execute("PRAGMA journal_mode=WAL")    # 读写并发：写不再阻塞读

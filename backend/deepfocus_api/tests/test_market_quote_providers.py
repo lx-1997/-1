@@ -64,6 +64,25 @@ def test_key_gated_providers_marked() -> None:
         assert by_key[k].requires_key is False
 
 
+def test_market_quote_quality_exposes_delayed_or_mixed_sources() -> None:
+    delayed = _quote("AAPL", "stooq")
+    quality = md._market_quote_quality([delayed])
+    assert quality.level == "degraded"
+    assert quality.label == "非实时/混合行情"
+    assert any("非交易所实时源" in reason for reason in quality.reasons)
+
+    realtime = MarketQuote(
+        symbol="600519.SH",
+        price=1.0,
+        provider="ifind",
+        provider_name="同花顺 iFinD 实时",
+        market_time="2026-06-06 10:00:00",
+        fetched_at="2026-06-06T02:00:00+00:00",
+        is_realtime=True,
+    )
+    assert md._market_quote_quality([realtime]).level == "live"
+
+
 def test_china_providers_serve_only_cn_hk() -> None:
     by_key = {p.key: p for p in md.QUOTE_PROVIDERS}
     for k in ("eastmoney_cn", "tencent"):
@@ -128,6 +147,43 @@ def test_earlier_hit_short_circuits_later_providers(monkeypatch) -> None:
     assert not later
     assert {q.symbol for q in resp.quotes} == {"AAPL"}
     assert resp.provider == "finnhub"
+
+
+def test_provider_exception_does_not_abort_fallback_chain(monkeypatch) -> None:
+    """注册表中的单个源抛出未预期异常时，后续源仍应补齐行情。"""
+    monkeypatch.setenv("FINNHUB_API_KEY", "demo")
+    monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
+    monkeypatch.delenv("ALPHA_VANTAGE_API_KEY", raising=False)
+    _install_recording_stubs(monkeypatch, fills={"stooq": "AAPL"})
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("synthetic provider crash")
+
+    monkeypatch.setattr(md, "_fetch_finnhub_quotes", boom)
+
+    resp = asyncio.run(md.fetch_market_quotes(["AAPL"]))
+
+    assert {quote.symbol for quote in resp.quotes} == {"AAPL"}
+    assert resp.provider == "stooq"
+    assert any("Finnhub" in warning and "synthetic provider crash" in warning for warning in resp.warnings)
+
+
+def test_malformed_provider_result_does_not_abort_fallback_chain(monkeypatch) -> None:
+    monkeypatch.setenv("FINNHUB_API_KEY", "demo")
+    monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
+    monkeypatch.delenv("ALPHA_VANTAGE_API_KEY", raising=False)
+    _install_recording_stubs(monkeypatch, fills={"stooq": "AAPL"})
+
+    async def malformed(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(md, "_fetch_finnhub_quotes", malformed)
+
+    resp = asyncio.run(md.fetch_market_quotes(["AAPL"]))
+
+    assert {quote.symbol for quote in resp.quotes} == {"AAPL"}
+    assert resp.provider == "stooq"
+    assert any("Finnhub" in warning and "invalid" in warning for warning in resp.warnings)
 
 
 def test_unfilled_symbol_reaches_eastmoney_fallback(monkeypatch) -> None:

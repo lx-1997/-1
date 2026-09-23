@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sqlite3
+from . import db
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -222,7 +223,7 @@ _SHARE_LEAD_LEN = 100    # 公开导语长度：够钩子、远不够全文
 
 def _init_share_db() -> None:
     SHARE_DB.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(SHARE_DB) as conn:
+    with db.connect(SHARE_DB) as conn:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS zsxq_share "
             "(id TEXT PRIMARY KEY, title TEXT NOT NULL, lead TEXT NOT NULL, date TEXT, created_at REAL NOT NULL)"
@@ -245,7 +246,7 @@ def _persist_share_topics(items: list[dict[str, Any]]) -> None:
         return
     try:
         _init_share_db()
-        with sqlite3.connect(SHARE_DB) as conn:
+        with db.connect(SHARE_DB) as conn:
             conn.executemany(
                 "INSERT INTO zsxq_share (id,title,lead,date,created_at) VALUES (?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET title=excluded.title, lead=excluded.lead, date=excluded.date",
@@ -268,7 +269,7 @@ def get_share_topic(topic_id: str) -> Optional[dict[str, Any]]:
         return None
     try:
         _init_share_db()
-        with sqlite3.connect(SHARE_DB) as conn:
+        with db.connect(SHARE_DB) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT id,title,lead,date FROM zsxq_share WHERE id=?", (tid,)).fetchone()
         return dict(row) if row else None
@@ -280,7 +281,7 @@ def recent_share_topics(limit: int = 200) -> list[dict[str, Any]]:
     """最近落库的机构纪要（供公开 /notes hub 列表 + sitemap 收录）；按入库时间倒序，滤掉无正文的图片帖。"""
     try:
         _init_share_db()
-        with sqlite3.connect(SHARE_DB) as conn:
+        with db.connect(SHARE_DB) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT id,title,lead,date FROM zsxq_share WHERE lead != '' "

@@ -1,0 +1,1318 @@
+/*
+ * Publication-style long-form research reader.  It deliberately uses the
+ * terminal's theme variables so the same draft can live in a modal, a page, or
+ * an embedded mobile WebView.
+ */
+.research-deep-draft {
+  --draft-accent: var(--accent, #0071e3);
+  --draft-surface: var(--surface, #fff);
+  --draft-muted-surface: var(--surface-muted, #f2f2f7);
+  --draft-raised: var(--surface-raised, #fff);
+  --draft-border: var(--border-soft, #e5e5ea);
+  --draft-text: var(--text, #1d1d1f);
+  --draft-muted: var(--text-muted, #6e6e73);
+  width: 100%;
+  min-width: 0;
+  color: var(--draft-text);
+  background: var(--draft-surface);
+  border: 1px solid var(--draft-border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card, 0 4px 18px rgb(0 0 0 / 7%));
+  overflow: hidden;
+}
+
+.research-deep-draft__header {
+  position: relative;
+  padding: clamp(22px, 4vw, 48px) clamp(20px, 5vw, 72px) 28px;
+  background:
+    radial-gradient(circle at 90% -40%, color-mix(in srgb, var(--draft-accent) 18%, transparent), transparent 44%),
+    linear-gradient(180deg, color-mix(in srgb, var(--draft-accent) 5%, var(--draft-surface)), var(--draft-surface));
+  border-bottom: 1px solid var(--draft-border);
+}
+
+.research-deep-draft__header-topline,
+.research-deep-draft__header-actions,
+.research-deep-draft__metadata,
+.research-deep-draft__conclusion-meta,
+.research-deep-draft__evidence,
+.research-deep-draft__watch-topline {
+  display: flex;
+  align-items: center;
+}
+
+.research-deep-draft__header-topline {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.research-deep-draft__header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.research-deep-draft__reader-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 10px;
+  color: var(--draft-accent);
+  background: color-mix(in srgb, var(--draft-accent) 14%, var(--draft-surface));
+  border: 1px solid color-mix(in srgb, var(--draft-accent) 54%, var(--draft-border));
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--draft-accent) 16%, transparent) inset;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.research-deep-draft__reader-mode small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  opacity: .72;
+}
+
+.research-deep-draft__reader-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--draft-text) 7%, var(--draft-surface));
+  border: 1px solid color-mix(in srgb, var(--draft-accent) 42%, var(--draft-border));
+  border-radius: 11px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 10%);
+}
+
+.research-deep-draft__reader-switch-label {
+  padding: 0 6px 0 4px;
+  color: var(--draft-text);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  opacity: .72;
+}
+
+.research-deep-draft__reader-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 10px;
+  color: var(--draft-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  transition: color .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.research-deep-draft__reader-switch button:hover,
+.research-deep-draft__reader-switch button:focus-visible {
+  color: var(--draft-text);
+  background: color-mix(in srgb, var(--draft-accent) 9%, transparent);
+  outline: none;
+}
+
+.research-deep-draft__reader-switch button.is-active {
+  color: var(--draft-accent);
+  background: color-mix(in srgb, var(--draft-accent) 18%, var(--draft-surface));
+  border-color: color-mix(in srgb, var(--draft-accent) 66%, var(--draft-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--draft-accent) 22%, transparent) inset, 0 2px 7px rgb(0 0 0 / 14%);
+  transform: translateY(-1px);
+}
+
+.research-deep-draft__reader-switch button.is-active svg {
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--draft-accent) 55%, transparent));
+}
+
+.research-deep-draft__reader-switch small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  opacity: .72;
+}
+
+.research-deep-draft__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--draft-accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.research-deep-draft__header h1 {
+  max-width: 960px;
+  margin: 0;
+  color: var(--draft-text);
+  font-size: clamp(26px, 4vw, 42px);
+  font-weight: 760;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+}
+
+.research-deep-draft__subtitle {
+  max-width: 800px;
+  margin: 12px 0 0;
+  color: var(--draft-muted);
+  font-size: clamp(14px, 1.7vw, 17px);
+  line-height: 1.7;
+}
+
+.research-deep-draft__metadata {
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 20px;
+  color: var(--draft-muted);
+  font-size: 12px;
+}
+
+.research-deep-draft__metadata span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.research-deep-draft__metadata span + span::before {
+  width: 3px;
+  height: 3px;
+  margin-right: 14px;
+  background: currentColor;
+  border-radius: 50%;
+  content: '';
+  opacity: .55;
+}
+
+.research-deep-draft__glossary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--draft-muted);
+  font-size: 11px;
+}
+
+.research-deep-draft__glossary-label,
+.research-deep-draft__glossary-term {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.research-deep-draft__glossary-label {
+  margin-right: 2px;
+}
+
+.research-deep-draft__glossary-term {
+  padding: 3px 7px;
+  color: var(--draft-accent);
+  background: color-mix(in srgb, var(--draft-accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--draft-accent) 20%, var(--draft-border));
+  border-radius: 999px;
+  cursor: help;
+}
+
+.research-deep-draft__glossary-term:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--draft-accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.research-deep-draft__layout {
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(0, 1fr);
+  align-items: start;
+  max-width: 1220px;
+  margin: 0 auto;
+}
+
+.research-deep-draft__toc {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  padding: 26px 18px 28px 24px;
+  overflow-y: auto;
+  border-right: 1px solid var(--draft-border);
+}
+
+.research-deep-draft__toc-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+  color: var(--draft-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.research-deep-draft__toc a {
+  display: block;
+  padding: 7px 8px;
+  color: var(--draft-muted);
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.45;
+  text-decoration: none;
+  transition: color .16s ease, background .16s ease;
+}
+
+.research-deep-draft__toc a:hover,
+.research-deep-draft__toc a:focus-visible {
+  color: var(--draft-accent);
+  background: color-mix(in srgb, var(--draft-accent) 9%, transparent);
+  outline: none;
+}
+
+.research-deep-draft__body {
+  min-width: 0;
+  padding: clamp(20px, 4vw, 44px) clamp(18px, 5vw, 72px) 36px;
+}
+
+.research-deep-draft__conclusion {
+  position: relative;
+  margin-bottom: 42px;
+  padding: 24px clamp(18px, 3vw, 34px) 26px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--draft-accent) 12%, var(--draft-surface)), color-mix(in srgb, var(--draft-accent) 3%, var(--draft-surface)));
+  border: 1px solid color-mix(in srgb, var(--draft-accent) 30%, var(--draft-border));
+  border-radius: 13px;
+  box-shadow: inset 4px 0 0 var(--draft-accent);
+  scroll-margin-top: 20px;
+}
+
+.research-deep-draft__section-kicker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 13px;
+  color: var(--draft-accent);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: .06em;
+}
+
+.research-deep-draft__one-liner {
+  margin: 0;
+  color: var(--draft-text);
+  font-size: clamp(19px, 2.5vw, 27px);
+  font-weight: 740;
+  line-height: 1.45;
+  letter-spacing: -.015em;
+}
+
+.research-deep-draft__core-conclusion {
+  margin: 13px 0 0;
+  color: var(--draft-text);
+  font-size: 15px;
+  font-weight: 560;
+  line-height: 1.8;
+}
+
+.research-deep-draft__thesis {
+  display: flex;
+  gap: 8px;
+  margin-top: 13px;
+  padding: 9px 11px;
+  color: var(--draft-muted);
+  background: color-mix(in srgb, var(--draft-surface) 62%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--draft-accent) 28%, var(--draft-border));
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.research-deep-draft__thesis b {
+  flex: 0 0 auto;
+  color: var(--draft-accent);
+  font-weight: 700;
+}
+
+.research-deep-draft__summary {
+  margin-top: 12px;
+}
+
+.research-deep-draft__summary p {
+  margin: 0 0 7px;
+  color: var(--draft-muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.research-deep-draft__summary-details {
+  margin-top: 15px;
+  padding: 10px 12px 4px;
+  background: color-mix(in srgb, var(--draft-surface) 68%, var(--draft-muted-surface));
+  border: 1px solid var(--draft-border);
+  border-radius: 9px;
+}
+
+.research-deep-draft__summary-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--draft-accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.research-deep-draft__summary-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.research-deep-draft__summary-details summary::after {
+  content: '⌄';
+  color: var(--draft-muted);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.research-deep-draft__summary-details[open] summary::after {
+  content: '⌃';
+}
+
+.research-deep-draft__summary-details summary small {
+  margin-left: auto;
+  color: var(--draft-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.research-deep-draft__metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.research-deep-draft__metric-card {
+  min-width: 0;
+  padding: 13px 14px;
+  background: var(--draft-raised);
+  border: 1px solid var(--draft-border);
+  border-radius: 10px;
+}
+
+.research-deep-draft__metric-label {
+  min-height: 30px;
+  color: var(--draft-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.research-deep-draft__metric-value {
+  margin-top: 6px;
+  color: var(--draft-text);
+  font-size: clamp(20px, 2.2vw, 28px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 760;
+  letter-spacing: -.02em;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.research-deep-draft__metric-value small {
+  margin-left: 3px;
+  color: var(--draft-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.research-deep-draft__metric-change {
+  margin-top: 5px;
+  color: var(--draft-accent);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.research-deep-draft__metric-card p {
+  margin: 6px 0 0;
+  color: var(--draft-muted);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.research-deep-draft__conclusion-meta {
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 18px;
+}
+
+.research-deep-draft__conclusion-meta .ant-tag {
+  margin-inline-end: 0;
+  font-size: 11px;
+}
+
+.research-deep-draft__quick-panel {
+  margin-bottom: 42px;
+  padding: 20px;
+  background: var(--draft-raised);
+  border: 1px solid var(--draft-border);
+  border-radius: 13px;
+  box-shadow: 0 5px 18px rgb(0 0 0 / 4%);
+}
+
+.research-deep-draft__quick-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 17px;
+}
+
+.research-deep-draft__quick-kicker {
+  color: var(--draft-accent);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .06em;
+}
+
+.research-deep-draft__quick-head h2 {
+  margin: 5px 0 0;
+  color: var(--draft-text);
+  font-size: clamp(19px, 2.3vw, 25px);
+  line-height: 1.35;
+}
+
+.research-deep-draft__quick-head p {
+  max-width: 310px;
+  margin: 0;
+  color: var(--draft-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  text-align: right;
+}
+
+.research-deep-draft__plain-summary {
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  background: color-mix(in srgb, var(--draft-accent) 7%, var(--draft-surface));
+  border-left: 3px solid var(--draft-accent);
+  border-radius: 8px;
+}
+
+.research-deep-draft__plain-summary > span,
+.research-deep-draft__quick-grid article > span {
+  color: var(--draft-accent);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.research-deep-draft__plain-summary p {
+  margin: 5px 0 0;
+  color: var(--draft-text);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.research-deep-draft__quick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.research-deep-draft__quick-grid article {
+  min-width: 0;
+  padding: 13px 14px;
+  background: var(--draft-muted-surface);
+  border: 1px solid var(--draft-border);
+  border-radius: 9px;
+}
+
+.research-deep-draft__quick-grid article p {
+  margin: 6px 0 0;
+  color: var(--draft-text);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.research-deep-draft__quick-footnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 17px;
+  padding-top: 13px;
+  color: var(--draft-muted);
+  border-top: 1px solid var(--draft-border);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.research-deep-draft__quick-footnote > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.research-deep-draft__section {
+  margin-bottom: 42px;
+  scroll-margin-top: 20px;
+}
+
+.research-deep-draft__section-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+
+.research-deep-draft__section-heading > span {
+  flex: 0 0 auto;
+  min-width: 28px;
+  color: var(--draft-accent);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: .04em;
+}
+
+.research-deep-draft__section-heading h2 {
+  margin: 0;
+  color: var(--draft-text);
+  font-size: clamp(19px, 2.4vw, 25px);
+  font-weight: 730;
+  line-height: 1.35;
+  letter-spacing: -.015em;
+}
+
+.research-deep-draft__section-summary,
+.research-deep-draft__section-lead {
+  margin: 0 0 14px;
+  color: var(--draft-muted);
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 1.75;
+}
+
+.research-deep-draft__paragraphs p {
+  margin: 0 0 14px;
+  color: var(--draft-text);
+  font-size: 15px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+
+.research-deep-draft__bullets {
+  margin: 10px 0 17px;
+  padding: 0 0 0 20px;
+  color: var(--draft-text);
+}
+
+.research-deep-draft__bullets li {
+  margin: 7px 0;
+  padding-left: 4px;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.research-deep-draft__bullets li::marker {
+  color: var(--draft-accent);
+}
+
+.research-deep-draft__logic-lines {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.research-deep-draft__logic-line {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  background: var(--draft-muted-surface);
+  border: 1px solid var(--draft-border);
+  border-radius: 10px;
+}
+
+.research-deep-draft__logic-index {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--draft-accent);
+  background: color-mix(in srgb, var(--draft-accent) 10%, transparent);
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.research-deep-draft__logic-main h3 {
+  margin: 0 0 8px;
+  color: var(--draft-text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.research-deep-draft__logic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+}
+
+.research-deep-draft__logic-grid div {
+  min-width: 0;
+}
+
+.research-deep-draft__logic-grid small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--draft-accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.research-deep-draft__logic-grid p {
+  margin: 0;
+  color: var(--draft-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.research-deep-draft__evidence {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.research-deep-draft__evidence-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 2px;
+  color: var(--draft-muted);
+  font-size: 11px;
+}
+
+.research-deep-draft__evidence-button {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.research-deep-draft__evidence-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(100%, 290px);
+  padding: 4px 8px;
+  color: var(--draft-accent);
+  background: color-mix(in srgb, var(--draft-accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--draft-accent) 25%, var(--draft-border));
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.research-deep-draft__evidence-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-deep-draft__evidence-chip b {
+  flex: 0 0 auto;
+  color: var(--draft-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.research-deep-draft__evidence-excerpt {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--draft-muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-deep-draft__table-wrap {
+  margin: 20px 0 0;
+  border: 1px solid var(--draft-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--draft-raised);
+}
+
+.research-deep-draft__table-wrap figcaption {
+  padding: 11px 14px;
+  color: var(--draft-text);
+  background: var(--draft-muted-surface);
+  border-bottom: 1px solid var(--draft-border);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.research-deep-draft__table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.research-deep-draft__table {
+  width: 100%;
+  min-width: 440px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.research-deep-draft__table th,
+.research-deep-draft__table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--draft-border);
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.55;
+}
+
+.research-deep-draft__table th {
+  color: var(--draft-muted);
+  background: color-mix(in srgb, var(--draft-muted-surface) 70%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.research-deep-draft__table td {
+  color: var(--draft-text);
+  overflow-wrap: anywhere;
+}
+
+.research-deep-draft__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.research-deep-draft__table-note {
+  padding: 8px 12px 10px;
+  color: var(--draft-muted);
+  border-top: 1px solid var(--draft-border);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.research-deep-draft__watch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.research-deep-draft__watch-card,
+.research-deep-draft__risk-card {
+  min-width: 0;
+  padding: 15px;
+  background: var(--draft-muted-surface);
+  border: 1px solid var(--draft-border);
+  border-radius: 10px;
+}
+
+.research-deep-draft__watch-topline {
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+  color: var(--draft-accent);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.research-deep-draft__watch-topline .ant-tag {
+  margin-inline-end: 0;
+  font-size: 10px;
+}
+
+.research-deep-draft__watch-card h3,
+.research-deep-draft__risk-card h3 {
+  margin: 0 0 8px;
+  color: var(--draft-text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.research-deep-draft__watch-card p,
+.research-deep-draft__risk-card p {
+  margin: 6px 0 0;
+  color: var(--draft-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.research-deep-draft__watch-card p b,
+.research-deep-draft__risk-card p b {
+  margin-right: 5px;
+  color: var(--draft-text);
+  font-weight: 650;
+}
+
+.research-deep-draft__watch-signal {
+  display: inline-block;
+  margin-bottom: 3px;
+  color: var(--draft-accent);
+  font-size: 11px;
+}
+
+.research-deep-draft__risk-list {
+  display: grid;
+  gap: 10px;
+}
+
+.research-deep-draft__risk-card {
+  border-left: 3px solid var(--negative, #d70015);
+}
+
+.research-deep-draft__risk-card h3 {
+  color: var(--negative, #d70015);
+}
+
+.research-deep-draft__source-list {
+  display: grid;
+  gap: 7px;
+}
+
+.research-deep-draft__source {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--draft-text);
+  background: var(--draft-muted-surface);
+  border: 1px solid var(--draft-border);
+  border-radius: 8px;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.research-deep-draft__source:hover,
+.research-deep-draft__source:focus-visible {
+  color: var(--draft-accent);
+  border-color: color-mix(in srgb, var(--draft-accent) 40%, var(--draft-border));
+  outline: none;
+}
+
+.research-deep-draft__source > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-deep-draft__source small,
+.research-deep-draft__source b,
+.research-deep-draft__source em {
+  color: var(--draft-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.research-deep-draft__footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 17px;
+  color: var(--draft-muted);
+  border-top: 1px solid var(--draft-border);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.research-deep-draft__footer > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.research-deep-draft__footer .ant-typography {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.research-deep-draft--state {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+  padding: 24px;
+}
+
+.research-deep-draft__state-card {
+  width: min(100%, 480px);
+  text-align: center;
+}
+
+.research-deep-draft__state-card h2 {
+  margin: 16px 0 6px;
+  color: var(--draft-text);
+  font-size: 20px;
+}
+
+.research-deep-draft__state-card p {
+  margin: 0;
+  color: var(--draft-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.research-deep-draft__state-card .ant-alert {
+  text-align: left;
+}
+
+.research-deep-draft__state-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+/* FinancialTerminal embedding: keep the existing modal toolbar/actions fixed
+ * while the article body gets its own scroll container. */
+.bbt-ai-body--deep {
+  display: flex;
+  min-height: 0;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.bbt-ai-deep-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.bbt-ai-deep-wrap .research-deep-draft {
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.bbt-ai-deep-wrap .research-deep-draft--embedded .research-deep-draft__body {
+  padding-top: 28px;
+}
+
+/*
+ * The article reader is normally mounted inside FinancialTerminal's generic
+ * document dialog.  That dialog intentionally keeps ordinary news/AI cards
+ * compact (860px / 84vh), but those limits make a long-form research draft
+ * feel cramped and create a second, nested scroll area.  Give the deep draft
+ * its own publication-sized canvas while preserving the compact size of other
+ * dialogs.  `.bbt-doc--deep` is the explicit hook used by the host; `:has`
+ * keeps this safe for older callers that only add the deep body class.
+ */
+@media (min-width: 821px) {
+  .bbt-doc-overlay .bbt-doc--ai.bbt-doc--deep,
+  .bbt-doc-overlay .bbt-doc--ai:has(.bbt-ai-body--deep) {
+    width: min(1320px, 96vw);
+    max-width: none;
+    height: min(92vh, 1080px);
+    max-height: none;
+  }
+
+  /* Expanded/fullscreen state: leave a small breathing room so the close and
+   * restore controls remain comfortably reachable on desktop screens. */
+  .bbt-doc-overlay .bbt-doc--ai.is-expanded,
+  .bbt-doc-overlay .bbt-doc--ai.bbt-doc--expanded,
+  .bbt-doc-overlay.bbt-doc-overlay--expanded .bbt-doc--ai {
+    width: min(1600px, calc(100vw - 24px));
+    max-width: none;
+    height: calc(100vh - 24px);
+    height: calc(100dvh - 24px);
+    max-height: none;
+  }
+
+  .bbt-doc-overlay:has(.bbt-doc--ai.is-expanded),
+  .bbt-doc-overlay:has(.bbt-doc--ai.bbt-doc--expanded),
+  .bbt-doc-overlay.bbt-doc-overlay--expanded {
+    padding: 12px;
+  }
+}
+
+/* The expand button is intentionally a separate visual treatment from the
+ * amber image action, so users can discover that the reader itself is
+ * resizable/maximizable.  Keep a generous hit target and an explicit focus
+ * ring for keyboard and WebView accessibility. */
+.bbt-doc-expand {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid rgba(100, 180, 255, .3);
+  border-radius: 999px;
+  background: rgba(100, 180, 255, .1);
+  color: #8fc8ff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: .2px;
+  white-space: nowrap;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.bbt-doc-expand:hover {
+  background: rgba(100, 180, 255, .18);
+  border-color: rgba(100, 180, 255, .55);
+  color: #b9ddff;
+}
+
+.bbt-doc-expand:focus-visible,
+.bbt-doc-copy:focus-visible,
+.bbt-doc-close:focus-visible {
+  outline: 2px solid var(--cyan, #4fd0e6);
+  outline-offset: 2px;
+}
+
+/* A deep reader has one intentional scroll container (the article wrapper),
+ * not a short body nested inside another short body. */
+.bbt-ai-body--deep {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
+  .bbt-ai-deep-wrap .research-deep-draft--embedded .research-deep-draft__body {
+    padding-top: 0;
+  }
+}
+
+@media (max-width: 860px) {
+  .research-deep-draft__layout {
+    display: block;
+  }
+
+  .research-deep-draft__toc {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    gap: 4px;
+    max-height: none;
+    padding: 9px 14px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: color-mix(in srgb, var(--draft-surface) 94%, transparent);
+    border-right: 0;
+    border-bottom: 1px solid var(--draft-border);
+    backdrop-filter: blur(14px);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .research-deep-draft__toc-title {
+    flex: 0 0 auto;
+    margin: 0 7px 0 0;
+  }
+
+  .research-deep-draft__toc a {
+    flex: 0 0 auto;
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+
+  .research-deep-draft__body {
+    padding-top: 28px;
+  }
+
+  .research-deep-draft__metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .research-deep-draft__quick-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .research-deep-draft__quick-head p {
+    max-width: none;
+    text-align: left;
+  }
+}
+
+@media (max-width: 620px) {
+  .research-deep-draft {
+    border-radius: 11px;
+  }
+
+  .research-deep-draft__header {
+    padding: 22px 16px 22px;
+  }
+
+  .research-deep-draft__header-topline {
+    align-items: flex-start;
+  }
+
+  .research-deep-draft__header-actions {
+    gap: 4px;
+  }
+
+  .research-deep-draft__reader-switch button {
+    padding-inline: 8px;
+  }
+
+  .research-deep-draft__reader-switch-label {
+    padding-inline: 4px;
+  }
+
+  .research-deep-draft__header h1 {
+    font-size: 26px;
+  }
+
+  .research-deep-draft__metadata {
+    gap: 5px 9px;
+  }
+
+  .research-deep-draft__metadata span + span::before {
+    margin-right: 9px;
+  }
+
+  .research-deep-draft__body {
+    padding: 22px 15px 28px;
+  }
+
+  .research-deep-draft__conclusion {
+    margin-bottom: 32px;
+    padding: 18px 16px 19px;
+  }
+
+  .research-deep-draft__quick-panel {
+    padding: 15px;
+  }
+
+  .research-deep-draft__quick-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .research-deep-draft__metric-card {
+    padding: 11px;
+  }
+
+  .research-deep-draft__metric-label {
+    min-height: 0;
+  }
+
+  .research-deep-draft__one-liner {
+    font-size: 20px;
+  }
+
+  .research-deep-draft__paragraphs p {
+    font-size: 14px;
+    line-height: 1.8;
+  }
+
+  .research-deep-draft__logic-line {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 8px;
+    padding: 11px;
+  }
+
+  .research-deep-draft__logic-index {
+    width: 26px;
+    height: 26px;
+    font-size: 10px;
+  }
+
+  .research-deep-draft__logic-grid,
+  .research-deep-draft__watch-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .research-deep-draft__table {
+    min-width: 390px;
+  }
+
+  .research-deep-draft__source {
+    grid-template-columns: 17px minmax(0, 1fr) auto;
+  }
+
+  .research-deep-draft__source em {
+    display: none;
+  }
+
+  .research-deep-draft__evidence-excerpt {
+    max-width: 120px;
+  }
+
+  .research-deep-draft__footer {
+    flex-wrap: wrap;
+  }
+
+  .research-deep-draft__footer .ant-typography {
+    width: 100%;
+    margin-left: 26px;
+  }
+}
+
+/* On phones the dialog remains true fullscreen regardless of the desktop
+ * restore state.  Account for notches while keeping the content and toolbar
+ * independently scrollable. */
+@media (max-width: 820px) {
+  .bbt-doc-overlay .bbt-doc--ai.bbt-doc--deep,
+  .bbt-doc-overlay .bbt-doc--ai:has(.bbt-ai-body--deep),
+  .bbt-doc-overlay .bbt-doc--ai.is-expanded,
+  .bbt-doc-overlay .bbt-doc--ai.bbt-doc--expanded {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .bbt-doc-overlay:has(.bbt-ai-body--deep) {
+    padding: 0;
+  }
+
+  .bbt-doc--ai .bbt-doc-bar {
+    padding-top: max(8px, env(safe-area-inset-top));
+  }
+
+  .bbt-doc-expand {
+    min-height: 36px;
+    padding-inline: 11px;
+  }
+}
+
+/* The explicit host hook avoids relying on :has() in older embedded WebViews
+ * and keeps the large reader inside the overlay's safe gutters. */
+@media (min-width: 821px) {
+  .bbt-doc-overlay--deep {
+    padding: 24px;
+  }
+
+  .bbt-doc-overlay--deep .bbt-doc--ai.bbt-doc--deep {
+    width: min(1320px, calc(100vw - 48px));
+    height: min(92vh, calc(100vh - 48px));
+    height: min(92vh, calc(100dvh - 48px));
+    max-width: none;
+    max-height: none;
+  }
+
+  .bbt-doc-overlay--deep.bbt-doc-overlay--expanded {
+    padding: 12px;
+  }
+
+  .bbt-doc-overlay--deep.bbt-doc-overlay--expanded .bbt-doc--ai.bbt-doc--deep {
+    width: min(1600px, calc(100vw - 24px));
+    height: calc(100vh - 24px);
+    height: calc(100dvh - 24px);
+  }
+}

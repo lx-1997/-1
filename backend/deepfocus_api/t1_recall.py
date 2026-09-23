@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from . import db
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from typing import Any, Optional
@@ -25,7 +26,7 @@ T+1 未回访召回：注册后 24h 内没再回来的新用户，发一封「�
 
 
 def _connect_recall() -> sqlite3.Connection:
-    conn = sqlite3.connect(RECALL_DB_PATH)
+    conn = db.connect(RECALL_DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -69,7 +70,7 @@ def _record_sent(user_id: str, email: str, status: str, detail: str) -> None:
 def _last_seen_map() -> dict:
     """activity_log：登录账号 → 最近活跃 ts（ISO）。失败返回空 dict。"""
     try:
-        with sqlite3.connect(METRICS_DB_PATH) as conn:
+        with db.connect(METRICS_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT actor_id, MAX(ts) AS last_seen FROM activity_log WHERE actor_kind='user' GROUP BY actor_id"

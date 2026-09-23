@@ -35,15 +35,24 @@ _MAX_LEN = 8   # 名称扫描窗口上限(A 股名一般 ≤6 字，留点冗余
 # A 股 6 位代码：前后都不能再接数字/点，避免把 8 位公告号、日期串、"前20/近10天"误判为代码。
 _SPECIFIC_CODE_RE = re.compile(r"(?<![\d.])\d{6}(?![\d.])")
 
-# 冷启动 / 离线兜底种子：高频被问的大票，即使东财拉取失败也能挡住最常见的误触发。
-_SEED_NAMES = frozenset({
-    "宁德时代", "贵州茅台", "比亚迪", "隆基绿能", "中国平安", "招商银行", "五粮液", "美的集团",
-    "中国移动", "工业富联", "长江电力", "药明康德", "东方财富", "海康威视", "紫金矿业", "中信证券",
-    "京东方A", "中国神华", "山西汾酒", "恒瑞医药", "北方华创", "立讯精密", "中际旭创", "寒武纪",
-    "金盘科技", "思源电气", "特变电工", "中国西电", "伊戈尔", "明阳电气", "华明装备", "阳光电源",
-    "三一重工", "万科A", "格力电器", "中国石油", "中国石化", "中国建筑", "中芯国际", "韦尔股份",
-    "通威股份", "片仔癀", "海天味业", "中国中免", "兆易创新", "汇川技术", "迈瑞医疗", "顺丰控股",
-})
+# 冷启动 / 离线兜底种子必须同时带代码。原实现只存名称集，
+# 在远程全市场列表拉取失败时，has_specific_stock_name 能命中，
+# 但 resolve_to_code("五粮液") 却返回 None，导致真实对话先空等一轮再猜代码。
+_SEED_NAME_CODE = {
+    "宁德时代": "300750", "贵州茅台": "600519", "比亚迪": "002594", "隆基绿能": "601012",
+    "中国平安": "601318", "招商银行": "600036", "五粮液": "000858", "美的集团": "000333",
+    "中国移动": "600941", "工业富联": "601138", "长江电力": "600900", "药明康德": "603259",
+    "东方财富": "300059", "海康威视": "002415", "紫金矿业": "601899", "中信证券": "600030",
+    "京东方A": "000725", "中国神华": "601088", "山西汾酒": "600809", "恒瑞医药": "600276",
+    "北方华创": "002371", "立讯精密": "002475", "中际旭创": "300308", "寒武纪": "688256",
+    "金盘科技": "688676", "思源电气": "002028", "特变电工": "600089", "中国西电": "601179",
+    "伊戈尔": "002922", "明阳电气": "301291", "华明装备": "002270", "阳光电源": "300274",
+    "三一重工": "600031", "万科A": "000002", "格力电器": "000651", "中国石油": "601857",
+    "中国石化": "600028", "中国建筑": "601668", "中芯国际": "688981", "韦尔股份": "603501",
+    "通威股份": "600438", "片仔癀": "600436", "海天味业": "603288", "中国中免": "601888",
+    "兆易创新": "603986", "汇川技术": "300124", "迈瑞医疗": "300760", "顺丰控股": "002352",
+}
+_SEED_NAMES = frozenset(_SEED_NAME_CODE)
 # ≥3 字但属常用词/纯行业赛道词、与某只股名同形会误命中的歧义名 → 从名称表剔除(发现一个补一个)。
 # "机器人"=300024 新松机器人的股名，但更常作"机器人板块/赛道"被问 → 留着会把板块查询解析成单只个股(答错对象)。
 _DENY: frozenset = frozenset({"机器人"})
@@ -51,7 +60,8 @@ _DENY: frozenset = frozenset({"机器人"})
 _lock = threading.Lock()
 _names: frozenset = _SEED_NAMES
 _maxlen = _MAX_LEN
-_name_code: dict = {}   # 完整 name->code（供 SEO 全市场发现页 /stocks/all 枚举所有 /stock/{code} 内链）
+_name_code: dict = dict(_SEED_NAME_CODE)  # 完整 name->code（冷启动也可真解析）
+_disk_load_attempted = False
 
 
 def _ingest(mapping: dict) -> int:
@@ -63,14 +73,19 @@ def _ingest(mapping: dict) -> int:
     with _lock:
         _names = merged
         _maxlen = min(_MAX_LEN, max((len(n) for n in merged), default=_MAX_LEN))
-        _name_code = {n: str(c) for n, c in norm.items()
-                      if n and c and len(n) >= _MIN_LEN and n not in _DENY}
+        _name_code = {
+            **_SEED_NAME_CODE,
+            **{n: str(c) for n, c in norm.items()
+               if n and c and len(n) >= _MIN_LEN and n not in _DENY},
+        }
     return len(merged)
 
 
 def all_name_code() -> dict:
     """全 A「名称→代码」映射快照（供 SEO 全市场发现页枚举；未加载则尝试磁盘缓存）。"""
-    if not _name_code:
+    global _disk_load_attempted
+    if not _disk_load_attempted:
+        _disk_load_attempted = True
         _load_disk()
     with _lock:
         return dict(_name_code)
@@ -84,8 +99,7 @@ def name_of_code(code: str) -> str:
     c = str(code or "").strip()
     if not c:
         return ""
-    if not _name_code:
-        _load_disk()
+    all_name_code()  # 确保只尝试加载一次磁盘全量映射
     with _lock:
         for n, k in _name_code.items():
             if k == c:

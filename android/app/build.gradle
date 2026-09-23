@@ -1,21 +1,32 @@
 apply plugin: 'com.android.application'
 
-// 发布签名：凭据放 android/keystore.properties（已 gitignore），缺失时回退 debug 签名
+// 发布签名：凭据放 android/keystore.properties（已 gitignore）。发布任务
+// 缺少凭据会在任务开始时 fail-closed，绝不生成可误发的未签名产物。
 def keystoreProps = new Properties()
 def keystorePropsFile = rootProject.file('keystore.properties')
+def hasReleaseKeystore = keystorePropsFile.exists()
 if (keystorePropsFile.exists()) {
     keystoreProps.load(new FileInputStream(keystorePropsFile))
 }
+def releaseVersionCode = (System.getenv('DAOCJING_ANDROID_VERSION_CODE') ?: System.getenv('DAOCJING_VERSION_CODE') ?: '1').toInteger()
+def releaseVersionName = System.getenv('DAOCJING_ANDROID_VERSION_NAME') ?: System.getenv('DAOCJING_VERSION_NAME') ?: '1.0.0'
+def releaseTaskRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+if (releaseTaskRequested && (!System.getenv('DAOCJING_ANDROID_VERSION_CODE') && !System.getenv('DAOCJING_VERSION_CODE'))) {
+    throw new GradleException('DAOCJING_ANDROID_VERSION_CODE is required for release builds')
+}
+if (releaseTaskRequested && (!System.getenv('DAOCJING_ANDROID_VERSION_NAME') && !System.getenv('DAOCJING_VERSION_NAME'))) {
+    throw new GradleException('DAOCJING_ANDROID_VERSION_NAME is required for release builds')
+}
 
 android {
-    namespace "com.deepfocus.trading"
+    namespace "com.daocaijing.app"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.deepfocus.trading"
+        applicationId "com.daocaijing.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode releaseVersionCode
+        versionName releaseVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -25,7 +36,7 @@ android {
     }
     signingConfigs {
         release {
-            if (keystorePropsFile.exists()) {
+            if (hasReleaseKeystore) {
                 storeFile rootProject.file(keystoreProps['storeFile'])
                 storePassword keystoreProps['storePassword']
                 keyAlias keystoreProps['keyAlias']
@@ -41,9 +52,19 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            if (keystorePropsFile.exists()) {
+            if (hasReleaseKeystore) {
                 signingConfig signingConfigs.release
             }
+        }
+    }
+}
+
+// 发布任务必须使用正式签名；debug 构建可以在没有凭据的开发机上运行，
+// 但 assembleRelease/bundleRelease 缺少 keystore 时直接失败，避免误发未签名包。
+tasks.matching { it.name in ['assembleRelease', 'bundleRelease'] }.configureEach {
+    doFirst {
+        if (!hasReleaseKeystore) {
+            throw new GradleException('Missing android/keystore.properties; refusing unsigned release artifact')
         }
     }
 }
@@ -64,6 +85,8 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+    // FCM 是可选运行时：没有 google-services.json 时仍可构建，App 自动退回原生轮询。
+    implementation 'com.google.firebase:firebase-messaging:24.1.2'
 }
 
 apply from: 'capacitor.build.gradle'

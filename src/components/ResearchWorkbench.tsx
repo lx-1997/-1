@@ -141,7 +141,12 @@ const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 const defaultWorkbenchUrl = () => {
   const hostname = window.location.hostname || '127.0.0.1';
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-  return `${protocol}//${hostname}:8300/research-workbench`;
+  // 生产环境后端只监听 127.0.0.1:8300，公网入口由同域 nginx/FastAPI 代理；
+  // 把 :8300 烘进浏览器地址会导致研报预览、原文下载在会员页面直接连接失败。
+  const local = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  return local
+    ? `${protocol}//${hostname}:8300/research-workbench`
+    : `${protocol}//${hostname}/research-workbench`;
 };
 
 const writeAiDraft = (payload: AiDraftPayload) => {
@@ -327,6 +332,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   const [quickAnalyzing, setQuickAnalyzing] = useState(false);
   const [quickAnalyzeStep, setQuickAnalyzeStep] = useState<string>('');
   const quickSearchSeq = useRef(0);
+  const quickAiCacheRef = useRef<Map<string, { analysis?: ProfessionalReportAnalysis; vision?: ResearchVisionAnalysis }>>(new Map());
 
   const [status, setStatus] = useState<WorkbenchStatus | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
@@ -797,7 +803,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     try {
       const result = await analyzeProfessionalReport(selectedReport.id, {
         focus: ragQuestion || aiBridgeDraft,
-        use_cloud_model: false
+        use_cloud_model: true
       });
       setAnalysis(result);
       setMetrics(result.key_metrics.length ? result.key_metrics : metrics);
@@ -821,7 +827,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
         symbol: symbolParamFromInput(activeSymbol) || selectedReport?.symbol || undefined,
         report_id: selectedReport?.id,
         top_k: 6,
-        use_cloud_model: false
+        use_cloud_model: true
       });
       setRagResult(result);
     } catch (error) {
@@ -1014,15 +1020,26 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   }, [quickKeyword, quickMarket, online, crawlTag, message]);
 
   // 图片型研报（无文字层）走多模态视觉解读：渲染页面图像→视觉模型读图出观点（无逐句溯源）。
-  const runVisionFallback = async (payload: { pdf_url?: string; workbench_filename?: string; title?: string; symbol?: string }) => {
+  const runVisionFallback = async (
+    payload: { pdf_url?: string; workbench_filename?: string; title?: string; symbol?: string },
+    cacheKey?: string
+  ) => {
+    const cached = cacheKey ? quickAiCacheRef.current.get(cacheKey) : undefined;
+    if (cached?.vision) {
+      setQuickVision(cached.vision);
+      setQuickAnalysis(null);
+      message.info('已复用本次会话的视觉解读');
+      return;
+    }
     setQuickAnalyzeStep('图片型研报，改用 AI 视觉解读…');
     try {
       const vision = await visionAnalyzeReport({
         ...payload,
         workbench_out: WORKBENCH_DOWNLOAD_OUT,
-        max_pages: 6
+        max_pages: 8
       });
       setQuickVision(vision);
+      if (cacheKey) quickAiCacheRef.current.set(cacheKey, { vision });
       message.success('AI 视觉解读完成');
     } catch (visionError: any) {
       const detail = visionError?.response?.data?.detail || visionError?.message || '请稍后重试';
@@ -1037,7 +1054,15 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     }
     setQuickAnalyzing(true);
     setQuickAnalysis(null); setQuickVision(null);
+    const cacheKey = `ov:${crawlItemKey(item)}`;
     try {
+      const cached = quickAiCacheRef.current.get(cacheKey);
+      if (cached?.analysis || cached?.vision) {
+        setQuickAnalysis(cached.analysis || null);
+        setQuickVision(cached.vision || null);
+        message.info('已复用本次会话的 AI 解读');
+        return;
+      }
       setQuickAnalyzeStep('拉取研报中…');
       await startResearchWorkbenchDownload([item], { tag: crawlTag, out: WORKBENCH_DOWNLOAD_OUT });
       const target = cleanReportTitle(item.name);
@@ -1059,12 +1084,13 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
       setQuickAnalyzeStep('AI 分析中…');
       const result = await analyzeProfessionalReport(report.id, { use_cloud_model: true });
       setQuickAnalysis(result);
+      quickAiCacheRef.current.set(cacheKey, { analysis: result });
       setReports(previous => [report, ...previous.filter(existing => existing.id !== report.id)]);
       setSelectedReportId(report.id);
       message.success('AI 分析完成');
     } catch (error: any) {
       if (isEmptyTextError(error)) {
-        await runVisionFallback({ workbench_filename: item.name, title: cleanReportTitle(item.name) });
+        await runVisionFallback({ workbench_filename: item.name, title: cleanReportTitle(item.name) }, cacheKey);
       } else {
         message.error(analyzeErrorMessage(error, '请稍后重试'));
       }
@@ -1078,7 +1104,15 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     if (selectedEastmoney) {
       setQuickAnalyzing(true);
       setQuickAnalysis(null); setQuickVision(null);
+      const cacheKey = selectedQuickKey;
       try {
+        const cached = quickAiCacheRef.current.get(cacheKey);
+        if (cached?.analysis || cached?.vision) {
+          setQuickAnalysis(cached.analysis || null);
+          setQuickVision(cached.vision || null);
+          message.info('已复用本次会话的 AI 解读');
+          return;
+        }
         setQuickAnalyzeStep('入库与解析中…');
         const report = await ingestProfessionalReportUrl({
           url: selectedEastmoney.pdf_url,
@@ -1092,6 +1126,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
           use_cloud_model: true
         });
         setQuickAnalysis(result);
+        quickAiCacheRef.current.set(cacheKey, { analysis: result });
         setReports(previous => [report, ...previous.filter(existing => existing.id !== report.id)]);
         setSelectedReportId(report.id);
         message.success('AI 分析完成');
@@ -1101,7 +1136,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
             pdf_url: selectedEastmoney.pdf_url,
             title: selectedEastmoney.title,
             symbol: selectedEastmoney.symbol || undefined
-          });
+          }, cacheKey);
         } else {
           message.error(analyzeErrorMessage(error, '请确认链接可访问后重试'));
         }
@@ -1300,6 +1335,19 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
           >
             {quickAnalyzing ? (quickAnalyzeStep || '分析中…') : '一键 AI 分析'}
           </Button>
+
+          {quickAnalyzing ? (
+            <div className="research-ai-stage-strip" aria-live="polite">
+              {['准备材料', '解析与取数', 'AI 结论'].map((stage, index) => (
+                <span
+                  key={stage}
+                  className={`research-ai-stage${index < 2 || quickAnalyzeStep.includes('AI') || quickAnalyzeStep.includes('视觉') ? ' is-active' : ''}${(index === 0 && quickAnalyzeStep.includes('拉取')) || (index === 1 && quickAnalyzeStep.includes('入库')) || (index === 2 && (quickAnalyzeStep.includes('AI') || quickAnalyzeStep.includes('视觉'))) ? ' is-current' : ''}`}
+                >
+                  <i>{index + 1}</i>{stage}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           {quickVision ? (
             <div className="research-quick-ai-body">
@@ -1753,7 +1801,13 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                     )}
                   </div>
                   {analyzing ? (
-                    <div className="research-desk-loading"><Spin /></div>
+                    <div className="research-desk-loading" aria-live="polite">
+                      <Spin />
+                      <div>
+                        <strong>正在生成投委会摘要</strong>
+                        <span>提取关键数字 · 对照原文证据 · 汇总风险与追问</span>
+                      </div>
+                    </div>
                   ) : analysis ? (
                     <>
                       <div className="research-analysis-brief">

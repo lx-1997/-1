@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+from . import db
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -128,6 +129,95 @@ STOP_TOKENS = {
     "没有披",
     "披露了",
 }
+
+# Period labels arrive from several ingestion paths (for example
+# ``2025年度``, ``2025年年报``, ``2025Q1`` and ``2025年第一季度``).  Keep the
+# matching logic in one place so a period-constrained RAG query never silently
+# falls back to a different reporting period just because the label spelling
+# differs.
+_PERIOD_MARKER_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"(?:上半年|半年度|半年报|中报|h1|1h|firsthalf)", "h1"),
+    (r"(?:下半年|h2|2h|secondhalf)", "h2"),
+    (r"(?:前三季度|前三季|1[-至~]?9个月|1[-至~]?9月|9m|9个月|ninemonths)", "9m"),
+    (r"(?:第一季度|一季度|一季报|q1|1q|firstquarter)", "q1"),
+    (r"(?:第二季度|二季度|二季报|q2|2q|secondquarter)", "q2"),
+    (r"(?:第三季度|三季度|三季报|q3|3q|thirdquarter)", "q3"),
+    (r"(?:第四季度|四季度|四季报|q4|4q|fourthquarter)", "q4"),
+    (r"(?:年度|年报|全年|财年|财政年度|fy|annual|fullyear|fiscalyear)", "fy"),
+)
+
+
+def _period_signature(value: Optional[str]) -> tuple[Optional[str], Optional[str], str]:
+    """Return ``(year, marker, normalized_text)`` for a report period label."""
+    normalized = re.sub(r"\s+", "", str(value or "")).lower()
+    if not normalized:
+        return None, None, ""
+    year_match = re.search(r"(?:19|20)\d{2}", normalized)
+    year = year_match.group(0) if year_match else None
+    # Buy-side users often shorten annual labels to FY25.  Expand that form
+    # before matching so it cannot accidentally match every fiscal year.
+    if year is None:
+        fiscal_short = re.search(r"fy[\-_']?(\d{2})(?!\d)", normalized, flags=re.I)
+        if fiscal_short:
+            year = f"20{fiscal_short.group(1)}"
+    marker: Optional[str] = None
+    # Check half-year/quarter markers before ``年度`` because ``半年度`` also
+    # contains the latter substring.
+    for pattern, candidate in _PERIOD_MARKER_PATTERNS:
+        if re.search(pattern, normalized, flags=re.I):
+            marker = candidate
+            break
+    return year, marker, normalized
+
+
+def _period_matches(stored: Optional[str], requested: Optional[str]) -> bool:
+    """Whether two human-entered/inferred period labels refer to the same slice.
+
+    A request containing only a year (``2025``/``2025年``) matches any period in
+    that year; an explicit annual/half-year/quarter marker must match the stored
+    marker.  Unknown labels fall back to a conservative normalized substring
+    comparison rather than mixing unrelated reports.
+    """
+    requested_year, requested_marker, requested_text = _period_signature(requested)
+    if not requested_text:
+        return True
+    stored_year, stored_marker, stored_text = _period_signature(stored)
+    if not stored_text:
+        return False
+    if requested_year and stored_year != requested_year:
+        return False
+    if requested_marker:
+        if stored_marker:
+            return stored_marker == requested_marker
+        return requested_marker in stored_text
+    if requested_year:
+        return True
+    return requested_text in stored_text
+
+
+def _period_sql_filter(
+    column: str,
+    period_year: Optional[str],
+    period_text: str,
+) -> tuple[Optional[str], list[str]]:
+    """Build a bounded SQL pre-filter without dropping short FY aliases.
+
+    Most ingested labels contain a four-digit year, but buy-side shorthand such
+    as ``FY25`` is also accepted by ``_period_signature``.  Keep that alias in
+    the SQL candidate set; exact marker/year matching still happens in Python.
+    ``column`` is an internal constant (not user input).
+    """
+    if not period_year:
+        return None, []
+    short_fy = re.search(r"^fy[\-_']?(\d{2})(?!\d)", period_text, flags=re.I)
+    if short_fy:
+        return (
+            f"({column} LIKE ? OR lower({column}) LIKE ?)",
+            [f"%{period_year}%", f"%fy{short_fy.group(1)}%"],
+        )
+    return f"{column} LIKE ?", [f"%{period_year}%"]
+
+
 def init_professional_research_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
@@ -185,10 +275,12 @@ def init_professional_research_db() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_reports_symbol ON professional_reports(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_reports_period ON professional_reports(period)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_chunks_report ON professional_report_chunks(report_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_metrics_report ON professional_financial_metrics(report_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_metrics_symbol ON professional_financial_metrics(symbol)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_metrics_key ON professional_financial_metrics(metric_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_prof_metrics_period ON professional_financial_metrics(period)")
         conn.commit()
 
 
@@ -348,6 +440,7 @@ def list_professional_metrics(
     symbol: Optional[str] = None,
     metric_key: Optional[str] = None,
     limit: int = 100,
+    period: Optional[str] = None,
 ) -> list[ProfessionalMetricRecord]:
     init_professional_research_db()
     clauses: list[str] = []
@@ -361,7 +454,20 @@ def list_professional_metrics(
     if metric_key:
         clauses.append("metric_key = ?")
         values.append(metric_key)
-    values.append(max(1, min(limit, 500)))
+    # Use the year as a cheap SQL pre-filter; marker-level matching below
+    # handles annual/half-year/quarter aliases consistently.
+    period_year, period_marker, _period_text = _period_signature(period)
+    period_clause, period_values = _period_sql_filter("period", period_year, _period_text)
+    if period_clause:
+        clauses.append(period_clause)
+        values.extend(period_values)
+    safe_limit = max(1, min(limit, 500))
+    # A marker (Q1/H1/9M/FY) cannot be expressed reliably with a single SQL
+    # predicate because older rows use several localized aliases.  Fetch a
+    # wider bounded window before applying ``_period_matches`` so a dense year
+    # of other periods cannot crowd the requested slice out of the result.
+    query_limit = max(safe_limit, 2000) if period_marker else safe_limit
+    values.append(query_limit)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with _connect() as conn:
         rows = conn.execute(
@@ -374,7 +480,10 @@ def list_professional_metrics(
             """,
             values,
         ).fetchall()
-    return [_row_to_metric(dict(row)) for row in rows]
+    metrics = [_row_to_metric(dict(row)) for row in rows]
+    if period:
+        metrics = [metric for metric in metrics if _period_matches(metric.period, period)]
+    return metrics[:safe_limit]
 
 
 def list_professional_chunks(report_id: str, limit: int = 100) -> list[ProfessionalReportChunkRecord]:
@@ -393,7 +502,11 @@ def list_professional_chunks(report_id: str, limit: int = 100) -> list[Professio
     return [_row_to_chunk(dict(row)) for row in rows]
 
 
-async def query_professional_rag(request: ProfessionalRagQueryRequest) -> ProfessionalRagQueryResponse:
+async def query_professional_rag(
+    request: ProfessionalRagQueryRequest,
+    *,
+    llm_adapter: Optional[CloudResearchLLM] = None,
+) -> ProfessionalRagQueryResponse:
     init_professional_research_db()
     citations = _retrieve_citations(
         question=request.question,
@@ -404,28 +517,39 @@ async def query_professional_rag(request: ProfessionalRagQueryRequest) -> Profes
     )
     metric_citations = [citation for citation in citations if citation.kind == "metric"]
     if not citations:
+        missing_reason = (
+            f"指定报告期「{request.period}」未检索到结构化指标或原文片段"
+            if request.period
+            else "未命中结构化指标或原文片段"
+        )
         return ProfessionalRagQueryResponse(
             answer="我不知道。当前专业财报库没有检索到足够证据，不能编造结论。",
             citations=[],
             metrics=[],
             confidence=0.0,
-            missing=["未命中结构化指标或原文片段"],
+            missing=[missing_reason],
         )
 
     local_answer = _local_rag_answer(request.question, citations)
     if request.use_cloud_model:
-        llm = CloudResearchLLM()
-        if llm.provider != "mock":
+        adapter = llm_adapter or CloudResearchLLM()
+        if adapter.provider != "mock":
             try:
-                answer = await _cloud_rag_answer(llm, request.question, citations)
+                answer = await _cloud_rag_answer(adapter, request.question, citations)
                 local_answer = answer or local_answer
             except Exception:
                 pass
 
+    response_metrics: list[ProfessionalMetricRecord] = []
+    for citation in metric_citations:
+        metric = _citation_to_metric(citation)
+        if metric is not None:
+            response_metrics.append(metric)
+
     return ProfessionalRagQueryResponse(
         answer=local_answer,
         citations=citations,
-        metrics=[_citation_to_metric(citation) for citation in metric_citations if _citation_to_metric(citation)],
+        metrics=response_metrics,
         confidence=_confidence_from_citations(citations),
         missing=[],
     )
@@ -434,6 +558,8 @@ async def query_professional_rag(request: ProfessionalRagQueryRequest) -> Profes
 async def analyze_professional_report(
     report_id: str,
     request: ProfessionalReportAnalysisRequest,
+    *,
+    llm_adapter: Optional[CloudResearchLLM] = None,
 ) -> ProfessionalReportAnalysisResponse:
     report = get_professional_report(report_id)
     if not report:
@@ -455,10 +581,10 @@ async def analyze_professional_report(
     citations = [*metric_citations[:8], *risk_citations[:5]]
 
     if request.use_cloud_model:
-        llm = CloudResearchLLM()
-        if llm.provider != "mock":
+        adapter = llm_adapter or CloudResearchLLM()
+        if adapter.provider != "mock":
             try:
-                cloud_summary = await _cloud_report_summary(llm, report, metrics, quality_flags, risks, citations)
+                cloud_summary = await _cloud_report_summary(adapter, report, metrics, quality_flags, risks, citations)
                 if cloud_summary:
                     summary = cloud_summary
             except Exception:
@@ -511,7 +637,7 @@ async def run_professional_eval(request: ProfessionalEvalRunRequest) -> Professi
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -748,21 +874,24 @@ def _retrieve_citations(
     query_tokens = _tokenize(question)
     metric_keys = _metric_keys_for_question(question)
     citations: list[tuple[float, ProfessionalCitation]] = []
+    metric_index = 0
+    chunk_index = 0
+    report_cache: dict[str, Optional[ProfessionalReportRecord]] = {}
 
     if include_metrics:
-        metrics = list_professional_metrics(report_id=report_id, symbol=symbol, limit=300)
+        metrics = list_professional_metrics(report_id=report_id, symbol=symbol, period=period, limit=300)
         for metric in metrics:
             score = _metric_score(metric, question, query_tokens, metric_keys)
-            if period and metric.period and period not in metric.period:
-                score -= 0.15
             if score > 0:
-                citations.append((score, _metric_to_citation(metric, score, len([item for item in citations if item[1].kind == "metric"]) + 1)))
+                metric_index += 1
+                citations.append((score, _metric_to_citation(metric, score, metric_index, report_cache=report_cache)))
 
-    chunks = _candidate_chunks(report_id=report_id, symbol=symbol, limit=500)
+    chunks = _candidate_chunks(report_id=report_id, symbol=symbol, period=period, limit=500)
     for chunk in chunks:
         score = _chunk_score(chunk, question, query_tokens)
         if score > 0:
-            citations.append((score, _chunk_to_citation(chunk, score, len([item for item in citations if item[1].kind == "chunk"]) + 1)))
+            chunk_index += 1
+            citations.append((score, _chunk_to_citation(chunk, score, chunk_index, report_cache=report_cache)))
 
     citations.sort(key=lambda item: item[0], reverse=True)
     selected: list[ProfessionalCitation] = []
@@ -786,6 +915,7 @@ def _candidate_chunks(
     report_id: Optional[str],
     symbol: Optional[str],
     limit: int,
+    period: Optional[str] = None,
 ) -> list[ProfessionalReportChunkRecord]:
     clauses: list[str] = []
     values: list[Any] = []
@@ -793,16 +923,32 @@ def _candidate_chunks(
     if report_id:
         clauses.append("chunk.report_id = ?")
         values.append(report_id)
-    if symbol:
+    if symbol or period:
         join = "JOIN professional_reports report ON report.id = chunk.report_id"
+    if symbol:
         clauses.append("report.symbol = ?")
         values.append(symbol.strip().upper())
-    values.append(max(1, min(limit, 1000)))
+    period_year, period_marker, _period_text = _period_signature(period)
+    period_clause, period_values = _period_sql_filter("report.period", period_year, _period_text)
+    if period_clause:
+        # The Python predicate below applies the quarter/half-year marker;
+        # this year filter keeps the candidate set bounded for large archives.
+        clauses.append(period_clause)
+        values.extend(period_values)
+    safe_limit = max(1, min(limit, 1000))
+    # A marker (with or without a year) still needs Python-level alias
+    # matching; read a wider bounded window so a dense set of other periods
+    # cannot crowd the requested slice out before the predicate runs.
+    query_limit = max(safe_limit, 2000) if period_marker else safe_limit
+    values.append(query_limit)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    select_columns = "chunk.*"
+    if period:
+        select_columns += ", report.period AS _report_period"
     with _connect() as conn:
         rows = conn.execute(
             f"""
-            SELECT chunk.*
+            SELECT {select_columns}
             FROM professional_report_chunks chunk
             {join}
             {where}
@@ -811,7 +957,16 @@ def _candidate_chunks(
             """,
             values,
         ).fetchall()
-    return [_row_to_chunk(dict(row)) for row in rows]
+    records: list[ProfessionalReportChunkRecord] = []
+    for row in rows:
+        raw = dict(row)
+        if period and not _period_matches(raw.get("_report_period"), period):
+            continue
+        raw.pop("_report_period", None)
+        records.append(_row_to_chunk(raw))
+        if len(records) >= safe_limit:
+            break
+    return records
 
 
 def _metric_score(
@@ -1009,14 +1164,36 @@ def _analysis_summary(
 
 
 def _metric_citations(metrics: list[ProfessionalMetricRecord]) -> list[ProfessionalCitation]:
-    citations = [_metric_to_citation(metric, metric.confidence, index) for index, metric in enumerate(metrics, start=1)]
+    report_cache: dict[str, Optional[ProfessionalReportRecord]] = {}
+    citations = [
+        _metric_to_citation(metric, metric.confidence, index, report_cache=report_cache)
+        for index, metric in enumerate(metrics, start=1)
+    ]
     for index, citation in enumerate(citations, start=1):
         citation.citation_id = f"M{index}"
     return citations
 
 
-def _metric_to_citation(metric: ProfessionalMetricRecord, score: float, index: int) -> ProfessionalCitation:
-    report = get_professional_report(metric.report_id)
+def _cached_professional_report(
+    report_id: str,
+    cache: Optional[dict[str, Optional[ProfessionalReportRecord]]] = None,
+) -> Optional[ProfessionalReportRecord]:
+    """Reuse report lookups within one response (RAG can emit many citations)."""
+    if cache is None:
+        return get_professional_report(report_id)
+    if report_id not in cache:
+        cache[report_id] = get_professional_report(report_id)
+    return cache[report_id]
+
+
+def _metric_to_citation(
+    metric: ProfessionalMetricRecord,
+    score: float,
+    index: int,
+    *,
+    report_cache: Optional[dict[str, Optional[ProfessionalReportRecord]]] = None,
+) -> ProfessionalCitation:
+    report = _cached_professional_report(metric.report_id, report_cache)
     return ProfessionalCitation(
         citation_id=f"M{index}",
         kind="metric",
@@ -1040,8 +1217,14 @@ def _metric_to_citation(metric: ProfessionalMetricRecord, score: float, index: i
     )
 
 
-def _chunk_to_citation(chunk: ProfessionalReportChunkRecord, score: float, index: int) -> ProfessionalCitation:
-    report = get_professional_report(chunk.report_id)
+def _chunk_to_citation(
+    chunk: ProfessionalReportChunkRecord,
+    score: float,
+    index: int,
+    *,
+    report_cache: Optional[dict[str, Optional[ProfessionalReportRecord]]] = None,
+) -> ProfessionalCitation:
+    report = _cached_professional_report(chunk.report_id, report_cache)
     return ProfessionalCitation(
         citation_id=f"C{index}",
         kind="chunk",

@@ -12,7 +12,13 @@ from typing import Any, Iterable, Optional
 
 import httpx
 
-from .schemas import MarketQuote, MarketQuoteListResponse, MarketSymbolCandidate, MarketSymbolSearchResponse
+from .schemas import (
+    DataQuality,
+    MarketQuote,
+    MarketQuoteListResponse,
+    MarketSymbolCandidate,
+    MarketSymbolSearchResponse,
+)
 from .shared_utils import to_float, safe_error, utc_now_iso
 
 
@@ -21,6 +27,64 @@ MAX_SYMBOLS = 30
 MAX_SEARCH_RESULTS = 12
 REQUEST_TIMEOUT = httpx.Timeout(8.0, connect=4.0)
 EASTMONEY_SEARCH_TOKEN = "D43BF722C8E33BDC906FB84D85E326E8"
+
+
+def _market_quote_quality(quotes: list[MarketQuote]) -> DataQuality:
+    """Build an honest top-level quality label from the actual quote payload.
+
+    ``provider`` is a useful provenance hint but is not enough to infer
+    freshness: a response can be assembled from several public snapshots, or
+    combine an entitled real-time quote with delayed fallbacks.  The endpoint
+    therefore derives quality from each quote's explicit ``is_realtime`` flag
+    and timestamp fields while retaining the per-quote source details.
+    """
+    if not quotes:
+        return DataQuality(
+            level="degraded",
+            label="无可用行情",
+            detail="本次请求没有返回可用报价，不能据此判断价格、涨跌或市场状态。",
+        )
+
+    providers = sorted(
+        {str(quote.provider_name or quote.provider or "未知源").strip() for quote in quotes if quote}
+    )
+    delayed = [quote for quote in quotes if not quote.is_realtime]
+    missing_market_time = [quote for quote in quotes if quote.is_realtime and not quote.market_time]
+    reasons: list[str] = []
+    if delayed:
+        delayed_sources = sorted(
+            {str(quote.provider_name or quote.provider or "未知源").strip() for quote in delayed}
+        )
+        reasons.append(
+            f"{len(delayed)}/{len(quotes)} 条报价来自非交易所实时源（{'、'.join(delayed_sources[:4])}）。"
+        )
+    if len(providers) > 1:
+        reasons.append(
+            f"本次结果由多个行情源拼接（{'、'.join(providers[:5])}），跨源时差和字段口径需自行核对。"
+        )
+    if missing_market_time:
+        reasons.append(f"{len(missing_market_time)} 条标记为实时的报价缺少 market_time，无法完成时点核验。")
+
+    if not reasons:
+        return DataQuality(
+            level="live",
+            label="交易所实时",
+            detail="报价带有市场时间戳，可用于盘中观察；下单前仍应以券商成交回报为准。",
+        )
+    return DataQuality(
+        level="degraded",
+        label="非实时/混合行情",
+        detail="本次行情可用于研究参考，但不应替代交易所实时 feed、成交回报或结算数据。",
+        reasons=reasons,
+    )
+
+
+def _append_unique_warnings(target: list[str], values: Iterable[str]) -> None:
+    """Append non-empty warnings once, preserving provider order for readability."""
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in target:
+            target.append(text)
 
 
 def normalize_symbols(symbols: Iterable[str]) -> list[str]:
@@ -238,6 +302,7 @@ async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) 
             provider="none",
             fetched_at=fetched_at,
             warnings=["No valid symbols were supplied."],
+            data_quality=_market_quote_quality([]),
         )
 
     # iFinD 灰度增强（仅白名单用户，默认 False=现网零变化）：先用同花顺补齐 A股实时+基本面，
@@ -274,9 +339,28 @@ async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) 
             api_key = provider.api_key()
             if provider.requires_key and not api_key:
                 continue
-            quotes, provider_warnings = await provider.fetch(client, targets, api_key)
-            _merge_quotes(quote_by_symbol, quotes)
-            warnings.extend(provider_warnings)
+            # Provider implementations normally swallow their own network/parser
+            # errors, but the registry is intentionally extensible (and the
+            # Google fallback imports its adapter lazily).  Keep one broken or
+            # newly-added provider from aborting the whole fallback chain: the
+            # remaining providers can still fill the symbols they cover.
+            try:
+                result = await provider.fetch(client, targets, api_key)
+                if not isinstance(result, tuple) or len(result) != 2:
+                    raise TypeError("provider returned an invalid (quotes, warnings) result")
+                quotes, provider_warnings = result
+                if not isinstance(quotes, (list, tuple)):
+                    raise TypeError("provider quotes must be a list")
+                if not isinstance(provider_warnings, (list, tuple)):
+                    raise TypeError("provider warnings must be a list")
+                invalid_quotes = [quote for quote in quotes if not isinstance(quote, MarketQuote)]
+                if invalid_quotes:
+                    raise TypeError("provider returned a malformed quote")
+                _merge_quotes(quote_by_symbol, quotes)
+                warnings.extend(provider_warnings)
+            except Exception as exc:  # noqa: BLE001 - isolate provider failures
+                warnings.append(f"{provider.name} failed: {safe_error(exc)}.")
+                continue
             missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
 
     ordered_quotes = [
@@ -295,11 +379,15 @@ async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) 
     if missing_symbols:
         warnings.append(f"No market quote returned for: {', '.join(missing_symbols)}.")
 
+    quality = _market_quote_quality(ordered_quotes)
+    _append_unique_warnings(warnings, [f"行情质量：{reason}" for reason in quality.reasons])
+
     return MarketQuoteListResponse(
         quotes=ordered_quotes,
         provider=provider,
         fetched_at=fetched_at,
         warnings=warnings,
+        data_quality=quality,
     )
 
 

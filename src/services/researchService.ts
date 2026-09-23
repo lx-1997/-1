@@ -90,7 +90,7 @@ export interface StockCheckResponse {
 }
 
 export interface ModelConfig {
-  provider: 'mock' | 'openai' | 'minimax' | 'openai-compatible' | 'cloud';
+  provider: 'mock' | 'openai' | 'minimax' | 'deepseek' | 'openai-compatible' | 'cloud';
   model: string;
   base_url?: string | null;
   temperature: number;
@@ -650,6 +650,7 @@ export async function listProfessionalMetrics(filters: {
   report_id?: string;
   symbol?: string;
   metric_key?: string;
+  period?: string;
   limit?: number;
 } = {}): Promise<ProfessionalMetricRecord[]> {
   const response = await apiGet<{ metrics: ProfessionalMetricRecord[] }>('/api/pro-research/metrics', {
@@ -815,6 +816,119 @@ export interface ResearchVisionAnalysis {
   mode: 'vision';
   disclaimer: string;
   data_quality?: DataQuality;
+}
+
+// === 研报深度稿（文章式解读） ===
+// 深度稿与旧的 ResearchVisionAnalysis 兼容：后端可以先返回文章结构，
+// 失败/旧缓存时前端仍可回退到 one_liner/summary/logic_lines 卡片。
+export interface ResearchDeepDraftEvidence {
+  page?: number | null;
+  pages?: string | null;
+  excerpt?: string;
+  label?: string;
+  source_id?: string;
+  kind?: string;
+}
+
+export interface ResearchDeepDraftTable {
+  title: string;
+  columns: string[];
+  rows: Array<string[] | Record<string, unknown>>;
+  note?: string;
+}
+
+export interface ResearchDeepDraftSection {
+  id: string;
+  title: string;
+  summary?: string;
+  paragraphs: string[];
+  bullets?: string[];
+  evidence?: ResearchDeepDraftEvidence[];
+  tables?: ResearchDeepDraftTable[];
+  logic_lines?: Array<Record<string, string>>;
+}
+
+export interface ResearchDeepDraftWatchItem {
+  title?: string;
+  item?: string;
+  signal?: string;
+  window?: string;
+  metric?: string;
+  trigger?: string;
+  why?: string;
+  evidence?: ResearchDeepDraftEvidence[];
+}
+
+export interface ResearchDeepDraftRisk {
+  title?: string;
+  detail?: string;
+  evidence?: ResearchDeepDraftEvidence[];
+}
+
+export interface ResearchDeepDraftSource {
+  title: string;
+  label?: string;
+  source_id?: string;
+  page?: number | null;
+  pages?: string | null;
+  url?: string;
+  excerpt?: string;
+  kind?: string;
+}
+
+export interface ResearchDeepDraftResponse {
+  title: string;
+  subtitle?: string;
+  subject?: string;
+  symbol?: string | null;
+  generated_at?: string;
+  read_time_minutes?: number;
+  source_count?: number;
+  confidence: number;
+  one_liner: string;
+  executive_summary?: string;
+  core_conclusion?: string;
+  thesis?: string;
+  sections: ResearchDeepDraftSection[];
+  tables?: ResearchDeepDraftTable[];
+  watchlist: ResearchDeepDraftWatchItem[];
+  risks: Array<ResearchDeepDraftRisk | string>;
+  instruments?: string[];
+  sources: ResearchDeepDraftSource[];
+  disclaimer: string;
+  mode: 'deep_draft' | string;
+  pages_analyzed?: number;
+  provider?: string;
+  source_coverage?: {
+    pages_read?: number;
+    chars_read?: number;
+    cited_claims?: number;
+    verified_claims?: number;
+    source_count?: number;
+    total_pages?: number;
+  };
+  // Optional compact result retained for existing share/card actions.
+  compact?: ResearchVisionAnalysis | null;
+}
+
+export interface ResearchDeepDraftRequest {
+  pdf_url?: string;
+  file_id?: string;
+  filename?: string;
+  workbench_filename?: string;
+  workbench_out?: string;
+  title?: string;
+  symbol?: string;
+  max_pages?: number;
+  source_ids?: string[];
+}
+
+/** Generate the publication-style research article. The endpoint is deliberately
+ * separate from visionAnalyzeReport so old cached cards remain readable during rollout. */
+export function generateResearchDeepDraft(
+  payload: ResearchDeepDraftRequest,
+): Promise<ResearchDeepDraftResponse> {
+  return apiPost<ResearchDeepDraftResponse>('/api/research/deep-draft', payload, { timeout: 360000 });
 }
 
 /** 图片型研报（无文字层）的多模态视觉解读——渲染页面图像交给视觉模型读图出观点。 */

@@ -83,9 +83,9 @@ def _make_article(content="文章导语第一句。" + "中间正文段落。" *
     ))
 
 
-def _make_futou_article():
+def _make_futou_article(content="受限文章正文"):
     return rm.create_realtime_message(RealtimeMessageCreateRequest(
-        title="受限来源文章", content="受限文章正文", topic="文章",
+        title="受限来源文章", content=content, topic="文章",
         severity="info", source_name="DAO财经", source_id="88001",
         source_type="dao-article", url="https://backend.futoucaixin.cn/a/88001",
         tags=["文章"],
@@ -296,7 +296,7 @@ def test_member_unlocks_full_article(member_client):
     """正向路径：付费会员带 token 取单条 → 全文放行、无锁定标记。"""
     from deepfocus_api import auth as auth_mod
     c = member_client
-    art = _make_article()
+    art = _make_futou_article(content="文章导语第一句。" + "中间正文段落。" * 60 + _TAIL_MARKER)
     r = c.post("/api/auth/register", json={"username": "vipreader", "password": "password1", "email": "vip@firm.com"})
     assert r.status_code == 200, r.text
     auth_mod.grant_membership("vipreader", days=30, source="paid")
@@ -308,7 +308,7 @@ def test_member_unlocks_full_article(member_client):
     assert "全文为会员专享内容" not in body["content"]   # 无锁定标记
 
 
-def test_dao2_is_restricted_but_regular_user_can_read(member_client, monkeypatch):
+def test_dao2_is_restricted_and_regular_user_reads_all_retained_sources(member_client, monkeypatch):
     c = member_client
     article = _make_futou_article()
     flash = _make_futou_flash()

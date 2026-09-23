@@ -50,6 +50,7 @@ import {
   ScenarioProjectionPoint,
   ScenarioResult,
 } from '../utils/ontologyScenario';
+import { normalizePublisherName } from '../utils/displayBrand';
 import './InvestmentOntologyCenter.css';
 
 type WorkspaceView = 'decision' | 'simulation' | 'semantic' | 'network' | 'governance';
@@ -133,7 +134,7 @@ const OBJECT_TYPES: ObjectTypeDefinition[] = [
     label: '证据',
     description: '快讯、文章、研报或数据快照，是每条推断可以回看的原始依据。',
     primaryKey: 'evidence_id',
-    source: 'DAO 财经信息库',
+    source: '稻草财经信息库',
     properties: ['来源', '入库时间', '可信度', '原文链接'],
     icon: <DatabaseOutlined />,
     accent: '#22d3ee',
@@ -251,7 +252,7 @@ function liveEvidenceTitle(item: RealtimeMessageRecord): string {
   return item.content
     .split(/\n+/)
     .map(cleanEvidenceText)
-    .find(line => line.length > 8) || title || 'DAO 财经相关信息';
+    .find(line => line.length > 8) || title || '稻草财经相关信息';
 }
 
 function percentage(value: unknown): string {
@@ -268,6 +269,7 @@ function numberText(value: unknown, suffix = ''): string {
 
 function attributeText(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
+  if (key === 'source') return normalizePublisherName(String(value));
   if (key === 'confidence' || key === 'credibility') return percentage(value);
   if (key.endsWith('_pct')) return numberText(value, '%');
   return String(value);
@@ -292,7 +294,7 @@ function edgeClass(edge: OntologyEdge): string {
 
 function graphNodeMetric(node: OntologyNode): string {
   if (node.type === 'Evidence') {
-    return `${node.attributes.source || 'DAO 财经'} · 可信度 ${percentage(node.attributes.credibility)}`;
+    return `${normalizePublisherName(String(node.attributes.source || '稻草财经')) || '稻草财经'} · 可信度 ${percentage(node.attributes.credibility)}`;
   }
   if (node.type === 'Event') {
     const tone = node.attributes.severity;
@@ -393,6 +395,7 @@ const InvestmentOntologyCenter: React.FC = () => {
   const [contentOntologyLoading, setContentOntologyLoading] = useState(false);
   const [contentOntologyError, setContentOntologyError] = useState<string | null>(null);
   const [showAllEvidence, setShowAllEvidence] = useState(false);
+  const [beginnerMode, setBeginnerMode] = useState(true);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -445,7 +448,7 @@ const InvestmentOntologyCenter: React.FC = () => {
           setLiveEvidenceError(
             messageResult.reason instanceof Error
               ? messageResult.reason.message
-              : 'DAO 财经信息读取失败',
+              : '稻草财经信息读取失败',
           );
         }
         if (ontologyResult.status === 'fulfilled') {
@@ -508,7 +511,7 @@ const InvestmentOntologyCenter: React.FC = () => {
     const risk = annotatedLiveEvidence.filter(entry => entry.tone === 'risk').length;
     const neutral = annotatedLiveEvidence.length - positive - risk;
     const sources = new Set(
-      annotatedLiveEvidence.map(entry => entry.item.source_name || 'DAO 财经').filter(Boolean),
+      annotatedLiveEvidence.map(entry => normalizePublisherName(entry.item.source_name) || '稻草财经').filter(Boolean),
     ).size;
     return { positive, risk, neutral, sources, total: annotatedLiveEvidence.length };
   }, [annotatedLiveEvidence]);
@@ -540,7 +543,7 @@ const InvestmentOntologyCenter: React.FC = () => {
       : 'neutral';
 
   const liveAction = liveEvidenceStats.total === 0
-    ? '等待新的快讯、文章或研报进入 DAO 财经信息库。'
+    ? '等待新的快讯、文章或研报进入稻草财经信息库。'
     : liveSignalTone === 'risk'
       ? '先判断这些证据是否满足论点失效条件，再决定是否调整仓位。'
       : liveSignalTone === 'positive'
@@ -569,7 +572,7 @@ const InvestmentOntologyCenter: React.FC = () => {
       canonical_key: item.id,
       market: snapshot.identity.security.market,
       attributes: {
-        source: item.source_name || 'DAO 财经',
+        source: normalizePublisherName(item.source_name) || '稻草财经',
         known_at: item.created_at,
         credibility: tone === 'neutral' ? 0.62 : 0.76,
         signal: tone,
@@ -737,6 +740,35 @@ const InvestmentOntologyCenter: React.FC = () => {
 
   const renderDecisionWorkspace = () => (
     <div className="ontology-view-stack ontology-decision-v6">
+      <section className="ontology-mode-switcher" aria-label="查看模式">
+        <div>
+          <small>默认给新手</small>
+          <strong>先看结论，再看理由</strong>
+          <span>复杂推演先收起来，避免一上来信息过载。</span>
+        </div>
+        <div className="ontology-mode-toggle" role="tablist" aria-label="切换查看模式">
+          <button
+            type="button"
+            className={beginnerMode ? 'active' : ''}
+            aria-pressed={beginnerMode}
+            onClick={() => {
+              setBeginnerMode(true);
+              setShowAllEvidence(false);
+            }}
+          >
+            简洁模式
+          </button>
+          <button
+            type="button"
+            className={!beginnerMode ? 'active' : ''}
+            aria-pressed={!beginnerMode}
+            onClick={() => setBeginnerMode(false)}
+          >
+            专业模式
+          </button>
+        </div>
+      </section>
+
       <section className={`ontology-simple-answer tone-${liveSignalTone}`}>
         <header>
           <div>
@@ -771,9 +803,11 @@ const InvestmentOntologyCenter: React.FC = () => {
             >
               看 3 条关键原因
             </Button>
-            <button type="button" onClick={() => setActiveView('simulation')}>
-              模拟变化 <span>→</span>
-            </button>
+            {!beginnerMode && (
+              <button type="button" onClick={() => setActiveView('simulation')}>
+                模拟变化 <span>→</span>
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -801,7 +835,7 @@ const InvestmentOntologyCenter: React.FC = () => {
                 <span className="ontology-reason-index">{index + 1}</span>
                 <div>
                   <p>
-                    {item.source_name || 'DAO 财经'}
+                    {normalizePublisherName(item.source_name) || '稻草财经'}
                     <span>·</span>
                     {formatTimestamp(item.created_at)}
                   </p>
@@ -854,45 +888,58 @@ const InvestmentOntologyCenter: React.FC = () => {
         </Button>
       </section>
 
-      <details className="ontology-professional-tools ontology-simple-tools">
-        <summary>
-          <span>更多分析</span>
-          <strong>模拟、关系图与记录</strong>
-        </summary>
-        <div>
-          <button type="button" onClick={() => setActiveView('simulation')}>
-            <ExperimentOutlined />
-            <span>
-              <strong>模拟变化</strong>
-              <small>调整假设，查看可能结果</small>
-            </span>
-          </button>
-          <button type="button" onClick={() => {
-            setSelectedNodeId(decision?.thesis.id);
-            setActiveView('network');
-          }}>
-            <BranchesOutlined />
-            <span>
-              <strong>完整证据链</strong>
-              <small>查看结论是怎样形成的</small>
-            </span>
-          </button>
-          <button type="button" onClick={() => setActiveView('semantic')}>
-            <ClusterOutlined />
-            <span>
-              <strong>内容关系图</strong>
-              <small>查看快讯、文章和研报的关联</small>
-            </span>
-          </button>
-          <button type="button" onClick={() => setActiveView('governance')}>
-            <LockOutlined />
-            <span>
-              <strong>数据与记录</strong>
-              <small>查看来源、权限和决策历史</small>
-            </span>
-          </button>
-        </div>
-      </details>
+      {beginnerMode ? (
+        <section className="ontology-professional-preview">
+          <div>
+            <small>专业分析</small>
+            <strong>需要更细的推演、关系图和审计时再打开</strong>
+            <span>当前只保留最关键的判断，不会影响记录决定。</span>
+          </div>
+          <Button type="default" onClick={() => setBeginnerMode(false)}>
+            展开专业分析
+          </Button>
+        </section>
+      ) : (
+        <details className="ontology-professional-tools ontology-simple-tools" open>
+          <summary>
+            <span>更多分析</span>
+            <strong>模拟、关系图与记录</strong>
+          </summary>
+          <div>
+            <button type="button" onClick={() => setActiveView('simulation')}>
+              <ExperimentOutlined />
+              <span>
+                <strong>模拟变化</strong>
+                <small>调整假设，查看可能结果</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => {
+              setSelectedNodeId(decision?.thesis.id);
+              setActiveView('network');
+            }}>
+              <BranchesOutlined />
+              <span>
+                <strong>完整证据链</strong>
+                <small>查看结论是怎样形成的</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveView('semantic')}>
+              <ClusterOutlined />
+              <span>
+                <strong>内容关系图</strong>
+                <small>查看快讯、文章和研报的关联</small>
+              </span>
+            </button>
+            <button type="button" onClick={() => setActiveView('governance')}>
+              <LockOutlined />
+              <span>
+                <strong>数据与记录</strong>
+                <small>查看来源、权限和决策历史</small>
+              </span>
+            </button>
+          </div>
+        </details>
+      )}
     </div>
   );
 
@@ -1243,7 +1290,7 @@ const InvestmentOntologyCenter: React.FC = () => {
             );
           })}
           <div className="ontology-network-canvas-footer">
-            <span><SafetyCertificateOutlined /> 数据来自 DAO 财经，所有推断均保留原文和置信度</span>
+            <span><SafetyCertificateOutlined /> 数据来自稻草财经，所有推断均保留原文和置信度</span>
             <em>{displayedGraph.nodes.length} 个对象 · {displayedGraph.edges.length} 条关系</em>
           </div>
         </div>
@@ -1516,7 +1563,7 @@ const InvestmentOntologyCenter: React.FC = () => {
           <article>
             <DatabaseOutlined />
             <span>数据源</span>
-            <strong>DAO 财经</strong>
+                    <strong>稻草财经</strong>
             <small>快讯 · 文章 · 研报</small>
           </article>
           <i>→</i>
@@ -1617,7 +1664,7 @@ const InvestmentOntologyCenter: React.FC = () => {
 
   return (
     <CenterShell
-      eyebrow="DAO 财经 · 投研决策助手"
+      eyebrow="稻草财经 · 投研决策助手"
       title="持仓决策助手"
       subtitle="只回答一件事：现在是否需要行动"
       icon={<NodeIndexOutlined />}

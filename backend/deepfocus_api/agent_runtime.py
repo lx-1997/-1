@@ -6,6 +6,7 @@ import os
 import re
 import signal
 import sqlite3
+from . import db
 import time
 import uuid
 from contextlib import suppress
@@ -3180,6 +3181,6 @@ def _row_to_record(row: dict[str, Any]) -> InvestmentTaskRecord:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+from . import db
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -770,6 +771,19 @@ async def _build_synthesis(
             # 发布前硬拦截：模型漏掉任一边或复述“仅一边有数据”时，改用保守的逐边事实兜底。
             all_sides_present = all(any(label and label in content for label in labels) for labels in required_sides)
             if not all_sides_present or re.search(r"仅.*(?:一方|单边)|只.*(?:宁德时代|比亚迪).*(?:数据|资料)", content):
+                content = _comparison_fallback_content(request, turns)
+            # A comparison answer must not present a polished conclusion when the
+            # two sides have no current quote/valuation snapshot. Financial
+            # statement fields alone cannot support a preference on valuation or
+            # capital flows; force the deterministic, gap-first fallback.
+            def _has_snapshot(item: dict[str, Any]) -> bool:
+                quote = item.get("quote") if isinstance(item.get("quote"), dict) else {}
+                valuation = item.get("valuation") if isinstance(item.get("valuation"), dict) else {}
+                keys = ("price", "current_price", "pe_ratio", "pb_ratio", "market_cap")
+                return any(quote.get(key) not in (None, "") for key in keys) or any(
+                    valuation.get(key) not in (None, "") for key in keys
+                )
+            if not all(_has_snapshot(item) for item in comparison_items[:2]):
                 content = _comparison_fallback_content(request, turns)
             content = _enforce_comparison_contract(request, content)
         return DulusAgentTurn(
@@ -1980,7 +1994,7 @@ def _safe_list(value: Any) -> list[str]:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

@@ -1636,3 +1636,64 @@
     max-height: none;
   }
 }
+
+/* 快速研读的统一进度提示：让等待过程可理解，也避免把技术日志塞进结果区。 */
+.research-ai-stage-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 0 2px;
+}
+
+.research-ai-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted, #8e99aa);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.research-ai-stage i {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border: 1px solid rgba(142, 153, 170, .35);
+  border-radius: 50%;
+  font-style: normal;
+  font-size: 10px;
+}
+
+.research-ai-stage.is-active {
+  color: #cdd7e6;
+}
+
+.research-ai-stage.is-active i {
+  border-color: rgba(63, 190, 143, .65);
+  color: #65d7ad;
+}
+
+.research-ai-stage.is-current {
+  color: #f0f5fb;
+  font-weight: 600;
+}
+
+.research-ai-stage.is-current i {
+  background: rgba(63, 190, 143, .16);
+  box-shadow: 0 0 0 3px rgba(63, 190, 143, .08);
+}
+
+@media (max-width: 560px) {
+  .research-ai-stage-strip {
+    gap: 2px;
+  }
+
+  .research-ai-stage {
+    gap: 4px;
+    font-size: 10px;
+  }
+}

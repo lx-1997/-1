@@ -332,7 +332,7 @@ const MarketRiskRadar: React.FC = () => {
       <CenterShell
       eyebrow="MARKET RISK EARLY WARNING"
       title="跨市场风险预警雷达"
-      subtitle="A股、港股、美股各市值前20家公司 · 宏观 × 行业 × 个股 × 资金 × daocaijing站内信息 × 美股期权"
+      subtitle="A股、港股、美股各市值前20家公司 · 宏观 × 行业 × 个股 × 资金 × 稻草财经站内信息 × 美股期权"
       icon={<SafetyCertificateOutlined />}
       actions={(
         <Space wrap>

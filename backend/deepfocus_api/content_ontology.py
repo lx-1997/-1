@@ -1,4 +1,4 @@
-"""统一内容本体：把快讯、文章、研报和机构纪要变成可计算的内容对象。
+"""统一内容本体：把快讯、文章、研报、机构纪要和名人观点变成可计算的内容对象。
 
 与只有 ``["快讯"]`` 这类自由文本标签不同，本模块提供：
 
@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sqlite3
+from . import db
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -35,6 +36,8 @@ FACET_LABELS: dict[str, str] = {
     "horizon": "影响周期",
     "market": "市场",
     "source": "信息来源",
+    "access": "访问权限",
+    "evidence_role": "证据角色",
     "legacy": "原始标签",
 }
 
@@ -47,6 +50,8 @@ FACET_COLORS: dict[str, str] = {
     "horizon": "#a78bfa",
     "market": "#2dd4bf",
     "source": "#94a3b8",
+    "access": "#fb7185",
+    "evidence_role": "#f97316",
     "legacy": "#64748b",
 }
 
@@ -55,8 +60,12 @@ CONTENT_TYPE_LABELS: dict[str, str] = {
     "article": "文章",
     "research": "研报",
     "institution_note": "机构纪要",
+    "celebrity_view": "名人观点",
     "evidence": "证据资料",
 }
+
+# 标注协议版本写入 metadata，规则升级后可以增量重跑而不覆盖人工修订记录。
+ANNOTATION_VERSION = "rules-v2"
 
 EVENT_RULES: list[tuple[str, str, tuple[str, ...]]] = [
     ("earnings", "业绩变化", ("财报", "业绩", "营收", "净利润", "毛利率", "eps", "盈利")),
@@ -103,7 +112,7 @@ HORIZON_RULES: list[tuple[str, str, tuple[str, ...]]] = [
 SOURCE_TIERS: list[tuple[str, str, tuple[str, ...]]] = [
     ("official", "官方/监管", ("交易所", "证监会", "国务院", "央行", "公司公告")),
     ("institution", "机构研究", ("证券", "投行", "研究所", "机构", "纪要")),
-    ("media", "财经媒体", ("彭博", "路透", "财联社", "新华社", "央视", "dao财经")),
+    ("media", "财经媒体", ("彭博", "路透", "财联社", "新华社", "央视", "dao财经", "稻草财经")),
     ("community", "社区来源", ("雪球", "公众号", "知识星球", "社区")),
 ]
 
@@ -120,7 +129,7 @@ def _db_path() -> Path:
 def _connect() -> sqlite3.Connection:
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = db.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
@@ -192,6 +201,8 @@ def init_content_ontology_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_content_type ON content_objects(content_type);
             CREATE INDEX IF NOT EXISTS idx_content_symbol ON content_objects(symbol);
+            CREATE INDEX IF NOT EXISTS idx_content_type_published ON content_objects(content_type, published_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_content_source_published ON content_objects(source_name, published_at DESC);
             CREATE INDEX IF NOT EXISTS idx_tag_facet ON ontology_tags(facet);
             CREATE INDEX IF NOT EXISTS idx_tag_link_tag ON content_tag_links(tag_id);
             CREATE INDEX IF NOT EXISTS idx_entity_link_entity ON content_entity_links(entity_id);
@@ -280,6 +291,11 @@ def annotate_content(
     published_at: str = "",
     legacy_tags: Optional[list[str]] = None,
     security_context: Optional[dict[str, str]] = None,
+    as_of: str = "",
+    collected_at: str = "",
+    access_level: str = "public",
+    evidence_role: str = "context",
+    annotation_version: str = ANNOTATION_VERSION,
     persist: bool = True,
 ) -> dict[str, Any]:
     """生成一条类型化多标签内容对象，并可选持久化规范关系。"""
@@ -343,6 +359,31 @@ def annotate_content(
     source_tags = _match_rules(source_text, "source", SOURCE_TIERS, 0.74, max_items=1)
     tags.extend(source_tags or [_tag("source", "other", source or "其他来源", 0.55)])
 
+    # 访问权限和证据角色是检索/合规维度，不依赖正文规则，必须显式写入。
+    access_labels = {
+        "public": "公开",
+        "member": "会员",
+        "whitelist": "白名单",
+        "private": "私有",
+    }
+    access_code = str(access_level or "public").strip().lower() or "public"
+    tags.append(_tag(
+        "access", access_code, access_labels.get(access_code, access_code),
+        1.0, source="policy",
+    ))
+    role_labels = {
+        "fact": "事实",
+        "opinion": "观点",
+        "context": "背景资料",
+        "analysis": "分析解读",
+        "counter": "反证/风险",
+    }
+    role_code = str(evidence_role or "context").strip().lower() or "context"
+    tags.append(_tag(
+        "evidence_role", role_code, role_labels.get(role_code, role_code),
+        1.0, source="policy",
+    ))
+
     for raw in (legacy_tags or [])[:12]:
         value = str(raw).strip()
         if value and value not in CONTENT_TYPE_LABELS.values():
@@ -366,6 +407,11 @@ def annotate_content(
         "symbol": sym,
         "url": str(url or ""),
         "published_at": str(published_at or ""),
+        "as_of": str(as_of or published_at or ""),
+        "collected_at": str(collected_at or ""),
+        "access_level": access_code,
+        "evidence_role": role_code,
+        "annotation_version": str(annotation_version or ANNOTATION_VERSION),
         "tags": final_tags,
         "entities": entities,
         "tag_count": len(final_tags),
@@ -401,6 +447,11 @@ def persist_annotation(annotation: dict[str, Any]) -> None:
                 "tag_count": annotation.get("tag_count", 0),
                 "facet_count": annotation.get("facet_count", 0),
                 "annotation_quality": annotation.get("annotation_quality", 0),
+                "as_of": annotation.get("as_of") or "",
+                "collected_at": annotation.get("collected_at") or "",
+                "access_level": annotation.get("access_level") or "public",
+                "evidence_role": annotation.get("evidence_role") or "context",
+                "annotation_version": annotation.get("annotation_version") or ANNOTATION_VERSION,
             },
             ensure_ascii=False,
         ),
@@ -578,7 +629,10 @@ def build_content_map(
 
     facets: list[dict[str, Any]] = []
     top_tag_ids: set[str] = set()
-    facet_order = ("content_type", "entity", "event", "theme", "signal", "horizon", "source")
+    facet_order = (
+        "content_type", "entity", "event", "theme", "signal", "horizon",
+        "market", "source", "access", "evidence_role",
+    )
     for facet in facet_order:
         items = []
         for tag_id, count in facet_counts.get(facet, Counter()).most_common(8):

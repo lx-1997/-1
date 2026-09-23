@@ -435,8 +435,10 @@ async def _analyze_text_parallel(
         return cached
 
     try:
+        # Long reports are deliberately text-only. Read a bounded 60-page
+        # window so conclusions and targets in the tail are not missed.
         text = await asyncio.to_thread(
-            rv.extract_pdf_text, pdf_bytes, max_pages=rv.MAX_VISION_PAGES,
+            rv.extract_pdf_text, pdf_bytes, max_pages=60,
         )
     except Exception as exc:  # PDF corruption belongs on the established vision fallback.
         raise rv.PdfTextUnavailable("无法读取 PDF 文本层，转视觉解读") from exc
@@ -501,9 +503,28 @@ async def analyze_pdf_adaptive(
     symbol: Optional[str] = None,
     max_pages: int = 6,
     background: bool = False,
+    text_only: bool = False,
 ) -> dict[str, Any]:
-    """Use parallel specialists for readable text and image-only reports."""
+    """Use text specialists; optionally refuse the expensive image fallback."""
     if not _ENABLED:
+        if text_only:
+            try:
+                return await rv.analyze_pdf_text(
+                    pdf_bytes, title=title, symbol=symbol, max_pages=60,
+                )
+            except rv.PdfTextUnavailable:
+                return rv._normalize_result(
+                    {
+                        "subject": symbol or "",
+                        "one_liner": "未提取到可用文字，未进行图片解读。",
+                        "summary": "这份研报未检测到可读取的文字层，因此本次仅尝试文字解读，没有调用图片识别。",
+                        "source_note": "文字层不可提取；未进行图片解读",
+                    },
+                    provider="text-only-fallback",
+                    pages=0,
+                    disclaimer="本次仅基于 PDF 可提取文字；未进行图片识别，请以原文为准。",
+                    compact_report=True,
+                )
         return await rv.analyze_pdf_auto(
             pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
         )
@@ -531,6 +552,20 @@ async def analyze_pdf_adaptive(
             result.setdefault("analysis_mode", "single_agent_fallback")
             result.setdefault("multi_agent_warning", str(exc)[:240])
             return result
+
+    if text_only:
+        return rv._normalize_result(
+            {
+                "subject": symbol or "",
+                "one_liner": "未提取到可用文字，未进行图片解读。",
+                "summary": "这份研报未检测到可读取的文字层，因此本次仅尝试文字解读，没有调用图片识别。",
+                "source_note": "文字层不可提取；未进行图片解读",
+            },
+            provider="text-only-fallback",
+            pages=0,
+            disclaimer="本次仅基于 PDF 可提取文字；未进行图片识别，请以原文为准。",
+            compact_report=True,
+        )
 
     try:
         return await _analyze_images_parallel(

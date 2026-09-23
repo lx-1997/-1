@@ -4,6 +4,7 @@ import json
 import os
 import smtplib
 import sqlite3
+from . import db
 import uuid
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -80,6 +81,9 @@ def init_recall_subscription_db() -> None:
                 severities_json TEXT NOT NULL,
                 scope TEXT NOT NULL,
                 label TEXT,
+                topics_json TEXT NOT NULL DEFAULT '[]',
+                keywords_json TEXT NOT NULL DEFAULT '[]',
+                mode TEXT NOT NULL DEFAULT 'important',
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             )
@@ -90,6 +94,15 @@ def init_recall_subscription_db() -> None:
             conn.execute("ALTER TABLE recall_subscriptions ADD COLUMN user_id TEXT")
         except sqlite3.OperationalError:
             pass  # 列已存在
+        for column, definition in (
+            ("topics_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("mode", "TEXT NOT NULL DEFAULT 'important'"),
+        ):
+            try:
+                conn.execute(f"ALTER TABLE recall_subscriptions ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError:
+                pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS recall_deliveries (
@@ -146,6 +159,9 @@ def create_recall_subscription(request: RecallSubscriptionCreateRequest, user_id
     # 默认级别含 success：scope 默认 watchlist（只看自选），自选股的利好快讯正是"盯盘"要的通知；
     # info（中性资讯）刻意不进默认，避免热门股一天十几条把通知权限惹到 denied。
     severities = list(request.severities) or ["success", "warning", "critical"]
+    topics = _normalize_topics(request.topics)
+    keywords = _normalize_keywords(request.keywords)
+    mode = request.mode if request.mode in ("important", "all", "off") else "important"
     address = request.address.strip()
     record = {
         "id": str(uuid.uuid4()),
@@ -155,6 +171,9 @@ def create_recall_subscription(request: RecallSubscriptionCreateRequest, user_id
         "severities_json": json.dumps(severities, ensure_ascii=False),
         "scope": request.scope,
         "label": (request.label or "").strip() or None,
+        "topics_json": json.dumps(topics, ensure_ascii=False),
+        "keywords_json": json.dumps(keywords, ensure_ascii=False),
+        "mode": mode,
         "active": 1,
         "created_at": utc_now_iso(),
         "user_id": user_id,  # 归属人：登录则绑定，便于本人 list/delete；匿名为 None（仍正常投递，只是不可在 UI 管理）
@@ -172,7 +191,9 @@ def create_recall_subscription(request: RecallSubscriptionCreateRequest, user_id
                 """
                 UPDATE recall_subscriptions
                 SET symbols_json = :symbols_json, severities_json = :severities_json,
-                    scope = :scope, label = :label, active = 1, created_at = :created_at, user_id = :user_id
+                    scope = :scope, label = :label, topics_json = :topics_json,
+                    keywords_json = :keywords_json, mode = :mode, active = 1,
+                    created_at = :created_at, user_id = :user_id
                 WHERE id = :id
                 """,
                 record,
@@ -181,9 +202,11 @@ def create_recall_subscription(request: RecallSubscriptionCreateRequest, user_id
             conn.execute(
                 """
                 INSERT INTO recall_subscriptions (
-                    id, channel, address, symbols_json, severities_json, scope, label, active, created_at, user_id
+                    id, channel, address, symbols_json, severities_json, scope, label,
+                    topics_json, keywords_json, mode, active, created_at, user_id
                 ) VALUES (
-                    :id, :channel, :address, :symbols_json, :severities_json, :scope, :label, :active, :created_at, :user_id
+                    :id, :channel, :address, :symbols_json, :severities_json, :scope, :label,
+                    :topics_json, :keywords_json, :mode, :active, :created_at, :user_id
                 )
                 """,
                 record,
@@ -224,6 +247,8 @@ def subscription_matches(subscription: RecallSubscriptionRecord, message: Realti
     """与前端 signalRecall.shouldRecall 同义：级别命中 + 范围/标的匹配。
     例外：每日复盘/投研晨报是一日一次的策划摘要，对所有开了盯盘的人都是高价值「每日回访钩子」
     → 全员送达（不受 scope=watchlist / severities 收窄）。这是把流失用户拉回来的核心信号。"""
+    if subscription.channel == "fcm":
+        return _fcm_subscription_matches(subscription, message)
     if (getattr(message, "topic", "") or "") in ("复盘", "晨报"):
         return True
     if message.severity not in subscription.severities:
@@ -234,6 +259,57 @@ def subscription_matches(subscription: RecallSubscriptionRecord, message: Realti
     if not message.symbol:
         return False
     return message.symbol.upper() in [symbol.upper() for symbol in subscription.symbols]
+
+
+def _fcm_subscription_matches(subscription: RecallSubscriptionRecord, message: RealtimeMessageRecord) -> bool:
+    """FCM 与 App 内弹窗完全同义：类型/关键词先过滤，再按重要级别判断。"""
+    if subscription.mode == "off":
+        return False
+    topic = _normalize_popup_topic(message.topic)
+    if subscription.topics and topic not in subscription.topics:
+        return False
+    if subscription.keywords:
+        haystack = " ".join([message.title, message.content, message.topic, message.symbol or "", *(message.tags or [])]).casefold()
+        if not any(keyword.casefold() in haystack for keyword in subscription.keywords):
+            return False
+    if subscription.mode == "all":
+        return True
+    if message.severity in ("critical", "warning"):
+        return True
+    if message.severity == "success":
+        return bool(message.symbol) and message.symbol.upper() in {s.upper() for s in subscription.symbols}
+    return False
+
+
+def _normalize_popup_topic(value: str) -> str:
+    return {
+        "深度文章": "文章",
+        "投行研报": "研报",
+        "纪要": "机构纪要",
+        "机构调研纪要": "机构纪要",
+    }.get(value or "", value or "")
+
+
+def _normalize_topics(values: Any) -> list[str]:
+    allowed = {"快讯", "文章", "研报", "机构纪要"}
+    out: list[str] = []
+    for value in values or []:
+        normalized = _normalize_popup_topic(str(value).strip())
+        if normalized in allowed and normalized not in out:
+            out.append(normalized)
+    return out[:8]
+
+
+def _normalize_keywords(values: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        keyword = " ".join(str(value or "").strip().split())[:40]
+        key = keyword.casefold()
+        if keyword and key not in seen:
+            seen.add(key)
+            out.append(keyword)
+    return out[:20]
 
 
 def dispatch_recall(message: RealtimeMessageRecord) -> RecallDispatchResponse:
@@ -272,6 +348,8 @@ def _deliver(
         return _deliver_webpush(subscription, message, tracked_url)
     if subscription.channel == "wechat":
         return _deliver_wechat(subscription, message, tracked_url)
+    if subscription.channel == "fcm":
+        return _deliver_fcm(subscription, message, tracked_url)
     return _result(subscription, "skipped", "未知通道")
 
 
@@ -518,6 +596,36 @@ def _deliver_wechat(
         return _result(subscription, "error", f"推送失败：{exc}"[:200])
 
 
+def _deliver_fcm(
+    subscription: RecallSubscriptionRecord,
+    message: RealtimeMessageRecord,
+    tracked_url: str,
+) -> RecallDeliveryResult:
+    try:
+        from .fcm_push import send_data_message
+    except Exception:
+        return _result(subscription, "skipped", "FCM 适配器不可用")
+    status, detail, permanent = send_data_message(
+        subscription.address,
+        title=f"{message.symbol} · {message.title}" if message.symbol else message.title,
+        body=message.content or "点击查看资讯详情",
+        message_id=message.id,
+        topic=message.topic,
+        severity=message.severity,
+        symbol=message.symbol or "",
+        url=_deep_link(message),
+        tracked_url=tracked_url,
+        dedupe_id=str(
+            (message.metadata or {}).get("native_dedupe_id")
+            or message.source_id
+            or message.id
+        ),
+    )
+    if permanent:
+        _deactivate_subscription(subscription.id)
+    return _result(subscription, status, detail)
+
+
 def _result(subscription: RecallSubscriptionRecord, status: str, detail: str) -> RecallDeliveryResult:
     return RecallDeliveryResult(
         subscription_id=subscription.id,
@@ -651,7 +759,7 @@ def _row_to_delivery(row: dict[str, Any]) -> RecallDeliveryRecord:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = db.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -661,13 +769,26 @@ def _row_to_subscription(row: dict[str, Any]) -> RecallSubscriptionRecord:
         id=row["id"],
         channel=row["channel"],
         address=row["address"],
-        symbols=json.loads(row.get("symbols_json") or "[]"),
-        severities=json.loads(row.get("severities_json") or "[]"),
+        symbols=_load_json_array(row.get("symbols_json")),
+        severities=_load_json_array(row.get("severities_json")),
         scope=row.get("scope") or "watchlist",
         label=row.get("label"),
+        topics=_normalize_topics(_load_json_array(row.get("topics_json"))),
+        keywords=_normalize_keywords(_load_json_array(row.get("keywords_json"))),
+        mode=row.get("mode") if row.get("mode") in ("important", "all", "off") else "important",
         active=bool(row.get("active", 1)),
         created_at=row["created_at"],
     )
+
+
+def _load_json_array(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    try:
+        value = json.loads(raw or "[]")
+        return value if isinstance(value, list) else []
+    except (TypeError, ValueError):
+        return []
 
 
 def _normalize_symbols(symbols: list[str]) -> list[str]:

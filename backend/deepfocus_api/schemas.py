@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal, Optional
+from datetime import datetime, timezone
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -173,6 +173,10 @@ class TearSheetResponse(BaseModel):
     us10y_series: list[dict] = Field(default_factory=list)
     disclaimer: str = "个股速判卡基于多源证据的规则化判定，仅供投研参考，不构成投资建议。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    # Shared CoreAgent observability; optional for cached/rule-only cards.
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 PortfolioVerdict = Literal["稳健", "需关注", "高风险", "空仓"]
@@ -197,6 +201,9 @@ class PortfolioReviewResponse(BaseModel):
     alerts: list[str] = Field(default_factory=list)
     disclaimer: str = "组合速判基于本地持仓与风控规则，仅供风险管理参考，不构成投资建议。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 MacroVerdict = Literal["风险偏好", "中性", "避险", "数据不足"]
@@ -239,6 +246,9 @@ class MacroReviewResponse(BaseModel):
     us10y_series: list[dict] = Field(default_factory=list)
     disclaimer: str = "宏观环境速判基于公开市场数据的规则化判定，仅供研究参考，不构成投资建议。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class WatchlistSectorBucket(BaseModel):
@@ -270,6 +280,9 @@ class BriefingResponse(BaseModel):
     watchlist: Optional[WatchlistSummary] = None
     disclaimer: str = "投研晨报为多引擎规则化聚合，仅供研究参考，不构成投资建议。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class StockCompareItem(BaseModel):
@@ -323,6 +336,10 @@ class StockScreenResponse(BaseModel):
     provider: str = "rule-template"
     disclaimer: str = "自然语言选股基于确定性速判引擎逐维度判定 + AI 解析筛选意图，仅供研究参考，不构成投资建议。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    # CoreAgent observability metadata; optional for rule-template fallbacks.
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class StockAnalysisResponse(BaseModel):
@@ -339,6 +356,11 @@ class StockAnalysisResponse(BaseModel):
     suggested_questions: list[str]
     disclaimer: str = "仅供投研参考，不构成投资建议。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    # CoreAgent observability metadata; optional for backwards-compatible
+    # cached/legacy responses.
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class SentimentRequest(BaseModel):
@@ -353,6 +375,11 @@ class SentimentResponse(BaseModel):
     score: float = Field(ge=-1, le=1)
     rationale: str
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    # Optional run metadata keeps this small response compatible with the
+    # shared CoreAgent boundary just like the other AI projections.
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class Capability(BaseModel):
@@ -370,7 +397,7 @@ class CapabilityListResponse(BaseModel):
 
 
 class ModelConfigRequest(BaseModel):
-    provider: Literal["mock", "openai", "minimax", "openai-compatible", "cloud"] = "mock"
+    provider: Literal["mock", "openai", "minimax", "deepseek", "deep-seek", "deep_seek", "deepseek-api", "deepseek-compatible", "openai-compatible", "cloud"] = "mock"
     model: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
@@ -386,6 +413,8 @@ class ModelConfigResponse(BaseModel):
     api_key_configured: bool
     api_key_preview: Optional[str] = None
     config_source: str
+    pool_size: int = 1
+    load_balancing: bool = False
 
 
 class FileExtractionResponse(BaseModel):
@@ -635,18 +664,23 @@ class RealtimeMessageListResponse(BaseModel):
     messages: list[RealtimeMessageRecord]
 
 
-RecallChannel = Literal["email", "webpush", "wechat"]
+RecallChannel = Literal["email", "webpush", "wechat", "fcm"]
 RecallScope = Literal["watchlist", "all"]
 RecallDeliveryStatus = Literal["sent", "skipped", "pending", "error"]
+RecallPopupMode = Literal["important", "all", "off"]
 
 
 class RecallSubscriptionCreateRequest(BaseModel):
     channel: RecallChannel
-    address: str  # 邮箱地址 / Web Push 订阅信息(JSON 串)
+    address: str  # 邮箱地址 / Web Push 订阅信息(JSON 串) / Android FCM registration token
     symbols: list[str] = Field(default_factory=list)
     severities: list[RealtimeMessageSeverity] = Field(default_factory=lambda: ["warning", "critical"])
     scope: RecallScope = "watchlist"
     label: Optional[str] = None
+    # Android FCM 过滤器：与前台弹窗、原生轮询保持同一套语义。
+    topics: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    mode: RecallPopupMode = "important"
 
 
 class RecallSubscriptionRecord(BaseModel):
@@ -657,6 +691,9 @@ class RecallSubscriptionRecord(BaseModel):
     severities: list[RealtimeMessageSeverity] = Field(default_factory=list)
     scope: RecallScope
     label: Optional[str] = None
+    topics: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    mode: RecallPopupMode = "important"
     active: bool = True
     created_at: str
 
@@ -816,6 +853,9 @@ class PersonDigestResponse(BaseModel):
     item_count: int = 0
     generated_at: str
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class CelebrityViewComment(BaseModel):
@@ -902,6 +942,9 @@ class CelebrityDigestResponse(BaseModel):
     item_count: int = 0
     generated_at: str
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 McpTransport = Literal["streamable_http", "stdio", "hosted"]
@@ -1124,6 +1167,17 @@ class NewsAnalyzeRequest(BaseModel):
     title: str = ""
     content: str = ""
     url: Optional[str] = None
+    # 文章可带消息 id；服务端优先读取已预热的纯文字原文。
+    message_id: Optional[str] = None
+
+
+class ResearchLogicLine(BaseModel):
+    """One independent fact → mechanism → impact → validation track."""
+    title: str = ""
+    evidence: str = ""
+    chain: str = ""
+    impact: str = ""
+    watch: str = ""
 
 
 class ResearchVisionAnalysisResponse(BaseModel):
@@ -1135,6 +1189,7 @@ class ResearchVisionAnalysisResponse(BaseModel):
     core_logic: str = ""                                # 投资逻辑：核心驱动/因果链
     takeaway: str = ""                                  # 一句话启示
     df_take: str = ""                                   # DeepFocus 视角点评：我方原创独立判断（转化创作，版权安全，可盖 DeepFocus 水印）
+    logic_lines: list[ResearchLogicLine] = Field(default_factory=list)  # 贯穿式独立逻辑线拆解
     bullish: list[str] = Field(default_factory=list)    # 利好/看涨
     bearish: list[str] = Field(default_factory=list)    # 利空/风险
     instruments: list[str] = Field(default_factory=list)  # 提及标的（A/美/港股+黄金原油白银比特币）
@@ -1150,6 +1205,181 @@ class ResearchVisionAnalysisResponse(BaseModel):
     disclaimer: str = ""
     source_note: str = ""  # 取料充分度提示：「已读取原文全文」/「仅据标题概括」，前端诚实展示不误导
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# 深度研报稿（Deep Draft）
+# ---------------------------------------------------------------------------
+#
+# ``ResearchVisionAnalysisResponse`` is intentionally a compact, single-report
+# card.  The deep-draft contract is kept separate so clients can evolve from a
+# quick read to a publication-style article without making the existing API
+# response wider or breaking old consumers.  All nested records are permissive
+# (``extra='allow'``) because cached drafts produced by older model prompts may
+# contain a few additional editorial fields.
+
+
+class ResearchDeepDraftRequest(BaseModel):
+    """Request a long-form, source-bound research draft.
+
+    A draft may be built from one PDF (the common path) or several source ids
+    for a topic synthesis.  ``file_id``/``pdf_url``/``workbench_filename`` are
+    intentionally optional at validation time: the endpoint can return a
+    clearly marked, empty-evidence fallback when a source is temporarily
+    unavailable instead of manufacturing an analysis.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = "研报深度解读"
+    symbol: Optional[str] = None
+    file_id: Optional[str] = None
+    filename: Optional[str] = None
+    workbench_filename: Optional[str] = None
+    workbench_out: str = "downloads/海外投行报告"
+    pdf_url: Optional[str] = None
+    max_pages: int = Field(default=32, ge=1, le=60)
+    source_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ResearchDeepDraftEvidence(BaseModel):
+    """A source-bound claim used by a section or watch item."""
+
+    model_config = ConfigDict(extra="allow")
+
+    page: Optional[int] = Field(default=None, ge=1)
+    pages: Optional[str] = None
+    excerpt: str = ""
+    label: str = ""
+    source_id: Optional[str] = None
+    kind: str = "pdf"
+
+
+class ResearchDeepDraftTable(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str = ""
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[str]] = Field(default_factory=list)
+    note: Optional[str] = None
+
+
+class ResearchDeepDraftMetric(BaseModel):
+    """A small, first-screen metric that can be understood without the table."""
+
+    model_config = ConfigDict(extra="allow")
+
+    label: str = ""
+    value: Union[str, int, float] = ""
+    change: Union[str, int, float] = ""
+    context: str = ""
+    period: str = ""
+    unit: str = ""
+    status: str = ""
+    evidence: list[ResearchDeepDraftEvidence] = Field(default_factory=list)
+
+
+class ResearchDeepDraftSection(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str = "section-1"
+    title: str = ""
+    summary: str = ""
+    paragraphs: list[str] = Field(default_factory=list)
+    bullets: list[str] = Field(default_factory=list)
+    evidence: list[ResearchDeepDraftEvidence] = Field(default_factory=list)
+    tables: list[ResearchDeepDraftTable] = Field(default_factory=list)
+
+
+class ResearchDeepDraftWatchItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    # ``title`` is the preferred display label; ``item`` is retained for the
+    # original API sketch and for clients that render a compact watchlist.
+    title: str = ""
+    item: str = ""
+    signal: str = ""
+    window: str = ""
+    metric: str = ""
+    trigger: str = ""
+    why: str = ""
+    evidence: list[ResearchDeepDraftEvidence] = Field(default_factory=list)
+
+
+class ResearchDeepDraftRisk(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str = ""
+    detail: str = ""
+    evidence: list[ResearchDeepDraftEvidence] = Field(default_factory=list)
+
+
+class ResearchDeepDraftSource(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str = ""
+    label: str = ""
+    page: Optional[int] = Field(default=None, ge=1)
+    pages: Optional[str] = None
+    url: Optional[str] = None
+    excerpt: str = ""
+    kind: str = "pdf"
+    source_id: Optional[str] = None
+
+
+class ResearchDeepDraftCoverage(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    pages_read: int = Field(default=0, ge=0)
+    chars_read: int = Field(default=0, ge=0)
+    cited_claims: int = Field(default=0, ge=0)
+    verified_claims: int = Field(default=0, ge=0)
+    source_count: int = Field(default=0, ge=0)
+    total_pages: int = Field(default=0, ge=0)
+
+
+class ResearchDeepDraftResponse(BaseModel):
+    """Publication-style research draft returned by ``/api/research/deep-draft``."""
+
+    model_config = ConfigDict(extra="allow")
+
+    title: str = ""
+    subtitle: str = ""
+    subject: str = ""
+    symbol: Optional[str] = None
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    read_time_minutes: int = Field(default=1, ge=1)
+    source_count: int = Field(default=0, ge=0)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    one_liner: str = ""
+    executive_summary: str = ""
+    core_conclusion: str = ""
+    thesis: str = ""
+    sections: list[ResearchDeepDraftSection] = Field(default_factory=list)
+    metrics: list[ResearchDeepDraftMetric] = Field(default_factory=list)
+    plain_language_summary: str = ""
+    decision_implication: str = ""
+    glossary: list[dict[str, str]] = Field(default_factory=list)
+    tables: list[ResearchDeepDraftTable] = Field(default_factory=list)
+    watchlist: list[ResearchDeepDraftWatchItem] = Field(default_factory=list)
+    # A risk may be a structured record or a legacy plain string.  Keeping the
+    # union makes this response readable by both the new article renderer and
+    # the existing compact card.
+    # ``typing.Union`` keeps this model importable on the project's Python
+    # 3.9 runtime.  PEP 604 (``ResearchDeepDraftRisk | str``) is evaluated by
+    # Pydantic while resolving model fields and raises on 3.9 even with
+    # ``from __future__ import annotations``.
+    risks: list[Union[ResearchDeepDraftRisk, str]] = Field(default_factory=list)
+    instruments: list[str] = Field(default_factory=list)
+    sources: list[ResearchDeepDraftSource] = Field(default_factory=list)
+    disclaimer: str = ""
+    mode: Literal["deep_draft"] = "deep_draft"
+    pages_analyzed: int = Field(default=0, ge=0)
+    provider: str = ""
+    source_coverage: ResearchDeepDraftCoverage = Field(default_factory=ResearchDeepDraftCoverage)
 
 
 MarketDataLayerKind = Literal["free_quote", "structured_ashare", "sentiment"]
@@ -1421,6 +1651,10 @@ class OptionsAiAnalysisResponse(BaseModel):
     suggested_action: str = ""
     disclaimer: str = "AI 走势研判仅供投研和风控参考，不构成投资建议或收益承诺；请结合实时行情、订单流、基本面和自身风险承受能力独立判断。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    # Non-breaking observability metadata from the shared CoreAgent boundary.
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class MultiMarketDecisionRequest(BaseModel):
@@ -1697,6 +1931,9 @@ class ShareholderChangeInterpretResponse(BaseModel):
     prompt_version: str = "shareholder-change-interpret-v1"
     confidence: float = Field(default=0.62, ge=0, le=1)
     disclaimer: str = "AI 解读仅供投研参考，不构成投资建议。"
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class CnEarningsScanRequest(BaseModel):
@@ -1811,6 +2048,9 @@ class CnEarningsDiagnosisResponse(BaseModel):
     prompt_version: str = "cn-earnings-diagnosis-v1"
     confidence: float = Field(default=0.62, ge=0, le=1)
     disclaimer: str = "AI 诊断仅供投研参考，不构成投资建议。"
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class MajorEventScanRequest(BaseModel):
@@ -2096,6 +2336,9 @@ class GeneralChatResponse(BaseModel):
     title: str = "DeepFocus"
     content: str
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class ModuleContextChatRequest(BaseModel):
@@ -2107,6 +2350,10 @@ class ModuleContextChatRequest(BaseModel):
 
 class OrchestratorChatRequest(BaseModel):
     message: str
+    # Optional non-user-visible context carried separately from ``message``.
+    # Keeping the current question clean prevents deterministic skill
+    # detectors from re-triggering on keywords in prior turns/attachments.
+    context_hint: str = ""
     history: list[dict[str, str]] = Field(default_factory=list)
     engine: AgentEngine = "deepfocus"
     mode: Literal["research", "risk", "portfolio", "monitor"] = "research"
@@ -2146,6 +2393,9 @@ class OrchestratorChatResponse(BaseModel):
     handled_inline: bool = False
     confidence: float = Field(default=0.6, ge=0, le=1)
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 DulusProviderMode = Literal["openai_compatible", "local_mock", "webbridge_disabled"]
@@ -2248,6 +2498,21 @@ class DulusRoundtableResponse(BaseModel):
     citable_sources: list[DulusCitableSource] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0, le=1)
     disclaimer: str = "合规版 Dulus Runtime 不捕获第三方网页会话；输出仅供投研和工作流参考。"
+    quota_left: Optional[int] = None
+    # 统一研究 Harness 的资料覆盖快照，供前端展示实际查到/采用的站内与公开数据。
+    content_scope: dict[str, Any] = Field(default_factory=dict)
+    # 可审计研究路径与关键事实摘要；只展示已执行的步骤/事实，不暴露模型隐藏思维链。
+    research_steps: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_highlights: list[str] = Field(default_factory=list)
+    # 可读的引用依据：将站内资料、外部公开资料和数值数据通道分组呈现。
+    evidence_references: list[dict[str, Any]] = Field(default_factory=list)
+    # 前后端可识别当前答案是否经过同一轮证据治理与产品收口协议。
+    answer_protocol_version: str = "research-v3"
+    # CoreAgent observability metadata.  Optional so historical roundtable
+    # cache rows and older clients remain valid during the migration.
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class DulusMemoryCreateRequest(BaseModel):
@@ -2304,6 +2569,9 @@ class FinGptTaskResponse(BaseModel):
     confidence: float = Field(default=0.5, ge=0, le=1)
     disclaimer: str = "仅供投研和运营参考，不构成投资建议、支付建议或合规结论。"
     data_quality: DataQuality = Field(default_factory=DataQuality)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class StockCheckRequest(BaseModel):
@@ -2342,6 +2610,9 @@ class StockCheckResponse(BaseModel):
     agent_brief: Optional[FinGptTaskResponse] = None
     warnings: list[str] = Field(default_factory=list)
     disclaimer: str = "一键检测为多能力自动汇总，只能作为投研线索和复核清单，不构成投资建议。"
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class DataSourceItemInterpretRequest(BaseModel):
@@ -2352,6 +2623,9 @@ class DataSourceItemInterpretResponse(BaseModel):
     item: DataSourceItemRecord
     interpretation: str
     result: FinGptTaskResponse
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 ProfessionalReportType = Literal["annual", "semiannual", "quarterly", "research", "transcript", "other"]
@@ -2473,6 +2747,9 @@ class ProfessionalRagQueryResponse(BaseModel):
     confidence: float = Field(default=0.0, ge=0, le=1)
     missing: list[str] = Field(default_factory=list)
     disclaimer: str = "仅供投研参考，不构成投资建议。"
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class ProfessionalReportAnalysisRequest(BaseModel):
@@ -2490,6 +2767,9 @@ class ProfessionalReportAnalysisResponse(BaseModel):
     citations: list[ProfessionalCitation] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0, le=1)
     disclaimer: str = "仅供投研参考，不构成投资建议。"
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class ProfessionalEvalCase(BaseModel):
@@ -2531,6 +2811,9 @@ class ProfessionalEvalRunResponse(BaseModel):
     answer_match_rate: float = Field(ge=0, le=1)
     refusal_guard_rate: float = Field(ge=0, le=1)
     cases: list[ProfessionalEvalCaseResult] = Field(default_factory=list)
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 PositionDirection = Literal["long", "short"]
@@ -3008,6 +3291,11 @@ class DashboardAnalysisResponse(BaseModel):
     actions: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0, ge=0, le=1)
+    # CoreAgent observability metadata; optional to preserve cached/legacy
+    # dashboard analysis payloads.
+    core_agent_run_id: Optional[str] = None
+    core_agent_protocol_version: Optional[str] = None
+    core_agent_route: Optional[str] = None
 
 
 class CrossModuleResearchRequest(BaseModel):

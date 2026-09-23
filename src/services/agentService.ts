@@ -1076,7 +1076,7 @@ export function subscribeResearchLoop(
           } else if (line.trim() === '' && currentData) {
             try {
               const parsed = JSON.parse(currentData) as LoopResearchEvent;
-              if (currentEventType === 'loop_done') {
+              if (currentEventType === 'loop_done' || currentEventType === 'research_done') {
                 handlers.onDone?.(parsed);
               } else {
                 handlers.onEvent(parsed);

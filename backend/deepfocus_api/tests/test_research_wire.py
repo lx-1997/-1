@@ -155,16 +155,11 @@ def test_research_file_download_gated_by_default(monkeypatch):
     assert exc.value.status_code == 402
 
 
-@pytest.mark.parametrize("tier", ["premium", "lifetime"])
-def test_paid_members_pass_research_original_gate(monkeypatch, tier):
+def test_only_designated_user_passes_research_original_gate(monkeypatch):
     _login_as(monkeypatch, "paid-member")
-    monkeypatch.setattr(main, "membership_of_username", lambda value: {"tier": tier})
-    assert main._can_read_research_original({"username": "paid-member"}) is True
-
-
-def test_admin_and_existing_allowlist_keep_research_original_access(monkeypatch):
-    _login_as(monkeypatch, "ordinary-admin")
-    assert main._can_read_research_original({"username": "ordinary-admin", "role": "admin"}) is True
+    monkeypatch.setattr(main, "membership_of_username", lambda value: {"tier": "premium"})
+    assert main._can_read_research_original({"username": "paid-member"}) is False
+    assert main._can_read_research_original({"username": "ordinary-admin", "role": "admin"}) is False
     assert main._can_read_research_original({"username": "LX199710"}) is True
 
 

@@ -29,8 +29,14 @@ def test_upsert_query_dedup_order(arch):
 def test_before_paging_and_search(arch):
     arch.upsert([_it("a", "2026-06-24"), _it("b", "2026-06-20"), _it("c", "2026-06-10")])
     assert [x["id"] for x in arch.query(before="2026-06-20")] == ["c"]   # 只取更早(不含等于)
-    arch.upsert([_it("x", "2026-06-15", "特斯拉 FSD")])
-    assert [x["id"] for x in arch.query(query_text="特斯拉")] == ["x"]    # 标题搜索
+    # 同一天被一页截断时，before_id 继续取该日剩余条目；不能因 date < 游标把整天跳过。
+    arch.upsert([_it("z", "2026-06-18"), _it("y", "2026-06-18"), _it("x", "2026-06-18")])
+    first = arch.query(limit=2, before="2026-06-20")
+    assert [x["id"] for x in first] == ["z", "y"]
+    rest = arch.query(limit=9, before=first[-1]["date"], before_id=first[-1]["id"])
+    assert [x["id"] for x in rest][:2] == ["x", "c"]
+    arch.upsert([_it("t", "2026-06-15", "特斯拉 FSD")])
+    assert [x["id"] for x in arch.query(query_text="特斯拉")] == ["t"]    # 标题搜索
 
 
 def test_capacity_cap(arch, monkeypatch):

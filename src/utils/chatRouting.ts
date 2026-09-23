@@ -17,6 +17,14 @@ const RESEARCH_KEYWORDS = [
   '财报', '基本面', '估值', '营收', '利润', '风险', '持仓', '前景', '推荐', '建议',
 ];
 
+// 比较类问题经常没有显式出现「分析/估值」等词，但用户明确是在做投资判断。
+// 如果漏掉这类句式，AIChatPanel 会落到普通对话，用户看不到真实取数进度，也容易得到
+// 没有证据链的泛泛回答。
+const COMPARISON_KEYWORDS = [
+  '对比', '比较', '更偏向', '谁更好', '哪个更好', '哪只更', '谁更值得',
+  '哪个更值得', '怎么选', '选哪只', '排序', '哪家更', '两只谁', '几只谁',
+];
+
 /** 从一段中文/英文混排的提问里，尽量抽出一个股票代码（美股 ticker 或 A 股代码前缀）。 */
 export function extractStockSymbol(text: string): string | null {
   const patterns = [
@@ -44,7 +52,11 @@ export function extractStockSymbol(text: string): string | null {
 
 /** 判断这条消息是不是「想对某个标的做研究」，而非闲聊或操作指令。 */
 export function isResearchMessage(text: string): boolean {
-  return RESEARCH_KEYWORDS.some(keyword => text.includes(keyword));
+  return RESEARCH_KEYWORDS.some(keyword => text.includes(keyword)) || isComparisonMessage(text);
+}
+
+export function isComparisonMessage(text: string): boolean {
+  return COMPARISON_KEYWORDS.some(keyword => text.includes(keyword));
 }
 
 /** 一条消息是否应该触发个股深度研究 Loop：既能识别出标的，又是研究意图。 */

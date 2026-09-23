@@ -24,6 +24,7 @@ _WIRE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _WIRE_TTL = float(os.getenv("DEEPFOCUS_WIRE_CACHE_TTL", "600"))
 # 一次回源抓取的「池」上限（去重前，交给工作台 resultLimit；搜索非下载、不受 ZSXQ 下载限额影响）
 _WIRE_POOL = int(os.getenv("DEEPFOCUS_WIRE_POOL", "500"))
+_ANNOTATED_WIRE_IDS: set[str] = set()
 
 from .research_workbench import WORKBENCH_DIR
 
@@ -130,6 +131,23 @@ def _extract_doc_date(name: str) -> str:
         return f"{m.group(1)}-{int(m.group(2)):02d}"
     return ""
 
+def _valid_published_date(value: str, fallback: str = "") -> str:
+    """Reject malformed or future report dates (clock skew/upstream bad metadata)."""
+    raw = (value or "").strip()
+    try:
+        dt = datetime.fromisoformat(raw)
+        if dt.date() > datetime.now(timezone.utc).date():
+            fb = (fallback or "")[:10]
+            try:
+                if datetime.fromisoformat(fb).date() <= datetime.now(timezone.utc).date():
+                    return fb
+            except Exception:
+                pass
+            return ""
+    except Exception:
+        return (fallback or "")[:10]
+    return raw
+
 
 async def fetch_research_wire_online(
     *, limit: int = 60, query: str = "", use_cache: bool = True,
@@ -181,6 +199,8 @@ async def fetch_research_wire_online(
         _doc = _extract_doc_date(name)
         # 只接受完整 YYYY-MM-DD；部分日期(如「2026年6月」→2026-06)会在前端日期分组里多出脏分组，回退到帖子时间
         disp_date = (_doc if len(_doc) == 10 else "") or topic_time[:10] or created[:10]
+        # Upstream occasionally emits dates years in the future; never expose these.
+        disp_date = _valid_published_date(disp_date, topic_time[:10] or created[:10])
         fid = str(it.get("fileId") or "")
         items.append({
             "id": fid or hashlib.sha1(name.encode("utf-8")).hexdigest()[:12],
@@ -195,6 +215,27 @@ async def fetch_research_wire_online(
             "download_count": int(it.get("downloadCount") or 0),
             "file_id": fid,
         })
+        # Every discovered report receives a stable ontology index entry even
+        # when no user has opened it yet.  This keeps the recent-content bundle
+        # and per-stock research on the same searchable identity graph.
+        try:
+            stable_id = fid or hashlib.sha1(name.encode("utf-8")).hexdigest()[:20]
+            if stable_id not in _ANNOTATED_WIRE_IDS:
+                from .content_ontology import annotate_content
+                annotate_content(
+                    content_id=f"wire:{stable_id}",
+                    content_type="research",
+                    title=title,
+                    text=f"{org} {disp_date}",
+                    source_name="海外投行研报",
+                    published_at=topic_time or created or disp_date,
+                    persist=True,
+                )
+                _ANNOTATED_WIRE_IDS.add(stable_id)
+                if len(_ANNOTATED_WIRE_IDS) > 5000:
+                    _ANNOTATED_WIRE_IDS.pop()
+        except Exception:  # noqa: BLE001 - indexing must not break the source list
+            pass
     full = {"items": items, "total": len(items), "exists": True, "online": True}
     if items:  # 仅缓存成功的非空结果，避免缓存住偶发空响应
         _WIRE_CACHE[cache_key] = (now, full)

@@ -16,6 +16,7 @@ const DIRECT_MENU_VIEWS: Partial<Record<string, ViewType>> = {
   'financial-terminal': 'financial-terminal',
   'risk-dashboard': 'risk-dashboard',
   'quant-lab': 'quant-lab',
+  'backtest-center': 'backtest-center',
   'data-sources': 'data-sources',
   'multi-market-decision': 'multi-market-decision',
 };
