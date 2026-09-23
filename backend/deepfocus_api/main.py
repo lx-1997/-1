@@ -4647,6 +4647,15 @@ async def api_zsxq_topic_comments(request: Request, topic_id: str = "", limit: i
 
 
 _ZSXQ_IMG_HOSTS = {"images.zsxq.com"}  # ⚠️SSRF 白名单：只准代理知识星球图床，绝不做开放代理
+
+
+@app.get("/api/zsxq/sentiment-summary")
+async def api_zsxq_sentiment_summary(force: bool = False) -> dict[str, Any]:
+    """机构纪要当日多空统计（AI 判定，20min 缓存）：看多/看空/中性比例 + 板块分布。
+
+    样本=今日纪要帖（上限 60 条），样本量如实披露；无明确方向计入中性。公开（与纪要流一致）。"""
+    from .note_sentiment import get_daily_sentiment  # noqa: PLC0415
+    return await get_daily_sentiment(force=force)
 _ZSXQ_IMG_MAX = 25 * 1024 * 1024       # 单图上限 25MB，防超大响应打爆 1.8G 内存
 _ZSXQ_WM_CACHE: "dict[str, tuple[bytes, str]]" = {}   # url→(带品牌栏字节, content-type)，view/download 复用
 _ZSXQ_WM_CACHE_MAX = 24

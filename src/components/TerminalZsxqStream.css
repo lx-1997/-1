@@ -99,3 +99,24 @@
 .tzs-lightbox-btn { display: inline-flex; align-items: center; font-size: 13px; color: #e6e8eb; background: rgba(20,22,16,.92); border: 1px solid rgba(255,255,255,.22); border-radius: 20px; padding: 7px 16px; cursor: pointer; text-decoration: none; }
 .tzs-lightbox-btn:hover { border-color: #c4b5fd; color: #c4b5fd; }
 .tzs-lightbox-x { position: fixed; top: 14px; right: 18px; background: none; border: none; color: #fff; font-size: 22px; cursor: pointer; z-index: 1; }
+
+/* ── 当日多空统计（AI 判定）────────────────────────────── */
+.tzs-sentiment { margin: 0 0 12px; padding: 12px 14px; border: 1px solid rgba(128,158,198,.22); border-radius: 10px; background: rgba(52,93,132,.10); }
+.tzs-sentiment-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.tzs-sentiment-title { font-size: 12px; font-weight: 700; color: var(--text, #1c2733); letter-spacing: .02em; }
+.tzs-sentiment-sample { font-size: 10px; color: var(--text-muted, #5b6b7d); }
+.tzs-sentiment-bar { display: flex; height: 8px; border-radius: 5px; overflow: hidden; background: rgba(255,255,255,.06); }
+.tzs-sentiment-bar span { display: block; height: 100%; min-width: 2px; }
+.tzs-sentiment-bar .is-bull { background: var(--positive, #e5484d); }
+.tzs-sentiment-bar .is-neutral { background: rgba(147,164,182,.45); }
+.tzs-sentiment-bar .is-bear { background: var(--negative, #2fbf71); }
+.tzs-sentiment-nums { display: flex; gap: 14px; margin-top: 8px; font-size: 11px; }
+.tzs-sentiment-nums .is-bull { color: var(--positive, #e5484d); }
+.tzs-sentiment-nums .is-neutral { color: var(--text-muted, #5b6b7d); }
+.tzs-sentiment-nums .is-bear { color: var(--negative, #2fbf71); }
+.tzs-sentiment-sectors { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.tzs-sentiment-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.tzs-sentiment-row i { font-style: normal; font-size: 11px; font-weight: 700; margin-right: 2px; }
+.tzs-sentiment-row .is-bull, .tzs-sentiment-row i:first-child { color: var(--positive, #e5484d); }
+.tzs-sentiment-row em { font-style: normal; font-size: 10px; padding: 2px 8px; border-radius: 99px; border: 1px solid rgba(128,158,198,.28); color: var(--text, #1c2733); background: rgba(52,93,132,.10); }
+.tzs-sentiment-note { margin-top: 9px; font-size: 9px; color: var(--text-muted, #5b6b7d); }

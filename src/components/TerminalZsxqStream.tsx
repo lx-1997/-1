@@ -6,6 +6,8 @@ import {
   ZsxqStreamResponse,
   getZsxqStream,
   getZsxqTopicComments,
+  getNoteSentiment,
+  type NoteSentiment,
 } from '../services/zsxqStreamService';
 import ShareButton from './common/ShareButton';
 import './TerminalZsxqStream.css';
@@ -223,6 +225,15 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
   const [fitWin, setFitWin] = useState(false);   // 灯箱:false=铺满宽度可竖向滚动看清长图(默认)/true=整图适应窗口
   const cursorRef = useRef('');
   const hasMoreRef = useRef(false);
+  const [sentiment, setSentiment] = useState<NoteSentiment | null>(null);
+
+  const loadSentiment = useCallback(async (force = false) => {
+    // 服务端 20min 缓存；刷新按钮时 force 绕过缓存重算
+    const r = await getNoteSentiment();
+    setSentiment(r?.ok ? r : null);
+  }, []);
+
+  useEffect(() => { void loadSentiment(); }, [loadSentiment]);
 
   const load = useCallback(async (opts: { group?: string; q?: string; refresh?: boolean } = {}) => {
     setLoading(true);
@@ -341,12 +352,41 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
             <button className="tzs-clear" aria-label="清除搜索" title="清除搜索" onClick={() => { setQuery(''); if (applied) applySearch(''); }}>✕</button>
           )}
         </span>
-        <button className="tzs-refresh" onClick={() => load({ group, q: applied || undefined, refresh: true })} disabled={refreshing} title="刷新">
+        <button className="tzs-refresh" onClick={() => { load({ group, q: applied || undefined, refresh: true }); void loadSentiment(true); }} disabled={refreshing} title="刷新">
           {refreshing ? '刷新中…' : '⟳'}
         </button>
       </div>
 
       <div className="tzs-scroll">
+        {sentiment?.ok && (sentiment.sample || 0) > 0 && (
+          <div className="tzs-sentiment" aria-label="今日机构纪要多空统计（AI 判定）">
+            <div className="tzs-sentiment-head">
+              <span className="tzs-sentiment-title">今日纪要多空 · AI 统计</span>
+              <span className="tzs-sentiment-sample">样本 {sentiment.sample} 条</span>
+            </div>
+            <div className="tzs-sentiment-bar" role="img" aria-label={`看多 ${Math.round((sentiment.bull_ratio || 0) * 100)}%，中性 ${Math.round((sentiment.neutral_ratio || 0) * 100)}%，看空 ${Math.round((sentiment.bear_ratio || 0) * 100)}%`}>
+              <span className="is-bull" style={{ flexGrow: (sentiment.bull_ratio || 0) * 100 }} />
+              <span className="is-neutral" style={{ flexGrow: (sentiment.neutral_ratio || 0) * 100 }} />
+              <span className="is-bear" style={{ flexGrow: (sentiment.bear_ratio || 0) * 100 }} />
+            </div>
+            <div className="tzs-sentiment-nums">
+              <b className="is-bull">看多 {Math.round((sentiment.bull_ratio || 0) * 100)}%</b>
+              <b className="is-neutral">中性 {Math.round((sentiment.neutral_ratio || 0) * 100)}%</b>
+              <b className="is-bear">看空 {Math.round((sentiment.bear_ratio || 0) * 100)}%</b>
+            </div>
+            {(sentiment.bull_sectors?.length || sentiment.bear_sectors?.length) ? (
+              <div className="tzs-sentiment-sectors">
+                {sentiment.bull_sectors?.length ? (
+                  <div className="tzs-sentiment-row"><i>看多</i>{sentiment.bull_sectors.map(s => <em key={`bull-${s}`}>{s}</em>)}</div>
+                ) : null}
+                {sentiment.bear_sectors?.length ? (
+                  <div className="tzs-sentiment-row"><i>看空</i>{sentiment.bear_sectors.map(s => <em key={`bear-${s}`}>{s}</em>)}</div>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="tzs-sentiment-note">AI 判定 · 仅供参考，不构成投资建议</div>
+          </div>
+        )}
         {loading && pool.length === 0 && <div className="tzs-loading">加载中…</div>}
         {err && pool.length === 0 && !loading && <div className="tzs-error">{err}</div>}
         {!loading && !err && pool.length === 0 && (

@@ -67,3 +67,31 @@ export async function getZsxqTopicComments(topicId: string, limit = 150): Promis
     params: { topic_id: topicId, limit },
   });
 }
+
+export interface NoteSentiment {
+  ok: boolean;
+  day?: string;
+  sample?: number;
+  total_today?: number;
+  bull?: number;
+  bear?: number;
+  neutral?: number;
+  bull_ratio?: number | null;
+  bear_ratio?: number | null;
+  neutral_ratio?: number | null;
+  bull_sectors?: string[];
+  bear_sectors?: string[];
+  generated_at?: string;
+  ai_generated?: boolean;
+  reason?: string;
+}
+
+export async function getNoteSentiment(force = false): Promise<NoteSentiment> {
+  try {
+    return await apiGet<NoteSentiment>('/api/zsxq/sentiment-summary', {
+      params: force ? { force: true } : undefined,
+    });
+  } catch {
+    return { ok: false };
+  }
+}
