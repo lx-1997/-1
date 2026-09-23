@@ -370,9 +370,9 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
               <span className="is-bear" style={{ flexGrow: (sentiment.bear_ratio || 0) * 100 }} />
             </div>
             <div className="tzs-sentiment-nums">
-              <b className="is-bull">看多 {Math.round((sentiment.bull_ratio || 0) * 100)}%</b>
-              <b className="is-neutral">中性 {Math.round((sentiment.neutral_ratio || 0) * 100)}%</b>
-              <b className="is-bear">看空 {Math.round((sentiment.bear_ratio || 0) * 100)}%</b>
+              <b className="is-bull">看多 {Math.round((sentiment.bull_ratio || 0) * 100)}% · {sentiment.bull || 0} 条</b>
+              <b className="is-neutral">中性 {Math.round((sentiment.neutral_ratio || 0) * 100)}% · {sentiment.neutral || 0} 条</b>
+              <b className="is-bear">看空 {Math.round((sentiment.bear_ratio || 0) * 100)}% · {sentiment.bear || 0} 条</b>
             </div>
             {(sentiment.bull_sectors?.length || sentiment.bear_sectors?.length) ? (
               <div className="tzs-sentiment-sectors">
