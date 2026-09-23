@@ -79,8 +79,8 @@ export interface NoteSentiment {
   bull_ratio?: number | null;
   bear_ratio?: number | null;
   neutral_ratio?: number | null;
-  bull_sectors?: string[];
-  bear_sectors?: string[];
+  bull_sectors?: { name: string; count: number }[];
+  bear_sectors?: { name: string; count: number }[];
   generated_at?: string;
   ai_generated?: boolean;
   reason?: string;

@@ -377,10 +377,10 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
             {(sentiment.bull_sectors?.length || sentiment.bear_sectors?.length) ? (
               <div className="tzs-sentiment-sectors">
                 {sentiment.bull_sectors?.length ? (
-                  <div className="tzs-sentiment-row"><i>看多</i>{sentiment.bull_sectors.map(s => <em key={`bull-${s}`}>{s}</em>)}</div>
+                  <div className="tzs-sentiment-row"><i>看多</i>{sentiment.bull_sectors.map(s => <em key={`bull-${s.name}`}>{s.name}<u>{s.count}</u></em>)}</div>
                 ) : null}
                 {sentiment.bear_sectors?.length ? (
-                  <div className="tzs-sentiment-row"><i>看空</i>{sentiment.bear_sectors.map(s => <em key={`bear-${s}`}>{s}</em>)}</div>
+                  <div className="tzs-sentiment-row"><i>看空</i>{sentiment.bear_sectors.map(s => <em key={`bear-${s.name}`}>{s.name}<u>{s.count}</u></em>)}</div>
                 ) : null}
               </div>
             ) : null}

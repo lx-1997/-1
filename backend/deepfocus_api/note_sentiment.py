@@ -102,12 +102,12 @@ def _aggregate(notes: list[dict[str, Any]], data: dict[str, Any], day: str) -> d
     total = len(notes)
     sample = max(judged, counts["bull"] + counts["bear"] + counts["neutral"])
 
-    def top_sectors(stance: str) -> list[str]:
+    def top_sectors(stance: str) -> list[dict[str, Any]]:
         ranked = sorted(
             ((name, b[stance]) for name, b in sector_stance.items() if b[stance] > 0),
             key=lambda kv: kv[1], reverse=True,
         )
-        return [name for name, _ in ranked[:_MAX_SECTORS]]
+        return [{"name": name, "count": n} for name, n in ranked[:_MAX_SECTORS]]
 
     def ratio(n: int) -> Optional[float]:
         return round(n / sample, 3) if sample else None
