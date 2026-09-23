@@ -1114,10 +1114,10 @@ def _fallback_from_compact(
                 continue
             body = "；".join(_clean(line.get(key), 500) for key in ("evidence", "chain", "impact", "watch") if _clean(line.get(key)))
             if body:
-                sections.append({"id": f"s{index}", "title": _clean(line.get("title"), 180) or f"逻辑线 {index}", "summary": body[:700], "paragraphs": [body], "bullets": [], "evidence": [], "tables": []})
+                sections.append({"id": f"s{index}", "title": _clean(line.get("title"), 180) or f"逻辑线 {index}", "summary": body[:700], "paragraphs": [], "bullets": [], "evidence": [], "tables": []})
     if not sections:
         summary = _clean(compact.get("summary") or compact.get("one_liner"), 1_200) or _MISSING
-        sections = [{"id": "s1", "title": "模型读取摘要", "summary": summary, "paragraphs": [summary], "bullets": _list(compact.get("bullish") or compact.get("key_points"), 6), "evidence": [], "tables": []}]
+        sections = [{"id": "s1", "title": "模型读取摘要", "summary": summary, "paragraphs": [], "bullets": _list(compact.get("bullish") or compact.get("key_points"), 6), "evidence": [], "tables": []}]
     data = {
         "subtitle": "基于研报页面的结构化深度整理",
         "subject": compact.get("subject") or request.symbol or "",
