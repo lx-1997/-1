@@ -61,7 +61,10 @@ _MAX_PROMPT_CHARS = 58_000
 # occupy the global semaphore indefinitely after the browser has given up.
 _DEEP_LLM_CALL_TIMEOUT_SECONDS = 100
 _DEEP_LLM_TOTAL_TIMEOUT_SECONDS = 315
-_DEEP_VISION_MAX_PAGES = 6
+# Image-only deep drafts use the same page budget as the compact report.  The
+# previous six-page cap made long decks look empty even when the key chart or
+# target price appeared later in the report.
+_DEEP_VISION_MAX_PAGES = 14
 _MAX_SECTION_COUNT = 12
 _MAX_PARAGRAPHS_PER_SECTION = 8
 _MAX_BULLETS_PER_SECTION = 8
@@ -1189,16 +1192,24 @@ async def generate_deep_draft(
             pass
 
     # Image-only PDFs (no extractable text layer) skip the text path above.
-    # Short scans still deserve a real read: the vision analyzer renders at
-    # most _DEEP_VISION_MAX_PAGES pages, so page-gate it to keep long scans
-    # from spending minutes here, then reuse the compact-card converter.
+    # The renderer caps the selected window, so long scans can still be read
+    # through the page-parallel path instead of being rejected solely because
+    # their total page count is larger than the vision budget.
     if not text_docs:
         total_pages = sum(max(0, int(doc.total_pages or 0)) for doc in docs)
         vision_bytes = next((doc.pdf_bytes for doc in docs if doc.pdf_bytes), b"")
-        if vision_bytes and 0 < total_pages <= _DEEP_VISION_MAX_PAGES:
+        if vision_bytes and total_pages > 0:
             try:
                 compact = await asyncio.wait_for(
-                    analyze_pdf_vision(vision_bytes, title=request.title, symbol=request.symbol),
+                    analyze_pdf_adaptive(
+                        vision_bytes,
+                        title=request.title,
+                        symbol=request.symbol,
+                        max_pages=min(
+                            _DEEP_VISION_MAX_PAGES,
+                            max(1, int(request.max_pages or _DEEP_VISION_MAX_PAGES)),
+                        ),
+                    ),
                     timeout=_DEEP_LLM_TOTAL_TIMEOUT_SECONDS,
                 )
                 if isinstance(compact, dict) and compact:

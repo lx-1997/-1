@@ -11,6 +11,9 @@ from deepfocus_api import research_multi_agent as ma
 @pytest.fixture(autouse=True)
 def _enable_multi_agent(monkeypatch):
     monkeypatch.setattr(ma, "_ENABLED", True)
+    # Legacy role-wide tests stay deterministic; the dedicated page test below
+    # turns the new rollout on explicitly.
+    monkeypatch.setattr(ma, "_PAGE_SUMMARY_ENABLED", False)
 
 
 def test_main_cache_key_is_versioned_only_when_enabled(monkeypatch):
@@ -171,6 +174,65 @@ def test_image_report_runs_three_agents_concurrently_and_merges(monkeypatch):
     assert result["bearish"] == ["需求不及预期"]
     assert result["target_price"] == "1800元"
     assert result["df_take"] == ""  # 六维「综合判断与边界」已下线
+
+
+def test_image_report_can_read_pages_concurrently_then_synthesize(monkeypatch):
+    active = 0
+    max_active = 0
+    synthesis_calls = 0
+
+    class FakeLLM:
+        provider = "minimax"
+        model = "MiniMax-M3"
+
+        async def complete_vision(self, prompt, images, **kwargs):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.01)
+                page = int(prompt.split("页码：", 1)[1].split("。", 1)[0])
+                return json.dumps({
+                    "summary": f"第{page}页明确写出收入增长。",
+                    "facts": [f"第{page}页收入增长"],
+                    "bullish": ["需求延续"],
+                    "bearish": [],
+                    "confidence": 0.8,
+                }, ensure_ascii=False)
+            finally:
+                active -= 1
+
+        async def complete_json(self, prompt, **kwargs):
+            nonlocal synthesis_calls
+            synthesis_calls += 1
+            return {
+                "subject": "贵州茅台",
+                "summary": "多页共同显示收入增长。",
+                "one_liner": "收入增长，报告观点偏积极",
+                "core_logic": "需求增长推动收入。",
+                "bullish": ["需求延续"],
+                "bearish": [],
+                "confidence": 0.8,
+            }
+
+    def no_text(*args, **kwargs):
+        raise ma.rv.PdfTextUnavailable("scan")
+
+    monkeypatch.setattr(ma, "_PAGE_SUMMARY_ENABLED", True)
+    monkeypatch.setattr(ma, "_PAGE_CONCURRENCY", 2)
+    monkeypatch.setattr(ma, "_page_sem", None)
+    monkeypatch.setattr(ma, "CloudResearchLLM", FakeLLM)
+    monkeypatch.setattr(ma.rv, "extract_pdf_text", no_text)
+    monkeypatch.setattr(ma.rv, "render_pdf_to_pngs", lambda *args, **kwargs: [b"1", b"2", b"3", b"4"])
+    monkeypatch.setattr(ma, "_cache_get", lambda key: None)
+    monkeypatch.setattr(ma, "_cache_put", lambda key, value: None)
+
+    result = asyncio.run(ma.analyze_pdf_adaptive(b"scan-pages", title="贵州茅台", max_pages=4))
+    assert max_active <= 2
+    assert synthesis_calls == 1
+    assert result["analysis_mode"] == "page_parallel_synthesis"
+    assert result["pages_analyzed"] == 4
+    assert result["summary"] == "多页共同显示收入增长。"
 
 
 def test_partial_agent_failure_falls_back_without_caching_partial(monkeypatch):

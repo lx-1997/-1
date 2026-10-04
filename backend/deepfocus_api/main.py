@@ -8893,7 +8893,11 @@ async def _generate_research_ai_result(
                 ),
                 lambda: analyze_pdf_adaptive(
                     pdf_bytes, title=title, symbol=request.symbol, max_pages=request.max_pages,
-                    text_only=True,
+                    # Scanned/image-only reports must be allowed to enter the
+                    # page-level visual path.  ``text_only=True`` used to turn
+                    # an otherwise recoverable scan into an empty result when
+                    # the adaptive multi-agent route was enabled.
+                    text_only=False,
                 ),
                 route="report-vision",
             )

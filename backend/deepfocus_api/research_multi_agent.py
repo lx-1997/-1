@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -33,7 +34,24 @@ _AGENT_TIMEOUT_SECONDS = max(
 _TOTAL_TIMEOUT_SECONDS = max(
     25.0, float(os.getenv("DEEPFOCUS_RESEARCH_AGENT_TOTAL_SECONDS", "65") or 65),
 )
+# Image reports are more reliable when each page gets a small, bounded read and
+# a text-only synthesis follows.  It is enabled whenever multi-agent mode is
+# enabled; set the flag to 0 to keep the old role-wide path during a rollout.
+_PAGE_SUMMARY_ENABLED = os.getenv("DEEPFOCUS_RESEARCH_PAGE_SUMMARY", "1").strip().lower() not in {
+    "0", "false", "no", "off",
+}
+_PAGE_CONCURRENCY = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PAGE_CONCURRENCY", "3") or 3))
+_PAGE_TIMEOUT_SECONDS = max(
+    15.0, float(os.getenv("DEEPFOCUS_RESEARCH_PAGE_TIMEOUT_SECONDS", "45") or 45),
+)
+_PAGE_TOTAL_TIMEOUT_SECONDS = max(
+    30.0, float(os.getenv("DEEPFOCUS_RESEARCH_PAGE_TOTAL_SECONDS", "150") or 150),
+)
+_PAGE_SYNTHESIS_TIMEOUT_SECONDS = max(
+    20.0, float(os.getenv("DEEPFOCUS_RESEARCH_PAGE_SYNTHESIS_TIMEOUT_SECONDS", "75") or 75),
+)
 _CACHE_VERSION = "agents-v4"
+_PAGE_CACHE_VERSION = "pages-v1"
 
 
 def _cache_max_age_seconds() -> float | None:
@@ -125,6 +143,8 @@ _ROLES = (
 
 _sem: Optional[asyncio.Semaphore] = None
 _sem_loop: Optional[asyncio.AbstractEventLoop] = None
+_page_sem: Optional[asyncio.Semaphore] = None
+_page_sem_loop: Optional[asyncio.AbstractEventLoop] = None
 _batch_sem: Optional[asyncio.Semaphore] = None
 _batch_sem_loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -137,6 +157,16 @@ def _agent_semaphore() -> asyncio.Semaphore:
         _sem = asyncio.Semaphore(_AGENT_CONCURRENCY)
         _sem_loop = loop
     return _sem
+
+
+def _page_semaphore() -> asyncio.Semaphore:
+    """Separate page fan-out from the role-agent limiter."""
+    global _page_sem, _page_sem_loop
+    loop = asyncio.get_running_loop()
+    if _page_sem is None or _page_sem_loop is not loop:
+        _page_sem = asyncio.Semaphore(_PAGE_CONCURRENCY)
+        _page_sem_loop = loop
+    return _page_sem
 
 
 def _batch_semaphore() -> asyncio.Semaphore:
@@ -282,6 +312,275 @@ async def _call_role(
     raise RuntimeError(f"{role.label}没有可分析页面")
 
 
+_PAGE_SCHEMA = (
+    '{"page":0,"summary":"本页明确写出的核心信息，最多3句",'
+    '"facts":["本页可核对的事实/数字，最多4条"],'
+    '"bullish":["本页明确写出的积极因素，最多3条"],'
+    '"bearish":["本页明确写出的风险/不确定性，最多3条"],'
+    '"logic_lines":[{"title":"独立信息点","evidence":"可核对事实/数字",'
+    '"chain":"本页明确写出的因果传导，没有则留空",'
+    '"impact":"本页明确提及的影响对象，没有则留空",'
+    '"watch":"本页明确给出的指标/时间点，没有则留空"}],'
+    '"instruments":["本页明确提及的上市公司/商品/加密资产"],'
+    '"rating":"本页明确出现的机构评级或空串",'
+    '"target_price":"本页明确出现的目标价或空串",'
+    '"confidence":0.0}'
+)
+
+
+def _build_page_prompt(title: Optional[str], symbol: Optional[str], page: int) -> str:
+    target = " ".join(part for part in (title, symbol) if part) or "未知"
+    return (
+        "你是财经研报页面阅读器。下面只有同一份研报的第 "
+        f"{page} 页截图，不能使用其他页面或外部知识。"
+        "只提取图片中实际可见的文字、数字、图表标签和结论；看不清就留空，"
+        "不要猜测，不要补充背景，不要给投资建议。输出严格 JSON object，"
+        "不要 Markdown、解释或思考过程。"
+        f"\n字段：{_PAGE_SCHEMA}\n"
+        f"线索标的：{target}。页码：{page}。"
+    )
+
+
+def _page_summary_key(
+    pdf_bytes: bytes, max_pages: int, title: Optional[str], symbol: Optional[str],
+) -> str:
+    digest = hashlib.md5(
+        pdf_bytes + str(max_pages).encode() + (title or "").encode() + (symbol or "").encode()
+    ).hexdigest()
+    return f"VIS:{_PAGE_CACHE_VERSION}:{digest}"
+
+
+def _page_result_is_usable(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return bool(str(value.get("summary") or "").strip() or value.get("facts") or value.get("logic_lines"))
+
+
+def _compact_page_result(value: Any, page: int) -> dict[str, Any]:
+    """Bound page output before it is placed in the synthesis prompt."""
+    data = dict(value) if isinstance(value, dict) else {}
+    def _items(name: str, limit: int) -> list[str]:
+        raw = data.get(name)
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip()[:180] for item in raw if str(item or "").strip()][:limit]
+
+    lines: list[dict[str, str]] = []
+    raw_lines = data.get("logic_lines")
+    if isinstance(raw_lines, dict):
+        raw_lines = [raw_lines]
+    if isinstance(raw_lines, list):
+        for row in raw_lines[:3]:
+            if not isinstance(row, dict):
+                continue
+            lines.append({
+                key: str(row.get(key) or "").strip()[:180]
+                for key in ("title", "evidence", "chain", "impact", "watch")
+            })
+    return {
+        "page": page,
+        "summary": str(data.get("summary") or "").strip()[:600],
+        "facts": _items("facts", 4),
+        "bullish": _items("bullish", 3),
+        "bearish": _items("bearish", 3),
+        "logic_lines": lines,
+        "instruments": _items("instruments", 8),
+        "rating": str(data.get("rating") or "").strip()[:80],
+        "target_price": str(data.get("target_price") or "").strip()[:100],
+        "confidence": rv._clamp_confidence(data.get("confidence")),
+    }
+
+
+async def _call_page(
+    llm: CloudResearchLLM,
+    page: int,
+    image: bytes,
+    *,
+    title: Optional[str],
+    symbol: Optional[str],
+) -> dict[str, Any]:
+    """Read one page in isolation and retry once with a shorter JSON contract."""
+    prompt = _build_page_prompt(title, symbol, page)
+    async with _page_semaphore():
+        for attempt in range(2):
+            try:
+                raw = await llm.complete_vision(
+                    prompt if attempt == 0 else prompt + "\n只保留 summary、facts、bullish、bearish、rating、target_price、confidence。",
+                    [image],
+                    max_tokens=1500 if attempt == 0 else 900,
+                    timeout_seconds=_PAGE_TIMEOUT_SECONDS,
+                )
+                data = rv._parse_model_json(raw)
+                if _page_result_is_usable(data):
+                    return _compact_page_result(data, page)
+                if attempt == 1:
+                    raise RuntimeError(f"第 {page} 页未返回可用 JSON")
+            except RuntimeError as exc:
+                match = _SENSITIVE_CONTENT_RE.search(str(exc))
+                # A single image is content[1] (content[0] is the prompt).  A
+                # sensitive-page failure is not recoverable by dropping the
+                # only image, so let the caller count it as a page miss.
+                if "sensitive" in str(exc).lower() and match:
+                    raise RuntimeError(f"第 {page} 页被视觉安全策略拦截") from exc
+                if attempt == 1:
+                    raise
+    raise RuntimeError(f"第 {page} 页没有可分析结果")
+
+
+def _merge_page_fallback(
+    page_results: list[dict[str, Any]], *, provider: str, total_pages: int,
+) -> dict[str, Any]:
+    """Deterministic emergency merge when the final synthesis call fails."""
+    ordered = sorted(page_results, key=lambda item: int(item.get("page") or 0))
+    facts = _as_list([x for row in ordered for x in row.get("facts", [])], 8)
+    bullish = _as_list([x for row in ordered for x in row.get("bullish", [])], 4)
+    bearish = _as_list([x for row in ordered for x in row.get("bearish", [])], 4)
+    instruments = _as_list([x for row in ordered for x in row.get("instruments", [])], 8)
+    summaries = [str(row.get("summary") or "").strip() for row in ordered if str(row.get("summary") or "").strip()]
+    lines = rv._normalize_logic_lines(
+        [line for row in ordered for line in row.get("logic_lines", [])], 6,
+    )
+    result = rv._normalize_result(
+        {
+            "one_liner": summaries[0] if summaries else "已读取页面，但模型未形成一句话结论。",
+            "summary": "；".join(summaries[:4]) or "已读取页面，但未形成可用摘要。",
+            "core_logic": "；".join(facts[:3]),
+            "logic_lines": lines,
+            "bullish": bullish,
+            "bearish": bearish,
+            "instruments": instruments,
+            "rating": next((x.get("rating") for x in ordered if x.get("rating")), ""),
+            "target_price": next((x.get("target_price") for x in ordered if x.get("target_price")), ""),
+            "confidence": mean([rv._clamp_confidence(x.get("confidence")) for x in ordered]) if ordered else 0.2,
+        },
+        provider=provider,
+        pages=len(ordered),
+        disclaimer=(
+            "本结论由页面级 AI 读取结果直接合并生成，最终汇总模型未能调用；"
+            "可能遗漏或误读，请以原文为准。"
+        ),
+        compact_report=True,
+    )
+    result["pages_total"] = total_pages
+    result["pages_failed"] = max(0, total_pages - len(ordered))
+    result["analysis_mode"] = "page_parallel_fallback"
+    return result
+
+
+async def _synthesize_page_results(
+    llm: CloudResearchLLM,
+    page_results: list[dict[str, Any]],
+    *,
+    title: Optional[str],
+    symbol: Optional[str],
+    total_pages: int,
+) -> dict[str, Any]:
+    """Turn independent page notes into the same compact report contract."""
+    source = json.dumps(page_results, ensure_ascii=False, separators=(",", ":"))
+    target = " ".join(part for part in (title, symbol) if part) or "未知"
+    prompt = (
+        "你是研报编辑。下面是同一份研报各页的独立阅读笔记，页码已保留。"
+        "只使用这些笔记中出现的信息，合并重复事实，按页码和原文重要性组织。"
+        "不要补写页面没有的信息，不要给投资建议。输出严格 JSON object，不要 Markdown、解释或思考过程。\n"
+        "字段：{\"subject\":\"标的\",\"one_liner\":\"40字内结论\","
+        "\"summary\":\"2-4句综合综述\",\"core_logic\":\"最多3句核心因果\","
+        "\"logic_lines\":[{\"title\":\"逻辑线\",\"evidence\":\"事实/数字\","
+        "\"chain\":\"因果传导\",\"impact\":\"影响对象\",\"watch\":\"验证点\"}],"
+        "\"bullish\":[\"最多4条\"],\"bearish\":[\"最多4条\"],"
+        "\"instruments\":[\"最多8个可交易标的\"],\"market\":\"A股/港股/美股/无\","
+        "\"rating\":\"评级或空串\",\"target_price\":\"目标价或空串\",\"confidence\":0.0}\n"
+        f"线索标的：{target}；总页数：{total_pages}；成功读取页数：{len(page_results)}。\n"
+        f"=== 页面笔记 ===\n{source}"
+    )
+    async with _agent_semaphore():
+        data = await llm.complete_json(
+            prompt,
+            max_tokens=4200,
+            timeout_seconds=_PAGE_SYNTHESIS_TIMEOUT_SECONDS,
+            retry_schema_hint="必须包含 summary、core_logic、logic_lines、bullish、bearish、confidence；没有信息就留空。",
+        )
+    if not isinstance(data, dict) or not (data.get("summary") or data.get("one_liner")):
+        raise RuntimeError("页面阅读汇总未返回可用内容")
+    result = rv._normalize_result(
+        data,
+        provider=f"{llm.model} · page synthesis",
+        pages=len(page_results),
+        disclaimer="本结论由页面级 AI 并发读取后汇总生成，非逐句溯源，可能遗漏或误读，请以原文为准。",
+        compact_report=True,
+    )
+    result["pages_total"] = total_pages
+    result["pages_failed"] = max(0, total_pages - len(page_results))
+    result["analysis_mode"] = "page_parallel_synthesis"
+    result["page_results"] = page_results
+    return result
+
+
+async def _analyze_images_per_page(
+    pdf_bytes: bytes,
+    *,
+    title: Optional[str],
+    symbol: Optional[str],
+    max_pages: int,
+    background: bool = False,
+) -> dict[str, Any]:
+    """Read selected pages concurrently, then synthesize their bounded notes."""
+    key = _page_summary_key(pdf_bytes, max_pages, title, symbol)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    batch_sem = _batch_semaphore()
+    if background and batch_sem.locked():
+        raise ResearchMultiAgentBusy("交互式研报解读正在运行，后台预热稍后重试")
+    async with batch_sem:
+        late_cached = _cache_get(key)
+        if late_cached is not None:
+            return late_cached
+        images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
+        if not images:
+            raise RuntimeError("PDF 没有可渲染的页面")
+        llm = CloudResearchLLM()
+        if llm.provider == "mock":
+            raise RuntimeError("当前为本地演示模型，无法做页级视觉解读")
+        total_pages = len(images)
+        tasks = [
+            asyncio.create_task(
+                _call_page(llm, index, image, title=title, symbol=symbol),
+                name=f"research-page-{index}",
+            )
+            for index, image in enumerate(images, 1)
+        ]
+        try:
+            values = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=_PAGE_TOTAL_TIMEOUT_SECONDS,
+            )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        page_results = [value for value in values if _page_result_is_usable(value)]
+        # A page-level miss is expected under transient provider limits.  Keep
+        # enough coverage to synthesize, otherwise use the existing role-wide
+        # path so a report is not rejected just because one page timed out.
+        minimum = max(1, min(3, (total_pages + 1) // 2))
+        if len(page_results) < minimum:
+            raise RuntimeError(f"页级视觉读取成功 {len(page_results)}/{total_pages} 页，覆盖不足")
+        try:
+            result = await _synthesize_page_results(
+                llm, sorted(page_results, key=lambda item: int(item.get("page") or 0)),
+                title=title, symbol=symbol, total_pages=total_pages,
+            )
+        except Exception:
+            result = _merge_page_fallback(
+                page_results, provider=f"{llm.model} · page merge", total_pages=total_pages,
+            )
+    _cache_put(key, result)
+    return result
+
+
 async def _call_text_role(
     llm: CloudResearchLLM,
     role: _Role,
@@ -344,6 +643,24 @@ async def _analyze_images_parallel(
     max_pages: int,
     background: bool = False,
 ) -> dict[str, Any]:
+    page_warning = ""
+    if _PAGE_SUMMARY_ENABLED:
+        try:
+            return await _analyze_images_per_page(
+                pdf_bytes,
+                title=title,
+                symbol=symbol,
+                max_pages=max_pages,
+                background=background,
+            )
+        except (ResearchMultiAgentBusy, asyncio.CancelledError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - preserve the role-wide fallback
+            # The page path is intentionally additive: provider rate limits,
+            # malformed page JSON, or a failed synthesis must not turn a
+            # previously readable report into a hard 502.
+            page_warning = str(exc)[:240]
+
     key = _cache_key(pdf_bytes, max_pages, title, symbol)
     cached = _cache_get(key)
     if cached is not None:
@@ -416,6 +733,8 @@ async def _analyze_images_parallel(
     result = _merge_results(results, provider=f"{llm.model} · 3 agents", pages=len(images))
     result["agent_count"] = 3
     result["analysis_mode"] = "multi_agent_vision"
+    if page_warning:
+        result["page_parallel_warning"] = page_warning
     _cache_put(key, result)
     return result
 

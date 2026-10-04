@@ -634,7 +634,10 @@ async def analyze_pdf_auto(
 ) -> dict[str, Any]:
     """优先文本快速通道；仅图片型/无可读文本层的 PDF 回退视觉解读。"""
     try:
-        return await analyze_pdf_text(pdf_bytes, title=title, symbol=symbol)
+        return await analyze_pdf_text(
+            pdf_bytes, title=title, symbol=symbol,
+            max_pages=min(max(1, int(max_pages)), MAX_VISION_PAGES),
+        )
     except PdfTextUnavailable:
         return await analyze_pdf_vision(pdf_bytes, title=title, symbol=symbol, max_pages=max_pages)
 
