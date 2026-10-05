@@ -568,7 +568,10 @@ def extract_pdf_ocr_text(pdf_bytes: bytes, *, max_pages: int = OCR_MAX_PAGES) ->
                 try:
                     proc = subprocess.run(
                         ["tesseract", "stdin", "stdout", "-l", "chi_sim+eng", "--psm", "6"],
-                        input=pix.tobytes("png"), capture_output=True, timeout=12, check=False,
+                        # 封面页版式复杂时 tesseract 会跑满超时；预算从 12s 收紧到 6s，
+                        # 避免无文字层 PDF 在注定为空的 OCR 上白等（实测这类页面成功识别
+                        # 通常 <3s，超时页多数到 12s 也出不了字）。
+                        input=pix.tobytes("png"), capture_output=True, timeout=6, check=False,
                     )
                 except (FileNotFoundError, subprocess.TimeoutExpired):
                     return ""

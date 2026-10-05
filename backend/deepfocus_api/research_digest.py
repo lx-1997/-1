@@ -65,6 +65,10 @@ _DEEP_LLM_TOTAL_TIMEOUT_SECONDS = 315
 # previous six-page cap made long decks look empty even when the key chart or
 # target price appeared later in the report.
 _DEEP_VISION_MAX_PAGES = 14
+# Below this many extractable chars the "text layer" is a cover-page stub on an
+# otherwise scanned deck; synthesizing from it yields a zero-confidence stub,
+# so the document is routed to the page-parallel vision path instead.
+_DEEP_TEXT_FLOOR_CHARS = 600
 _MAX_SECTION_COUNT = 12
 _MAX_PARAGRAPHS_PER_SECTION = 8
 _MAX_BULLETS_PER_SECTION = 8
@@ -1170,6 +1174,8 @@ async def generate_deep_draft(
     # Text path: preserve page markers and let one synthesis call build the
     # article.  This is deliberately separate from the compact 7k-char prompt.
     text_docs = [doc for doc in docs if doc.text]
+    if sum(len(doc.text or "") for doc in text_docs) < _DEEP_TEXT_FLOOR_CHARS:
+        text_docs = []
     if text_docs:
         prompt = _prompt_for_documents(request, docs)
         try:

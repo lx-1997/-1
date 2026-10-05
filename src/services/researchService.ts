@@ -667,7 +667,8 @@ export async function analyzeProfessionalReport(
   reportId: string,
   payload: { focus?: string; use_cloud_model?: boolean } = {}
 ): Promise<ProfessionalReportAnalysis> {
-  return apiPost<ProfessionalReportAnalysis>(`/api/pro-research/reports/${reportId}/analyze`, payload);
+  // 云端模型解读常超 20s（apiClient 默认超时），超时后前端报错而后端仍在算——显式放宽到 5 分钟。
+  return apiPost<ProfessionalReportAnalysis>(`/api/pro-research/reports/${reportId}/analyze`, payload, { timeout: 300000 });
 }
 
 export async function runProfessionalEval(payload: {
