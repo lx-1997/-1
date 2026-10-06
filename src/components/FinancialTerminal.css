@@ -5514,3 +5514,21 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 .bbt-ai-chat-body .bbt-md { min-width: 0; max-width: 100%; }
 .bbt-md-hr { border: 0; border-top: 1px solid rgba(112, 149, 190, .18); margin: 12px 0; }
 [data-theme="light"] .bbt-md-hr { border-top-color: rgba(90, 130, 170, .22); }
+
+/* ============================================================================
+   移动端 AI 壳层高度稳健化 + 历史条按钮不压字 (2026-10-06)
+   坑: 壳层 height 依赖 JS 写入的 --df-vvh(visualViewport 实测), 在部分安卓浏览器
+   (MIUI 等)上工具栏收展/键盘关合后 resize 事件不触发或时序滞后, 拿到过期小值 →
+   工作区卡片缩短、固定定位的底导航留在原地, 中间空出一条灰带, 首屏内容也被卷走。
+   修复: 静态高度回归 100dvh(原生跟随浏览器工具栏, 配合 viewport meta 的
+   interactive-widget=resizes-content, 现代 Chrome 键盘态同样成立); 只有键盘弹起
+   (body.df-kb-open)才采用 JS 实测值 —— 这是 iOS(无 resizes-content)的必要兜底。
+   dvh 不支持的旧浏览器解析失败自动回落旧规则, 无回归风险。
+   ========================================================================== */
+@media (max-width: 820px) {
+  .terminal-only-root .bbt-with-sidebar.bbt-side-ai { height: 100dvh !important; }
+  body.df-kb-open .terminal-only-root .bbt-with-sidebar.bbt-side-ai { height: var(--df-vvh, 100dvh) !important; }
+  /* 历史条: 操作按钮(2×21px+间距+右距≈49px)绝对定位在右上, 文字只预留 30px 会压字 */
+  .bbt-side-ai .bbt-ai-history-item { flex-basis: 210px; }
+  .bbt-side-ai .bbt-ai-history-item-main { padding-right: 54px; }
+}
