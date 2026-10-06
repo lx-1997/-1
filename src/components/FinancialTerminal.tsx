@@ -450,8 +450,10 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
         <small>{roundtable
           ? `真实协作 · 已用 ${elapsed} 秒 · 实时核对中，30 秒无进度自动兜底 · 仅展示执行步骤`
           : `快速问答 · 已用 ${elapsed} 秒 · ${progressPercent >= 67 ? '正在组织回答' : '正在核对可用数据'} · 30 秒无进度自动兜底`}</small>
-        {roundtable && auditedScope.length > 0 && <span className="bbt-ai-thinking-scope"><b>已查范围</b>{auditedScope.map(label => <i key={label}>{label}</i>)}</span>}
-        {roundtable && latestAudited?.summary && <span className="bbt-ai-thinking-latest">最新核对：{latestAudited.summary.slice(0, 118)}</span>}
+        {/* 阶段性结果对快速问答同样可见：工具摘要/已查范围随 SSE 事件逐条到达，
+            是真实取数结论而非预估动画——这是等待期唯一「有内容可看」的来源。 */}
+        {auditedScope.length > 0 && <span className="bbt-ai-thinking-scope"><b>已查范围</b>{auditedScope.map(label => <i key={label}>{label}</i>)}</span>}
+        {latestAudited?.summary && <span className="bbt-ai-thinking-latest">最新核对：{latestAudited.summary.slice(0, 118)}</span>}
         {liveReferences.length > 0 && <span className="bbt-ai-thinking-references" aria-label="已命中的资料">
           <b>已命中资料</b>
           {liveReferences.map((reference, index) => <span key={`${reference.id || reference.title}-${index}`} title={reference.detail || reference.title}>
@@ -1351,6 +1353,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 跨用户持久缓存，这里只做前端瞬时缓存，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
   const [aiProgress, setAiProgress] = useState(0);  // AI 解读进度条（按耗时渐近爬升，完成即收）
+  const [aiLoadElapsed, setAiLoadElapsed] = useState(0);  // 已用秒数（等待期体感时间）
   const [aiError, setAiError] = useState('');
   const [upgradeOpen, setUpgradeOpen] = useState(false);   // 开通会员引导弹层
   const [upgradeReason, setUpgradeReason] = useState('');
@@ -3410,10 +3413,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => {
     if (!aiLoading) return;
     setAiProgress(6);
+    setAiLoadElapsed(0);
     const start = Date.now();
     const tau = 16000;  // 时间常数：~16s 到 ~61%，~40s 到 ~87%，渐近 94%
     const t = window.setInterval(() => {
       const elapsed = Date.now() - start;
+      setAiLoadElapsed(Math.floor(elapsed / 1000));
       setAiProgress(Math.min(94, 6 + 88 * (1 - Math.exp(-elapsed / tau))));
     }, 250);
     return () => window.clearInterval(t);
@@ -6644,18 +6649,27 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   />
                 </div>
               ) : <>
-              {aiLoading && (
+              {aiLoading && (() => {
+                // 阶段推进与进度条同源（按耗时预估节奏），如实标注「预估」——服务器没有阶段事件可回报。
+                const stages = aiReportMeta ? ['读取原文', '提炼事实', '组织逻辑', '核对风险', '生成结论'] : ['读取内容', '提炼要点', '生成解读'];
+                const stageCut = aiReportMeta ? [0, 26, 52, 74, 90] : [0, 38, 74];
+                const activeStage = stages.reduce((acc, _, index) => (aiProgress >= stageCut[index] ? index : acc), 0);
+                const stageDetail = aiReportMeta
+                  ? ['正在下载并解析研报原文', '正在逐页提炼事实与数据', '正在组织章节逻辑与证据链', '正在核对风险与反方观点', '正在汇总结论与跟踪项']
+                  : ['正在读取内容', '正在提炼关键要点', '正在生成解读'];
+                return (
                 <div className="bbt-ai-loading">
-                  <div className="bbt-ai-load-head"><span>✦ {aiReportMeta ? '正在生成深度研报稿…' : 'AI 正在解读…'}</span><span className="bbt-ai-load-pct">{Math.round(aiProgress)}%</span></div>
+                  <div className="bbt-ai-load-head"><span>✦ {aiReportMeta ? '正在生成深度研报稿…' : 'AI 正在解读…'}</span><span className="bbt-ai-load-pct">{Math.round(aiProgress)}% · 已用 {Math.max(1, aiLoadElapsed)}s</span></div>
                   <div className="bbt-ai-bar"><div className="bbt-ai-bar-fill" style={{ width: `${aiProgress}%` }} /></div>
-                  <div className="bbt-ai-load-stages" aria-label="AI 解读阶段">
-                    {(aiReportMeta ? ['读取原文', '提炼事实', '组织逻辑', '核对风险', '生成结论'] : ['读取内容', '提炼要点', '生成解读']).map((stage, index) => (
-                      <span key={stage} className={index === 0 ? 'is-active' : ''}><i>{index + 1}</i>{stage}</span>
+                  <div className="bbt-ai-load-stages" aria-label="AI 解读阶段（按典型耗时预估）">
+                    {stages.map((stage, index) => (
+                      <span key={stage} className={index < activeStage ? 'is-done' : index === activeStage ? 'is-active' : ''}><i>{index < activeStage ? '✓' : index + 1}</i>{stage}</span>
                     ))}
                   </div>
-                  <div className="bbt-ai-load-hint">{aiReportMeta ? '正在读取最多 32 页并整理证据、章节与跟踪项；通常需要几十秒' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
+                  <div className="bbt-ai-load-hint"><b>{stageDetail[activeStage]}…</b>{aiReportMeta ? '正在读取最多 32 页并整理证据、章节与跟踪项；通常需要几十秒' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
                 </div>
-              )}
+                );
+              })()}
               {!aiLoading && aiError && <div className="bbt-empty bbt-ai-err">⚠ {aiError}</div>}
               {!aiLoading && aiResult && (() => {
                 const compactReport = !!aiReportMeta;
