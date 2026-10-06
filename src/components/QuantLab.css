@@ -37,6 +37,16 @@
   transform: translateY(-1px);
 }
 
+.quant-lab .quant-beginner-panel { margin-bottom: 16px; padding: 12px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border, #d9e1ea)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 4%, var(--surface-muted, #f7f9fb)); }
+.quant-lab .quant-beginner-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.quant-lab .quant-preset-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.quant-lab .quant-preset-option { min-height: 68px; padding: 9px 10px; border: 1px solid var(--border, #d9e1ea); border-radius: 8px; color: var(--text, #1f2937); background: var(--surface, #fff); cursor: pointer; font: inherit; text-align: left; }
+.quant-lab .quant-preset-option:hover, .quant-lab .quant-preset-option.is-active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface, #fff)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent); }
+.quant-lab .quant-preset-option strong, .quant-lab .quant-preset-option span { display: block; }
+.quant-lab .quant-preset-option strong { margin-bottom: 4px; font-size: 12px; }
+.quant-lab .quant-preset-option span, .quant-lab .quant-beginner-note { color: var(--text-muted, #64748b); font-size: 11px; line-height: 1.45; }
+.quant-lab .quant-beginner-note { display: block; margin-top: 9px; }
+
 .quant-lab .quant-strategy-option.is-active {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface, #fff));
@@ -135,6 +145,9 @@
   .quant-lab .quant-strategy-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .quant-lab .quant-preset-grid { grid-template-columns: 1fr; }
+  .quant-lab .quant-beginner-header { align-items: flex-start; flex-direction: column; }
 
   .quant-lab .quant-strategy-option {
     min-height: 70px;

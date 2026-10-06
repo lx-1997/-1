@@ -87,6 +87,12 @@ const DEFAULT_RULES = {
   allow_reentry: false,
 };
 
+const BEGINNER_PRESETS: Array<{ key: string; label: string; description: string; strategy: QuantStrategyKey; values: Record<string, unknown> }> = [
+  { key: 'steady', label: '稳健入门', description: '低换手、只做多、保留现金缓冲，适合第一次回测。', strategy: 'defensive', values: { lookback: 20, top_n: 4, rebalance_frequency: 'monthly', allow_short: false, max_position_size_pct: 20, max_total_exposure_pct: 80, max_drawdown_pct: 12 } },
+  { key: 'trend', label: '趋势成长', description: '用趋势与相对强度筛选强势标的，每周检查一次。', strategy: 'trend_following', values: { lookback: 60, top_n: 5, rebalance_frequency: 'weekly', allow_short: false, max_position_size_pct: 25, max_total_exposure_pct: 100, max_drawdown_pct: 15 } },
+  { key: 'reversal', label: '均值回归', description: '观察短期偏离后的回归机会，适合学习信号与风险。', strategy: 'mean_reversion', values: { lookback: 20, top_n: 4, rebalance_frequency: 'weekly', allow_short: false, max_position_size_pct: 20, max_total_exposure_pct: 80, max_drawdown_pct: 12 } },
+];
+
 const ACTION_LABELS: Record<string, string> = {
   buy: '买入', sell: '卖出', short: '做空', cover: '平空', hold: '观望',
 };
@@ -108,6 +114,23 @@ const parseSectorMap = (text: string): Record<string, string> => {
   return map;
 };
 
+const buildPlatformContext = (stocks: AppState['stocks'] | undefined, posts: AppState['posts'] | undefined, symbols: string[]) => {
+  const wanted = new Set(symbols.map(symbol => symbol.toUpperCase()));
+  const postsBySymbol = (posts || []).reduce<Record<string, AppState['posts']>>((acc, post) => {
+    const symbol = String(post.stockSymbol || '').trim().toUpperCase();
+    if (symbol && wanted.has(symbol)) (acc[symbol] ||= []).push(post);
+    return acc;
+  }, {});
+  return (stocks || []).reduce<Record<string, Record<string, unknown>>>((acc, stock) => {
+    const symbol = String(stock.symbol || '').trim().toUpperCase();
+    if (!symbol || !wanted.has(symbol)) return acc;
+    const stockPosts = postsBySymbol[symbol] || [];
+    const qualityScores = stockPosts.map(post => Number(post.qualityScore)).filter(score => Number.isFinite(score) && score > 0);
+    acc[symbol] = { name: stock.name, sector: stock.sector, market: stock.market, community_score: stock.communityScore, focus_level: stock.focusLevel, total_posts: stock.totalPosts, total_paid_posts: stock.totalPaidPosts, change_percent: stock.changePercent, recent_post_count: stockPosts.length, analysis_post_count: stockPosts.filter(post => post.type === 'analysis').length, avg_quality_score: qualityScores.length ? qualityScores.reduce((sum, score) => sum + score, 0) / qualityScores.length : undefined, top_tags: Array.from(new Set(stockPosts.flatMap(post => post.tags || []))).slice(0, 6) };
+    return acc;
+  }, {});
+};
+
 const buildChartData = (result: QuantLabResponse | null) => {
   if (!result) return [];
   const { dates, equity_curve, baseline_curve, benchmark_curve } = result.backtest;
@@ -120,7 +143,7 @@ const buildChartData = (result: QuantLabResponse | null) => {
 };
 
 interface QuantLabProps {
-  appState?: Pick<AppState, 'stocks'>;
+  appState?: Pick<AppState, 'stocks' | 'posts'>;
   defaultSymbols?: string[];
 }
 
@@ -136,6 +159,8 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
   const activeJobRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const allowShort = Form.useWatch('allow_short', form);
+
+  const platformStocks = useMemo(() => appState?.stocks || [], [appState?.stocks]);
 
   const defaultSymbols = useMemo(() => {
     const symbols = (preferredSymbols?.length
@@ -206,7 +231,24 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
         allow_reentry: !!values.allow_reentry,
       },
       sector_map: parseSectorMap(values.sector_map || ''),
+      platform_context: buildPlatformContext(platformStocks, appState?.posts, symbols),
     };
+  };
+
+  const applyBeginnerPreset = (preset: typeof BEGINNER_PRESETS[number]) => {
+    setStrategyKey(preset.strategy);
+    form.setFieldsValue(preset.values);
+    message.success(`已应用「${preset.label}」`);
+  };
+
+  const usePlatformWatchlist = () => {
+    if (!platformStocks.length) {
+      message.info('当前没有可用的平台观察池，请先在观察池添加标的。');
+      return;
+    }
+    const selected = platformStocks.slice(0, 10);
+    form.setFieldsValue({ symbols: selected.map(stock => stock.symbol).join(', '), sector_map: selected.map(stock => `${stock.symbol}=${stock.sector || '未分类'}`).join(', ') });
+    message.success(`已载入平台观察池 ${selected.length} 个标的，并同步行业与社区信息`);
   };
 
   const handleRun = async () => {
@@ -282,6 +324,12 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
     { title: '标的', key: 'symbol', width: 120, render: (_: unknown, row: QuantLabResponse['signals'][number]) => <Space direction="vertical" size={0}><Text strong>{row.symbol}</Text><Text type="secondary">{row.market} · {row.sector || '未分组'}</Text></Space> },
     { title: '动作', dataIndex: 'action', key: 'action', width: 82, render: (value: string) => <Tag color={ACTION_COLORS[value]}>{ACTION_LABELS[value] || value}</Tag> },
     { title: '评分', dataIndex: 'score', key: 'score', width: 145, render: (score: number) => <Space direction="vertical" size={0} style={{ width: '100%' }}><Text>{score >= 0 ? '+' : ''}{score.toFixed(1)}</Text><Progress percent={Math.max(0, Math.min(100, score + 50))} size="small" showInfo={false} /></Space> },
+    { title: '平台上下文', key: 'platform', width: 185, render: (_: unknown, row: QuantLabResponse['signals'][number]) => {
+      const ctx = row.platform_context || {};
+      const items = [typeof ctx.community_score === 'number' ? `社区 ${ctx.community_score.toFixed(0)}` : '', ctx.focus_level ? `关注 ${String(ctx.focus_level)}` : '', typeof ctx.total_posts === 'number' ? `内容 ${ctx.total_posts}` : '', typeof ctx.avg_quality_score === 'number' ? `质量 ${ctx.avg_quality_score.toFixed(0)}` : ''].filter(Boolean);
+      return <Space wrap size={[4, 4]}>{items.length ? items.map(item => <Tag key={item} color="blue">{item}</Tag>) : <Text type="secondary">未匹配观察池</Text>}</Space>;
+    } },
+
     { title: '当前 / 目标', key: 'weights', width: 130, render: (_: unknown, row: QuantLabResponse['signals'][number]) => <Text>{row.current_weight.toFixed(1)}% / {row.target_weight.toFixed(1)}%</Text> },
     { title: '最新价', dataIndex: 'latest_close', key: 'latest_close', width: 100, render: (value: number) => value.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) },
     { title: '置信度', dataIndex: 'confidence', key: 'confidence', width: 90, render: (value: number) => `${Math.round(value * 100)}%` },
@@ -344,6 +392,11 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
       />
 
       <Card size="small" title="研究配置" style={{ marginBottom: 16 }}>
+        <div className="quant-beginner-panel">
+          <div className="quant-beginner-header"><div><Text strong>新手向导</Text><Text type="secondary"> 先选一个目标，系统会填好可解释的参数。</Text></div><Button size="small" onClick={usePlatformWatchlist} disabled={!platformStocks.length}>使用平台观察池</Button></div>
+          <div className="quant-preset-grid">{BEGINNER_PRESETS.map(preset => <button key={preset.key} type="button" className={`quant-preset-option${strategyKey === preset.strategy ? ' is-active' : ''}`} onClick={() => applyBeginnerPreset(preset)}><strong>{preset.label}</strong><span>{preset.description}</span></button>)}</div>
+          <Text type="secondary" className="quant-beginner-note">平台上下文会使用观察池的社区活跃度、关注等级、研究数量、内容质量和行业标签，只对最新信号做轻量叠加；历史回测仍只使用行情。</Text>
+        </div>
         <Form
           form={form}
           layout="vertical"
@@ -388,7 +441,7 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
               ))}
             </div>
           </Form.Item>
-          <Form.Item name="symbols" label="交易标的" rules={[{ required: true, message: '请输入至少一个标的代码' }]} extra="多个代码用逗号或空格分隔；A股支持 600519 / 000001.SZ，港股支持 00700 / 00700.HK，美股支持 AAPL。"><Input placeholder="AAPL, MSFT, 600519, 00700" /></Form.Item>
+          <Form.Item name="symbols" label={<Space size={8}>交易标的{platformStocks.length > 0 && <Button type="link" size="small" onClick={usePlatformWatchlist} style={{ padding: 0 }}>载入观察池</Button>}</Space>} rules={[{ required: true, message: '请输入至少一个标的代码' }]} extra="多个代码用逗号或空格分隔；A股支持 600519 / 000001.SZ，港股支持 00700 / 00700.HK，美股支持 AAPL。"><Input placeholder="AAPL, MSFT, 600519, 00700" /></Form.Item>
 
           <Row gutter={12}>
             <Col xs={24} md={12}><Form.Item name="dateRange" label="回测区间" rules={[{ required: true, message: '请选择回测开始和结束日期' }]}><RangePicker allowClear={false} style={{ width: '100%' }} /></Form.Item></Col>
@@ -461,6 +514,7 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
               <Tag>现金缓冲 {fmtPct(result.allocation.cash_buffer_pct, false)}</Tag>
               {result.notes.map(note => <Tag key={note}>{note}</Tag>)}
             </Space>
+            {result.platform_context?.matched_symbols ? <Alert type="info" showIcon style={{ marginTop: 12 }} message={`已融合平台观察池 ${result.platform_context.matched_symbols} 个标的`} description="平台信息只影响最新候选信号的轻量叠加，不改变历史行情回测；社区热度越高，越需要结合回撤和成交成本审慎判断。" /> : null}
           </Card>
 
           <Card size="small" title={<><BarChartOutlined /> 组合净值曲线</>} style={{ marginBottom: 16 }}>
