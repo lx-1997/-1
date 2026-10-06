@@ -1,0 +1,55 @@
+@app.get("/api/agents/chain-metrics")
+async def agent_chain_metrics(limit: int = 200, _admin: dict = Depends(require_admin)) -> dict[str, Any]:
+    """研究链路质量聚合（管理员）：最近 N 次问答的任务长度分布、断链率、断点位置/工具 Top、
+    耗时分位，以及与 👍👎 反馈的按题联查——用「能连续串多少步」衡量研究 Agent，而非单工具准确率。
+    数据来自 tool-research 每次运行落的 agent_chain 记录（data_store 序列封顶 500 条）。"""
+    from . import data_store as _ds
+    take = max(10, min(int(limit or 200), 500))
+    runs = [(row.get("payload") or {}) for row in _ds.history("agent_chain", "all", limit=take)]
+    runs.reverse()  # 旧→新
+    n = len(runs)
+    if not n:
+        return {"runs": 0, "note": "暂无 agent_chain 记录"}
+    def _pctl(values: list[int], q: float):
+        if not values:
+            return None
+        xs = sorted(values)
+        return xs[max(0, min(len(xs) - 1, int(round(q * (len(xs) - 1)))))]
+    steps_list = [int(r.get("steps") or 0) for r in runs]
+    ok_runs = [r for r in runs if r.get("ok") is True]
+    broken = [r for r in runs if isinstance(r.get("break_index"), int) and r["break_index"] >= 0]
+    break_tool_counts: dict[str, int] = {}
+    break_pos_counts: dict[int, int] = {}
+    for r in broken:
+        tool = str(r.get("break_tool") or "未知")
+        break_tool_counts[tool] = break_tool_counts.get(tool, 0) + 1
+        pos = int(r.get("break_index") or 0) + 1  # 1-based：第几步断
+        break_pos_counts[pos] = break_pos_counts.get(pos, 0) + 1
+    # 按题联查用户反馈（最近 100 条）：链路指标最终要落在「用户是否认可答案」上。
+    fb_up = fb_down = fb_joined = 0
+    for r in runs[-100:]:
+        fp = str(r.get("q_fp") or "")
+        if not fp:
+            continue
+        fb = _ds.latest("qa_feedback", fp) or {}
+        verdict = str(fb.get("verdict") or "")
+        if verdict in ("up", "down"):
+            fb_joined += 1
+            if verdict == "up":
+                fb_up += 1
+            else:
+                fb_down += 1
+    return {
+        "runs": n,
+        "ok_rate": round(len(ok_runs) / n, 3) if n else None,
+        "steps": {"p50": _pctl(steps_list, 0.5), "p90": _pctl(steps_list, 0.9), "max": max(steps_list) if steps_list else None},
+        "break_rate": round(len(broken) / n, 3) if n else None,
+        "break_at_step": dict(sorted(break_pos_counts.items())),
+        "break_tool_top": sorted(break_tool_counts.items(), key=lambda kv: -kv[1])[:5],
+        "elapsed_ms_p50": _pctl([int(r.get("elapsed_ms") or 0) for r in ok_runs], 0.5),
+        "elapsed_ms_p90": _pctl([int(r.get("elapsed_ms") or 0) for r in ok_runs], 0.9),
+        "feedback_last100": {"joined": fb_joined, "up": fb_up, "down": fb_down},
+    }
+
+
+@app.post("/api/agents/feedback")

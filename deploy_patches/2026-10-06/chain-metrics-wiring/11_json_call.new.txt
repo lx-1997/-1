@@ -1,0 +1,3 @@
+    _ifind = ifind_enhance_enabled(request)
+    _runtime_record = _start_ai_runtime_tracker("deep" if use_roundtable else "quick", message=message)
+    hint_parts = [p for p in (context_hint, _history_context_prefix(history),) if p]

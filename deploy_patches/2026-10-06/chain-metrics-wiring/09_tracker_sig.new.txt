@@ -1,0 +1,13 @@
+def _start_ai_runtime_tracker(mode: str, message: str = ""):
+    """Return an idempotent finisher for one AI request (JSON or SSE)."""
+    started_at = time.perf_counter()
+    recorded = False
+
+    def finish(success: bool, *, trace: Any = None, reason: str = "") -> None:
+        nonlocal recorded
+        if recorded:
+            return
+        recorded = True
+        _record_ai_runtime_metrics(mode, started_at, trace=trace, success=success, reason=reason, message=message)
+
+    return finish

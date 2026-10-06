@@ -1,0 +1,4 @@
+        suggestions = list(getattr(routed, "suggested_actions", None) or [])
+        if not suggestions:
+            suggestions = _followup_suggestions(message, trace)
+        return {

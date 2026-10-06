@@ -1,0 +1,4 @@
+                        _record_agent_chain(mode=request_mode, route="roundtable", message=message, trace=roundtable_trace,
+                                            elapsed_ms=int((time.perf_counter() - _ai_started) * 1000), answer=answer, ok=True)
+                        await emit("status", {"message": "多专家已完成交叉核对，正在组织结论"})
+                        await queue.put(_sse_frame("final", {

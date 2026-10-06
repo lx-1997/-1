@@ -1,0 +1,29 @@
+    ip = _client_ip(request) if request is not None else "?"
+    fkey = f"q:agentqa:anon:{ip}"
+    if metrics_get_daily(fkey) >= _AGENT_FREE_QA_ANON:
+        raise HTTPException(status_code=403, detail="登录即可继续用 AI 投研问答，还送 3 天尊享会员 🎁")
+    return fkey
+
+
+def _record_agent_chain(*, mode: str, route: str, message: str, trace: list, elapsed_ms: int,
+                        answer: str, ok: bool, error: str = "") -> None:
+    """研究链路质量台账（借鉴 RSI 论文的核心度量：评估研究 Agent 看「能连续串多少步不断链」，
+    而非单工具准确率）。tool-research 每次运行落一条 agent_chain 记录，供
+    /api/agents/chain-metrics 聚合任务长度/断链率/断点分布/耗时分位。失败静默，绝不拖垮问答。"""
+    try:
+        from . import data_store as _ds
+        from .weixin_channel import _qa_fingerprint as _wx_fp
+        steps = [t for t in (trace or []) if isinstance(t, dict)]
+        ok_flags = [t.get("ok", True) is not False for t in steps]
+        break_index = next((i for i, f in enumerate(ok_flags) if not f), -1)
+        _ds.record("agent_chain", "all", {
+            "mode": str(mode or "")[:16], "route": str(route or "")[:16],
+            "q_fp": _wx_fp(message) if message else "",
+            "steps": len(steps), "steps_ok": sum(ok_flags),
+            "break_index": break_index,
+            "break_tool": str(steps[break_index].get("tool") or "")[:40] if 0 <= break_index < len(steps) else "",
+            "elapsed_ms": max(0, int(elapsed_ms or 0)), "answer_chars": len(answer or ""),
+            "ok": bool(ok), "error": str(error or "")[:120],
+        })
+    except Exception:
+        pass

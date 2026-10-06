@@ -1,0 +1,2 @@
+    zsxq_health_task = _spawn_bg("zsxq_health", run_zsxq_health)
+    recall_ingest_task = _spawn_bg("recall_ingest", run_recall_ingest)

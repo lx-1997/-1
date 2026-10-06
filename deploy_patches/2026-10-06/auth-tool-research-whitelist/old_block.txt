@@ -1,0 +1,4 @@
+        "/api/research/vision-analyze",
+        "/api/research/deep-draft",  # 深度研报稿：handler 复用 _check_ai_quota 精细把关
+        "/api/news/ai-analyze",
+        "/api/metrics/pageview",    # 匿名打点

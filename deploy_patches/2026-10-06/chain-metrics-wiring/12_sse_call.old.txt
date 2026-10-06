@@ -1,0 +1,3 @@
+        async def run() -> None:
+            _runtime_record = _start_ai_runtime_tracker("deep" if use_roundtable else "quick")
+            from . import agent_tools as _agent_tools

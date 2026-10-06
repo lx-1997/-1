@@ -1,0 +1,10 @@
+def _record_ai_runtime_metrics(
+    mode: str,
+    started_at: float,
+    *,
+    trace: Any = None,
+    success: bool,
+    reason: str = "",
+) -> None:
+    """Persist exact model/tool runtime counters without affecting the answer path."""
+    prefix = "ai_runtime_deep" if str(mode or "").strip().lower() == "deep" else "ai_runtime_quick"

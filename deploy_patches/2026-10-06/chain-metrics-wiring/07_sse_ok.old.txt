@@ -1,0 +1,2 @@
+                    suggestions = list(getattr(routed, "suggested_actions", None) or []) or _followup_suggestions(message, trace)
+                    await emit("status", {"message": "已完成交叉核对，正在组织结论"})

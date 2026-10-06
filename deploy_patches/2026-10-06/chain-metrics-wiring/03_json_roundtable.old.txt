@@ -1,0 +1,5 @@
+            answer = (roundtable_result.synthesis or "").strip()
+            if not answer:
+                return {"ok": False, "answer": "", "tool_trace": roundtable_trace, "reason": "多专家圆桌未返回结论"}
+            if quota_key:
+                metrics_incr(quota_key)

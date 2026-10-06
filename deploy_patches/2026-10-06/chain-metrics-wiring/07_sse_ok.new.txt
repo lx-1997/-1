@@ -1,0 +1,4 @@
+                    suggestions = list(getattr(routed, "suggested_actions", None) or []) or _followup_suggestions(message, trace)
+                    _record_agent_chain(mode=request_mode, route="orchestrator", message=message, trace=trace,
+                                        elapsed_ms=_ai_elapsed_ms, answer=answer, ok=True)
+                    await emit("status", {"message": "已完成交叉核对，正在组织结论"})

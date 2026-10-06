@@ -1,0 +1,5 @@
+    ip = _client_ip(request) if request is not None else "?"
+    fkey = f"q:agentqa:anon:{ip}"
+    if metrics_get_daily(fkey) >= _AGENT_FREE_QA_ANON:
+        raise HTTPException(status_code=403, detail="登录即可继续用 AI 投研问答，还送 3 天尊享会员 🎁")
+    return fkey

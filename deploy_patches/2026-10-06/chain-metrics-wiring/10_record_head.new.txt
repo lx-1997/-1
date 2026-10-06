@@ -1,0 +1,19 @@
+def _record_ai_runtime_metrics(
+    mode: str,
+    started_at: float,
+    *,
+    trace: Any = None,
+    success: bool,
+    reason: str = "",
+    message: str = "",
+) -> None:
+    """Persist exact model/tool runtime counters without affecting the answer path."""
+    prefix = "ai_runtime_deep" if str(mode or "").strip().lower() == "deep" else "ai_runtime_quick"
+    # 研究链路质量台账：任务长度/断链（借鉴 RSI 论文度量「能连续串多少步」）——
+    # 挂在唯一运行收口，JSON/SSE、成功/失败全覆盖。失败静默，绝不影响回答路径。
+    try:
+        _record_agent_chain(mode=str(mode), route="runtime", message=str(message or ""), trace=trace,
+                            elapsed_ms=max(0, int((time.perf_counter() - float(started_at)) * 1000)),
+                            answer="", ok=bool(success), error=str(reason or ""))
+    except Exception:
+        pass

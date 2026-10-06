@@ -1,0 +1,4 @@
+        metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
+        _record_agent_chain(mode=request_mode, route="error", message=message, trace=[],
+                            elapsed_ms=elapsed, answer="", ok=False, error=str(exc))
+        return {"ok": False, "answer": "", "tool_trace": [], "error": str(exc)[:160]}

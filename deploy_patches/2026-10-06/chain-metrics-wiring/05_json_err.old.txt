@@ -1,0 +1,2 @@
+        metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
+        return {"ok": False, "answer": "", "tool_trace": [], "error": str(exc)[:160]}
