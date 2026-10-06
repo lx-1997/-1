@@ -8990,6 +8990,30 @@ def _check_agent_quota(user: Optional[dict], request: Optional[Request] = None) 
     return fkey
 
 
+def _record_agent_chain(*, mode: str, route: str, message: str, trace: list, elapsed_ms: int,
+                        answer: str, ok: bool, error: str = "") -> None:
+    """研究链路质量台账（借鉴 RSI 论文的核心度量：评估研究 Agent 看「能连续串多少步不断链」，
+    而非单工具准确率）。tool-research 每次运行落一条 agent_chain 记录，供
+    /api/agents/chain-metrics 聚合任务长度/断链率/断点分布/耗时分位。失败静默，绝不拖垮问答。"""
+    try:
+        from . import data_store as _ds
+        from .weixin_channel import _qa_fingerprint as _wx_fp
+        steps = [t for t in (trace or []) if isinstance(t, dict)]
+        ok_flags = [t.get("ok", True) is not False for t in steps]
+        break_index = next((i for i, f in enumerate(ok_flags) if not f), -1)
+        _ds.record("agent_chain", "all", {
+            "mode": str(mode or "")[:16], "route": str(route or "")[:16],
+            "q_fp": _wx_fp(message) if message else "",
+            "steps": len(steps), "steps_ok": sum(ok_flags),
+            "break_index": break_index,
+            "break_tool": str(steps[break_index].get("tool") or "")[:40] if 0 <= break_index < len(steps) else "",
+            "elapsed_ms": max(0, int(elapsed_ms or 0)), "answer_chars": len(answer or ""),
+            "ok": bool(ok), "error": str(error or "")[:120],
+        })
+    except Exception:
+        pass
+
+
 # AI 对话里的「深度研判」是回答模式，不再单独做成会员专属入口：会员/管理员不限次，
 # 非会员每天体验 1 次；匿名按 IP 计数，登录后按账号计数。只在成功返回圆桌答案后扣次。
 _DULUS_DEEP_FREE = int(os.getenv("DEEPFOCUS_FREE_DEEP_ANSWER", "1") or 1)
@@ -12834,6 +12858,8 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
             answer = (roundtable_result.synthesis or "").strip()
             if not answer:
                 return {"ok": False, "answer": "", "tool_trace": roundtable_trace, "reason": "多专家圆桌未返回结论"}
+            _record_agent_chain(mode=request_mode, route="roundtable", message=message, trace=roundtable_trace,
+                                elapsed_ms=int((time.perf_counter() - _ai_started) * 1000), answer=answer, ok=True)
             if quota_key:
                 metrics_incr(quota_key)
             from .compliance import ai_label as _ai_label
@@ -12874,6 +12900,8 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
         elapsed = int((time.perf_counter() - _ai_started) * 1000)
         metrics_incr("ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
         metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
+        _record_agent_chain(mode=request_mode, route="error", message=message, trace=[],
+                            elapsed_ms=elapsed, answer="", ok=False, error=str(exc))
         return {"ok": False, "answer": "", "tool_trace": [], "error": str(exc)[:160]}
     finally:
         _agent_tools._BINDING_USER.reset(_tok)
@@ -12925,6 +12953,8 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
         suggestions = list(getattr(routed, "suggested_actions", None) or [])
         if not suggestions:
             suggestions = _followup_suggestions(message, trace)
+        _record_agent_chain(mode=request_mode, route="orchestrator", message=message, trace=trace,
+                            elapsed_ms=_ai_elapsed_ms, answer=answer, ok=True)
         return {
             "ok": True,
             "answer": _ai_label(_scrub_internal_text(answer), brief=True),
@@ -13081,6 +13111,8 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                                 "ok": item.get("ok"),
                                 "summary": item.get("summary", ""),
                             })
+                        _record_agent_chain(mode=request_mode, route="roundtable", message=message, trace=roundtable_trace,
+                                            elapsed_ms=int((time.perf_counter() - _ai_started) * 1000), answer=answer, ok=True)
                         await emit("status", {"message": "多专家已完成交叉核对，正在组织结论"})
                         await queue.put(_sse_frame("final", {
                             "answer": _ai_label(_scrub_internal_text(answer), brief=True),
@@ -13168,6 +13200,8 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                             "summary": str(getattr(step, "detail", "") or "")[:200],
                         })
                     suggestions = list(getattr(routed, "suggested_actions", None) or []) or _followup_suggestions(message, trace)
+                    _record_agent_chain(mode=request_mode, route="orchestrator", message=message, trace=trace,
+                                        elapsed_ms=_ai_elapsed_ms, answer=answer, ok=True)
                     await emit("status", {"message": "已完成交叉核对，正在组织结论"})
                     await queue.put(_sse_frame("final", {
                         "answer": _ai_label(_scrub_internal_text(answer), brief=True),
@@ -13190,6 +13224,8 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                 elapsed = int((time.perf_counter() - _ai_started) * 1000)
                 metrics_incr("ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
                 metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
+                _record_agent_chain(mode=request_mode, route="error", message=message, trace=[],
+                                    elapsed_ms=elapsed, answer="", ok=False, error=str(exc))
                 await queue.put(_sse_frame("error", {"message": str(exc)[:200]}))
             finally:
                 _agent_tools._BINDING_USER.reset(_tok)
@@ -13221,6 +13257,60 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+@app.get("/api/agents/chain-metrics")
+async def agent_chain_metrics(limit: int = 200, _admin: dict = Depends(require_admin)) -> dict[str, Any]:
+    """研究链路质量聚合（管理员）：最近 N 次问答的任务长度分布、断链率、断点位置/工具 Top、
+    耗时分位，以及与 👍👎 反馈的按题联查——用「能连续串多少步」衡量研究 Agent，而非单工具准确率。
+    数据来自 tool-research 每次运行落的 agent_chain 记录（data_store 序列封顶 500 条）。"""
+    from . import data_store as _ds
+    take = max(10, min(int(limit or 200), 500))
+    runs = [(row.get("payload") or {}) for row in _ds.history("agent_chain", "all", limit=take)]
+    runs.reverse()  # 旧→新
+    n = len(runs)
+    if not n:
+        return {"runs": 0, "note": "暂无 agent_chain 记录"}
+    def _pctl(values: list[int], q: float):
+        if not values:
+            return None
+        xs = sorted(values)
+        return xs[max(0, min(len(xs) - 1, int(round(q * (len(xs) - 1)))))]
+    steps_list = [int(r.get("steps") or 0) for r in runs]
+    ok_runs = [r for r in runs if r.get("ok") is True]
+    broken = [r for r in runs if isinstance(r.get("break_index"), int) and r["break_index"] >= 0]
+    break_tool_counts: dict[str, int] = {}
+    break_pos_counts: dict[int, int] = {}
+    for r in broken:
+        tool = str(r.get("break_tool") or "未知")
+        break_tool_counts[tool] = break_tool_counts.get(tool, 0) + 1
+        pos = int(r.get("break_index") or 0) + 1  # 1-based：第几步断
+        break_pos_counts[pos] = break_pos_counts.get(pos, 0) + 1
+    # 按题联查用户反馈（最近 100 条）：链路指标最终要落在「用户是否认可答案」上。
+    fb_up = fb_down = fb_joined = 0
+    for r in runs[-100:]:
+        fp = str(r.get("q_fp") or "")
+        if not fp:
+            continue
+        fb = _ds.latest("qa_feedback", fp) or {}
+        verdict = str(fb.get("verdict") or "")
+        if verdict in ("up", "down"):
+            fb_joined += 1
+            if verdict == "up":
+                fb_up += 1
+            else:
+                fb_down += 1
+    return {
+        "runs": n,
+        "ok_rate": round(len(ok_runs) / n, 3) if n else None,
+        "steps": {"p50": _pctl(steps_list, 0.5), "p90": _pctl(steps_list, 0.9), "max": max(steps_list) if steps_list else None},
+        "break_rate": round(len(broken) / n, 3) if n else None,
+        "break_at_step": dict(sorted(break_pos_counts.items())),
+        "break_tool_top": sorted(break_tool_counts.items(), key=lambda kv: -kv[1])[:5],
+        "elapsed_ms_p50": _pctl([int(r.get("elapsed_ms") or 0) for r in ok_runs], 0.5),
+        "elapsed_ms_p90": _pctl([int(r.get("elapsed_ms") or 0) for r in ok_runs], 0.9),
+        "feedback_last100": {"joined": fb_joined, "up": fb_up, "down": fb_down},
+    }
 
 
 @app.post("/api/agents/feedback")
