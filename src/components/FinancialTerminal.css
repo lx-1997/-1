@@ -5495,3 +5495,22 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   .bbt-side-ai .bbt-ai-mode-switch button small { display: none; }
   .bbt-side-ai .bbt-ai-composer .bbt-ai-send { padding: 0 6px; }
 }
+
+/* ============================================================================
+   AI 对话横向溢出修复 (2026-10-06)
+   宽表格(.bbt-md-table min-width:480px)沿 flex 气泡链(min-width:auto)逐级把
+   消息/回答块撑到 ~540px，.bbt-md-table-wrap 的 max-width:100% 随之失效，
+   最终 .bbt-ai-chat-body 整体横向滚动：正文右缘被裁、左缘露出空白沟。
+   修复：消息链强制可收缩(max-width:100% + min-width:0)，chat-body 禁横向滚动，
+   表格回落到 wrap 内部自滚动(移动端横滑表格的标准形态)。
+   ========================================================================== */
+.bbt-ai-chat-body { overflow-x: hidden; }
+.bbt-ai-chat-body > * { min-width: 0; max-width: 100%; }
+/* 关键一环: 气泡是 flex 容器, 其无名子 DIV 是 flex 项, 默认 min-width:auto 会被
+   表格 min-width:480px 撑到 ~505px —— 溢出链的真正起点在这一层。 */
+.bbt-ai-chat-body .bbt-ai-message > * { min-width: 0; max-width: 100%; }
+.bbt-ai-chat-body .bbt-ai-message,
+.bbt-ai-chat-body .bbt-ai-latest-answer,
+.bbt-ai-chat-body .bbt-md { min-width: 0; max-width: 100%; }
+.bbt-md-hr { border: 0; border-top: 1px solid rgba(112, 149, 190, .18); margin: 12px 0; }
+[data-theme="light"] .bbt-md-hr { border-top-color: rgba(90, 130, 170, .22); }

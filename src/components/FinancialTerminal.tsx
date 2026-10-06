@@ -508,6 +508,12 @@ function Markdownlite({ text }: { text: string }) {
       blocks.push(<h3 key={`heading${k}`} className="bbt-md-heading">{mdInline(heading[1], `heading${k}`)}</h3>);
       continue;
     }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
+      flush();
+      const k = blocks.length;
+      blocks.push(<hr key={`hr${k}`} className="bbt-md-hr" />);
+      continue;
+    }
     const section = t.match(/^\*\*(结论|核心依据|风险与反证|下一步核验)\*\*[：:]?\s*(.*)$/);
     if (section) {
       flush();
