@@ -5913,6 +5913,37 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       <div className="bbt-ai-deep-section-head"><span>关键事实</span><small>来自本次研究数据包</small></div>
                       <div className="bbt-ai-deep-facts-grid">{(deepAnswer.evidence_highlights || []).map((fact, index) => <div className="bbt-ai-deep-fact" key={`${fact}-${index}`}><span>{fact.split('：', 1)[0]}</span><p>{fact.includes('：') ? fact.slice(fact.indexOf('：') + 1) : fact}</p></div>)}</div>
                     </div>}
+                    {/* 条件化结论（借鉴 RSI 论文的「列出升级条件」表述范式）：非 candidate 判定
+                        只展示由本次研究记录可推导的数据缺口（失败取数/受阻步骤/资料覆盖缺口），
+                        不虚构模型没给出的升级承诺；无缺口可展示时不渲染。 */}
+                    {deepAnswer.decision !== 'candidate' && (() => {
+                      const items: string[] = [];
+                      for (const trace of deepAnswer.tool_traces || []) {
+                        if (trace.status && trace.status !== 'completed') {
+                          items.push(`${DEEP_SOURCE_LABEL[trace.tool] || trace.title}：本次未取得，可稍后重试或换个问法`);
+                        }
+                      }
+                      for (const step of deepAnswer.research_steps || []) {
+                        if (step.status === 'blocked') {
+                          items.push(`${step.label}：未执行${step.detail ? `（${step.detail}）` : ''}`);
+                        }
+                      }
+                      if (deepAnswer.content_scope) {
+                        for (const label of Object.keys(deepAnswer.content_scope)) {
+                          const item = deepAnswer.content_scope[label];
+                          if (item && item.status !== 'available') {
+                            items.push(item.status === 'not_authorized' ? `${label}：会员资料未授权，授权后可扩证据面` : `${label}：本次无命中，可扩大时间窗或换关键词追问`);
+                          }
+                        }
+                      }
+                      if (items.length === 0) return null;
+                      return <div className="bbt-ai-deep-upgrade" aria-label="补证据方向">
+                        <div className="bbt-ai-deep-section-head"><span>补证据方向</span><small>补齐后可支撑升级判断，不改变当前结论</small></div>
+                        <ul>
+                          {items.map((item, index) => <li key={`gap-${index}`}>{item}</li>)}
+                        </ul>
+                      </div>;
+                    })()}
                     {deepAnswer.content_scope && Object.keys(deepAnswer.content_scope).length > 0 && (() => {
                       const scopeOrder = ['快讯', '文章', '研报', '投行研报', '机构纪要', '名人观点', '行业', '同行', '上下游', '公开数据'];
                       const scopeStatus = (item: { status?: string; raw_count?: number; selected_count?: number }) => {

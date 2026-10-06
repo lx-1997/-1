@@ -3709,6 +3709,14 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 .bbt-ai-deep-workflow-link { flex: 0 0 auto; color: #587994; font-size: 16px; line-height: 1; }
 .bbt-ai-deep-workflow-note { margin-top: 7px; color: #69869f; font-size: 9px; }
 .bbt-ai-deep-facts { margin-top: 12px; padding: 11px 12px 10px; border: 1px solid rgba(112,149,190,.17); border-radius: 9px; background: rgba(8,19,33,.28); }
+/* 补证据方向：条件化结论——只列本次数据包可推导的证据缺口，不虚构升级承诺。 */
+.bbt-ai-deep-upgrade { margin-top: 12px; padding: 11px 12px 10px; border: 1px dashed rgba(112,149,190,.3); border-radius: 9px; background: rgba(52,93,132,.08); }
+.bbt-ai-deep-upgrade ul { margin: 8px 0 0; padding: 0; list-style: none; }
+.bbt-ai-deep-upgrade li { position: relative; margin: 5px 0; padding-left: 15px; color: #9db4cb; font-size: 12px; line-height: 1.65; }
+.bbt-ai-deep-upgrade li::before { content: "◦"; position: absolute; left: 1px; color: #5d9ad6; font-weight: 700; }
+.bbt-ai-deep-upgrade li.is-scope::before { color: #b08d4a; }
+[data-theme="light"] .bbt-ai-deep-upgrade { border-color: rgba(112,149,190,.45); background: rgba(63,143,231,.06); }
+[data-theme="light"] .bbt-ai-deep-upgrade li { color: #4c6478; }
 .bbt-ai-deep-facts-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 9px; }
 .bbt-ai-deep-fact { min-width: 0; padding: 8px 9px; border: 1px solid rgba(112,149,190,.13); border-radius: 7px; background: rgba(9,22,38,.44); }
 .bbt-ai-deep-fact span { display: block; color: #79a8c9; font-size: 9px; font-weight: 800; }
