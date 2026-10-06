@@ -62,6 +62,7 @@ import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
 import './TerminalMobile.css';
+import './TerminalMobileChat.css';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
@@ -2246,6 +2247,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setSideNavKey('ai'); setSideNavOpen(false); setSideToolsOpen(false);
     logAct('tab', 'ai_chat');
     window.setTimeout(() => aiWorkspaceRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
+    // 进入欢迎态时把消息区滚回顶部：切页时浏览器/父级 scrollIntoView 会让内部滚动容器
+    // 停在中间，居中的 ✦ 欢迎标被顶边裁掉。会话态(已有回答)不动，保留阅读位置。
+    window.setTimeout(() => {
+      const body = aiWorkspaceRef.current?.querySelector('.bbt-ai-chat-body');
+      if (body && !body.querySelector('.bbt-ai-latest-answer')) body.scrollTop = 0;
+    }, 80);
   }, [logAct]);
   // 深度研判（多智能体辩论：取证→多空立论→交叉反驳→风控→投委会裁决）。纯轮询，灰度白名单。
   const [deepMode, setDeepMode] = useState(false);

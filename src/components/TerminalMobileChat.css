@@ -1,0 +1,150 @@
+/* ============================================================================
+   移动端 AI 对话 · 聊天应用形态 (Qoder/Codex/ChatGPT 系参照)
+   仅 ≤640px 生效；须在 FinancialTerminal.css 之后加载（见 FinancialTerminal.tsx
+   import 顺序）。要点：对话全屏化（去卡片嵌套）、纤细顶栏、用户消息右对齐气泡、
+   AI 回答无气泡全宽、圆形发送键的底部输入坞、居中问候语 + 堆叠建议卡、
+   历史条紧凑化。颜色走 --shell-* 主题变量，深浅色主题自动适配。
+   ========================================================================== */
+
+@media (max-width: 640px) {
+  /* ---- 全屏化：对话即页面，去掉卡片嵌套 ---- */
+  .bbt-side-ai .bbt-ai-workspace {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    gap: 0;
+    padding: 0 0 6px;
+  }
+  .terminal-only-root .bbt-with-sidebar.bbt-side-ai .bbt-ai-workspace {
+    padding: 0 0 6px;
+  }
+
+  /* ---- 纤细顶栏 ---- */
+  .bbt-side-ai .bbt-ai-workspace-head {
+    min-height: 46px;
+    margin: 0;
+    padding: 4px 14px;
+    gap: 10px;
+    border-bottom: 1px solid rgba(var(--shell-accent-rgb, 10, 132, 255), .12);
+  }
+  .bbt-side-ai .bbt-ai-workspace-head h1 { max-width: 56vw; font-size: 16px !important; font-weight: 800; }
+  .bbt-side-ai .bbt-ai-workspace-head-actions button {
+    min-height: 30px;
+    padding: 0 11px;
+    border-radius: 15px;
+    font-size: 12px;
+  }
+
+  /* ---- 历史条紧凑化：去卡片壳，一行小胶囊 ---- */
+  .bbt-side-ai .bbt-ai-history-panel {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 6px 10px 2px;
+  }
+  .bbt-side-ai .bbt-ai-history-head { min-height: 26px; padding: 0 2px; }
+  .bbt-side-ai .bbt-ai-history-head h3,
+  .bbt-side-ai .bbt-ai-history-head b { font-size: 11px; font-weight: 600; opacity: .75; }
+  .bbt-side-ai .bbt-ai-history-list { padding: 2px 2px 4px; }
+  .bbt-side-ai .bbt-ai-history-item { flex-basis: 200px; }
+  .bbt-side-ai .bbt-ai-history-item-main {
+    padding: 7px 54px 7px 12px;
+    border-radius: 16px;
+    font-size: 13px;
+  }
+
+  /* ---- 消息流：用户右侧气泡，AI 无气泡全宽 ---- */
+  .bbt-side-ai .bbt-ai-chat-body { padding: 12px 14px 8px; }
+  .bbt-side-ai .bbt-ai-message { max-width: 100%; gap: 0; }
+  .bbt-side-ai .bbt-ai-message > span { display: none; } /* 你/AI 头像隐藏 */
+  .bbt-side-ai .bbt-ai-message--user { justify-content: flex-end; }
+  .bbt-side-ai .bbt-ai-message--user p {
+    max-width: 86%;
+    padding: 9px 13px;
+    border-radius: 17px 17px 5px 17px;
+    color: var(--shell-text, #f5f5f7);
+    background: rgba(var(--shell-accent-rgb, 10, 132, 255), .16);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .bbt-side-ai .bbt-ai-message--assistant { padding-top: 2px; }
+  .bbt-side-ai .bbt-ai-message--assistant > div { border-left: 0; padding-left: 0; }
+  .bbt-side-ai .bbt-ai-message--assistant .bbt-md-p,
+  .bbt-side-ai .bbt-ai-message--assistant .bbt-md li,
+  .bbt-side-ai .bbt-ai-message--assistant .bbt-ai-sum {
+    color: var(--shell-text, #f5f5f7);
+    font-size: 15px;
+    line-height: 1.75;
+  }
+  .bbt-side-ai .bbt-ai-message--assistant .bbt-md-p { margin-bottom: 10px; }
+
+  /* ---- 输入坞：圆角容器 + 圆形发送键 ---- */
+  .bbt-side-ai .bbt-ai-composer {
+    gap: 6px;
+    margin: 8px 12px 2px;
+    padding: 6px 6px 6px 13px;
+    border-radius: 22px;
+  }
+  .bbt-side-ai .bbt-ai-composer .bbt-ai-send,
+  .bbt-side-ai .bbt-ai-composer > button {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 15px;
+  }
+  .bbt-side-ai .bbt-ai-composer-note { margin: 4px 14px 2px; font-size: 10px; }
+  .bbt-side-ai .bbt-ai-composer-note button { border-radius: 12px; }
+
+  /* ---- 欢迎语：居中问候 + 堆叠建议卡 ---- */
+  .bbt-side-ai .bbt-ai-welcome-mark {
+    width: 42px; height: 42px; margin-bottom: 12px;
+    border-radius: 13px; font-size: 20px;
+  }
+  .bbt-side-ai .bbt-ai-welcome h2 { font-size: 21px; }
+  .bbt-side-ai .bbt-ai-welcome p { color: var(--shell-text-muted, #a1a1a6); font-size: 14px; }
+  .bbt-side-ai .bbt-ai-welcome-proof { display: none; } /* 参照形态不放能力吹捧行 */
+  .bbt-side-ai .bbt-ai-sugg-grid {
+    grid-template-columns: 1fr;
+    gap: 9px;
+    margin-top: 20px;
+  }
+  .bbt-side-ai .bbt-ai-sugg-grid button,
+  .bbt-side-ai .bbt-ai-followups button {
+    min-height: 50px;
+    padding: 11px 14px;
+    border-radius: 14px;
+    font-size: 13.5px;
+  }
+  .bbt-side-ai .bbt-ai-sugg-grid button span { display: none; } /* 去掉 ↘ 指向箭头 */
+  .bbt-side-ai .bbt-ai-followups button { border-radius: 17px; min-height: 38px; padding: 8px 13px; }
+}
+
+@media (max-width: 640px) {
+  /* ---- 二轮修正 ---- */
+  /* 聊天面板自带卡片皮肤(1px 边框+16px 圆角+白底+投影)与全屏化冲突 → 全部剥掉 */
+  .bbt-side-ai .bbt-ai-chat-panel {
+    border: 0 !important;          /* [data-theme] 前缀皮肤规则特异性更高, 用 !important 终审 */
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  /* 发送键: 文本型按钮("免费试问")在 34px 圆里放不下 → 胶囊形, 高度不变 */
+  .bbt-side-ai .bbt-ai-composer .bbt-ai-send,
+  .bbt-side-ai .bbt-ai-composer > button {
+    width: auto;
+    min-width: 34px;
+    border-radius: 18px;
+    padding: 0 13px;
+    white-space: nowrap;
+  }
+  /* 欢迎块贴底停靠: 空间富余时紧挨输入框(ChatGPT 形态), 溢出时从顶部起排不裁切 */
+  .bbt-side-ai .bbt-ai-welcome { margin: auto 0 4px; }
+  .bbt-side-ai .bbt-ai-chat-body { padding-top: 10px; }
+}
