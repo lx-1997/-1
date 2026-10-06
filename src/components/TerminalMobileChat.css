@@ -148,3 +148,88 @@
   .bbt-side-ai .bbt-ai-welcome { margin: auto 0 4px; }
   .bbt-side-ai .bbt-ai-chat-body { padding-top: 10px; }
 }
+
+@media (max-width: 640px) {
+  /* ---- 三轮: Codex/ChatGPT 式扁平净化 —— 零边框、纯白表面、中性部件 ---- */
+  [data-theme="light"] .terminal-only-root .bbt-with-sidebar.bbt-side-ai,
+  [data-theme="light"] .bbt-side-ai .bbt-ai-workspace {
+    background: #fff !important;
+  }
+  /* 顶栏去发丝线, 靠留白分隔 */
+  .bbt-side-ai .bbt-ai-workspace-head { border-bottom: 0 !important; }
+  /* 历史条: 隐藏「历史记录」文字, 只留操作钮 + 无边框灰底胶囊 */
+  .bbt-side-ai .bbt-ai-history-head h3,
+  .bbt-side-ai .bbt-ai-history-head b { display: none; }
+  .bbt-side-ai .bbt-ai-history-head { justify-content: flex-end; }
+  .bbt-side-ai .bbt-ai-history-item-main {
+    border: 0;
+    background: #f4f5f7;
+    color: #1a2430;
+  }
+  .bbt-side-ai .bbt-ai-history-item.is-active .bbt-ai-history-item-main {
+    background: #e8eef7;
+  }
+  /* 欢迎语: 去 ✦ 渐变框(只留符号), 标题墨色, 副标题中性灰 */
+  .bbt-side-ai .bbt-ai-welcome-mark {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--shell-accent, #0a84ff);
+  }
+  [data-theme="light"] .bbt-side-ai .bbt-ai-welcome h2 { color: #101820; }
+  [data-theme="light"] .bbt-side-ai .bbt-ai-welcome p { color: #8a919c; }
+  /* 建议卡 → 单行灰底 chips: 去边框/去标签/去箭头 */
+  .bbt-side-ai .bbt-ai-sugg-grid button,
+  .bbt-side-ai .bbt-ai-followups button {
+    border: 0 !important;
+    background: #f4f5f7 !important;
+    color: #232f3c !important;
+    min-height: 46px;
+    padding: 12px 14px;
+  }
+  .bbt-side-ai .bbt-ai-sugg-grid button small { display: none; }
+  .bbt-side-ai .bbt-ai-sugg-grid button b,
+  .bbt-side-ai .bbt-ai-followups button { font-weight: 500; }
+  /* 输入坞: 去边框灰底; 发送键中性深色圆钮(Codex 式), 不再蓝渐变 */
+  .bbt-side-ai .bbt-ai-composer {
+    border: 0 !important;
+    background: #f4f5f7 !important;
+    box-shadow: none !important;
+  }
+  .bbt-side-ai .bbt-ai-composer .bbt-ai-send,
+  .bbt-side-ai .bbt-ai-composer > button {
+    background: #14213a;
+    color: #fff;
+  }
+  .bbt-side-ai .bbt-ai-composer > button:disabled {
+    background: #c9d2dc;
+    color: #fff;
+  }
+  /* 消息: 用户气泡中性浅灰深字, 回答正文近黑 */
+  [data-theme="light"] .bbt-side-ai .bbt-ai-message--user p {
+    background: #eef1f4;
+    color: #14213a;
+  }
+  [data-theme="light"] .bbt-side-ai .bbt-ai-message--assistant .bbt-md-p,
+  [data-theme="light"] .bbt-side-ai .bbt-ai-message--assistant .bbt-md li,
+  [data-theme="light"] .bbt-side-ai .bbt-ai-message--assistant .bbt-ai-sum {
+    color: #1c2530;
+  }
+  [data-theme="light"] .bbt-side-ai .bbt-ai-workspace-head h1 { color: #101820; }
+  [data-theme="light"] .bbt-side-ai .bbt-ai-workspace-head-actions button {
+    border: 0;
+    background: #f4f5f7;
+    color: #232f3c;
+  }
+  [data-theme="light"] .bbt-side-ai .bbt-ai-composer-note { color: #9aa2ad; }
+}
+
+@media (max-width: 640px) {
+  /* ---- 四轮收尾: AI 回答包裹层在浅色主题下的卡片皮肤剥掉; 历史标签隐藏 ---- */
+  .bbt-side-ai .bbt-ai-message--assistant > div {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+  }
+  .bbt-side-ai .bbt-ai-history-label { display: none; }
+}
