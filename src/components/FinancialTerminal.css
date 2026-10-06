@@ -3865,7 +3865,7 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   .bbt-ai-role-panel { order: 2; }
   .bbt-ai-role-list { max-height: 310px; }
   .bbt-ai-sugg-grid { grid-template-columns: 1fr; }
-  .bbt-ai-welcome { margin-top: 18px; padding-bottom: 12px; }
+  .bbt-ai-welcome { margin: auto 0; padding-bottom: 12px; }  /* 配合 chat-body flex 列垂直居中, 消除建议卡下方大片空洞 */
   .bbt-ai-roundtable-card { margin-left: 0; padding: 12px; }
   .bbt-ai-roundtable-card-head { flex-direction: column; gap: 10px; }
   .bbt-ai-roundtable-confidence { align-self: flex-start; flex-direction: row; gap: 7px; min-height: 0; padding: 6px 9px; }
@@ -4241,7 +4241,7 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   }
   .bbt-side-ai .bbt-ai-auto-route { display: none; }
   .bbt-side-ai .bbt-ai-attach { flex-basis: 34px; min-height: 34px !important; }
-  .bbt-side-ai .bbt-ai-composer textarea { min-height: 28px; max-height: 82px; font-size: 14px; }
+  .bbt-side-ai .bbt-ai-composer textarea { min-height: 28px; max-height: 82px; font-size: 16px; }  /* 16px: iOS 聚焦不触发页面自动放大 */
   .bbt-side-ai .bbt-ai-composer .bbt-ai-send { min-height: 34px; padding: 0 10px; font-size: 11px; white-space: nowrap; }
   .bbt-side-ai .bbt-ai-composer-note {
     justify-content: flex-start;
@@ -5529,4 +5529,20 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 @media (max-width: 820px) {
   .bbt-side-ai .bbt-ai-history-item { flex-basis: 210px; }
   .bbt-side-ai .bbt-ai-history-item-main { padding-right: 54px; }
+}
+
+/* ============================================================================
+   移动端 AI 阅读密度与触控目标 (2026-10-06)
+   桌面终端的 11-13px 字号直接落到手机上密度过大：回答正文提到 14px，
+   建议卡/追问 13px，能力说明 10px；输入框 16px(iOS 聚焦不放大，textarea
+   已原位改)；历史条操作按钮 21px → 26px 触控目标。chat-body 改 flex 列
+   使欢迎块垂直居中（配 .bbt-ai-welcome 的 margin:auto 原位修改）。
+   ========================================================================== */
+@media (max-width: 820px) {
+  .bbt-side-ai .bbt-ai-chat-body { display: flex; flex-direction: column; }
+  .bbt-side-ai .bbt-ai-composer input { font-size: 16px; }
+  .bbt-side-ai .bbt-ai-message p, .bbt-side-ai .bbt-ai-message li, .bbt-side-ai .bbt-md-p { font-size: 14px; }
+  .bbt-side-ai .bbt-ai-sugg-grid button, .bbt-side-ai .bbt-ai-followups button { font-size: 13px; }
+  .bbt-side-ai .bbt-ai-welcome-proof { font-size: 10px; }
+  .bbt-side-ai .bbt-ai-history-item-actions button { width: 26px; height: 26px; font-size: 13px; }
 }
