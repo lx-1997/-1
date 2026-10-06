@@ -5,8 +5,9 @@
     <meta name="format-detection" content="telephone=no" />
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <!-- 允许用户缩放(无障碍:低视力用户能放大密集终端);viewport-fit=cover 让安全区 env() 生效(刘海/底部 home bar) -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- 允许用户缩放(无障碍:低视力用户能放大密集终端);viewport-fit=cover 让安全区 env() 生效(刘海/底部 home bar);
+         interactive-widget=resizes-content 让 Android 键盘弹起时收缩布局视口,100dvh 容器与底部输入框不被键盘遮挡(iOS 不识别该值,由 JS visualViewport 兜底) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0b0c0f" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

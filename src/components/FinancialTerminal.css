@@ -3837,7 +3837,9 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   .bbt-ai-context-panel { display: none; }
 }
 @media (max-width: 820px) {
-  .bbt-side-ai .bbt-ai-workspace { height: calc(100dvh - 154px); min-height: 0; overflow: hidden; padding: 10px 8px 8px; }
+  /* 高度跟随可视视口（--df-vvh 由 JS visualViewport 写入）：软键盘弹起时工作区随视口收缩，
+     composer 始终留在键盘上方；未写入时回落 100dvh。 */
+  .bbt-side-ai .bbt-ai-workspace { height: calc(var(--df-vvh, 100dvh) - 154px); min-height: 0; overflow: hidden; padding: 10px 8px 8px; }
   .bbt-ai-workspace-head { align-items: flex-start; flex-direction: column; gap: 8px; }
   .bbt-ai-workspace-head h1 { margin-top: 0; font-size: 22px; }
   .bbt-ai-workspace-head p { display: none; }
@@ -4110,11 +4112,23 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 @media (max-width: 820px) {
   /* AI 已在底部主导航占据固定入口，顶栏再放一次只会挤压登录和搜索。 */
   .terminal-only-root .bbt-with-sidebar.bbt-side-ai {
-    height: 100dvh !important;
+    /* 跟随可视视口：键盘弹起时收缩，避免输入框被键盘遮住（iOS 兜底，Android 另有 interactive-widget）。 */
+    height: var(--df-vvh, 100dvh) !important;
     min-height: 0;
     padding-bottom: calc(72px + env(safe-area-inset-bottom));
     overflow: hidden;
   }
+  /* 键盘弹出（body.df-kb-open 由 JS visualViewport 判定）：内容导航让位，回收其占用的底部空间。 */
+  body.df-kb-open .bbt-mobile-nav { display: none; }
+  body.df-kb-open .terminal-only-root .bbt-with-sidebar.bbt-side-ai { padding-bottom: 0 !important; }
+  /* 移动端清掉桌面装饰层：eyebrow 行话、副标题、「一条研究链路」横幅、面板头（新对话/准备就绪/
+     智能投研芯片）都不承载操作，却吃掉近半首屏；对话与输入区才是这个页面的主体。 */
+  .bbt-side-ai .bbt-ai-workspace-eyebrow,
+  .bbt-side-ai .bbt-ai-workspace-head p,
+  .bbt-side-ai .bbt-ai-harness-guide,
+  .bbt-side-ai .bbt-ai-chat-head,
+  .bbt-side-ai .bbt-ai-live { display: none; }
+  .bbt-side-ai .bbt-ai-workspace-head-actions button { white-space: nowrap; }
   .bbt-side-ai .bbt-cmd-right .bbt-primary-action { display: none; }
   .bbt-side-ai .bbt-ai-workspace {
     gap: 8px;
@@ -5246,15 +5260,18 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   .bbt-side-notes .bbt-ph,
   .bbt-side-reports .bbt-ph { min-height: 46px; padding-left: 10px; padding-right: 10px; }
   .bbt-side-ai .bbt-ai-workspace {
-    height: auto !important;
-    min-height: calc(100dvh - 58px - 76px);
+    /* 高度交给外层容器收缩 + flex 拉伸决定（见文末「最后一轮布局」块的 flex: 1 1 0）：
+       此处只保证不被旧档 min-height 撑住，键盘弹起时才能随容器一起压缩。 */
+    height: auto;
+    min-height: 0;
     gap: 7px;
     padding: 11px 8px 8px;
   }
   .bbt-side-ai .bbt-ai-workspace-head { min-height: 37px; }
   .bbt-side-ai .bbt-ai-workspace-eyebrow { font-size: 8px; letter-spacing: .11em; }
   .bbt-side-ai .bbt-ai-workspace-head h1 { max-width: 66vw; font-size: 19px; }
-  .bbt-side-ai .bbt-ai-workspace-head p { display: block; overflow: hidden; max-width: 88vw; color: var(--shell-text-muted); font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+  /* 副标题是桌面营销文案：移动端随装饰层一并隐藏（此前这里曾保留为单行截断展示）。 */
+  .bbt-side-ai .bbt-ai-workspace-head p { display: none; }
   .bbt-side-ai .bbt-ai-live { display: none; }
   .bbt-ai-harness-guide { min-height: 43px; gap: 10px; padding: 6px 8px; border-radius: 10px; }
   .bbt-ai-harness-guide-copy { padding-right: 9px; }
@@ -5342,7 +5359,9 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
    在手机上容易出现输入框被挤出视口、历史记录占满首屏、建议卡片横向溢出。 */
 @media (max-width: 820px) {
   .terminal-only-root .bbt-with-sidebar.bbt-side-ai {
-    height: 100dvh !important;
+    /* 高度跟随可视视口（--df-vvh 由 JS visualViewport 写入）：软键盘弹起时容器收缩、
+       工作区靠 flex 拉伸一起压缩，composer 留在键盘上方；变量未写入时回落 100dvh。 */
+    height: var(--df-vvh, 100dvh) !important;
     min-height: 0;
     padding-bottom: calc(70px + env(safe-area-inset-bottom));
     overflow: hidden;

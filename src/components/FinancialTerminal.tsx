@@ -1916,6 +1916,37 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [activeAiPreviousTurns.length, aiAnswer, aiBusy, aiQuestion, deepAnswer, deepAnswerBusy, sideNavKey]);
+  // 移动端软键盘适配：键盘弹起时 dvh/100dvh 都不会收缩，底部 composer 会被键盘盖住。
+  // 把可视视口高度写入 --df-vvh 供 AI 工作区替代 100dvh；键盘弹出（可视高度骤减）时
+  // 隐藏底部内容导航、去掉为其预留的 padding，把垂直空间全部让给对话与输入区。
+  // Android 由 viewport meta 的 interactive-widget=resizes-content 先行处理，这里统一兜底 iOS。
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv || !isMobileView()) return;
+    const sync = () => {
+      document.documentElement.style.setProperty('--df-vvh', `${Math.round(vv.height)}px`);
+      document.body.classList.toggle('df-kb-open', window.innerHeight - vv.height > 120);
+    };
+    sync();
+    vv.addEventListener('resize', sync);
+    vv.addEventListener('scroll', sync);
+    return () => {
+      vv.removeEventListener('resize', sync);
+      vv.removeEventListener('scroll', sync);
+      document.body.classList.remove('df-kb-open');
+    };
+  }, []);
+  // iOS Safari 不支持 field-sizing: content，多行输入会在单行高度里被裁切（首行文字不可见）。
+  // 用 scrollHeight 兜底自适应；支持 field-sizing 的浏览器算出的高度一致，无副作用。
+  useEffect(() => {
+    const el = aiPromptInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    // 上限取桌面档的 max-height(112px)；移动端 CSS 的 max-height(82px) 会继续钳制实际高度。
+    el.style.height = `${Math.min(el.scrollHeight, 112)}px`;
+  }, [aiInput]);
+  // 窄屏下长占位文案会折行，超出单行高度被裁出半行鬼影；移动端换短占位。
+  const [isNarrowViewport] = useState(() => isMobileView());
   const attachAiFile = useCallback(async (file: File) => {
     if (!file) return;
     setAiAttachmentBusy(true); setAiAttachmentErr('');
@@ -1957,6 +1988,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         if (!r.ok && r.status === 402) {
           setUpgradeReason(r.error || '今日免费 AI 问答已用完，开通会员畅享无限');
           setUpgradeOpen(true); setAiInput(msg); settle(); return;
+        }
+        if (!r.ok && r.status === 401 && !authUserRef.current) {
+          // 匿名（从未登录）拿到 401 不是「登录过期」——apiClient 会把 401 统一拍成
+          // 「登录已过期，请重新登录」，对从未登录的游客是句死错误文案。按「引导登录」重写。
+          setAiErr('游客试问需要登录后继续，登录后每日 10 次还送 3 天尊享会员');
+          setAiInput(msg); settle(); return;
         }
         if (!r.ok && r.status === 403) {
           if (!authUserRef.current) {
@@ -2019,7 +2056,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onFinal: result => applyResult(result),
         onFallback: reason => { void runFallback(reason); },
         onError: (error, status) => {
-          if (status === 402 || status === 403) {
+          if (status === 402 || status === 403 || (status === 401 && !authUserRef.current)) {
             applyResult({ ok: false, answer: '', tool_trace: [], error, status });
           } else {
             void runFallback(error);
@@ -6002,7 +6039,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <div className="bbt-ai-auto-route" title="AI 会根据问题自动选择行情、财务、资讯、研报或市场扫描能力"><i>✦</i><span>自动</span></div>
                 <button type="button" className="bbt-ai-attach" onClick={() => aiFileInputRef.current?.click()} disabled={aiAttachmentBusy || aiWorkspaceBusy} title="上传 PDF、Word、Excel、CSV 或文本文件">{aiAttachmentBusy ? '读取中…' : '📎'}</button>
                 <input ref={aiFileInputRef} className="bbt-ai-file-input" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.markdown,.json,.log" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void attachAiFile(file); }} />
-                <textarea ref={aiPromptInputRef} rows={1} value={aiInput} aria-label="向 AI 投研助手提问" placeholder="问行情、估值、财报，或比较几只股票…" onChange={e => setAiInput(e.target.value)} onKeyDown={e => {
+                <textarea ref={aiPromptInputRef} rows={1} value={aiInput} aria-label="向 AI 投研助手提问" placeholder={isNarrowViewport ? '问行情、估值、财报…' : '问行情、估值、财报，或比较几只股票…'} onChange={e => setAiInput(e.target.value)} onKeyDown={e => {
                   if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
                   e.preventDefault();
                   if (!aiInput.trim()) return;

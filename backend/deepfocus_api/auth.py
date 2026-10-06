@@ -1055,6 +1055,11 @@ PUBLIC_EXACT = frozenset(
         "/api/research/vision-analyze",
         "/api/research/deep-draft",  # 深度研报稿：handler 复用 _check_ai_quota 精细把关
         "/api/news/ai-analyze",
+        # 终端 AI 投研问答（quick/roundtable + SSE 流）：放行到端点，由 _check_agent_quota 精细把关——
+        # 会员/管理员无限，登录非会员每天 10 次(402 引导开通)，匿名每天 1 次、超额 403 引导登录。
+        # 不放行则全局鉴权中间件对匿名直接 401「登录已过期」，游客免费试问漏斗整体断裂（2026-10-06 实测）。
+        "/api/agents/tool-research",
+        "/api/agents/tool-research/stream",
         "/api/metrics/pageview",    # 匿名打点
         "/api/metrics/event",       # 匿名打点
         # 看板（HTML 外壳 + 数据接口）：均无 JWT（独立 HTML 页用 ?token= 取数），

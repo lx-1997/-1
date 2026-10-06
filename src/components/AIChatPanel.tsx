@@ -221,8 +221,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
       position: 'fixed',
       top: 0,
       right: 0,
-      width: 400,
-      height: '100vh',
+      // 手机视口 (<400px) 下固定 400px 会横向溢出屏幕；100vh 在 iOS 上会顶到工具栏之下，用 dvh 兜底。
+      width: 'min(400px, 100vw)',
+      height: 'min(100vh, 100dvh)',
       background: 'var(--surface)',
       boxShadow: '-4px 0 20px rgba(0,0,0,0.3)',
       zIndex: 1050,
