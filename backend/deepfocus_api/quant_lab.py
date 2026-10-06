@@ -67,6 +67,42 @@ def _data_error(symbol: str, payload: dict[str, Any], minimum: int) -> str:
     return f"{symbol} 无可用真实行情" + (f"（{warnings}）" if warnings else "")
 
 
+def _platform_overlay(symbol: str, context: dict[str, Any] | None) -> tuple[float, list[str], list[str], dict[str, Any]]:
+    """Apply a small, explainable daocaijing context overlay to the latest signal."""
+    data = dict(context or {})
+    adjustment = 0.0
+    reasons: list[str] = []
+    risks: list[str] = []
+    community = data.get("community_score")
+    if community is not None:
+        value = max(0.0, min(100.0, safe_float(community, 50.0)))
+        adjustment += (value - 50.0) / 50.0 * 4.0
+        reasons.append(f"平台社区活跃度 {value:.0f}/100")
+        if value >= 85: risks.append("社区热度较高，需防止拥挤交易")
+    focus = str(data.get("focus_level") or "").strip().lower()
+    if focus in {"high", "重点", "高"}: adjustment += 2.0; reasons.append("平台重点关注标的")
+    elif focus in {"low", "较低", "低"}: adjustment -= 1.0; reasons.append("平台关注度较低")
+    posts = data.get("total_posts")
+    if posts is not None:
+        count = max(0, int(safe_float(posts, 0.0)))
+        if count >= 20: adjustment += 1.0
+        if count > 0: reasons.append(f"平台研究内容 {count} 条")
+    quality = data.get("avg_quality_score")
+    if quality is not None:
+        value = max(0.0, min(100.0, safe_float(quality, 0.0)))
+        adjustment += 1.5 if value >= 80 else -1.0 if value < 60 else 0.0
+        reasons.append(f"平台内容质量均值 {value:.0f}/100")
+    adjustment = round(max(-8.0, min(8.0, adjustment)), 2)
+    return adjustment, reasons, risks, {
+        "name": str(data.get("name") or symbol), "sector": str(data.get("sector") or ""),
+        "community_score": community, "focus_level": data.get("focus_level"),
+        "total_posts": posts, "total_paid_posts": data.get("total_paid_posts"),
+        "recent_post_count": data.get("recent_post_count"), "analysis_post_count": data.get("analysis_post_count"),
+        "avg_quality_score": quality, "top_tags": data.get("top_tags") or [],
+        "change_percent": data.get("change_percent"), "score_overlay": adjustment,
+    }
+
+
 async def run_quant_lab(request: QuantLabRequest, progress_callback: Optional[ProgressCallback] = None) -> dict[str, Any]:
     symbols = _clean_symbols(request.symbols)
     if not symbols:
@@ -79,6 +115,7 @@ async def run_quant_lab(request: QuantLabRequest, progress_callback: Optional[Pr
     strategy_label = STRATEGY_LABELS.get(strategy_key, strategy_key)
     lookback = max(5, int(request.lookback or 20))
     sector_map = {str(key).strip().upper(): str(value).strip() for key, value in (request.sector_map or {}).items()}
+    platform_context = {str(key).strip().upper(): dict(value or {}) for key, value in (request.platform_context or {}).items() if str(key).strip()}
     rules = request.risk_rules.model_dump() if hasattr(request.risk_rules, "model_dump") else dict(request.risk_rules or {})
 
     await _progress(progress_callback, 5, "正在校验策略与市场代码")
@@ -120,13 +157,17 @@ async def run_quant_lab(request: QuantLabRequest, progress_callback: Optional[Pr
         volumes = [safe_float(bar.get("volume"), 0.0) for bar in bars]
         metrics = build_metrics(closes, benchmark_closes, volumes, lookback)
         score, reasons, risks = score_signal(strategy_key, metrics)
+        overlay, platform_reasons, platform_risks, platform_record = _platform_overlay(symbol, platform_context.get(symbol))
+        score = round(max(-100.0, min(100.0, score + overlay)), 2)
+        reasons = (reasons + platform_reasons)[:6]
+        risks = (risks + platform_risks)[:4]
         action = action_from_score(score)
         if action == "sell" and request.allow_short:
             action = "short"
         signals.append({
             "symbol": symbol,
-            "name": symbol,
-            "sector": sector_map.get(symbol, ""),
+            "name": str(platform_record.get("name") or symbol),
+            "sector": sector_map.get(symbol) or str(platform_record.get("sector") or ""),
             "market": str(payload.get("market") or market),
             "latest_close": round(closes[-1], 4),
             "score": score,
@@ -137,6 +178,7 @@ async def run_quant_lab(request: QuantLabRequest, progress_callback: Optional[Pr
             "reasons": reasons[:4],
             "risk_flags": risks[:4],
             "metrics": metrics,
+            "platform_context": platform_record,
         })
     signals.sort(key=lambda item: item["score"], reverse=True)
 
@@ -205,6 +247,8 @@ async def run_quant_lab(request: QuantLabRequest, progress_callback: Optional[Pr
         "notes": [f"策略 {strategy_label} 已对 {len(signals)} 只标的评分", f"目标总敞口 {target_gross:.2f}%，净敞口 {target_net:+.2f}%"],
     }
     notes = ["所有信号与回测均来自已披露的真实行情源，未使用模拟数据。"]
+    platform_count = sum(1 for symbol in symbols if symbol in platform_context)
+    if platform_count: notes.append(f"已融合 daocaijing 平台观察池的 {platform_count} 个标的上下文；平台叠加分限制在 ±8 分，历史回测未使用未来社区信息。")
     if target_gross == 0:
         notes.append("当前信号强度不足，系统建议继续等待。")
     elif signals:
@@ -228,5 +272,6 @@ async def run_quant_lab(request: QuantLabRequest, progress_callback: Optional[Pr
         "backtest": backtest, "risk_summary": risk_summary, "notes": notes,
         "data_sources": {symbol: str(details[symbol].get("source") or "") for symbol in details},
         "data_source_details": details,
+        "platform_context": {"source": "daocaijing_watchlist", "matched_symbols": platform_count, "available_fields": ["community_score", "focus_level", "total_posts", "total_paid_posts", "recent_post_count", "analysis_post_count", "avg_quality_score", "sector", "change_percent"], "score_overlay_cap": 8, "historical_backtest_included": False},
         "disclaimer": "QuantLab 仅用于可复现的历史研究与纸上计划，不构成投资建议或自动下单承诺。",
     }

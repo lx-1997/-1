@@ -105,6 +105,7 @@ export interface QuantLabRequest {
   min_trade_notional: number;
   risk_rules: QuantRiskRules;
   sector_map?: Record<string, string>;
+  platform_context?: Record<string, Record<string, unknown>>;
 }
 
 export interface QuantSignalRecord {
@@ -121,6 +122,7 @@ export interface QuantSignalRecord {
   reasons: string[];
   risk_flags: string[];
   metrics: Record<string, number>;
+  platform_context?: Record<string, unknown>;
 }
 
 export interface QuantOrderPlan {
@@ -166,6 +168,7 @@ export interface QuantLabResponse {
   notes: string[];
   data_sources: Record<string, string>;
   data_source_details: Record<string, QuantDataSourceDetail>;
+  platform_context?: { source?: string; matched_symbols?: number; available_fields?: string[]; score_overlay_cap?: number; historical_backtest_included?: boolean };
   disclaimer: string;
 }
 

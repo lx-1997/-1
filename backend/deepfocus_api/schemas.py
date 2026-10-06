@@ -3183,6 +3183,7 @@ class QuantLabRequest(BaseModel):
     min_trade_notional: float = Field(default=100, ge=0)
     risk_rules: RiskBacktestRuleSet = Field(default_factory=RiskBacktestRuleSet)
     sector_map: dict[str, str] = Field(default_factory=dict)
+    platform_context: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class QuantSignalRecord(BaseModel):
@@ -3199,6 +3200,7 @@ class QuantSignalRecord(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
     metrics: dict[str, float] = Field(default_factory=dict)
+    platform_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class QuantOrderPlan(BaseModel):
@@ -3244,6 +3246,7 @@ class QuantLabResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
     data_sources: dict[str, str] = Field(default_factory=dict)
     data_source_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    platform_context: dict[str, Any] = Field(default_factory=dict)
     disclaimer: str = "量化系统输出为研究与纸上回放用途，不构成投资建议，也不是自动下单承诺。"
 
 
