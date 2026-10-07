@@ -26,6 +26,11 @@ _WIRE_TTL = float(os.getenv("DEEPFOCUS_WIRE_CACHE_TTL", "600"))
 _WIRE_POOL = int(os.getenv("DEEPFOCUS_WIRE_POOL", "500"))
 _ANNOTATED_WIRE_IDS: set[str] = set()
 
+
+def clear_wire_cache() -> None:
+    """Invalidate online report pools after credentials or source config change."""
+    _WIRE_CACHE.clear()
+
 from .research_workbench import WORKBENCH_DIR
 
 # 知识星球「海外投行报告」星球 ID（与研报工作台默认一致）；同机 Node 工作台内部地址
@@ -52,6 +57,7 @@ def save_zsxq_override(cookie: str, aduid: str = "") -> None:
     payload = {"cookie": (cookie or "").strip(), "aduid": (aduid or "").strip(),
                "updated_at": datetime.now(timezone.utc).isoformat()}
     _COOKIE_FILE.write_text(json.dumps(payload, ensure_ascii=False), "utf-8")
+    clear_wire_cache()
 
 
 def clear_zsxq_override() -> None:
@@ -59,6 +65,7 @@ def clear_zsxq_override() -> None:
         _COOKIE_FILE.unlink()
     except FileNotFoundError:
         pass
+    clear_wire_cache()
 
 
 def parse_curl_cookie(text: str) -> tuple[str, str]:
@@ -149,6 +156,14 @@ def _valid_published_date(value: str, fallback: str = "") -> str:
     return raw
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Parse noisy upstream numeric fields without failing the whole sync."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 async def fetch_research_wire_online(
     *, limit: int = 60, query: str = "", use_cache: bool = True,
 ) -> dict[str, Any]:
@@ -164,7 +179,7 @@ async def fetch_research_wire_online(
 
     def _slice(full: dict[str, Any]) -> dict[str, Any]:
         items = full.get("items") or []
-        return {**full, "items": items[:want], "total": len(items)}
+        return {**full, "items": items[:want], "total": len(items), "stale": bool(full.get("stale", False))}
 
     hit = _WIRE_CACHE.get(cache_key)
     if use_cache and hit and (now - hit[0]) < _WIRE_TTL:
@@ -180,20 +195,16 @@ async def fetch_research_wire_online(
             resp.raise_for_status()
             data = resp.json()
     except Exception:
-        if hit:  # 抓取失败 → 回退上次成功结果（stale-while-revalidate），绝不让用户看空/报错
-            return _slice(hit[1])
+        if hit:  # 抓取失败 → 回退上次成功结果，同时显式标记降级
+            return _slice({**hit[1], "stale": True})
         raise
     items: list[dict[str, Any]] = []
-    seen_titles: set[str] = set()  # 同一篇研报常被重复发布（file_id 不同、标题同），按标题去重保留最新
+    seen_keys: set[str] = set()
     for it in (data.get("items") or []):
         name = str(it.get("name") or "").strip()
         if not name or not _is_doc_file(name):  # 过滤 mp3 等非文档/图片文件
             continue
         title = _clean_title(name)
-        dedup_key = title.casefold()
-        if dedup_key in seen_titles:
-            continue
-        seen_titles.add(dedup_key)
         topic_time = str(it.get("topicCreateTime") or it.get("createTime") or "").strip()
         created = str(it.get("createTime") or "").strip()
         _doc = _extract_doc_date(name)
@@ -202,6 +213,10 @@ async def fetch_research_wire_online(
         # Upstream occasionally emits dates years in the future; never expose these.
         disp_date = _valid_published_date(disp_date, topic_time[:10] or created[:10])
         fid = str(it.get("fileId") or "")
+        dedup_key = f"id:{fid}" if fid else f"title:{title.casefold()}|date:{disp_date}"
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
         items.append({
             "id": fid or hashlib.sha1(name.encode("utf-8")).hexdigest()[:12],
             "title": title,
@@ -210,9 +225,9 @@ async def fetch_research_wire_online(
             "created_at": topic_time or created,
             "filename": name,
             "out": "",
-            "size": int(it.get("size") or 0),
+            "size": _safe_int(it.get("size")),
             "hashtag": str(it.get("hashtag") or "#海外投行报告#"),
-            "download_count": int(it.get("downloadCount") or 0),
+            "download_count": _safe_int(it.get("downloadCount")),
             "file_id": fid,
         })
         # Every discovered report receives a stable ontology index entry even
@@ -226,7 +241,7 @@ async def fetch_research_wire_online(
                     content_id=f"wire:{stable_id}",
                     content_type="research",
                     title=title,
-                    text=f"{org} {disp_date}",
+                    text=f"海外投行 {disp_date}",
                     source_name="海外投行研报",
                     published_at=topic_time or created or disp_date,
                     persist=True,
@@ -236,14 +251,17 @@ async def fetch_research_wire_online(
                     _ANNOTATED_WIRE_IDS.pop()
         except Exception:  # noqa: BLE001 - indexing must not break the source list
             pass
-    full = {"items": items, "total": len(items), "exists": True, "online": True}
+    full = {
+        "items": items, "total": len(items), "exists": True, "online": True,
+        "stale": False, "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
     if items:  # 仅缓存成功的非空结果，避免缓存住偶发空响应
         _WIRE_CACHE[cache_key] = (now, full)
         if len(_WIRE_CACHE) > 60:  # 防无界增长
             oldest = min(_WIRE_CACHE.items(), key=lambda kv: kv[1][0])[0]
             _WIRE_CACHE.pop(oldest, None)
-    elif hit:  # 偶发空响应 → 也回退上次成功结果
-        return _slice(hit[1])
+    elif hit:  # 偶发空响应 → 也回退上次成功结果，并标记降级
+        return _slice({**hit[1], "stale": True})
     return _slice(full)
 
 DEFAULT_OUT = "downloads/海外投行报告"
@@ -322,32 +340,33 @@ def list_research_wire(*, out: str = DEFAULT_OUT, limit: int = 60, query: str = 
             created = str(meta.get("createTime") or meta.get("topicCreateTime") or "").strip()
             if not created:
                 created = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-            topic_id = meta.get("topicId")
+            file_id = str(meta.get("fileId") or meta.get("file_id") or "").strip()
             items.append({
-                "id": str(topic_id) if topic_id else hashlib.sha1(name.encode("utf-8")).hexdigest()[:12],
+                "id": file_id or hashlib.sha1(name.encode("utf-8")).hexdigest()[:20],
                 "title": _clean_title(name),
                 "org": "海外投行",
                 "date": created[:10],
                 "created_at": created,
                 "filename": name,
                 "out": target_out,
-                "size": int(stat.st_size),
+                "size": _safe_int(stat.st_size),
                 "hashtag": str(meta.get("hashtag") or "#海外投行报告#"),
-                "download_count": int(meta.get("downloadCount") or 0),
+                "download_count": _safe_int(meta.get("downloadCount")),
+                "file_id": file_id or None,
             })
 
         keyword = (query or "").strip().lower()
         if keyword:
             items = [it for it in items if keyword in it["title"].lower()]
         items.sort(key=lambda it: it["created_at"], reverse=True)
-        # 按标题去重（保留最新一条），避免同篇研报重复出现
+        # 同标题不同日期可以是修订版；只合并相同标题+日期的重复文件。
         deduped: list[dict[str, Any]] = []
-        seen_titles: set[str] = set()
+        seen_keys: set[str] = set()
         for it in items:
-            key = str(it["title"]).strip().casefold()
-            if key in seen_titles:
+            key = f"{str(it['title']).strip().casefold()}|{str(it.get('date') or '')[:10]}"
+            if key in seen_keys:
                 continue
-            seen_titles.add(key)
+            seen_keys.add(key)
             deduped.append(it)
         items = deduped
 

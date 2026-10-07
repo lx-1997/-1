@@ -90,7 +90,8 @@ def query(limit: int = 400, query_text: str = "", before: str = "", before_id: s
         clauses, params = [], []
         q = (query_text or "").strip()
         if q:
-            clauses.append("title LIKE ?"); params.append(f"%{q}%")
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("title LIKE ? ESCAPE '\\'"); params.append(f"%{escaped}%")
         bf = (before or "").strip()
         bid = (before_id or "").strip()
         if bf:
