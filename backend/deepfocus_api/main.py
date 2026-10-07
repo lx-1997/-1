@@ -1500,6 +1500,14 @@ def _allowed_origins() -> list[str]:
         origins.extend(local_origins)
     return list(dict.fromkeys(origins))
 
+
+def _api_docs_enabled() -> bool:
+    """Expose FastAPI docs only when explicitly enabled or in local bypass mode."""
+    raw = os.getenv("DEEPFOCUS_EXPOSE_API_DOCS")
+    if raw is not None and raw.strip():
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return not auth_required()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     def _spawn_bg(name: str, factory):
@@ -1669,9 +1677,9 @@ app = FastAPI(
     title="DeepFocus AI API",
     description="Cloud-model research API for the DeepFocus frontend.",
     version="0.1.0",
-    docs_url="/docs" if os.getenv("DEEPFOCUS_EXPOSE_API_DOCS", "").strip().lower() in {"1", "true", "yes"} or not auth_required() else None,
-    redoc_url="/redoc" if os.getenv("DEEPFOCUS_EXPOSE_API_DOCS", "").strip().lower() in {"1", "true", "yes"} or not auth_required() else None,
-    openapi_url="/openapi.json" if os.getenv("DEEPFOCUS_EXPOSE_API_DOCS", "").strip().lower() in {"1", "true", "yes"} or not auth_required() else None,
+    docs_url="/docs" if _api_docs_enabled() else None,
+    redoc_url="/redoc" if _api_docs_enabled() else None,
+    openapi_url="/openapi.json" if _api_docs_enabled() else None,
     lifespan=lifespan,
 )
 
