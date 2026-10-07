@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
 from .config import OpsConsoleSettings
-from .routers import search, exceptions, approvals, ledger_explorer, agents_explorer, mandates_console, corridors
+from .routers import search, exceptions, approvals, ledger_explorer, agents_explorer, mandates_console, corridors, web3_products
 
 log = structlog.get_logger()
 settings = OpsConsoleSettings()
@@ -66,6 +66,7 @@ app.include_router(ledger_explorer.router,    prefix="/v1/ops/ledger",     tags=
 app.include_router(agents_explorer.router,    prefix="/v1/ops/agents",     tags=["agents"])
 app.include_router(mandates_console.router,   prefix="/v1/ops/mandates",   tags=["mandates"])
 app.include_router(corridors.router,          prefix="/v1/ops/corridors",  tags=["corridors"])
+app.include_router(web3_products.router,      prefix="/v1/ops/web3",       tags=["web3-products"])
 
 
 @app.get("/health")

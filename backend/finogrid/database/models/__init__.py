@@ -5,6 +5,7 @@ from .instruction import PayoutInstruction
 from .execution import ExecutionEvent
 from .audit import AuditLog
 from .routing import RoutingProfile, ComplianceProfile
+from .web3_products import RWAAsset, RwaEvidenceEvent, GamefiSeason, GamefiStrategyRun
 
 __all__ = [
     "Base",
@@ -17,4 +18,8 @@ __all__ = [
     "AuditLog",
     "RoutingProfile",
     "ComplianceProfile",
+    "RWAAsset",
+    "RwaEvidenceEvent",
+    "GamefiSeason",
+    "GamefiStrategyRun",
 ]
