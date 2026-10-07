@@ -346,20 +346,6 @@ const NEW_USER_BONUS: Record<string, { days: number; label: string }> = {
 };
 const NEW_USER_WINDOW_MS = 3 * 24 * 3600 * 1000;  // 注册后 3 天内算「新人」
 
-const HERO_PROOF_CHIP_STYLE: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  padding: '4px 10px',
-  borderRadius: 999,
-  border: '1px solid var(--border-soft)',
-  background: 'rgba(255, 255, 255, 0.03)',
-  color: 'var(--text-soft)',
-  fontSize: 11,
-  fontWeight: 600,
-  lineHeight: 1.4,
-};
-
 // AI 助手用的工具→中文名(供对话/材料/分享复用)。
 const TOOL_LABEL: Record<string, string> = {
   get_market_quote: '实时行情', get_valuation: '估值', get_financials: '财报',
@@ -1240,6 +1226,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [searchMsgs, setSearchMsgs] = useState<RealtimeMessageRecord[]>([]);  // 选股/搜索时：服务端全量历史检索结果
   const [searchLoading, setSearchLoading] = useState(false);
   const [status, setStatus] = useState<StreamConnectionStatus>('connecting');
+  // 壳层自己的时间心跳：让顶部状态栏在没有行情变更时也保持真实、可感知的动态。
+  const [terminalClock, setTerminalClock] = useState(() => beijingParts(new Date()).clock);
+  useEffect(() => {
+    const tick = () => setTerminalClock(beijingParts(new Date()).clock);
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   // 默认进入市场快讯；用户切换到左侧其它内容模块后记住选择。
   const [feedFilter, setFeedFilter] = useState<string>(() => {
     try {
@@ -4955,6 +4948,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const renderNewsRow = (m: RealtimeMessageRecord, pinned = false, wlSyms?: string[], personalWhy?: string) => {
     const isFlash = (m.topic || '') === '快讯';
     const isArticle = (m.topic || '') === '文章';
+    // 首屏失败时仍可展示本地缓存，但必须把它和实时内容视觉上区分开，避免旧日期被误认为实时。
+    const staleCache = feedLoadError && (!feedSyncedAt || Date.now() - feedSyncedAt > 86_400_000);
     // 文章无论是否带 AI 预读元数据，都采用“标题 + 正文摘要”两层排版；
     // 之前只有预读成功的文章才拆行，普通文章因此退化成标题正文连在一行。
     const splitTitleBody = isArticle || (isFlash && Boolean(
@@ -4969,7 +4964,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       return next;
     });
     return (
-      <article key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${isArticle ? ' bbt-nrow--article' : ''}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}${personalWhy ? ' bbt-nrow--personal' : ''}`}
+      <article key={m.id} className={`bbt-nrow bbt-nrow--click sev-${m.severity}${isArticle ? ' bbt-nrow--article' : ''}${pinned ? ' bbt-nrow--pin' : ''}${wlSyms && wlSyms.length ? ' bbt-nrow--wl' : ''}${personalWhy ? ' bbt-nrow--personal' : ''}${staleCache ? ' bbt-nrow--stale' : ''}`}
         tabIndex={0}
         aria-label={`${isFlash ? '快讯' : '资讯'}：${stripUrls(m.title) || m.title}`}
         onKeyDown={event => {
@@ -4983,6 +4978,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         {pinned && <span className="bbt-pin-badge">★ 头条</span>}
         {wlSyms && wlSyms.length > 0 && <span className="bbt-wl-badge" title={`点击查看 ${nameOf(wlSyms[0])}`} onClick={e => { e.stopPropagation(); selectStock(wlSyms[0]); }}>★ 自选 {wlSyms.slice(0, 2).map(s => nameOf(s)).join('·')}{wlSyms.length > 2 ? ` +${wlSyms.length - 2}` : ''}</span>}
         <span className="bbt-ntime">{fmtTimeSmart(m.created_at)}</span>
+        {staleCache && <span className="bbt-cache-label" title="资讯服务暂未同步成功，当前内容来自本地缓存">历史缓存</span>}
         {/* 中性「资讯」标签无信息量、纯噪音 → 不显示；只在利好/利空/紧急时才标，凸显真正的信号。
             AI 判定（metadata.ai_sentiment）优先于关键词；悬浮显示 AI 的多空细分（利好xxx，利空xxx） */}
         {(m.severity === 'critical' || m.severity === 'warning' || m.severity === 'success') && (
@@ -5562,23 +5558,37 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </span>
       </div>
 
-      {/* 匿名访客 hero：先回答「这是什么、值不值得看」，再给三条最直接的入口（登录后隐藏，工作台用户不需要） */}
-      {!authUser && (
-        <div className="bbt-hero">
-          <div className="bbt-hero-inner">
-            <h1 className="bbt-hero-title">今天先看什么</h1>
-            <p className="bbt-hero-sub">自选变化、市场快讯和 AI 研判，集中在一个工作台。</p>
-            <div className="bbt-hero-ctas">
-              <button type="button" className="bbt-hero-cta bbt-hero-cta-primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 搜索一只股票</button>
+      {/* 匿名访客宣传首屏：把实时终端的核心价值先说清楚，再把用户送进真实数据工作台。 */}
+      {!authUser && sideNavKey === 'market' && (
+        <section className="bbt-promo-hero" aria-labelledby="bbt-promo-title">
+          <div className="bbt-promo-glow" aria-hidden="true" />
+          <div className="bbt-promo-copy">
+            <div className="bbt-promo-kicker"><span className="bbt-promo-kicker-dot" />DEEPFOCUS AI · 稻草财经</div>
+            <h1 id="bbt-promo-title">把市场的噪音，变成可验证的线索。</h1>
+            <p>实时行情、重要快讯、投行研报和 AI 证据链，集中在一张真正能用的投研工作台。</p>
+            <div className="bbt-promo-actions">
+              <button type="button" className="bbt-promo-cta primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>搜索一只股票 <span>⌘K</span></button>
+              <button type="button" className="bbt-promo-cta ghost" onClick={() => { void openReview(); }}>查看今日复盘 <span>→</span></button>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-              <span style={HERO_PROOF_CHIP_STYLE}>自选有动静第一时间提醒</span>
-              <span style={HERO_PROOF_CHIP_STYLE}>晨报 / 复盘按交易日节律推送</span>
-              <span style={HERO_PROOF_CHIP_STYLE}>AI 问答带上下文、附件和证据</span>
+            <div className="bbt-promo-trust" aria-label="平台实时状态">
+              <span><b>{watchlist.length}</b> 个自选观察</span>
+              <span><b>{messages.length || 0}</b> 条快讯样本</span>
+              <span className={status === 'live' ? 'is-live' : ''}><i />{status === 'live' ? '实时连接' : '自动同步中'}</span>
             </div>
-            <div className="bbt-hero-alt">想深入研究？直接问 AI；专业数据和策略工具收在「更多」里。</div>
           </div>
-        </div>
+          <div className="bbt-promo-visual" aria-hidden="true">
+            <div className="bbt-promo-orbit orbit-a" />
+            <div className="bbt-promo-orbit orbit-b" />
+            <div className="bbt-promo-console">
+              <div className="bbt-promo-console-head"><span>MARKET SIGNALS</span><b>{terminalClock}</b></div>
+              <div className="bbt-promo-console-line line-main"><i /> 自选池正在扫描 <strong>{watchlist.length}</strong> 个标的</div>
+              <div className="bbt-promo-console-line"><i /> 证据流 <strong>{status === 'live' ? 'LIVE' : 'SYNCING'}</strong></div>
+              <div className="bbt-promo-bars"><i /><i /><i /><i /><i /><i /><i /><i /></div>
+            </div>
+            <span className="bbt-promo-float float-a">行情 · 快讯 · 研报</span>
+            <span className="bbt-promo-float float-b">AI 证据链</span>
+          </div>
+        </section>
       )}
 
       <section className="bbt-simple-start" aria-label="从这里开始">
@@ -5687,6 +5697,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           );
         })}
         {Object.keys(macro).length === 0 && <span className="bbt-dim">{macroFailed ? '宏观数据暂不可用，稍后自动重试' : '宏观加载中…'}</span>}
+      </div>
+
+      <div className="bbt-live-rail" aria-label="实时工作台状态">
+        <span className={`bbt-live-chip is-${status}`}><i aria-hidden="true" />{status === 'live' ? 'LIVE' : status === 'paused' ? '后台暂停' : status === 'error' || status === 'closed' ? '离线' : '同步中'}</span>
+        <span className="bbt-live-copy">资讯连接 <b>{status === 'live' ? '已连接' : '自动重试中'}</b></span>
+        <span className="bbt-live-copy">北京时间 <b>{terminalClock}</b></span>
+        <span className="bbt-live-copy">自选 <b>{watchlist.length}</b> 只</span>
+        <span className="bbt-live-wave" aria-hidden="true"><i /><i /><i /><i /><i /></span>
+        <span className="bbt-live-sync">最近同步 {formatSyncAge(feedSyncedAt)}</span>
       </div>
 
       {active && quotes[active] && (() => {

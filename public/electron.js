@@ -1,9 +1,13 @@
 const { app, BrowserWindow, Menu, shell } = require('electron');
-const isDev = require('electron-is-dev');
 const path = require('path');
 
 let mainWindow;
 const DEV_SERVER_URL = process.env.ELECTRON_RENDERER_URL || 'http://localhost:3000';
+const isDev = !app.isPackaged || process.env.ELECTRON_IS_DEV === '1';
+app.setName('Daocaijing');
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.daocaijing.app');
+}
 
 function isSafeAppNavigation(url) {
   if (isDev) {
@@ -42,6 +46,7 @@ function createWindow() {
       allowRunningInsecureContent: false
     },
     icon: path.join(__dirname, 'icon.png'),
+    title: 'Daocaijing',
     titleBarStyle: 'default',
     show: false
   });

@@ -1962,6 +1962,15 @@ function defaultProviderConfig() {
       temperature: Number(process.env.DEEPFOCUS_LLM_TEMPERATURE || 0.2),
     };
   }
+  if (provider === "deepseek") {
+    return {
+      provider,
+      model: process.env.DEEPSEEK_MODEL || "deepseek-chat",
+      base_url: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1",
+      api_key: process.env.DEEPSEEK_API_KEY || "",
+      temperature: Number(process.env.DEEPFOCUS_LLM_TEMPERATURE || 0.2),
+    };
+  }
   if (["openai", "openai-compatible", "cloud"].includes(provider)) {
     return {
       provider,
@@ -1994,8 +2003,16 @@ function readSharedModelConfigSync() {
 }
 
 function normalizeSharedModelConfig(config) {
-  const provider = ["mock", "openai", "minimax", "openai-compatible", "cloud"].includes(String(config.provider || "").toLowerCase())
-    ? String(config.provider).toLowerCase()
+  const aliases = {
+    "deep-seek": "deepseek",
+    "deep_seek": "deepseek",
+    "deepseek-api": "deepseek",
+    "deepseek-compatible": "deepseek",
+  };
+  const rawProvider = String(config.provider || "").toLowerCase();
+  const canonicalProvider = aliases[rawProvider] || rawProvider;
+  const provider = ["mock", "openai", "minimax", "deepseek", "openai-compatible", "cloud"].includes(canonicalProvider)
+    ? canonicalProvider
     : "mock";
   const baseUrl = config.base_url || defaultBaseUrlForProvider(provider);
   const model = config.model || defaultModelForProvider(provider);
@@ -2011,12 +2028,14 @@ function normalizeSharedModelConfig(config) {
 
 function defaultModelForProvider(provider) {
   if (provider === "minimax") return "MiniMax-M2.7";
+  if (provider === "deepseek") return "deepseek-chat";
   if (["openai", "openai-compatible", "cloud"].includes(provider)) return "gpt-4o-mini";
   return "mock-research-analyst";
 }
 
 function defaultBaseUrlForProvider(provider) {
   if (provider === "minimax") return "https://api.minimax.io/v1";
+  if (provider === "deepseek") return "https://api.deepseek.com/v1";
   if (provider === "mock") return "";
   return process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 }
@@ -2024,6 +2043,7 @@ function defaultBaseUrlForProvider(provider) {
 function inferProviderFromBaseUrl(baseUrl) {
   const normalized = String(baseUrl || "").toLowerCase();
   if (normalized.includes("minimax")) return "minimax";
+  if (normalized.includes("deepseek")) return "deepseek";
   if (!normalized || normalized.includes("api.openai.com")) return "openai";
   return "openai-compatible";
 }
@@ -2056,14 +2076,21 @@ function modelDefaults() {
 async function saveSharedModelConfig(payload = {}) {
   const current = readSharedModelConfigSync();
   const raw = payload.modelConfig || payload;
-  const baseUrl = String(raw.baseUrl ?? raw.base_url ?? current.base_url ?? "").trim().replace(/\/+$/, "");
-  const provider = String(raw.provider || inferProviderFromBaseUrl(baseUrl)).toLowerCase();
-  const model = String(raw.model || current.model || defaultModelForProvider(provider)).trim();
+  const rawProvider = String(raw.provider || "").toLowerCase();
+  const provider = rawProvider || inferProviderFromBaseUrl(String(raw.baseUrl ?? raw.base_url ?? current.base_url ?? ""));
+  const providerChanged = provider !== String(current.provider || "").toLowerCase();
+  const requestedBase = raw.baseUrl ?? raw.base_url;
+  const baseUrl = String(
+    requestedBase !== undefined
+      ? requestedBase
+      : (providerChanged ? defaultBaseUrlForProvider(provider) : (current.base_url ?? ""))
+  ).trim().replace(/\/+$/, "");
+  const model = String(raw.model || (providerChanged ? defaultModelForProvider(provider) : current.model) || defaultModelForProvider(provider)).trim();
   const apiKeyProvided = raw.apiKey !== undefined || raw.api_key !== undefined;
   const apiKeyInput = raw.apiKey ?? raw.api_key;
   const apiKey = apiKeyProvided && String(apiKeyInput || "").trim()
     ? String(apiKeyInput).trim()
-    : current.api_key;
+    : (providerChanged ? "" : current.api_key);
   const temperature = Number.isFinite(Number(raw.temperature)) ? Number(raw.temperature) : current.temperature;
   const nextConfig = normalizeSharedModelConfig({
     provider,

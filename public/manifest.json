@@ -1,7 +1,7 @@
 {
-  "short_name": "DEEPFOCUS",
-  "name": "DEEPFOCUS 金融终端",
-  "description": "彭博风格全球金融终端：实时行情 · 快讯 · AI 研报解读",
+  "short_name": "Daocaijing",
+  "name": "Daocaijing 金融终端",
+  "description": "实时行情 · 快讯 · AI 投研与风险分析",
   "icons": [
     {
       "src": "logo192.png",
