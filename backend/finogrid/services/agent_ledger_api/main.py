@@ -34,6 +34,11 @@ log = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    config_errors = settings.production_validation_errors()
+    if config_errors:
+        for error in config_errors:
+            log.critical("agent_ledger_invalid_production_config", error=error)
+        raise RuntimeError("Invalid production configuration: " + "; ".join(config_errors))
     log.info("agent_ledger_api_starting", port=settings.app_port, chain=settings.chain)
     yield
     log.info("agent_ledger_api_shutdown")
@@ -49,7 +54,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -2,10 +2,10 @@
 Chain Watcher — Base L2 on-chain event processor.
 
 Two jobs running in parallel:
-  Job A — Deposit watcher: monitors USDC transfers to the Finogrid deposit address
-           and credits agent prefund balances.
-  Job B — Settlement sweep: promotes micro_transactions from settled_offchain to
-           settled_onchain after confirming the on-chain batch.
+  Job A — Deposit watcher: monitors confirmed USDC transfers to the Finogrid deposit
+           address and credits agent prefund balances.
+  Job B — Settlement sweep: only promotes transactions after a real sweep transaction
+           has been recorded and confirmed. It never infers settlement from elapsed time.
 
 Requires: web3.py, settings.chain_enabled=True, settings.base_rpc_url
 """
@@ -61,7 +61,8 @@ async def job_a_deposit_watcher(last_block: int) -> int:
     try:
         w3 = _get_web3()
         latest = w3.eth.block_number
-        if latest <= last_block:
+        safe_latest = latest - settings.chain_min_confirmations
+        if safe_latest <= last_block:
             return last_block
 
         usdc = w3.eth.contract(
@@ -72,7 +73,7 @@ async def job_a_deposit_watcher(last_block: int) -> int:
 
         events = usdc.events.Transfer.get_logs(
             fromBlock=last_block + 1,
-            toBlock=latest,
+            toBlock=safe_latest,
             argument_filters={"to": deposit_addr},
         )
 
@@ -92,7 +93,7 @@ async def job_a_deposit_watcher(last_block: int) -> int:
             async with AsyncSessionLocal() as db:
                 await _credit_deposit(db, tx_hash, from_addr, amount_usdc)
 
-        return latest
+        return safe_latest
 
     except Exception as exc:  # noqa: BLE001
         log.error("deposit_watcher_error", error=str(exc))
@@ -160,18 +161,17 @@ async def _credit_deposit(db: AsyncSession, tx_hash: str, from_addr: str, amount
 
 async def job_b_settlement_sweep():
     """
-    Promote settled_offchain micro_transactions to settled_onchain.
-    In production, this would batch-sweep transactions on-chain.
-    For MVP: marks settled_offchain txs older than 60s as settled_onchain.
-    """
-    from datetime import timedelta
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=60)
+    Promote only transactions with a recorded, confirmed sweep transaction.
 
+    The actual sweep worker is intentionally separate. A clock-based promotion
+    would make the ledger claim on-chain settlement without a chain receipt.
+    """
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(MicroTransaction).where(
                 MicroTransaction.status == MicroTxStatus.SETTLED_OFFCHAIN,
-                MicroTransaction.settled_at < cutoff,
+                MicroTransaction.on_chain_tx_hash.is_not(None),
+                MicroTransaction.on_chain_confirmed_at.is_not(None),
             ).limit(100)
         )
         pending_sweep = result.scalars().all()
@@ -181,8 +181,6 @@ async def job_b_settlement_sweep():
 
         for tx in pending_sweep:
             tx.status = MicroTxStatus.SETTLED_ONCHAIN
-            tx.on_chain_confirmed_at = datetime.now(timezone.utc)
-            # on_chain_tx_hash would be set by the actual sweep transaction
 
         await db.commit()
         log.info("settlement_sweep_completed", count=len(pending_sweep))

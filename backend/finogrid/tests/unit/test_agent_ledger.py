@@ -355,6 +355,56 @@ class TestX402Middleware:
         assert not valid
         assert "mismatch" in reason.lower()
 
+    def test_wrong_network_rejected(self):
+        from finogrid.services.agent_ledger_api.middleware.payment_required import _validate_payment_signature
+        sig_data = json.loads(base64.b64decode(self._make_signature("/api/test")).decode())
+        sig_data["network"] = "base-sepolia"
+        valid, reason = _validate_payment_signature(sig_data, "/api/test")
+        assert not valid
+        assert "network" in reason.lower()
+
+    def test_non_positive_amount_rejected(self):
+        from finogrid.services.agent_ledger_api.middleware.payment_required import _validate_payment_signature
+        sig_data = json.loads(base64.b64decode(self._make_signature("/api/test")).decode())
+        sig_data["amount"] = "0"
+        valid, reason = _validate_payment_signature(sig_data, "/api/test")
+        assert not valid
+        assert "amount" in reason.lower()
+
+    def test_future_timestamp_rejected(self):
+        from finogrid.services.agent_ledger_api.middleware.payment_required import _validate_payment_signature
+        sig_data = json.loads(base64.b64decode(self._make_signature("/api/test", offset_seconds=60)).decode())
+        valid, reason = _validate_payment_signature(sig_data, "/api/test")
+        assert not valid
+        assert "future" in reason.lower()
+
+
+class TestProductionConfiguration:
+    def test_production_rejects_development_placeholders(self):
+        from finogrid.services.agent_ledger_api.config import AgentLedgerSettings
+        cfg = AgentLedgerSettings(
+            app_env="production", app_debug=False,
+            cors_origins_value="https://daocaijing.com",
+            database_url="postgresql+asyncpg://finogrid:password@localhost:5432/finogrid",
+            v1_internal_api_key="internal-service-key",
+        )
+        errors = cfg.production_validation_errors()
+        assert any("DATABASE_URL" in error for error in errors)
+        assert any("V1_INTERNAL_API_KEY" in error for error in errors)
+
+    def test_production_rejects_unverified_x402_paths(self):
+        from finogrid.services.agent_ledger_api.config import AgentLedgerSettings
+        cfg = AgentLedgerSettings(
+            app_env="production", app_debug=False,
+            cors_origins_value="https://daocaijing.com",
+            database_url="postgresql+asyncpg://finogrid:secret@db.internal:5432/finogrid",
+            v1_internal_api_key="a-real-secret",
+            x402_payment_protected_paths_value="/v1/paid",
+            x402_onchain_verifier_enabled=False,
+        )
+        errors = cfg.production_validation_errors()
+        assert any("receipt verifier" in error for error in errors)
+
     def test_encode_decode_requirement_roundtrip(self):
         from finogrid.services.agent_ledger_api.middleware.payment_required import _encode_requirement
         encoded = _encode_requirement("/v1/micropay", amount_usdc=0.001)

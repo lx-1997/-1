@@ -1675,8 +1675,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 先加鉴权中间件、后加 CORS，使 CORS 处于最外层——
-# 这样鉴权返回的 401/403 也会带上 CORS 头，浏览器能正确读到状态码而非报跨域。
+# 先加鉴权中间件、后加 CORS，使 CORS 包住鉴权返回；安全中间件最后加入，
+# 覆盖早退的 401/403/429 响应并补齐安全头。
 app.add_middleware(AuthMiddleware)
 
 app.add_middleware(

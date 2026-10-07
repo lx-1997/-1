@@ -25,6 +25,7 @@ import base64
 import json
 import time
 import hashlib
+import math
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -72,8 +73,8 @@ def _decode_signature(signature_b64: str) -> dict | None:
 def _validate_payment_signature(sig_data: dict, path: str) -> tuple[bool, str]:
     """
     Validate a payment signature for x402.
-    In production this verifies the on-chain USDC transfer receipt.
-    For MVP: validates structure and nonce freshness.
+    This validates the signed envelope only. Production must additionally verify
+    the USDC receipt before enabling protected paths.
     """
     required_fields = {"network", "asset", "payTo", "amount", "nonce", "timestamp", "resource"}
     if not required_fields.issubset(sig_data.keys()):
@@ -85,8 +86,21 @@ def _validate_payment_signature(sig_data: dict, path: str) -> tuple[bool, str]:
         age = time.time() - ts
         if age > settings.x402_nonce_ttl_seconds:
             return False, f"Payment signature expired ({age:.0f}s ago, TTL={settings.x402_nonce_ttl_seconds}s)"
+        if age < -settings.x402_max_future_skew_seconds:
+            return False, "Payment signature timestamp is too far in the future"
     except (ValueError, TypeError):
         return False, "Invalid timestamp in signature"
+
+    if sig_data.get("network") != "base-mainnet":
+        return False, "Unsupported payment network"
+    if sig_data.get("asset") != "USDC":
+        return False, "Unsupported payment asset"
+    try:
+        amount = float(sig_data["amount"])
+        if not math.isfinite(amount) or amount <= 0:
+            return False, "Payment amount must be a positive finite number"
+    except (ValueError, TypeError):
+        return False, "Invalid payment amount"
 
     # Check deposit address
     if sig_data.get("payTo", "").lower() != settings.agent_ledger_deposit_address.lower():
@@ -95,6 +109,9 @@ def _validate_payment_signature(sig_data: dict, path: str) -> tuple[bool, str]:
     # Check resource matches path
     if sig_data.get("resource") != path:
         return False, f"Resource mismatch: expected '{path}', got '{sig_data.get('resource')}'"
+
+    if not str(sig_data.get("nonce", "")).strip():
+        return False, "Nonce must not be empty"
 
     return True, "valid"
 

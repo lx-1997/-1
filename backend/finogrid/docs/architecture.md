@@ -31,7 +31,7 @@ Steps: Auth + corridor check → route decision → sanctions + KYT → Bridge s
 Setup:  AgentAccount → KYA → Mandate → AgentWallet → USDC top-up
 Pay:    closed-loop: PaymentIntent → micropay (10 gates) → off-chain settle
         open-loop:  micropay (10 gates) → off-chain settle
-Sweep:  chain_watcher → settled_offchain → settled_onchain (Base L2)
+Sweep:  chain_watcher → settled_offchain → (confirmed sweep tx) → settled_onchain (Base L2)
 Expiry: intent_sweeper → expired intents → release reserved_balance
 ```
 
@@ -157,7 +157,8 @@ Agents observe, report, recommend. They never release payments.
 - No private keys stored
 - Client + Agent API keys SHA-256 hashed; agent keys shown once
 - Ops Console uses separate ops API key
-- x402 nonce + timestamp TTL prevents replay
+- x402 nonce + timestamp TTL prevents replay; the receipt verifier must confirm the
+  Base USDC transfer before protected paths are enabled.
 - KYA validator tokens have configurable expiry (default 365 days)
 - Ledger entries, mandate events, audit_logs are append-only
 - All traffic TLS; secrets in GCP Secret Manager
