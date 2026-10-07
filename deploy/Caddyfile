@@ -2,6 +2,16 @@
 # For local testing set DOMAIN=localhost (Caddy issues a local cert).
 {$DOMAIN:localhost} {
 	encode zstd gzip
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-site"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
 
 	# API + health + research-workbench → backend
 	@backend path /api/* /health /research-workbench /research-workbench/*

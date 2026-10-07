@@ -334,6 +334,7 @@ from .research_vision import (
 )
 from .research_digest import generate_deep_draft, neutralize_deep_draft, resolve_source_documents
 from .research_cache import deep_draft_cache_key, legacy_deep_draft_cache_key
+from .security import SecurityMiddleware, client_ip as _secure_client_ip
 
 # 对外 AI 品牌名：不暴露底层模型（如 MiniMax）
 _AI_BRAND = (os.getenv("DEEPFOCUS_AI_BRAND") or "DEEPFOCUS 智能解读").strip()
@@ -1475,16 +1476,29 @@ def _safe_workbench_file_path(out: str, filename: str) -> Path:
 
 
 def _allowed_origins() -> list[str]:
-    raw = os.getenv("CORS_ORIGINS", "*")
-    origins = [origin.strip() for origin in raw.split(",") if origin.strip()] or ["*"]
-    if "*" in origins:
-        return origins
+    raw = os.getenv("CORS_ORIGINS", "").strip()
+    if raw:
+        origins = [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+        if "*" in origins:
+            return ["*"]
+    else:
+        origins = []
+        for key in ("DEEPFOCUS_APP_BASE_URL", "DEEPFOCUS_PUBLIC_BASE_URL"):
+            value = os.getenv(key, "").strip().rstrip("/")
+            if value and value not in origins:
+                origins.append(value)
+        if os.getenv("DEEPFOCUS_ENV", "production").strip().lower() not in {"prod", "production"}:
+            origins.extend(["http://localhost:3000", "http://localhost:3001"])
+    if not origins:
+        return []
     local_origins = [
         f"http://{host}:{port}"
         for host in ("localhost", "127.0.0.1")
         for port in range(3000, 3016)
     ]
-    return list(dict.fromkeys([*origins, *local_origins]))
+    if os.getenv("DEEPFOCUS_ENV", "production").strip().lower() not in {"prod", "production"}:
+        origins.extend(local_origins)
+    return list(dict.fromkeys(origins))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1655,6 +1669,9 @@ app = FastAPI(
     title="DeepFocus AI API",
     description="Cloud-model research API for the DeepFocus frontend.",
     version="0.1.0",
+    docs_url="/docs" if os.getenv("DEEPFOCUS_EXPOSE_API_DOCS", "").strip().lower() in {"1", "true", "yes"} or not auth_required() else None,
+    redoc_url="/redoc" if os.getenv("DEEPFOCUS_EXPOSE_API_DOCS", "").strip().lower() in {"1", "true", "yes"} or not auth_required() else None,
+    openapi_url="/openapi.json" if os.getenv("DEEPFOCUS_EXPOSE_API_DOCS", "").strip().lower() in {"1", "true", "yes"} or not auth_required() else None,
     lifespan=lifespan,
 )
 
@@ -1668,6 +1685,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SecurityMiddleware)
 
 llm = CloudResearchLLM()
 # All user-facing AI paths share this policy/lifecycle boundary.  Specialist
@@ -5946,7 +5964,10 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                 _WIRE_RESP_CACHE.pop(next(iter(_WIRE_RESP_CACHE)), None)
             # 预热：列表刷新时后台自动处理最新 5 篇 PDF，第一个用户点「原文」也秒开
             if not q.strip() and not before:
-                _trigger_pdf_prewarm(rows[:5])
+                try:
+                    _trigger_pdf_prewarm(rows[:5])
+                except Exception as exc:  # noqa: BLE001 - 预热失败不应把在线列表降级
+                    logging.getLogger(__name__).debug("[wire] pdf prewarm skipped: %s", type(exc).__name__)
             return _wire_conditional(request, _resp)
     except Exception:  # 在线失败（工作台未起/cookie 失效/网络）→ 先试归档，再回退本地抓取舱
         arch_rows = research_archive.query(limit=limit, query_text=q, before=before, before_id=before_id)
@@ -6426,15 +6447,7 @@ _ACTIVITY_ACTION_RE = _re_act.compile(r"^[a-z][a-z0-9_]{1,39}$")
 
 
 def _client_ip(request: Request) -> str:
-    # ⚠️本机 nginx 设 X-Real-IP=$remote_addr（真实对端），优先用它。X-Forwarded-For 的【首段】是
-    # 客户端可任意伪造的（用来刷邀请注册去重/匿名配额），故绝不取首段——退而取最后一跳（nginx 追加的真实IP）。
-    real = (request.headers.get("x-real-ip") or "").strip()
-    if real:
-        return real[:64]
-    xff = request.headers.get("x-forwarded-for") or ""
-    if xff:
-        return xff.split(",")[-1].strip()[:64]
-    return (request.client.host if request.client else "")[:64]
+    return _secure_client_ip(request)
 
 
 def _resolve_actor(request: Request, session: str = "") -> tuple[str, str, str]:

@@ -9,7 +9,9 @@ routes or on a separate process.
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
+import secrets
 import uuid
 from typing import Any
 
@@ -100,8 +102,18 @@ def _text_result(value: Any) -> dict[str, Any]:
 
 async def handle_local_mcp_request(request: Request) -> JSONResponse:
     """Handle one JSON-RPC request for the built-in MCP server."""
-    if LOCAL_TOKEN and request.headers.get("X-MCP-Token", "") != LOCAL_TOKEN:
-        return JSONResponse({"detail": "MCP token invalid"}, status_code=401)
+    configured_token = os.getenv("DEEPFOCUS_MCP_LOCAL_TOKEN", "").strip() or LOCAL_TOKEN
+    peer = (request.client.host if request.client else "") or ""
+    try:
+        is_loopback = ipaddress.ip_address(peer).is_loopback
+    except ValueError:
+        is_loopback = peer == "testclient"
+    provided_token = request.headers.get("X-MCP-Token", "")
+    if configured_token:
+        if not secrets.compare_digest(provided_token, configured_token):
+            return JSONResponse({"detail": "MCP token invalid"}, status_code=401)
+    elif not is_loopback or request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip"):
+        return JSONResponse({"detail": "MCP endpoint disabled: configure DEEPFOCUS_MCP_LOCAL_TOKEN"}, status_code=403)
 
     try:
         payload = await request.json()
@@ -154,7 +166,7 @@ async def handle_local_mcp_request(request: Request) -> JSONResponse:
             value = {"ok": True, "service": "DeepFocus Built-in MCP", "protocolVersion": PROTOCOL_VERSION}
         elif tool_name == "search_market_symbols":
             query = str(arguments.get("query") or "").strip()
-            if not query:
+            if not query or len(query) > 200:
                 return _rpc_error(request_id, -32602, "query is required")
             value = await search_market_symbols(query, market=str(arguments.get("market") or "") or None)
         elif tool_name == "get_market_quotes":
