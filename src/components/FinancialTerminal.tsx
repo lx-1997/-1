@@ -6260,6 +6260,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <TerminalZsxqStream inline loggedIn={!!authUser} focusId={zsxqFocusId} onItems={handleZsxqItems} onRequireLogin={() => requireLogin(() => {}, '登录查看更早机构纪要')} />
           ) : isResearch ? (
             <div className="bbt-res">
+              {reportDq?.level === 'degraded' && resFiltered.length > 0 && (
+                <div className="bbt-feed-stale" role="status">
+                  <span>⚠️ 在线源暂不可用，当前展示最近缓存 · {reportDq.label || '海外投行研报'}</span>
+                  <button className="bbt-retry-btn" onClick={() => loadReports(resQuery)}>↻ 重试</button>
+                </div>
+              )}
               {resFiltered.length === 0 && (
                 <div className="bbt-empty">{
                   resLoading ? '检索中…'
@@ -6526,7 +6532,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               )}
             </div>
           )}
-          {isResearch && <div className="bbt-pf">海外投行研报{resQuery.trim() ? ` · 检索「${resQuery.trim()}」` : ''} · <span className={resLoading ? 'bbt-up' : ''}>{resLoading ? '● 同步中…' : `每分钟自动同步${resSyncedAt ? ` · 同步于 ${fmtTime(resSyncedAt.toISOString())}` : ''}`}</span> · 点条目 → AI 解读</div>}
+          {isResearch && <div className="bbt-pf">海外投行研报{resQuery.trim() ? ` · 检索「${resQuery.trim()}」` : ''} · <span className={resLoading ? 'bbt-up' : ''}>{resLoading ? '● 检查中…' : `每分钟自动检查${resSyncedAt ? ` · 数据源于 ${fmtTime(resSyncedAt.toISOString())}` : ''}`}</span> · 点条目 → AI 解读</div>}
         </section>
       </div>
 

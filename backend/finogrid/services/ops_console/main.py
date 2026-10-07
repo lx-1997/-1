@@ -31,6 +31,12 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.app_env.lower() in {"production", "prod"}:
+        errors = settings.production_validation_errors()
+        if errors:
+            for error in errors:
+                log.critical("ops_console_invalid_production_config", error=error)
+            raise RuntimeError("Invalid production Ops Console configuration")
     log.info("ops_console_starting", port=settings.app_port)
     yield
     log.info("ops_console_shutdown")
@@ -41,7 +47,7 @@ app = FastAPI(
     description="Internal operations, monitoring, and manual controls",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
+    docs_url="/docs" if settings.app_debug else None,
 )
 
 app.add_middleware(

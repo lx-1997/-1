@@ -1,4 +1,6 @@
 """Ops Console shared dependencies."""
+import secrets
+
 from fastapi import Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from .config import OpsConsoleSettings
@@ -15,6 +17,6 @@ async def get_db():
 
 async def require_ops_key(x_ops_api_key: str = Header(...)):
     """Ops-level API key gate. Separate from client API keys."""
-    if x_ops_api_key != settings.ops_api_key:
+    if not secrets.compare_digest(x_ops_api_key, settings.ops_api_key):
         raise HTTPException(status_code=401, detail="Invalid ops API key")
     return x_ops_api_key

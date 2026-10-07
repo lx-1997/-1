@@ -57,3 +57,28 @@ def test_rwa_evidence_rejects_bad_uri_and_broken_chain():
         event_hash(EvidenceEvent("a", "report", "http://bad", "a" * 64, "now", "signer", {}))
     first = _event()
     assert not verify_chain([(first, "b" * 64)])
+
+
+def test_ops_console_production_config_rejects_defaults():
+    from finogrid.services.ops_console.config import OpsConsoleSettings
+
+    cfg = OpsConsoleSettings(
+        app_env="production",
+        app_debug=False,
+        allowed_origins_value="https://daocaijing.com",
+        database_url="postgresql+asyncpg://ops:secret@db.internal:5432/finogrid",
+        ops_api_key="ops_dev_key",
+    )
+    errors = cfg.production_validation_errors()
+    assert any("OPS_API_KEY" in error for error in errors)
+
+    cfg = OpsConsoleSettings(
+        app_env="production",
+        app_debug=False,
+        allowed_origins_value="https://daocaijing.com",
+        database_url="postgresql+asyncpg://finogrid:password@localhost:5432/finogrid",
+        ops_api_key="a-real-ops-secret",
+    )
+    assert cfg.allowed_origins == ["https://daocaijing.com"]
+    errors = cfg.production_validation_errors()
+    assert any("DATABASE_URL" in error for error in errors)
