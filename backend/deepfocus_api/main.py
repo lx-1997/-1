@@ -1257,6 +1257,7 @@ from .research_wire import (
     probe_zsxq,
     save_zsxq_override,
     clear_zsxq_override,
+    clear_wire_cache,
     load_zsxq_override,
     parse_curl_cookie,
     auth_payload as zsxq_auth_payload,
@@ -5645,6 +5646,7 @@ async def api_research_auth(request: Request, token: str = "") -> dict[str, Any]
         body = {}
     if body.get("clear"):
         clear_zsxq_override()
+        _clear_wire_response_cache()
         return {"ok": True, "cleared": True}
     cookie = str(body.get("cookie") or "").strip()
     aduid = str(body.get("aduid") or "").strip()
@@ -5659,6 +5661,8 @@ async def api_research_auth(request: Request, token: str = "") -> dict[str, Any]
     if not ok:
         raise HTTPException(status_code=400, detail=f"该 cookie 验证未通过，未保存：{detail}")
     save_zsxq_override(cookie, aduid)
+    clear_wire_cache()
+    _clear_wire_response_cache()
     _ZSXQ_HEALTH.update({"ok": True, "fails": 0, "alerted": False,
                          "last_ok": datetime.now(timezone.utc).isoformat(), "detail": "已更新"})
     return {"ok": True, "saved": True, "detail": "新登录态已验证并即时生效"}
@@ -5799,10 +5803,24 @@ def _market_for(file_id: Any, title: str = "", cached: Any = None) -> str:
 _WIRE_RESP_CACHE: dict[str, tuple[float, ResearchWireResponse]] = {}
 
 
+def _clear_wire_response_cache() -> None:
+    _WIRE_RESP_CACHE.clear()
+
+
 def _wire_etag(resp: "ResearchWireResponse") -> str:
-    """内容指纹：列表条目 id + 总数。列表没变 → ETag 不变 → 浏览器拿 304（0 流量）。"""
+    """内容指纹：覆盖会被 AI 富化的展示字段，避免旧 304 吞掉新标签。"""
     import hashlib as _h
-    raw = "|".join(str(it.id) for it in resp.items) + f"#{resp.total}#{resp.source}"
+    displayed = [
+        {
+            "id": it.id, "title": it.title, "org": it.org, "date": it.date,
+            "created_at": it.created_at, "filename": it.filename, "out": it.out,
+            "size": it.size, "hashtag": it.hashtag, "download_count": it.download_count,
+            "file_id": it.file_id, "instruments": it.instruments, "market": it.market,
+            "tags": it.tags, "preview_url": it.preview_url,
+        }
+        for it in resp.items
+    ]
+    raw = json.dumps({"items": displayed, "total": resp.total, "source": resp.source}, ensure_ascii=False, sort_keys=True)
     return _h.md5(raw.encode("utf-8")).hexdigest()[:20]
 
 
@@ -5843,6 +5861,28 @@ def _enrich_research_wire_item(item: ResearchWireItem) -> ResearchWireItem:
     return item
 
 
+def _wire_row_key(row: dict[str, Any]) -> str:
+    fid = str(row.get("file_id") or row.get("id") or "").strip()
+    if fid:
+        return f"id:{fid}"
+    return f"title:{str(row.get('title') or '').strip().casefold()}|date:{str(row.get('date') or '')[:10]}"
+
+
+def _merge_wire_rows(primary: list[dict[str, Any]], archived: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in [*(primary or []), *(archived or [])]:
+        if not isinstance(row, dict):
+            continue
+        key = _wire_row_key(row)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    merged.sort(key=lambda row: (str(row.get("date") or ""), str(row.get("created_at") or ""), str(row.get("id") or "")), reverse=True)
+    return merged[:max(1, min(int(limit or 60), 2000))]
+
+
 @app.get("/api/research/wire", response_model=ResearchWireResponse)
 async def api_research_wire(request: Request, limit: int = 60, q: str = "", before: str = "", before_id: str = ""):
     """知识星球「海外投行报告」研报流：终端「研报」面板的数据源。
@@ -5857,14 +5897,14 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
         return _wire_conditional(request, _hit[1])
     try:
         online = await fetch_research_wire_online(limit=limit, query=q)
-        if online.get("items"):
+        if online.get("items") and not online.get("stale"):
             research_archive.upsert(online["items"])  # 每次在线结果落归档，累积历史
         # 最新视图(空 q)：合并历史归档 → 能往回翻；搜索(带 q)走在线全索引；带 before 翻更早
         if not q.strip() or (before or "").strip():
             rows = research_archive.query(limit=limit, query_text=q, before=before, before_id=before_id) or online.get("items") or []
             archived = True
         else:
-            rows = online.get("items") or []
+            rows = _merge_wire_rows(online.get("items") or [], research_archive.query(limit=limit, query_text=q), limit)
             archived = False
         if rows:
             # 一次性批量取所有研报的 AI 缓存（替代逐条 2 次 SQLite 读，几十并发下从 ~1.6s 降到几十 ms）
@@ -5885,15 +5925,20 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                 for row in rows
             ]
             online_items = [_enrich_research_wire_item(item) for item in online_items]
+            fetched_at = str(online.get("fetched_at") or datetime.now(timezone.utc).isoformat())
+            stale = bool(online.get("stale"))
             _resp = ResearchWireResponse(
                 items=online_items, total=len(rows),
                 source="海外投行研报 · 在线检索",
-                fetched_at=datetime.now(timezone.utc).isoformat(),
+                fetched_at=fetched_at,
                 data_quality=DataQuality(
-                    level="live", label="在线 · 海外投行",
-                    detail=(f"实时检索「{q.strip()}」· {len(rows)} 篇" if q.strip()
+                    level="degraded" if stale else "live",
+                    label="缓存 · 海外投行" if stale else "在线 · 海外投行",
+                    detail=(f"在线源暂不可用，显示最近缓存 · {len(rows)} 篇" if stale
+                            else f"实时检索「{q.strip()}」· {len(rows)} 篇" if q.strip()
                             else f"最新 + 历史归档 · {len(rows)} 篇" if archived
                             else f"实时最新 · {len(rows)} 篇"),
+                    reasons=["online-stale"] if stale else [],
                 ),
             )
             _WIRE_RESP_CACHE[_rk] = (time.monotonic(), _resp)
@@ -8135,6 +8180,9 @@ async def run_wire_refresher() -> None:
         try:
             data = await fetch_research_wire_online(limit=120, use_cache=False)
             rows = data.get("items") or []
+            if rows and not data.get("stale"):
+                research_archive.upsert(rows)
+                _clear_wire_response_cache()
             today = datetime.now(ai_fund.BJ_TZ).date().isoformat()
             today_rows = [
                 row for row in rows
