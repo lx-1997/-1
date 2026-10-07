@@ -6,6 +6,7 @@ Finogrid is a non-custodial B2B infrastructure platform with two interconnected 
 
 - **v1 Payout Engine** — cross-border B2B payouts in USDT/USDC via Bridge + regulated corridor adapters
 - **Agent Ledger** — A2A stablecoin micro-transactions with KYA, closed/open-loop wallets, x402, and Mandate-based access control
+- **Web3 Products** — deterministic GameFi strategy scoring and append-only RWA evidence hashes; these layers are non-custodial and do not promise returns.
 
 ---
 
@@ -200,7 +201,7 @@ finogrid/
 ├── database/
 │   ├── models/                # base, client, batch, execution, audit, routing,
 │   │                          # instruction, agent_ledger, mandate
-│   └── migrations/            # 001_initial_schema, 002_agent_ledger, 003_mandate
+│   └── migrations/            # 001_initial_schema … 004_web3_products
 ├── corridors/                 # 8 country adapters (BR, NG, IN, AR, VN, AE, ID, PH)
 ├── mcp/                       # 6 MCP servers: bridge, kyt_aml, identity,
 │                              # wallet_factory, kya_validator, plaid
@@ -210,7 +211,7 @@ finogrid/
 ├── docs/                      # architecture.md, dr-runbook.md, corridors/
 └── tests/
     └── unit/                  # test_routing_engine, test_corridor_adapters,
-                               # test_agent_ledger (35 tests)
+                               # test_agent_ledger, test_web3_products
 ```
 
 ---
