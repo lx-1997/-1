@@ -32,7 +32,9 @@ APP_URL = os.getenv("DEEPFOCUS_PUBLIC_APP_URL", "/").strip() or "/"
 DEFAULT_OG_IMAGE = (os.getenv("DEEPFOCUS_OG_IMAGE", "").strip() or f"{BASE_URL}/og-cover.png")
 
 # 站级实体根（GEO 归因骨架）：所有页面的 publisher/author 用 @id 互引，引擎只需解析一次即知作者方。
-ORG_NAME = "DeepFocus 金融数据"
+# 对外统一主品牌，DeepFocus 作为投研引擎名称，避免首页、SEO 页和分享卡片出现多个品牌。
+BRAND_NAME = "Daocaijing · DeepFocus AI 投研"
+ORG_NAME = BRAND_NAME
 ORG_ID = f"{BASE_URL}/#org"
 WEBSITE_ID = f"{BASE_URL}/#website"
 # 官方可验证社媒账号（sameAs 是 AI 引擎归因的最高杠杆信号）；站长提供后用逗号分隔填入环境变量。
@@ -223,7 +225,7 @@ def _page(
 <meta property="og:locale" content="zh_CN">
 <meta property="og:title" content="{t}">
 <meta property="og:description" content="{desc}">
-<meta property="og:site_name" content="DeepFocus 金融数据">
+<meta property="og:site_name" content="{_esc(BRAND_NAME)}">
 <meta property="og:image" content="{img}">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -265,7 +267,7 @@ def _page(
 </head>
 <body>
 <main class="wrap">
-  <div class="brand"><a href="{_esc(BASE_URL)}/">◆ DeepFocus 金融数据</a></div>
+  <div class="brand"><a href="{_esc(BASE_URL)}/">◆ {_esc(BRAND_NAME)}</a></div>
   {body}
   <a class="cta" href="{_esc(cta_href or APP_URL)}">{_esc(cta_text or "在 DeepFocus 上做深度研究 →")}</a>
   <footer>{ai_notice}{_esc(_DISCLAIMER)} · <a href="{_esc(BASE_URL)}/review">每日复盘</a> · <a href="{_esc(BASE_URL)}/stocks">热门个股速判</a> · <a href="{_esc(BASE_URL)}/articles">财经资讯</a>{_icp_footer()}</footer>
@@ -782,14 +784,22 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     source = _public_source(article.get("source_name") or "")
     when = _beijing_time(article.get("created_at"))
     teaser = _teaser(article.get("content") or "", 300)
+    source_url = str(article.get("url") or "").strip()
     symbol = str(article.get("symbol") or "").strip()
     canonical = page_url or f"{BASE_URL}/article/{aid}"
 
-    # 顶部已有「◆ DeepFocus 金融数据」品牌行，来源同为 DeepFocus 属重复 → meta 只留时间+类型，减噪
-    meta_bits = [_esc(when), "资讯文章"]
+    # 页面明确标注时间、来源与 AI 摘要边界，避免用户把聚合内容误认为站内原创。
+    meta_bits = [_esc(when or "时间待确认"), "资讯文章"]
+    if source and source != "DeepFocus":
+        meta_bits.append(f"来源：{_esc(source)}")
     if symbol:
         meta_bits.append(_esc(symbol))
     parts = [f"<h1>{_esc(title)}</h1>", f'<div class="meta">{" · ".join(meta_bits)}</div>']
+    if source_url.startswith(("http://", "https://")):
+        parts.append(
+            f'<div class="meta">原文来源：<a href="{_esc(source_url)}" rel="nofollow noopener" target="_blank">打开原文 ↗</a> · '
+            "以下内容为 DeepFocus 摘要，完整原文以来源方页面为准。</div>"
+        )
     if teaser and teaser.strip() != title.strip():  # 正文与标题相同则不重复展示导语
         parts.append(f'<h2>内容摘要</h2><div class="lead">{_esc(teaser)}</div>')
     # 软墙 CTA 按 topic 分口径（2026-08-07）：文章全文会员专享；快讯站内免费可读，只做 App 引流，不承诺会员解锁
@@ -837,9 +847,10 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
         "datePublished": published,
         "dateModified": published,
         "image": DEFAULT_OG_IMAGE,
-        "author": {"@type": "Organization", "name": source},
+        "author": {"@id": ORG_ID},
         "publisher": {"@id": ORG_ID},
         "isAccessibleForFree": False,  # 软墙：公开仅标题+摘要，全文需会员解锁
+        **({"isBasedOn": source_url, "citation": source_url} if source_url.startswith(("http://", "https://")) else {}),
         **({"mainEntityOfPage": canonical} if canonical else {}),
     }
     trail = [("首页", f"{BASE_URL}/"), ("财经资讯", f"{BASE_URL}/articles"), (title[:30], canonical)]
@@ -1623,7 +1634,7 @@ _FRIENDLY_BOTS = [
 
 
 def render_robots_txt() -> str:
-    lines = ["# DeepFocus / daocaijing.com — 欢迎搜索与生成式 AI 引擎抓取公开内容（仅供研究参考，不构成投资建议）"]
+    lines = [f"# {BRAND_NAME} / daocaijing.com — 欢迎搜索与生成式 AI 引擎抓取公开内容（仅供研究参考，不构成投资建议）"]
     # 每个已知友好爬虫一条 stanza：放行全站、屏蔽 API。
     for bot in dict.fromkeys(_FRIENDLY_BOTS):  # 去重保序
         lines.append(f"User-agent: {bot}")
@@ -1638,7 +1649,7 @@ def render_robots_txt() -> str:
 
 def render_llms_txt() -> str:
     """llms.txt（GEO）：给 AI 引擎一张「这站有什么可引用内容、在哪」的速查表（markdown）。"""
-    return f"""# DeepFocus 金融数据 (daocaijing.com)
+    return f"""# {BRAND_NAME} (daocaijing.com)
 
 > 面向中文投资者的 AI 投研工作台：A股每日收盘复盘、个股多维证据速判、财经资讯聚合与 AI 解读。
 > 下列页面为证据引擎每日自动生成的常青内容，结构清晰、自带日期与证据，欢迎检索与引用。
@@ -1688,7 +1699,7 @@ def render_feed_xml(reviews: list[dict[str, Any]], articles: list[dict[str, Any]
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<rss version="2.0"><channel>'
-        '<title>DeepFocus · A股每日复盘与财经资讯</title>'
+        f'<title>{html.escape(BRAND_NAME)} · A股每日复盘与财经资讯</title>'
         f'<link>{html.escape(BASE_URL)}/</link>'
         '<description>每个交易日自动生成的 A 股复盘与财经资讯（仅供研究参考，不构成投资建议）。</description>'
         '<language>zh-CN</language>'

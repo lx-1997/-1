@@ -90,9 +90,10 @@
     </noscript>
     <div id="root"></div>
     <script>
+      // 旧版本曾在每次打开首页时清空全部 Cache Storage，导致移动端反复冷启动。
+      // 只注销历史 cache-first 应用 SW，保留 push-sw.js；版本化静态资源由 nginx/CDN 自己缓存。
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          // 清掉历史 cache-first sw.js（陈旧内容元凶），但保留离线召回用的 push-sw.js。
           navigator.serviceWorker.getRegistrations()
             .then((registrations) => Promise.all(registrations
               .filter((registration) => {
@@ -102,11 +103,6 @@
               .map((registration) => registration.unregister())))
             .catch(() => undefined);
         });
-      }
-      if ('caches' in window) {
-        caches.keys()
-          .then((cacheNames) => Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName))))
-          .catch(() => undefined);
       }
     </script>
   </body>

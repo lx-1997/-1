@@ -32,6 +32,7 @@ def _article(aid="a-1"):
 
 def test_article_page_soft_wall_no_fulltext_leak():
     a = _article()
+    a["url"] = "https://example.com/source"
     page = seo_pages.render_article_page_html(a, recent=[a], page_url="https://daocaijing.com/article/a-1")
     assert "某公司发布重大利好公告" in page          # 标题公开
     assert "这是文章导语第一句" in page               # 短导语公开（120字预览）
@@ -41,6 +42,8 @@ def test_article_page_soft_wall_no_fulltext_leak():
     assert "DeepFocus" in page                         # 对外署名 DeepFocus
     assert "DAO财经" not in page                        # ⭐ 内部聚合源名不外露(品牌红线)
     assert '"@type": "NewsArticle"' in page            # 结构化数据
+    assert "原文来源" in page and "打开原文" in page
+    assert '"isBasedOn": "https://example.com/source"' in page
 
 
 def test_public_source_neutralizes_internal_names():

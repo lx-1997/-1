@@ -154,6 +154,7 @@ interface ResearchWireItem {
   id: string; title: string; org: string; date: string; created_at: string;
   filename: string; out: string; size: number; hashtag: string; download_count: number; preview_url: string;
   file_id?: string | null;
+  fetched_at?: string | null;
   instruments?: string[];   // 研报提及的标的（A/美/港股+黄金原油白银比特币），收报时预提取
   market?: string;          // 主要市场 A/HK/US（模型权威判定；空则前端按标题/标的启发式归类）
 }
@@ -1320,7 +1321,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     window.addEventListener('touchmove', onTouch, { passive: false }); window.addEventListener('touchend', stop);
   }, []);
   const [reports, setReports] = useState<ResearchWireItem[]>([]);
-  const [reportDq, setReportDq] = useState<{ level?: string; label?: string; detail?: string } | null>(null);
+  const [reportDq, setReportDq] = useState<{ level?: string; label?: string; detail?: string; reasons?: string[] } | null>(null);
   const [resQuery, setResQuery] = useState('');           // 研报在线全局搜索关键词
   const [resLoading, setResLoading] = useState(false);
   // 研报默认只展示最近一档(干净);更早历史靠底部「加载更早」按需翻(归档 before= 分页,历史一条不丢)
@@ -1328,6 +1329,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [resMoreLoading, setResMoreLoading] = useState(false);
   const resHistLoadedRef = useRef(false);                 // 用户已翻过历史 → 暂停自动刷新(免得把展开的历史收回去)
   const [resSyncedAt, setResSyncedAt] = useState<Date | null>(null);  // 研报最近一次成功同步时刻
+  const reportRequestSeqRef = useRef(0);
+  const reportAbortRef = useRef<AbortController | null>(null);
   const [newsPreview, setNewsPreview] = useState<RealtimeMessageRecord | null>(null);  // 文章在线预览
   const [articleOriginal, setArticleOriginal] = useState<ArticleOriginalTextResponse | null>(null);
   const [articleTextLoading, setArticleTextLoading] = useState(false);
@@ -1604,40 +1607,58 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // ---- 研报流（海外投行报告）：空关键词=最新，带关键词=在线全局检索 ----
   const loadReports = useCallback(async (q: string | string[] = '') => {
+    const requestSeq = ++reportRequestSeqRef.current;
+    reportAbortRef.current?.abort();
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    reportAbortRef.current = controller;
     setResLoading(true);
     try {
       const kws = (Array.isArray(q) ? q : [q]).map(s => s.trim()).filter(Boolean);
+      const request = (kw: string, limit: number) => apiGet<{ items: ResearchWireItem[]; data_quality?: any; fetched_at?: string }>('/api/research/wire', {
+        params: { limit, ...(kw ? { q: kw } : {}) },
+        ...(controller ? { signal: controller.signal } : {}),
+      });
       if (kws.length <= 1) {
         // 默认(空 q)只取最新一档,界面干净;搜索仍走全量历史归档(400)。更早历史靠底部「加载更早」按需翻(before=)。
-        const params: Record<string, any> = { limit: kws[0] ? 400 : RES_RECENT_LIMIT };
-        if (kws[0]) params.q = kws[0];
-        const d = await apiGet<{ items: ResearchWireItem[]; data_quality?: any }>('/api/research/wire', { params });
+        const d = await request(kws[0] || '', kws[0] ? 400 : RES_RECENT_LIMIT);
+        if (requestSeq !== reportRequestSeqRef.current) return;
         setReports(d.items || []);
         setReportDq(d.data_quality || null);
         setResHistDone((d.items || []).length < RES_RECENT_LIMIT);  // 不足一档=没更早了
         resHistLoadedRef.current = false;  // 回到最新视图,恢复自动刷新
+        setResSyncedAt(d.fetched_at ? new Date(d.fetched_at) : null);
       } else {
-        // 多关键词(中文→英文)并发检索，按序累加去重——中文命中在前，英文标题原文补在后
-        const ds = await Promise.all(kws.map(kw =>
-          apiGet<{ items: ResearchWireItem[]; data_quality?: any }>('/api/research/wire', { params: { limit: 400, q: kw } })
-            .catch(() => ({ items: [] as ResearchWireItem[], data_quality: null }))
-        ));
+        // 多关键词按优先级串行检索：中文先命中，只有不足一档才补英文，避免同时打爆源站。
         const seen = new Set<string>();
         const merged: ResearchWireItem[] = [];
-        ds.forEach(d => (d.items || []).forEach(it => {
-          const key = (it.id || it.file_id || it.preview_url || it.title || '').trim().toLowerCase();
-          if (key && !seen.has(key)) { seen.add(key); merged.push(it); }
-        }));
+        let quality: any = null;
+        let fetchedAt: string | null = null;
+        for (const kw of kws) {
+          try {
+            const d = await request(kw, 400);
+            if (!quality && d.data_quality) quality = d.data_quality;
+            if (!fetchedAt && d.fetched_at) fetchedAt = d.fetched_at;
+            (d.items || []).forEach(it => {
+              const key = (it.file_id || it.id || it.preview_url || `${it.title}|${it.date}` || '').trim().toLowerCase();
+              if (key && !seen.has(key)) { seen.add(key); merged.push(it); }
+            });
+            if (merged.length >= RES_RECENT_LIMIT) break;
+          } catch { /* 单个关键词失败，继续尝试下一个别名 */ }
+        }
+        if (requestSeq !== reportRequestSeqRef.current) return;
         setReports(merged);
-        setReportDq(ds.find(d => d.data_quality)?.data_quality || null);
+        setReportDq(quality);
         setResHistDone(true);              // 搜索已是全量归档,无「加载更早」
         resHistLoadedRef.current = false;
+        setResSyncedAt(fetchedAt ? new Date(fetchedAt) : null);
       }
-      setResSyncedAt(new Date());
     } catch {
+      if (requestSeq !== reportRequestSeqRef.current) return;
       // 首次加载即失败时 reportDq 仍为空 → 给明确错误态，避免永久假「加载中」死胡同
       setReportDq(prev => prev || { level: 'error', detail: '研报同步失败，可能是源不稳，点右上角 ⟳ 重试' });
-    } finally { setResLoading(false); }
+    } finally {
+      if (requestSeq === reportRequestSeqRef.current) setResLoading(false);
+    }
   }, []);
   // 一次性加载全部更早历史:循环用归档 before= 往回翻到底(渐进填充,边翻边显),不用反复点。历史一条不丢。
   const loadMoreReports = useCallback(async () => {
@@ -1647,7 +1668,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const keyOf = (it: ResearchWireItem) => (it.id || it.file_id || it.title || '').trim().toLowerCase();
     try {
       let cur = reports;
-      for (let guard = 0; guard < 40; guard++) {   // 守护上限:40×60=2400 条,远超归档量,防异常死循环
+      for (let guard = 0; guard < 8; guard++) {   // 单次最多翻 8 页，避免一次点击长时间占用请求；可再次点击继续
         const oldestItem = cur.length ? cur[cur.length - 1] : null;
         const oldest = (oldestItem?.date || '').slice(0, 10);
         if (!oldest) break;
@@ -5784,12 +5805,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <div className="bbt-review-workspace-card-top">
                   <span className="bbt-review-workspace-card-ico">📊</span>
                   <div className="bbt-review-workspace-card-main">
-                    <div className="bbt-review-workspace-card-meta">{rIsToday ? '今日 ' : ''}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}</div>
+                    <div className="bbt-review-workspace-card-meta">{rIsToday ? '今日 ' : '最近交易日 '}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}</div>
                     <h2>{narrative.one_liner || '今日市场复盘已准备好'}</h2>
                     <p>{narrative.plain || '点击查看大盘、板块、资金与个股的完整复盘。'}</p>
                   </div>
                   <span className="bbt-review-workspace-card-go">查看完整复盘 ↗</span>
                 </div>
+                {!rIsToday && <div className="bbt-review-workspace-card-stale" role="status">今日暂无新的交易日复盘，以上为最近可用数据；休市期间会在下一交易日自动更新。</div>}
                 {(reviewToday.our_edge || []).length > 0 && (
                   <div className="bbt-review-workspace-edge">⭐ DeepFocus 提前发现 · {(reviewToday.our_edge || []).length} 条线索</div>
                 )}
