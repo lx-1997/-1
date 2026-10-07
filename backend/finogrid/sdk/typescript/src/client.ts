@@ -201,7 +201,7 @@ export class X402Helper {
    */
   static buildPaymentSignature(
     requirement: X402PaymentRequirement,
-    opts: { amount?: string } = {}
+    opts: { amount?: string; txHash?: string } = {}
   ): string {
     const sig: X402PaymentSignature = {
       network: requirement.network,
@@ -211,6 +211,7 @@ export class X402Helper {
       nonce: randomUUID(),
       timestamp: String(Date.now() / 1000),
       resource: requirement.resource,
+      txHash: opts.txHash,
     };
     return Buffer.from(JSON.stringify(sig)).toString("base64");
   }

@@ -405,6 +405,48 @@ class TestProductionConfiguration:
         errors = cfg.production_validation_errors()
         assert any("receipt verifier" in error for error in errors)
 
+    def test_production_requires_chain_for_x402(self):
+        from finogrid.services.agent_ledger_api.config import AgentLedgerSettings
+        cfg = AgentLedgerSettings(
+            app_env="production", app_debug=False,
+            cors_origins_value="https://daocaijing.com",
+            database_url="postgresql+asyncpg://finogrid:secret@db.internal:5432/finogrid",
+            v1_internal_api_key="a-real-secret",
+            x402_payment_protected_paths_value="/v1/paid",
+            x402_onchain_verifier_enabled=True,
+            chain_enabled=False,
+        )
+        errors = cfg.production_validation_errors()
+        assert any("CHAIN_ENABLED" in error for error in errors)
+
+
+class TestReceiptVerifier:
+    def test_rejects_bad_transaction_hash_without_rpc(self):
+        from finogrid.services.agent_ledger_api.receipt_verifier import verify_usdc_receipt
+
+        result = verify_usdc_receipt(
+            tx_hash="0x1234",
+            pay_to="0x0000000000000000000000000000000000000001",
+            amount_usdc="0.01",
+            rpc_url="https://example.invalid",
+            usdc_contract="0x0000000000000000000000000000000000000002",
+        )
+        assert not result.valid
+        assert "hash" in result.reason.lower()
+
+    def test_rejects_non_positive_amount_without_rpc(self):
+        from finogrid.services.agent_ledger_api.receipt_verifier import verify_usdc_receipt
+
+        result = verify_usdc_receipt(
+            tx_hash="0x" + "1" * 64,
+            pay_to="0x0000000000000000000000000000000000000001",
+            amount_usdc="0",
+            rpc_url="https://example.invalid",
+            usdc_contract="0x0000000000000000000000000000000000000002",
+        )
+        assert not result.valid
+        assert "positive" in result.reason.lower()
+
     def test_encode_decode_requirement_roundtrip(self):
         from finogrid.services.agent_ledger_api.middleware.payment_required import _encode_requirement
         encoded = _encode_requirement("/v1/micropay", amount_usdc=0.001)

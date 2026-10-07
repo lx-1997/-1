@@ -228,6 +228,7 @@ export interface X402PaymentSignature {
   nonce: string;
   timestamp: string;
   resource: string;
+  txHash?: string;
 }
 
 // ── SDK Config ────────────────────────────────────────────────────────────────

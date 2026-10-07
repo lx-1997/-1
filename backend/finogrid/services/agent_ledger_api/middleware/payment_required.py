@@ -176,6 +176,34 @@ class PaymentRequiredMiddleware(BaseHTTPMiddleware):
                 headers={PAYMENT_REQUIRED_HEADER: _encode_requirement(path)},
             )
 
+        verification = None
+        if settings.x402_onchain_verifier_enabled:
+            from ..receipt_verifier import verify_usdc_receipt_async
+
+            tx_hash = sig_data.get("txHash") or sig_data.get("tx_hash")
+            if not tx_hash:
+                return JSONResponse(
+                    status_code=402,
+                    content={"error": "On-chain transaction hash is required"},
+                    headers={PAYMENT_REQUIRED_HEADER: _encode_requirement(path)},
+                )
+            verification = await verify_usdc_receipt_async(
+                tx_hash=tx_hash,
+                pay_to=settings.agent_ledger_deposit_address,
+                amount_usdc=sig_data["amount"],
+                rpc_url=settings.base_rpc_url,
+                usdc_contract=settings.usdc_contract_address_base,
+                min_confirmations=settings.chain_min_confirmations,
+                rpc_timeout_seconds=settings.x402_rpc_timeout_seconds,
+            )
+            if not verification.valid:
+                log.warning("x402_receipt_rejected", path=path, reason=verification.reason)
+                return JSONResponse(
+                    status_code=402,
+                    content={"error": f"On-chain payment invalid: {verification.reason}"},
+                    headers={PAYMENT_REQUIRED_HEADER: _encode_requirement(path)},
+                )
+
         # Valid payment — forward and attach receipt
         response = await call_next(request)
 
@@ -187,6 +215,9 @@ class PaymentRequiredMiddleware(BaseHTTPMiddleware):
             "paidAt": time.time(),
             "resource": path,
             "nonce": sig_data.get("nonce"),
+            "txHash": sig_data.get("txHash") or sig_data.get("tx_hash"),
+            "blockNumber": verification.block_number if verification else None,
+            "confirmations": verification.confirmations if verification else 0,
             "receiptId": hashlib.sha256(
                 f"{sig_data.get('nonce')}{sig_data.get('timestamp')}".encode()
             ).hexdigest()[:16],

@@ -52,6 +52,7 @@ class AgentLedgerSettings(BaseSettings):
     x402_nonce_ttl_seconds: int = 300
     x402_max_future_skew_seconds: int = 30
     x402_onchain_verifier_enabled: bool = False
+    x402_rpc_timeout_seconds: int = 10
 
     # Intent sweeper
     intent_sweeper_interval_seconds: int = 300
@@ -87,8 +88,11 @@ class AgentLedgerSettings(BaseSettings):
                 errors.append("deposit and sweep wallet addresses must be configured before enabling chain settlement")
             if self.chain_min_confirmations < 1:
                 errors.append("CHAIN_MIN_CONFIRMATIONS must be at least 1")
-        if self.x402_payment_protected_paths and not self.x402_onchain_verifier_enabled:
-            errors.append("x402 protected paths require an on-chain receipt verifier")
+        if self.x402_payment_protected_paths:
+            if not self.x402_onchain_verifier_enabled:
+                errors.append("x402 protected paths require an on-chain receipt verifier")
+            if not self.chain_enabled:
+                errors.append("x402 protected paths require CHAIN_ENABLED=true")
         if self.v1_internal_api_key == "internal-service-key":
             errors.append("V1_INTERNAL_API_KEY still uses the development placeholder")
         return errors
