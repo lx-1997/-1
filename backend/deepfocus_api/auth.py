@@ -1094,6 +1094,8 @@ PUBLIC_EXACT = frozenset(
         # require_current_user 守卫、DELETE 带 {id} 后缀不在此列，均不受影响。
         "/api/realtime/recall/subscriptions",
         "/api/agents/feedback",     # AI 答案 👍👎 反馈（匿名也可投，handler 只落库不回敏感数据）——持续在线回归的数据源
+        "/api/mcp",                 # 对外远程 MCP 端点（POST）：handler 自校验个人接入令牌(dfm_)，与 /api/v1 的 X-API-Key 同款自管模式
+        "/api/mcp/setup",           # MCP 自助接入控制台（公开静态 HTML，登录态由页面读同源 localStorage）
 
         # 微信推送台：独立 HTML 页(?token=)+ 推送接口，handler 自校验 metrics token；与看板同款，故放行 JWT 网关。
         "/api/weixin/console",

@@ -190,6 +190,8 @@ from .mcp_hub import (
     list_mcp_servers,
 )
 from .mcp_local import handle_local_mcp_request
+from . import mcp_tokens
+from .mcp_remote import handle_remote_mcp_request, setup_page as mcp_setup_page
 from .model_config import public_model_config, save_model_config, configure_data_source_egress
 from .multi_market_decision import build_multi_market_decision
 from .tear_sheet import (
@@ -1533,6 +1535,7 @@ async def lifespan(app: FastAPI):
     # 文章收到后立即提取并写入原文缓存；阅读器点击时直接命中成品。
     register_post_message_hook(prewarm_article_original_text)
     init_mcp_db()
+    mcp_tokens.init_mcp_tokens_db()  # 个人 MCP 接入令牌库（dfm_，外部客户端经 /api/mcp 接入）
     local_mcp_url = os.getenv("DEEPFOCUS_LOCAL_MCP_URL", "http://127.0.0.1:8000/mcp").strip()
     local_mcp_name = "DeepFocus 内置投研 MCP"
     if not any(
@@ -1727,6 +1730,49 @@ async def core_agent_runtime_status() -> dict[str, Any]:
 async def local_mcp_endpoint(request: Request) -> JSONResponse:
     """内置只读 Streamable HTTP MCP 端点。"""
     return await handle_local_mcp_request(request)
+
+
+@app.post("/api/mcp", include_in_schema=True)
+async def remote_mcp_endpoint(request: Request) -> JSONResponse:
+    """对外远程 MCP 端点（个人接入令牌鉴权，会员墙与配额见 mcp_remote）。"""
+    return await handle_remote_mcp_request(request)
+
+
+@app.get("/api/mcp/setup", response_class=HTMLResponse)
+async def remote_mcp_setup_page() -> HTMLResponse:
+    """MCP 自助接入控制台（公开静态页，登录态由同源 localStorage 提供）。"""
+    return mcp_setup_page()
+
+
+@app.get("/api/account/mcp-tokens")
+async def api_account_mcp_tokens_list(_user: dict = Depends(require_current_user)) -> dict[str, Any]:
+    return {"tokens": mcp_tokens.list_tokens(str(_user.get("sub") or ""))}
+
+
+@app.post("/api/account/mcp-tokens")
+async def api_account_mcp_tokens_create(
+    request: Request, _user: dict = Depends(require_current_user)
+) -> dict[str, Any]:
+    """签发个人 MCP 接入令牌（明文只此一次返回）。"""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - 空 body / 非 JSON 视为默认名
+        body = {}
+    try:
+        return mcp_tokens.issue_token(
+            str(_user.get("sub") or ""), str(_user.get("username") or ""),
+            str((body or {}).get("name") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/account/mcp-tokens/{token_prefix}")
+async def api_account_mcp_tokens_revoke(token_prefix: str, _user: dict = Depends(require_current_user)) -> dict[str, Any]:
+    ok = mcp_tokens.revoke_token(str(_user.get("sub") or ""), token_prefix)
+    if not ok:
+        raise HTTPException(status_code=404, detail="令牌不存在或不属于当前账号")
+    return {"ok": True}
 
 
 @app.get("/api/ontology/demo")
