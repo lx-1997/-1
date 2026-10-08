@@ -1825,7 +1825,14 @@ async def oauth_register(request: Request) -> Response:
 @app.get("/api/oauth/authorize", response_class=HTMLResponse)
 async def oauth_authorize_page() -> HTMLResponse:
     """登录 + 授权页（后端直出；OAuth 参数经 query 透传给页面 JS，审批走 /consent）。"""
-    return HTMLResponse(mcp_oauth.consent_page())
+    return HTMLResponse(mcp_oauth.consent_page(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/oauth/me")
+async def oauth_me(_user: dict = Depends(require_current_user)) -> dict[str, Any]:
+    """授权页登录态探测：/api/auth/me 在通用 /api/ 段有 nginx 前端标识闸，
+    本页 fetch 不带 SPA 标识会被 444 断连，故走 OAuth 段（nginx 已豁免）。"""
+    return {"username": str(_user.get("username") or "")}
 
 
 @app.post("/api/oauth/authorize/consent")

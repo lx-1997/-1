@@ -374,19 +374,26 @@ let memJwt='';
 function bearer(){ return memJwt || jwt; }
 function err(m){ document.getElementById('gerr').textContent=m||''; }
 async function whoami(t){
-  const r=await fetch('/api/auth/me',{headers:{'Authorization':'Bearer '+t}});
-  if(!r.ok) return null; const d=await r.json(); return (d.user&&d.user.username)||null;
+  try{
+    const c=new AbortController(); const tm=setTimeout(()=>c.abort(),3000);
+    const r=await fetch('/api/oauth/me',{headers:{'Authorization':'Bearer '+t},signal:c.signal});
+    clearTimeout(tm);
+    if(!r.ok) return null; const d=await r.json(); return d.username||null;
+  }catch(e){ return null; }
 }
-function show(box){ document.getElementById(box).classList.remove('hide'); }
+function show(box){ const el=document.getElementById(box); if(el) el.classList.remove('hide'); }
+function fatal(m){ err(m); show('loginBox'); }
 async function boot(){
-  document.getElementById('appName').textContent = qs.get('client_name') || 'MCP 客户端';
-  for(const k of ['client_id','redirect_uri','code_challenge']){
-    if(!OAUTH[k]){ err('授权链接不完整（缺少 '+k+'），请回到客户端重新发起连接。'); return; }
-  }
-  if(OAUTH.code_challenge_method && OAUTH.code_challenge_method!=='S256'){ err('仅支持 S256 校验方式。'); return; }
-  const t=bearer();
-  if(t){ const u=await whoami(t); if(u){ document.getElementById('who').textContent=u; show('consentBox'); return; } }
-  show('loginBox');
+  try{
+    document.getElementById('appName').textContent = qs.get('client_name') || 'MCP 客户端';
+    for(const k of ['client_id','redirect_uri','code_challenge']){
+      if(!OAUTH[k]){ err('授权链接不完整（缺少 '+k+'），请回到客户端重新发起连接。'); return; }
+    }
+    if(OAUTH.code_challenge_method && OAUTH.code_challenge_method!=='S256'){ err('仅支持 S256 校验方式。'); return; }
+    const t=bearer();
+    if(t){ const u=await whoami(t); if(u){ document.getElementById('who').textContent=u; show('consentBox'); return; } }
+    show('loginBox');
+  }catch(e){ fatal('页面初始化异常：'+((e&&e.message)||e)+'。请直接在下方登录后授权。'); }
 }
 async function doLogin(){
   err(''); document.getElementById('err').textContent='';
