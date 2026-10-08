@@ -1835,6 +1835,38 @@ async def oauth_me(_user: dict = Depends(require_current_user)) -> dict[str, Any
     return {"username": str(_user.get("username") or "")}
 
 
+_OAUTH_LOGIN_FAILS: dict = {}  # {ip: [最近失败时间戳]} 授权页就地登录防暴破
+
+
+@app.post("/api/oauth/login", response_model=TokenResponse)
+async def oauth_login(payload: LoginRequest, request: Request) -> TokenResponse:
+    """授权页就地登录。/api/auth/login 在通用 /api/ 段有 nginx 前端标识闸
+    （不带 SPA 头被 444 断连），授权页是后端直出 HTML 不经 SPA，故走本豁免段；
+    失去的 nginx api_auth 限速(15r/m/IP)以应用内每 IP 限速补齐。"""
+    ip = _client_ip(request)
+    now = time.time()
+    fails = _OAUTH_LOGIN_FAILS.setdefault(ip, [])
+    fails[:] = [t for t in fails if t > now - 60]
+    if len(fails) >= 10:
+        raise HTTPException(status_code=429, detail="尝试过于频繁，请一分钟后再试")
+    user = authenticate(payload.username, payload.password)
+    if user is None:
+        fails.append(now)
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    _OAUTH_LOGIN_FAILS.pop(ip, None)
+    try:  # 与 /api/auth/login 同款操作流水
+        ua = request.headers.get("user-agent") or ""
+        metrics_log_activity(
+            actor_kind="user", actor_id=f"u:{user.id}",
+            actor_name=str(user.username or user.email or user.id), action="login",
+            target="", ip=ip, device=("mobile" if _MOBILE_UA_RE.search(ua) else "pc"),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    sid = rotate_session(user.id)
+    return TokenResponse(access_token=create_access_token(user, sid=sid), user=user)
+
+
 @app.post("/api/oauth/authorize/consent")
 async def oauth_authorize_consent(request: Request, _user: dict = Depends(require_current_user)) -> Response:
     """审批（页面 JS 携带站点 JWT 调用）。返回客户端回调 URL，由页面执行跳转。"""

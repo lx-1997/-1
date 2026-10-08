@@ -286,7 +286,17 @@ def verify_access_token(token: str) -> Optional[dict]:
 
         try:
             claims = _jwt.decode(token, jwt_secret(), algorithms=[JWT_ALG], audience=RESOURCE)
-        except JWTError:
+        except JWTError as e:
+            import logging
+
+            try:
+                token_aud = (_jwt.get_unverified_claims(token) or {}).get("aud")
+            except Exception:  # noqa: BLE001
+                token_aud = "?"
+            logging.getLogger("uvicorn.error").warning(
+                "MCP OAuth 令牌校验失败: %s: %s (token_aud=%r resource=%s)",
+                type(e).__name__, e, token_aud, RESOURCE,
+            )
             return None
     if not claims or not claims.get("sub"):
         return None
@@ -397,26 +407,30 @@ async function boot(){
 }
 async function doLogin(){
   err(''); document.getElementById('err').textContent='';
-  const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({username:document.getElementById('user').value.trim(),password:document.getElementById('pass').value})});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok){ document.getElementById('err').textContent=d.detail||('登录失败 '+r.status); return; }
-  memJwt=d.access_token;
-  const u=await whoami(memJwt);
-  document.getElementById('who').textContent=u||'';
-  document.getElementById('loginBox').classList.add('hide');
-  show('consentBox');
+  try{
+    const r=await fetch('/api/oauth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:document.getElementById('user').value.trim(),password:document.getElementById('pass').value})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.access_token){ document.getElementById('err').textContent=d.detail||('登录失败 '+r.status); return; }
+    memJwt=d.access_token;
+    const u=await whoami(memJwt);
+    document.getElementById('who').textContent=u||'';
+    document.getElementById('loginBox').classList.add('hide');
+    show('consentBox');
+  }catch(e){ document.getElementById('err').textContent='网络异常，请稍后再试：'+((e&&e.message)||e); }
 }
 document.getElementById('chg').onclick=()=>{ memJwt=''; document.getElementById('consentBox').classList.add('hide'); show('loginBox'); };
 async function doConsent(approve){
   err('');
-  const r=await fetch('/api/oauth/authorize/consent',{method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':'Bearer '+bearer()},
-    body:JSON.stringify({approve, ...OAUTH, client_name: qs.get('client_name')||''})});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok){ err(d.detail||('授权失败 '+r.status)); return; }
-  if(d.redirect){ location.href=d.redirect; }
-  else { err('已拒绝。请回到客户端。'); document.getElementById('consentBox').innerHTML='<p class="sub">已拒绝，可关闭此页。</p>'; }
+  try{
+    const r=await fetch('/api/oauth/authorize/consent',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+bearer()},
+      body:JSON.stringify({approve, ...OAUTH, client_name: qs.get('client_name')||''})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ err(d.detail||('授权失败 '+r.status)); return; }
+    if(d.redirect){ location.href=d.redirect; }
+    else { err('已拒绝。请回到客户端。'); document.getElementById('consentBox').innerHTML='<p class="sub">已拒绝，可关闭此页。</p>'; }
+  }catch(e){ err('网络异常，请稍后再试：'+((e&&e.message)||e)); }
 }
 boot();
 </script></body></html>"""

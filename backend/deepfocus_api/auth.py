@@ -1099,6 +1099,7 @@ PUBLIC_EXACT = frozenset(
         "/api/oauth/register",      # MCP OAuth 2.1 动态客户端注册（公共客户端，RFC 7591；按 IP 限频）
         "/api/oauth/authorize",     # MCP OAuth 登录+授权页（GET 出 HTML；POST /consent 不在此列、须站点 JWT）
         "/api/oauth/token",         # MCP OAuth 令牌端点（授权码 PKCE / refresh；客户端服务端调用，无站点 JWT）
+        "/api/oauth/login",         # MCP OAuth 授权页就地登录（授权页为后端直出 HTML 无 SPA 标识头；自带每 IP 防暴破限速）
 
         # 微信推送台：独立 HTML 页(?token=)+ 推送接口，handler 自校验 metrics token；与看板同款，故放行 JWT 网关。
         "/api/weixin/console",
