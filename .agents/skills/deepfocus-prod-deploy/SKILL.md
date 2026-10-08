@@ -34,12 +34,15 @@ description: >-
 
 3. **用 `scripts/precise_patch.py` 同步到服务器**(str.replace + count 断言 + 备份 + py_compile,见下)。它把 old/new 块从文件读入,避免 shell 引号地狱。
 
-4. **重启 + 验证**(顺序敏感:8300 boot 慢,要轮询等 health):
+4. **重启 + 验证**——**必须用服务器上的受控重启闸门,禁止裸 `systemctl restart`**:
    ```bash
-   ssh root@39.105.214.141 'systemctl restart deepfocus-api.service
-     for i in 1 2 3 4 5 6; do c=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8300/health); echo $c; [ "$c" = 200 ] && break; sleep 2; done'
+   ssh root@39.105.214.141 '/opt/deepfocus/bin/api-restart'
    ```
-   再针对改动 curl 对应端点(localhost:8300)确认新行为。
+   它做三件事:flock 串行化(多会话并行部署时排队,避免重启互相踩踏)→ 重启 → 轮询 /health
+   到 200 才返回。背景:2026-10-08 一晚 18 次重启(多会话并行),每次 ~9-25s 端口空窗,
+   nginx 全站 502 波(当日 290 次 502/504);裸 restart 无锁 + 不等健康 = 雪上加霜。
+   脚本改后端代码之外**不要**额外手写重启循环。
+   重启后再针对改动 curl 对应端点(localhost:8300)确认新行为。
 
 ⚠️ `python -c 'import deepfocus_api.main'` 预检**挡不住 lifespan 崩溃**(懒导入不在顶层)。py_compile 只查语法。真要保险跑前台冒烟:`uvicorn ... --port 8399` 看 "Application startup complete"。但纯改 HTML 字符串/启发式函数这类不碰导入链的,py_compile + 重启后 health 200 即足够。
 
