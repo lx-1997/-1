@@ -70,16 +70,25 @@ interface Props {
   onLog?: (action: string, target?: string) => void;   // 埋点（call_create / call_cancel），复用 FinancialTerminal.logAct
 }
 
-type TabKey = 'verdict' | 'lhb' | 'consensus' | 'dividends' | 'news' | 'themes' | 'calls';
+type TabKey = 'verdict' | 'lhb' | 'consensus' | 'dividends' | 'news' | 'themes' | 'msgs' | 'calls';
 
 const TABS: Array<[TabKey, string]> = [
   ['verdict', '⚡ 速判卡'],
+  ['msgs', '站内消息'],
   ['lhb', '龙虎榜'],
   ['consensus', '一致预期'],
   ['dividends', '分红'],
   ['news', '公司新闻'],
   ['themes', '题材'],
 ];
+
+// 站内消息聚合（message_symbols 倒排索引）的来源徽标
+const MSG_KIND: Record<string, string> = {
+  'dao-news': '快讯', flash: '快讯', news: '快讯',
+  'dao-article': '文章', article: '文章',
+  'dao-report': '研报', 'research-wire': '研报',
+  'institution-note': '纪要', note: '纪要',
+};
 
 // 信号→终端色（本产品刻意绿涨红跌，沿用 bbt-up=涨色 / bbt-down=跌色 单一真源）
 const sigCls = (s: string) => (s === 'bullish' ? 'bbt-up' : s === 'bearish' ? 'bbt-down' : '');
@@ -185,9 +194,9 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
         cache.current[key] = { ts, hist: Array.isArray(histItems) ? histItems.slice().reverse() : [], risk: risk?.data || null };
       } else {
         const path = t === 'lhb' ? '/api/stock/dragon-tiger' : t === 'consensus' ? '/api/stock/consensus'
-          : t === 'dividends' ? '/api/stock/dividends' : t === 'themes' ? '/api/themes/stock' : '/api/stock/news';
-        const r = await apiGet<any>(path, { params: { symbol } }).catch(() => null);
-        cache.current[key] = r?.data ?? null;
+          : t === 'dividends' ? '/api/stock/dividends' : t === 'themes' ? '/api/themes/stock' : t === 'msgs' ? '/api/messages/by-symbol' : '/api/stock/news';
+        const r = await apiGet<any>(path, { params: { symbol }, timeout: t === 'msgs' ? 20000 : undefined }).catch(() => null);
+        cache.current[key] = t === 'msgs' ? { items: r?.data || [] } : (r?.data ?? null);
       }
     } finally { setBusy(false); bump(); }
   }, [loggedIn, symbol, name]);
@@ -380,6 +389,27 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
             ))}
           </div>
         ) : <div className="bbt-empty">暂无个股新闻</div>
+      )}
+
+      {/* 站内消息聚合：message_symbols 倒排索引——快讯/文章/研报/纪要按标的混合时间线（收报时打标，查询 O(索引)） */}
+      {tab === 'msgs' && d !== undefined && (
+        d && Array.isArray(d.items) && d.items.length > 0 ? (
+          <div style={{ marginTop: 8 }}>
+            {(d.items as any[]).slice(0, 30).map((it: any, i: number) => (
+              <div key={it.id || i} style={{ fontSize: 13, lineHeight: 1.65, display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                <span style={{ ...dim, flex: '0 0 auto', fontSize: 11, border: '1px solid rgba(127,138,150,.3)', borderRadius: 3, padding: '0 3px' }}>
+                  {MSG_KIND[String(it.source_type || '')] || '消息'}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  {it.url
+                    ? <a href={it.url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>{it.title}</a>
+                    : it.title}
+                  <span style={dim}>　{String(it.created_at || '').slice(5, 10)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : <div className="bbt-empty">暂无该标的的站内消息</div>
       )}
 
       {/* 题材反查（东财）：个股所属行业/板块——从个股出发找同题材联动，与龙虎榜等横向数据互补 */}

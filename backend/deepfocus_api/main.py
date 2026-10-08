@@ -3175,6 +3175,20 @@ async def themes_stock(symbol: str) -> dict:
     return await fetch_stock_themes(sym) or {"symbol": sym, "name": "", "industry": "", "board": ""}
 
 
+@app.get("/api/messages/by-symbol")
+async def messages_by_symbol_index(request: Request, symbol: str, limit: int = 30) -> dict:
+    """按标的聚合站内消息（message_symbols 倒排索引：快讯/文章/研报/纪要混合时间线，新→旧）。
+
+    个股工作区"一屏看全该股消息"的数据底座；查询走收报时打好的倒排，O(索引) 不现场扫文。
+    鉴权与个股面板其余数据端点对齐（登录可见）。"""
+    require_current_user(request)
+    from .symbol_linker import messages_by_symbol
+    sym = (symbol or "").strip()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol 不能为空")
+    return {"symbol": sym.upper(), "data": messages_by_symbol(sym, limit=limit)}
+
+
 @app.get("/api/themes/limit-up")
 async def themes_limit_up(limit: int = 60) -> dict:
     """A股涨停天梯（连板梯队·公开免费层）：按连板数降序，含 N天M板/所属行业/炸板。东财涨停池，纯事实非荐股。"""
@@ -8383,9 +8397,12 @@ async def run_seo_submit() -> None:
             new_urls = [u for u in urls if u not in pushed]
             if new_urls:
                 res = await asyncio.to_thread(seo_submit.submit_urls, new_urls)
-                pushed.update(new_urls)
-                record_datapoint("seo_submit_state", "global", {"pushed": list(pushed)[-5000:]})
-                print(f"[seo-submit] 推送 {len(new_urls)} 个新 URL：{res}")
+                # 任一渠道接受才标记已推；全部失败/被拒则下轮重试（IndexNow 新 key 大批次会 403，重试无害）
+                accepted = any((res.get(k) or {}).get("ok") for k in ("baidu", "indexnow"))
+                if accepted:
+                    pushed.update(new_urls)
+                    record_datapoint("seo_submit_state", "global", {"pushed": list(pushed)[-5000:]})
+                print(f"[seo-submit] 推送 {len(new_urls)} 个新 URL（{'已入队' if accepted else '失败,下轮重试'}）：{res}")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

@@ -224,6 +224,14 @@ def create_realtime_message(request: RealtimeMessageCreateRequest) -> Optional[R
         annotation_from_message(message, persist=True)
     except Exception:  # noqa: BLE001
         pass
+    # 消息→标的倒排打标（provider/meta/alias 三源）：个股工作区按 symbol 聚合查询的数据底座。
+    # 打标失败不阻断消息主链路；存量可由 scripts 回填（幂等）。
+    try:
+        from .symbol_linker import link_message
+        link_message(record["id"], record.get("symbol"), record.get("metadata_json"),
+                     record.get("title") or "", record.get("content") or "", record.get("created_at") or "")
+    except Exception:  # noqa: BLE001
+        pass
     _broadcast_message(message)
     _run_post_hooks(message)
     return message
