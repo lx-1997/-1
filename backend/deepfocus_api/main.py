@@ -190,8 +190,8 @@ from .mcp_hub import (
     list_mcp_servers,
 )
 from .mcp_local import handle_local_mcp_request
-from . import mcp_tokens
-from .mcp_remote import handle_remote_mcp_request, setup_page as mcp_setup_page
+from . import mcp_oauth, mcp_tokens
+from .mcp_remote import _CORS_HEADERS as _MCP_CORS_HEADERS, handle_remote_mcp_request, setup_page as mcp_setup_page
 from .model_config import public_model_config, save_model_config, configure_data_source_egress
 from .multi_market_decision import build_multi_market_decision
 from .tear_sheet import (
@@ -1536,8 +1536,9 @@ async def lifespan(app: FastAPI):
     register_post_message_hook(prewarm_article_original_text)
     init_mcp_db()
     mcp_tokens.init_mcp_tokens_db()  # 个人 MCP 接入令牌库（dfm_，外部客户端经 /api/mcp 接入）
+    mcp_oauth.init_oauth_db()  # MCP OAuth 2.1（动态客户端注册/授权码/refresh 轮换）
     local_mcp_url = os.getenv("DEEPFOCUS_LOCAL_MCP_URL", "http://127.0.0.1:8000/mcp").strip()
-    local_mcp_name = "DeepFocus 内置投研 MCP"
+    local_mcp_name = "稻草财经 内置投研 MCP"
     if not any(
         server.name == local_mcp_name and str(server.config.get("url") or "") == local_mcp_url
         for server in list_mcp_servers()
@@ -1773,6 +1774,123 @@ async def api_account_mcp_tokens_revoke(token_prefix: str, _user: dict = Depends
     if not ok:
         raise HTTPException(status_code=404, detail="令牌不存在或不属于当前账号")
     return {"ok": True}
+
+
+# --- MCP OAuth 2.1：外部 AI 客户端浏览器授权流（401 发现 → 注册 → 授权页 → 换 token）--- #
+def _oauth_cors(response: Response) -> Response:
+    response.headers.update(_MCP_CORS_HEADERS)
+    return response
+
+
+@app.options("/api/mcp")
+async def mcp_preflight() -> Response:
+    return _oauth_cors(Response(status_code=204))
+
+
+@app.get("/.well-known/oauth-protected-resource")
+async def oauth_rs_metadata() -> Response:
+    return _oauth_cors(JSONResponse(mcp_oauth.protected_resource_metadata()))
+
+
+@app.get("/.well-known/oauth-authorization-server")
+async def oauth_as_metadata() -> Response:
+    return _oauth_cors(JSONResponse(mcp_oauth.authorization_server_metadata()))
+
+
+@app.options("/api/oauth/register")
+async def oauth_register_preflight() -> Response:
+    return _oauth_cors(Response(status_code=204))
+
+
+@app.post("/api/oauth/register")
+async def oauth_register(request: Request) -> Response:
+    """RFC 7591 动态客户端注册（公共客户端，无 secret）。"""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    rec = mcp_oauth.register_client(
+        str((body or {}).get("client_name") or ""), list((body or {}).get("redirect_uris") or []),
+        ip=_client_ip(request),
+    )
+    if rec is None:
+        return _oauth_cors(JSONResponse(
+            {"error": "invalid_client_metadata", "error_description": "redirect_uris 必填，或注册过于频繁"},
+            status_code=400))
+    return _oauth_cors(JSONResponse(rec, status_code=201))
+
+
+@app.get("/api/oauth/authorize", response_class=HTMLResponse)
+async def oauth_authorize_page() -> HTMLResponse:
+    """登录 + 授权页（后端直出；OAuth 参数经 query 透传给页面 JS，审批走 /consent）。"""
+    return HTMLResponse(mcp_oauth.consent_page())
+
+
+@app.post("/api/oauth/authorize/consent")
+async def oauth_authorize_consent(request: Request, _user: dict = Depends(require_current_user)) -> Response:
+    """审批（页面 JS 携带站点 JWT 调用）。返回客户端回调 URL，由页面执行跳转。"""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    out = mcp_oauth.build_consent_redirect(
+        approve=bool((body or {}).get("approve")),
+        client_id=str((body or {}).get("client_id") or ""),
+        redirect_uri=str((body or {}).get("redirect_uri") or ""),
+        state=str((body or {}).get("state") or ""),
+        code_challenge=str((body or {}).get("code_challenge") or ""),
+        method=str((body or {}).get("code_challenge_method") or ""),
+        resource=str((body or {}).get("resource") or ""),
+        user_id=str(_user.get("sub") or ""),
+    )
+    if "error" in out:
+        raise HTTPException(status_code=400, detail=str(out["error"]))
+    return JSONResponse(out)
+
+
+@app.options("/api/oauth/token")
+async def oauth_token_preflight() -> Response:
+    return _oauth_cors(Response(status_code=204))
+
+
+@app.post("/api/oauth/token")
+async def oauth_token(request: Request) -> Response:
+    """授权码（PKCE）/ refresh_token 换发。表单或 JSON 均收。"""
+    ctype = (request.headers.get("content-type") or "").lower()
+    body: dict[str, Any] = {}
+    if "json" in ctype:
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+    else:
+        try:
+            form = await request.form()
+            body = {k: str(v) for k, v in form.items()}
+        except Exception:  # noqa: BLE001
+            body = {}
+
+    def _bad(desc: str) -> Response:
+        return _oauth_cors(JSONResponse({"error": "invalid_grant", "error_description": desc}, status_code=400))
+
+    grant = str(body.get("grant_type") or "")
+    client_id = str(body.get("client_id") or "")
+    if not client_id:
+        return _bad("缺少 client_id")
+    if grant == "authorization_code":
+        pair = mcp_oauth.redeem_code(
+            str(body.get("code") or ""), client_id,
+            str(body.get("redirect_uri") or ""), str(body.get("code_verifier") or ""),
+        )
+        if pair is None:
+            return _bad("授权码无效、已使用、已过期或 PKCE 校验失败")
+        return _oauth_cors(JSONResponse(pair))
+    if grant == "refresh_token":
+        pair = mcp_oauth.rotate_refresh(str(body.get("refresh_token") or ""), client_id)
+        if pair is None:
+            return _bad("refresh token 无效、已轮换或已过期")
+        return _oauth_cors(JSONResponse(pair))
+    return _bad("不支持的 grant_type")
 
 
 @app.get("/api/ontology/demo")

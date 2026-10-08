@@ -1096,6 +1096,9 @@ PUBLIC_EXACT = frozenset(
         "/api/agents/feedback",     # AI 答案 👍👎 反馈（匿名也可投，handler 只落库不回敏感数据）——持续在线回归的数据源
         "/api/mcp",                 # 对外远程 MCP 端点（POST）：handler 自校验个人接入令牌(dfm_)，与 /api/v1 的 X-API-Key 同款自管模式
         "/api/mcp/setup",           # MCP 自助接入控制台（公开静态 HTML，登录态由页面读同源 localStorage）
+        "/api/oauth/register",      # MCP OAuth 2.1 动态客户端注册（公共客户端，RFC 7591；按 IP 限频）
+        "/api/oauth/authorize",     # MCP OAuth 登录+授权页（GET 出 HTML；POST /consent 不在此列、须站点 JWT）
+        "/api/oauth/token",         # MCP OAuth 令牌端点（授权码 PKCE / refresh；客户端服务端调用，无站点 JWT）
 
         # 微信推送台：独立 HTML 页(?token=)+ 推送接口，handler 自校验 metrics token；与看板同款，故放行 JWT 网关。
         "/api/weixin/console",

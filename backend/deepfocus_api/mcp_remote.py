@@ -13,6 +13,7 @@ main 的符号一律在调用时懒导入：本模块在 main 启动期被导入
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -24,10 +25,10 @@ from typing import Any, Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from . import mcp_tokens
+from . import mcp_oauth, mcp_tokens
 from .mcp_local import PROTOCOL_VERSION
 
-SERVER_NAME = "DeepFocus MCP"
+SERVER_NAME = "稻草财经 MCP"
 SERVER_VERSION = "1.0.0"
 
 _ASK_MAX_CHARS = 4000
@@ -36,7 +37,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "ping",
         "title": "连接探针",
-        "description": "验证 DeepFocus MCP 在线，并返回当前令牌绑定的账号与会员状态。",
+        "description": "验证稻草财经 MCP 在线，并返回当前令牌绑定的账号与会员状态。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
@@ -70,7 +71,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_review_today",
         "title": "今日复盘",
-        "description": "最新一期 DeepFocus A股复盘（盘中=午盘版，收盘后=收盘版；一句话盘面/板块/明日展望）。自有内容。",
+        "description": "最新一期稻草财经 A股复盘（盘中=午盘版，收盘后=收盘版；一句话盘面/板块/明日展望）。自有内容。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
@@ -97,7 +98,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_stock_verdict",
         "title": "个股速判卡",
-        "description": "DeepFocus 确定性引擎生成的个股证据速判卡（多维证据+信号灯+可信度），非 LLM 叙述。",
+        "description": "稻草财经确定性引擎生成的个股证据速判卡（多维证据+信号灯+可信度），非 LLM 叙述。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -112,7 +113,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "search_news",
         "title": "搜资讯",
-        "description": "DeepFocus 资讯流检索：快讯/文章，可按标的、关键词过滤。只含自有条目。",
+        "description": "稻草财经资讯流检索：快讯/文章，可按标的、关键词过滤。只含自有条目。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -165,7 +166,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "ask_ai",
         "title": "AI 投研问答",
-        "description": "向 DeepFocus 投研 AI 提问（会调工具取真实数据：行情/复盘/研报/财报等）。",
+        "description": "向稻草财经投研 AI 提问（会调工具取真实数据：行情/复盘/研报/财报等）。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -197,8 +198,23 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+# 浏览器侧 MCP 客户端（claude.ai web 等）跨域访问需要 CORS；MCP 规范要求授权相关头可暴露。
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
+}
+
+
+def _www_authenticate() -> str:
+    """RFC 9728：401 时指引客户端去做 OAuth 发现（MCP 客户端据此自动弹出浏览器授权）。"""
+    return f'Bearer resource_metadata="{mcp_oauth.ISSUER}{mcp_oauth.RS_METADATA_PATH}"'
+
+
 def _rpc_error(request_id: Any, code: int, message: str, session_id: str = "") -> JSONResponse:
-    headers = {"Mcp-Session-Id": session_id} if session_id else None
+    headers = dict(_CORS_HEADERS)
+    headers["Mcp-Session-Id"] = session_id or str(uuid.uuid4())
     return JSONResponse(
         {"jsonrpc": "2.0", "id": request_id, "error": {"code": int(code), "message": message}},
         status_code=200,
@@ -209,7 +225,7 @@ def _rpc_error(request_id: Any, code: int, message: str, session_id: str = "") -
 def _result(request_id: Any, result: dict[str, Any], session_id: str) -> JSONResponse:
     return JSONResponse(
         {"jsonrpc": "2.0", "id": request_id, "result": result},
-        headers={"Mcp-Session-Id": session_id},
+        headers={**_CORS_HEADERS, "Mcp-Session-Id": session_id},
     )
 
 
@@ -222,8 +238,13 @@ def _text_result(value: Any) -> dict[str, Any]:
     }
 
 
-def _http_error(status: int, detail: str) -> JSONResponse:
-    return JSONResponse({"detail": detail}, status_code=status)
+def _http_error(status: int, detail: str, extra: Optional[dict] = None) -> JSONResponse:
+    headers = dict(_CORS_HEADERS)
+    if status == 401:
+        headers["WWW-Authenticate"] = _www_authenticate()
+    if extra:
+        headers.update(extra)
+    return JSONResponse({"detail": detail}, status_code=status, headers=headers)
 
 
 def _bearer_token(request: Request) -> str:
@@ -462,22 +483,32 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
 
     token = _bearer_token(request)
     rec = mcp_tokens.verify_token(token)
-    if not rec:
+    oauth_user: Optional[dict] = None
+    if rec is None:
+        # 非 dfm_ 令牌 → 尝试 OAuth access token（JWT typ=mcp，浏览器授权流签发）
+        oauth_user = mcp_oauth.verify_access_token(token)
+    if rec is None and oauth_user is None:
         mcp_tokens.register_auth_fail(ip)
-        return _http_error(401, "无效或已过期的接入令牌（请先在 daocaijing.com/api/mcp/setup 登录创建，"
-                               "并以 Authorization: Bearer <令牌> 携带）")
+        return _http_error(401, "无效或已过期的接入凭证。首次使用请在客户端里直接添加本地址，"
+                               "将自动跳转浏览器完成登录授权；或到 daocaijing.com/api/mcp/setup 创建个人令牌")
+    if rec is not None:
+        token_hash, token_prefix, user_id = rec["_token_hash"], rec.get("token_prefix", ""), str(rec["user_id"])
+    else:
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()  # OAuth JWT 无库内摘要，哈希原文作限流/计量键
+        token_prefix = f"oauth:{str(oauth_user.get('username') or '')[:8]}"
+        user_id = str(oauth_user["user_id"])
 
     # 令牌绑定的用户须仍然有效（停用/注销立即失效）。
     from .auth import get_user_out_by_id
 
-    user_out = get_user_out_by_id(str(rec.get("user_id") or ""))
+    user_out = get_user_out_by_id(user_id)
     if user_out is None or not getattr(user_out, "is_active", False):
         return _http_error(401, "令牌绑定的账号不可用")
 
-    if not mcp_tokens.check_rate(rec["_token_hash"]):
+    if not mcp_tokens.check_rate(token_hash):
         return _http_error(429, f"超出速率上限（{mcp_tokens.RATE_PER_MIN} 次/分钟），请稍后再试")
     quota = _daily_quota_for(user_out)
-    if quota > 0 and mcp_tokens.today_count(rec["_token_hash"]) >= quota:
+    if quota > 0 and mcp_tokens.today_count(token_hash) >= quota:
         return _http_error(429, f"已达今日调用上限（{quota} 次/天，体验期用户）。开通尊享会员畅享不限次")
 
     try:
@@ -507,7 +538,7 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                 "instructions": (
-                    "DeepFocus（daocaijing.com）投研 MCP：A股复盘/个股速判卡/资讯/研报元数据/题材/行情等只读工具，"
+                    "稻草财经（daocaijing.com）投研 MCP：A股复盘/个股速判卡/资讯/研报元数据/题材/行情等只读工具，"
                     "以及 ask_ai 投研问答（会员配额与网页端一致）。内容仅供研究参考，不构成投资建议。"
                 ),
             },
@@ -559,7 +590,7 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 - MCP 错误保持 JSON-RPC 形态返回给客户端模型
         return _result(request_id, {**_text_result({"error": f"服务暂时不可用：{exc}"}), "isError": True}, session_id)
 
-    mcp_tokens.record_success(rec["_token_hash"], rec.get("token_prefix", ""))
+    mcp_tokens.record_success(token_hash, token_prefix)
     try:
         return _result(request_id, _text_result(value), session_id)
     except Exception as exc:  # noqa: BLE001 - 序列化失败降级为文本错误，绝不 500
@@ -572,7 +603,7 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
 # --------------------------------------------------------------------------- #
 _SETUP_PAGE_TMPL = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DeepFocus MCP 接入控制台</title>
+<title>稻草财经 MCP 接入控制台</title>
 <style>
 :root{--bg:#0b0d12;--panel:#12151c;--line:#222733;--text:#e6ebf2;--mute:#8a93a3;--amber:#ffb000;--green:#2bd96a;--blue:#6ab0ff;--red:#ff6b6b}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
@@ -594,12 +625,12 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 .mut{color:var(--mute);font-size:12.5px}.ft{margin-top:40px;color:var(--mute);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
 .tag{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:0 8px;font-size:12px;color:var(--mute);margin-left:6px}
 </style></head><body><div class="wrap">
-<h1>DeepFocus MCP 接入控制台</h1>
-<p class="sub">把 DeepFocus（daocaijing.com）的 A股复盘、个股速判卡、资讯、研报与 AI 投研问答，接入你自己的 AI 客户端（Claude Desktop、Claude Code、Cursor、Cherry Studio 等任何支持 MCP 的软件）。</p>
+<h1>稻草财经 MCP 接入控制台</h1>
+<p class="sub">把稻草财经（daocaijing.com）的 A股复盘、个股速判卡、资讯、研报与 AI 投研问答，接入你自己的 AI 客户端（Claude Desktop、Claude Code、Cursor、Cherry Studio 等任何支持 MCP 的软件）。</p>
 <div class="note">接入地址（MCP URL）：<code>__MCP_URL__</code>，传输方式 Streamable HTTP。需要你的<b>个人接入令牌</b>（下方创建），内容权限与会员权益同你的网页端账号。</div>
 
 <h2>第一步 · 创建接入令牌</h2>
-<div id="loginHint" class="note" style="display:none">尚未检测到登录态：请先 <a href="/" style="color:var(--blue)">打开 DeepFocus 首页登录</a>，然后回到本页刷新。</div>
+<div id="loginHint" class="note" style="display:none">尚未检测到登录态：请先 <a href="/" style="color:var(--blue)">打开稻草财经首页登录</a>，然后回到本页刷新。</div>
 <div class="panel">
   <div class="row"><input id="tokName" placeholder="令牌备注（如：我的 Cursor）" maxlength="40"><button onclick="createTok()">创建令牌</button><button class="ghost" onclick="loadToks()">刷新列表</button></div>
   <div id="newTok" style="display:none" class="ok"><b>请立即保存（仅此一次完整显示）：</b><div class="tok" id="newTokVal"></div><button class="ghost" onclick="copyTok()">复制令牌</button> <span class="mut">令牌等同账号凭证，泄露请立即在下方撤销重发。</span></div>
@@ -636,8 +667,8 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 <tr><td><code>ask_ai</code></td><td>AI 投研问答（取真数再回答；会员/管理员不限次，非会员每天 10 次，与网页端同一配额）</td></tr>
 </table>
 
-<div class="note">速率：每令牌 60 次/分钟；体验期账号每天 300 次工具调用，尊享/永久会员不限次。第三方版权内容（投行研报原文、聚合文章全文）不通过 MCP 提供，仅元数据与 DeepFocus 自有内容。</div>
-<p class="ft">内容仅供研究参考，不构成投资建议。© DeepFocus 金融终端 · daocaijing.com</p>
+<div class="note">速率：每令牌 60 次/分钟；体验期账号每天 300 次工具调用，尊享/永久会员不限次。第三方版权内容（投行研报原文、聚合文章全文）不通过 MCP 提供，仅元数据与稻草财经自有内容。</div>
+<p class="ft">内容仅供研究参考，不构成投资建议。© 稻草财经 · daocaijing.com</p>
 </div>
 <script>
 const API='/api/account/mcp-tokens';

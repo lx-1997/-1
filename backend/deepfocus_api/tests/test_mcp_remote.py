@@ -98,7 +98,7 @@ def test_rpc_initialize_and_tools_list(client):
     r = _rpc(client, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, token)
     assert r.status_code == 200
     result = r.json()["result"]
-    assert result["serverInfo"]["name"] == "DeepFocus MCP"
+    assert result["serverInfo"]["name"] == "稻草财经 MCP"
     assert result["protocolVersion"]
 
     r = _rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, token)
@@ -178,3 +178,111 @@ def test_setup_page_public(client):
     assert r.status_code == 200
     assert "MCP 接入控制台" in r.text
     assert "/api/mcp" in r.text
+
+
+# --------------------------------------------------------------------------- #
+# OAuth 2.1 浏览器授权流
+# --------------------------------------------------------------------------- #
+def test_mcp_401_points_to_oauth_discovery(client):
+    r = client.post("/api/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert r.status_code == 401
+    www = r.headers.get("WWW-Authenticate", "")
+    assert "resource_metadata" in www and "/.well-known/oauth-protected-resource" in www
+    assert r.headers.get("Access-Control-Allow-Origin") == "*"
+
+
+def test_oauth_metadata_endpoints(client):
+    rs = client.get("/.well-known/oauth-protected-resource").json()
+    assert rs["resource"].endswith("/api/mcp")
+    assert rs["authorization_servers"]
+    asm = client.get("/.well-known/oauth-authorization-server").json()
+    assert asm["authorization_endpoint"].endswith("/api/oauth/authorize")
+    assert asm["token_endpoint"].endswith("/api/oauth/token")
+    assert asm["code_challenge_methods_supported"] == ["S256"]
+
+
+def test_oauth_authorization_code_flow(client):
+    from urllib.parse import urlparse, parse_qs
+
+    from deepfocus_api.mcp_oauth import pkce_s256
+
+    # ① 动态注册客户端
+    r = client.post("/api/oauth/register", json={
+        "client_name": "测试客户端",
+        "redirect_uris": ["http://localhost:9911/callback"],
+    })
+    assert r.status_code == 201, r.text
+    cid = r.json()["client_id"]
+
+    # ② 授权页可访问
+    assert client.get("/api/oauth/authorize").status_code == 200
+
+    # ③ 注册登录用户 → 页面以站点 JWT 审批
+    reg = client.post("/api/auth/register", json={
+        "username": "oauthuser", "password": "pw123456", "email": "oauth@test.dev"})
+    site_jwt = reg.json()["access_token"]
+
+    verifier = "v" * 64
+    challenge = pkce_s256(verifier)
+    redirect_uri = "http://localhost:9911/callback"
+    r = client.post("/api/oauth/authorize/consent", json={
+        "approve": True, "client_id": cid, "redirect_uri": redirect_uri,
+        "state": "st123", "code_challenge": challenge,
+        "code_challenge_method": "S256", "resource": "https://daocaijing.com/api/mcp",
+    }, headers={"Authorization": f"Bearer {site_jwt}"})
+    assert r.status_code == 200, r.text
+    redirect = r.json()["redirect"]
+    assert redirect.startswith(redirect_uri)
+    q = parse_qs(urlparse(redirect).query)
+    assert q["state"] == ["st123"]
+    code = q["code"][0]
+
+    # ④ 换 token（urlencoded 表单，模拟真实客户端）；错误 verifier 必须被拒
+    bad = client.post("/api/oauth/token", data={
+        "grant_type": "authorization_code", "code": code, "client_id": cid,
+        "redirect_uri": redirect_uri, "code_verifier": "w" * 64})
+    assert bad.status_code == 400
+    r = client.post("/api/oauth/token", data={
+        "grant_type": "authorization_code", "code": code, "client_id": cid,
+        "redirect_uri": redirect_uri, "code_verifier": verifier})
+    assert r.status_code == 200, r.text
+    pair = r.json()
+    access, refresh = pair["access_token"], pair["refresh_token"]
+    assert pair["token_type"] == "bearer" and pair["expires_in"] > 0
+
+    # ⑤ 授权码单次使用：重放被拒
+    r = client.post("/api/oauth/token", data={
+        "grant_type": "authorization_code", "code": code, "client_id": cid,
+        "redirect_uri": redirect_uri, "code_verifier": verifier})
+    assert r.status_code == 400
+
+    # ⑥ 用 access token 调 MCP 工具（ping 回显账号）
+    r = client.post("/api/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                      "params": {"name": "ping", "arguments": {}}},
+                    headers={"Authorization": f"Bearer {access}"})
+    assert r.status_code == 200
+    data = r.json()["result"]["structuredContent"]["data"]
+    assert data["ok"] is True and data["account"] == "oauthuser"
+
+    # ⑦ refresh 轮换：旧 refresh 用一次后即作废
+    r = client.post("/api/oauth/token", data={
+        "grant_type": "refresh_token", "refresh_token": refresh, "client_id": cid})
+    assert r.status_code == 200
+    new_refresh = r.json()["refresh_token"]
+    assert client.post("/api/oauth/token", data={
+        "grant_type": "refresh_token", "refresh_token": refresh, "client_id": cid}).status_code == 400
+    assert client.post("/api/oauth/token", data={
+        "grant_type": "refresh_token", "refresh_token": new_refresh, "client_id": "dfc_other"}).status_code == 400
+
+    # ⑧ 未注册的 redirect_uri 被拒
+    r = client.post("/api/oauth/authorize/consent", json={
+        "approve": True, "client_id": cid, "redirect_uri": "https://evil.example/cb",
+        "code_challenge": challenge, "code_challenge_method": "S256",
+    }, headers={"Authorization": f"Bearer {site_jwt}"})
+    assert r.status_code == 400
+
+
+def test_oauth_consent_requires_login(client):
+    r = client.post("/api/oauth/authorize/consent", json={"approve": True, "client_id": "x",
+                                                          "redirect_uri": "http://a/cb"})
+    assert r.status_code == 401
