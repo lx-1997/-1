@@ -1100,6 +1100,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 加自选后的「开盯盘」上下文提示——高意向时刻顺势捕获推送订阅;每会话至多一次,不打扰。
   const [pushNudge, setPushNudge] = useState(false);
   const pushNudgeRef = useRef(false);
+  const authNudgeAtRef = useRef<Map<string, number>>(new Map());  // 登录弹窗按 reason 的会话级冷却
   // 连续看复盘签到：打开复盘即签到（登录用户），连续天数到里程碑送会员。
   // 类型放宽为 Partial<CheckinStatus>：页面加载即拉全量状态（头部常驻火焰徽章），签到 POST 只回三个字段。
   const [checkin, setCheckin] = useState<(Partial<authService.CheckinStatus> & { streak: number }) | null>(null);
@@ -1451,25 +1452,40 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setWatchlist(prev => prev.filter(s => s !== code));
     setActive(prev => (prev === code ? null : prev));
     logAct('watch_remove', code);
-  }, [logAct]);
+    showToast(`已移除 ${nameOf(code)}（可重新添加）`);
+  }, [logAct, nameOf, showToast]);
 
   // 个股中心：内容流/AI 解读里的标的 chip 一键下钻——已在自选则切换选中（联动报价头/K线/个股面板），不在则解析后入自选并选中。
   // 研报 instruments 是 LLM 自由文本：先按自选标的检索别名（中文简称）反查命中，再走标的搜索解析成代码，最后原文兜底行情校验。
+  // 点击语义是「查看这只股」：重复点击已选中的标的保持选中（不 toggle 取消），并把工作区滚进视口给出聚焦反馈。
+  const focusWorkspace = useCallback(() => {
+    window.setTimeout(() => {
+      const el = document.querySelector('.bbt-detail');
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      el.classList.add('bbt-detail--flash');
+      window.setTimeout(() => el.classList.remove('bbt-detail--flash'), 1200);
+    }, 60);
+  }, []);
   const handleSymbolChipClick = useCallback((raw: string) => {
     const s = (raw || '').trim();
     if (!s) return;
-    if (watchlist.includes(s)) { selectStock(s); return; }
+    if (watchlist.includes(s)) {
+      if (active !== s) selectStock(s);
+      focusWorkspace();
+      return;
+    }
     const aliased = watchlist.find(sym => sym === s || keysOf(sym).some(k => !!k && k === s));
-    if (aliased) { selectStock(aliased); return; }
+    if (aliased) { if (active !== aliased) selectStock(aliased); focusWorkspace(); return; }
     void (async () => {
       try {
         const resp = await searchMarketSymbols(s);
         const hit = (resp.candidates || []).find(c => !!c.symbol);
-        if (hit?.symbol) { await addSymbol(hit.symbol, hit.name || s, true); return; }
+        if (hit?.symbol) { await addSymbol(hit.symbol, hit.name || s, true); focusWorkspace(); return; }
       } catch { /* 搜索失败落到原文直校验 */ }
       await addSymbol(s, undefined, true);
     })();
-  }, [watchlist, selectStock, addSymbol, keysOf]);
+  }, [watchlist, active, selectStock, addSymbol, keysOf, focusWorkspace]);
 
   // Day-1 激活：开启盯盘提醒（自选出快讯/异动把用户叫回来 = 回访触发器）
   const armRecall = useCallback(async () => {
@@ -2677,6 +2693,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 网关：已登录直接执行；否则记住意图、弹登录框，登录成功后自动续做那一步。
   const requireLogin = useCallback((run: () => void, reason: string) => {
     if (authUserRef.current) { run(); return; }
+    // 弹窗治理：同一 reason 弹过一次后 15 分钟内不再弹全局登录框，只 toast 提醒——
+    // 查看/浏览类操作被弹窗打断是流失级体验（2026-10-08 用户反馈「没事就弹窗」）。
+    const now = Date.now();
+    const last = authNudgeAtRef.current.get(reason) || 0;
+    authNudgeAtRef.current.set(reason, now);
+    if (now - last < 15 * 60 * 1000) { showToast(`登录后可${reason}`); return; }
     pendingActionRef.current = run;
     setAuthReason(reason);
     setAuthOpen(true);
@@ -3279,10 +3301,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const markAiFreeUsed = useCallback(() => { try { localStorage.setItem('df_ai_free_day', new Date().toLocaleDateString('en-CA')); } catch { /* */ } }, []);
 
   const runAiAnalysis = useCallback(async (r: ResearchWireItem) => {
-    // 匿名用户：免费体验「一次」AI 解读，尝到甜头后第二次起引导登录（登录再送 3 天尊享会员）。
+    // 匿名用户：免费体验「一次」AI 解读，第二次起 toast 引导登录（不再弹全局登录框打断阅读流）。
     if (!authUserRef.current && aiFreeUsed()) {
-      showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁');
-      requireLogin(() => runAiAnalysis(r), 'AI 解读'); return;
+      showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
+      logAct('ai_report_gate', 'free_used_toast');
+      return;
     }
     const requestSeq = ++aiRequestSeqRef.current;
     const isCurrent = () => aiRequestSeqRef.current === requestSeq;
@@ -3327,11 +3350,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       const deepDetail = deepError?.response?.data?.detail ?? deepError?.detail;
       // 402：登录非会员（未缓存 / 今日免费已用完）→ 升级弹窗
       if (deepStatus === 402) { setAiReport(null); setAiDeepDraft(null); setUpgradeReason(deepDetail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
-      // 403：匿名（该研报未生成解读 / 今日免费已用完）→ 直接弹注册/登录框（首登用户默认注册+送3天会员），不再只甩一行死提示
+      // 403：匿名（该研报未生成解读 / 今日免费已用完）→ toast 引导登录，不再弹全局登录框
       if (deepStatus === 403) {
         setAiReport(null);
         setAiDeepDraft(null);
-        requireLogin(() => runAiAnalysis(r), '登录解读 · 送 3 天尊享会员 🎁'); return;
+        showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）'); return;
       }
       // 仅在明确的「路由未部署」状态回退旧 compact。502/超时/模型错误不再
       // 深度稿是增强层；模型或 PDF 解析超时先回退到轻量视觉卡，
@@ -3366,7 +3389,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         if (status === 402) { setAiReport(null); setAiDeepDraft(null); setUpgradeReason(detail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
         if (status === 403) {
           setAiReport(null); setAiDeepDraft(null);
-          requireLogin(() => runAiAnalysis(r), '登录解读 · 送 3 天尊享会员 🎁'); return;
+          showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）'); return;
         }
         const code = e?.code;
         if (code === 'ECONNABORTED' || /timeout/i.test(e?.message || '') || /timeout/i.test(deepError?.message || '')) {
@@ -3380,8 +3403,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const runNewsAi = useCallback(async (m: RealtimeMessageRecord) => {
     if (!authUserRef.current && aiFreeUsed()) {
-      showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁');
-      requireLogin(() => runNewsAi(m), 'AI 解读'); return;
+      showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
+      return;
     }
     const requestSeq = ++aiRequestSeqRef.current;
     const isCurrent = () => aiRequestSeqRef.current === requestSeq;
@@ -3409,7 +3432,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (status === 402) { setAiReport(null); setUpgradeReason(detail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
       if (status === 403) {
         setAiReport(null);
-        requireLogin(() => runNewsAi(m), '登录解读 · 送 3 天尊享会员 🎁'); return;
+        showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）'); return;
       }
       if (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) setAiError('解读超时了，请重试。');
       else setAiError(e?.response?.data?.detail || e?.message || 'AI 解读失败，请稍后重试');
@@ -5120,7 +5143,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const isActive = active === sym;
     const xBtn = (
       <button className="bbt-qrow-x" aria-label={`移除自选 ${sym}`} title="从自选删除"
-        onClick={e => { e.stopPropagation(); requireLogin(() => { if (window.confirm(`确定从「我的自选」删除 ${nameOf(sym)}（${sym}）？`)) removeSymbol(sym); }, '管理自选股票'); }}>✕</button>
+        onClick={e => { e.stopPropagation(); removeSymbol(sym); }}>✕</button>
     );
     if (!q) return (
       <div key={sym} className={`bbt-qrow bbt-dim ${isActive ? 'active' : ''}`} onClick={() => selectStock(sym)}>

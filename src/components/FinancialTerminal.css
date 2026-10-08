@@ -5782,3 +5782,10 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 @media (prefers-reduced-motion: reduce) {
   .bbt-promo-glow, .bbt-promo-kicker-dot, .bbt-promo-orbit, .bbt-promo-bars i, .bbt-promo-float { animation: none; }
 }
+
+/* 标的下钻聚焦脉冲：chip 点击后工作区滚进视口并短暂高亮，给「点到了」的确定性反馈 */
+@keyframes bbt-detail-flash {
+  0% { box-shadow: 0 0 0 1px var(--amber); background: rgba(245,158,11,.10); }
+  100% { box-shadow: none; background: transparent; }
+}
+.bbt-detail--flash { animation: bbt-detail-flash 1.1s ease-out 1; }

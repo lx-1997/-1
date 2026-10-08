@@ -237,11 +237,13 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
   }, [symbol, callBusy, onLog]);
 
   const switchTab = useCallback((t: TabKey) => {
-    if (!loggedIn && t !== 'verdict') { onRequireLogin('解锁个股完整数据面板'); return; }
+    // 弹窗治理：查看类 tab 未登录不再弹全局登录框——tab 照常切换，内容区显示锁定遮罩，
+    // 由用户主动点击遮罩里的登录按钮才弹（onRequireLogin）。
     setTab(t);
+    if (!loggedIn && t !== 'verdict') return;
     if (t === 'calls') { void loadCalls(); return; }
     void load(t);
-  }, [loggedIn, onRequireLogin, load, loadCalls]);
+  }, [loggedIn, load, loadCalls]);
 
   if (!open) {
     return (
@@ -273,6 +275,16 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
       )}
 
       {busy && d === undefined && <div className="bbt-empty">加载中…</div>}
+
+      {/* 未登录查看类 tab：锁定遮罩（数据端点后端本就要求登录），不再弹全局框 */}
+      {!loggedIn && tab !== 'verdict' && tab !== 'calls' && (
+        <div className="bbt-empty" style={{ marginTop: 8 }}>
+          🔒 登录后查看「{(TABS.find(([k]) => k === tab) || ['', tab])[1]}」数据
+          <div>
+            <button className="bbt-primary-action" style={{ marginTop: 7 }} onClick={() => onRequireLogin('解锁个股完整数据面板')}>登录 / 注册</button>
+          </div>
+        </div>
+      )}
 
       {tab === 'verdict' && d && (
         <div>
