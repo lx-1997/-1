@@ -5291,7 +5291,7 @@ async def api_interpret_data_item(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"AI 解读失败：{exc}") from exc
+        raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
     interpretation = _format_interpretation(result)
     updated = item
     if request.persist:
@@ -6360,15 +6360,41 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
     base = f"http://127.0.0.1:{os.getenv('RESEARCH_WORKBENCH_INTERNAL_PORT', '3927')}"
     safe_name = (name or f"{file_id}.pdf").strip()
     async with httpx.AsyncClient(trust_env=False) as client:
-        pr = await client.post(
-            f"{base}/api/preview", json={"fileId": file_id, "name": safe_name, **zsxq_auth_payload()}, timeout=30,
-        )
-        pr.raise_for_status()
+        # 工作台偶发 RemoteProtocolError（本机 Node 被内存挤压瞬断）；重试一次，
+        # 避免把瞬时抖动放大成用户可见的 502。
+        pr: Optional[httpx.Response] = None
+        for attempt in range(2):
+            try:
+                pr = await client.post(
+                    f"{base}/api/preview", json={"fileId": file_id, "name": safe_name, **zsxq_auth_payload()}, timeout=30,
+                )
+                pr.raise_for_status()
+                break
+            except HTTPException:
+                raise
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as exc:
+                if attempt == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                raise HTTPException(status_code=502, detail=f"工作台预览地址获取失败：{type(exc).__name__}") from exc
+        assert pr is not None
         preview_url = (pr.json() or {}).get("previewUrl")
         if not preview_url:
             raise HTTPException(status_code=502, detail="工作台未返回在线预览地址")
-        fr = await client.get(f"{base}{preview_url}", timeout=90)
-        fr.raise_for_status()
+        fr: Optional[httpx.Response] = None
+        for attempt in range(2):
+            try:
+                fr = await client.get(f"{base}{preview_url}", timeout=90)
+                fr.raise_for_status()
+                break
+            except HTTPException:
+                raise
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as exc:
+                if attempt == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                raise HTTPException(status_code=502, detail=f"研报原文下载失败：{type(exc).__name__}") from exc
+        assert fr is not None
         raw = fr.content
         ct = fr.headers.get("content-type") or "application/pdf"
         if ct.lower().startswith("application/pdf") or safe_name.lower().endswith(".pdf"):
@@ -9344,7 +9370,7 @@ async def api_research_vision_analyze(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - 统一转成 502，前端给友好提示
-        raise HTTPException(status_code=502, detail=f"AI 解读失败：{exc}") from exc
+        raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
 
     if cache_ref and cache_key != cache_ref:
         metrics_set_ai_cache(cache_ref, result)  # 给研报博客/头条保留最新结构的无版本别名
@@ -9616,7 +9642,7 @@ async def api_news_ai_analyze(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"AI 解读失败：{exc}") from exc
+        raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
     if original_source_note:
         result["source_note"] = original_source_note
     metrics_set_ai_cache(cache_key, result)
