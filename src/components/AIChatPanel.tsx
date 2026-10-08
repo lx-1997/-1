@@ -25,6 +25,7 @@ import { useModuleContext, ModuleContextData } from '../contexts/ModuleContext';
 import { runOrchestratorChat, streamToolResearch } from '../services/agentService';
 import type { OrchestratorReasoningStep, ToolStep } from '../services/agentService';
 import { isResearchMessage } from '../utils/chatRouting';
+import { DEFAULT_SEARCH_KEYS } from '../utils/symbolAliases';
 import Markdown from './common/Markdown';
 import ReasoningTrace, { formatToolLabel } from './common/ReasoningTrace';
 
@@ -66,6 +67,12 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
   const [streamingTools, setStreamingTools] = useState<ToolStep[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<any>(null);
+
+  // 正文内联标的识别：别名表展平（个股中心——AI 回答里提到的标的可直接下钻追问）
+  const symbolAliases = React.useMemo(
+    () => Array.from(new Set(Object.values(DEFAULT_SEARCH_KEYS).flat())),
+    []
+  );
 
   useEffect(() => {
     if (open && inputRef.current) {
@@ -342,7 +349,15 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
                   wordBreak: 'break-word',
                 }}>
                   {msg.role === 'assistant'
-                    ? <Markdown content={msg.content} />
+                    ? <Markdown
+                        content={msg.content}
+                        symbolAliases={symbolAliases}
+                        onSymbolClick={token => {
+                          const q = `${token} 现在怎么样？基本面、资金面和估值怎么看`;
+                          setInput('');
+                          void sendMessage(q);
+                        }}
+                      />
                     : msg.content}
                   {msg.role === 'assistant' && msg.reasoning_trace && msg.reasoning_trace.length > 0 && (
                     <ReasoningTrace steps={msg.reasoning_trace} />

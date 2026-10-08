@@ -10,6 +10,24 @@ import './Markdown.css';
 // 当前 Markdown 渲染的引用上下文（同步渲染期间有效）。
 let activeCite: { valid: Set<number>; onClick?: (n: number) => void } | null = null;
 
+// 当前 Markdown 渲染的标的识别上下文：正文中的别名/带后缀代码渲染为可点 chip（个股中心下钻）。
+let activeSym: { re: RegExp; onClick: (token: string) => void } | null = null;
+let activeSymKey = '';
+let activeSymRe: RegExp | null = null;
+
+function symbolRegex(aliases: string[]): RegExp {
+  const escapeRe = (a: string) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = [
+    '[A-Z]{1,5}\\.US', '\\d{4,5}\\.HK', '\\d{6}\\.(?:SH|SZ)',
+    ...aliases
+      .filter(a => a && a.length >= 2)
+      .map(escapeRe),
+  ];
+  // 长词优先，避免「苹果公司」被短词「苹果」截断成两段
+  parts.sort((a, b) => b.length - a.length);
+  return new RegExp(`(?:${parts.join('|')})`);
+}
+
 type InlineRender = (m: RegExpExecArray, key: string) => React.ReactNode;
 
 /** 行内解析：**加粗** *斜体* `代码` [文字](链接) [n]引用。
@@ -41,6 +59,22 @@ function parseInline(text: string): React.ReactNode[] {
       },
     }] : []),
     { re: /`([^`]+)`/, render: (m, key) => <code key={key} className="dfx-md-code-inline">{m[1]}</code> },
+    ...(activeSym ? [{
+      re: activeSym.re,
+      render: (m: RegExpExecArray, key: string): React.ReactNode => {
+        const token = m[0];
+        const onClick = activeSym!.onClick;
+        return (
+          <span
+            key={key}
+            className="dfx-md-sym"
+            title={`下钻 ${token}：向 AI 追问该标的`}
+            role="button"
+            onClick={() => onClick(token)}
+          >{token}</span>
+        );
+      },
+    }] : []),
     { re: /\*\*([^*]+)\*\*/, render: (m, key) => <strong key={key}>{parseInline(m[1])}</strong> },
     { re: /__([^_]+)__/, render: (m, key) => <strong key={key}>{parseInline(m[1])}</strong> },
     { re: /\*([^*\n]+)\*/, render: (m, key) => <em key={key}>{parseInline(m[1])}</em> },
@@ -228,10 +262,22 @@ const Markdown: React.FC<{
   className?: string;
   citations?: number[];
   onCitationClick?: (n: number) => void;
-}> = ({ content, className, citations, onCitationClick }) => {
+  symbolAliases?: string[];
+  onSymbolClick?: (token: string) => void;
+}> = ({ content, className, citations, onCitationClick, symbolAliases, onSymbolClick }) => {
   activeCite = citations && citations.length > 0
     ? { valid: new Set(citations), onClick: onCitationClick }
     : null;
+  if (onSymbolClick) {
+    const key = (symbolAliases || []).join('\u0001');
+    if (key !== activeSymKey || !activeSymRe) {
+      activeSymKey = key;
+      activeSymRe = symbolRegex(symbolAliases || []);
+    }
+    activeSym = { re: activeSymRe, onClick: onSymbolClick };
+  } else {
+    activeSym = null;
+  }
   const blocks = parseBlocks(content);
 
   return (

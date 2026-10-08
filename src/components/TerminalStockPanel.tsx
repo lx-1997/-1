@@ -70,7 +70,7 @@ interface Props {
   onLog?: (action: string, target?: string) => void;   // 埋点（call_create / call_cancel），复用 FinancialTerminal.logAct
 }
 
-type TabKey = 'verdict' | 'lhb' | 'consensus' | 'dividends' | 'news' | 'calls';
+type TabKey = 'verdict' | 'lhb' | 'consensus' | 'dividends' | 'news' | 'themes' | 'calls';
 
 const TABS: Array<[TabKey, string]> = [
   ['verdict', '⚡ 速判卡'],
@@ -78,6 +78,7 @@ const TABS: Array<[TabKey, string]> = [
   ['consensus', '一致预期'],
   ['dividends', '分红'],
   ['news', '公司新闻'],
+  ['themes', '题材'],
 ];
 
 // 信号→终端色（本产品刻意绿涨红跌，沿用 bbt-up=涨色 / bbt-down=跌色 单一真源）
@@ -184,7 +185,7 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
         cache.current[key] = { ts, hist: Array.isArray(histItems) ? histItems.slice().reverse() : [], risk: risk?.data || null };
       } else {
         const path = t === 'lhb' ? '/api/stock/dragon-tiger' : t === 'consensus' ? '/api/stock/consensus'
-          : t === 'dividends' ? '/api/stock/dividends' : '/api/stock/news';
+          : t === 'dividends' ? '/api/stock/dividends' : t === 'themes' ? '/api/themes/stock' : '/api/stock/news';
         const r = await apiGet<any>(path, { params: { symbol } }).catch(() => null);
         cache.current[key] = r?.data ?? null;
       }
@@ -367,6 +368,20 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
             ))}
           </div>
         ) : <div className="bbt-empty">暂无个股新闻</div>
+      )}
+
+      {/* 题材反查（东财）：个股所属行业/板块——从个股出发找同题材联动，与龙虎榜等横向数据互补 */}
+      {tab === 'themes' && d !== undefined && (
+        d && (d.industry || d.board || d.name) ? (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 13, lineHeight: 2 }}>
+              {d.industry && <div>· 行业：<b>{d.industry}</b></div>}
+              {d.board && <div>· 板块：<b>{d.board}</b></div>}
+              {d.name && <div style={dim}>· 简称：{d.name}</div>}
+            </div>
+            <div style={{ ...dim, marginTop: 6 }}>个股→题材反查（东方财富口径），供同题材联动线索参考。</div>
+          </div>
+        ) : <div className="bbt-empty">暂无题材数据</div>
       )}
 
       {/* 🎯 我的判断：一键即完整 call（默认 5 个交易日/信念档默认档），按收盘价起算自动兑现。

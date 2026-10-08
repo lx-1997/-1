@@ -25,6 +25,7 @@ import {
 import { getZsxqStream, type ZsxqTopic } from '../services/zsxqStreamService';
 import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
 import { searchMarketSymbols } from '../services/marketService';
+import { DEFAULT_SEARCH_KEYS } from '../utils/symbolAliases';
 import { loadRecallPrefs, saveRecallPrefs, requestBrowserPermission, evaluateAndNotify, RECALL_PREFS_EVENT, subscribeWebPush, subscribeEmailRecall, getNotificationPermission } from '../utils/signalRecall';
 import {
   DEFAULT_FOREGROUND_POPUP_TOPICS,
@@ -129,12 +130,6 @@ const DEFAULT_NAMES: Record<string, string> = {
   '00700': '腾讯控股', '09988': '阿里巴巴', '03690': '美团',
   NVDA: '英伟达', TSLA: '特斯拉', AAPL: '苹果', MSFT: '微软', GOOGL: '谷歌',
 };
-const DEFAULT_SEARCH_KEYS: Record<string, string[]> = {
-  '600519': ['茅台', '600519'], '300750': ['宁德', '300750'], '002594': ['比亚迪', '002594'], '000858': ['五粮液', '000858'],
-  '00700': ['腾讯', '00700'], '09988': ['阿里', '09988'], '03690': ['美团', '03690'],
-  NVDA: ['英伟达', 'NVDA', '黄仁勋'], TSLA: ['特斯拉', 'TSLA', '马斯克'], AAPL: ['苹果', 'AAPL', '库克'], MSFT: ['微软', 'MSFT'], GOOGL: ['谷歌', 'GOOGL', 'Alphabet'],
-};
-
 // ---- localStorage 持久化 ----
 const LS = {
   read<T>(key: string, fallback: T): T {

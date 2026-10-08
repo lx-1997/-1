@@ -150,3 +150,14 @@
   color: var(--text-muted);
   font-weight: 600;
 }
+
+/* 正文内联标的 chip（个股中心下钻）：弱化样式避免打断阅读，点击=向 AI 追问该标的 */
+.dfx-md-sym {
+  cursor: pointer;
+  color: var(--accent, #4da3ff);
+  border-bottom: 1px dashed currentColor;
+  font-weight: 600;
+}
+.dfx-md-sym:hover {
+  filter: brightness(1.2);
+}

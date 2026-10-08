@@ -191,12 +191,14 @@ async def find_board_by_name(name: str) -> Optional[dict]:
 
 
 async def fetch_stock_themes(symbol: str) -> dict:
-    """个股所属行业/板块（东财 stock/get f127 行业 / f128 板块）。缓存 6h。失败 {}。仅 A股 6 位。"""
+    """个股所属行业（东财 F10 CompanySurvey 的 INDUSTRYCSRC1 证监会行业）。缓存 6h。失败 {}。仅 A股 6 位。
+    原走 push2 qt/stock/get f127/f128（行业+概念板块）；2026-10 起 push2 全家族（含数字镜像域）对云厂商 IP
+    返回 Empty reply，换 emweb F10 源——概念板块无替代源，仅保留行业字段。"""
     code = re.sub(r"\D", "", symbol or "")
     if len(code) != 6:
         return {}
-    secid = f"1.{code}" if code[0] in ("6", "9") else f"0.{code}"
-    key = f"theme:{secid}"
+    prefix = "SH" if code[0] in ("6", "9") else "SZ"
+    key = f"theme:{prefix}{code}"
     hit = _CACHE.get(key)
     if hit and (time.time() - hit[0]) < _THEME_TTL:
         return hit[1]
@@ -204,15 +206,18 @@ async def fetch_stock_themes(symbol: str) -> dict:
     try:
         async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
             r = await client.get(
-                f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f127,f128",
+                f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code={prefix}{code}",
                 headers=_HEADERS,
             )
         if r.status_code == 200:
-            d = (r.json() or {}).get("data") or {}
-            ind = (d.get("f127") or "").strip()
-            brd = (d.get("f128") or "").strip()
-            if ind or brd:
-                out = {"symbol": code, "name": (d.get("f58") or "").strip(), "industry": ind, "board": brd}
+            d = r.json() or {}
+            jb = d.get("jbzl") or {}
+            if isinstance(jb, list):
+                jb = jb[0] if jb else {}
+            ind = str(jb.get("INDUSTRYCSRC1") or "").strip()
+            name = str(jb.get("SECURITY_NAME_ABBR") or "").strip()
+            if ind or name:
+                out = {"symbol": code, "name": name, "industry": ind, "board": ""}
     except Exception:  # noqa: BLE001
         out = {}
     if out:
