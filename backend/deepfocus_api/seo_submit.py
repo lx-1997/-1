@@ -60,17 +60,24 @@ def _indexnow(urls: list[str]) -> dict:
     if not key or httpx is None or not urls:
         return {"skipped": True}
     base = _base_url()
-    payload = {
-        "host": _host(base),
-        "key": key,
-        "keyLocation": f"{base}/indexnow-key.txt",
-        "urlList": urls[:10000],
-    }
-    try:
-        r = httpx.post("https://api.indexnow.org/indexnow", json=payload, timeout=10.0, trust_env=False)
-        return {"ok": r.status_code in (200, 202), "status": r.status_code}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)[:200]}
+    # 新 key 提交大批次会被 403（实测 528 条整批被拒、≤100 条/批全过），按 100 分块提交
+    statuses: list[int] = []
+    errors: list[str] = []
+    for i in range(0, len(urls), 100):
+        payload = {
+            "host": _host(base),
+            "key": key,
+            "keyLocation": f"{base}/indexnow-key.txt",
+            "urlList": urls[i:i + 100],
+        }
+        try:
+            r = httpx.post("https://api.indexnow.org/indexnow", json=payload, timeout=10.0, trust_env=False)
+            statuses.append(r.status_code)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(str(exc)[:200])
+    if not statuses:
+        return {"ok": False, "error": "; ".join(errors)[:200]}
+    return {"ok": all(s in (200, 202) for s in statuses), "status": statuses[0], "chunks": len(statuses)}
 
 
 def submit_urls(urls: Iterable[str]) -> dict:
