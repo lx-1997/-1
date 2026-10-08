@@ -934,6 +934,11 @@
   background: rgba(106,176,255,.1); color: var(--blue); border: 1px solid rgba(106,176,255,.22);
 }
 .bbt-rtick--more { background: rgba(127,138,150,.12); color: var(--mute); border-color: rgba(127,138,150,.25); }
+/* 标的下钻 chip（个股中心）：chip 即个股工作区入口，点击=入自选并选中联动下方报价头/K线/个股面板 */
+button.bbt-rtick--act { cursor: pointer; font-family: inherit; transition: border-color .15s, color .15s, background .15s; }
+button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); background: rgba(245,158,11,.12); }
+.bbt-ai-chip--act, .bbt-ai-inst--act { cursor: pointer; font-family: inherit; border: 0; transition: filter .15s; }
+.bbt-ai-chip--act:hover, .bbt-ai-inst--act:hover { filter: brightness(1.3); }
 .bbt-htitle .bbt-rticks { margin-left: 8px; vertical-align: middle; }
 /* 资讯流「加载更多历史」按钮 + 到底标记 */
 .bbt-loadmore {

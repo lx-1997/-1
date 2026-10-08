@@ -24,6 +24,7 @@ import {
 } from '../services/researchService';
 import { getZsxqStream, type ZsxqTopic } from '../services/zsxqStreamService';
 import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
+import { searchMarketSymbols } from '../services/marketService';
 import { loadRecallPrefs, saveRecallPrefs, requestBrowserPermission, evaluateAndNotify, RECALL_PREFS_EVENT, subscribeWebPush, subscribeEmailRecall, getNotificationPermission } from '../utils/signalRecall';
 import {
   DEFAULT_FOREGROUND_POPUP_TOPICS,
@@ -1456,6 +1457,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setActive(prev => (prev === code ? null : prev));
     logAct('watch_remove', code);
   }, [logAct]);
+
+  // 个股中心：内容流/AI 解读里的标的 chip 一键下钻——已在自选则切换选中（联动报价头/K线/个股面板），不在则解析后入自选并选中。
+  // 研报 instruments 是 LLM 自由文本：先按自选标的检索别名（中文简称）反查命中，再走标的搜索解析成代码，最后原文兜底行情校验。
+  const handleSymbolChipClick = useCallback((raw: string) => {
+    const s = (raw || '').trim();
+    if (!s) return;
+    if (watchlist.includes(s)) { selectStock(s); return; }
+    const aliased = watchlist.find(sym => sym === s || keysOf(sym).some(k => !!k && k === s));
+    if (aliased) { selectStock(aliased); return; }
+    void (async () => {
+      try {
+        const resp = await searchMarketSymbols(s);
+        const hit = (resp.candidates || []).find(c => !!c.symbol);
+        if (hit?.symbol) { await addSymbol(hit.symbol, hit.name || s, true); return; }
+      } catch { /* 搜索失败落到原文直校验 */ }
+      await addSymbol(s, undefined, true);
+    })();
+  }, [watchlist, selectStock, addSymbol, keysOf]);
 
   // Day-1 激活：开启盯盘提醒（自选出快讯/异动把用户叫回来 = 回访触发器）
   const armRecall = useCallback(async () => {
@@ -4843,7 +4862,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const INST_MAX = 10;
   const instChips = (insts?: string[]) => (insts && insts.length > 0)
     ? <span className="bbt-rticks">
-        {insts.slice(0, INST_MAX).map((t, i) => <span key={t + i} className="bbt-rtick">{t}</span>)}
+        {insts.slice(0, INST_MAX).map((t, i) => (
+          <button key={t + i} type="button" className="bbt-rtick bbt-rtick--act" title={`下钻 ${t}：入自选并打开个股工作区`}
+            onClick={e => { e.stopPropagation(); handleSymbolChipClick(t); }}>{t}</button>
+        ))}
         {insts.length > INST_MAX && <span className="bbt-rtick bbt-rtick--more">+{insts.length - INST_MAX}</span>}
       </span>
     : null;
@@ -6708,7 +6730,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <>
                   {(aiResult.subject || aiResult.rating || aiResult.target_price) && (
                     <div className="bbt-ai-tags">
-                      {aiResult.subject && <span className="bbt-ai-chip bbt-ai-chip--subject">标的 {aiResult.subject}</span>}
+                      {aiResult.subject && <button type="button" className="bbt-ai-chip bbt-ai-chip--subject bbt-ai-chip--act" title={`下钻 ${aiResult.subject}：入自选并打开个股工作区`} onClick={() => handleSymbolChipClick(aiResult.subject!)}>标的 {aiResult.subject}</button>}
                       {aiResult.rating && <span className="bbt-ai-chip bbt-ai-chip--rating">评级 {aiResult.rating}</span>}
                       {aiResult.target_price && <span className="bbt-ai-chip bbt-ai-chip--target">目标价 {aiResult.target_price}</span>}
                     </div>
@@ -6716,7 +6738,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   {!!aiResult.instruments?.length && (
                     <div className="bbt-ai-insts">
                       <span className="bbt-ai-insts-h">📈 提及个股</span>
-                      {aiResult.instruments.map((t, i) => <span key={t + i} className="bbt-ai-inst">{t}</span>)}
+                      {aiResult.instruments.map((t, i) => <button key={t + i} type="button" className="bbt-ai-inst bbt-ai-inst--act" title={`下钻 ${t}：入自选并打开个股工作区`} onClick={() => handleSymbolChipClick(t)}>{t}</button>)}
                     </div>
                   )}
                   {conclusion && <div className={`bbt-ai-oneliner${newsReport ? ' bbt-ai-oneliner--news' : ''}`}>
