@@ -1,0 +1,41 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.manifest.schema.json",
+  "name": "com.daocaijing/mcp",
+  "display_name": "稻草财经 MCP (Daocaijing Finance)",
+  "description": "稻草财经（daocaijing.com）投研 MCP：A股复盘、个股证据速判卡、资讯流、投行研报元数据、题材↔个股双向映射、A股/港股/美股行情，以及会取真实数据的 AI 投研问答。OAuth 2.1 浏览器授权，登录即用；内容仅供研究参考，不构成投资建议。",
+  "description_translations": {
+    "en": "Daocaijing (daocaijing.com) investment-research MCP: A-share market reviews, evidence-based stock verdict cards, news streams, sell-side research metadata, theme<->stock mapping, CN/HK/US quotes, and an AI research assistant that pulls real data. OAuth 2.1 browser sign-in; for research reference only."
+  },
+  "version": "1.0.0",
+  "publication": {
+    "status": "public",
+    "date_published": "2026-10-08"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://daocaijing.com/api/mcp",
+      "transport": "streamable-http",
+      "auth": {
+        "type": "oauth2",
+        "authorization_server": "https://daocaijing.com",
+        "description": "MCP OAuth 2.1：客户端连接时自动发现授权服务器，浏览器登录稻草财经账号并授权，无需手工令牌。也支持个人令牌 Bearer（daocaijing.com/api/mcp/setup 创建）。"
+      }
+    }
+  ],
+  "tools_generated": true,
+  "vendor": {
+    "name": "稻草财经 (daocaijing.com)",
+    "url": "https://daocaijing.com"
+  },
+  "documentation": {
+    "url": "https://daocaijing.com/developers",
+    "setup_instructions": "在任意 MCP 客户端添加远程服务器 https://daocaijing.com/api/mcp ，首次连接自动跳转浏览器完成登录授权。"
+  },
+  "security": {
+    "data_access": "只读。工具仅访问行情/公开复盘/资讯元数据/题材等只读内容与该账号有权访问的 AI 问答；不涉及账户资金操作。",
+    "pricing": "免费。AI 问答配额与官网会员一致（会员不限次，非会员每天 10 次）。"
+  },
+  "categories": ["finance", "market-data", "investment-research", "china-a-shares"],
+  "keywords": ["A股", "股票", "投研", "行情", "复盘", "研报", "题材", "finance", "stocks", "china"]
+}

@@ -286,3 +286,82 @@ def test_oauth_consent_requires_login(client):
     r = client.post("/api/oauth/authorize/consent", json={"approve": True, "client_id": "x",
                                                           "redirect_uri": "http://a/cb"})
     assert r.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# Webhook 事件推送
+# --------------------------------------------------------------------------- #
+def test_webhook_flow_signature_and_ssrf_guard(client, monkeypatch):
+    import hashlib
+    import hmac as _hmac
+    import json as _json
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from deepfocus_api import webhook_push
+
+    received = []
+
+    class _H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            received.append((self.headers.get("X-DaoCaijing-Event"),
+                             self.headers.get("X-DaoCaijing-Signature"), body))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    reg = client.post("/api/auth/register", json={
+        "username": "whuser", "password": "pw123456", "email": "wh@test.dev"})
+    hdr = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+
+    # 未登录被拒
+    assert client.get("/api/account/webhooks").status_code == 401
+
+    # SSRF：内网地址被拒（默认禁内网；ALLOW_LOCAL 仅为下面回环接收器放开）
+    r = client.post("/api/account/webhooks", json={"url": "http://10.0.0.1/cb"}, headers=hdr)
+    assert r.status_code == 400
+
+    monkeypatch.setattr(webhook_push, "ALLOW_LOCAL", True)  # 测试允许回环地址
+
+    # 创建（回环地址，ALLOW_LOCAL 已放开）
+    r = client.post("/api/account/webhooks", json={
+        "url": f"http://127.0.0.1:{srv.server_address[1]}/cb", "events": ["news"], "description": "测试"},
+        headers=hdr)
+    assert r.status_code == 200, r.text
+    secret, sub_id = r.json()["secret"], r.json()["id"]
+    assert secret.startswith("whsec_")
+
+    # 列表（不含明文密钥）
+    lst = client.get("/api/account/webhooks", headers=hdr).json()["webhooks"]
+    assert len(lst) == 1 and "secret" not in lst[0]
+
+    # 分发 news 事件 → 收到 + 签名可验
+    assert webhook_push.dispatch_event("news", {"title": "测试快讯", "content": "hello"}) >= 1
+    deadline = time.time() + 6
+    while time.time() < deadline and not received:
+        time.sleep(0.1)
+    assert received, "webhook 未投递"
+    event, sig_header, body = received[0]
+    assert event == "news" and _json.loads(body)["data"]["title"] == "测试快讯"
+    parts = dict(kv.split("=", 1) for kv in sig_header.split(","))
+    expect = _hmac.new(secret.encode(), f"{parts['t']}.".encode() + body, hashlib.sha256).hexdigest()
+    assert _hmac.compare_digest(expect, parts["v1"]), "HMAC 签名不符"
+
+    # 未支持的事件不分发
+    assert webhook_push.dispatch_event("review", {"x": 1}) == 0
+
+    # 测试端点
+    r = client.post(f"/api/account/webhooks/{sub_id}/test", headers=hdr)
+    assert r.status_code == 200
+
+    # 删除
+    assert client.delete(f"/api/account/webhooks/{sub_id}", headers=hdr).json() == {"ok": True}
+    assert client.delete(f"/api/account/webhooks/{sub_id}", headers=hdr).status_code == 404
+    srv.shutdown()

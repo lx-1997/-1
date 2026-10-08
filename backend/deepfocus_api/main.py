@@ -190,7 +190,7 @@ from .mcp_hub import (
     list_mcp_servers,
 )
 from .mcp_local import handle_local_mcp_request
-from . import mcp_oauth, mcp_tokens
+from . import mcp_oauth, mcp_tokens, webhook_push, dev_portal
 from .mcp_remote import _CORS_HEADERS as _MCP_CORS_HEADERS, handle_remote_mcp_request, setup_page as mcp_setup_page
 from .model_config import public_model_config, save_model_config, configure_data_source_egress
 from .multi_market_decision import build_multi_market_decision
@@ -1537,6 +1537,8 @@ async def lifespan(app: FastAPI):
     init_mcp_db()
     mcp_tokens.init_mcp_tokens_db()  # 个人 MCP 接入令牌库（dfm_，外部客户端经 /api/mcp 接入）
     mcp_oauth.init_oauth_db()  # MCP OAuth 2.1（动态客户端注册/授权码/refresh 轮换）
+    webhook_push.init_webhook_db()  # Webhook 事件推送订阅
+    register_post_message_hook(webhook_push.dispatch_message)  # 快讯入库 → news 事件推送到订阅者
     local_mcp_url = os.getenv("DEEPFOCUS_LOCAL_MCP_URL", "http://127.0.0.1:8000/mcp").strip()
     local_mcp_name = "稻草财经 内置投研 MCP"
     if not any(
@@ -1891,6 +1893,10 @@ async def oauth_token(request: Request) -> Response:
             return _bad("refresh token 无效、已轮换或已过期")
         return _oauth_cors(JSONResponse(pair))
     return _bad("不支持的 grant_type")
+
+
+app.include_router(webhook_push.router)  # /api/account/webhooks：Webhook 订阅管理（JWT）
+app.include_router(dev_portal.router)  # /feed/*、/api/v1/openapi.json、/developers：开发者分发通道
 
 
 @app.get("/api/ontology/demo")
