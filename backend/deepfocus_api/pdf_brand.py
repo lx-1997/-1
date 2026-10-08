@@ -326,16 +326,53 @@ def get_cached_by_file_id(file_id: str) -> "bytes | None":
 
 
 def has_cached_file_id(file_id: str) -> bool:
-    """轻量判断某 file_id 的去水印成品是否已落盘（不读文件内容）。
-    供预热调度判定「这篇原文是否还需下载去水印」，避免 get_cached_by_file_id 整文件读盘的开销。"""
+    """轻量判断某 file_id 的原文 PDF（去水印成品或原始件）是否已落盘（不读文件内容）。
+    供预热调度判定「这篇原文是否还需下载」，避免 get_cached_by_file_id 整文件读盘的开销。"""
     if not file_id:
         return False
     if _fid_mem_key(file_id) in _MEM_CACHE:
         return True
     try:
-        return _fid_cache_path(file_id).exists()
+        return _fid_cache_path(file_id).exists() or _fid_raw_cache_path(file_id).exists()
     except Exception:
         return False
+
+
+def _fid_raw_cache_path(file_id: str) -> Path:
+    safe = re.sub(r'[^A-Za-z0-9._-]', '_', file_id)[:80]
+    return _CACHE_DIR / f"fid_raw_{safe}.pdf"
+
+
+def get_raw_by_file_id(file_id: str) -> "bytes | None":
+    """按 file_id 查原始 PDF（未经去水印处理）——AI 解读输入专用，命中则跳过网络下载。"""
+    if not file_id:
+        return None
+    mem_key = f"fid:raw:{file_id}"
+    if mem_key in _MEM_CACHE:
+        _MEM_CACHE.move_to_end(mem_key)
+        return _MEM_CACHE[mem_key]
+    try:
+        p = _fid_raw_cache_path(file_id)
+        if p.exists():
+            data = p.read_bytes()
+            _mem_put(mem_key, data)
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def store_raw_pdf(file_id: str, data: bytes) -> None:
+    """落盘原始 PDF 供 AI 解读复用。去水印成品仅服务人类阅读链路；AI 只需原始字节，
+    跳过去水印可省掉 ~640MB 的处理子进程（小内存服务器上会被 OOM 击杀）。尽力而为，失败静默。"""
+    if not file_id or not data:
+        return
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _fid_raw_cache_path(file_id).write_bytes(data)
+        _mem_put(f"fid:raw:{file_id}", data)
+    except Exception:
+        pass
 
 
 def _content_cache_key(content: bytes) -> str:

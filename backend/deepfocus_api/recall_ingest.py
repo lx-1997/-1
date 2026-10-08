@@ -299,6 +299,9 @@ async def run_recall_ingest() -> None:
             stats = ingest_items("research_wire", data.get("items") or [], normalize_research_item)
             if stats["new"]:
                 print(f"[recall-ingest] 研报新增 {stats['new']}，已通知 {stats['notified']}")
+                from .research_prewarm_signal import notify_research_arrived
+
+                notify_research_arrived()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - 单源故障不阻塞其它后台任务

@@ -338,14 +338,14 @@ from .research_digest import generate_deep_draft, neutralize_deep_draft, resolve
 from .research_cache import deep_draft_cache_key, legacy_deep_draft_cache_key
 
 # 对外 AI 品牌名：不暴露底层模型（如 MiniMax）
-_AI_BRAND = (os.getenv("DEEPFOCUS_AI_BRAND") or "DEEPFOCUS 智能解读").strip()
+_AI_BRAND = (os.getenv("DEEPFOCUS_AI_BRAND") or "稻草财经 智能解读").strip()
 
 _METRICS_DASHBOARD_HTML = """<!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
 <meta name="robots" content="noindex,nofollow"/>
-<title>DEEPFOCUS 金融终端 · 数据看板</title>
+<title>稻草财经 金融终端 · 数据看板</title>
 <style>
   :root{--bg:#0a0d12;--card:#11161f;--line:#1c2530;--amber:#ffb000;--mute:#7f8a96;--up:#2bd96a;--blue:#6ab0ff;--purple:#c4b5fd}
   *{box-sizing:border-box}
@@ -496,7 +496,7 @@ async function load(){
     '<div class="panel"><h2>🎁 邀请榜 · 谁拉的人最多</h2><table><tbody>'+ivTop+'</tbody></table></div>'
   ) : '';
   $('#app').innerHTML=
-    '<h1>DEEPFOCUS 金融终端 · 数据看板 <button class="refresh" onclick="load()">↻ 刷新</button></h1>'+
+    '<h1>稻草财经 金融终端 · 数据看板 <button class="refresh" onclick="load()">↻ 刷新</button></h1>'+
     '<div class="sub">更新于 '+esc((d.generated_at||'').replace('T',' ').slice(0,19))+'（各表时间为北京时间）</div>'+
     // 顶部分区导航（粘性，▸=可折叠抽屉）
     '<div class="nav">'+
@@ -583,7 +583,7 @@ async function load(){
     '<div id="pkeys"><div class="panel"><h2>🔌 合作方 API</h2><div class="sub">加载中…</div></div></div>'+
     '<div id="act"><div class="sub">操作流水加载中…</div></div>'+
     '<div id="rq"><div class="panel"><h2>🤖 复盘 AI 质量</h2><div class="sub">加载中…</div></div></div>'+
-    '<div class="ft">DEEPFOCUS 金融终端 · 内部数据，请勿外传</div>';
+    '<div class="ft">稻草财经 金融终端 · 内部数据，请勿外传</div>';
   loadGrowth();
   loadMarketing();
   loadActivity('');
@@ -761,7 +761,7 @@ async function loadCommunity(){
     '<div class="sub" style="margin-bottom:8px;color:var(--amber)">⏳ 微信群码 7 天失效，过期请每周来这换一张新码；下方「客服微信」做兜底(名片码不失效)。</div>'+
     '<div class="two" style="grid-template-columns:1.1fr 1fr">'+
       '<div>'+
-        '<div class="sub" style="margin-bottom:3px">群标题</div>'+inp('cmTitle',c.title,'DeepFocus 用户交流群')+
+        '<div class="sub" style="margin-bottom:3px">群标题</div>'+inp('cmTitle',c.title,'稻草财经 用户交流群')+
         '<div class="sub" style="margin:8px 0 3px">副标题</div>'+inp('cmSub',c.subtitle,'免费 · 对所有用户开放')+
         '<div class="sub" style="margin:8px 0 3px">群码失效日期(YYYY-MM-DD，留空=不提示)</div>'+inp('cmExp',c.expires_at,'2026-07-04')+
         '<div class="sub" style="margin:8px 0 3px">客服微信号(兜底拉群，留空=隐藏)</div>'+inp('cmCs',c.cs_wechat,'例：deepfocus_cs')+
@@ -1550,7 +1550,7 @@ async def lifespan(app: FastAPI):
             McpServerCreateRequest(
                 name=local_mcp_name,
                 transport="streamable_http",
-                description="DeepFocus 自带的只读行情 MCP 服务，支持协议发现与工具调用。",
+                description="稻草财经 自带的只读行情 MCP 服务，支持协议发现与工具调用。",
                 url=local_mcp_url,
                 headers=local_headers,
                 trust_level="internal",
@@ -1655,8 +1655,8 @@ async def lifespan(app: FastAPI):
 AI_ANSWER_PROTOCOL_VERSION = "research-v4-buy-side"
 
 app = FastAPI(
-    title="DeepFocus AI API",
-    description="Cloud-model research API for the DeepFocus frontend.",
+    title="稻草财经 AI API",
+    description="Cloud-model research API for the 稻草财经 frontend.",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -4826,7 +4826,7 @@ _ZSXQ_WM_CACHE_MAX = 24
 
 
 def _brand_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
-    """在机构纪要图【底部拼接 DeepFocus 品牌栏】（不遮盖内容）：logo + 一句话定位 + 网址 + 可扫二维码。
+    """在机构纪要图【底部拼接 稻草财经 品牌栏】（不遮盖内容）：logo + 一句话定位 + 网址 + 可扫二维码。
     比叠在内容上的水印更形象、能引导「扫码看更多」，且不影响原图阅读。⚠️只在下方加自有品牌栏，
     绝不改动/去除原图任何像素与已有水印。失败原样返回。"""
     try:
@@ -4855,7 +4855,7 @@ def _brand_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
                 except Exception:  # noqa: BLE001
                     pass
         y = top
-        d.text((x, y), "DeepFocus", font=_font(int(bar_h * 0.32)), fill=(255, 255, 255),
+        d.text((x, y), "稻草财经", font=_font(int(bar_h * 0.32)), fill=(255, 255, 255),
                stroke_width=1, stroke_fill=(255, 255, 255))
         y += int(bar_h * 0.36)
         d.text((x, y), "比券商早一步的市场快讯 · AI 投研终端", font=_font(int(bar_h * 0.185)), fill=(227, 169, 79))
@@ -4883,7 +4883,7 @@ def _brand_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
 
 @app.get("/api/zsxq/image")
 async def api_zsxq_image(request: Request, u: str = "", dl: int = 0) -> Response:
-    """机构纪要图片代理：服务端取知识星球图（绕客户端防盗链/token 失效），叠加 DeepFocus 品牌水印后返回，
+    """机构纪要图片代理：服务端取知识星球图（绕客户端防盗链/token 失效），叠加 稻草财经 品牌水印后返回，
     让长图能在网页高清放大、也能下载成带我方水印的可查看图片（群友反馈：直接存图是带防盗链的星球图打不开）。
     ⚠️仅允许 images.zsxq.com（防 SSRF 被当开放代理）。所有人可见（机构纪要已公开）。dl=1 走附件下载。"""
     from urllib.parse import urlparse, unquote  # noqa: PLC0415
@@ -5006,7 +5006,7 @@ def _customs_agent_task_to_fingpt(task: InvestmentTaskRecord) -> FinGptTaskRespo
         if isinstance(item, dict) and (item.get("title") or item.get("source"))
     ]
     sources = [
-        f"DeepFocus Agent Task {task.id}",
+        f"稻草财经 Agent Task {task.id}",
         *evidence_sources,
     ]
     return FinGptTaskResponse(
@@ -5700,7 +5700,7 @@ async def run_capacity_monitor() -> None:
                 print(f"[capacity] 容量告警：sse={snap['active_sse']} fd={snap['fd_used']}/{snap['fd_limit']} status={snap['status']}")
                 try:
                     send_alert_email(
-                        "⚠️ DeepFocus 在线连接接近上限",
+                        "⚠️ 稻草财经 在线连接接近上限",
                         f"在线快讯 SSE 长连接：{snap['active_sse']}（warn≥{snap['sse_warn']} / crit≥{snap['sse_crit']}）\n"
                         f"后端文件句柄：{snap['fd_used']} / {snap['fd_limit']}\n档位：{snap['status']}\n"
                         f"时间：{snap['generated_at']}\n\n"
@@ -5713,7 +5713,7 @@ async def run_capacity_monitor() -> None:
             elif not bad and _CAPACITY_HEALTH.get("alerted"):
                 _CAPACITY_HEALTH["alerted"] = False
                 try:
-                    send_alert_email("✅ DeepFocus 在线连接已回落正常", f"在线 SSE：{snap['active_sse']}，档位正常。\n时间：{snap['generated_at']}")
+                    send_alert_email("✅ 稻草财经 在线连接已回落正常", f"在线 SSE：{snap['active_sse']}，档位正常。\n时间：{snap['generated_at']}")
                 except Exception:  # noqa: BLE001
                     pass
         except asyncio.CancelledError:
@@ -5836,7 +5836,7 @@ async def api_research_test_email(request: Request, token: str = "") -> dict[str
     if not expected or provided != expected:
         raise HTTPException(status_code=403, detail="需要有效的 metrics 令牌")
     sent, info = send_alert_email(
-        "✅ DEEPFOCUS 看板 · 告警邮件测试",
+        "✅ 稻草财经 看板 · 告警邮件测试",
         "这是一封测试邮件。如果你收到了，说明研报源失效告警邮件已配置成功。",
     )
     return {"ok": sent, "detail": info}
@@ -6149,7 +6149,7 @@ async def api_research_workbench_pdf(
     media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
     metrics_incr_research(filename, filename)  # 研报下载/打开计数（本地原文）
     if media_type == "application/pdf":
-        # 抓取舱文件与在线 wire-file 必须走同一套去水印 + DeepFocus 打标。
+        # 抓取舱文件与在线 wire-file 必须走同一套去水印 + 稻草财经 打标。
         # 用 to_thread 读大 PDF，避免阻塞 uvicorn 事件循环；apply_pdf_brand 内部按
         # sha + 处理版本缓存，同一文件只会实际处理一次。
         from .pdf_brand import apply_pdf_brand  # noqa: PLC0415
@@ -6308,11 +6308,20 @@ async def _prewarm_local_pdf_batch(targets: list[tuple[Path, tuple[int, int]]]) 
 
 
 async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[bytes, str]:
-    """经同机 Node 工作台解析研报在线下载链并取回原文字节，返回 (content, content_type)。
+    """经同机 Node 工作台解析研报在线下载链并取回 PDF 字节，返回 (content, content_type)。
 
-    供在线预览（wire-file）与在线研报 AI 解读（vision-analyze）共用。
-    优先按 file_id 查磁盘缓存（跳过网络下载），命中直接返回。"""
-    # ── 快路径：已处理过的 PDF 直接从磁盘缓存返回，跳过网络下载 ──────────────
+    消费方全是 AI 解读链路（vision-analyze / 预热），只读内容：
+    不走去水印——其子进程 ~640MB，小内存服务器上会被 OOM 击杀，且成品无人类
+    消费方（用户看原文走 wire-file 流式转发原始件）。缓存优先级：原始件 →
+    历史去水印成品（内容等价），命中任一即跳过网络下载。"""
+    # ── 快路径：已落盘的 PDF 直接返回，跳过网络下载 ──────────────
+    try:
+        from .pdf_brand import get_raw_by_file_id  # noqa: PLC0415
+        raw_cached = get_raw_by_file_id(file_id)
+        if raw_cached is not None:
+            return raw_cached, "application/pdf"
+    except Exception:
+        pass
     try:
         from .pdf_brand import get_cached_by_file_id  # noqa: PLC0415
         cached = get_cached_by_file_id(file_id)
@@ -6336,8 +6345,9 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
         raw = fr.content
         ct = fr.headers.get("content-type") or "application/pdf"
         if ct.lower().startswith("application/pdf") or safe_name.lower().endswith(".pdf"):
-            from .pdf_brand import apply_pdf_brand  # noqa: PLC0415
-            raw = await apply_pdf_brand(raw, file_id=file_id)
+            from .pdf_brand import store_raw_pdf  # noqa: PLC0415
+
+            store_raw_pdf(file_id, raw)
         return raw, ct
 
 
@@ -6408,7 +6418,7 @@ _PDF_TOKENS: dict[str, dict[str, Any]] = {}
 _SERVE_RESEARCH_ORIGINAL = os.getenv("DEEPFOCUS_SERVE_RESEARCH_ORIGINAL", "false").strip().lower() == "true"
 _RESEARCH_ORIGINAL_RETIRED_MSG = (
     "应版权合规要求，研报原文已不再提供在线查看。"
-    "请查看我们的「DeepFocus 视角」AI 解读与要点（目标价 / 评级 / 盈利预测），或前往原始发布方获取原文。"
+    "请查看我们的「稻草财经 视角」AI 解读与要点（目标价 / 评级 / 盈利预测），或前往原始发布方获取原文。"
 )
 
 
@@ -6469,7 +6479,7 @@ async def api_research_pdf_token(request: Request, file_id: str = "", name: str 
 async def api_research_wire_file(
     request: Request, file_id: str, name: str = "", token: str = "",
 ) -> Response:
-    """在线查看研报原文：按点击创建临时链接并流式转发，不在 DeepFocus 落盘。
+    """在线查看研报原文：按点击创建临时链接并流式转发，不在 稻草财经 落盘。
 
     保留来源原文与原水印；默认关闭，仅在确认在线展示权限后通过
     DEEPFOCUS_SERVE_RESEARCH_ORIGINAL=true 启用。"""
@@ -6692,7 +6702,7 @@ def _require_api_key(request: Request) -> dict:
     max_calls = int(rec.get("max_calls") or 0)
     if max_calls > 0 and int(rec.get("call_count") or 0) >= max_calls:
         partner_api.log_usage(kp, path, 403, ip)
-        raise HTTPException(status_code=403, detail=f"已达该密钥的总调用次数上限（{max_calls} 次），请联系 DeepFocus 续期或升级")
+        raise HTTPException(status_code=403, detail=f"已达该密钥的总调用次数上限（{max_calls} 次），请联系 稻草财经 续期或升级")
     # 3) 每日配额（0=不限；按今日成功计——读非有损日计数表，按 key_hash）
     daily_quota = int(rec.get("daily_quota") or 0)
     if daily_quota > 0 and partner_api.today_count(kh) >= daily_quota:
@@ -6710,7 +6720,7 @@ def _count_v1_success(rec: dict, request: Request) -> None:
 
 _PARTNER_API_DOCS_HTML = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DeepFocus Open API · 开发者文档</title>
+<title>稻草财经 Open API · 开发者文档</title>
 <style>
 :root{--bg:#0b0d12;--panel:#12151c;--line:#222733;--text:#e6ebf2;--mute:#8a93a3;--amber:#ffb000;--green:#2bd96a;--blue:#6ab0ff}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
@@ -6726,9 +6736,9 @@ table{border-collapse:collapse;width:100%;margin:8px 0;font-size:13px}th,td{bord
 .note{background:rgba(255,176,0,.08);border:1px solid rgba(255,176,0,.3);border-radius:8px;padding:10px 14px;margin:12px 0;font-size:13.5px}
 a{color:var(--blue)}.ft{margin-top:40px;color:var(--mute);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
 </style></head><body><div class="wrap">
-<h1>DeepFocus Open API <span class="sub">v1</span></h1>
-<p class="sub">DeepFocus 金融终端面向合作方/开发者的只读内容 API。基地址 <code>https://daocaijing.com</code>，所有业务端点形如 <code>/api/v1/*</code>，返回 JSON。</p>
-<div class="note">⚠️ 仅开放 DeepFocus 自有内容（A股复盘、个股速判卡、资讯流、研报）。密钥由 DeepFocus 按需签发，无自助注册——请联系商务对接。</div>
+<h1>稻草财经 Open API <span class="sub">v1</span></h1>
+<p class="sub">稻草财经 金融终端面向合作方/开发者的只读内容 API。基地址 <code>https://daocaijing.com</code>，所有业务端点形如 <code>/api/v1/*</code>，返回 JSON。</p>
+<div class="note">⚠️ 仅开放 稻草财经 自有内容（A股复盘、个股速判卡、资讯流、研报）。密钥由 稻草财经 按需签发，无自助注册——请联系商务对接。</div>
 
 <h2>鉴权</h2>
 <p>每个业务请求都需在 HTTP Header 传入密钥：</p>
@@ -6797,7 +6807,7 @@ a{color:var(--blue)}.ft{margin-top:40px;color:var(--mute);font-size:12px;border-
 <tr><td>429</td><td>超出每分钟速率、每日配额，或无效请求过多（IP 限速）</td></tr>
 <tr><td>502</td><td>上游数据源暂时不可用（速判卡生成失败 / 研报源不可用），稍后重试</td></tr></table>
 
-<p class="ft">内容仅供研究参考，不构成投资建议。© DeepFocus 金融终端 · daocaijing.com</p>
+<p class="ft">内容仅供研究参考，不构成投资建议。© 稻草财经 金融终端 · daocaijing.com</p>
 </div></body></html>"""
 
 
@@ -6805,11 +6815,11 @@ a{color:var(--blue)}.ft{margin-top:40px;color:var(--mute);font-size:12px;border-
 async def api_v1_index() -> dict[str, Any]:
     """开发者 API 自描述索引（公开，无需 key）。说明可用端点与鉴权方式。"""
     return {
-        "service": "DeepFocus Open API",
+        "service": "稻草财经 Open API",
         "version": "v1",
         "docs": "https://daocaijing.com/api/v1/docs",
-        "auth": "在请求 Header 传 X-API-Key: <你的密钥>（仅 Header，勿放 URL 参数）。密钥由 DeepFocus 签发，请妥善保管、仅服务端使用。",
-        "note": "DeepFocus 金融终端内容 API。",
+        "auth": "在请求 Header 传 X-API-Key: <你的密钥>（仅 Header，勿放 URL 参数）。密钥由 稻草财经 签发，请妥善保管、仅服务端使用。",
+        "note": "稻草财经 金融终端内容 API。",
         "endpoints": [
             {"method": "GET", "path": "/api/v1/review/today", "desc": "最新一期 A股收盘复盘"},
             {"method": "GET", "path": "/api/v1/review/{date}", "desc": "指定日期(YYYY-MM-DD)的复盘"},
@@ -6858,7 +6868,7 @@ async def api_v1_review_by_date(request: Request, date_str: str) -> dict[str, An
 
 @app.get("/api/v1/stock/{symbol}/verdict")
 async def api_v1_stock_verdict(request: Request, symbol: str, name: str = "", market: str = "") -> dict[str, Any]:
-    """个股证据速判卡（DeepFocus 确定性引擎自生成；不叠加 LLM 叙述以保证稳定）。"""
+    """个股证据速判卡（稻草财经 确定性引擎自生成；不叠加 LLM 叙述以保证稳定）。"""
     rec = _require_api_key(request)
     sym = (symbol or "").strip().upper()[:16]
     if not sym:
@@ -7047,7 +7057,7 @@ async def run_ashare_review() -> None:
                     create_realtime_message(RealtimeMessageCreateRequest(
                         title=f"📊 今日A股{_lab}已生成",
                         content="大盘 · 板块 · 个股全维度" + _lab + (f",含我们提前发现的 {_edge_n} 条信号" if _edge_n else "") + " → 点开看复盘。",
-                        topic="复盘", severity="info", source_name="DeepFocus 复盘",
+                        topic="复盘", severity="info", source_name="稻草财经 复盘",
                         url=f"/?review={today}",
                     ))
                 except Exception as _rexc:  # noqa: BLE001
@@ -7088,7 +7098,7 @@ async def run_morning_briefing() -> None:
             create_realtime_message(RealtimeMessageCreateRequest(
                 title=f"🌅 投研晨报 · {mlab}",
                 content=_ai_label(headline + " · 点开看今日宏观与组合全貌。", brief=True),
-                topic="晨报", severity="info", source_name="DeepFocus 投研晨报",
+                topic="晨报", severity="info", source_name="稻草财经 投研晨报",
                 url=f"/?briefing={today}",  # 回流落点：深链直开晨报（此前是裸首页，浪费召回点击）
             ))
             last_sent = today
@@ -7182,7 +7192,7 @@ async def _build_watchlist_scan_message(today: str) -> Optional[RealtimeMessageC
     return RealtimeMessageCreateRequest(
         title=f"📈 自选股今日异动 · {len(hits)} 只",
         content=content,
-        topic="异动", severity="info", source_name="DeepFocus 自选巡检",
+        topic="异动", severity="info", source_name="稻草财经 自选巡检",
         url="/?feed=自选",  # 聚合消息：symbol 留空，落点自选 feed
     )
 
@@ -7660,7 +7670,7 @@ async def run_feed_watchdog() -> None:
                 _FEED_WATCHDOG_STATE[alerted_key] = time.time()
                 desc = f"{stale_min:.0f} 分钟" if stale_min is not None else "无法确认(空库/时间解析失败)"
                 msg = (
-                    f"⚠️ DeepFocus 快讯断供告警（{label}）：交易时段已 {desc} 无新快讯入库"
+                    f"⚠️ 稻草财经 快讯断供告警（{label}）：交易时段已 {desc} 无新快讯入库"
                     f"（阈值 {_FEED_STALE_MINUTES}min）。请检查上游 token/dao-realinfo 服务。最后一条：{created or '无'}"
                 )
                 print(f"[feed-watchdog] {msg}")
@@ -8123,7 +8133,7 @@ def _partner_alert_email_body(al: dict) -> str:
         return ""
     def _money(c):
         return f"¥{(c or 0) / 100:.0f}"
-    lines = ["DeepFocus 合作方 API · 今日续费/对账提醒", ""]
+    lines = ["稻草财经 合作方 API · 今日续费/对账提醒", ""]
     if al.get("near_expiry"):
         lines.append(f"⏰ 近到期（{len(al['near_expiry'])} 个，续费机会，收款后在看板点「续期」）：")
         for k in al["near_expiry"][:20]:
@@ -8165,7 +8175,7 @@ async def run_partner_billing_alerts() -> None:
             al = await asyncio.to_thread(partner_api.compute_alerts)
             body = _partner_alert_email_body(al)
             if body:
-                ok, msg = await asyncio.to_thread(send_alert_email, "[DeepFocus] 合作方 API 续费/对账提醒", body)
+                ok, msg = await asyncio.to_thread(send_alert_email, "[稻草财经] 合作方 API 续费/对账提醒", body)
                 print(f"[partner-alert] 告警 {al.get('counts')} 邮件：{ok} {msg}")
             else:
                 print("[partner-alert] 今日无告警")
@@ -8712,7 +8722,8 @@ async def run_research_prewarm() -> None:
     fresh_reserve = int(os.getenv("DEEPFOCUS_RESEARCH_FRESH_RESERVE", "15"))
     backfill_cap = int(os.getenv("DEEPFOCUS_RESEARCH_BACKFILL_PER_CYCLE", "8"))
     _DL_KEY = "research_pdf_dl"  # 当日 PDF 下载计数（按自然日滚动）
-    from .pdf_brand import has_cached_file_id  # noqa: PLC0415 - 判定原文去水印成品是否已落盘
+    from .pdf_brand import has_cached_file_id  # noqa: PLC0415 - 判定原文 PDF 是否已落盘
+    from .research_prewarm_signal import wait_research_arrival  # noqa: PLC0415 - 入库脉冲提前唤醒
     await asyncio.sleep(25)  # 启动后稍等，让服务与工作台就绪
     print(
         f"[prewarm] 启动：并发 {workers}、每日下载上限 {daily_max}（为新报告预留 {fresh_reserve}）、"
@@ -8733,7 +8744,8 @@ async def run_research_prewarm() -> None:
             ):
                 return
             try:
-                # _fetch_research_online_pdf 内部即会去水印并按 file_id 落盘成品（下载本身就完成了 PDF 缓存）。
+                # _fetch_research_online_pdf 只取原始字节并按 file_id 落盘（AI 解读无需去水印；
+                # 下载本身就完成了 AI 输入 PDF 缓存）。
                 content, _ = await _fetch_research_online_pdf(fid, item.get("filename", ""))
             except asyncio.CancelledError:
                 raise
@@ -8852,8 +8864,11 @@ async def run_research_prewarm() -> None:
         low = max(60.0, cycle * (1.0 - jitter_ratio))
         high = max(low, cycle * (1.0 + jitter_ratio))
         next_delay = random.uniform(low, high) if jitter_ratio else max(60.0, cycle)
-        print(f"[prewarm] 下一轮约 {next_delay / 60:.1f} 分钟后")
-        await asyncio.sleep(next_delay)
+        awakened = await wait_research_arrival(next_delay)
+        if awakened:
+            print("[prewarm] 新研报入库脉冲，提前开始本轮预热")
+        else:
+            print(f"[prewarm] 下一轮约 {next_delay / 60:.1f} 分钟后")
 
 
 @app.get("/api/research/search", response_model=ResearchReportSearchResponse)
@@ -9530,7 +9545,7 @@ async def api_news_ai_analyze(
             title=title or "新闻解读", subject=_nz(result.get("subject", "")),
             one_liner=_nz(result.get("one_liner", "")), summary=_nz(result.get("summary", "")),
             core_logic=_nz(result.get("core_logic", "")), takeaway=_nz(result.get("takeaway", "")),
-            df_take=_nz(result.get("df_take", "")),  # DeepFocus 视角点评（转化创作）
+            df_take=_nz(result.get("df_take", "")),  # 稻草财经 视角点评（转化创作）
             logic_lines=[
                 {key: _nz(line.get(key, "")) for key in ("title", "evidence", "chain", "impact", "watch")}
                 for line in _logic_lines if isinstance(line, dict)
@@ -10337,7 +10352,7 @@ input[type=number]{width:52px}input[type=text],.syms{width:100%;box-sizing:borde
 #res{padding:10px;margin-top:10px;border-radius:8px;background:#13351f;border:1px solid #1f5b34;white-space:pre-wrap;font-size:12px;display:none}#res.err{background:#3a1414;border-color:#5b1f1f}
 details{margin-top:18px}summary{cursor:pointer;color:#9aa6ba;font-size:14px}
 </style>
-<h2>📢 DeepFocus 微信推送台 <small style="color:#7f8aa3;font-size:12px">· 仅内测渠道</small></h2>
+<h2>📢 稻草财经 微信推送台 <small style="color:#7f8aa3;font-size:12px">· 仅内测渠道</small></h2>
 <h3>① 按标的自动推送（选标的 → 有新快讯命中就自动推）</h3>
 <div id=subs>__CARDS__</div>
 <div id=res></div>
@@ -10425,6 +10440,8 @@ _SEO_TS_TTL = 3600.0
 _seo_build_semaphore = asyncio.Semaphore(2)
 _SEO_TS_BUILD_TIMEOUT = 45.0  # tearsheet 构建硬超时：上游数据源挂死时不让事件循环被吊住拖垮全站
 _SEO_SYMBOL_RE = re.compile(r"^[A-Za-z0-9.\-]{1,12}$")
+_SITEMAP_CACHE_TTL = 1800.0  # sitemap 实时查库需 2-5s，缓存 30 分钟：别让每次爬虫抓取都重复付这个代价
+_sitemap_cache: tuple[float, str] | None = None
 
 
 def _canonical_url(request: Request) -> str:
@@ -10494,6 +10511,9 @@ def _public_qa_items(limit: int = 200) -> list[dict[str, Any]]:
 
 @app.get("/sitemap.xml", include_in_schema=False)
 async def public_sitemap() -> Response:
+    global _sitemap_cache
+    if _sitemap_cache is not None and time.monotonic() - _sitemap_cache[0] < _SITEMAP_CACHE_TTL:
+        return Response(_sitemap_cache[1], media_type="application/xml")
     base = seo_pages.BASE_URL
     dates: list[str] = []
     seen: set[str] = set()
@@ -10548,13 +10568,12 @@ async def public_sitemap() -> Response:
             research_fids.append(p["fid"])
             if p.get("date"):
                 lastmod[f"{base}/research/{p['fid']}"] = str(p["date"])
-    return Response(
-        seo_pages.render_sitemap_xml(dates, symbols, article_ids, lastmod_map=lastmod,
-                                     qa_slugs=qa_slugs, report_ids=report_ids,
-                                     flash_ids=flash_ids, note_ids=note_ids,
-                                     research_fids=research_fids),
-        media_type="application/xml",
-    )
+    xml = seo_pages.render_sitemap_xml(dates, symbols, article_ids, lastmod_map=lastmod,
+                                       qa_slugs=qa_slugs, report_ids=report_ids,
+                                       flash_ids=flash_ids, note_ids=note_ids,
+                                       research_fids=research_fids)
+    _sitemap_cache = (time.monotonic(), xml)
+    return Response(xml, media_type="application/xml")
 
 
 @app.get("/review", response_class=HTMLResponse, include_in_schema=False)
