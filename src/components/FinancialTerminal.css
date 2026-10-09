@@ -1069,6 +1069,63 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
   animation: bbt-toast-in .22s ease-out;
 }
 @keyframes bbt-toast-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+/* 可点击 toast（如「解读完成 · 点击查看」） */
+.bbt-toast--act { cursor: pointer; border-color: rgba(145,202,255,.4); color: #d8eaff; }
+
+/* AI 解读后台任务浮标（右下角） */
+.bbt-ai-tasks { position: fixed; right: 16px; bottom: 22px; z-index: 70; }
+.bbt-ai-tasks-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(16,22,31,.92); color: var(--text-soft);
+  border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
+  padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 10px 36px rgba(0,0,0,.5); backdrop-filter: blur(6px);
+}
+.bbt-ai-tasks-pill.is-open { border-color: rgba(145,202,255,.45); color: #cfe4fb; }
+.bbt-ai-tasks-spin {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid rgba(145,202,255,.28); border-top-color: #91caff;
+  animation: bbt-ai-tasks-rot .9s linear infinite;
+}
+@keyframes bbt-ai-tasks-rot { to { transform: rotate(360deg); } }
+.bbt-ai-tasks-pop {
+  position: absolute; right: 0; bottom: calc(100% + 10px);
+  width: min(88vw, 360px); max-height: 46vh; overflow: auto;
+  background: rgba(13,20,30,.97); border: 1px solid rgba(255,255,255,.14); border-radius: 12px;
+  padding: 6px; box-shadow: 0 18px 48px rgba(0,0,0,.55);
+}
+.bbt-ai-tasks-h { padding: 8px 10px 6px; font-size: 12px; font-weight: 700; letter-spacing: .5px; color: var(--mute); }
+.bbt-ai-task { display: flex; align-items: center; gap: 4px; }
+.bbt-ai-task-main {
+  flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 9px;
+  background: none; border: 0; padding: 8px 6px 8px 10px; text-align: left;
+  border-radius: 8px; cursor: pointer; color: var(--text-soft);
+}
+.bbt-ai-task.is-running .bbt-ai-task-main { cursor: default; }
+.bbt-ai-task-main:hover { background: rgba(145,202,255,.09); }
+.bbt-ai-task.is-running .bbt-ai-task-main:hover { background: none; }
+.bbt-ai-task-dot {
+  flex: none; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800;
+  background: rgba(145,202,255,.16); color: #9cd1ff;
+}
+.bbt-ai-task.is-done .bbt-ai-task-dot { background: rgba(64,222,148,.16); color: #52e0a2; }
+.bbt-ai-task.is-error .bbt-ai-task-dot { background: rgba(255,110,84,.16); color: #ff8a70; }
+.bbt-ai-task-dot.is-run { animation: bbt-ai-task-breath 1.4s ease-in-out infinite; }
+@keyframes bbt-ai-task-breath { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.bbt-ai-task-txt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bbt-ai-task-txt b { font-size: 13px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bbt-ai-task-txt small { font-size: 11.5px; color: var(--mute); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bbt-ai-task-x {
+  flex: none; background: none; border: 0; color: var(--mute); font-size: 12px;
+  padding: 8px; cursor: pointer; border-radius: 8px;
+}
+.bbt-ai-task-x:hover { color: var(--text-soft); background: rgba(255,255,255,.07); }
+@media (max-width: 760px) {
+  .bbt-ai-tasks { right: 10px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+  .bbt-ai-tasks-pop { width: min(92vw, 340px); }
+}
 
 /* 前台快讯弹窗：独立于浏览器 Notification，兼容 Android WebView。 */
 .bbt-news-popup {
