@@ -366,10 +366,19 @@ _TUTORIAL_PAGE_TMPL = """<!doctype html><html lang="zh-CN"><head><meta charset="
     const a=document.createElement('a');a.href='#'+h.id;a.textContent=h.textContent;toc.appendChild(a);
   });
 })();
-// 代码块一键复制
+// 代码块一键复制（Clipboard API 优先，失败降级 execCommand）
+async function __copyText(t){
+  try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
+  try{
+    const ta=document.createElement('textarea'); ta.value=t;
+    ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok=document.execCommand('copy'); document.body.removeChild(ta); return ok;
+  }catch(e){ return false; }
+}
 document.querySelectorAll('.doc pre').forEach(pre=>{
   const b=document.createElement('button');b.className='copy';b.textContent='复制';
-  b.onclick=async()=>{try{await navigator.clipboard.writeText(pre.innerText.replace(/^复制\\n?/,''));b.textContent='已复制';setTimeout(()=>b.textContent='复制',1500);}catch(e){b.textContent='失败';}};
+  b.onclick=async()=>{const ok=await __copyText(pre.innerText);b.textContent=ok?'已复制':'失败';setTimeout(()=>b.textContent='复制',1500);};
   pre.appendChild(b);
 });
 </script></body></html>"""
