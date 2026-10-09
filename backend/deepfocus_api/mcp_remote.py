@@ -203,6 +203,114 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_kline",
+        "title": "K线/分时",
+        "description": "个股 K 线（默认日线 OHLC，A股为主）或当日分时（period=1m）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "标的代码，如 600519 / AAPL"},
+                "market": {"type": "string", "description": "可选：市场 CN/HK/US"},
+                "points": {"type": "integer", "description": "K线根数，默认 120，上限 320"},
+                "period": {"type": "string", "description": "留空=日线；1m=当日分时"},
+            },
+            "required": ["symbol"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_market_dashboard",
+        "title": "大盘指标盘",
+        "description": "大盘核心指标盘（指数/宽度/情绪等汇总面板）。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "get_risk_radar",
+        "title": "市场风险雷达",
+        "description": "A/H/美股市值前 N 风险预警（只读公开数据，确定性规则）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "markets": {"type": "string", "description": "可选：逗号分隔，默认 CN,HK,US"},
+                "limit": {"type": "integer", "description": "每市场条数，默认 10，上限 20"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_theme_boards",
+        "title": "概念板块涨幅榜",
+        "description": "A股概念板块当日涨幅榜（看哪些题材主线在动，确定性归属，非荐股）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "description": "条数，默认 40，上限 80"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_limit_up_ladder",
+        "title": "涨停天梯",
+        "description": "A股涨停天梯/连板梯队（N天M板/所属行业/炸板，东财涨停池，纯事实非荐股）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "description": "条数，默认 60，上限 120"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_dragon_tiger",
+        "title": "龙虎榜",
+        "description": "某交易日 A股龙虎榜全榜单（date 留空=最近交易日，交易所公开事实）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"date": {"type": "string", "description": "可选：YYYY-MM-DD"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_market_calendar",
+        "title": "A股日历",
+        "description": "A股日历：解禁/新股/财报预约披露等确定性事件（默认未来 7 天，上限 30 天）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"days": {"type": "integer", "description": "未来天数，默认 7，上限 30"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "universal_search",
+        "title": "统一搜索",
+        "description": "跨库聚合搜索：股票/快讯文章/研报/术语/板块 一次返回（各路独立容错）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"q": {"type": "string", "description": "关键词，如 白酒 / 茅台 / semiconductor"}},
+            "required": ["q"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_headlines",
+        "title": "AI 今日头条",
+        "description": "AI 评选的今日头条（快讯/文章/研报各至多 3 条，附「为什么重要」）。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "get_track_record",
+        "title": "平台战绩",
+        "description": "「我们提前发现的」平台战绩：近 30 天经 AI 判定验证的命中汇总与近期明细。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "get_ai_fund_snapshot",
+        "title": "AI 模拟盘快照",
+        "description": "AI 模拟盘全貌（净值/收益/持仓盯市/近期交易理由/净值曲线）；strategy 可选竞技场选手 id。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"strategy": {"type": "string", "description": "可选：选手 fund_id，留空=主账户"}},
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "ask_ai",
         "title": "AI 投研问答",
         "description": "向稻草财经投研 AI 提问（会调工具取真实数据：行情/复盘/研报/财报等）。",
@@ -501,6 +609,140 @@ async def _tool_minutes_sentiment(args: dict) -> Any:
     return await get_daily_sentiment(force=bool(args.get("force")))
 
 
+async def _tool_kline(args: dict) -> Any:
+    from .main import market_kline
+
+    sym = str(args.get("symbol") or "").strip()
+    if not sym:
+        raise ValueError("symbol 不能为空")
+    try:
+        points = max(20, min(int(args.get("points") or 120), 320))
+    except (TypeError, ValueError):
+        points = 120
+    return await market_kline(
+        sym, market=str(args.get("market") or "").strip(),
+        points=points, period=str(args.get("period") or "").strip(),
+    )
+
+
+async def _tool_dashboard() -> Any:
+    from .main import fetch_market_dashboard
+
+    return await fetch_market_dashboard()
+
+
+async def _tool_risk_radar(args: dict) -> Any:
+    from .market_risk_radar import build_market_risk_radar
+
+    markets = [m.strip().upper() for m in str(args.get("markets") or "CN,HK,US").split(",") if m.strip()]
+    try:
+        limit = max(1, min(int(args.get("limit") or 10), 20))
+    except (TypeError, ValueError):
+        limit = 10
+    return await build_market_risk_radar(markets, limit=limit)
+
+
+async def _tool_theme_boards(args: dict) -> Any:
+    from .theme_navigation import fetch_concept_boards
+
+    try:
+        limit = max(1, min(int(args.get("limit") or 40), 80))
+    except (TypeError, ValueError):
+        limit = 40
+    boards = await fetch_concept_boards(limit=limit)
+    return {"boards": boards or [], "count": len(boards or [])}
+
+
+async def _tool_limit_up(args: dict) -> Any:
+    from .theme_navigation import fetch_limit_up_ladder
+
+    try:
+        limit = max(1, min(int(args.get("limit") or 60), 120))
+    except (TypeError, ValueError):
+        limit = 60
+    return await fetch_limit_up_ladder(limit=limit)
+
+
+async def _tool_dragon_tiger(args: dict) -> Any:
+    import re
+
+    from .dragon_tiger import fetch_daily_billboard
+
+    date = str(args.get("date") or "").strip()
+    if date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        raise ValueError("date 须为 YYYY-MM-DD 或留空")
+    data = await fetch_daily_billboard(date)
+    return {"data": data, "note": "交易所公开龙虎榜数据，仅为事实呈现，不构成投资建议"}
+
+
+async def _tool_calendar(args: dict) -> Any:
+    from .cn_calendar import fetch_cn_calendar
+
+    try:
+        days = max(1, min(int(args.get("days") or 7), 30))
+    except (TypeError, ValueError):
+        days = 7
+    return await fetch_cn_calendar(days=days)
+
+
+async def _tool_usearch(args: dict) -> Any:
+    import asyncio
+
+    from .main import (
+        _usearch_boards,
+        _usearch_news,
+        _usearch_reports,
+        _usearch_stocks,
+        _usearch_terms,
+    )
+
+    q = str(args.get("q") or "").strip()[:60]
+    if not q:
+        raise ValueError("q 不能为空")
+
+    async def _safe(coro):
+        try:
+            return await coro
+        except Exception:  # noqa: BLE001 - 单路失败不拖垮聚合
+            return []
+
+    stocks, news, reports, terms, boards = await asyncio.wait_for(
+        asyncio.gather(
+            _safe(_usearch_stocks(q)),
+            _safe(_usearch_news(q)),
+            _safe(_usearch_reports(q)),
+            _safe(_usearch_terms(q)),
+            _safe(_usearch_boards(q)),
+        ),
+        timeout=10,
+    )
+    return {"q": q, "stocks": stocks, "news": news, "reports": reports, "terms": terms, "boards": boards}
+
+
+async def _tool_headlines() -> Any:
+    from . import main as _main_mod
+
+    hl = getattr(_main_mod, "_HEADLINES", None) or {}
+    cap = lambda seq: (seq or [])[-5:]  # noqa: E731 - 每类至多 5 条，控载荷
+    return {"kx": cap(hl.get("kx")), "wz": cap(hl.get("wz")), "yb": cap(hl.get("yb")),
+            "generated_at": hl.get("generated_at") or ""}
+
+
+async def _tool_track_record() -> Any:
+    from . import track_record
+
+    hits = track_record._collect_hits(30)
+    return {**track_record._summarize(hits), "days": 30, "recent": hits[:12]}
+
+
+async def _tool_aifund(args: dict) -> Any:
+    import asyncio
+
+    from .main import _aifund_snapshot
+
+    return await asyncio.to_thread(_aifund_snapshot, str(args.get("strategy") or "").strip())
+
+
 async def _tool_ask_ai(args: dict, user_out) -> dict:
     question = str(args.get("question") or "").strip()[:_ASK_MAX_CHARS]
     if not question:
@@ -675,6 +917,28 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
             value = await _tool_theme_stocks(arguments)
         elif tool_name == "get_stock_themes":
             value = await _tool_stock_themes(arguments)
+        elif tool_name == "get_kline":
+            value = await _tool_kline(arguments)
+        elif tool_name == "get_market_dashboard":
+            value = await _tool_dashboard()
+        elif tool_name == "get_risk_radar":
+            value = await _tool_risk_radar(arguments)
+        elif tool_name == "get_theme_boards":
+            value = await _tool_theme_boards(arguments)
+        elif tool_name == "get_limit_up_ladder":
+            value = await _tool_limit_up(arguments)
+        elif tool_name == "get_dragon_tiger":
+            value = await _tool_dragon_tiger(arguments)
+        elif tool_name == "get_market_calendar":
+            value = await _tool_calendar(arguments)
+        elif tool_name == "universal_search":
+            value = await _tool_usearch(arguments)
+        elif tool_name == "get_headlines":
+            value = await _tool_headlines()
+        elif tool_name == "get_track_record":
+            value = await _tool_track_record()
+        elif tool_name == "get_ai_fund_snapshot":
+            value = await _tool_aifund(arguments)
         elif tool_name == "search_stock_reports":
             value = await _tool_stock_reports(arguments)
         elif tool_name == "search_minutes":
@@ -758,7 +1022,7 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 <div class="panel"><h3>curl 直连验证</h3>
 <pre id="cfgCurl">curl -s __MCP_URL__ -H "Authorization: Bearer &lt;你的令牌&gt;" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre></div>
 
-<h2>可用工具（15 个）</h2>
+<h2>可用工具（26 个）</h2>
 <table><tr><th>工具</th><th>说明</th></tr>
 <tr><td><code>ping</code></td><td>连通探针，返回账号与会员状态</td></tr>
 <tr><td><code>search_market_symbols</code> / <code>get_market_quotes</code></td><td>标的搜索 / 行情快照（A/H/美）</td></tr>
@@ -766,7 +1030,9 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 <tr><td><code>get_stock_verdict</code></td><td>个股证据速判卡（确定性引擎）</td></tr>
 <tr><td><code>search_news</code> / <code>search_research</code> / <code>search_stock_reports</code></td><td>资讯流 / 投行研报元数据 / 个股券商研报（近两年，标题机构评级）</td></tr>
 <tr><td><code>search_minutes</code> / <code>get_minutes_sentiment</code></td><td>机构纪要检索（含正文）/ 当日纪要多空统计</td></tr>
-<tr><td><code>get_theme_stocks</code> / <code>get_stock_themes</code></td><td>题材→受益股 / 个股→题材反查</td></tr>
+<tr><td><code>get_theme_stocks</code> / <code>get_stock_themes</code> / <code>get_theme_boards</code> / <code>get_limit_up_ladder</code></td><td>题材→受益股 / 题材反查 / 板块涨幅榜 / 涨停天梯</td></tr>
+<tr><td><code>get_kline</code> / <code>get_market_dashboard</code> / <code>get_risk_radar</code> / <code>get_dragon_tiger</code> / <code>get_market_calendar</code></td><td>K线分时 / 大盘指标盘 / 风险雷达 / 龙虎榜 / A股日历</td></tr>
+<tr><td><code>universal_search</code> / <code>get_headlines</code> / <code>get_track_record</code> / <code>get_ai_fund_snapshot</code></td><td>统一搜索 / AI头条 / 平台战绩 / AI模拟盘</td></tr>
 <tr><td><code>ask_ai</code></td><td>AI 投研问答（取真数再回答；会员/管理员不限次，非会员每天 10 次，与网页端同一配额）</td></tr>
 </table>
 
