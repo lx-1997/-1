@@ -87,7 +87,7 @@ describe('article original reader parser', () => {
       title: '路透社：快时尚巨头希音计划在香港上市。',
       paragraphs: [
         'Daocaijing 金融终端 A股每日复盘 热门个股多维证据速判 财经资讯',
-        '稻财经', 'DEEPFOCUS AI', '主菜单', '深度文章', '★ 头条',
+        '稻财经', '稻草财经 AI', '主菜单', '深度文章', '★ 头条',
         '路透社：快时尚巨头希音计划在香港上市。',
         'Fast-fashion giant Shein set to open flat in Hong Kong market debut',
         '快时尚巨头施恩计划在香港市场首次开设实体店',
@@ -109,7 +109,7 @@ describe('article original reader parser', () => {
     expect(body).toContain('香港市场的首次公开募股');
     expect(body).toContain('关税及税收政策');
     expect(body).not.toContain('Daocaijing');
-    expect(body).not.toContain('DEEPFOCUS AI');
+    expect(body).not.toContain('稻草财经 AI');
     expect(body).not.toContain('The Daily Docket');
     expect(body).not.toContain('Suggested Topics');
     expect(body).not.toContain('Unrelated recommendation');

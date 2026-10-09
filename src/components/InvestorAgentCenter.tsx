@@ -87,7 +87,7 @@ const decisionMeta: Record<string, { color: string; text: string }> = {
 
 const engineMeta: Record<AgentEngine, { title: string; short: string; color: string; description: string }> = {
   deepfocus: {
-    title: 'DeepFocus Native',
+    title: '稻草财经 Native',
     short: 'Native',
     color: 'cyan',
     description: '使用 4 个核心角色调度证据、分析、风控和输出层；FinGPT 与专题能力作为技能接入。'
@@ -107,7 +107,7 @@ const engineMeta: Record<AgentEngine, { title: string; short: string; color: str
 };
 
 const engineOptions = [
-  { value: 'deepfocus', label: 'DeepFocus' },
+  { value: 'deepfocus', label: '稻草财经' },
   { value: 'tradingagents', label: 'TradingAgents' },
   { value: 'financial_services', label: 'FSI Playbook' }
 ];
@@ -559,7 +559,7 @@ const AgentThread: React.FC<{
                     ? result.plain_language_takeaway
                     : '',
                 ].filter(Boolean).join('\n\n'),
-                byline: '由 DeepFocus 投研工作台 · 深度任务生成',
+                byline: '由 稻草财经 投研工作台 · 深度任务生成',
               })}
             />
           )}
@@ -588,7 +588,7 @@ const AgentThread: React.FC<{
           type="warning"
           showIcon
           message={result.engine_status === 'runtime_error' ? 'TradingAgents 运行失败，等待配置复核' : 'TradingAgents 运行环境待配置'}
-          description="DeepFocus 已内置 TradingAgents 引擎，并会读取 设置 → 模型配置；如果这里出现告警，通常是模型 API key、模型名、行情数据源或运行时配置还需要补齐。任务结果中会保留可复核诊断。"
+          description="稻草财经 已内置 TradingAgents 引擎，并会读取 设置 → 模型配置；如果这里出现告警，通常是模型 API key、模型名、行情数据源或运行时配置还需要补齐。任务结果中会保留可复核诊断。"
         />
       )}
 

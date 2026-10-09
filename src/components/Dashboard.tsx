@@ -69,7 +69,7 @@ const Dashboard: React.FC<DashboardProps> = ({ appState, onStockSelect }) => {
       actions={
         <Space size={8} wrap>
           <Tag color="blue">Premium</Tag>
-          <Tag color="cyan">DeepFocus</Tag>
+          <Tag color="cyan">稻草财经</Tag>
         </Space>
       }
     >

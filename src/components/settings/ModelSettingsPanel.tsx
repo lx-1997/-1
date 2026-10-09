@@ -319,7 +319,7 @@ const ModelSettingsPanel: React.FC<ModelSettingsPanelProps> = ({
         >
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <Text type="secondary">
-              开新对话时，DeepFocus 会把上一段对话归档到本机；之后你提问时，Agent 会按相关性
+              开新对话时，稻草财经 会把上一段对话归档到本机；之后你提问时，Agent 会按相关性
               召回过往讨论作为上下文（在「记忆」上下文源开启时）。数据仅存于本机浏览器。
             </Text>
             {memStats.count > 0 ? (
@@ -361,7 +361,7 @@ const ModelSettingsPanel: React.FC<ModelSettingsPanelProps> = ({
         >
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <Text type="secondary">
-              每次深度研究给出分析评分时，DeepFocus 会自动记录这次判断（标的 / 动作 / 置信度 / 论点）。
+              每次深度研究给出分析评分时，稻草财经 会自动记录这次判断（标的 / 动作 / 置信度 / 论点）。
               你标注兑现结果后，系统计算「置信度校准」——自评置信度 vs 实际命中率，识别系统性偏差，
               并在后续分析该标的时把校准结论喂回 Agent，促其自我纠偏。数据仅存本机浏览器。
             </Text>

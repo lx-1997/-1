@@ -346,7 +346,7 @@ const evidenceText = (items: ResearchDeepDraftImageEvidence[]): string[] => item
 /** Plain-text counterpart used by the “复制为文字” action. */
 export function researchDeepDraftToText(input: unknown, options: ResearchDeepDraftImageOptions = {}): string {
   const model = buildResearchDeepDraftImageModel(input, options);
-  const lines: string[] = [`📑 DeepFocus AI 深度研究稿｜${model.title}`];
+  const lines: string[] = [`📑 稻草财经 AI 深度研究稿｜${model.title}`];
   if (model.subtitle) lines.push(model.subtitle);
   if (model.metadata.length) lines.push(model.metadata.join(' · '));
   if (model.oneLiner) lines.push('', `💡 ${model.oneLiner}`);
@@ -418,7 +418,7 @@ export function researchDeepDraftToText(input: unknown, options: ResearchDeepDra
     lines.push('', '【来源与证据范围】');
     model.sources.forEach(item => lines.push(`- ${[item.title, item.provider, item.page, item.kind].filter(Boolean).join(' · ')}`));
   }
-  lines.push('', '——————————', model.disclaimer, `—— DeepFocus 金融终端 · ${options.site || 'daocaijing.com'}`);
+  lines.push('', '——————————', model.disclaimer, `—— 稻草财经 金融终端 · ${options.site || 'daocaijing.com'}`);
   return lines.map(cleanForText).filter(Boolean).join('\n');
 }
 
@@ -467,7 +467,7 @@ export async function drawResearchDeepDraftImage(input: unknown, options: Resear
     if (refs.length) add(refs.map(ref => `证据 · ${ref}`), font(11), 18, '#8793a3', 10, '·');
   };
 
-  add('DEEPFOCUS 金融终端 · AI 深度研究稿', font(17, '800'), 26, '#ffb000');
+  add('稻草财经 金融终端 · AI 深度研究稿', font(17, '800'), 26, '#ffb000');
   add(model.title, font(29, '800'), 38, '#f4ecd6', 10);
   if (model.subtitle) add(model.subtitle, font(15), 24, '#b0b9c6', 4);
   if (model.metadata.length) add(model.metadata.join('　·　'), font(12), 20, '#8a8463', 12);
@@ -548,7 +548,7 @@ export async function drawResearchDeepDraftImage(input: unknown, options: Resear
   ctx.font = font(38, '800');
   ctx.translate(width / 2, finalHeight / 2);
   ctx.rotate(-Math.PI / 7);
-  for (let y = -finalHeight; y < finalHeight; y += 130) for (let x = -width; x < width; x += 390) ctx.fillText('DEEPFOCUS', x, y);
+  for (let y = -finalHeight; y < finalHeight; y += 130) for (let x = -width; x < width; x += 390) ctx.fillText('稻草财经', x, y);
   ctx.restore();
   ctx.textBaseline = 'top';
   let y = pad;
@@ -583,7 +583,7 @@ export async function drawResearchDeepDraftImage(input: unknown, options: Resear
     ctx.fillStyle = '#000';
     for (let row = 0; row < qr.size; row++) for (let col = 0; col < qr.size; col++) if (qr.matrix[row]?.[col]) ctx.fillRect(qx + col * cell, qy + row * cell, cell + 0.6, cell + 0.6);
   }
-  ctx.font = font(17, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('DEEPFOCUS 金融终端', pad, dividerY + 14);
+  ctx.font = font(17, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('稻草财经 金融终端', pad, dividerY + 14);
   ctx.font = font(12); ctx.fillStyle = '#8a93a0'; ctx.fillText(`扫码访问 · ${(options.site || 'daocaijing.com').replace(/^https?:\/\//, '')}`, pad, dividerY + 42);
   ctx.font = font(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('AI 深度研究稿 · 仅供参考，非投资建议', pad, dividerY + 64);
   return await new Promise<Blob | null>(resolve => {

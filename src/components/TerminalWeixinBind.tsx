@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiGet, apiPost } from '../services/apiClient';
 
-// 微信扫码绑定到当前 DeepFocus 账号：绑定后可在微信里直接问 DeepFocus（个性化问答）。
+// 微信扫码绑定到当前 稻草财经 账号：绑定后可在微信里直接问 稻草财经（个性化问答）。
 // 后端 iLink 渠道，1:1 绑定；这是「问答(PULL)」入口，不是推送。
 
 type StartResp = { qrcode: string; qr_content: string; qr_data_url?: string | null; base_url: string };
@@ -120,7 +120,7 @@ const TerminalWeixinBind: React.FC<{ onClose: () => void; showToast?: (m: string
       if (st === 'scaned') { setPhase('scaned'); continue; }
       if (st === 'confirmed') {
         runningRef.current = false; setPhase('confirmed');
-        showToast?.('✅ 微信已绑定，DeepFocus 重要快讯会推送给你');
+        showToast?.('✅ 微信已绑定，稻草财经 重要快讯会推送给你');
         void loadMe(); return;
       }
       if (st === 'expired') { runningRef.current = false; setPhase('expired'); return; }
@@ -170,7 +170,7 @@ const TerminalWeixinBind: React.FC<{ onClose: () => void; showToast?: (m: string
     <div style={box} onClick={onClose}>
       <div style={card} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <strong style={{ fontSize: 15 }}>🟢 绑定微信 · 收 DeepFocus 快讯</strong>
+          <strong style={{ fontSize: 15 }}>🟢 绑定微信 · 收 稻草财经 快讯</strong>
           <span onClick={onClose} style={{ cursor: 'pointer', color: '#8b95a7', fontSize: 18, lineHeight: 1 }}>×</span>
         </div>
 
@@ -186,7 +186,7 @@ const TerminalWeixinBind: React.FC<{ onClose: () => void; showToast?: (m: string
           <div style={{ background: '#3a2a0d', border: '1px solid #6b4e15', borderRadius: 8, padding: '11px 13px', marginBottom: 12, color: '#ffd98a', fontSize: 13, lineHeight: 1.6 }}>
             ⚡ <b>最后一步：去微信激活推送</b>
             <div style={{ color: '#e8cf95', marginTop: 4 }}>
-              绑定后请在微信里给 DeepFocus 机器人<b>发一句话</b>（如「你好」），推送才会开通。
+              绑定后请在微信里给 稻草财经 机器人<b>发一句话</b>（如「你好」），推送才会开通。
               <br />若隔一阵子没再收到，回复任意消息即可<b>重新激活</b>。
             </div>
           </div>
@@ -266,8 +266,8 @@ const TerminalWeixinBind: React.FC<{ onClose: () => void; showToast?: (m: string
         ) : null}
 
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #222a38', color: '#8b95a7', fontSize: 12, lineHeight: 1.6 }}>
-          尊享 / 永久会员专享：绑定后，DeepFocus 的重要快讯会<b>主动推送</b>到你微信（带利好/利空标注），可在上方<b>自助选择</b>推送范围。
-          <br />绑定后还能在微信里直接<b>向 DeepFocus AI 提问</b>（会员专享，畅聊不限次；常见问题秒回）。
+          尊享 / 永久会员专享：绑定后，稻草财经 的重要快讯会<b>主动推送</b>到你微信（带利好/利空标注），可在上方<b>自助选择</b>推送范围。
+          <br />绑定后还能在微信里直接<b>向 稻草财经 AI 提问</b>（会员专享，畅聊不限次；常见问题秒回）。
           {onOpenConsole ? (
             <div style={{ marginTop: 10 }}>
               <span onClick={onOpenConsole} style={{ color: '#5a9cff', cursor: 'pointer' }}>📣 打开管理员推送台（内测）→</span>

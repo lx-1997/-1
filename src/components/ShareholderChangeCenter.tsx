@@ -1182,7 +1182,7 @@ const ShareholderChangeCenter: React.FC<ShareholderChangeCenterProps> = ({ appSt
                       target={() => ({
                         title: `${selectedDisplayName} · AI解读`,
                         summary: selectedAiModelInterpretation.verdict ? `${selectedAiModelInterpretation.verdict}。${selectedAiModelInterpretation.summary}` : selectedAiModelInterpretation.summary,
-                        byline: '由 DeepFocus 股东变动解读生成',
+                        byline: '由 稻草财经 股东变动解读生成',
                       })}
                     />
                     {selectedAiModelInterpretation.points.length > 0 && (

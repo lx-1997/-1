@@ -90,7 +90,7 @@ const TerminalAiFund: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <div className="aif-ava">🤖<span className="aif-ava-dot" /></div>
           <div className="aif-who">
             <div className="aif-nm">{data?.persona?.name || '阿尔法'}<span className="aif-livetag">● 模拟盘·实时盯市</span></div>
-            <div className="aif-tg">{data?.persona?.tag || 'DeepFocus AI 操盘手'}</div>
+            <div className="aif-tg">{data?.persona?.tag || '稻草财经 AI 操盘手'}</div>
           </div>
           {data?.mood && <span className="aif-mood">{data.mood.emoji} {data.mood.label}</span>}
           <span className={`aif-dq aif-dq--${data?.data_quality.level || 'degraded'}`}>

@@ -781,7 +781,7 @@ const CnEarningsCenter: React.FC<CnEarningsCenterProps> = ({ appState, onStockSe
                                 target={() => ({
                                   title: `${selectedRecord.name} 财报诊断`,
                                   summary: selectedDiagnosis.verdict ? `${selectedDiagnosis.verdict}。${selectedDiagnosis.summary}` : selectedDiagnosis.summary,
-                                  byline: '由 DeepFocus 财报诊断生成',
+                                  byline: '由 稻草财经 财报诊断生成',
                                 })}
                               />
                             </div>

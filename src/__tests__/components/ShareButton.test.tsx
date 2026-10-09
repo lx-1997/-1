@@ -6,7 +6,7 @@ describe('ShareButton', () => {
   const target = {
     title: 'NVDA 投研体检',
     summary: '英伟达数据中心营收高增，毛利率维持高位。',
-    byline: '由 DeepFocus 投研工作台生成',
+    byline: '由 稻草财经 投研工作台生成',
   };
 
   it('渲染「分享」按钮，点击后打开弹窗并展示结论标题/摘要/署名', () => {
@@ -20,7 +20,7 @@ describe('ShareButton', () => {
     expect(screen.getByText('分享投研结论')).toBeInTheDocument();
     expect(screen.getByText('NVDA 投研体检')).toBeInTheDocument();
     expect(screen.getByText(/英伟达数据中心营收高增/)).toBeInTheDocument();
-    expect(screen.getByText('由 DeepFocus 投研工作台生成')).toBeInTheDocument();
+    expect(screen.getByText('由 稻草财经 投研工作台生成')).toBeInTheDocument();
     // 无现成链接的 AI 结论应提供「生成公开只读页」入口
     expect(screen.getByRole('button', { name: /生成公开只读页/ })).toBeInTheDocument();
   });
@@ -36,7 +36,7 @@ describe('ShareButton', () => {
     expect(textarea).toBeTruthy();
     expect(textarea.placeholder).toContain('NVDA 投研体检');
     expect(textarea.placeholder).toContain('英伟达数据中心营收高增');
-    expect(textarea.placeholder).toContain('由 DeepFocus 投研工作台生成');
+    expect(textarea.placeholder).toContain('由 稻草财经 投研工作台生成');
     // 不应出现伪造的 http(s) 链接
     expect(textarea.placeholder).not.toMatch(/https?:\/\//);
   });

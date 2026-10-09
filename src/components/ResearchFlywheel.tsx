@@ -234,7 +234,7 @@ const fallbackProfile: NetworkProfile = {
     }
   ],
   authors: [
-    { name: 'DeepFocus Pro', specialty: '基本面', score: 86, adoption: 22 },
+    { name: '稻草财经 Pro', specialty: '基本面', score: 86, adoption: 22 },
     { name: 'EventDesk', specialty: '事件跟踪', score: 82, adoption: 18 }
   ],
   theses: [

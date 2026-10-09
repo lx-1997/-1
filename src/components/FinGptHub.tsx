@@ -276,7 +276,7 @@ const FinGptHub: React.FC<FinGptHubProps> = ({ appState }) => {
                 stockReport.catalysts?.length ? `催化：${stockReport.catalysts.slice(0, 2).join('；')}` : '',
                 stockReport.risks?.length ? `风险：${stockReport.risks.slice(0, 2).join('；')}` : '',
               ].filter(Boolean).join('\n\n'),
-              byline: '由 DeepFocus 投研工作台 · 个股体检生成',
+              byline: '由 稻草财经 投研工作台 · 个股体检生成',
             })}
           />
           <Tag color="blue">{stockReport.model}</Tag>

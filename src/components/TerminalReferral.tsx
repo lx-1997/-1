@@ -73,7 +73,7 @@ const TerminalReferral: React.FC<{
   // 一键复制「双边钩子」邀请文案：突出好友能立得 3 天（利他），降低对方戒心；自己另得邀请奖励。
   const [msgCopied, setMsgCopied] = useState(false);
   const inviteMsg = data
-    ? `🎁 送你 DeepFocus 金融终端 3 天尊享会员！\n用我的邀请码 ${data.code} 注册即得 —— 全球行情 · 实时快讯 · AI 研报解读，比别人早一步看懂行情。\n👉 ${link}`
+    ? `🎁 送你 稻草财经 金融终端 3 天尊享会员！\n用我的邀请码 ${data.code} 注册即得 —— 全球行情 · 实时快讯 · AI 研报解读，比别人早一步看懂行情。\n👉 ${link}`
     : '';
   const copyInvite = async () => {
     const ok = await copyText(inviteMsg);
@@ -113,7 +113,7 @@ const TerminalReferral: React.FC<{
       ctx.textBaseline = 'alphabetic';
       // 品牌头
       ctr('🎁 邀你免费体验', 92, FN(34, '800'), '#ffffff');
-      ctr('DEEPFOCUS 金融终端', 134, FN(20, '800'), '#ffb000');
+      ctr('稻草财经 金融终端', 134, FN(20, '800'), '#ffb000');
       ctr('彭博风格终端 · 全球行情 · 实时快讯 · AI 研报解读', 168, FN(14.5, '500'), '#9aa3b0');
 
       // 中部主文案
@@ -154,7 +154,7 @@ const TerminalReferral: React.FC<{
       if (coarse) {
         const blob: Blob | null = await new Promise(res => cv.toBlob(b => res(b), 'image/png'));
         if (blob) {
-          const r = await shareImageNative(blob, { filename: 'DeepFocus邀请海报.png', title: '邀你免费体验 DeepFocus', text: '扫码注册，领 3 天尊享会员' });
+          const r = await shareImageNative(blob, { filename: '稻草财经邀请海报.png', title: '邀你免费体验 稻草财经', text: '扫码注册，领 3 天尊享会员' });
           if (r === 'shared') { setPosterTip('👇 也可长按下方海报另存'); return; }
         }
       }
@@ -355,7 +355,7 @@ const TerminalReferral: React.FC<{
             <div className={`bbt-shareimg-tip${posterCoarse ? ' bbt-shareimg-tip--big' : ''}`}>{posterTip}</div>
             <img className="bbt-shareimg-img" src={posterUrl} alt="邀请海报" />
             <div className="bbt-ai-actions">
-              {!posterCoarse && <a className="bbt-ai-btn bbt-ai-btn--img" href={posterUrl} download="DEEPFOCUS邀请海报.png">⬇ 下载海报</a>}
+              {!posterCoarse && <a className="bbt-ai-btn bbt-ai-btn--img" href={posterUrl} download="稻草财经邀请海报.png">⬇ 下载海报</a>}
               <button className="bbt-ai-btn bbt-ai-btn--close" onClick={() => setPosterUrl('')}>关闭</button>
             </div>
           </div>

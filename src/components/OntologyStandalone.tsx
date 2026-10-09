@@ -38,7 +38,7 @@ const OntologyStandalone: React.FC = () => (
         <nav className="ontology-standalone-nav" aria-label="投资本体导航">
           <a href="/" className="ontology-standalone-brand">
             <span>◆</span>
-            <strong>DEEPFOCUS</strong>
+            <strong>稻草财经</strong>
             <small>持仓决策助手</small>
           </a>
           <div>

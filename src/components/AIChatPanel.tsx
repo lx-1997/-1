@@ -210,7 +210,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({ open, onClose }) => {
     `这些指标意味着什么？`,
     `当前市场环境下的投资建议`,
   ] : [
-    '介绍一下 DeepFocus 的功能',
+    '介绍一下 稻草财经 的功能',
     '如何使用 Agent 分析？',
     '帮我分析当前市场',
   ];

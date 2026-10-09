@@ -1381,7 +1381,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
               ) : null}
               <Alert type="warning" showIcon style={{ marginTop: 4 }} message={quickVision.disclaimer} />
               <Space wrap>
-                <ShareButton target={() => ({ title: previewTitle || '研报视觉解读', summary: quickVision.summary, byline: '由 DeepFocus 研报视觉解读生成' })} />
+                <ShareButton target={() => ({ title: previewTitle || '研报视觉解读', summary: quickVision.summary, byline: '由 稻草财经 研报视觉解读生成' })} />
                 <Button
                   icon={<SendOutlined />}
                   onClick={() => {
@@ -1430,7 +1430,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                 </div>
               ) : null}
               <Space wrap>
-                <ShareButton target={() => ({ title: previewTitle || '研报分析', summary: quickAnalysis.summary, byline: '由 DeepFocus 研报快速研读生成' })} />
+                <ShareButton target={() => ({ title: previewTitle || '研报分析', summary: quickAnalysis.summary, byline: '由 稻草财经 研报快速研读生成' })} />
                 <Button icon={<AuditOutlined />} onClick={() => setMode('pro')}>转专业模式深入</Button>
                 <Button
                   icon={<SendOutlined />}
@@ -1822,7 +1822,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                         </div>
                       </div>
                       <div style={{ marginTop: 8 }}>
-                        <ShareButton target={() => ({ title: selectedReport?.title || '研报复核', summary: analysis.summary, byline: '由 DeepFocus 投研工作台生成' })} />
+                        <ShareButton target={() => ({ title: selectedReport?.title || '研报复核', summary: analysis.summary, byline: '由 稻草财经 投研工作台生成' })} />
                       </div>
                       <div className="research-ic-thesis-row">
                         <div>
@@ -2013,7 +2013,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                 ) : ragResult ? (
                   <>
                     <p>{ragResult.answer}</p>
-                    <ShareButton target={() => ({ title: ragQuestion || '引用问答结论', summary: ragResult.answer, byline: '由 DeepFocus 投研工作台引用核验生成' })} />
+                    <ShareButton target={() => ({ title: ragQuestion || '引用问答结论', summary: ragResult.answer, byline: '由 稻草财经 投研工作台引用核验生成' })} />
                     {ragResult.missing.length > 0 && (
                       <Alert
                         type="warning"

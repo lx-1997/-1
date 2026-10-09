@@ -605,7 +605,7 @@ const MajorEventCenter: React.FC<MajorEventCenterProps> = ({ appState, onStockSe
                       target={() => ({
                         title: `${selectedRecord.name || selectedRecord.symbol} · ${selectedRecord.title}`,
                         summary: selectedRecord.detail_summary || '',
-                        byline: '由 DeepFocus 重大事项预警生成',
+                        byline: '由 稻草财经 重大事项预警生成',
                       })}
                     />
                   )}

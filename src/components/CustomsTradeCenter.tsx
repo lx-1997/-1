@@ -396,7 +396,7 @@ const CustomsTradeCenter: React.FC<CustomsTradeCenterProps> = () => {
                 target={() => ({
                   title: '中国海关进出口 AI 分析',
                   summary: aiAnalysis.summary,
-                  byline: '由 DeepFocus 海关贸易分析生成',
+                  byline: '由 稻草财经 海关贸易分析生成',
                 })}
               />
               <Tag color="blue">置信 {formatConfidence(aiAnalysis.confidence)}</Tag>

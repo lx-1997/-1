@@ -1059,7 +1059,7 @@ const OptionsSignalCenter: React.FC<OptionsSignalCenterProps> = ({ appState }) =
                         target={() => ({
                           title: `${activeSignal?.symbol || ''} AI走势研判`.trim(),
                           summary: visibleAiAnalysis.thesis,
-                          byline: '由 DeepFocus 期权异动雷达生成',
+                          byline: '由 稻草财经 期权异动雷达生成',
                         })}
                       />
                     </Space>

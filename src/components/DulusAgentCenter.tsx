@@ -454,7 +454,7 @@ const DulusAgentCenter: React.FC<DulusAgentCenterProps> = ({ appState }) => {
                           return {
                             title: obj ? (obj.length > 38 ? `${obj.slice(0, 38)}…` : obj) : '圆桌综合结论',
                             summary: `${response.synthesis}${response.sources.length ? `\n\n来源：${response.sources.slice(0, 3).join('；')}` : ''}`,
-                            byline: '由 DeepFocus 投研工作台 · 圆桌生成',
+                            byline: '由 稻草财经 投研工作台 · 圆桌生成',
                           };
                         }}
                       />

@@ -156,7 +156,7 @@ export function evaluateAndNotify(message: RealtimeMessageRecord, watchlist: str
 }
 
 export function fireTestRecall(): boolean {
-  return fireNotification('DeepFocus 召回测试', '盯的信号触发时，会这样把你叫回来。', 'recall-test');
+  return fireNotification('稻草财经 召回测试', '盯的信号触发时，会这样把你叫回来。', 'recall-test');
 }
 
 /** 仅供测试：清空去重缓存。 */

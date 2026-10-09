@@ -9,7 +9,7 @@ const SECTIONS: HelpSection[] = [
   {
     icon: '🌐', title: '这是什么',
     items: [
-      { v: 'DeepFocus 金融终端把「全球行情 + 实时快讯 + 全球投行研报 + AI 解读」聚到一屏，像彭博终端那样盯盘。' },
+      { v: '稻草财经 金融终端把「全球行情 + 实时快讯 + 全球投行研报 + AI 解读」聚到一屏，像彭博终端那样盯盘。' },
       { v: '不登录就能看实时行情和快讯；登录后再解锁 AI 解读与研报原文。' },
     ],
   },
@@ -70,7 +70,7 @@ const TerminalHelp: React.FC<{ onClose: () => void; onStartTour?: () => void }> 
     <div className="bbt-help-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="bbt-help-modal" role="dialog" aria-modal="true" aria-label="产品说明书">
         <div className="bbt-help-head">
-          <div className="bbt-help-h1">📖 DeepFocus 金融终端 · 产品说明</div>
+          <div className="bbt-help-h1">📖 稻草财经 金融终端 · 产品说明</div>
           <button className="bbt-help-x" onClick={onClose} aria-label="关闭">✕</button>
         </div>
         <div className="bbt-help-scroll">

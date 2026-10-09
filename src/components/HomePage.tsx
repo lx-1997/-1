@@ -98,7 +98,7 @@ interface HomePageProps {
 function buildShareTarget(messages: ChatMessage[], index: number): ShareTarget {
   const msg = messages[index];
   // 标题取触发本次回答的提问；找不到时退回品牌默认。
-  let title = 'DeepFocus 投研结论';
+  let title = '稻草财经 投研结论';
   for (let i = index - 1; i >= 0; i -= 1) {
     if (messages[i].role === 'user') {
       const q = messages[i].content.trim().replace(/\s+/g, ' ');
@@ -114,7 +114,7 @@ function buildShareTarget(messages: ChatMessage[], index: number): ShareTarget {
   if (summary.length > 800) {
     summary = `${summary.slice(0, 800)}…`;
   }
-  return { title, summary, byline: '由 DeepFocus 投研工作台生成' };
+  return { title, summary, byline: '由 稻草财经 投研工作台生成' };
 }
 
 const HomePage: React.FC<HomePageProps> = ({
@@ -598,7 +598,7 @@ const HomePage: React.FC<HomePageProps> = ({
       <div className="dfx-home-topbar">
         <div className="dfx-home-topbar-title">
           <span className="dfx-home-brandmark">◆</span>
-          <span>{hasConversation ? '当前对话' : 'DeepFocus'}</span>
+          <span>{hasConversation ? '当前对话' : '稻草财经'}</span>
         </div>
         {hasConversation && (
           <button type="button" className="dfx-home-chip" onClick={resetConversation}>

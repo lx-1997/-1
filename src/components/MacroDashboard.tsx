@@ -359,7 +359,7 @@ function MacroDashboard() {
             target={() => ({
               title: activeTab === 'global' ? '全球宏观分析' : 'A股大盘分析',
               summary: analysis.summary,
-              byline: '由 DeepFocus 投研工作台生成',
+              byline: '由 稻草财经 投研工作台生成',
             })}
           />
         </div>
@@ -474,7 +474,7 @@ function MacroDashboard() {
                     target={() => ({
                       title: '大盘综合研判',
                       summary: data.overall_summary,
-                      byline: '由 DeepFocus 投研工作台生成',
+                      byline: '由 稻草财经 投研工作台生成',
                     })}
                   />
                 </div>

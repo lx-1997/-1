@@ -17,7 +17,7 @@ const { TextArea } = Input;
 export interface ShareTarget {
   title: string;
   summary: string;
-  /** 署名行，例如「作者：xxx」或「由 DeepFocus 投研工作台生成」。 */
+  /** 署名行，例如「作者：xxx」或「由 稻草财经 投研工作台生成」。 */
   byline?: string;
   /** 可选的可访问链接；缺省时隐藏链接相关入口，社交按钮退化为「复制文案」。 */
   url?: string;
@@ -125,7 +125,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
     if (target.kind === 'article') {
       const parts = [`📰 ${target.title}`];
       if ((target.summary || '').trim()) parts.push(target.summary.trim());
-      parts.push('👉 点这看全文 · DeepFocus 金融数据');
+      parts.push('👉 点这看全文 · 稻草财经 金融数据');
       return `${parts.join('\n\n')}${link ? `\n${link}` : ''}`;
     }
 
@@ -133,17 +133,17 @@ const ShareModal: React.FC<ShareModalProps> = ({
     if (target.kind === 'report') {
       const parts = [`📑 研报速读丨${target.title}`];
       if ((target.summary || '').trim()) parts.push(target.summary.trim());
-      parts.push('👉 登录看完整 AI 解读 · DeepFocus 金融数据');
+      parts.push('👉 登录看完整 AI 解读 · 稻草财经 金融数据');
       return `${parts.join('\n\n')}${link ? `\n${link}` : ''}`;
     }
 
     switch (platform) {
       case 'wechat':
-        return `${baseContent}\n\n来自 DeepFocus 金融数据${link ? `\n${link}` : ''}`;
+        return `${baseContent}\n\n来自 稻草财经 金融数据${link ? `\n${link}` : ''}`;
       case 'weibo':
-        return `${baseContent}\n\n#DeepFocus# #投研#${link ? ` ${link}` : ''}`;
+        return `${baseContent}\n\n#稻草财经# #投研#${link ? ` ${link}` : ''}`;
       case 'qq':
-        return `${baseContent}\n\n分享自 DeepFocus${link ? `：${link}` : ''}`;
+        return `${baseContent}\n\n分享自 稻草财经${link ? `：${link}` : ''}`;
       default:
         return `${baseContent}${link ? `\n\n${link}` : ''}`.trim();
     }

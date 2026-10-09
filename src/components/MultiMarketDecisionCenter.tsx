@@ -451,7 +451,7 @@ const MultiMarketDecisionCenter: React.FC<MultiMarketDecisionCenterProps> = ({ a
               description={data.disclaimer}
             />
             <div style={{ marginTop: 8 }}>
-              <ShareButton modalTitle="分享多市场决策" target={() => ({ title: '多市场决策', summary: data.summary, byline: '由 DeepFocus 多市场决策中心生成' })} />
+              <ShareButton modalTitle="分享多市场决策" target={() => ({ title: '多市场决策', summary: data.summary, byline: '由 稻草财经 多市场决策中心生成' })} />
             </div>
 
             {data.warnings.length > 0 && (

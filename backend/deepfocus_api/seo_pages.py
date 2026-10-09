@@ -32,7 +32,7 @@ APP_URL = os.getenv("DEEPFOCUS_PUBLIC_APP_URL", "/").strip() or "/"
 DEFAULT_OG_IMAGE = (os.getenv("DEEPFOCUS_OG_IMAGE", "").strip() or f"{BASE_URL}/og-cover.png")
 
 # 站级实体根（GEO 归因骨架）：所有页面的 publisher/author 用 @id 互引，引擎只需解析一次即知作者方。
-ORG_NAME = "DeepFocus 金融数据"
+ORG_NAME = "稻草财经 金融数据"
 ORG_ID = f"{BASE_URL}/#org"
 WEBSITE_ID = f"{BASE_URL}/#website"
 # 官方可验证社媒账号（sameAs 是 AI 引擎归因的最高杠杆信号）；站长提供后用逗号分隔填入环境变量。
@@ -58,7 +58,7 @@ _SIGNAL_LABEL = {
     "insufficient": ("· 数据不足", "#5b6470"),
 }
 
-_DISCLAIMER = "本页内容由 DeepFocus 证据引擎自动生成，仅供研究参考，不构成任何投资建议。"
+_DISCLAIMER = "本页内容由 稻草财经 证据引擎自动生成，仅供研究参考，不构成任何投资建议。"
 
 
 def _esc(value: Any) -> str:
@@ -198,7 +198,7 @@ def _page(
     """
     t = _esc(title)
     # 标题后缀治理：短标题补品牌后缀利于识别；标题本身已长（≥42）则不补，避免 SERP 截断丢关键词。
-    suffix = "" if len(str(title)) >= 42 else " · DeepFocus 投研"
+    suffix = "" if len(str(title)) >= 42 else " · 稻草财经 投研"
     desc = _esc(" ".join(str(description).split())[:200])
     img = _esc(image or DEFAULT_OG_IMAGE)
     canonical_tags = (
@@ -223,7 +223,7 @@ def _page(
 <meta property="og:locale" content="zh_CN">
 <meta property="og:title" content="{t}">
 <meta property="og:description" content="{desc}">
-<meta property="og:site_name" content="DeepFocus 金融数据">
+<meta property="og:site_name" content="稻草财经 金融数据">
 <meta property="og:image" content="{img}">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -265,9 +265,9 @@ def _page(
 </head>
 <body>
 <main class="wrap">
-  <div class="brand"><a href="{_esc(BASE_URL)}/">◆ DeepFocus 金融数据</a></div>
+  <div class="brand"><a href="{_esc(BASE_URL)}/">◆ 稻草财经 金融数据</a></div>
   {body}
-  <a class="cta" href="{_esc(cta_href or APP_URL)}">{_esc(cta_text or "在 DeepFocus 上做深度研究 →")}</a>
+  <a class="cta" href="{_esc(cta_href or APP_URL)}">{_esc(cta_text or "在 稻草财经 上做深度研究 →")}</a>
   <footer>{ai_notice}{_esc(_DISCLAIMER)} · <a href="{_esc(BASE_URL)}/review">每日复盘</a> · <a href="{_esc(BASE_URL)}/stocks">热门个股速判</a> · <a href="{_esc(BASE_URL)}/articles">财经资讯</a>{_icp_footer()}</footer>
 </main>
 </body>
@@ -305,7 +305,7 @@ def render_review_page_html(review: dict[str, Any], recent: list[dict[str, Any]]
                 if code else _esc(name))
 
     parts: list[str] = [f"<h1>{_esc(title)}</h1>"]
-    parts.append(f'<div class="meta">{_esc(date)} · {_esc(session_label)} · DeepFocus 自动复盘</div>')
+    parts.append(f'<div class="meta">{_esc(date)} · {_esc(session_label)} · 稻草财经 自动复盘</div>')
     if one_liner:
         # answer-first：开门见山一句可被 AI 引擎整段抽取的结论（自带日期，脱离上下文也成立）。
         parts.append(f'<div class="tldr"><b>一句话</b>：截至 {_esc(date)} A股{_esc(session_label)}，{_esc(neutralize_text(one_liner))}</div>')
@@ -361,7 +361,7 @@ def render_review_page_html(review: dict[str, Any], recent: list[dict[str, Any]]
             rows.append(
                 f"<div class=\"dim\"><div class=\"hl\">{_slink(e.get('name'))} · {_esc(e.get('theme') or e.get('kind'))} "
                 f"<span class=\"{'up' if _num(e.get('pct')) > 0 else 'down'}\">{_esc(_fmt_pct(e.get('pct')))}</span></div>"
-                f"<ul><li>{_esc(lead_txt)}在 DeepFocus 出现相关信号：{_esc(str(e.get('evidence') or '')[:160])}</li></ul></div>"
+                f"<ul><li>{_esc(lead_txt)}在 稻草财经 出现相关信号：{_esc(str(e.get('evidence') or '')[:160])}</li></ul></div>"
             )
         parts.append("<h2>我们提前发现了什么</h2>" + "".join(rows))
 
@@ -415,7 +415,7 @@ def render_review_fallback_html(review: dict[str, Any], page_url: str = "") -> s
     session_label = _esc(str(review.get("session_label") or "收盘复盘"))
     title = f"{date} A股{session_label}"
     parts: list[str] = [f"<h1>{title}</h1>",
-                        f'<div class="meta">{date} · {session_label} · DeepFocus 自动复盘（摘要版）</div>']
+                        f'<div class="meta">{date} · {session_label} · 稻草财经 自动复盘（摘要版）</div>']
     rows = "".join(
         f"<tr><td>{_esc(i.get('name'))}</td><td>{_esc(i.get('close'))}</td>"
         f"<td class=\"{'up' if _num(i.get('pct')) > 0 else 'down'}\">{_esc(_fmt_pct(i.get('pct')))}</td></tr>"
@@ -460,7 +460,7 @@ def render_review_hub_html(items: list[dict[str, Any]]) -> str:
     trail = [("首页", f"{BASE_URL}/"), ("每日复盘", f"{BASE_URL}/review")]
     return _page(
         title="A股每日复盘归档",
-        description="DeepFocus 每个交易日自动生成的 A 股复盘：大盘指数、领涨领跌板块、资金动向，以及我们提前发现的资讯如何被当日行情验证。",
+        description="稻草财经 每个交易日自动生成的 A 股复盘：大盘指数、领涨领跌板块、资金动向，以及我们提前发现的资讯如何被当日行情验证。",
         body=body,
         canonical=f"{BASE_URL}/review",
         graph=_graph(_breadcrumb_node(trail)),
@@ -489,7 +489,7 @@ def _stock_faq(name: str, symbol: str, verdict: str, score: Any, conf_txt: str, 
     """生成「问句式」FAQ（可见 HTML + FAQPage 节点必须答案一致），AI 引擎偏好问答结构、利于被引用。"""
     score_txt = f"，综合分 {score}" if score not in (None, "") else ""
     a1 = neutralize_text(
-        f"截至 {date}，DeepFocus 多维证据引擎对 {name}（{symbol}）的综合研判为「{verdict}」{score_txt}"
+        f"截至 {date}，稻草财经 多维证据引擎对 {name}（{symbol}）的综合研判为「{verdict}」{score_txt}"
         + (f"，{conf_txt}" if conf_txt else "") + "。"
         + (narrative[:160] if narrative else "")
     ).strip()
@@ -548,7 +548,7 @@ def render_stock_page_html(ts: dict[str, Any], related: list[dict[str, Any]], pa
     # answer-first TL;DR：自带日期与研判，便于 AI 引擎整段引用。
     if not thin:
         tldr = neutralize_text(
-            f"截至 {date or '近期'}，DeepFocus 对 {name}（{symbol}）的多维证据综合研判为「{verdict}」"
+            f"截至 {date or '近期'}，稻草财经 对 {name}（{symbol}）的多维证据综合研判为「{verdict}」"
             + (f"（{conf_txt}）" if conf_txt else "") + "。"
         )
         parts.append(f'<div class="tldr"><b>速判</b>：{_esc(tldr)}</div>')
@@ -617,7 +617,7 @@ def render_stock_page_html(ts: dict[str, Any], related: list[dict[str, Any]], pa
         noindex=thin,
         image=f"{BASE_URL}/og/stock/{symbol}.png",
         cta_href=_watch_href,
-        cta_text=f"在 DeepFocus 盯盘 {name} →",
+        cta_text=f"在 稻草财经 盯盘 {name} →",
         ai_generated=True,  # 速判卡 narrative 为 AI 合成 → 标识
     )
 
@@ -639,13 +639,13 @@ def render_stocks_hub_html(items: list[dict[str, Any]]) -> str:
         )
     body = (
         "<h1>热门个股 · 多维证据速判</h1>"
-        '<div class="meta">按 DeepFocus 用户近期关注热度排序，每只股票一页看清信号 / 证据 / 置信度</div>'
+        '<div class="meta">按 稻草财经 用户近期关注热度排序，每只股票一页看清信号 / 证据 / 置信度</div>'
         + ("".join(rows) or "<p>暂无数据。</p>")
     )
     trail = [("首页", f"{BASE_URL}/"), ("热门个股", f"{BASE_URL}/stocks")]
     return _page(
         title="热门个股多维证据速判",
-        description="DeepFocus 用户近期最关注的股票：动量、催化、估值、资金面等多维证据速判，信号与置信度一页看清。",
+        description="稻草财经 用户近期最关注的股票：动量、催化、估值、资金面等多维证据速判，信号与置信度一页看清。",
         body=body,
         canonical=f"{BASE_URL}/stocks",
         graph=_graph(_breadcrumb_node(trail)),
@@ -686,7 +686,7 @@ def render_stocks_all_html(entries: list[tuple[str, str]], page: int, total_page
     trail = [("首页", f"{BASE_URL}/"), ("热门个股", f"{BASE_URL}/stocks"), ("全部A股", f"{BASE_URL}/stocks/all")]
     return _page(
         title=title,
-        description="DeepFocus 覆盖全部 A 股的多维证据速判索引：每只股票一页看清动量、催化、估值、资金面信号与置信度。",
+        description="稻草财经 覆盖全部 A 股的多维证据速判索引：每只股票一页看清动量、催化、估值、资金面信号与置信度。",
         body=body,
         canonical=canonical,
         graph=_graph(_breadcrumb_node(trail)),
@@ -769,10 +769,10 @@ def _teaser(content: str, limit: int = 120) -> str:
 
 
 def _public_source(name: str) -> str:
-    """对外署名：内部聚合源名(DAO财经/道财经等)一律收敛为 DeepFocus(品牌红线，不外露)。"""
+    """对外署名：内部聚合源名(DAO财经/道财经等)一律收敛为 稻草财经(品牌红线，不外露)。"""
     n = (name or "").strip()
     if not n or "DAO" in n.upper() or "道财经" in n or "财经" in n:
-        return "DeepFocus"
+        return "稻草财经"
     return n
 
 
@@ -785,7 +785,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     symbol = str(article.get("symbol") or "").strip()
     canonical = page_url or f"{BASE_URL}/article/{aid}"
 
-    # 顶部已有「◆ DeepFocus 金融数据」品牌行，来源同为 DeepFocus 属重复 → meta 只留时间+类型，减噪
+    # 顶部已有「◆ 稻草财经 金融数据」品牌行，来源同为 稻草财经 属重复 → meta 只留时间+类型，减噪
     meta_bits = [_esc(when), "资讯文章"]
     if symbol:
         meta_bits.append(_esc(symbol))
@@ -795,7 +795,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     # 软墙 CTA 按 topic 分口径（2026-08-07）：文章全文会员专享；快讯站内免费可读，只做 App 引流，不承诺会员解锁
     is_article = str(article.get("topic") or "") == "文章"
     if is_article:
-        parts.append(f'<a class="cta" href="{_app_article_url(aid)}">打开 DeepFocus · 会员读全文 →</a>')
+        parts.append(f'<a class="cta" href="{_app_article_url(aid)}">打开 稻草财经 · 会员读全文 →</a>')
         parts.append(
             '<h2>会员权益</h2>'
             '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
@@ -805,7 +805,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
             '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">文章全文会员专享 · 行情与自选登录即用</p></div>'
         )
     else:
-        parts.append(f'<a class="cta" href="{_app_article_url(aid)}">打开 DeepFocus 查看 →</a>')
+        parts.append(f'<a class="cta" href="{_app_article_url(aid)}">打开 稻草财经 查看 →</a>')
         parts.append(
             '<h2>登录后你可以</h2>'
             '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
@@ -845,7 +845,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
     trail = [("首页", f"{BASE_URL}/"), ("财经资讯", f"{BASE_URL}/articles"), (title[:30], canonical)]
     return _page(
         title=title,
-        description=teaser or f"{title} · 在 DeepFocus 阅读全文。",
+        description=teaser or f"{title} · 在 稻草财经 阅读全文。",
         body="".join(parts),
         canonical=canonical,
         graph=_graph(_breadcrumb_node(trail), news),
@@ -861,7 +861,7 @@ def render_articles_hub_html(items: list[dict[str, Any]], page: int = 1, total_p
     ) or "<p>暂无文章。</p>"
     body = (
         "<h1>财经资讯文章</h1>"
-        '<div class="meta">DeepFocus 聚合的财经资讯，会员解锁阅读全文 · 行情 / 自选 / AI 解读登录即用</div>' + rows
+        '<div class="meta">稻草财经 聚合的财经资讯，会员解锁阅读全文 · 行情 / 自选 / AI 解读登录即用</div>' + rows
     )
     if total_pages > 1:
         nums = " ".join(
@@ -874,7 +874,7 @@ def render_articles_hub_html(items: list[dict[str, Any]], page: int = 1, total_p
     trail = [("首页", f"{BASE_URL}/"), ("财经资讯", f"{BASE_URL}/articles")]
     return _page(
         title="财经资讯文章",
-        description="DeepFocus 聚合的财经资讯文章：会员解锁阅读全文，并解锁实时行情、自选与 AI 解读。",
+        description="稻草财经 聚合的财经资讯文章：会员解锁阅读全文，并解锁实时行情、自选与 AI 解读。",
         body=body,
         canonical=f"{BASE_URL}/articles",
         graph=_graph(_breadcrumb_node(trail)),
@@ -924,11 +924,11 @@ def render_note_page_html(topic: dict[str, Any], page_url: str = "") -> str:
     }
     return _page(
         title=title,
-        description=lead or f"{title} · DeepFocus 机构纪要。",
+        description=lead or f"{title} · 稻草财经 机构纪要。",
         body="".join(parts),
         canonical=canonical,
         cta_href=_app_note_url(nid),                   # 深链定位到机构纪要模块的这条,而非裸开首页
-        cta_text="打开 DeepFocus 看完整机构纪要 →",   # 用户拍板放开匿名可见→CTA 不再要求登录
+        cta_text="打开 稻草财经 看完整机构纪要 →",   # 用户拍板放开匿名可见→CTA 不再要求登录
         graph=_graph(_breadcrumb_node(trail), article),
         # 用户拍板放开 SEO 收录（2026-07-06）：落地页仅标题+≤100字导语钩子（全文在 SPA 不入 HTML→
         # 搜索引擎只收录 teaser 非全文）；noindex 已去除。⚠️第三方付费内容收录风险已知并接受。
@@ -945,12 +945,12 @@ def render_notes_hub_html(items: list[dict[str, Any]]) -> str:
     ) or "<p>暂无机构纪要。</p>"
     body = (
         "<h1>机构纪要</h1>"
-        '<div class="meta">机构调研纪要 / 个股动态点评聚合，仅供研究参考，不构成投资建议。打开 DeepFocus 看完整内容。</div>' + rows
+        '<div class="meta">机构调研纪要 / 个股动态点评聚合，仅供研究参考，不构成投资建议。打开 稻草财经 看完整内容。</div>' + rows
     )
     trail = [("首页", f"{BASE_URL}/"), ("机构纪要", f"{BASE_URL}/notes")]
     return _page(
         title="机构纪要 · 机构调研纪要与个股动态点评",
-        description="DeepFocus 机构纪要：机构调研会议纪要、个股动态点评聚合。每条含标题与摘要，打开 App 看完整内容。仅供研究参考，不构成投资建议。",
+        description="稻草财经 机构纪要：机构调研会议纪要、个股动态点评聚合。每条含标题与摘要，打开 App 看完整内容。仅供研究参考，不构成投资建议。",
         body=body,
         canonical=f"{BASE_URL}/notes",
         graph=_graph(_breadcrumb_node(trail)),
@@ -981,11 +981,11 @@ def render_report_page_html(report: dict[str, Any], recent: list[dict[str, Any]]
     if symbol:
         meta_bits.append(_esc(symbol))
     parts = [f"<h1>{_esc(title)}</h1>", f'<div class="meta">{" · ".join(meta_bits)}</div>']
-    parts.append('<div class="lead" style="color:#9fd9c3">✦ DeepFocus AI 研报速读</div>')
+    parts.append('<div class="lead" style="color:#9fd9c3">✦ 稻草财经 AI 研报速读</div>')
     if teaser:
         parts.append(f'<h2>解读摘要</h2><div class="lead">{_esc(teaser)}</div>')
     # 软墙：完整解读需登录在 App 内看
-    parts.append(f'<a class="cta" href="{_app_report_url(rid)}">登录 DeepFocus 看完整解读 →</a>')
+    parts.append(f'<a class="cta" href="{_app_report_url(rid)}">登录 稻草财经 看完整解读 →</a>')
     parts.append(
         '<h2>登录后你可以</h2>'
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
@@ -1025,7 +1025,7 @@ def render_report_page_html(report: dict[str, Any], recent: list[dict[str, Any]]
     trail = [("首页", f"{BASE_URL}/"), ("研报解读", f"{BASE_URL}/reports"), (title[:30], canonical)]
     return _page(
         title=f"{title} · 研报 AI 解读",
-        description=teaser or f"{title} · 在 DeepFocus 查看完整研报 AI 解读。",
+        description=teaser or f"{title} · 在 稻草财经 查看完整研报 AI 解读。",
         body="".join(parts),
         canonical=canonical,
         graph=_graph(_breadcrumb_node(trail), article),
@@ -1042,12 +1042,12 @@ def render_reports_hub_html(items: list[dict[str, Any]]) -> str:
     ) or "<p>暂无研报解读。</p>"
     body = (
         "<h1>研报 AI 解读</h1>"
-        '<div class="meta">DeepFocus 对券商 / 投行研报的 AI 速读，登录后查看完整解读并解锁行情 / 自选 / 复盘</div>' + rows
+        '<div class="meta">稻草财经 对券商 / 投行研报的 AI 速读，登录后查看完整解读并解锁行情 / 自选 / 复盘</div>' + rows
     )
     trail = [("首页", f"{BASE_URL}/"), ("研报解读", f"{BASE_URL}/reports")]
     return _page(
         title="研报 AI 解读",
-        description="DeepFocus 对券商 / 投行研报的 AI 速读解读：登录后查看完整解读，并解锁实时行情、自选与每日复盘。",
+        description="稻草财经 对券商 / 投行研报的 AI 速读解读：登录后查看完整解读，并解锁实时行情、自选与每日复盘。",
         body=body,
         canonical=f"{BASE_URL}/reports",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1103,13 +1103,13 @@ def render_research_blog_post_html(post: dict[str, Any], recent: list[dict[str, 
     """单篇研报 AI 解读博客文章（全文公开可读）。post={fid,title(已清洗),org(已署名),date,interp}。"""
     fid = str(post.get("fid") or "")
     topic = str(post.get("title") or "研报速读")
-    org = str(post.get("org") or "DeepFocus")
+    org = str(post.get("org") or "稻草财经")
     date = str(post.get("date") or "")[:10]
     canonical = page_url or f"{BASE_URL}/research/{fid}"
     d = _blog_extract(post.get("interp") or {})
 
     parts: list[str] = [f"<h1>{_esc(topic)}</h1>"]
-    meta_bits = ["DeepFocus AI 研报速读", f"来源：{_esc(org)}"] + ([_esc(date)] if date else [])
+    meta_bits = ["稻草财经 AI 研报速读", f"来源：{_esc(org)}"] + ([_esc(date)] if date else [])
     parts.append(f'<div class="meta">{" · ".join(meta_bits)}</div>')
 
     if d["one_liner"]:
@@ -1126,7 +1126,7 @@ def render_research_blog_post_html(post: dict[str, Any], recent: list[dict[str, 
                 if line.get(key)
             )
             cards.append(f'<div class="dim"><h3>{index}. {_esc(line.get("title") or f"逻辑线 {index}")}</h3>{body}</div>')
-        parts.append('<h2>DeepFocus 视角 · 独立逻辑线拆解</h2>' + "".join(cards))
+        parts.append('<h2>稻草财经 视角 · 独立逻辑线拆解</h2>' + "".join(cards))
     if d["core_logic"]:
         parts.append(f'<h2>核心逻辑</h2><p>{_esc(d["core_logic"])}</p>')
 
@@ -1171,8 +1171,8 @@ def render_research_blog_post_html(post: dict[str, Any], recent: list[dict[str, 
     conf = d["confidence"]
     conf_txt = f" · 解读置信度 {conf:.0%}" if isinstance(conf, (int, float)) else ""
     parts.append(
-        f'<p class="meta" style="margin-top:20px">本文为 DeepFocus 对{_esc(org)}公开研报的 AI 解读与整理'
-        f'{conf_txt}，不含研报原文；完整跟踪与实时行情请在 DeepFocus 终端查看。</p>'
+        f'<p class="meta" style="margin-top:20px">本文为 稻草财经 对{_esc(org)}公开研报的 AI 解读与整理'
+        f'{conf_txt}，不含研报原文；完整跟踪与实时行情请在 稻草财经 终端查看。</p>'
     )
 
     others = [r for r in recent if r.get("fid") and r.get("fid") != fid][:8]
@@ -1202,13 +1202,13 @@ def render_research_blog_post_html(post: dict[str, Any], recent: list[dict[str, 
     trail = [("首页", f"{BASE_URL}/"), ("研报解读", f"{BASE_URL}/research"), (topic[:30], canonical)]
     return _page(
         title=f"{topic} · 研报 AI 解读",
-        description=d["one_liner"] or d["summary"] or f"{topic} · DeepFocus AI 研报速读。",
+        description=d["one_liner"] or d["summary"] or f"{topic} · 稻草财经 AI 研报速读。",
         body="".join(parts),
         canonical=canonical,
         graph=_graph(_breadcrumb_node(trail), article),
         ai_generated=True,
         cta_href=APP_URL,
-        cta_text="在 DeepFocus 终端看实时行情与更多解读 →",
+        cta_text="在 稻草财经 终端看实时行情与更多解读 →",
     )
 
 
@@ -1219,7 +1219,7 @@ def render_research_blog_index_html(items: list[dict[str, Any]]) -> str:
         interp = it.get("interp") or {}
         topic = str(it.get("title") or "")
         one = neutralize_text(str(interp.get("one_liner") or interp.get("summary") or ""))
-        org = str(it.get("org") or "DeepFocus")
+        org = str(it.get("org") or "稻草财经")
         date = str(it.get("date") or "")[:10]
         cards += (
             f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none;font-size:16px" '
@@ -1229,14 +1229,14 @@ def render_research_blog_index_html(items: list[dict[str, Any]]) -> str:
         )
     body = (
         "<h1>研报 AI 解读</h1>"
-        '<div class="tldr" style="margin-top:6px">DeepFocus 每天把券商 / 海外投行研报，'
+        '<div class="tldr" style="margin-top:6px">稻草财经 每天把券商 / 海外投行研报，'
         "用 AI 拆成「一句话结论 + 多空要点 + 机构评级」的速读文章。免费阅读，登录解锁实时行情与自选盯盘。</div>"
         + (cards or "<p>暂无解读。</p>")
     )
     trail = [("首页", f"{BASE_URL}/"), ("研报解读", f"{BASE_URL}/research")]
     return _page(
         title="研报 AI 解读 · 每日更新",
-        description="DeepFocus 研报 AI 解读博客：券商与海外投行研报的 AI 速读，一句话结论 + 多空要点 + 机构评级，免费阅读。",
+        description="稻草财经 研报 AI 解读博客：券商与海外投行研报的 AI 速读，一句话结论 + 多空要点 + 机构评级，免费阅读。",
         body=body,
         canonical=f"{BASE_URL}/research",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1264,12 +1264,12 @@ def render_track_record_page_html(record: dict[str, Any], page_url: str = "") ->
 
     parts: list[str] = [f"<h1>信息时效记录：近 {_esc(days)} 天提前覆盖 {_esc(n)} 次</h1>"]
     parts.append(
-        '<div class="meta">DeepFocus 聚合快讯/研报信号的发布时间 × 次日盘面事实的自动比对 · 每条均可溯源</div>'
+        '<div class="meta">稻草财经 聚合快讯/研报信号的发布时间 × 次日盘面事实的自动比对 · 每条均可溯源</div>'
     )
     if n:
         # answer-first：一句纯事实概括（次数/领先小时数都是时间戳比对结果，非预测能力表述）。
         parts.append(
-            f'<div class="tldr"><b>事实速览</b>：近 {_esc(days)} 天，DeepFocus 站内信号在相关标的/板块被市场'
+            f'<div class="tldr"><b>事实速览</b>：近 {_esc(days)} 天，稻草财经 站内信号在相关标的/板块被市场'
             f"关注之前平均提前 {_esc(avg_lead)} 小时出现，共提前覆盖 {_esc(n)} 次、最长领先 {_esc(max_lead)} 小时，"
             f"覆盖 {_esc(days_covered)} 个交易日（板块 {_esc(rec.get('sector_hits') or 0)} 次 / "
             f"个股 {_esc(rec.get('stock_hits') or 0)} 次）。</div>"
@@ -1316,13 +1316,13 @@ def render_track_record_page_html(record: dict[str, Any], page_url: str = "") ->
     trail = [("首页", f"{BASE_URL}/"), ("提前覆盖记录", canonical)]
     return _page(
         title=f"信息时效记录：近{days}天提前覆盖{n}次",
-        description=f"DeepFocus 近 {days} 天信息时效记录：站内信号提前覆盖 {n} 次、平均领先 {avg_lead} 小时，"
+        description=f"稻草财经 近 {days} 天信息时效记录：站内信号提前覆盖 {n} 次、平均领先 {avg_lead} 小时，"
                     "每条附时间戳与佐证链接，可逐条溯源。仅为发布时间事实统计，不构成投资建议。",
         body="".join(parts),
         canonical=canonical,
         graph=_graph(_breadcrumb_node(trail)),
         cta_href=APP_URL,
-        cta_text="到 DeepFocus 看实时信号 →",
+        cta_text="到 稻草财经 看实时信号 →",
     )
 
 
@@ -1421,13 +1421,13 @@ def render_qa_page_html(qa: dict[str, Any], related: Optional[list[dict[str, Any
     canonical = page_url or f"{BASE_URL}/qa/{slug}"
 
     parts = [f"<h1>{_esc(q or '投研问答')}</h1>",
-             '<div class="meta">DeepFocus AI 投研问答 · 自动生成，仅供研究参考</div>']
+             '<div class="meta">稻草财经 AI 投研问答 · 自动生成，仅供研究参考</div>']
     # answer-first：首段直答（AI 引擎偏好整段抽取）
     paras = [ln for ln in answer.splitlines() if ln.strip()] or [answer]
     parts.append(f'<div class="lead">{_esc(paras[0][:600])}</div>')
     for ln in paras[1:]:
         parts.append(f"<p>{_esc(ln)}</p>")
-    parts.append('<a class="cta" href="' + _esc(APP_URL) + '">在 DeepFocus 问更多 →</a>')
+    parts.append('<a class="cta" href="' + _esc(APP_URL) + '">在 稻草财经 问更多 →</a>')
 
     rel_chips = "".join(
         f'<a href="{_esc(BASE_URL)}/qa/{_esc(r.get("slug") or r.get("fp"))}">{_esc((r.get("q") or "")[:24])}</a>'
@@ -1446,7 +1446,7 @@ def render_qa_page_html(qa: dict[str, Any], related: Optional[list[dict[str, Any
         graph = _graph(_breadcrumb_node(trail), faq)
     return _page(
         title=title,
-        description=answer[:200] or "DeepFocus AI 投研问答。",
+        description=answer[:200] or "稻草财经 AI 投研问答。",
         body="".join(p for p in parts if p),
         canonical=canonical,
         graph=graph,
@@ -1464,11 +1464,11 @@ def render_qa_hub_html(items: list[dict[str, Any]]) -> str:
         for it in items if (it.get("slug") or it.get("fp")) and (it.get("q") or "").strip()
     ) or "<p>暂无问答。</p>"
     body = ("<h1>投研问答 · 大家都在问</h1>"
-            '<div class="meta">DeepFocus 用户高频提问与 AI 解答，自动沉淀，仅供研究参考</div>' + rows)
+            '<div class="meta">稻草财经 用户高频提问与 AI 解答，自动沉淀，仅供研究参考</div>' + rows)
     trail = [("首页", f"{BASE_URL}/"), ("投研问答", f"{BASE_URL}/qa")]
     return _page(
         title="投研问答 · 大家都在问",
-        description="DeepFocus 用户最关心的股票与市场问题，AI 多维取数解答，每问一页。仅供研究参考，不构成投资建议。",
+        description="稻草财经 用户最关心的股票与市场问题，AI 多维取数解答，每问一页。仅供研究参考，不构成投资建议。",
         body=body,
         canonical=f"{BASE_URL}/qa",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1486,7 +1486,7 @@ def render_learn_page_html(term: dict[str, Any], related: Optional[list[dict[str
     title = f"{name}是什么？一文看懂"
     canonical = page_url or f"{BASE_URL}/learn/{slug}"
     parts = [f"<h1>{_esc(name)}</h1>",
-             '<div class="meta">DeepFocus 财经术语 · 投资科普 · 仅供学习参考</div>',
+             '<div class="meta">稻草财经 财经术语 · 投资科普 · 仅供学习参考</div>',
              f'<div class="lead">{_esc(defi)}</div>']
     if term.get("aliases"):
         parts.append(f'<p style="color:#8b939b;font-size:13px">又称：{_esc("、".join(term["aliases"]))}</p>')
@@ -1497,7 +1497,7 @@ def render_learn_page_html(term: dict[str, Any], related: Optional[list[dict[str
         if chips:
             parts.append(f'<h2>相关术语</h2><div class="chips">{chips}</div>')
     parts.append(
-        '<h2>在 DeepFocus 用它做研究</h2><div class="chips">'
+        '<h2>在 稻草财经 用它做研究</h2><div class="chips">'
         f'<a href="{_esc(BASE_URL)}/stocks">热门个股速判</a>'
         f'<a href="{_esc(BASE_URL)}/stocks/all">全部 A 股</a>'
         f'<a href="{_esc(BASE_URL)}/qa">投研问答</a></div>')
@@ -1524,7 +1524,7 @@ def render_learn_hub_html(terms: list[dict[str, Any]]) -> str:
     trail = [("首页", f"{BASE_URL}/"), ("财经术语", f"{BASE_URL}/learn")]
     return _page(
         title="财经术语库 · 投资科普",
-        description="DeepFocus 财经术语科普：市盈率、市净率、ROE、换手率、北向资金、MACD、杯柄形态等常用概念一文看懂。",
+        description="稻草财经 财经术语科普：市盈率、市净率、ROE、换手率、北向资金、MACD、杯柄形态等常用概念一文看懂。",
         body=body,
         canonical=f"{BASE_URL}/learn",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1623,7 +1623,7 @@ _FRIENDLY_BOTS = [
 
 
 def render_robots_txt() -> str:
-    lines = ["# DeepFocus / daocaijing.com — 欢迎搜索与生成式 AI 引擎抓取公开内容（仅供研究参考，不构成投资建议）"]
+    lines = ["# 稻草财经 / daocaijing.com — 欢迎搜索与生成式 AI 引擎抓取公开内容（仅供研究参考，不构成投资建议）"]
     # 每个已知友好爬虫一条 stanza：放行全站、屏蔽 API。
     for bot in dict.fromkeys(_FRIENDLY_BOTS):  # 去重保序
         lines.append(f"User-agent: {bot}")
@@ -1638,7 +1638,7 @@ def render_robots_txt() -> str:
 
 def render_llms_txt() -> str:
     """llms.txt（GEO）：给 AI 引擎一张「这站有什么可引用内容、在哪」的速查表（markdown）。"""
-    return f"""# DeepFocus 金融数据 (daocaijing.com)
+    return f"""# 稻草财经 金融数据 (daocaijing.com)
 
 > 面向中文投资者的 AI 投研工作台：A股每日收盘复盘、个股多维证据速判、财经资讯聚合与 AI 解读。
 > 下列页面为证据引擎每日自动生成的常青内容，结构清晰、自带日期与证据，欢迎检索与引用。
@@ -1657,8 +1657,12 @@ def render_llms_txt() -> str:
 - {BASE_URL}/sitemap.xml
 - {BASE_URL}/feed.xml（RSS 增量）
 
+## 机器接入（MCP）
+- MCP Server：{BASE_URL}/api/mcp — 标准 Model Context Protocol（Streamable HTTP），提供每日复盘、个股证据速判、财经资讯检索、AI 投研问答等工具。
+- 接入方式：Bearer 个人接入令牌；到 {BASE_URL}/api/mcp/setup 自助创建令牌并查看连接说明。
+
 ## 引用规范
-- 来源请注明 DeepFocus（{BASE_URL}）。
+- 来源请注明 稻草财经（{BASE_URL}）。
 - 内容随行情每日更新，引用时请带上页面标注的日期。
 - 不要把页面中的研判当作投资建议；它们是确定性多因子证据引擎的中性化结论。
 """
@@ -1688,7 +1692,7 @@ def render_feed_xml(reviews: list[dict[str, Any]], articles: list[dict[str, Any]
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<rss version="2.0"><channel>'
-        '<title>DeepFocus · A股每日复盘与财经资讯</title>'
+        '<title>稻草财经 · A股每日复盘与财经资讯</title>'
         f'<link>{html.escape(BASE_URL)}/</link>'
         '<description>每个交易日自动生成的 A 股复盘与财经资讯（仅供研究参考，不构成投资建议）。</description>'
         '<language>zh-CN</language>'
@@ -1699,7 +1703,7 @@ def render_feed_xml(reviews: list[dict[str, Any]], articles: list[dict[str, Any]
 def render_error_html(message: str = "页面暂时无法生成，请稍后再试。") -> str:
     return (
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
-        '<title>暂时无法生成 · DeepFocus</title><meta name="robots" content="noindex"></head>'
+        '<title>暂时无法生成 · 稻草财经</title><meta name="robots" content="noindex"></head>'
         '<body style="font-family:sans-serif;max-width:520px;margin:60px auto;padding:0 20px;color:#333">'
         f"<h1>稍后再试</h1><p>{html.escape(message)}</p></body></html>"
     )
@@ -1710,7 +1714,7 @@ def render_error_html(message: str = "页面暂时无法生成，请稍后再试
 # --------------------------------------------------------------------------- #
 def render_about_page_html() -> str:
     body = (
-        "<h1>DeepFocus · 深度焦点</h1>"
+        "<h1>稻草财经</h1>"
         '<div class="meta">现代化个股投研智库 —— 从信息到决策，钻井式深度研究</div>'
         "<h2>我们做什么</h2>"
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
@@ -1737,8 +1741,8 @@ def render_about_page_html() -> str:
     )
     trail = [("首页", f"{BASE_URL}/"), ("关于我们", f"{BASE_URL}/about")]
     return _page(
-        title="关于 DeepFocus · 深度焦点",
-        description="DeepFocus（深度焦点）是现代化个股投研智库：A 股每日复盘、个股多维证据速判、AI 策略模拟盘业绩与 AI 蒸馏资讯，钻井式深度研究。",
+        title="关于 稻草财经",
+        description="稻草财经（深度焦点）是现代化个股投研智库：A 股每日复盘、个股多维证据速判、AI 策略模拟盘业绩与 AI 蒸馏资讯，钻井式深度研究。",
         body=body,
         canonical=f"{BASE_URL}/about",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1771,8 +1775,8 @@ def render_partners_page_html() -> str:
     )
     trail = [("首页", f"{BASE_URL}/"), ("合作与API", f"{BASE_URL}/partners")]
     return _page(
-        title="合作与 API · DeepFocus",
-        description="DeepFocus 面向机构与合作伙伴：个股速判 / tearsheet / 复盘数据的 API 能力、数据覆盖与合作通道。",
+        title="合作与 API · 稻草财经",
+        description="稻草财经 面向机构与合作伙伴：个股速判 / tearsheet / 复盘数据的 API 能力、数据覆盖与合作通道。",
         body=body,
         canonical=f"{BASE_URL}/partners",
         graph=_graph(_breadcrumb_node(trail)),
