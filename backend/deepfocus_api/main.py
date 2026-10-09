@@ -8820,6 +8820,10 @@ async def run_research_prewarm() -> None:
     done_counter = {"n": 0}
     banned = {"hit": False}
     failed_fids: set[str] = set()  # 下载成功但解读失败的，本进程内不再重复下载（避免浪费当日预算；重启后再试）
+    # 24h 防抖：部分研报模型只能产出 <4 条逻辑线，report_depth_needs_refresh 会永远判短，
+    # 不设防抖会让同一篇每轮被重算、占死名额，新报告永远轮不到下载（2026-10-08 实测）。
+    _WARM_THROTTLE_SECONDS = 24 * 3600.0
+    warmed_at: dict[str, float] = {}
 
     async def _warm_one(item: dict, sem: asyncio.Semaphore, ai: bool = True) -> None:
         fid = str(item.get("file_id") or "").strip()
@@ -8862,6 +8866,7 @@ async def run_research_prewarm() -> None:
                 metrics_set_ai_cache(ai_cache_key, result)
                 if ai_cache_key != fid:  # 保留无版本别名给研报博客/头条标的提取
                     metrics_set_ai_cache(fid, result)
+                warmed_at[fid] = time.time()
                 done_counter["n"] += 1
             except asyncio.CancelledError:
                 raise
@@ -8881,7 +8886,7 @@ async def run_research_prewarm() -> None:
                 daily_max, datetime.now(ai_fund.BJ_TZ).hour,
             )
             download_room = max(0, download_cap - used)
-            data = await fetch_research_wire_online(limit=200)  # 整库覆盖（知识星球返回上限）
+            data = await fetch_research_wire_online(limit=200, use_cache=False)  # 整库覆盖（禁缓存：陈旧清单会让预热吃旧报告，新报告永远进不了队列）
             fresh: list[dict] = []
             migrate: list[dict] = []
             pdf_only: list[dict] = []  # 已 AI 解读但原文未去水印落盘 → 仅补 PDF 成品缓存(列表近新优先)，让用户点开秒看
@@ -8894,9 +8899,12 @@ async def run_research_prewarm() -> None:
                 # 用户手动打开原文走独立接口，不受这个后台候选过滤影响。
                 if non_a_only and _market_for(fid, str(it.get("title") or ""), cached) not in {"HK", "US"}:
                     continue
-                if not cached or report_depth_needs_refresh(cached):
-                    # 旧缓存可能只有一句话和几条 bullet；把它当作待重算，
-                    # 否则后台永远不会用新版提示词回填。
+                # 旧缓存可能只有一句话和几条 bullet；把它当作待重算，
+                # 否则后台永远不会用新版提示词回填。
+                needs_refresh = report_depth_needs_refresh(cached) and (
+                    time.time() - warmed_at.get(fid, 0.0) > _WARM_THROTTLE_SECONDS
+                )
+                if not cached or needs_refresh:
                     fresh.append(it)  # 新报告或旧短缓存：下载→用新版提示词重算
                 elif isinstance(cached, dict) and "instruments" not in cached:
                     migrate.append(it)  # 旧缓存补「提及标的」（市场归类由 _market_for 用 subject 即时算，无需重下载）
@@ -8935,9 +8943,13 @@ async def run_research_prewarm() -> None:
             migrate_pending = migrate_local_pending + migrate_remote_pending
             pending = fresh_pending + pdf_pending + migrate_pending
             if pending:
+                _dbg = ", ".join(
+                    f"{(str(it.get('file_id') or ''))[-6:]}{'L' if has_cached_file_id(str(it.get('file_id') or '')) else 'R'}"
+                    for it in pending[:6]
+                )
                 print(
                     f"[prewarm] 本轮处理 {len(pending)} 篇（新{len(fresh_pending)}/原文{len(pdf_pending)}/"
-                    f"回填{len(migrate_pending)}），分时下载额度 {used}/{download_cap}（日上限{daily_max}）"
+                    f"回填{len(migrate_pending)}），分时下载额度 {used}/{download_cap}（日上限{daily_max}）；pending: {_dbg}"
                 )
                 sem = asyncio.Semaphore(workers)
                 pdf_ids = {id(x) for x in pdf_pending}  # 仅这批走「只补 PDF、不重解读」
