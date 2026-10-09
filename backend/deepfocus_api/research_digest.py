@@ -59,7 +59,7 @@ _MAX_PROMPT_CHARS = 58_000
 # JSON call plus format retries).  Keep each attempt and the whole deep-draft
 # request below the client's 360s timeout so a malformed-model response cannot
 # occupy the global semaphore indefinitely after the browser has given up.
-_DEEP_LLM_CALL_TIMEOUT_SECONDS = 100
+_DEEP_LLM_CALL_TIMEOUT_SECONDS = 240  # 长报告（5万+字符提示词）生成需 >100s：100s 会超时静默失败落兜底
 _DEEP_LLM_TOTAL_TIMEOUT_SECONDS = 315
 # Image-only deep drafts use the same page budget as the compact report.  The
 # previous six-page cap made long decks look empty even when the key chart or
@@ -1193,9 +1193,9 @@ async def generate_deep_draft(
                 if isinstance(data, dict) and data:
                     provider = _clean(getattr(llm, "model", "cloud"), 120) or "cloud"
                     return _base_response(request, docs, data=data, provider=provider, disclaimer=_DISCLAIMER)
-        except Exception:
+        except Exception as exc:
             # A model outage should never erase the readable source extraction.
-            pass
+            print(f"[deep-draft] 文本路径 LLM 失败：{type(exc).__name__}: {str(exc)[:120]}")
 
     # Image-only PDFs (no extractable text layer) skip the text path above.
     # The renderer caps the selected window, so long scans can still be read

@@ -9453,6 +9453,11 @@ async def api_research_deep_draft(
             return False
         if not isinstance(value.get("source_coverage"), dict):
             return False
+        # 模型失败的确定性兜底不当长期缓存：瞬时 LLM 故障会被缓存成永久降级解读
+        # （provider=local-fallback、置信 ~0.12、章节只是原文摘录"页面线索"）。
+        # 按未命中处理，下次点击重试生成；LLM 仍不可用时现场兜底，UX 相同但缓存不再被毒化。
+        if value.get("provider") == "local-fallback":
+            return False
         try:
             ResearchDeepDraftResponse.model_validate(value)
         except Exception:
@@ -9553,7 +9558,7 @@ async def api_research_deep_draft(
                     stock=request.symbol,
                     attachments=[request.filename or request.workbench_filename or "研报资料"],
                     channel="web",
-                    timeout_seconds=180.0,
+                    timeout_seconds=300.0,
                 ),
                 lambda: generate_deep_draft(request, documents=docs),
                 route="deep-draft",
