@@ -1,5 +1,5 @@
 import { DataQuality, Post, Stock } from '../types';
-import { apiGet, apiPost } from './apiClient';
+import { apiGet, apiPost, DF_WEB_TOKEN } from './apiClient';
 
 // === aiResearchService types ===
 
@@ -930,6 +930,83 @@ export function generateResearchDeepDraft(
   payload: ResearchDeepDraftRequest,
 ): Promise<ResearchDeepDraftResponse> {
   return apiPost<ResearchDeepDraftResponse>('/api/research/deep-draft', payload, { timeout: 360000 });
+}
+
+/** 深度解读流式版：SSE 阶段进度实时回报（获取原文→页数/字符→生成中→兜底提示），
+ * 完成后返回与 POST 端点完全同构的结果。流不可用（旧后端 404/405、首个事件前
+ * 网络失败）时静默回退普通 POST；402/403/422 与生成错误按 axios 形状抛出，
+ * 复用调用方现有处理链。 */
+export async function generateResearchDeepDraftSmart(
+  payload: ResearchDeepDraftRequest,
+  onStage?: (detail: string) => void,
+): Promise<ResearchDeepDraftResponse> {
+  try {
+    return await streamResearchDeepDraft(payload, onStage);
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 402 || status === 403 || status === 422) throw err;
+    if (err?.streamUnavailable) return generateResearchDeepDraft(payload);
+    throw err;
+  }
+}
+
+async function streamResearchDeepDraft(
+  payload: ResearchDeepDraftRequest,
+  onStage?: (detail: string) => void,
+): Promise<ResearchDeepDraftResponse> {
+  const token = localStorage.getItem('auth_token');
+  const resp = await fetch('/api/research/deep-draft/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-DF-Web': DF_WEB_TOKEN,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok || !resp.body) {
+    let detail = '';
+    try { detail = (await resp.json())?.detail || ''; } catch { /* 保留状态码提示 */ }
+    const err: any = new Error(detail || `HTTP ${resp.status}`);
+    err.response = { status: resp.status, data: { detail } };
+    throw err;
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let result: ResearchDeepDraftResponse | null = null;
+  let sawEvent = false;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const line = frame.split('\n').find(l => l.startsWith('data:'));
+      if (!line) continue;
+      let evt: any;
+      try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+      sawEvent = true;
+      if (evt.type === 'stage' && onStage && evt.detail) onStage(evt.detail);
+      else if (evt.type === 'done' && evt.data) result = evt.data;
+      else if (evt.type === 'error') {
+        const err: any = new Error(evt.detail || '生成失败');
+        err.response = { status: evt.status || 502, data: { detail: evt.detail } };
+        throw err;
+      }
+    }
+  }
+  if (result) return result;
+  if (!sawEvent) {
+    const err: any = new Error('stream unavailable');
+    err.streamUnavailable = true;
+    throw err;
+  }
+  const err: any = new Error('解读中断，请重试');
+  err.response = { status: 502, data: { detail: '解读中断，请重试' } };
+  throw err;
 }
 
 /** 图片型研报（无文字层）的多模态视觉解读——渲染页面图像交给视觉模型读图出观点。 */

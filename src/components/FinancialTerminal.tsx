@@ -20,6 +20,7 @@ import { runToolResearch, runToolResearchStream, listDulusMemory, sendAgentFeedb
 import {
   extractFileText,
   generateResearchDeepDraft,
+  generateResearchDeepDraftSmart,
   type ResearchDeepDraftResponse
 } from '../services/researchService';
 import { getZsxqStream, type ZsxqTopic } from '../services/zsxqStreamService';
@@ -158,7 +159,7 @@ interface AiLogicLine {
 }
 interface AiAnalysis {
   title: string; subject?: string; one_liner?: string; summary: string; core_logic?: string; takeaway?: string;
-  df_take?: string;   // DeepFocus 视角点评：我方原创独立判断（转化创作，版权安全，盖 DeepFocus 水印）
+  df_take?: string;   // 稻草财经 视角点评：我方原创独立判断（转化创作，版权安全，盖 稻草财经 水印）
   logic_lines?: AiLogicLine[]; // 贯穿式独立逻辑线：事实→传导→影响→验证
   bullish?: string[]; bearish?: string[]; key_points?: string[]; risks?: string[];
   instruments?: string[]; market?: string;   // 原文提及的可交易标的（A/美/港股+黄金原油白银比特币）+ 主要市场
@@ -222,7 +223,7 @@ function aiAnalysisToText(r: AiAnalysis, title: string): string {
   if (conclusion) { L.push(''); L.push(`💡 ${conclusion}`); }
   if (r.summary && r.summary.trim() !== conclusion?.trim()) { L.push('', '【报告综述】', r.summary); }
   if (lines.length) {
-    L.push('', `【DeepFocus 视角 · ${lines.length}条独立逻辑线】`);
+    L.push('', `【稻草财经 视角 · ${lines.length}条独立逻辑线】`);
     lines.forEach((line, i) => {
       L.push(`${i + 1}. ${line.title || `逻辑线 ${i + 1}`}`);
       if (line.evidence) L.push(`事实：${line.evidence}`);
@@ -1050,7 +1051,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [sideToolsOpen, setSideToolsOpen] = useState(false);
   const [showReferral, setShowReferral] = useState(false);  // 邀请得会员弹层
   const [showAiFund, setShowAiFund] = useState(false);      // AI 模拟盘弹层
-  const [showWeixinBind, setShowWeixinBind] = useState(false);  // 微信扫码绑定（扫码即问 DeepFocus）
+  const [showWeixinBind, setShowWeixinBind] = useState(false);  // 微信扫码绑定（扫码即问 稻草财经）
   const [riskRadarOpen, setRiskRadarOpen] = useState(false);  // A/H/美股市值前20风险预警独立模块
   const [quantLabOpen, setQuantLabOpen] = useState(false);  // QuantLab 登录态全屏工具；URL 与浏览器后退同步
   // 账号菜单可发现性：首次登录给一次性气泡指向头像，告知里面有会员/绑定/邀请等功能（看过即不再弹）
@@ -1337,8 +1338,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiResult, setAiResult] = useState<AiAnalysis | null>(null);
   // 研报默认走文章式深度稿；为空时仍使用下面的旧 compact 卡片（兼容旧缓存/灰度后端）。
   const [aiDeepDraft, setAiDeepDraft] = useState<ResearchDeepDraftInput>(null);
-  const [dfExpanded, setDfExpanded] = useState(false);  // DeepFocus 视角深度点评：长文默认收起，点「展开全文」看全
+  const [dfExpanded, setDfExpanded] = useState(false);  // 稻草财经 视角深度点评：长文默认收起，点「展开全文」看全
   const [aiLoading, setAiLoading] = useState(false);
+  // 流式端点回报的真实阶段（SSE stage 事件）；空串时 loading UI 退回耗时预估节奏
+  const [aiStage, setAiStage] = useState('');
   // 同一会话内重复打开同一条资讯/研报时直接复用已完成的解读；服务端仍负责
   // 跨用户持久缓存，这里只做前端瞬时缓存，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
@@ -2904,7 +2907,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         try { window.history.replaceState({}, '', window.location.pathname + window.location.hash); } catch { /* */ }
         const bits = [d?.headline, d?.macro_verdict ? `宏观风险偏好：${d.macro_verdict}` : '', d?.portfolio_verdict ? `组合状态：${d.portfolio_verdict}` : '', d?.disclaimer].filter(Boolean);
         if (bits.length) {
-          const view = { id: `briefing-${bday}`, title: `🌅 投研晨报 · ${bday}`, content: bits.join('\n\n'), topic: '晨报', source_name: 'DeepFocus 投研晨报', created_at: '' } as unknown as RealtimeMessageRecord;
+          const view = { id: `briefing-${bday}`, title: `🌅 投研晨报 · ${bday}`, content: bits.join('\n\n'), topic: '晨报', source_name: '稻草财经 投研晨报', created_at: '' } as unknown as RealtimeMessageRecord;
           setNewsPreview(view);
         }
       } catch { /* 晨报拉取失败就落在首页，与旧行为一致 */ }
@@ -3312,7 +3315,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     logAct('ai_report', r.title);
     // 研报解读的完整层是核心增值内容：结果返回后直接展开，避免用户只看到
     // 一句话和几条 bullet；文章解读仍保持紧凑展示。
-    setAiReport(r); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false); setAiError(''); setDfExpanded(true); setAiLoading(true);
+    setAiReport(r); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false); setAiError(''); setDfExpanded(true); setAiLoading(true); setAiStage('');
     setAiReportMeta({ org: (r as any).org || '', symbol: (r.instruments && r.instruments[0]) || '', preview_url: r.preview_url || '' });  // 研报解读→可分享落地页 + 原文按钮
     aiRetryRef.current = () => runAiAnalysis(r);
     const previewUrl = r.preview_url || '';
@@ -3332,11 +3335,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       // 研报主路径：文章式深度稿（默认 32 页，后端上限 60）。
       // 返回中附带 compact 时复用它；否则从文章结构投影，保证旧分享/出图仍可用。
-      const deep = await generateResearchDeepDraft({
+      const deep = await generateResearchDeepDraftSmart({
         ...sourceBody,
         max_pages: RESEARCH_DEEP_DRAFT_MAX_PAGES,
         symbol: (r.instruments && r.instruments[0]) || undefined,
-      });
+      }, setAiStage);
       if (!isCurrent()) return;
       const compact = deep.compact || compactFromDeepDraft(deep);
       setAiDeepDraft(deep as unknown as ResearchDeepDraftInput);
@@ -3462,7 +3465,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, []);
 
 
-  // 快讯复制(金十式·固定规则·零大模型)：头条用「DeepFocus快讯丨X月X日讯，」通讯体起手 + 原文事实(逐字忠实、不改不编) + 引流链接；
+  // 快讯复制(金十式·固定规则·零大模型)：头条用「稻草财经快讯丨X月X日讯，」通讯体起手 + 原文事实(逐字忠实、不改不编) + 引流链接；
   // 原文链接保留(竞品域名除外)。即时、确定、零 token——固定格式没必要叫大模型。
   const copyNews = useCallback(async (m: RealtimeMessageRecord) => {
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
@@ -3471,8 +3474,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       catch { return ''; }
     })();
     const headline = (m.title || '').trim();
-    // 头条:「DeepFocus快讯丨6月24日讯，<原文标题>。」标题已带句末标点则不再补
-    const lead = `DeepFocus快讯${dateLabel ? `丨${dateLabel}讯，` : '丨'}${headline}${/[。！？!?…」』）)\.]$/.test(headline) ? '' : '。'}`;
+    // 头条:「稻草财经快讯丨6月24日讯，<原文标题>。」标题已带句末标点则不再补
+    const lead = `稻草财经快讯${dateLabel ? `丨${dateLabel}讯，` : '丨'}${headline}${/[。！？!?…」』）)\.]$/.test(headline) ? '' : '。'}`;
     const parts: string[] = [lead];
     const bodyTail = newsBodyTail(m.title, m.content);   // 正文里标题之后的增量(剥掉与标题重复的前缀,避免复制文本里标题出现两遍)
     if (bodyTail) parts.push('', bodyTail);
@@ -3637,7 +3640,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const push = (lines: string[], font: string, lh: number, color: string, mt = 0, bullet?: string) => {
       items.push({ lines, font, lh, color, mt, bullet }); h += mt + lines.length * lh;
     };
-    push([compactReport ? 'DEEPFOCUS 金融终端 · AI 速读' : 'DEEPFOCUS 金融终端 · AI 新闻简报'], F(15, '700'), 24, '#ffb000');
+    push([compactReport ? '稻草财经 金融终端 · AI 速读' : '稻草财经 金融终端 · AI 新闻简报'], F(15, '700'), 24, '#ffb000');
     push(wrap(aiReport?.title || r.title || '', F(21, '700'), maxW), F(21, '700'), 31, '#f4ecd6', 8);
     if (aiReport?.date) push([`🗓 ${aiReport.date}`], F(13, '400'), 20, '#8a8463', 4);
     const chips = [r.subject && `标的 ${r.subject}`, r.rating && `评级 ${r.rating}`, r.target_price && `目标价 ${r.target_price}`].filter(Boolean).join('　｜　');
@@ -3666,12 +3669,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     cv.width = W * SC; cv.height = Math.ceil(h) * SC; ctx.scale(SC, SC);
     ctx.fillStyle = '#0a0d12'; ctx.fillRect(0, 0, W, h);
     ctx.fillStyle = '#ffb000'; ctx.fillRect(0, 0, W, 4);
-    // 品牌水印：斜向平铺半透明「DEEPFOCUS」铺满全卡，明确标注为我方原创解读（防盗用、立品牌）
+    // 品牌水印：斜向平铺半透明「稻草财经」铺满全卡，明确标注为我方原创解读（防盗用、立品牌）
     ctx.save();
     ctx.globalAlpha = 0.04; ctx.fillStyle = '#ffb000'; ctx.font = F(34, '800');
     ctx.translate(W / 2, h / 2); ctx.rotate(-Math.PI / 7);
     for (let wy = -h; wy < h; wy += 120) {
-      for (let wx = -W; wx < W; wx += 360) ctx.fillText('DEEPFOCUS', wx, wy);
+      for (let wx = -W; wx < W; wx += 360) ctx.fillText('稻草财经', wx, wy);
     }
     ctx.restore();
     ctx.textBaseline = 'top';
@@ -3694,7 +3697,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (qr.matrix[i][j]) ctx.fillRect(qx + j * cell, qy + i * cell, cell + 0.6, cell + 0.6);
     }
     // 页脚：品牌为主、域名为辅（不再用大蓝裸域名，显得更克制）
-    ctx.font = F(16, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('DEEPFOCUS 金融终端', PAD, footTop + 14);
+    ctx.font = F(16, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('稻草财经 金融终端', PAD, footTop + 14);
     ctx.font = F(12); ctx.fillStyle = '#8a93a0'; ctx.fillText('扫码访问 · ' + site.replace(/^https?:\/\//, ''), PAD, footTop + 40);
     ctx.font = F(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('AI 自动解读 · 仅供参考，非投资建议', PAD, footTop + 60);
     return await new Promise<Blob | null>(res => cv.toBlob(res, 'image/png'));
@@ -3729,7 +3732,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       const coarse = typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
       // 移动端优先原生分享面板（可直接发朋友圈/好友/存图）；不支持/失败再回退长按弹图
       if (coarse) {
-        const r = await shareImageNative(blob, { filename: 'DeepFocus-微信分享图.png', title: 'DeepFocus 金融终端', text: aiReport?.title || 'DeepFocus · AI 解析' });
+        const r = await shareImageNative(blob, { filename: '稻草财经-微信分享图.png', title: '稻草财经 金融终端', text: aiReport?.title || '稻草财经 · AI 解析' });
         if (r === 'shared') return;
       }
       // 桌面：尝试直接复制图片到剪贴板（部分浏览器如 Firefox 不支持 → 抛错走弹图）
@@ -3760,7 +3763,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const coarse = typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     // 移动端优先原生分享面板（可直接发朋友圈/好友/存图）；不支持/失败再回退长按弹图
     if (coarse) {
-      const r = await shareImageNative(blob, { filename: 'DeepFocus.png', title: 'DeepFocus 金融终端', text: 'DeepFocus · 实时资讯，提前发现' });
+      const r = await shareImageNative(blob, { filename: '稻草财经.png', title: '稻草财经 金融终端', text: '稻草财经 · 实时资讯，提前发现' });
       if (r === 'shared') return;
     }
     try {
@@ -3795,7 +3798,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const items: Block[] = []; let h = PAD;
     const push = (lines: string[], font: string, lh: number, color: string, mt = 0, bullet?: string) => { items.push({ lines, font, lh, color, mt, bullet }); h += mt + lines.length * lh; };
     const sess = r.session_label || '收盘复盘';
-    push([`DEEPFOCUS 金融终端 · A股${sess}`], F(15, '700'), 24, '#ffb000');
+    push([`稻草财经 金融终端 · A股${sess}`], F(15, '700'), 24, '#ffb000');
     push([`🗓 ${r.date || ''}${r.session === 'midday' ? ' · 盘中半日' : ' · 全天定稿'}`], F(13, '400'), 20, '#8a8463', 4);
     if (nar.one_liner) push(wrap('「' + nar.one_liner + '」', F(19, '700'), maxW), F(19, '700'), 29, '#ffd980', 12);
     // 指数行
@@ -3808,7 +3811,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     sec('funds', nar.funds, '#9fc0ff', '💰 资金面');
     // ⭐ 我们提前发现的
     if (nar.our_value || (r.our_edge || []).length) {
-      push(['⭐ DeepFocus 提前发现'], F(15, '800'), 25, '#ffb000', 18);
+      push(['⭐ 稻草财经 提前发现'], F(15, '800'), 25, '#ffb000', 18);
       if (nar.our_value) push(wrap(nar.our_value, F(15), maxW), F(15), 25, '#f0e3c8', 3);
       (r.our_edge || []).slice(0, 5).forEach((e: any) => {
         const lead = (typeof e.lead_hours === 'number' && e.lead_hours >= 1) ? (e.lead_hours >= 24 ? `领先约${(e.lead_hours / 24).toFixed(0)}天` : `领先约${e.lead_hours.toFixed(0)}小时`) : '同日捕捉';
@@ -3825,7 +3828,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     for (const it of items) { y += it.mt; for (const ln of it.lines) { if (it.bullet) { ctx.font = F(11); ctx.fillStyle = '#ffb000'; ctx.fillText(it.bullet, PAD, y + 3); ctx.font = it.font; ctx.fillStyle = it.color; ctx.fillText(ln, PAD + 18, y); } else { ctx.font = it.font; ctx.fillStyle = it.color; ctx.fillText(ln, PAD, y); } y += it.lh; } }
     ctx.strokeStyle = '#1c2530'; ctx.beginPath(); ctx.moveTo(PAD, footTop); ctx.lineTo(W - PAD, footTop); ctx.stroke();
     if (qr) { const n = qr.size, cell = qrSize / n, qx = W - PAD - qrSize, qy = footTop + 16; ctx.fillStyle = '#fff'; ctx.fillRect(qx - 6, qy - 6, qrSize + 12, qrSize + 12); ctx.fillStyle = '#000'; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (qr.matrix[i][j]) ctx.fillRect(qx + j * cell, qy + i * cell, cell + 0.6, cell + 0.6); }
-    ctx.font = F(16, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('DeepFocus · 提前发现', PAD, footTop + 16);
+    ctx.font = F(16, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('稻草财经 · 提前发现', PAD, footTop + 16);
     ctx.font = F(12); ctx.fillStyle = '#8a93a0'; ctx.fillText('扫码看实时资讯 · ' + site.replace(/^https?:\/\//, ''), PAD, footTop + 42);
     ctx.font = F(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('数据 + AI 综述 · 仅供研究参考，不构成投资建议', PAD, footTop + 62);
     return await new Promise<Blob | null>(res => cv.toBlob(res, 'image/png'));
@@ -3860,10 +3863,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const push = (lines: string[], font: string, lh: number, color: string, mt = 0, bullet?: string) => { items.push({ lines, font, lh, color, mt, bullet }); h += mt + lines.length * lh; };
     const tag = (e: any) => e.kind === 'stock' ? '个股' : '板块';
     const pctOf = (e: any) => `${e.pct > 0 ? '+' : ''}${e.pct.toFixed(2)}%`;
-    push(['DeepFocus · 信息领先 📈'], F(16, '800'), 26, '#ffb000');
+    push(['稻草财经 · 信息领先 📈'], F(16, '800'), 26, '#ffb000');
     push(['🎯 我的先知战绩'], F(23, '800'), 38, '#ffffff', 8);
     push([`提前 ${_leadLabel(hero.lead_hours)}`], F(50, '900'), 60, '#ffd166', 6);
-    push(['我在 DeepFocus 比市场早看到了 ↓'], F(15, '600'), 24, '#cfd6e0', 2);
+    push(['我在 稻草财经 比市场早看到了 ↓'], F(15, '600'), 24, '#cfd6e0', 2);
     const sigTitle = (hero.signals && hero.signals[0] && hero.signals[0].title) || hero.name;
     push(wrap(`【${sigTitle}】`, F(18, '700'), maxW), F(18, '700'), 28, '#ffe6a3', 18);
     push([`${tag(hero)} ${hero.name}　今日 ${pctOf(hero)}　⚡领先约 ${_leadLabel(hero.lead_hours)}`], F(14, '700'), 24, '#ffcf72', 6);
@@ -3900,14 +3903,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const seg = (h: string, t: string) => { if (t) L.push('', `【${h}】${t}`); };
     seg('导读', nar.plain); seg('大盘', nar.market); seg('板块', nar.sectors); seg('资金面', nar.funds);
     if (nar.our_value || (r.our_edge || []).length) {
-      L.push('', `【⭐ DeepFocus 提前发现】${nar.our_value || ''}`);
+      L.push('', `【⭐ 稻草财经 提前发现】${nar.our_value || ''}`);
       (r.our_edge || []).slice(0, 5).forEach((e: any) => {
         const lead = (typeof e.lead_hours === 'number' && e.lead_hours >= 1) ? (e.lead_hours >= 24 ? `领先约${(e.lead_hours / 24).toFixed(0)}天` : `领先约${e.lead_hours.toFixed(0)}小时`) : '同日捕捉';
         L.push(`  · ${e.kind === 'stock' ? '个股' : '板块'} ${e.name}${typeof e.pct === 'number' ? ` ${e.pct > 0 ? '+' : ''}${e.pct.toFixed(2)}%` : ''}  ⚡${lead}${e.evidence ? `（${e.evidence}条佐证）` : ''}`);
       });
     }
     seg('下一交易日', nar.tomorrow);
-    L.push('', `—— DeepFocus 终端 · 实时资讯，提前发现`, site.replace(/^https?:\/\//, ''));
+    L.push('', `—— 稻草财经 终端 · 实时资讯，提前发现`, site.replace(/^https?:\/\//, ''));
     const text = L.join('\n');
     if (await copyText(text)) { pingMetric('copy_text'); showToast('✅ 复盘已复制，可直接粘贴分享'); }
     else showToast('⚠️ 复制失败，请长按文本手动复制');
@@ -3957,7 +3960,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const t = deepTask; const dv = t && t.result; if (!t || !dv) return Promise.resolve(null);
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
     return _cardFromBlocks((push, wrap, F, maxW) => {
-      push(['DEEPFOCUS · 多智能体深度研判'], F(15, '700'), 24, '#ffb000');
+      push(['稻草财经 · 多智能体深度研判'], F(15, '700'), 24, '#ffb000');
       push([`${`${t.name || ''} ${t.symbol}`.trim()}　·　取证→多空辩论→风控→裁决`], F(13), 20, '#8a8463', 4);
       const dir = String(dv.direction || '中性');
       const dc = dir.indexOf('看多') >= 0 ? '#2bd96a' : dir.indexOf('看空') >= 0 ? '#ff5a52' : '#aeb6c2';
@@ -3969,7 +3972,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       const wl = dv.watch_levels;
       if (wl && (wl.support || wl.resistance || wl.note)) { push(['📐 观察位（非买卖指令）'], F(14, '700'), 23, '#c4b5fd', 16); const lv = [wl.support ? `支撑 ${wl.support}` : '', wl.resistance ? `压力 ${wl.resistance}` : ''].filter(Boolean).join('　'); if (lv) push([lv], F(14), 23, '#e2e5ea', 2); if (wl.note) push(wrap(stripMd(wl.note), F(13), maxW), F(13), 21, '#b9c0cc', 2); }
       if (dv.debate_synthesis) { push(['⚖️ 多空交锋'], F(14, '700'), 23, '#9fc0ff', 16); push(wrap(stripMd(dv.debate_synthesis), F(14), maxW), F(14), 24, '#dfe4ea', 2); }
-    }, { title: 'DeepFocus · AI 深度研判', sub: '扫码用 AI 研判个股 · ' + site.replace(/^https?:\/\//, ''), disc: '⚠ AI 多角色综合生成 · 仅供研究参考，不构成投资建议' });
+    }, { title: '稻草财经 · AI 深度研判', sub: '扫码用 AI 研判个股 · ' + site.replace(/^https?:\/\//, ''), disc: '⚠ AI 多角色综合生成 · 仅供研究参考，不构成投资建议' });
   }, [deepTask, _cardFromBlocks]);
 
   const shareDeepImage = useCallback(async () => {
@@ -3981,7 +3984,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const copyDeepText = useCallback(async () => {
     const t = deepTask; const dv = t && t.result; if (!t || !dv) return;
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-    const L: string[] = [`🔬 DeepFocus AI 深度研判 · ${`${t.name || ''} ${t.symbol}`.trim()}`];
+    const L: string[] = [`🔬 稻草财经 AI 深度研判 · ${`${t.name || ''} ${t.symbol}`.trim()}`];
     L.push(`研判方向：${dv.direction || '中性'}${typeof dv.confidence === 'number' ? ` · 置信 ${Math.round(dv.confidence * 100)}%` : ''}`);
     if (dv.thesis) L.push('', stripMd(dv.thesis));
     if (Array.isArray(dv.core_evidence) && dv.core_evidence.length) { L.push('', '【核心依据】'); dv.core_evidence.slice(0, 5).forEach((c: any) => L.push(`· ${c.point || ''}${c.evidence_ref ? `（${c.evidence_ref}）` : ''}`)); }
@@ -3989,7 +3992,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const wl = dv.watch_levels;
     if (wl && (wl.support || wl.resistance || wl.note)) { L.push('', `【观察位（非买卖指令）】${[wl.support ? `支撑 ${wl.support}` : '', wl.resistance ? `压力 ${wl.resistance}` : ''].filter(Boolean).join('  ')}`); if (wl.note) L.push(stripMd(wl.note)); }
     if (dv.debate_synthesis) L.push('', `【多空交锋】${stripMd(dv.debate_synthesis)}`);
-    L.push('', stripMd(dv.disclaimer || 'AI 多角色综合生成，仅供研究参考，不构成投资建议。'), `—— DeepFocus 终端 · ${site.replace(/^https?:\/\//, '')}`);
+    L.push('', stripMd(dv.disclaimer || 'AI 多角色综合生成，仅供研究参考，不构成投资建议。'), `—— 稻草财经 终端 · ${site.replace(/^https?:\/\//, '')}`);
     if (await copyText(L.join('\n'))) { pingMetric('copy_text'); logAct('deep_share_text', t.symbol || ''); showToast('✅ 研判已复制，可直接粘贴'); }
     else showToast('⚠️ 复制失败，请长按手动复制');
   }, [deepTask, pingMetric, showToast, logAct]);
@@ -3998,10 +4001,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const q = aiQuestion.trim(); const a = aiAnswer.trim(); if (!a) return Promise.resolve(null);
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
     return _cardFromBlocks((push, wrap, F, maxW) => {
-      push(['DEEPFOCUS · AI 投研问答'], F(15, '700'), 24, '#ffb000');
+      push(['稻草财经 · AI 投研问答'], F(15, '700'), 24, '#ffb000');
       if (q) push(wrap('问：' + q, F(15, '700'), maxW), F(15, '700'), 25, '#ffd980', 8);
       push(wrap(stripMd(a), F(15), maxW), F(15), 26, '#e2e5ea', 10);
-    }, { title: 'DeepFocus · AI 投研问答', sub: '扫码自己问 · ' + site.replace(/^https?:\/\//, ''), disc: '⚠ AI 综合平台数据生成 · 仅供研究参考，不构成投资建议' });
+    }, { title: '稻草财经 · AI 投研问答', sub: '扫码自己问 · ' + site.replace(/^https?:\/\//, ''), disc: '⚠ AI 综合平台数据生成 · 仅供研究参考，不构成投资建议' });
   }, [aiQuestion, aiAnswer, _cardFromBlocks]);
 
   const shareQaImage = useCallback(async () => {
@@ -4015,7 +4018,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
     const L: string[] = [];
     if (aiQuestion.trim()) L.push(`问：${aiQuestion.trim()}`, '');
-    L.push(stripMd(a), '', '⚠ 仅供研究参考，不构成投资建议。', `—— DeepFocus 终端 · ${site.replace(/^https?:\/\//, '')}`);
+    L.push(stripMd(a), '', '⚠ 仅供研究参考，不构成投资建议。', `—— 稻草财经 终端 · ${site.replace(/^https?:\/\//, '')}`);
     if (await copyText(L.join('\n'))) { pingMetric('copy_text'); showToast('✅ 已复制为文字'); }
     else showToast('⚠️ 复制失败，请长按手动复制');
   }, [aiAnswer, aiQuestion, pingMetric, showToast]);
@@ -4058,11 +4061,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     ctx.save();  // 品牌水印
     ctx.globalAlpha = 0.045; ctx.fillStyle = '#ffb000'; ctx.font = F(32, '800');
     ctx.translate(W / 2, h / 2); ctx.rotate(-Math.PI / 7);
-    for (let wy = -h; wy < h; wy += 110) for (let wx = -W; wx < W; wx += 340) ctx.fillText('DEEPFOCUS', wx, wy);
+    for (let wy = -h; wy < h; wy += 110) for (let wx = -W; wx < W; wx += 340) ctx.fillText('稻草财经', wx, wy);
     ctx.restore();
     ctx.textBaseline = 'top';
     let y = PAD;
-    ctx.font = F(14, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('DEEPFOCUS 快讯', PAD, y);
+    ctx.font = F(14, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('稻草财经 快讯', PAD, y);
     if (when) { ctx.font = F(13); ctx.fillStyle = '#8a93a0'; ctx.textAlign = 'right'; ctx.fillText(`${when} · 北京时间`, W - PAD, y + 1); ctx.textAlign = 'left'; }
     y += 26 + 10;
     ctx.font = F(20, '700'); ctx.fillStyle = '#f4ecd6';
@@ -4078,7 +4081,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       ctx.fillStyle = '#000';
       for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (qr.matrix[i][j]) ctx.fillRect(qx + j * cell, qy + i * cell, cell + 0.6, cell + 0.6);
     }
-    ctx.font = F(15, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('DEEPFOCUS 金融终端', PAD, footTop + 14);
+    ctx.font = F(15, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('稻草财经 金融终端', PAD, footTop + 14);
     ctx.font = F(12); ctx.fillStyle = '#8a93a0'; ctx.fillText('长按识别二维码 · 看 AI 解读与后续追踪', PAD, footTop + 38);
     ctx.font = F(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('快讯为事实转述 · 不构成投资建议', PAD, footTop + 58);
     const blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/png'));
@@ -4248,7 +4251,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       ops.push(() => { ctx.font = font; ctx.fillStyle = color; ctx.textBaseline = 'top'; lines.forEach((ln, i) => ctx.fillText(ln, x, y0 + i * lh)); });
       h += lines.length * lh;
     };
-    addText(['DEEPFOCUS 金融终端 · 今日市场早报'], F(19, '700'), 27, '#ffb000');
+    addText(['稻草财经 金融终端 · 今日市场早报'], F(19, '700'), 27, '#ffb000');
     addText([dateStr], F(13), 20, '#8a8463', 2);
     // 关键指标
     const ind = (k: string) => macro[k];
@@ -4293,7 +4296,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (qr.matrix[i][j]) ctx.fillRect(qx + j * cell, qy + i * cell, cell + 0.6, cell + 0.6);
     }
     ctx.textBaseline = 'top';
-    ctx.font = F(16, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('DEEPFOCUS 金融终端', PAD, footTop + 12);
+    ctx.font = F(16, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('稻草财经 金融终端', PAD, footTop + 12);
     ctx.font = F(12); ctx.fillStyle = '#8a93a0'; ctx.fillText('扫码访问 · ' + site.replace(/^https?:\/\//, ''), PAD, footTop + 38);
     ctx.font = F(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('AI 自动汇编 · 仅供参考，非投资建议', PAD, footTop + 58);
     return await new Promise<Blob | null>(res => cv.toBlob(res, 'image/png'));
@@ -4352,7 +4355,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (conclusion) { L.push(''); L.push(compactReport ? `💡 ${conclusion}` : `【核心结论】${conclusion}`); }
     if (r.summary && r.summary.trim() !== (conclusion || '').trim()) { L.push('', compactReport ? '【综合综述】' : '【事件摘要】', r.summary); }
     if (logicLines.length) {
-      L.push('', compactReport ? `【DeepFocus 视角 · ${logicLines.length}条独立逻辑线】` : '【关键信息链 · 仅列原文明确内容】');
+      L.push('', compactReport ? `【稻草财经 视角 · ${logicLines.length}条独立逻辑线】` : '【关键信息链 · 仅列原文明确内容】');
       logicLines.forEach((line, i) => {
         L.push(`${i + 1}. ${line.title || `逻辑线 ${i + 1}`}`);
         if (line.evidence) L.push(`事实：${line.evidence}`);
@@ -4365,7 +4368,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (bull.length) { L.push('', compactReport ? '【关键利好】' : '【积极因素（原文）】', ...bull.map((b, i) => `${i + 1}. ${b}`)); }
     if (bear.length) { L.push('', compactReport ? '【主要风险】' : '【风险与不确定性】', ...bear.map((b, i) => `${i + 1}. ${b}`)); }
     if (!compactReport && r.takeaway) { L.push('', `📌 关注重点：${r.takeaway}`); }
-    L.push('', '——————————', compactReport ? 'DeepFocus 终端 · AI 速读 · 提前发现' : 'DeepFocus 终端 · AI 新闻简报', site);
+    L.push('', '——————————', compactReport ? '稻草财经 终端 · AI 速读 · 提前发现' : '稻草财经 终端 · AI 新闻简报', site);
     const text = L.join('\n');
     try {
       if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); }
@@ -5339,7 +5342,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <aside className="bbt-side-nav" aria-label="主导航">
         <div className="bbt-side-brand">
           <span className="bbt-side-brand-mark" aria-hidden="true">稻</span>
-          <span className="bbt-side-brand-copy"><strong>稻财经</strong><small>DEEPFOCUS AI</small></span>
+          <span className="bbt-side-brand-copy"><strong>稻财经</strong><small>稻草财经 AI</small></span>
         </div>
         <button type="button" className="bbt-side-collapse" onClick={() => setSideNavCollapsed(value => !value)} aria-label={sideNavCollapsed ? '展开主导航' : '收起主导航'} title={sideNavCollapsed ? '展开主导航' : '收起主导航'}><span>{sideNavCollapsed ? '›' : '‹'}</span><b>{sideNavCollapsed ? '展开' : '收起'}</b></button>
         <div className="bbt-side-kicker">主菜单</div>
@@ -5394,7 +5397,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-brand">
           <span className="bbt-cmd-key">稻草财经</span>
           <span className="bbt-cmd-amber">金融终端</span>
-          <span className="bbt-cmd-tagline" title="DeepFocus AI · 实时快讯、自选盯盘与 AI 研判">DeepFocus AI · 实时快讯 · 自选盯盘 · AI 研判</span>
+          <span className="bbt-cmd-tagline" title="稻草财经 AI · 实时快讯、自选盯盘与 AI 研判">稻草财经 AI · 实时快讯 · 自选盯盘 · AI 研判</span>
           <span className="bbt-mobile-brand" aria-label="稻草财经">稻草财经</span>
         </span>
         <nav className="bbt-cmd-nav" aria-label="主导航">
@@ -5603,7 +5606,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section className="bbt-promo-hero" aria-labelledby="bbt-promo-title">
           <div className="bbt-promo-glow" aria-hidden="true" />
           <div className="bbt-promo-copy">
-            <div className="bbt-promo-kicker"><span className="bbt-promo-kicker-dot" />DEEPFOCUS AI · 稻草财经</div>
+            <div className="bbt-promo-kicker"><span className="bbt-promo-kicker-dot" />稻草财经 AI</div>
             <h1 id="bbt-promo-title">把市场的噪音，变成可验证的线索。</h1>
             <p>实时行情、重要快讯、投行研报和 AI 证据链，集中在一张真正能用的投研工作台。</p>
             <div className="bbt-promo-actions">
@@ -5680,10 +5683,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       {/* ⭐单一 promo 槽：一次只显一条（匿名=战绩证据优先、无数据回退价值主张+领会员；登录=仅领会员待领）——
           此前最多 5 层转化组件同屏打架，反而稀释了唯一有说服力的「提前发现」证据 */}
       {!authUser && (trackRecord && trackRecord.hit_count > 0 ? (
-        <div className="bbt-tr-hero" onClick={() => { logAct('tr_hero_cta', '首屏战绩'); openReview(); }} role="button" title="看今天的 A 股复盘 · DeepFocus 提前发现的资讯">
+        <div className="bbt-tr-hero" onClick={() => { logAct('tr_hero_cta', '首屏战绩'); openReview(); }} role="button" title="看今天的 A 股复盘 · 稻草财经 提前发现的资讯">
           <span className="bbt-tr-hero-ico">📡</span>
           <span className="bbt-tr-hero-text">
-            近 {trackRecord.days} 天，DeepFocus 用快讯/研报<b> 提前覆盖 {trackRecord.hit_count} 次</b>异动 · 平均提前 <b>{trackRecord.avg_lead_hours}h</b> — 关键消息比你的券商 App 早一步
+            近 {trackRecord.days} 天，稻草财经 用快讯/研报<b> 提前覆盖 {trackRecord.hit_count} 次</b>异动 · 平均提前 <b>{trackRecord.avg_lead_hours}h</b> — 关键消息比你的券商 App 早一步
           </span>
           <button className="bbt-tr-hero-btn" onClick={e => { e.stopPropagation(); logAct('tr_hero_cta', '首屏战绩按钮'); openReview(); }}>看今天的复盘 →</button>
         </div>
@@ -5831,7 +5834,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <div>
               <div className="bbt-review-workspace-eyebrow">DAILY MARKET REVIEW</div>
               <h1>每日复盘</h1>
-              <p>把大盘、板块、个股与 DeepFocus 提前发现的线索，集中收在一个独立模块里。</p>
+              <p>把大盘、板块、个股与 稻草财经 提前发现的线索，集中收在一个独立模块里。</p>
             </div>
             <button type="button" className="bbt-review-workspace-open" onClick={() => openReview()}>打开完整复盘 ↗</button>
           </header>
@@ -5850,7 +5853,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <span className="bbt-review-workspace-card-go">查看完整复盘 ↗</span>
                 </div>
                 {(reviewToday.our_edge || []).length > 0 && (
-                  <div className="bbt-review-workspace-edge">⭐ DeepFocus 提前发现 · {(reviewToday.our_edge || []).length} 条线索</div>
+                  <div className="bbt-review-workspace-edge">⭐ 稻草财经 提前发现 · {(reviewToday.our_edge || []).length} 条线索</div>
                 )}
                 <div className="bbt-review-workspace-card-foot">数据 + AI 综述 · 仅供研究参考，不构成投资建议</div>
               </article>
@@ -5867,7 +5870,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section ref={aiWorkspaceRef} className="bbt-ai-workspace" aria-label="AI 对话工作区">
           <header className="bbt-ai-workspace-head">
             <div>
-              <div className="bbt-ai-workspace-eyebrow">DEEPFOCUS RESEARCH RUNTIME · 证据驱动研究</div>
+              <div className="bbt-ai-workspace-eyebrow">稻草财经 RESEARCH RUNTIME · 证据驱动研究</div>
               <h1>AI 投研助手</h1>
               <p>把问题交给研究引擎：先锁定范围，再查数据、核证据、过风险，最后给结论。</p>
             </div>
@@ -6725,7 +6728,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       <span key={stage} className={index < activeStage ? 'is-done' : index === activeStage ? 'is-active' : ''}><i>{index < activeStage ? '✓' : index + 1}</i>{stage}</span>
                     ))}
                   </div>
-                  <div className="bbt-ai-load-hint"><b>{stageDetail[activeStage]}…</b>{aiReportMeta ? '正在读取最多 32 页并整理证据、章节与跟踪项；通常需要几十秒' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
+                  <div className="bbt-ai-load-hint"><b>{aiStage || stageDetail[activeStage]}…</b>{aiReportMeta ? '正在读取最多 32 页并整理证据、章节与跟踪项；通常需要几十秒' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
                 </div>
                 );
               })()}
@@ -6764,7 +6767,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   </div>}
                   {aiResult.summary && aiResult.summary.trim() !== (conclusion || '').trim() && <><div className="bbt-ai-h">🧾 {newsReport ? '事件摘要' : '综合综述'}</div><div className="bbt-ai-sum">{aiResult.summary}</div></>}
                   {logicLines.length > 0 && <div className="bbt-ai-logic-lines">
-                    <div className="bbt-ai-logic-lines-h"><b>{newsReport ? '🧩 关键信息链' : '🧭 DeepFocus 视角 · 独立逻辑线拆解'}</b><span>{newsReport ? '仅列原文明确内容' : `${logicLines.length}条并行演化`}</span></div>
+                    <div className="bbt-ai-logic-lines-h"><b>{newsReport ? '🧩 关键信息链' : '🧭 稻草财经 视角 · 独立逻辑线拆解'}</b><span>{newsReport ? '仅列原文明确内容' : `${logicLines.length}条并行演化`}</span></div>
                     {logicLines.map((line, index) => <div className="bbt-ai-logic-line" key={`${line.title || 'line'}-${index}`}>
                       <div className="bbt-ai-logic-line-title"><span>{index + 1}</span><b>{line.title || `逻辑线 ${index + 1}`}</b></div>
                       {line.evidence && <div><em>事实</em>{line.evidence}</div>}
@@ -6780,7 +6783,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     const show = dfExpanded || !long;
                     return (
                       <div className={`bbt-ai-dftake${compactReport ? ' bbt-ai-dftake--report' : ''}`}>
-                        <div className="bbt-ai-dftake-h"><b>{compactReport ? '完整解读' : 'DeepFocus 综合判断'}</b><span className="bbt-ai-dftake-badge">{compactReport ? '原文补充' : '独家点评'}</span></div>
+                        <div className="bbt-ai-dftake-h"><b>{compactReport ? '完整解读' : '稻草财经 综合判断'}</b><span className="bbt-ai-dftake-badge">{compactReport ? '原文补充' : '独家点评'}</span></div>
                         <div className={`bbt-ai-dftake-body${show ? '' : ' bbt-ai-dftake-body--clip'}`}>{dft}</div>
                         {long && <button className="bbt-ai-dftake-more" onClick={() => setDfExpanded(v => !v)}>{show ? '收起 ▴' : (compactReport ? '展开完整解读 ▾' : '展开全文 ▾')}</button>}
                       </div>
@@ -6825,7 +6828,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <div className={`bbt-shareimg-tip${shareImgCoarse ? ' bbt-shareimg-tip--big' : ''}`}>{shareImgNote || '👇 长按图片，选择「存储图像 / 保存到相册」或「分享」'}</div>
             <img className="bbt-shareimg-img" src={shareImgUrl} alt="研报微信分享图" />
             <div className="bbt-ai-actions">
-              {!shareImgCoarse && <a className="bbt-ai-btn bbt-ai-btn--img" href={shareImgUrl} download="DeepFocus-微信分享图.png">⬇ 下载图片</a>}
+              {!shareImgCoarse && <a className="bbt-ai-btn bbt-ai-btn--img" href={shareImgUrl} download="稻草财经-微信分享图.png">⬇ 下载图片</a>}
               <button className="bbt-ai-btn bbt-ai-btn--close" onClick={closeShareImg}>关闭</button>
             </div>
           </div>
@@ -6942,7 +6945,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <footer className="bbt-footer">
         <div className="bbt-footer-cols">
           <div className="bbt-footer-col">
-            <div className="bbt-footer-brand">DeepFocus · 深度焦点</div>
+            <div className="bbt-footer-brand">稻草财经</div>
             <div className="bbt-footer-slogan">现代化个股投研智库 · AI 蒸馏 · 多维证据</div>
             <a href="/about">关于我们</a>
           </div>
@@ -7003,7 +7006,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <button className="bbt-doc-close" onClick={() => setGroupOpen(false)}>✕ 关闭</button>
               </div>
               <div className="bbt-grp-body">
-                <div className="bbt-grp-h">{g.title || 'DeepFocus 用户交流群'}</div>
+                <div className="bbt-grp-h">{g.title || '稻草财经 用户交流群'}</div>
                 <div className="bbt-grp-qrwrap">
                   {g.group_qr ? (
                     <img className="bbt-grp-qr" src={site + '/api/community/qr/group?t=' + Math.floor(Date.now() / 60000)} alt="微信群二维码" />
@@ -7176,7 +7179,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
                 {/* ⭐ 我们提前发现的：突出信息价值 + 快讯领先时长 + 可点开原文 */}
                 {(nar.our_value || (r.our_edge || []).length > 0) && <div className="bbt-review-edge">
-                  <div className="bbt-review-edge-h">⭐ DeepFocus 提前发现{(r.our_edge || []).length > 0 ? <span className="bbt-review-edge-n">{(r.our_edge || []).length} 条线索</span> : null}</div>
+                  <div className="bbt-review-edge-h">⭐ 稻草财经 提前发现{(r.our_edge || []).length > 0 ? <span className="bbt-review-edge-n">{(r.our_edge || []).length} 条线索</span> : null}</div>
                   {nar.our_value && sentences(nar.our_value).map((s, k) => <div key={'ov' + k} className="bbt-review-edge-val">{linkify(s)}</div>)}
                   {(r.our_edge || []).slice(0, 8).map((e: any, k: number) => {
                     const lead = e.lead_hours;
@@ -7416,7 +7419,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   ['qa', 'AI 投研问答不限次 + 🔬 深度研判（多空辩论式深度报告）'],
                   ['read', 'AI 多模态解读无限次 · 研报 / 文章随便读'],
                   ['push', '关键资讯比别人早一步 · 微信快讯推送第一时间到'],
-                  ['review', '每日 A 股收盘复盘全量解锁 · 看 DeepFocus 提前发现的资讯'],
+                  ['review', '每日 A 股收盘复盘全量解锁 · 看 稻草财经 提前发现的资讯'],
                   ['sync', '自选云端同步 · 连续看复盘冲会员里程碑'],
                 ];
                 const r = upgradeReason || '';
@@ -7904,7 +7907,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         return (
           <div className="bbt-auth-backdrop" onClick={() => setInviteOpen(false)}>
             <div className="bbt-invite" onClick={e => e.stopPropagation()}>
-              <div className="bbt-auth-head"><span className="bbt-auth-key">DEEPFOCUS</span><span className="bbt-auth-amber">🎁 我的邀请</span><button type="button" className="bbt-auth-x" onClick={() => setInviteOpen(false)}>✕</button></div>
+              <div className="bbt-auth-head"><span className="bbt-auth-key">稻草财经</span><span className="bbt-auth-amber">🎁 我的邀请</span><button type="button" className="bbt-auth-x" onClick={() => setInviteOpen(false)}>✕</button></div>
               <div className="bbt-auth-sub">把链接/邀请码发给好友,Ta 注册时填写即与你建立邀请关系</div>
               {!inviteData ? <div className="bbt-empty">加载中…</div> : <>
                 <div className="bbt-invite-row"><span className="bbt-invite-lbl">邀请码</span><b className="bbt-invite-code">{code}</b><button className="bbt-invite-btn" onClick={() => copy(code, 'code')}>{inviteCopied === 'code' ? '✓ 已复制' : '复制'}</button></div>
