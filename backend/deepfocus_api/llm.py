@@ -371,8 +371,7 @@ class CloudResearchLLM:
             raise RuntimeError(f"Unsupported DEEPFOCUS_LLM_PROVIDER={self.config.get('provider')}")
         last_exc: Exception | None = None
         for index, candidate in enumerate(candidates):
-            request_payload = dict(payload)
-            request_payload["model"] = candidate.get("model") or request_payload.get("model")
+            request_payload = _payload_for_candidate(payload, candidate)
             if _is_qwen3_thinking_model(request_payload.get("model")):
                 # 百炼 qwen3.x 默认输出 reasoning_content 且计入 max_tokens/配额：
                 # 结构化调用只要最终答案，隐藏推理既耗预算又可能截断 JSON。这里在
@@ -413,6 +412,19 @@ class CloudResearchLLM:
                 self._recover_pool_slot(candidate)
                 return response
             except Exception as exc:
+                # 「始终思考」型模型（百炼 1210）会 400 拒绝 enable_thinking=False：
+                # 去掉禁用键原地重试一次，思考内容由 _strip_thinking_blocks 兜底剥离。
+                if _thinking_disable_conflict(request_payload, exc):
+                    try:
+                        client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
+                        response = await asyncio.wait_for(
+                            client.chat.completions.create(**_without_thinking_disable(request_payload)),
+                            timeout=timeout_seconds,
+                        )
+                        self._recover_pool_slot(candidate)
+                        return response
+                    except Exception:
+                        pass  # 重试仍失败 → 走原失败处理（换槽/报错）
                 last_exc = exc
                 if not _is_retryable_pool_error(exc):
                     raise
@@ -484,6 +496,141 @@ class CloudResearchLLM:
                     "模型返回格式不完整，已自动重试但仍无法解析。请重试，或在模型配置中选择支持 JSON 输出/更大输出长度的模型。"
                 ) from exc
         raise ValueError("模型返回了空 JSON，已自动重试但仍没有有效解读内容。")
+
+    async def complete_json_streaming(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 2200,
+        timeout_seconds: float = 35,
+        on_delta=None,
+        retry_schema_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """流式版 complete_json：增量经 ``on_delta(piece)`` 实时回调（供 SSE 思考过程）。
+
+        解析失败时回退非流式的完整重试阶梯；流式分片仅供展示，不参与解析正确性。
+        """
+        text = await self._complete_text_streaming(
+            prompt,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            on_delta=on_delta,
+        )
+        try:
+            data = _extract_json(text)
+            if _has_meaningful_json(data):
+                return data
+        except ValueError:
+            pass
+        return await self.complete_json(
+            prompt,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            retry_schema_hint=retry_schema_hint,
+        )
+
+    async def _complete_text_streaming(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int,
+        timeout_seconds: float,
+        on_delta=None,
+    ) -> str:
+        """_complete_text 的流式版：payload 同源，增量内容回调 on_delta。"""
+        config = self.config
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是金融投研助手。输出必须是严格 JSON object，不要包含 Markdown。"
+                        "结论要谨慎，避免确定性交易建议。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": max_tokens,
+        }
+        if _is_kimi_switchable_thinking_model(self.model):
+            payload["extra_body"] = {"thinking": {"type": "disabled"}}
+        else:
+            payload["temperature"] = max(0.01, min(config["temperature"], 1.0))
+        if self.provider == "minimax" and self.model.lower().startswith("minimax-m3"):
+            payload["extra_body"] = {"reasoning_split": True, "thinking": {"type": "disabled"}}
+        if _is_qwen3_thinking_model(self.model):
+            extra = dict(payload.get("extra_body") or {})
+            extra.setdefault("enable_thinking", False)
+            payload["extra_body"] = extra
+
+        candidates = self._pool_candidates()
+        if not candidates:
+            raise RuntimeError(f"Unsupported DEEPFOCUS_LLM_PROVIDER={config.get('provider')}")
+        last_exc: Exception | None = None
+        for index, candidate in enumerate(candidates):
+            request_payload = _payload_for_candidate(payload, candidate)
+            request_payload["stream"] = True
+            try:
+                client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
+                parts: list[str] = []
+                async with asyncio.timeout(timeout_seconds):
+                    stream = await client.chat.completions.create(**request_payload)
+                    async for chunk in stream:
+                        if not getattr(chunk, "choices", None):
+                            continue
+                        piece = getattr(chunk.choices[0].delta, "content", None) or ""
+                        if piece:
+                            parts.append(piece)
+                            if on_delta:
+                                try:
+                                    on_delta(piece)
+                                except Exception:
+                                    pass
+                text = _strip_thinking_blocks("".join(parts))
+                if not text.strip():
+                    empty_error = RuntimeError("模型返回空正文")
+                    empty_error.status_code = 502
+                    raise empty_error
+                self._recover_pool_slot(candidate)
+                return text
+            except Exception as exc:
+                # 「始终思考」型模型 400 拒绝禁思考 → 去掉禁用键原地重试一次
+                #（思考内容已由 _strip_thinking_blocks 兜底剥离）；仍失败走换槽/报错。
+                if _thinking_disable_conflict(request_payload, exc):
+                    try:
+                        retry_client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
+                        retry_payload = _without_thinking_disable(request_payload)
+                        # 始终思考模型的推理也计入 max_tokens：抬高预算给正文留空间
+                        retry_payload["max_tokens"] = max(int(retry_payload.get("max_tokens") or 0), 12000)
+                        parts2: list[str] = []
+                        async with asyncio.timeout(timeout_seconds):
+                            stream2 = await retry_client.chat.completions.create(**retry_payload)
+                            async for chunk2 in stream2:
+                                if not getattr(chunk2, "choices", None):
+                                    continue
+                                piece2 = getattr(chunk2.choices[0].delta, "content", None) or ""
+                                if piece2:
+                                    parts2.append(piece2)
+                                    if on_delta:
+                                        try:
+                                            on_delta(piece2)
+                                        except Exception:
+                                            pass
+                        text2 = _strip_thinking_blocks("".join(parts2))
+                        if text2.strip():
+                            self._recover_pool_slot(candidate)
+                            return text2
+                    except Exception as retry_exc:
+                        print(f"[llm] 禁思考冲突重试仍失败：{type(retry_exc).__name__}: {str(retry_exc)[:160]}")
+                last_exc = exc
+                self._cooldown_pool_slot(candidate, exc)
+                if index >= len(candidates) - 1:
+                    break
+        assert last_exc is not None
+        if isinstance(last_exc, TimeoutError):
+            raise RuntimeError(f"云模型 {timeout_seconds:.0f} 秒内未返回，请稍后重试或换用更快的模型。") from last_exc
+        raise RuntimeError(f"云模型调用失败：{_clean_error(last_exc)}") from last_exc
 
     async def _complete_text(
         self,
@@ -2262,6 +2409,48 @@ def _is_retryable_pool_error(exc: Exception) -> bool:
         "bad gateway", "gateway timeout", "service unavailable", "unauthorized",
         "authentication", "invalid_api_key",
     ))
+
+
+def _payload_for_candidate(base: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    """按候选模型清洗 payload：enable_thinking 是 qwen3 专属键，
+    发给「始终思考」的别家模型（GLM 1210）会被 400 拒绝——非 qwen3 一律剥离。"""
+    p = dict(base)
+    model = str(candidate.get("model") or p.get("model") or "")
+    p["model"] = model or p.get("model")
+    if not _is_qwen3_thinking_model(model):
+        extra = dict(p.get("extra_body") or {})
+        if extra.pop("enable_thinking", None) is not None:
+            if extra:
+                p["extra_body"] = extra
+            else:
+                p.pop("extra_body", None)
+    return p
+
+
+def _thinking_disable_conflict(payload: dict[str, Any], exc: Exception) -> bool:
+    """「始终思考」型模型（百炼错误码 1210）会 400 拒绝 enable_thinking=False。"""
+    extra = payload.get("extra_body") or {}
+    disabled = (extra.get("enable_thinking") is False) or (
+        isinstance(extra.get("thinking"), dict) and extra["thinking"].get("type") == "disabled"
+    )
+    if not disabled:
+        return False
+    text = str(exc)
+    return "1210" in text or "不支持关闭思考" in text
+
+
+def _without_thinking_disable(payload: dict[str, Any]) -> dict[str, Any]:
+    """去掉禁思考键，并按 1210 的指引设 thinking_budget=low：
+    「始终思考」模型不禁用也会思考，预算全花在思考上会榨干 max_tokens 致正文为空。"""
+    p = dict(payload)
+    extra = dict(p.get("extra_body") or {})
+    extra.pop("enable_thinking", None)
+    thinking = extra.get("thinking")
+    if isinstance(thinking, dict) and thinking.get("type") == "disabled":
+        extra.pop("thinking", None)
+    extra.setdefault("thinking_budget", "low")
+    p["extra_body"] = extra
+    return p
 
 
 async def _safe_emit(emit, event_type: str, payload: dict[str, Any]) -> None:

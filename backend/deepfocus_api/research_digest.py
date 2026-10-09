@@ -1159,8 +1159,12 @@ async def generate_deep_draft(
     *,
     documents: Optional[list[SourceDocument]] = None,
     source_error: str = "",
+    progress: Optional[Any] = None,
 ) -> ResearchDeepDraftResponse:
-    """Generate a deep draft, falling back to deterministic source extraction."""
+    """Generate a deep draft, falling back to deterministic source extraction.
+
+    ``progress(kind, value)`` 可选回调：kind="llm_delta" 时 value 为模型增量文本
+    （供 SSE 思考过程展示；只用于展示，不参与解析）。"""
 
     docs = list(documents or [])
     if not docs and not source_error:
@@ -1181,15 +1185,28 @@ async def generate_deep_draft(
         try:
             llm = CloudResearchLLM()
             if llm.provider != "mock":
-                data = await asyncio.wait_for(
-                    llm.complete_json(
-                        prompt,
-                        max_tokens=7_200,
-                        timeout_seconds=_DEEP_LLM_CALL_TIMEOUT_SECONDS,
-                        retry_schema_hint='必须包含 sections, sources, source_coverage；没有证据写“原文未提供”。',
-                    ),
-                    timeout=_DEEP_LLM_TOTAL_TIMEOUT_SECONDS,
-                )
+                if progress is not None:
+                    # 流式：增量片段经 progress("llm_delta", piece) 回调给 SSE 思考过程
+                    data = await asyncio.wait_for(
+                        llm.complete_json_streaming(
+                            prompt,
+                            max_tokens=7_200,
+                            timeout_seconds=_DEEP_LLM_CALL_TIMEOUT_SECONDS,
+                            on_delta=lambda piece: progress("llm_delta", piece),
+                            retry_schema_hint='必须包含 sections, sources, source_coverage；没有证据写“原文未提供”。',
+                        ),
+                        timeout=_DEEP_LLM_TOTAL_TIMEOUT_SECONDS,
+                    )
+                else:
+                    data = await asyncio.wait_for(
+                        llm.complete_json(
+                            prompt,
+                            max_tokens=7_200,
+                            timeout_seconds=_DEEP_LLM_CALL_TIMEOUT_SECONDS,
+                            retry_schema_hint='必须包含 sections, sources, source_coverage；没有证据写“原文未提供”。',
+                        ),
+                        timeout=_DEEP_LLM_TOTAL_TIMEOUT_SECONDS,
+                    )
                 if isinstance(data, dict) and data:
                     provider = _clean(getattr(llm, "model", "cloud"), 120) or "cloud"
                     return _base_response(request, docs, data=data, provider=provider, disclaimer=_DISCLAIMER)

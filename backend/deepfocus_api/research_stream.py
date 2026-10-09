@@ -147,27 +147,44 @@ async def api_research_deep_draft_stream(
         yield _sse({"type": "stage", "stage": "generate", "detail": "模型解读中（长报告约 1-3 分钟，完成即缓存秒开）"})
 
         started = asyncio.get_event_loop().time()
+        delta_queue: asyncio.Queue = asyncio.Queue()
+        _delta_buf: list[str] = []
+
+        def _progress(kind: str, value: Any) -> None:
+            if kind == "llm_delta" and value:
+                try:
+                    delta_queue.put_nowait(str(value))
+                except Exception:
+                    pass
 
         async def _generate() -> dict[str, Any]:
             late_cached = metrics_get_ai_cache(cache_key)
             if _valid_cached_draft(late_cached):
                 return late_cached
             async with _AI_ANALYZE_SEM:
-                result = await generate_deep_draft(request, documents=docs)
+                result = await generate_deep_draft(request, documents=docs, progress=_progress)
             payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
             metrics_set_ai_cache(cache_key, payload)
             if legacy_cache_key and legacy_cache_key != cache_key:
                 metrics_set_ai_cache(legacy_cache_key, payload)
             return payload
 
-        async def _run() -> dict[str, Any]:
-            return await _RESEARCH_AI_SINGLEFLIGHT.run(cache_key, _generate)
-
-        gen_task = asyncio.create_task(_run())
+        gen_task = asyncio.create_task(_generate())
+        get_task: Optional[asyncio.Task] = None
         try:
             while True:
-                done, _pending = await asyncio.wait({gen_task}, timeout=3.0)
-                if done:
+                get_task = asyncio.create_task(delta_queue.get()) if delta_queue.empty() and not _delta_buf else None
+                wait_set = {gen_task} | ({get_task} if get_task else set())
+                done, _pending = await asyncio.wait(wait_set, timeout=3.0, return_when=asyncio.FIRST_COMPLETED)
+                while not delta_queue.empty():
+                    _delta_buf.append(delta_queue.get_nowait())
+                if _delta_buf:
+                    chunk = "".join(_delta_buf)[-240:]
+                    del _delta_buf[:]
+                    yield _sse({"type": "thought", "delta": chunk})
+                if gen_task in done:
+                    if get_task and get_task in _pending:
+                        get_task.cancel()
                     break
                 elapsed = int(asyncio.get_event_loop().time() - started)
                 yield _sse({"type": "tick", "elapsed": elapsed})
