@@ -1,0 +1,13 @@
+{
+  "pages": [
+    "pages/webview/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "稻草财经",
+    "navigationBarBackgroundColor": "#12151c",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#12151c",
+    "backgroundTextStyle": "dark"
+  },
+  "sitemapLocation": "sitemap.json"
+}

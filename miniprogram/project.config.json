@@ -1,0 +1,28 @@
+{
+  "compileType": "miniprogram",
+  "libVersion": "3.8.12",
+  "appid": "touristappid",
+  "projectname": "daocaijing-miniprogram",
+  "description": "稻草财经小程序壳：web-view 承载 H5",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": true,
+    "coverView": true,
+    "autoAudits": false,
+    "showShadowRootInWxmlPanel": true,
+    "compileHotReLoad": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "condition": {},
+  "editorSetting": {
+    "tabIndent": "insertSpaces",
+    "tabSize": 2
+  }
+}

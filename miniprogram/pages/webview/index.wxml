@@ -1,0 +1,7 @@
+<web-view wx:if="{{!loadError}}" src="{{src}}" binderror="onError" bindload="onLoaded" />
+
+<view wx:else class="err">
+  <text class="err-title">页面加载失败</text>
+  <text class="err-desc">请检查网络后重试</text>
+  <button class="err-btn" bindtap="onRetry">重新加载</button>
+</view>

@@ -1,0 +1,9 @@
+{
+  "desc": "稻草财经",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+.err {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background-color: #12151c;
+}
+
+.err-title {
+  color: #e6ebf2;
+  font-size: 34rpx;
+  font-weight: 600;
+  margin-bottom: 16rpx;
+}
+
+.err-desc {
+  color: #8a93a3;
+  font-size: 26rpx;
+  margin-bottom: 48rpx;
+}
+
+.err-btn {
+  background-color: #1a2540;
+  color: #ffb000;
+  border: 1rpx solid #2a3a55;
+  border-radius: 44rpx;
+  font-size: 28rpx;
+  padding: 0 56rpx;
+}
