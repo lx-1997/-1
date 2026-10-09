@@ -240,7 +240,7 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 a{color:var(--blue)}
 </style></head><body><div class="wrap">
 <h1>稻草财经 · 开发者平台</h1>
-<p class="sub">把稻草财经的 A股复盘、个股速判卡、资讯、研报与 AI 投研问答，接入你的 AI 客户端、自动化工作流、机器人或网站。内容仅供研究参考，不构成投资建议。</p>
+<p class="sub">把稻草财经的 A股复盘、个股速判卡、资讯、研报与 AI 投研问答，接入你的 AI 客户端、自动化工作流、机器人或网站。内容仅供研究参考，不构成投资建议。完整用法与最佳实践见 <a href="https://daocaijing.com/developers/guide">《开发者接入指南》</a>。</p>
 
 <h2>① MCP —— 让任意 AI 软件「长出」稻草财经能力（推荐）</h2>
 <div class="panel"><p class="sub">Claude Desktop / Claude Code / Cursor / Cherry Studio 等任何支持 MCP 的客户端，添加远程服务器：</p>
@@ -318,3 +318,56 @@ if(jwt) loadWh(); else document.getElementById('loginHint').style.display='block
 @router.get("/developers", response_class=HTMLResponse, include_in_schema=False)
 async def developers_page() -> HTMLResponse:
     return HTMLResponse(_DEV_PAGE_TMPL)
+
+
+_GUIDE_CANDIDATES = (
+    "docs/开发者接入指南.md",
+)
+
+
+def _guide_md_path():
+    import os
+    from pathlib import Path
+
+    custom = (os.getenv("DEEPFOCUS_DEV_GUIDE_PATH") or "").strip()
+    if custom:
+        p = Path(custom)
+        if p.is_file():
+            return p
+    here = Path(__file__).resolve()
+    for base in (here.parents[2], here.parents[1]):  # Mac 仓库布局 / 服务器部署布局
+        for rel in _GUIDE_CANDIDATES:
+            p = base / rel
+            if p.is_file():
+                return p
+    return None
+
+
+@router.get("/developers/guide", response_class=HTMLResponse, include_in_schema=False)
+async def developers_guide() -> HTMLResponse:
+    """《开发者接入指南》：源 docs/开发者接入指南.md，服务端渲染。markdown 库缺失时降级纯文本，不 500。"""
+    p = _guide_md_path()
+    if p is None:
+        return HTMLResponse("<h1>开发者接入指南</h1><p>文档文件未部署，请稍后再试。</p>")
+    raw = p.read_text(encoding="utf-8")
+    try:
+        import markdown
+
+        body = markdown.markdown(raw, extensions=["tables", "fenced_code"])
+    except Exception:  # noqa: BLE001 - 降级为等宽纯文本
+        body = f"<pre>{_xesc(raw)}</pre>"
+    return HTMLResponse(
+        f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>稻草财经 · 开发者接入指南</title>
+<style>body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;background:#0b0d12;color:#e6ebf2;max-width:860px;margin:0 auto;padding:32px 20px 80px;line-height:1.75}}
+h1{{font-size:24px}}h2{{font-size:19px;margin-top:30px;padding-top:12px;border-top:1px solid #222733}}h3{{font-size:16px;color:#ffb000}}
+code{{background:#0c1018;border:1px solid #222733;border-radius:4px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;color:#9fd0ff;word-break:break-all}}
+pre{{background:#0c1018;border:1px solid #222733;border-radius:8px;padding:12px;overflow:auto;font-size:12.5px;white-space:pre-wrap}}
+pre code{{border:none;padding:0;background:none}}
+table{{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0}}th,td{{border:1px solid #222733;padding:6px 9px;text-align:left}}th{{color:#8a93a3}}
+a{{color:#6ab0ff}}blockquote{{color:#8a93a3;border-left:3px solid #222733;margin:0;padding-left:14px}}
+.ft{{margin-top:40px;border-top:1px solid #222733;padding-top:14px;color:#8a93a3;font-size:12.5px}}</style></head><body>
+{body}
+<p class="ft">© 稻草财经 · daocaijing.com · <a href="/developers">返回开发者平台</a></p>
+</body></html>"""
+    )
