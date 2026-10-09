@@ -1936,6 +1936,9 @@ async def oauth_token(request: Request) -> Response:
 
 app.include_router(webhook_push.router)  # /api/account/webhooks：Webhook 订阅管理（JWT）
 app.include_router(dev_portal.router)  # /feed/*、/api/v1/openapi.json、/developers：开发者分发通道
+from .research_stream import router as research_stream_router  # noqa: E402 - 研报深度解读 SSE 流式端点（懒导入 main，须在 main 定义后挂载）
+
+app.include_router(research_stream_router)
 
 
 @app.get("/api/ontology/demo")
