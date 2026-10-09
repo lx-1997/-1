@@ -19,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from dotenv import load_dotenv
 
+logger = logging.getLogger("uvicorn.error")
+
 from .agent_engines import DEFAULT_ENGINE_KEY, list_engines
 from .agent_runtime import (
     cancel_investment_task,
