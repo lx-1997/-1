@@ -315,6 +315,82 @@ if(jwt) loadWh(); else document.getElementById('loginHint').style.display='block
 </script></body></html>"""
 
 
+_TUTORIAL_PAGE_TMPL = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>使用教程 · 稻草财经</title>
+<style>
+:root{--bg:#0b0d12;--panel:#12151c;--line:#222733;--text:#e6ebf2;--mute:#8a93a3;--amber:#ffb000;--blue:#6ab0ff;--green:#2bd96a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.top{position:sticky;top:0;z-index:10;background:rgba(11,13,18,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1100px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:800;font-size:16px}.brand span{color:var(--amber)}
+.top a{color:var(--blue);text-decoration:none;font-size:13.5px}
+.top .sp{flex:1}
+.layout{max-width:1100px;margin:0 auto;padding:26px 20px 90px;display:grid;grid-template-columns:230px 1fr;gap:28px}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.toc{position:static;max-height:none;border-right:none;border-bottom:1px solid var(--line);padding-bottom:12px}}
+.toc{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 90px);overflow:auto;border-right:1px solid var(--line);padding-right:16px}
+.toc b{display:block;color:var(--mute);font-size:12px;margin:6px 0 10px;letter-spacing:1px}
+.toc a{display:block;color:var(--text);text-decoration:none;font-size:13.5px;padding:5px 8px;border-radius:6px;opacity:.85}
+.toc a:hover{background:var(--panel);opacity:1}
+.doc{min-width:0}
+.doc h1{font-size:24px;margin:0 0 8px}.doc h2{font-size:19px;margin:34px 0 10px;padding-top:12px;border-top:1px solid var(--line)}
+.doc h3{font-size:15.5px;color:var(--amber);margin:18px 0 6px}
+.doc p{margin:10px 0}.doc ul{padding-left:22px}.doc li{margin:4px 0}
+.doc a{color:var(--blue)}
+.doc code{background:#0c1018;border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;color:#9fd0ff;word-break:break-all}
+.doc pre{position:relative;background:#0c1018;border:1px solid var(--line);border-radius:8px;padding:12px 40px 12px 12px;overflow:auto;font-size:12.5px;white-space:pre-wrap}
+.doc pre code{border:none;padding:0;background:none;color:#cdd6e3}
+.copy{position:absolute;top:8px;right:8px;background:var(--panel);border:1px solid var(--line);color:var(--mute);border-radius:6px;padding:3px 9px;font-size:12px;cursor:pointer}
+.copy:hover{color:var(--text)}
+.doc table{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0}
+.doc th,.doc td{border:1px solid var(--line);padding:6px 9px;text-align:left}.doc th{color:var(--mute)}
+.doc blockquote{color:var(--mute);border-left:3px solid var(--line);margin:0;padding-left:14px}
+.ft{max-width:1100px;margin:0 auto;padding:20px;color:var(--mute);font-size:12.5px;border-top:1px solid var(--line)}
+</style></head><body>
+<div class="top"><div class="top-in">
+<span class="brand">稻草财经 · <span>使用教程</span></span>
+<span class="sp"></span>
+<a href="/">返回终端</a><a href="/developers">开发者平台</a><a href="/api/mcp/setup">MCP 控制台</a>
+</div></div>
+<div class="layout">
+<nav class="toc" id="toc"><b>目录</b></nav>
+<main class="doc" id="doc">__BODY__</main>
+</div>
+<p class="ft">© 稻草财经 · daocaijing.com · 内容仅供研究参考，不构成投资建议 · <a href="/developers/guide">纯文本版指南</a></p>
+<script>
+// 目录：扫描 h2 自动生成
+(function(){
+  const toc=document.getElementById('toc');
+  document.querySelectorAll('.doc h2').forEach((h,i)=>{
+    h.id=h.id||('sec-'+i);
+    const a=document.createElement('a');a.href='#'+h.id;a.textContent=h.textContent;toc.appendChild(a);
+  });
+})();
+// 代码块一键复制
+document.querySelectorAll('.doc pre').forEach(pre=>{
+  const b=document.createElement('button');b.className='copy';b.textContent='复制';
+  b.onclick=async()=>{try{await navigator.clipboard.writeText(pre.innerText.replace(/^复制\\n?/,''));b.textContent='已复制';setTimeout(()=>b.textContent='复制',1500);}catch(e){b.textContent='失败';}};
+  pre.appendChild(b);
+});
+</script></body></html>"""
+
+
+@router.get("/tutorial", response_class=HTMLResponse, include_in_schema=False)
+async def tutorial_page() -> HTMLResponse:
+    """网站独立教程模块：与 /developers/guide 同源渲染《开发者接入指南》，带目录与代码复制。"""
+    p = _guide_md_path()
+    if p is None:
+        return HTMLResponse(_TUTORIAL_PAGE_TMPL.replace("__BODY__", "<h1>使用教程</h1><p>文档文件未部署，请稍后再试。</p>"))
+    raw = p.read_text(encoding="utf-8")
+    try:
+        import markdown
+
+        body = markdown.markdown(raw, extensions=["tables", "fenced_code"])
+    except Exception:  # noqa: BLE001 - 降级为等宽纯文本
+        body = f"<pre>{_xesc(raw)}</pre>"
+    return HTMLResponse(_TUTORIAL_PAGE_TMPL.replace("__BODY__", body))
+
+
 @router.get("/developers", response_class=HTMLResponse, include_in_schema=False)
 async def developers_page() -> HTMLResponse:
     return HTMLResponse(_DEV_PAGE_TMPL)
