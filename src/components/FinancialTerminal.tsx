@@ -182,6 +182,34 @@ const RESEARCH_AI_MAX_PAGES = 14;
 // Keep first paint within a practical mobile wait window; the backend cache
 // remains source-stable and can be reused for later full refreshes.
 const RESEARCH_DEEP_DRAFT_MAX_PAGES = 18;
+
+// AI 解读后台任务：点击解读立即返回不占用界面，生成在后台进行；
+// 完成/失败经 toast 与右下角任务浮标回到阅读模态。
+interface AiBgTask {
+  key: string;
+  kind: 'report' | 'news';
+  title: string;
+  report: { title?: string; date?: string } | null;
+  meta: { org?: string; symbol?: string; preview_url?: string } | null;
+  content?: string;   // 文章原文：解读生成期间即可在阅读模态直接阅读，无需等待
+  restart: () => void;
+  startedAt: number;
+  status: 'running' | 'done' | 'error';
+  stage: string;
+  result: AiAnalysis | null;
+  deepDraft: ResearchDeepDraftInput;
+  error: string;
+  hidden?: boolean;   // 运行中被移除：完成后静默入缓存，不再提醒
+}
+
+// 进度按耗时渐近爬升（预估节奏）：深稿分钟级、快讯十秒级；完成即被真实结果替代。
+const aiTaskPulse = (t: AiBgTask, now = Date.now()) => {
+  const ms = Math.max(0, now - t.startedAt);
+  const tau = t.kind === 'report' ? 45000 : 8000;
+  return { elapsed: Math.floor(ms / 1000), progress: Math.min(94, 6 + 88 * (1 - Math.exp(-ms / tau))) };
+};
+
+const clipTitle = (s: string, n = 24) => (s.length > n ? `${s.slice(0, n)}…` : s);
 interface AiConversationTurn {
   id: string;
   question: string;
@@ -1330,23 +1358,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [reportShareBusy, setReportShareBusy] = useState(false);
   const [shareModal, setShareModal] = useState<{ open: boolean; target: ShareTarget | null }>({ open: false, target: null });
   const aiRetryRef = useRef<null | (() => void)>(null);
-  // Deep-draft generation can take 30–150s.  A user may open another report
-  // (or close the modal) before the first response returns; this sequence
-  // prevents a stale response from replacing the currently selected report.
-  const aiRequestSeqRef = useRef(0);
+  // AI 解读后台任务表：ref 持有真身 + 版本号触发渲染（任务少，免整表拷贝）。
+  const aiTasksRef = useRef<Map<string, AiBgTask>>(new Map());
+  const [aiTasksVersion, setAiTasksVersion] = useState(0);
+  const [aiTasksOpen, setAiTasksOpen] = useState(false);
+  const aiViewingTaskRef = useRef('');  // 阅读模态当前跟随的后台任务 key；空串=模态未跟随任务
   const [shareImgUrl, setShareImgUrl] = useState<string>('');  // 出图兜底预览（长按保存）
   const [aiResult, setAiResult] = useState<AiAnalysis | null>(null);
   // 研报默认走文章式深度稿；为空时仍使用下面的旧 compact 卡片（兼容旧缓存/灰度后端）。
   const [aiDeepDraft, setAiDeepDraft] = useState<ResearchDeepDraftInput>(null);
   const [dfExpanded, setDfExpanded] = useState(false);  // 稻草财经 视角深度点评：长文默认收起，点「展开全文」看全
   const [aiLoading, setAiLoading] = useState(false);
-  // 流式端点回报的真实阶段（SSE stage 事件）；空串时 loading UI 退回耗时预估节奏
-  const [aiStage, setAiStage] = useState('');
+  // 文章原文：解读生成期间在阅读模态直接展示（点击即可读，AI 完成后自动切换为解读）
+  const [aiOriginal, setAiOriginal] = useState('');
   // 同一会话内重复打开同一条资讯/研报时直接复用已完成的解读；服务端仍负责
   // 跨用户持久缓存，这里只做前端瞬时缓存，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
-  const [aiProgress, setAiProgress] = useState(0);  // AI 解读进度条（按耗时渐近爬升，完成即收）
-  const [aiLoadElapsed, setAiLoadElapsed] = useState(0);  // 已用秒数（等待期体感时间）
   const [aiError, setAiError] = useState('');
   const [upgradeOpen, setUpgradeOpen] = useState(false);   // 开通会员引导弹层
   const [upgradeReason, setUpgradeReason] = useState('');
@@ -1360,9 +1387,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [picks, setPicks] = useState<{ kx?: any; wz?: any; yb?: any } | null>(null);  // AI 评选的头条
   const [newsQuery, setNewsQuery] = useState('');  // 当前信息模块的关键词搜索
   const [toast, setToast] = useState('');
+  const [toastAct, setToastAct] = useState<null | (() => void)>(null);  // 非空=可点击 toast（如「查看解读」）
   const [shareImgNote, setShareImgNote] = useState('');
   const [shareImgCoarse, setShareImgCoarse] = useState(false);  // 移动端（触屏）：只引导长按
-  const showToast = useCallback((msg: string) => { setToast(msg); window.setTimeout(() => setToast(''), 2800); }, []);
+  const showToast = useCallback((msg: string, action?: () => void) => {
+    setToast(msg); setToastAct(action || null);
+    window.setTimeout(() => setToast(''), 2800);
+  }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pq, setPq] = useState('');
   const [paletteActive, setPaletteActive] = useState(0);   // 命令面板当前高亮项（↑↓ 导航）
@@ -1549,7 +1580,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const navRef = useRef<string[]>(watchlist);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiModalExpanded(false); return; }
+      if (e.key === 'Escape') { setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); aiViewingTaskRef.current = ''; setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiOriginal(''); setAiModalExpanded(false); return; }
       if (paletteOpen) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -3303,6 +3334,94 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const aiFreeUsed = useCallback(() => { try { return localStorage.getItem('df_ai_free_day') === new Date().toLocaleDateString('en-CA'); } catch { return false; } }, []);
   const markAiFreeUsed = useCallback(() => { try { localStorage.setItem('df_ai_free_day', new Date().toLocaleDateString('en-CA')); } catch { /* */ } }, []);
 
+  // ===== AI 解读后台任务：立即返回不占界面，完成经 toast/浮标回到阅读模态 =====
+  const openAiReading = useCallback((v: { report: { title?: string; date?: string } | null; meta: { org?: string; symbol?: string; preview_url?: string } | null; result: AiAnalysis | null; deepDraft: ResearchDeepDraftInput; loading?: boolean; error?: string; original?: string }) => {
+    aiViewingTaskRef.current = '';
+    setAiReport(v.report); setAiReportMeta(v.meta); setAiResult(v.result); setAiDeepDraft(v.deepDraft);
+    setAiLoading(!!v.loading);
+    setAiOriginal(v.original || '');
+    setAiError(v.error || ''); setAiModalExpanded(false); setDfExpanded(true);
+    setAiCopied(false); setAiTextCopied(false);
+    aiRetryRef.current = null;
+    setAiTasksOpen(false);
+  }, []);
+
+  const openAiTaskView = useCallback((key: string) => {
+    const t = aiTasksRef.current.get(key);
+    if (!t) return;
+    if (t.status === 'running') {
+      openAiReading({ report: t.report, meta: t.meta, result: null, deepDraft: null, loading: true, original: t.content });
+      aiViewingTaskRef.current = key;  // 跟随任务：阶段/进度/完成实时同步进模态
+      return;
+    }
+    openAiReading({ report: t.report, meta: t.meta, result: t.result, deepDraft: t.deepDraft, error: t.status === 'error' ? t.error : '' });
+    if (t.status === 'error') { aiViewingTaskRef.current = key; aiRetryRef.current = t.restart; }
+  }, [openAiReading]);
+
+  const removeAiTask = useCallback((key: string) => {
+    aiTasksRef.current.delete(key);
+    setAiTasksVersion(v => v + 1);
+  }, []);
+
+  const registerAiTask = useCallback((task: AiBgTask) => {
+    aiTasksRef.current.set(task.key, task);
+    // 浮标只留轻量历史：已结束任务超过 6 条丢最旧
+    const finished = Array.from(aiTasksRef.current.values()).filter(t => t.status !== 'running');
+    if (finished.length > 6) {
+      finished.sort((a, b) => a.startedAt - b.startedAt);
+      for (const t of finished.slice(0, finished.length - 6)) aiTasksRef.current.delete(t.key);
+    }
+    setAiTasksVersion(v => v + 1);
+  }, []);
+
+  const dismissAiTask = useCallback((key: string) => {
+    const t = aiTasksRef.current.get(key);
+    if (!t) return;
+    if (t.status === 'running') t.hidden = true;  // 运行中移除：完成后静默入缓存不再提醒
+    else aiTasksRef.current.delete(key);
+    setAiTasksVersion(v => v + 1);
+  }, []);
+
+  const settleAiTask = useCallback((key: string, title: string, result: AiAnalysis, deepDraft: ResearchDeepDraftInput) => {
+    aiInterpretCacheRef.current.set(key, { result, deepDraft: deepDraft || undefined });
+    const cur = aiTasksRef.current.get(key);
+    if (cur) { cur.status = 'done'; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1); }
+    if (aiViewingTaskRef.current === key) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); }
+    if (!authUserRef.current) markAiFreeUsed();  // 匿名免费体验已消费 → 下次起需登录
+    if (!cur || !cur.hidden) showToast(`✅ 解读完成：${clipTitle(title)}，点击查看`, () => openAiTaskView(key));
+  }, [markAiFreeUsed, showToast, openAiTaskView]);
+
+  const failAiTask = useCallback((key: string, msg: string) => {
+    const cur = aiTasksRef.current.get(key);
+    if (!cur) return;
+    cur.status = 'error'; cur.error = msg; setAiTasksVersion(v => v + 1);
+    if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); }
+    else showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
+  }, [showToast, openAiTaskView]);
+
+  // 402/403 是即时配额/登录门槛：不留任务，直接给升级弹窗或登录引导
+  const gateAiTask = useCallback((key: string, status: unknown, detail: unknown) => {
+    removeAiTask(key);
+    if (aiViewingTaskRef.current === key) {
+      aiViewingTaskRef.current = '';
+      setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiLoading(false); setAiError('');
+    }
+    if (Number(status) === 402) { setUpgradeReason((detail as string) || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); }
+    else showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）');
+  }, [removeAiTask, showToast]);
+
+  // 同一条目已有任务：运行中提示（隐藏则重新挂回）、完成直接看、失败重试
+  const resumeAiTask = useCallback((key: string) => {
+    const existing = aiTasksRef.current.get(key);
+    if (!existing) return false;
+    if (existing.status === 'running') {
+      if (existing.hidden) { existing.hidden = false; setAiTasksVersion(v => v + 1); }
+      showToast('✦ 正在后台解读中，完成后提醒你');
+    } else if (existing.status === 'done') openAiTaskView(key);
+    else existing.restart();
+    return true;
+  }, [showToast, openAiTaskView]);
+
   const runAiAnalysis = useCallback(async (r: ResearchWireItem) => {
     // 匿名用户：免费体验「一次」AI 解读，第二次起 toast 引导登录（不再弹全局登录框打断阅读流）。
     if (!authUserRef.current && aiFreeUsed()) {
@@ -3310,58 +3429,45 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       logAct('ai_report_gate', 'free_used_toast');
       return;
     }
-    const requestSeq = ++aiRequestSeqRef.current;
-    const isCurrent = () => aiRequestSeqRef.current === requestSeq;
     logAct('ai_report', r.title);
-    // 研报解读的完整层是核心增值内容：结果返回后直接展开，避免用户只看到
-    // 一句话和几条 bullet；文章解读仍保持紧凑展示。
-    setAiReport(r); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false); setAiError(''); setDfExpanded(true); setAiLoading(true); setAiStage('');
-    setAiReportMeta({ org: (r as any).org || '', symbol: (r.instruments && r.instruments[0]) || '', preview_url: r.preview_url || '' });  // 研报解读→可分享落地页 + 原文按钮
-    aiRetryRef.current = () => runAiAnalysis(r);
     const previewUrl = r.preview_url || '';
     const fid = r.file_id || (previewUrl.includes('wire-file') ? new URLSearchParams(previewUrl.split('?')[1] || '').get('file_id') : '');
     const sourceBody: Record<string, any> = { title: r.title, max_pages: RESEARCH_AI_MAX_PAGES };
     if (fid) { sourceBody.file_id = fid; sourceBody.filename = r.filename; }
     else { sourceBody.workbench_filename = r.filename; sourceBody.workbench_out = r.out || 'downloads/海外投行报告'; }
     const cacheKey = `report:${fid || r.filename || r.title}`;
+    const meta = { org: (r as any).org || '', symbol: (r.instruments && r.instruments[0]) || '', preview_url: r.preview_url || '' };
     const cached = aiInterpretCacheRef.current.get(cacheKey);
     if (cached) {
-      setAiDeepDraft(cached.deepDraft || null);
-      setAiResult(cached.result);
-      setAiLoading(false);
+      openAiReading({ report: r, meta, result: cached.result, deepDraft: cached.deepDraft || null });
       if (!authUserRef.current) markAiFreeUsed();
       return;
     }
+    if (resumeAiTask(cacheKey)) return;
+    registerAiTask({
+      key: cacheKey, kind: 'report', title: r.title, report: r, meta,
+      restart: () => { removeAiTask(cacheKey); runAiAnalysis(r); },
+      startedAt: Date.now(), status: 'running', stage: '', result: null, deepDraft: null, error: '',
+    });
+    showToast('✦ 已转入后台解读，完成后提醒你');
     try {
-      // 研报主路径：文章式深度稿（默认 32 页，后端上限 60）。
-      // 返回中附带 compact 时复用它；否则从文章结构投影，保证旧分享/出图仍可用。
+      // 研报主路径：文章式深度稿。返回中附带 compact 时复用它；否则从文章结构投影，
+      // 保证旧分享/出图仍可用。
       const deep = await generateResearchDeepDraftSmart({
         ...sourceBody,
         max_pages: RESEARCH_DEEP_DRAFT_MAX_PAGES,
         symbol: (r.instruments && r.instruments[0]) || undefined,
-      }, setAiStage);
-      if (!isCurrent()) return;
+      }, (detail) => {
+        const cur = aiTasksRef.current.get(cacheKey);
+        if (cur && cur.stage !== detail) { cur.stage = detail; setAiTasksVersion(v => v + 1); }
+      });
       const compact = deep.compact || compactFromDeepDraft(deep);
-      setAiDeepDraft(deep as unknown as ResearchDeepDraftInput);
-      setAiResult(compact);
-      aiInterpretCacheRef.current.set(cacheKey, { result: compact, deepDraft: deep as unknown as ResearchDeepDraftInput });
-      if (!authUserRef.current) markAiFreeUsed();  // 匿名免费体验已消费 → 下次起需登录
-      return;
+      settleAiTask(cacheKey, r.title, compact, deep as unknown as ResearchDeepDraftInput);
     } catch (deepError: any) {
-      if (!isCurrent()) return;
       const deepStatus = deepError?.response?.status ?? deepError?.status;
       const deepDetail = deepError?.response?.data?.detail ?? deepError?.detail;
-      // 402：登录非会员（未缓存 / 今日免费已用完）→ 升级弹窗
-      if (deepStatus === 402) { setAiReport(null); setAiDeepDraft(null); setUpgradeReason(deepDetail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
-      // 403：匿名（该研报未生成解读 / 今日免费已用完）→ toast 引导登录，不再弹全局登录框
-      if (deepStatus === 403) {
-        setAiReport(null);
-        setAiDeepDraft(null);
-        showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）'); return;
-      }
-      // 仅在明确的「路由未部署」状态回退旧 compact。502/超时/模型错误不再
-      // 深度稿是增强层；模型或 PDF 解析超时先回退到轻量视觉卡，
-      // 保证用户至少拿到一份带来源说明的结果。
+      if (deepStatus === 402 || deepStatus === 403) { gateAiTask(cacheKey, deepStatus, deepDetail); return; }
+      // 仅在明确的「路由未部署」状态回退旧 compact；其余失败进失败任务（可从浮标重试）。
       // A source-level 404 (for example a deleted workbench file) is not a
       // missing route.  The backend returns 422/502 for those cases; keep the
       // 404 fallback narrow so we do not burn a second compact request.
@@ -3369,93 +3475,70 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       const routeUnavailable = [405, 408, 501, 502, 504].includes(Number(deepStatus)) || deepTimedOut
         || (Number(deepStatus) === 404 && (!deepDetail || /^(not found|method not allowed)$/i.test(String(deepDetail).trim())));
       if (!routeUnavailable) {
-        if (deepError?.code === 'ECONNABORTED' || /timeout/i.test(deepError?.message || '')) {
-          setAiError('深度稿生成超时了，请稍后重试。');
-        } else {
-          setAiError(deepDetail || deepError?.message || '深度稿生成失败，请稍后重试');
-        }
+        failAiTask(cacheKey, deepTimedOut ? '深度稿生成超时了，请稍后重试。' : (deepDetail || deepError?.message || '深度稿生成失败，请稍后重试'));
         return;
       }
       // 灰度/旧后端可能还没有 deep-draft 路由；自动回退旧 compact，避免入口失效。
-      if (!isCurrent()) return;
       try {
         const res = await apiPost<AiAnalysis>('/api/research/vision-analyze', sourceBody, { timeout: 150000 });
-        if (!isCurrent()) return;
-        setAiDeepDraft(null);
-        setAiResult(res);
-        aiInterpretCacheRef.current.set(cacheKey, { result: res });
-        if (!authUserRef.current) markAiFreeUsed();
-        return;
+        settleAiTask(cacheKey, r.title, res, null);
       } catch (e: any) {
-        if (!isCurrent()) return;
         const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
-        if (status === 402) { setAiReport(null); setAiDeepDraft(null); setUpgradeReason(detail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
-        if (status === 403) {
-          setAiReport(null); setAiDeepDraft(null);
-          showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）'); return;
-        }
-        const code = e?.code;
-        if (code === 'ECONNABORTED' || /timeout/i.test(e?.message || '') || /timeout/i.test(deepError?.message || '')) {
-          setAiError('深度稿生成超时了，已保留旧版重试入口。请稍后再点一次（后台缓存完成后通常会更快）。');
-        } else {
-          setAiError(detail || deepDetail || e?.message || deepError?.message || 'AI 解读失败，请稍后重试');
-        }
+        if (status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
+        const timedOut = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '') || /timeout/i.test(deepError?.message || '');
+        failAiTask(cacheKey, timedOut
+          ? '深度稿生成超时了，请稍后再试（后台缓存完成后通常会更快）。'
+          : (detail || deepDetail || e?.message || deepError?.message || 'AI 解读失败，请稍后重试'));
       }
-    } finally { if (isCurrent()) setAiLoading(false); }
-  }, [requireLogin, logAct, showToast, aiFreeUsed, markAiFreeUsed]);
+    }
+  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
 
+  // 快讯/文章解读：同研报后台任务化，完成经 toast/浮标回看。
   const runNewsAi = useCallback(async (m: RealtimeMessageRecord) => {
     if (!authUserRef.current && aiFreeUsed()) {
       showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
       return;
     }
-    const requestSeq = ++aiRequestSeqRef.current;
-    const isCurrent = () => aiRequestSeqRef.current === requestSeq;
     logAct('ai_news', m.title);
-    setAiReport({ title: m.title, date: (m.created_at || '').slice(0, 10) }); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false); setAiError(''); setAiCopied(false); setDfExpanded(true); setAiLoading(true);
-    aiRetryRef.current = () => runNewsAi(m);
+    const report = { title: m.title, date: (m.created_at || '').slice(0, 10) };
     const cacheKey = `news:${m.id || `${m.title}:${(m.content || '').slice(0, 80)}`}`;
     const cached = aiInterpretCacheRef.current.get(cacheKey);
     if (cached) {
-      setAiResult(cached.result);
-      setAiLoading(false);
+      openAiReading({ report, meta: null, result: cached.result, deepDraft: null });
       if (!authUserRef.current) markAiFreeUsed();
       return;
     }
+    if (resumeAiTask(cacheKey)) return;
+    registerAiTask({
+      key: cacheKey, kind: 'news', title: m.title, report, meta: null,
+      content: (m.content || '').slice(0, 20000),
+      restart: () => { removeAiTask(cacheKey); runNewsAi(m); },
+      startedAt: Date.now(), status: 'running', stage: '', result: null, deepDraft: null, error: '',
+    });
+    // 立即打开阅读模态展示文章原文：解读在后台生成，完成后自动切换为解读结果
+    openAiTaskView(cacheKey);
+    showToast('✦ 已转入后台解读，完成后提醒你');
     try {
       const res = await apiPost<AiAnalysis>('/api/news/ai-analyze',
         { title: m.title, content: m.content || '', url: m.url || '', message_id: m.id }, { timeout: 120000 });
-      if (!isCurrent()) return;
-      setAiResult(res);
-      aiInterpretCacheRef.current.set(cacheKey, { result: res });
-      if (!authUserRef.current) markAiFreeUsed();
+      settleAiTask(cacheKey, m.title, res, null);
     } catch (e: any) {
-      if (!isCurrent()) return;
       const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
-      if (status === 402) { setAiReport(null); setUpgradeReason(detail || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); return; }
-      if (status === 403) {
-        setAiReport(null);
-        showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）'); return;
-      }
-      if (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) setAiError('解读超时了，请重试。');
-      else setAiError(e?.response?.data?.detail || e?.message || 'AI 解读失败，请稍后重试');
-    } finally { if (isCurrent()) setAiLoading(false); }
-  }, [requireLogin, logAct, showToast, aiFreeUsed, markAiFreeUsed]);
+      if (status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
+      failAiTask(cacheKey, (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) ? '解读超时了，请重试。' : (detail || e?.message || 'AI 解读失败，请稍后重试'));
+    }
+  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
 
-  // AI 解读进度条：拿不到流式进度，按耗时渐近爬升到 ~94%（文字快、图片慢），完成时面板切走即收。
+  // 后台任务浮标：有运行中任务才开秒表 tick；进度/已用时长由 aiTaskPulse 按开始时刻推导。
+  const [, setAiTick] = useState(0);
+  const aiTasks = useMemo(() => Array.from(aiTasksRef.current.values())
+    .filter(t => !t.hidden)
+    .sort((a, b) => b.startedAt - a.startedAt), [aiTasksVersion]);
   useEffect(() => {
-    if (!aiLoading) return;
-    setAiProgress(6);
-    setAiLoadElapsed(0);
-    const start = Date.now();
-    const tau = 16000;  // 时间常数：~16s 到 ~61%，~40s 到 ~87%，渐近 94%
-    const t = window.setInterval(() => {
-      const elapsed = Date.now() - start;
-      setAiLoadElapsed(Math.floor(elapsed / 1000));
-      setAiProgress(Math.min(94, 6 + 88 * (1 - Math.exp(-elapsed / tau))));
-    }, 250);
-    return () => window.clearInterval(t);
-  }, [aiLoading]);
+    if (!aiTasks.some(t => t.status === 'running')) return;
+    const timer = window.setInterval(() => setAiTick(n => n + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [aiTasks]);
 
   // 交互埋点（白名单事件：copy_text / copy_image / copy_news）
   const pingMetric = useCallback((name: string, title?: string) => {
@@ -3499,8 +3582,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [pingMetric, logAct, showToast]);
 
   const closeAi = useCallback(() => {
-    // Invalidate any in-flight deep/news analysis before unmounting the modal.
-    aiRequestSeqRef.current += 1;
+    // 仅关闭阅读模态；后台解读任务继续运行，完成仍会提醒。
+    aiViewingTaskRef.current = '';
     aiRetryRef.current = null;
     setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false);
     setAiError(''); setAiCopied(false); setDfExpanded(false); setAiLoading(false);
@@ -6713,23 +6796,31 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 </div>
               ) : <>
               {aiLoading && (() => {
-                // 阶段推进与进度条同源（按耗时预估节奏），如实标注「预估」——服务器没有阶段事件可回报。
+                // 进度按耗时渐近爬升（预估节奏）；跟随后台任务时用其真实阶段文本与开始时刻。
+                const task = aiViewingTaskRef.current ? aiTasksRef.current.get(aiViewingTaskRef.current) : undefined;
+                const pulse = task && task.status === 'running' ? aiTaskPulse(task) : { elapsed: 0, progress: 6 };
                 const stages = aiReportMeta ? ['读取原文', '提炼事实', '组织逻辑', '核对风险', '生成结论'] : ['读取内容', '提炼要点', '生成解读'];
                 const stageCut = aiReportMeta ? [0, 26, 52, 74, 90] : [0, 38, 74];
-                const activeStage = stages.reduce((acc, _, index) => (aiProgress >= stageCut[index] ? index : acc), 0);
+                const activeStage = stages.reduce((acc, _, index) => (pulse.progress >= stageCut[index] ? index : acc), 0);
                 const stageDetail = aiReportMeta
                   ? ['正在下载并解析研报原文', '正在逐页提炼事实与数据', '正在组织章节逻辑与证据链', '正在核对风险与反方观点', '正在汇总结论与跟踪项']
                   : ['正在读取内容', '正在提炼关键要点', '正在生成解读'];
                 return (
                 <div className="bbt-ai-loading">
-                  <div className="bbt-ai-load-head"><span>✦ {aiReportMeta ? '正在生成深度研报稿…' : 'AI 正在解读…'}</span><span className="bbt-ai-load-pct">{Math.round(aiProgress)}% · 已用 {Math.max(1, aiLoadElapsed)}s</span></div>
-                  <div className="bbt-ai-bar"><div className="bbt-ai-bar-fill" style={{ width: `${aiProgress}%` }} /></div>
+                  <div className="bbt-ai-load-head"><span>✦ {aiReportMeta ? '正在生成深度研报稿…' : 'AI 正在解读…'}</span><span className="bbt-ai-load-pct">{Math.round(pulse.progress)}% · 已用 {Math.max(1, pulse.elapsed)}s</span></div>
+                  <div className="bbt-ai-bar"><div className="bbt-ai-bar-fill" style={{ width: `${pulse.progress}%` }} /></div>
                   <div className="bbt-ai-load-stages" aria-label="AI 解读阶段（按典型耗时预估）">
                     {stages.map((stage, index) => (
                       <span key={stage} className={index < activeStage ? 'is-done' : index === activeStage ? 'is-active' : ''}><i>{index < activeStage ? '✓' : index + 1}</i>{stage}</span>
                     ))}
                   </div>
-                  <div className="bbt-ai-load-hint"><b>{aiStage || stageDetail[activeStage]}…</b>{aiReportMeta ? '正在读取最多 32 页并整理证据、章节与跟踪项；通常需要几十秒' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
+                  <div className="bbt-ai-load-hint"><b>{(task && task.stage) || stageDetail[activeStage]}…</b>{aiReportMeta ? '正在后台读取原文并整理证据、章节与跟踪项；通常需要几十秒，可随时关闭继续浏览' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
+                  {aiOriginal ? (
+                    <div aria-label="文章原文（AI 解读生成期间可直接阅读）" style={{ marginTop: 12, maxHeight: 300, overflowY: 'auto', textAlign: 'left', fontSize: 13, lineHeight: 1.9, color: 'rgba(255,255,255,0.78)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 10, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>原文 · AI 解读完成后自动替换为本区块</div>
+                      {aiOriginal}
+                    </div>
+                  ) : null}
                 </div>
                 );
               })()}
@@ -6836,7 +6927,48 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
 
-      {toast && <div className="bbt-toast">{toast}</div>}
+      {aiTasks.length > 0 && (() => {
+        const running = aiTasks.filter(t => t.status === 'running');
+        return (
+          <div className="bbt-ai-tasks">
+            {aiTasksOpen && (
+              <div className="bbt-ai-tasks-pop" role="dialog" aria-label="AI 解读任务">
+                <div className="bbt-ai-tasks-h">AI 解读任务</div>
+                {aiTasks.map(t => {
+                  const isRun = t.status === 'running';
+                  const p = aiTaskPulse(t);
+                  return (
+                    <div key={t.key} className={`bbt-ai-task is-${t.status}`}>
+                      <button type="button" className="bbt-ai-task-main" onClick={() => { if (!isRun) openAiTaskView(t.key); }}>
+                        <span className={`bbt-ai-task-dot${isRun ? ' is-run' : ''}`}>{isRun ? '' : t.status === 'done' ? '✓' : '!'}</span>
+                        <span className="bbt-ai-task-txt">
+                          <b>{clipTitle(t.title, 30)}</b>
+                          <small>{isRun ? `${t.stage || '后台解读中'} · ${p.elapsed}s` : t.status === 'done' ? '解读完成 · 点击查看' : clipTitle(t.error, 40)}</small>
+                        </span>
+                      </button>
+                      <button type="button" className="bbt-ai-task-x" aria-label="移除" onClick={() => dismissAiTask(t.key)}>✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <button type="button" className={`bbt-ai-tasks-pill${aiTasksOpen ? ' is-open' : ''}`} onClick={() => setAiTasksOpen(v => !v)}>
+              {running.length > 0
+                ? <><i className="bbt-ai-tasks-spin" aria-hidden />后台解读 {running.length} 项 · {aiTaskPulse(running[running.length - 1]).elapsed}s</>
+                : <>✦ 解读完成 {aiTasks.filter(t => t.status === 'done').length} 条待看</>}
+            </button>
+          </div>
+        );
+      })()}
+      {toast && (
+        <div
+          className={`bbt-toast${toastAct ? ' bbt-toast--act' : ''}`}
+          onClick={toastAct ? () => { const act = toastAct; setToast(''); setToastAct(null); act(); } : undefined}
+          role={toastAct ? 'button' : undefined}
+        >
+          {toast}{toastAct ? ' →' : ''}
+        </div>
+      )}
 
       {FOREGROUND_NEWS_POPUP_ENABLED && newsPopup && sideNavKey !== 'ai' && (
         <div
