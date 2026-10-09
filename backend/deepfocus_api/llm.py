@@ -602,7 +602,7 @@ class CloudResearchLLM:
                         retry_client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
                         retry_payload = _without_thinking_disable(request_payload)
                         # 始终思考模型的推理也计入 max_tokens：抬高预算给正文留空间
-                        retry_payload["max_tokens"] = max(int(retry_payload.get("max_tokens") or 0), 12000)
+                        retry_payload["max_tokens"] = max(int(retry_payload.get("max_tokens") or 0), 30000)
                         parts2: list[str] = []
                         async with asyncio.timeout(timeout_seconds):
                             stream2 = await retry_client.chat.completions.create(**retry_payload)

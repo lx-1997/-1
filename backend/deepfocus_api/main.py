@@ -9563,7 +9563,7 @@ async def api_research_deep_draft(
                     stock=request.symbol,
                     attachments=[request.filename or request.workbench_filename or "研报资料"],
                     channel="web",
-                    timeout_seconds=300.0,
+                    timeout_seconds=480.0,
                 ),
                 lambda: generate_deep_draft(request, documents=docs),
                 route="deep-draft",

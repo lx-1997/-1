@@ -59,8 +59,8 @@ _MAX_PROMPT_CHARS = 58_000
 # JSON call plus format retries).  Keep each attempt and the whole deep-draft
 # request below the client's 360s timeout so a malformed-model response cannot
 # occupy the global semaphore indefinitely after the browser has given up.
-_DEEP_LLM_CALL_TIMEOUT_SECONDS = 240  # 长报告（5万+字符提示词）生成需 >100s：100s 会超时静默失败落兜底
-_DEEP_LLM_TOTAL_TIMEOUT_SECONDS = 315
+_DEEP_LLM_CALL_TIMEOUT_SECONDS = 420  # GLM/长报告：5.9 万字符提示词仅推理就需 ~220s，100s 会超时静默失败落兜底
+_DEEP_LLM_TOTAL_TIMEOUT_SECONDS = 480
 # Image-only deep drafts use the same page budget as the compact report.  The
 # previous six-page cap made long decks look empty even when the key chart or
 # target price appeared later in the report.
@@ -1190,7 +1190,7 @@ async def generate_deep_draft(
                     data = await asyncio.wait_for(
                         llm.complete_json_streaming(
                             prompt,
-                            max_tokens=7_200,
+                            max_tokens=30_000,
                             timeout_seconds=_DEEP_LLM_CALL_TIMEOUT_SECONDS,
                             on_delta=lambda piece: progress("llm_delta", piece),
                             retry_schema_hint='必须包含 sections, sources, source_coverage；没有证据写“原文未提供”。',
