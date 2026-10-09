@@ -103,7 +103,8 @@ def test_rpc_initialize_and_tools_list(client):
 
     r = _rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, token)
     names = {t["name"] for t in r.json()["result"]["tools"]}
-    assert {"ping", "get_review_today", "get_stock_verdict", "ask_ai"} <= names
+    assert {"ping", "get_review_today", "get_stock_verdict", "ask_ai",
+            "search_minutes", "search_stock_reports", "get_minutes_sentiment"} <= names
 
     r = _rpc(client, {"jsonrpc": "2.0", "id": 3, "method": "no/such/method"}, token)
     assert r.json()["error"]["code"] == -32601

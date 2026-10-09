@@ -164,6 +164,45 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "search_stock_reports",
+        "title": "个股券商研报",
+        "description": "查询某标的近两年的券商研报列表（标题/机构/日期/评级等元数据）。研报原文受版权保护不在此提供。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "标的代码，如 600519 / 00700 / AAPL"},
+                "market": {"type": "string", "description": "可选：市场 CN/HK/US，辅助消歧"},
+                "limit": {"type": "integer", "description": "条数，默认 20，上限 50"},
+            },
+            "required": ["symbol"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "search_minutes",
+        "title": "机构纪要检索",
+        "description": "检索机构调研纪要/动态点评（稻草财经自有信息流，含正文、日期、标签）。keyword 留空返回最新。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string", "description": "关键词，如 公司名/题材；留空=最新"},
+                "group": {"type": "string", "description": "可选：星球分组 id（search 一次后可从返回的 groups 里取）"},
+                "limit": {"type": "integer", "description": "条数，默认 10，上限 20"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_minutes_sentiment",
+        "title": "纪要多空统计",
+        "description": "当日机构纪要的多空倾向统计（AI 判定：看多/看空/中性比例 + 板块分布，样本量如实披露）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"force": {"type": "boolean", "description": "可选：跳过缓存强刷（默认 20 分钟缓存）"}},
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "ask_ai",
         "title": "AI 投研问答",
         "description": "向稻草财经投研 AI 提问（会调工具取真实数据：行情/复盘/研报/财报等）。",
@@ -405,6 +444,63 @@ async def _tool_stock_themes(args: dict) -> Any:
     return await fetch_stock_themes(sym) or {"symbol": sym, "name": "", "industry": "", "board": ""}
 
 
+async def _tool_stock_reports(args: dict) -> Any:
+    from .eastmoney_reports import query_eastmoney_reports
+
+    sym = str(args.get("symbol") or "").strip()
+    if not sym:
+        raise ValueError("symbol 不能为空")
+    try:
+        limit = max(1, min(int(args.get("limit") or 20), 50))
+    except (TypeError, ValueError):
+        limit = 20
+    rows, warnings = await query_eastmoney_reports(
+        code=sym, market=(str(args.get("market") or "").strip() or None), page_size=limit,
+    )
+    items = [
+        {"title": r.get("title"), "org": r.get("org"), "date": r.get("date"),
+         "rating": r.get("rating"), "stock_name": r.get("stock_name"),
+         "stock_code": r.get("stock_code"), "pdf_url": r.get("pdf_url")}
+        for r in rows if isinstance(r, dict)
+    ]
+    return {"count": len(items), "items": items, "warnings": warnings}
+
+
+async def _tool_search_minutes(args: dict) -> Any:
+    from .zsxq_stream import fetch_stream
+
+    keyword = str(args.get("keyword") or "").strip()[:40]
+    try:
+        limit = max(1, min(int(args.get("limit") or 10), 20))
+    except (TypeError, ValueError):
+        limit = 10
+    data = await fetch_stream(
+        group=str(args.get("group") or "").strip(), keyword=keyword, limit=limit, use_cache=True,
+    )
+    items = []
+    for it in data.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        text = str(it.get("text") or "")
+        items.append({
+            "id": it.get("id"),
+            "title": it.get("title"),
+            "text": text[:3000] + ("…（正文截断）" if len(text) > 3000 else ""),
+            "date": it.get("date"),
+            "create_time": it.get("create_time"),
+            "tags": it.get("tags") or [],
+            "comments_count": it.get("comments_count"),
+        })
+    return {"count": len(items), "items": items, "groups": data.get("groups") or [],
+            "has_more": bool(data.get("has_more")), "next_before": data.get("next_before")}
+
+
+async def _tool_minutes_sentiment(args: dict) -> Any:
+    from .note_sentiment import get_daily_sentiment
+
+    return await get_daily_sentiment(force=bool(args.get("force")))
+
+
 async def _tool_ask_ai(args: dict, user_out) -> dict:
     question = str(args.get("question") or "").strip()[:_ASK_MAX_CHARS]
     if not question:
@@ -579,6 +675,12 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
             value = await _tool_theme_stocks(arguments)
         elif tool_name == "get_stock_themes":
             value = await _tool_stock_themes(arguments)
+        elif tool_name == "search_stock_reports":
+            value = await _tool_stock_reports(arguments)
+        elif tool_name == "search_minutes":
+            value = await _tool_search_minutes(arguments)
+        elif tool_name == "get_minutes_sentiment":
+            value = await _tool_minutes_sentiment(arguments)
         elif tool_name == "ask_ai":
             value = await _tool_ask_ai(arguments, user_out)
         else:
@@ -656,13 +758,14 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 <div class="panel"><h3>curl 直连验证</h3>
 <pre id="cfgCurl">curl -s __MCP_URL__ -H "Authorization: Bearer &lt;你的令牌&gt;" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre></div>
 
-<h2>可用工具（12 个）</h2>
+<h2>可用工具（15 个）</h2>
 <table><tr><th>工具</th><th>说明</th></tr>
 <tr><td><code>ping</code></td><td>连通探针，返回账号与会员状态</td></tr>
 <tr><td><code>search_market_symbols</code> / <code>get_market_quotes</code></td><td>标的搜索 / 行情快照（A/H/美）</td></tr>
 <tr><td><code>get_review_today</code> / <code>get_review</code> / <code>list_reviews</code></td><td>A股复盘（今日 / 指定日期 / 历史列表）</td></tr>
 <tr><td><code>get_stock_verdict</code></td><td>个股证据速判卡（确定性引擎）</td></tr>
-<tr><td><code>search_news</code> / <code>search_research</code></td><td>资讯流 / 投行研报元数据检索</td></tr>
+<tr><td><code>search_news</code> / <code>search_research</code> / <code>search_stock_reports</code></td><td>资讯流 / 投行研报元数据 / 个股券商研报（近两年，标题机构评级）</td></tr>
+<tr><td><code>search_minutes</code> / <code>get_minutes_sentiment</code></td><td>机构纪要检索（含正文）/ 当日纪要多空统计</td></tr>
 <tr><td><code>get_theme_stocks</code> / <code>get_stock_themes</code></td><td>题材→受益股 / 个股→题材反查</td></tr>
 <tr><td><code>ask_ai</code></td><td>AI 投研问答（取真数再回答；会员/管理员不限次，非会员每天 10 次，与网页端同一配额）</td></tr>
 </table>

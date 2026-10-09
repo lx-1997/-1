@@ -11,7 +11,7 @@
 **一句话简介**：A股复盘 · 个股速判卡 · 研报元数据 · 题材映射 · 行情 · 会取真数的投研 AI 问答。
 
 **完整描述**：
-> 稻草财经（daocaijing.com）投研 MCP。12 个只读工具：今日/指定日期 A股复盘、个股证据速判卡（确定性引擎）、资讯与研报检索（元数据）、题材→受益股与个股→题材反查、A/H/美股行情快照，以及 ask_ai——会调工具取真实行情与财务数据再回答的投研问答。OAuth 2.1 浏览器授权，登录即用；免费，AI 问答配额与官网会员一致。内容仅供研究参考，不构成投资建议。
+> 稻草财经（daocaijing.com）投研 MCP。15 个只读工具：今日/指定日期 A股复盘、个股证据速判卡（确定性引擎）、资讯/投行研报/个股券商研报检索（元数据）、机构纪要检索与多空统计、题材→受益股与个股→题材反查、A/H/美股行情快照，以及 ask_ai——会调工具取真实行情与财务数据再回答的投研问答。OAuth 2.1 浏览器授权，登录即用；免费，AI 问答配额与官网会员一致。内容仅供研究参考，不构成投资建议。
 
 **MCP URL**：`https://daocaijing.com/api/mcp`（Streamable HTTP，OAuth 2.1）
 
@@ -74,7 +74,7 @@
 - [x] /api/mcp 401 带 WWW-Authenticate resource_metadata（自动授权发现）
 - [x] /.well-known/oauth-protected-resource、/.well-known/oauth-authorization-server 可公网访问
 - [x] 动态客户端注册 / PKCE S256 / refresh 轮换（生产全舞步已验证 2026-10-08）
-- [x] tools/list 12 个工具、描述中文
+- [x] tools/list 15 个工具、描述中文
 - [x] nginx 对 /api/mcp、/api/oauth/、/.well-known/ 豁免 UA/前端标识闸
 - [ ] mcp-publisher validate 通过（提交时按校验器微调 server.json）
 - [ ] 512×512 LOGO 上传至站内固定地址
