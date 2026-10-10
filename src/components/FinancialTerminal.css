@@ -1656,6 +1656,31 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
 @keyframes bbt-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes bbt-modal-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .bbt-doc-overlay, .bbt-doc { animation: none; } }
+
+/* PC 端 AI 解读 = 右侧停靠栏：不蒙全屏、不挡信息流，生成期间用户可继续浏览；
+   任务体系照常（关闭后经右下角浮标回到解读）。移动端（≤900px）维持全屏。 */
+@media (min-width: 901px) {
+  .bbt-doc-overlay:has(.bbt-doc--ai) {
+    background: transparent;
+    justify-content: flex-end;
+    align-items: stretch;
+    padding: 0;
+  }
+  .bbt-doc--ai {
+    width: clamp(430px, 38vw, 560px);
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+    border-left: 1px solid var(--line-2);
+    box-shadow: -18px 0 48px rgba(0, 0, 0, 0.45);
+    animation: bbt-dock-in var(--dur-mid) var(--ease-out) both;
+  }
+  /* 放大 = 半屏宽（深稿宽表格/长文阅读更舒展）；还原回停靠栏 */
+  .bbt-doc-overlay--expanded .bbt-doc--ai { width: min(920px, 62vw); }
+  @keyframes bbt-dock-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .bbt-doc--ai { animation: none; } }
+}
 .bbt-doc-bar { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--line-2); background: var(--bar); }
 .bbt-doc-tag { flex: 0 0 auto; font-size: 12px; font-weight: 700; padding: 1px 6px; border-radius: 2px; background: var(--purple-bg); color: var(--purple); }
 .bbt-doc-title { flex: 1 1 auto; min-width: 0; color: var(--text-body); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
