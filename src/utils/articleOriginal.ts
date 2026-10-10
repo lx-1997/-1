@@ -202,7 +202,7 @@ function isRelatedCardHeadline(lines: string[], index: number): boolean {
 function isFooterStart(value: string): boolean {
   // Newsletter cross-reference items（「阅读更多：…」/「Read more: …」指向的是
   // 其它文章的一行摘要，不是本文内容）与站点 footer 一样视为正文结束边界。
-  return /^(?:more\s+from\b|更多来自|top\s+reads?\b|热门阅读|suggested\s+topics?\b|read\s+next\b|latest\b|our\s+standards\b|purchase\s+licen[cs]ing\s+rights\b|lseg\s+products\b|stay\s+informed\b|follow\s+us\b|home\s+首页|首页\s+news|terms?\s+of\s+service|manage\s+cookies|trademarks?|privacy\s+policy|careers\b|advertise\b|ad\s+choices|©\s*\d{4})/i.test(value)
+  return /^(?:more\s+from\b|更多来自|top\s+reads?\b|热门阅读|suggested\s+topics?\b|read\s+next\b|latest\b|our\s+standards\b|purchase\s+licen[cs]ing\s+rights\b|lseg\s+products\b|stay\s+informed\b|follow\s+us\b|home\s+首页|首页\s+news|terms?\s+of\s+service|manage\s+cookies|trademarks?|privacy\s+policy|careers\b|advertise\b|ad\s+choices|©\s*\d{4}|article\s+sitemap|网站地图|站点地图)/i.test(value)
     || /^(?:阅读更多|相关阅读|延伸阅读|更多阅读)\s*[:：]/i.test(value)
     || /^(?:read\s+more\b|点击阅读原文|继续阅读)\s*[:：]?$/i.test(value);
 }
@@ -222,11 +222,13 @@ const PAGE_CHROME_LINES = new Set([
   'save 保存 translate 翻译结果', 'takeaways 外卖食品',
 ]);
 const INLINE_CHROME_RE = /^(?:translate\s+翻译结果|\d{1,2}:\d{2}\s*\/\s*\d{1,2}:\d{2})$/i;
-const PAGE_CHROME_RE = /^(?:≡\s*)?bloomberg$|^the company\s*&\s*its products\b|^bloomberg terminal demo request\b|^bloomberg anywhere login\b|^customer support$|^subscribe\b|^\[?免费翻译服务\]?|^建议升级为\s*pro\s*会员|^错误原因\s*[:：]|^免费试用\s*pro\s*会员|^切换到.*翻译.*重试$|^.*(?:save\s+保存|translate\s+翻译结果).*$|^.*\d{1,2}:\d{2}\s*\/\s*\d{1,2}:\d{2}.*$|^\*?photographer\s*[:：]|^摄影师\s*[:：]|^(?:↗\s*)?current market cap$|^[a-z][a-z ]{0,30}['’]s\s+market cap shrinks$|^[\$]?\s*\d+(?:\.\d+)?\s*[bm]?$|^[\d\s$,.]+$/i;
+// 原件截图里上游页脚标语常被机器翻译成中文，英文原文键匹配不到，需按译写形态再拦一层。
+const PUBLISHER_CHROME_RE = /专为金融.{0,6}专业人士设计的独家新闻|独家新闻[、，]\s*数据和分析信息|所有报价至少延迟\s*15\s*分钟/;
+const PAGE_CHROME_RE = /^(?:≡\s*)?bloomberg$|^the company\s*&\s*its products\b|^bloomberg terminal demo request\b|^bloomberg anywhere login\b|^customer support$|^subscribe\b|^\[?免费翻译服务\]?|^建议升级为\s*pro\s*会员|^错误原因\s*[:：]|^免费试用\s*pro\s*会员|^切换到.*翻译.*重试$|^.*(?:save\s+保存|translate\s+翻译结果).*$|^.*\d{1,2}:\d{2}\s*\/\s*\d{1,2}:\d{2}.*$|^\*?photographer\s*[:：]|^摄影师\s*[:：]|^file\s+photo\s*[:：]|^photo\s*[:：]|^图片(?:照片|来源|出处)\s*[:：]|^照片来源\s*[:：]|^(?:↗\s*)?current market cap$|^[a-z][a-z ]{0,30}['’]s\s+market cap shrinks$|^[\$]?\s*\d+(?:\.\d+)?\s*[bm]?$|^[\d\s$,.]+$/i;
 
 function isPublisherChromeLine(value: string): boolean {
   const key = stripHeadingMarker(value).toLowerCase();
-  return PUBLISHER_CHROME_LINES.has(key);
+  return PUBLISHER_CHROME_LINES.has(key) || PUBLISHER_CHROME_RE.test(key);
 }
 
 function isPageChromeLine(value: string): boolean {

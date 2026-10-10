@@ -66,6 +66,24 @@ describe('article original reader parser', () => {
     expect(body).toContain('华为技术有限公司在应对内存成本上涨时，利润出现明显下降。');
   });
 
+  it('filters machine-translated publisher taglines, photo credits and footer headings', () => {
+    const doc = parseArticleOriginal({
+      title: '超级微电子承包商承认阴谋指控',
+      paragraphs: [
+        '超级微电子公司的一名承包商承认参与了将配备英伟达芯片的 AI 服务器转移到中国的阴谋。',
+        'A contractor for Super Micro admitted to a conspiracy involving AI servers with Nvidia chips.',
+        '专为金融专业人士设计的独家新闻、数据和分析信息。',
+        'Exclusive news, data and analytics for financial market professionals',
+        '图片照片：在这张拍摄于 2025 年 8 月 25 日的插图中，可以看到 NVIDIA 的标志。图片来源：REUTERS/Dado Ruvic/插图。',
+        'FILE PHOTO: An illustration taken August 25, 2025 shows the NVIDIA logo. REUTERS/Dado Ruvic/Illustration.',
+        'Article Sitemap',
+      ],
+    });
+
+    const body = doc.sections.flatMap(section => section.paragraphs).map(paragraph => paragraph.text);
+    expect(body).toEqual(['超级微电子公司的一名承包商承认参与了将配备英伟达芯片的 AI 服务器转移到中国的阴谋。']);
+  });
+
   it('turns stored HTML fragments into clean readable paragraphs', () => {
     const doc = parseArticleOriginal({
       title: 'HTML 文章',
