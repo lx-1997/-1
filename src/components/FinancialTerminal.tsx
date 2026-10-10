@@ -1431,6 +1431,43 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const aiTasksRef = useRef<Map<string, AiBgTask>>(new Map());
   const [aiTasksVersion, setAiTasksVersion] = useState(0);
   const [aiTasksOpen, setAiTasksOpen] = useState(false);
+  // AI 常驻挂件：可拖拽浮标 + 双页签面板（AI 对话 / 解读记录）。位置持久化到 localStorage。
+  const [aiDockOpen, setAiDockOpen] = useState(false);
+  const [aiDockTab, setAiDockTab] = useState<'chat' | 'tasks'>('chat');
+  const [aiDockPos, setAiDockPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('bbt_ai_dock_pos') || 'null');
+      if (v && typeof v.x === 'number' && typeof v.y === 'number') return v;
+    } catch { /* 损坏即回默认位 */ }
+    return null;
+  });
+  const aiDockRef = useRef<HTMLDivElement>(null);
+  const aiDockDragRef = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
+  const aiDockSavePos = (x: number, y: number) => {
+    const p = { x: Math.max(8, Math.min(x, Math.max(8, window.innerWidth - 72))), y: Math.max(8, Math.min(y, Math.max(8, window.innerHeight - 72))) };
+    setAiDockPos(p);
+    try { localStorage.setItem('bbt_ai_dock_pos', JSON.stringify(p)); } catch { /* 隐私模式忽略 */ }
+  };
+  const onAiDockFabDown = (e: React.PointerEvent) => {
+    const el = aiDockRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    aiDockDragRef.current = { px: e.clientX, py: e.clientY, x: rect.left, y: rect.top, moved: false };
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* 老内核忽略 */ }
+  };
+  const onAiDockFabMove = (e: React.PointerEvent) => {
+    const st = aiDockDragRef.current;
+    if (!st) return;
+    const dx = e.clientX - st.px;
+    const dy = e.clientY - st.py;
+    if (!st.moved && Math.abs(dx) + Math.abs(dy) > 5) st.moved = true;
+    if (st.moved) aiDockSavePos(st.x + dx, st.y + dy);
+  };
+  const onAiDockFabUp = () => {
+    const st = aiDockDragRef.current;
+    aiDockDragRef.current = null;
+    if (st && !st.moved) setAiDockOpen(v => !v);
+  };
   const aiViewingTaskRef = useRef('');  // 阅读模态当前跟随的后台任务 key；空串=模态未跟随任务
   const [shareImgUrl, setShareImgUrl] = useState<string>('');  // 出图兜底预览（长按保存）
   const [aiResult, setAiResult] = useState<AiAnalysis | null>(null);
@@ -3733,26 +3770,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // 深度稿证据 chip：优先打开证据自身链接；研报证据没有独立 URL 时打开原文
   // PDF。页码只作定位提示（不同 PDF 查看器不一定支持可靠的 page fragment）。
-  const openDeepDraftSource = useCallback((source: ResearchDeepDraftEvidence | ResearchDeepDraftSource) => {
-    const url = source.url;
-    if (url && /^https?:\/\//i.test(url)) {
-      window.open(url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    if (aiReportMeta?.preview_url) {
-      if (!canViewResearchOriginal) {
-        // 研报原文是站长账号白名单能力，不是购买会员即可解锁的权益。
-        // 非白名单用户不应看到“开通会员”弹窗，避免把不可购买的能力误导成会员权益。
-        showToast('研报原文仅对指定账号开放');
-        return;
-      }
-      const page = source.page || (source.pages ? String(source.pages) : '');
-      if (page) showToast(`正在打开原文（可按 ${page} 定位）`);
-      void openResearchOriginal(aiReportMeta.preview_url);
-      return;
-    }
-    showToast('该条证据暂无可打开的原文链接');
-  }, [aiReportMeta?.preview_url, canViewResearchOriginal, openResearchOriginal, showToast]);
 
   // 研报解读「分享」：把当前 AI 解读存成公开软墙落地页 → 拿到 URL → 打开极简分享弹窗（落地页登录看完整解读，引流转化）。
   const shareReportInsight = useCallback(async () => {
@@ -6978,7 +6995,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     error={aiError || null}
                     onRetry={() => aiRetryRef.current?.()}
                     onClose={closeAi}
-                    onSourceClick={openDeepDraftSource}
                     className="research-deep-draft--embedded"
                   />
                 </div>
@@ -7116,35 +7132,85 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
 
-      {aiTasks.length > 0 && (() => {
+      {(() => {
         const running = aiTasks.filter(t => t.status === 'running');
+        const done = aiTasks.filter(t => t.status === 'done').length;
         return (
-          <div className="bbt-ai-tasks">
-            {aiTasksOpen && (
-              <div className="bbt-ai-tasks-pop" role="dialog" aria-label="AI 解读任务">
-                <div className="bbt-ai-tasks-h">AI 解读任务</div>
-                {aiTasks.map(t => {
-                  const isRun = t.status === 'running';
-                  const p = aiTaskPulse(t);
-                  return (
-                    <div key={t.key} className={`bbt-ai-task is-${t.status}`}>
-                      <button type="button" className="bbt-ai-task-main" onClick={() => { if (!isRun) openAiTaskView(t.key); }}>
-                        <span className={`bbt-ai-task-dot${isRun ? ' is-run' : ''}`}>{isRun ? '' : t.status === 'done' ? '✓' : '!'}</span>
-                        <span className="bbt-ai-task-txt">
-                          <b>{clipTitle(t.title, 30)}</b>
-                          <small>{isRun ? `${t.stage || '后台解读中'} · ${p.elapsed}s` : t.status === 'done' ? '解读完成 · 点击查看' : clipTitle(t.error, 40)}</small>
-                        </span>
-                      </button>
-                      <button type="button" className="bbt-ai-task-x" aria-label="移除" onClick={() => dismissAiTask(t.key)}>✕</button>
+          <div
+            ref={aiDockRef}
+            className={`bbt-ai-dock${aiDockPos ? ' is-placed' : ''}${aiDockOpen ? ' is-open' : ''}`}
+            style={aiDockPos ? { left: aiDockPos.x, top: aiDockPos.y } : undefined}
+          >
+            {aiDockOpen && (
+              <div className="bbt-ai-dock-panel" role="dialog" aria-label="AI 助手">
+                <div className="bbt-ai-dock-tabs">
+                  <button type="button" className={aiDockTab === 'chat' ? 'active' : ''} onClick={() => setAiDockTab('chat')}>AI 对话</button>
+                  <button type="button" className={aiDockTab === 'tasks' ? 'active' : ''} onClick={() => setAiDockTab('tasks')}>
+                    解读记录{running.length > 0 ? ` · ${running.length}进行中` : done > 0 ? ` · ${done}待看` : ''}
+                  </button>
+                  <button type="button" className="bbt-ai-dock-x" aria-label="收起" onClick={() => setAiDockOpen(false)}>✕</button>
+                </div>
+                {aiDockTab === 'chat' ? (
+                  <div className="bbt-ai-dock-chat">
+                    <div className="bbt-ai-dock-convlist">
+                      {aiConversations.length === 0 && <p className="bbt-ai-dock-empty">还没有对话；在下方输入问题即可开始。</p>}
+                      {aiConversations.slice(0, 6).map(c => (
+                        <button key={c.id} type="button" className="bbt-ai-dock-conv" onClick={() => { setActiveAiConversationId(c.id); focusSideModule('ai'); setAiDockOpen(false); }}>
+                          <b>{clipTitle(c.title, 26)}</b>
+                          <small>{clipTitle(c.answer || c.question, 64)}</small>
+                        </button>
+                      ))}
                     </div>
-                  );
-                })}
+                    <button type="button" className="bbt-ai-dock-expand" onClick={() => { focusSideModule('ai'); setAiDockOpen(false); }}>展开完整对话 →</button>
+                    <div className="bbt-ai-dock-inputrow">
+                      <input
+                        value={aiInput}
+                        onChange={e => setAiInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAiQuestion(); setAiInput(''); } }}
+                        placeholder={aiBusy ? 'AI 正在回答…' : '问点研究问题，回车发送'}
+                        disabled={aiBusy}
+                      />
+                      <button type="button" onClick={() => { submitAiQuestion(); setAiInput(''); }} disabled={aiBusy || !aiInput.trim()}>
+                        {aiBusy ? '…' : '发送'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bbt-ai-dock-tasks">
+                    {aiTasks.length === 0 && <p className="bbt-ai-dock-empty">暂无解读任务；在研报上点「AI 解读」即可后台生成。</p>}
+                    {aiTasks.map(t => {
+                      const isRun = t.status === 'running';
+                      const p = aiTaskPulse(t);
+                      return (
+                        <div key={t.key} className={`bbt-ai-task is-${t.status}`}>
+                          <button type="button" className="bbt-ai-task-main" onClick={() => { if (!isRun) openAiTaskView(t.key); }}>
+                            <span className={`bbt-ai-task-dot${isRun ? ' is-run' : ''}`}>{isRun ? '' : t.status === 'done' ? '✓' : '!'}</span>
+                            <span className="bbt-ai-task-txt">
+                              <b>{clipTitle(t.title, 30)}</b>
+                              <small>{isRun ? `${t.stage || '后台解读中'} · ${p.elapsed}s` : t.status === 'done' ? '解读完成 · 点击查看' : clipTitle(t.error, 40)}</small>
+                            </span>
+                          </button>
+                          <button type="button" className="bbt-ai-task-x" aria-label="移除" onClick={() => dismissAiTask(t.key)}>✕</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
-            <button type="button" className={`bbt-ai-tasks-pill${aiTasksOpen ? ' is-open' : ''}`} onClick={() => setAiTasksOpen(v => !v)}>
+            <button
+              type="button"
+              className={`bbt-ai-dock-fab${aiDockOpen ? ' is-open' : ''}${running.length > 0 ? ' is-busy' : ''}`}
+              onPointerDown={onAiDockFabDown}
+              onPointerMove={onAiDockFabMove}
+              onPointerUp={onAiDockFabUp}
+              title="AI 助手（可拖动）"
+            >
               {running.length > 0
-                ? <><i className="bbt-ai-tasks-spin" aria-hidden />后台解读 {running.length} 项 · {aiTaskPulse(running[running.length - 1]).elapsed}s</>
-                : <>✦ 解读完成 {aiTasks.filter(t => t.status === 'done').length} 条待看</>}
+                ? <><i className="bbt-ai-tasks-spin" aria-hidden />{running.length}</>
+                : aiTasks.some(t => t.status === 'done')
+                  ? <>✦<i className="bbt-ai-dock-badge">{aiTasks.filter(t => t.status === 'done').length}</i></>
+                  : <>✦ AI</>}
             </button>
           </div>
         );
