@@ -7,9 +7,11 @@ import re
 import signal
 import sqlite3
 from . import db
+from .ownership import bind_owner, owner_filter
 import time
 import uuid
 from contextlib import suppress
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,12 +45,7 @@ from .schemas import (
 )
 
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_AGENT_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".agent_tasks.sqlite3"),
-    )
-)
+DB_PATH = db.data_path(".agent_tasks.sqlite3", "DEEPFOCUS_AGENT_DB_PATH")
 
 WORKER_POLL_SECONDS = float(os.getenv("DEEPFOCUS_AGENT_WORKER_POLL_SECONDS", "2.5"))
 AGENT_LLM_TIMEOUT_SECONDS = float(os.getenv("DEEPFOCUS_AGENT_LLM_TIMEOUT_SECONDS", "120"))
@@ -82,15 +79,21 @@ PATH_OR_URL_RE = re.compile(
 
 _worker_task: Optional[asyncio.Task] = None
 _worker_stop_event: Optional[asyncio.Event] = None
+_worker_leases: dict[str, str] = {}
+_active_lease: ContextVar[Optional[tuple[str, str]]] = ContextVar("investment_task_lease", default=None)
 
 
 def init_task_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS agent_tasks (
                 id TEXT PRIMARY KEY,
+                owner_user_id TEXT,
+                lease_token TEXT,
+                lease_expires_at TEXT,
                 title TEXT NOT NULL,
                 symbol TEXT,
                 asset_name TEXT,
@@ -123,17 +126,22 @@ def init_task_db() -> None:
             conn.execute("ALTER TABLE agent_tasks ADD COLUMN runtime_pid INTEGER")
         if "runtime_kind" not in columns:
             conn.execute("ALTER TABLE agent_tasks ADD COLUMN runtime_kind TEXT")
+        for column in ("owner_user_id", "lease_token", "lease_expires_at"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE agent_tasks ADD COLUMN {column} TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_tasks_owner ON agent_tasks(owner_user_id, created_at)")
         conn.commit()
     recover_stale_running_tasks()
 
 
-def create_investment_task(request: InvestmentTaskCreateRequest) -> InvestmentTaskRecord:
+def create_investment_task(request: InvestmentTaskCreateRequest, *, owner_user_id: Optional[str] = None) -> InvestmentTaskRecord:
     init_task_db()
     task_id = str(uuid.uuid4())
     timestamp = utc_now_iso()
     input_payload = request.model_dump()
     record = {
         "id": task_id,
+        "owner_user_id": owner_user_id,
         "title": request.title,
         "symbol": request.symbol,
         "asset_name": request.asset_name,
@@ -165,11 +173,11 @@ def create_investment_task(request: InvestmentTaskCreateRequest) -> InvestmentTa
         conn.execute(
             """
             INSERT INTO agent_tasks (
-                id, title, symbol, asset_name, task_type, engine, status, priority, assigned_agent,
+                id, owner_user_id, title, symbol, asset_name, task_type, engine, status, priority, assigned_agent,
                 progress, input_json, result_json, logs_json, error, created_at, updated_at,
                 started_at, completed_at
             ) VALUES (
-                :id, :title, :symbol, :asset_name, :task_type, :engine, :status, :priority,
+                :id, :owner_user_id, :title, :symbol, :asset_name, :task_type, :engine, :status, :priority,
                 :assigned_agent, :progress, :input_json, :result_json, :logs_json,
                 :error, :created_at, :updated_at, :started_at, :completed_at
             )
@@ -180,31 +188,34 @@ def create_investment_task(request: InvestmentTaskCreateRequest) -> InvestmentTa
     return _row_to_record(record)
 
 
-def list_investment_tasks(limit: int = 50) -> list[InvestmentTaskRecord]:
+def list_investment_tasks(limit: int = 50, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> list[InvestmentTaskRecord]:
     init_task_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM agent_tasks ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            "SELECT * FROM agent_tasks" + (f" WHERE {clause}" if clause else "") + " ORDER BY created_at DESC LIMIT ?",
+            [*values, max(1, min(limit, 200))],
         ).fetchall()
     return [_row_to_record(dict(row)) for row in rows]
 
 
-def get_investment_task(task_id: str) -> Optional[InvestmentTaskRecord]:
+def get_investment_task(task_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> Optional[InvestmentTaskRecord]:
     init_task_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
-        row = conn.execute("SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id = ?" + (f" AND {clause}" if clause else ""), [task_id, *values]).fetchone()
     return _row_to_record(dict(row)) if row else None
 
 
-def retry_investment_task(task_id: str) -> Optional[InvestmentTaskRecord]:
-    task = get_investment_task(task_id)
+def retry_investment_task(task_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> Optional[InvestmentTaskRecord]:
+    task = get_investment_task(task_id, owner_user_id=owner_user_id, is_admin=is_admin)
     if not task or task.status not in {"failed", "cancelled", "completed"}:
         return task
     logs = [entry.model_dump() for entry in task.logs]
     logs.append({"timestamp": utc_now_iso(), "agent": "TaskCenter", "message": "任务已重新排队。"})
     _update_task(
         task_id,
+        expected_statuses={"failed", "cancelled", "completed"},
         status="pending",
         progress=0,
         error=None,
@@ -212,33 +223,42 @@ def retry_investment_task(task_id: str) -> Optional[InvestmentTaskRecord]:
         logs_json=json.dumps(logs, ensure_ascii=False),
         started_at=None,
         completed_at=None,
+        lease_token=None,
+        lease_expires_at=None,
     )
-    return get_investment_task(task_id)
+    return get_investment_task(task_id, owner_user_id=owner_user_id, is_admin=is_admin)
 
 
-def cancel_investment_task(task_id: str) -> Optional[InvestmentTaskRecord]:
-    task = get_investment_task(task_id)
+def cancel_investment_task(task_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> Optional[InvestmentTaskRecord]:
+    task = get_investment_task(task_id, owner_user_id=owner_user_id, is_admin=is_admin)
     if not task or task.status in {"completed", "failed", "cancelled"}:
         return task
-    _terminate_task_runtime_process(task_id)
+    with _connect() as conn:
+        runtime = conn.execute("SELECT runtime_pid, runtime_kind FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
     logs = [entry.model_dump() for entry in task.logs]
     logs.append({"timestamp": utc_now_iso(), "agent": "TaskCenter", "message": "用户取消任务。"})
-    _update_task(
+    cancelled = _update_task(
         task_id,
+        expected_statuses={"pending", "running"},
         status="cancelled",
         progress=task.progress,
         logs_json=json.dumps(logs, ensure_ascii=False),
         runtime_pid=None,
         runtime_kind=None,
         completed_at=utc_now_iso(),
+        lease_token=None,
+        lease_expires_at=None,
     )
-    return get_investment_task(task_id)
+    if cancelled and runtime:
+        _terminate_registered_runtime(runtime["runtime_pid"], runtime["runtime_kind"])
+    return get_investment_task(task_id, owner_user_id=owner_user_id, is_admin=is_admin)
 
 
-def task_counts() -> dict[str, int]:
+def task_counts(*, owner_user_id: Optional[str] = None, is_admin: bool = False) -> dict[str, int]:
     init_task_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
-        rows = conn.execute("SELECT status, COUNT(*) AS count FROM agent_tasks GROUP BY status").fetchall()
+        rows = conn.execute("SELECT status, COUNT(*) AS count FROM agent_tasks" + (f" WHERE {clause}" if clause else "") + " GROUP BY status", values).fetchall()
     counts = {row["status"]: int(row["count"]) for row in rows}
     return {
         "pending": counts.get("pending", 0),
@@ -256,13 +276,17 @@ def recover_stale_running_tasks(now: Optional[datetime] = None) -> int:
     recovered = 0
 
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """
             SELECT id, progress, assigned_agent, logs_json, updated_at, runtime_pid, runtime_kind
             FROM agent_tasks
-            WHERE status = 'running' AND updated_at < ?
+            WHERE status = 'running' AND (
+                (lease_expires_at IS NOT NULL AND lease_expires_at < ?)
+                OR (lease_expires_at IS NULL AND updated_at < ?)
+            )
             """,
-            (stale_cutoff,),
+            (timestamp, stale_cutoff),
         ).fetchall()
 
         for row in rows:
@@ -301,6 +325,8 @@ def recover_stale_running_tasks(now: Optional[datetime] = None) -> int:
                     logs_json = ?,
                     runtime_pid = NULL,
                     runtime_kind = NULL,
+                    lease_token = NULL,
+                    lease_expires_at = NULL,
                     updated_at = ?,
                     completed_at = ?
                 WHERE id = ? AND status = 'running'
@@ -348,7 +374,24 @@ async def _worker_loop(stop_event: asyncio.Event) -> None:
             recover_stale_running_tasks()
         task = _claim_next_task()
         if task:
-            await _process_task(task)
+            lease = _worker_leases.pop(task.id)
+            with bind_owner(task.owner_user_id):
+                context = _active_lease.set((task.id, lease))
+                execution = asyncio.create_task(_process_task(task))
+                heartbeat = asyncio.create_task(_maintain_task_lease(task.id, lease, execution))
+                try:
+                    await asyncio.wait({execution})
+                    if not execution.cancelled():
+                        await execution
+                finally:
+                    try:
+                        execution.cancel()
+                        heartbeat.cancel()
+                        await asyncio.gather(execution, heartbeat, return_exceptions=True)
+                        _terminate_task_runtime_process(task.id)
+                        _update_task(task.id, status="failed", error="后台 worker 已停止，任务可重试", completed_at=utc_now_iso())
+                    finally:
+                        _active_lease.reset(context)
         else:
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=WORKER_POLL_SECONDS)
@@ -358,7 +401,10 @@ async def _worker_loop(stop_event: asyncio.Event) -> None:
 
 def _claim_next_task() -> Optional[InvestmentTaskRecord]:
     timestamp = utc_now_iso()
+    lease_token = f"{os.getpid()}:{uuid.uuid4().hex}"
+    lease_until = (datetime.now(timezone.utc) + timedelta(seconds=max(1, RUNNING_TASK_STALE_SECONDS))).isoformat()
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             """
             SELECT * FROM agent_tasks
@@ -369,19 +415,43 @@ def _claim_next_task() -> Optional[InvestmentTaskRecord]:
         ).fetchone()
         if not row:
             return None
-        conn.execute(
+        claimed = conn.execute(
             """
             UPDATE agent_tasks
-            SET status = 'running', progress = 5, started_at = ?, updated_at = ?
+            SET status = 'running', progress = 5, started_at = ?, updated_at = ?, lease_token = ?, lease_expires_at = ?
             WHERE id = ? AND status = 'pending'
             """,
-            (timestamp, timestamp, row["id"]),
+            (timestamp, timestamp, lease_token, lease_until, row["id"]),
         )
         conn.commit()
+        if claimed.rowcount != 1:
+            return None
     task = get_investment_task(row["id"])
     if task:
+        _worker_leases[task.id] = lease_token
         _append_log(task.id, "OrchestratorAgent", "任务已启动，开始拆解为核心投研流程。", progress=8)
     return task
+
+
+async def _maintain_task_lease(task_id: str, lease: str, execution: asyncio.Task) -> None:
+    interval = max(0.1, min(10.0, RUNNING_TASK_STALE_SECONDS / 3))
+    while not execution.done():
+        await asyncio.sleep(interval)
+        now = datetime.now(timezone.utc)
+        try:
+            with _connect() as conn:
+                renewed = conn.execute(
+                    "UPDATE agent_tasks SET lease_expires_at=?, updated_at=? WHERE id=? AND status='running' AND lease_token=?",
+                    ((now + timedelta(seconds=max(1, RUNNING_TASK_STALE_SECONDS))).isoformat(), now.isoformat(), task_id, lease),
+                )
+                conn.commit()
+        except sqlite3.Error:
+            # 无法确认租约仍有效时停止执行，不能让任务在另一 worker 恢复后继续调用外部服务。
+            execution.cancel()
+            return
+        if renewed.rowcount != 1:
+            execution.cancel()
+            return
 
 
 async def _process_task(task: InvestmentTaskRecord) -> None:
@@ -3111,10 +3181,13 @@ def _register_task_runtime_process(task_id: str):
 
 
 def _terminate_task_runtime_process(task_id: str) -> bool:
+    lease = _active_lease.get()
+    clause = " AND lease_token=?" if lease and lease[0] == task_id else ""
+    values = [task_id, lease[1]] if clause else [task_id]
     with _connect() as conn:
         row = conn.execute(
-            "SELECT runtime_pid, runtime_kind FROM agent_tasks WHERE id = ?",
-            (task_id,),
+            "SELECT runtime_pid, runtime_kind FROM agent_tasks WHERE id = ?" + clause,
+            values,
         ).fetchone()
     if not row:
         return False
@@ -3146,20 +3219,34 @@ def _terminate_registered_runtime(pid: Any, kind: Any) -> bool:
             return False
 
 
-def _update_task(task_id: str, **updates: Any) -> None:
+def _update_task(task_id: str, *, expected_statuses: Optional[set[str]] = None, **updates: Any) -> bool:
     if not updates:
-        return
+        return False
+    lease = _active_lease.get()
+    clauses = ["id = ?"]
+    filters: list[Any] = [task_id]
+    if lease and lease[0] == task_id:
+        clauses.extend(["lease_token = ?", "status = 'running'"])
+        filters.append(lease[1])
+    if expected_statuses:
+        clauses.append("status IN (" + ",".join("?" for _ in expected_statuses) + ")")
+        filters.extend(sorted(expected_statuses))
+    if updates.get("status") in {"completed", "failed", "cancelled", "pending"}:
+        updates["lease_token"] = None
+        updates["lease_expires_at"] = None
     updates["updated_at"] = utc_now_iso()
     assignments = ", ".join(f"{key} = ?" for key in updates)
-    values = list(updates.values()) + [task_id]
+    values = list(updates.values()) + filters
     with _connect() as conn:
-        conn.execute(f"UPDATE agent_tasks SET {assignments} WHERE id = ?", values)
+        cursor = conn.execute(f"UPDATE agent_tasks SET {assignments} WHERE {' AND '.join(clauses)}", values)
         conn.commit()
+    return cursor.rowcount == 1
 
 
 def _row_to_record(row: dict[str, Any]) -> InvestmentTaskRecord:
     return InvestmentTaskRecord(
         id=row["id"],
+        owner_user_id=row.get("owner_user_id"),
         title=row["title"],
         symbol=row.get("symbol"),
         asset_name=row.get("asset_name"),

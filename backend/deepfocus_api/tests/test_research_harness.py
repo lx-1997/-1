@@ -228,6 +228,13 @@ async def test_harness_marks_whitelist_content_without_leaking_it(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_institution_notes_tool_keeps_category_separate(monkeypatch) -> None:
+    from datetime import datetime, timezone
+    from deepfocus_api import agent_tools
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 31, 7, tzinfo=timezone.utc).astimezone(tz)
+    monkeypatch.setattr(agent_tools, "_dt", FixedDateTime)
     async def fake_stream(**kwargs):
         assert kwargs["keyword"] == "贵州茅台"
         return {"items": [{
@@ -248,6 +255,13 @@ async def test_institution_notes_tool_keeps_category_separate(monkeypatch) -> No
 
 @pytest.mark.asyncio
 async def test_institution_notes_code_boundary_and_dedup(monkeypatch) -> None:
+    from datetime import datetime, timezone
+    from deepfocus_api import agent_tools
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 31, 7, tzinfo=timezone.utc).astimezone(tz)
+    monkeypatch.setattr(agent_tools, "_dt", FixedDateTime)
     async def fake_stream(**kwargs):
         assert kwargs["keyword"] == "00148"
         return {"items": [

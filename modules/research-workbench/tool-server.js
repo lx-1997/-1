@@ -820,6 +820,7 @@ function chromeExecutablePath() {
     "/usr/bin/google-chrome",
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
+    chromium.executablePath(),
   ];
   const found = candidates.find((candidate) => fssync.existsSync(candidate));
   if (!found) throw new Error("未找到 Chrome/Chromium。请先安装 Chrome 后再使用微信扫码登录。");
@@ -2850,7 +2851,7 @@ async function main() {
   const server = http.createServer((req, res) => {
     route(req, res).catch((error) => send(res, 500, { error: error.message }));
   });
-  server.listen(DEFAULT_PORT, "127.0.0.1", () => {
+  server.listen(DEFAULT_PORT, process.env.RESEARCH_WORKBENCH_HOST || "127.0.0.1", () => {
     console.log(`知识星球下载工具已启动：http://127.0.0.1:${DEFAULT_PORT}`);
   });
 }

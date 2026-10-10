@@ -1,0 +1,10 @@
+FROM node:22-bookworm-slim
+WORKDIR /app/modules/research-workbench
+COPY modules/research-workbench/package.json modules/research-workbench/package-lock.json ./
+RUN npm ci --omit=dev
+COPY modules/research-workbench/ ./
+# Install browser libraries and a matching Chromium for authenticated downloads.
+RUN npx playwright-core install --with-deps chromium
+ENV PORT=3927 RESEARCH_WORKBENCH_HOST=0.0.0.0
+EXPOSE 3927
+CMD ["node", "tool-server.js"]

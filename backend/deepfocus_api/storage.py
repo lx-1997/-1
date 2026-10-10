@@ -22,6 +22,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from . import db
+
 logger = logging.getLogger("deepfocus.storage")
 
 
@@ -29,7 +31,7 @@ class Base(DeclarativeBase):
     """所有走统一存储层的 ORM 模型的公共基类。"""
 
 
-_DEFAULT_SQLITE_PATH = Path(__file__).resolve().parents[1] / ".deepfocus_core.sqlite3"
+_DEFAULT_SQLITE_PATH = db.data_path(".deepfocus_core.sqlite3")
 
 _engine: Optional[Engine] = None
 _session_factory: Optional[sessionmaker] = None
@@ -43,7 +45,7 @@ def database_url() -> str:
     explicit = os.getenv("DEEPFOCUS_DATABASE_URL")
     if explicit:
         return explicit.strip()
-    sqlite_path = os.getenv("DEEPFOCUS_CORE_DB_PATH", str(_DEFAULT_SQLITE_PATH))
+    sqlite_path = db.data_path(".deepfocus_core.sqlite3", "DEEPFOCUS_CORE_DB_PATH")
     return f"sqlite:///{sqlite_path}"
 
 

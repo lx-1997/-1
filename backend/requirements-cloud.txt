@@ -18,3 +18,11 @@ python-jose[cryptography]==3.4.0
 # Optional Android FCM HTTP v1 sender. Without Firebase credentials the
 # adapter degrades to a recorded "skipped" delivery and does not block news.
 google-auth==2.38.0
+
+# Core authentication, ORM stores, PDF branding and public market adapters.
+SQLAlchemy==2.0.30
+passlib==1.7.4
+pikepdf==9.11.0
+requests==2.32.5
+beautifulsoup4==4.14.3
+yfinance==1.2.0

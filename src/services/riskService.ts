@@ -1,7 +1,5 @@
-import axios from 'axios';
-import { getApiBaseUrls, formatErrorMessage } from './apiClient';
+import { apiGet, apiPost, apiPut, apiDelete } from './apiClient';
 
-const API_BASE = () => getApiBaseUrls()[0];
 
 export interface PositionRiskMetrics {
   unrealized_pnl: number;
@@ -244,133 +242,45 @@ export interface PositionCreateRequest {
 }
 
 export async function calculateGreeks(request: GreeksRequest): Promise<GreeksResponse> {
-  try {
-    const resp = await axios.post(`${API_BASE()}/api/risk/greeks`, request);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiPost('/api/risk/greeks', request);
 }
-
 export async function getPositions(status?: string): Promise<PositionRecord[]> {
-  try {
-    const params = status ? { status } : {};
-    const resp = await axios.get(`${API_BASE()}/api/risk/positions`, { params });
-    return resp.data.positions;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  const response = await apiGet<{ positions: PositionRecord[] }>('/api/risk/positions', { params: status ? { status } : {} });
+  return response.positions;
 }
-
 export async function getPosition(positionId: string): Promise<PositionRecord> {
-  try {
-    const resp = await axios.get(`${API_BASE()}/api/risk/positions/${positionId}`);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiGet(`/api/risk/positions/${positionId}`);
 }
-
 export async function createPosition(request: PositionCreateRequest): Promise<PositionRecord> {
-  try {
-    const resp = await axios.post(`${API_BASE()}/api/risk/positions`, request);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiPost('/api/risk/positions', request);
 }
-
 export async function updatePosition(positionId: string, updates: Partial<PositionRecord>): Promise<PositionRecord> {
-  try {
-    const resp = await axios.put(`${API_BASE()}/api/risk/positions/${positionId}`, updates);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiPut(`/api/risk/positions/${positionId}`, updates);
 }
-
 export async function deletePosition(positionId: string): Promise<void> {
-  try {
-    await axios.delete(`${API_BASE()}/api/risk/positions/${positionId}`);
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiDelete(`/api/risk/positions/${positionId}`);
 }
-
 export async function closePosition(positionId: string, exitPrice: number, exitReason?: string): Promise<PositionRecord> {
-  try {
-    const resp = await axios.post(`${API_BASE()}/api/risk/positions/${positionId}/close`, {
-      exit_price: exitPrice,
-      exit_reason: exitReason || ''
-    });
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiPost(`/api/risk/positions/${positionId}/close`, { exit_price: exitPrice, exit_reason: exitReason || '' });
 }
-
 export async function refreshPrices(): Promise<{ updated_count: number }> {
-  try {
-    const resp = await axios.post(`${API_BASE()}/api/risk/positions/refresh`);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiPost('/api/risk/positions/refresh');
 }
-
 export async function getRiskSummary(): Promise<RiskSummaryResponse> {
-  try {
-    const resp = await axios.get(`${API_BASE()}/api/risk/summary`);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiGet('/api/risk/summary');
 }
-
 export async function getRiskLimits(): Promise<RiskLimitRecord[]> {
-  try {
-    const resp = await axios.get(`${API_BASE()}/api/risk/limits`);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiGet('/api/risk/limits');
 }
-
 export async function updateRiskLimit(key: string, value: number, enabled?: boolean): Promise<RiskLimitRecord> {
-  try {
-    const resp = await axios.put(`${API_BASE()}/api/risk/limits/${key}`, { value, enabled });
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiPut(`/api/risk/limits/${key}`, { value, enabled });
 }
-
 export async function getPnlSummary(): Promise<PnlSummaryResponse> {
-  try {
-    const resp = await axios.get(`${API_BASE()}/api/risk/pnl`);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiGet('/api/risk/pnl');
 }
-
 export async function getPnlRecords(positionId?: string, limit?: number): Promise<PnlRecord[]> {
-  try {
-    const params: Record<string, any> = {};
-    if (positionId) params.position_id = positionId;
-    if (limit) params.limit = limit;
-    const resp = await axios.get(`${API_BASE()}/api/risk/pnl/records`, { params });
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiGet('/api/risk/pnl/records', { params: { ...(positionId ? { position_id: positionId } : {}), ...(limit ? { limit } : {}) } });
 }
-
 export async function runRiskBacktest(request: RiskBacktestRequest): Promise<RiskBacktestResponse> {
-  try {
-    const resp = await axios.post(`${API_BASE()}/api/risk/backtest`, request);
-    return resp.data;
-  } catch (error) {
-    throw new Error(formatErrorMessage(error));
-  }
+  return apiPost('/api/risk/backtest', request);
 }

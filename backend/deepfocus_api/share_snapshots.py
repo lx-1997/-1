@@ -23,12 +23,7 @@ HTML 由后端直出（带 <title> / description / og:* meta），免登录、�
 这是 SPA 架构下拿到真 SEO 与社交预览的关键。所有用户内容均 HTML 转义后注入。
 """
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_SHARE_SNAPSHOT_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".share_snapshots.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.share_snapshots.sqlite3', 'DEEPFOCUS_SHARE_SNAPSHOT_DB_PATH')
 
 # 公开页底部「打开 DeepFocus」CTA 指向的应用地址（部署后配置；缺省相对根路径）。
 APP_URL = os.getenv("DEEPFOCUS_PUBLIC_APP_URL", "/").strip() or "/"

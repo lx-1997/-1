@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from . import db
+
 import json
 import unicodedata
 import os
@@ -22,12 +24,7 @@ from pathlib import Path
 
 import httpx
 
-_CACHE_FILE = Path(
-    os.getenv(
-        "DEEPFOCUS_STOCK_NAME_CACHE",
-        str(Path(__file__).resolve().parents[1] / ".stock_names.json"),
-    )
-)
+_CACHE_FILE = db.data_path('.stock_names.json', 'DEEPFOCUS_STOCK_NAME_CACHE')
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 _MIN_LEN = 3   # 只认 ≥3 字的名称
 _MAX_LEN = 8   # 名称扫描窗口上限(A 股名一般 ≤6 字，留点冗余)
@@ -120,6 +117,7 @@ def _load_disk() -> bool:
 
 def _save_disk(mapping: dict) -> None:
     try:
+        _CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = _CACHE_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
         tmp.replace(_CACHE_FILE)

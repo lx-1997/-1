@@ -6,12 +6,52 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.backend
-    env_file: .env
+    env_file: ${DEPLOY_ENV_FILE:-.env}
+    environment:
+      DEEPFOCUS_DATA_DIR: /data
+      DEEPFOCUS_MODEL_CONFIG_PATH: /data/.model_config.json
+      PDF_CACHE_DIR: /data/pdf_cache
+      DEEPFOCUS_RESEARCH_WORKBENCH_AUTOSTART: "0"
+      RESEARCH_WORKBENCH_UPSTREAM_URL: http://research-workbench:3927
     volumes:
       - backend_data:/data        # persists runtime SQLite (accounts, caches)
+      - workbench_downloads:/app/modules/research-workbench/downloads
+    depends_on:
+      research-workbench:
+        condition: service_healthy
     expose:
       - "8300"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8300/health', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      start_period: 60s
+      retries: 5
+
+  research-workbench:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.workbench
+    env_file: ${DEPLOY_ENV_FILE:-.env}
+    environment:
+      RESEARCH_WORKBENCH_HOST: 0.0.0.0
+      DEEPFOCUS_MODEL_CONFIG_PATH: /data/.model_config.json
+    volumes:
+      - backend_data:/data
+      - workbench_downloads:/app/modules/research-workbench/downloads
+      - workbench_runs:/app/modules/research-workbench/.tool-runs
+      - workbench_exports:/app/modules/research-workbench/exports
+      - workbench_browser:/app/modules/research-workbench/.zsxq-browser-profile
+    expose:
+      - "3927"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3927/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 8s
+      start_period: 20s
+      retries: 5
 
   frontend:
     build:
@@ -43,5 +83,9 @@ services:
 
 volumes:
   backend_data:
+  workbench_downloads:
+  workbench_runs:
+  workbench_exports:
+  workbench_browser:
   caddy_data:
   caddy_config:

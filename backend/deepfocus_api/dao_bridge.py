@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from . import db
+
 import asyncio
 import json
 import os
@@ -154,12 +156,7 @@ def _fetch_latest_id_db(db_path: str) -> int:
     except Exception:
         return 0
 
-_STATE_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_DAO_BRIDGE_STATE_PATH",
-        str(Path(__file__).resolve().parents[1] / ".dao_bridge_state.json"),
-    )
-)
+_STATE_PATH = db.data_path('.dao_bridge_state.json', 'DEEPFOCUS_DAO_BRIDGE_STATE_PATH')
 
 # DAO 事件类型 → 终端 topic / 来源类型 / 标签
 _TYPE_META = {

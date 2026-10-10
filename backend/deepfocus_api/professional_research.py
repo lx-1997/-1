@@ -34,12 +34,7 @@ from .schemas import (
 )
 
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_PRO_RESEARCH_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".professional_research.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.professional_research.sqlite3', 'DEEPFOCUS_PRO_RESEARCH_DB_PATH')
 
 MAX_REPORT_TEXT_CHARS = int(os.getenv("DEEPFOCUS_PRO_RESEARCH_MAX_REPORT_CHARS", "200000"))
 CHUNK_CHARS = int(os.getenv("DEEPFOCUS_PRO_RESEARCH_CHUNK_CHARS", "1200"))

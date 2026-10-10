@@ -21,10 +21,12 @@ import asyncio
 import json
 from typing import Any, AsyncIterator, Optional
 
+import anyio
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from .auth import optional_current_user
+from .cost_quotas import quota_scope
 from .research_digest import (
     ResearchDeepDraftRequest,
     ResearchDeepDraftResponse,
@@ -32,6 +34,7 @@ from .research_digest import (
     neutralize_deep_draft,
     resolve_source_documents,
 )
+from .research_quick import generate_deep_quick
 
 router = APIRouter()
 
@@ -81,6 +84,7 @@ def _finish(value: Any) -> ResearchDeepDraftResponse:
 
 
 @router.post("/api/research/deep-draft/stream")
+@quota_scope
 async def api_research_deep_draft_stream(
     request: ResearchDeepDraftRequest,
     http_req: Request,
@@ -90,8 +94,8 @@ async def api_research_deep_draft_stream(
         from . import metrics_store  # noqa: PLC0415
         from .main import (  # noqa: PLC0415 - 懒导入：main 在模块加载期引用本包路由
             _AI_ANALYZE_SEM,
-            _RESEARCH_AI_SINGLEFLIGHT,
             _check_ai_quota,
+            _complete_cost_quota,
             deep_draft_cache_key,
             legacy_deep_draft_cache_key,
             metrics_get_ai_cache,
@@ -115,6 +119,13 @@ async def api_research_deep_draft_stream(
                 cached = legacy_cached
                 metrics_set_ai_cache(cache_key, legacy_cached)
         if cached is not None:
+            try:
+                quota_key = _check_ai_quota(_user, "yb", http_req, cached=True)
+            except Exception as exc:
+                yield _sse({"type": "error", "status": getattr(exc, "status_code", 503), "detail": str(getattr(exc, "detail", "") or str(exc))[:160]})
+                return
+            if quota_key:
+                _complete_cost_quota(quota_key)
             yield _sse({"type": "stage", "stage": "hit", "detail": "已有解读，直接展示"})
             yield _sse({"type": "done", "data": _finish(cached).model_dump(mode="json")})
             return
@@ -144,6 +155,31 @@ async def api_research_deep_draft_stream(
                 "chars": text_chars,
                 "detail": f"原文已获取 · {pages} 页 · " + ("文本层 %d 字符" % text_chars if text_chars else "扫描版，走视觉解读"),
             })
+
+        # 快轨：先推一版十秒级速览（独立缓存 quick:<key>），深度稿随后继续生成。
+        # 速览失败静默跳过——它只是增强层，绝不阻塞深稿主链路。
+        quick_cache_key = f"quick:{cache_key}" if cache_key else ""
+        quick = metrics_get_ai_cache(quick_cache_key) if quick_cache_key else None
+        if not isinstance(quick, dict) or not quick.get("one_liner"):
+            yield _sse({"type": "stage", "stage": "quick", "detail": "速览生成中（约 10 秒，先出方向感）…"})
+            try:
+                quick = await asyncio.wait_for(
+                    generate_deep_quick(request, documents=docs),
+                    timeout=60,
+                )
+            except Exception as exc:
+                print(f"[deep-quick] 快轨异常跳过：{type(exc).__name__}: {str(exc)[:120]}")
+                quick = None
+            if isinstance(quick, dict) and quick.get("one_liner") and quick_cache_key:
+                metrics_set_ai_cache(quick_cache_key, quick)
+        if isinstance(quick, dict) and quick.get("one_liner"):
+            # A useful preview already fulfils the request even if the client
+            # disconnects before the deep draft; completing the same lease
+            # again below is idempotent and never charges a second time.
+            if quota_key:
+                _complete_cost_quota(quota_key)
+            yield _sse({"type": "quick", "data": quick})
+
         yield _sse({"type": "stage", "stage": "generate", "detail": "模型解读中（长报告约 1-3 分钟，完成即缓存秒开）"})
 
         started = asyncio.get_event_loop().time()
@@ -176,6 +212,13 @@ async def api_research_deep_draft_stream(
                 get_task = asyncio.create_task(delta_queue.get()) if delta_queue.empty() and not _delta_buf else None
                 wait_set = {gen_task} | ({get_task} if get_task else set())
                 done, _pending = await asyncio.wait(wait_set, timeout=3.0, return_when=asyncio.FIRST_COMPLETED)
+                if get_task:
+                    if get_task in done:
+                        _delta_buf.append(get_task.result())
+                    else:
+                        get_task.cancel()
+                        await asyncio.gather(get_task, return_exceptions=True)
+                    get_task = None
                 while not delta_queue.empty():
                     _delta_buf.append(delta_queue.get_nowait())
                 if _delta_buf:
@@ -183,22 +226,24 @@ async def api_research_deep_draft_stream(
                     del _delta_buf[:]
                     yield _sse({"type": "thought", "delta": chunk})
                 if gen_task in done:
-                    if get_task and get_task in _pending:
-                        get_task.cancel()
                     break
                 elapsed = int(asyncio.get_event_loop().time() - started)
                 yield _sse({"type": "tick", "elapsed": elapsed})
             payload = gen_task.result()
-        except asyncio.CancelledError:
-            gen_task.cancel()
-            raise
         except Exception as exc:
             status = getattr(exc, "status_code", 502)
             detail = str(getattr(exc, "detail", "") or str(exc))[:160]
             yield _sse({"type": "error", "status": status, "detail": f"深度稿生成失败：{detail}"})
             return
+        finally:
+            tasks = [task for task in (gen_task, get_task) if task is not None]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(*tasks, return_exceptions=True)
         if quota_key:
-            metrics_incr(quota_key)
+            _complete_cost_quota(quota_key)
         if isinstance(payload, dict) and payload.get("provider") == "local-fallback":
             yield _sse({"type": "stage", "stage": "fallback", "detail": "本轮模型超时，先展示原文摘录版；稍后重试可获取完整解读"})
         yield _sse({"type": "done", "data": _finish(payload).model_dump(mode="json")})

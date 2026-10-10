@@ -38,12 +38,7 @@ from .source_policy import is_tradealpha_source, tradealpha_blocking_enabled
 
 
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_DATA_SOURCE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".data_sources.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.data_sources.sqlite3', 'DEEPFOCUS_DATA_SOURCE_DB_PATH')
 
 MAX_STORED_TEXT_CHARS = int(os.getenv("DEEPFOCUS_DATA_SOURCE_MAX_CHARS", "60000"))
 AUTO_SYNC_LIMIT = int(os.getenv("DEEPFOCUS_DATA_SOURCE_AUTO_SYNC_LIMIT", "4"))

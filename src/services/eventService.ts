@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiDelete, getApiBaseUrls, DF_WEB_TOKEN } from './apiClient';
 import { Capacitor } from '@capacitor/core';
+import { drainRealtimeMessages, type RealtimeMessageCursor } from './realtimeCursor';
 
 // === majorEventService types ===
 
@@ -223,6 +224,9 @@ export interface RealtimeMessageFilters {
   topic?: string;
   severity?: RealtimeMessageSeverity;
   since?: string;
+  after_created_at?: string;
+  after_id?: string;
+  order?: 'asc' | 'desc';
   before?: string;   // 翻页游标：取比该时间更旧的历史
   q?: string;        // 关键词检索全量历史（标题/正文，空格分词 AND）
   anyq?: string;     // 多别名检索（逗号分隔，任一命中 OR）——选股用简称/全名/代码一起搜
@@ -361,7 +365,8 @@ export function createRealtimeMessageStream(options: {
   if (Capacitor.isNativePlatform()) {
     let closed = false;
     let timer: number | undefined;
-    let cursor = new Date().toISOString();
+    let cursor: RealtimeMessageCursor | null = null;
+    const controller = new AbortController();
     let polling = false;
     let connected = false;
 
@@ -370,13 +375,10 @@ export function createRealtimeMessageStream(options: {
       polling = true;
       try {
         if (!connected) options.onStatus('connecting');
-        const messages = await listRealtimeMessages({ since: cursor, limit: 60 });
+        cursor = await drainRealtimeMessages(cursor, messages => {
+          if (!closed) messages.forEach(options.onMessage);
+        }, controller.signal);
         if (closed) return;
-        // 服务端按 created_at 倒序返回；推进游标时取最晚一条，避免重复。
-        for (const message of [...messages].reverse()) {
-          options.onMessage(message);
-          if (message.created_at && message.created_at > cursor) cursor = message.created_at;
-        }
         connected = true;
         options.onStatus('live');
       } catch (error) {
@@ -394,6 +396,7 @@ export function createRealtimeMessageStream(options: {
     return {
       close: () => {
         closed = true;
+        controller.abort();
         if (timer) window.clearTimeout(timer);
         options.onStatus('closed');
       }

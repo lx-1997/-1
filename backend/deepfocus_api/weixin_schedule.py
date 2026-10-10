@@ -23,12 +23,7 @@ from .shared_utils import utc_now_iso
 本模块只管「存 + 判到点 + 去重」，保持纯净可单测。见 [[wechat-push-channel]] 的准推送边界。
 """
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_WEIXIN_SCHEDULE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".weixin_schedule.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.weixin_schedule.sqlite3', 'DEEPFOCUS_WEIXIN_SCHEDULE_DB_PATH')
 
 _KINDS = ("broadcast", "personal")
 _BROADCAST_TYPES = ("text", "news")

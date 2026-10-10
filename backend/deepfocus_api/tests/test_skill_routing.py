@@ -175,7 +175,7 @@ async def test_terminal_chat_reuses_orchestrator_and_keeps_attachment_out_of_rou
     assert captured["message"] == payload["message"]       # 当前问题保持干净
     assert "上一问" in captured["context_prefix"]
     assert "附件里的减持" in captured["context_prefix"]
-    assert captured["force_research"] is True
+    assert captured["force_research"] is False  # 默认 quick；深度模式另有覆盖
     assert captured["tool_max_rounds"] >= 6
 
 

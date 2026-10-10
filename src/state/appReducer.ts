@@ -15,6 +15,9 @@ import {
   STOCK_POOL_STORAGE_KEY,
   enrichDefaultStock
 } from '../utils/stockPool';
+import { getAuthSnapshot } from './authSession';
+import { mapAuthUser } from '../services/authService';
+import { readAccountStorage } from '../utils/accountStorage';
 import { loadSavedCommunity } from '../utils/communityPersistence';
 
 export type AppAction =
@@ -41,17 +44,13 @@ export type AppAction =
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_APP_STATE'; payload: Partial<AppState> };
 
-const loadSavedStockPool = (): Stock[] | null => {
+const loadSavedStockPool = (accountId: string): Stock[] | null => {
   if (typeof window === 'undefined') {
     return null;
   }
 
   try {
-    const raw = window.localStorage.getItem(STOCK_POOL_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
+    const parsed = readAccountStorage<unknown>(STOCK_POOL_STORAGE_KEY, accountId, null);
     if (!Array.isArray(parsed)) {
       return null;
     }
@@ -83,11 +82,11 @@ export const createLoggedOutState = (): AppState => ({
   selectedProduct: null
 });
 
-export const createDemoState = (): AppState => {
-  const savedStockPool = loadSavedStockPool();
+export const createDemoState = (accountId = mockUser.id): AppState => {
+  const savedStockPool = loadSavedStockPool(accountId);
   // 社区/商城 UGC 本地持久化：刷新后恢复用户的发帖/评论/点赞/购买/下单与余额，
   // 缺省回退到 mock 种子数据。
-  const savedCommunity = loadSavedCommunity();
+  const savedCommunity = loadSavedCommunity(accountId);
   const user = savedCommunity?.userBalance != null
     ? { ...mockUser, balance: savedCommunity.userBalance }
     : mockUser;
@@ -109,15 +108,13 @@ export const createDemoState = (): AppState => {
   };
 };
 
-/**
- * 真实登录成功后的初始状态：复用 demo 的本地持久化恢复（自选/社区/余额），
- * 但把账户换成后端返回的真实用户。余额优先取本地已存的社区余额，否则用账号自带值。
- */
+/** Restore only this account's local state; demo balances/orders never cross into a real login. */
 export const createLoggedInState = (user: User): AppState => {
-  const base = createDemoState();
-  const savedCommunity = loadSavedCommunity();
-  const balance = savedCommunity?.userBalance != null ? savedCommunity.userBalance : user.balance;
-  return { ...base, user: { ...user, balance } };
+  const base = createDemoState(user.id);
+  const saved = loadSavedCommunity(user.id);
+  return { ...base, user: { ...user, balance: saved?.userBalance ?? user.balance },
+    payments: saved?.payments ?? [], orders: saved?.orders ?? [],
+    rechargeHistory: [], platformBalance: 0 };
 };
 
 export const getProductVariant = (product: Product, variantId: string): ProductVariant => {
@@ -136,7 +133,9 @@ export const getProductVariant = (product: Product, variantId: string): ProductV
 export const getInitialState = (): AppState => {
   // 仅显式 REACT_APP_AUTH_BYPASS=true 才进演示态；其余一律登出态（移除"dev 默认免登录"，与 App.tsx 对齐）。
   const AUTH_BYPASS_ENABLED = process.env.REACT_APP_AUTH_BYPASS?.toLowerCase() === 'true';
-  return AUTH_BYPASS_ENABLED ? createDemoState() : createLoggedOutState();
+  if (AUTH_BYPASS_ENABLED) return createDemoState();
+  const account = getAuthSnapshot().account;
+  return account ? createLoggedInState(mapAuthUser(account)) : createLoggedOutState();
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {

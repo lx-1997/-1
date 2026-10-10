@@ -17,6 +17,9 @@ import { formatErrorMessage } from './services/apiClient';
 import { mockUser } from './data/mockData';
 import { appReducer, getInitialState, createDemoState, createLoggedInState, getProductVariant } from './state/appReducer';
 import { applyMarketQuotesToStocks, candidateToStock, STOCK_POOL_STORAGE_KEY } from './utils/stockPool';
+import { useAuth } from './context/AuthContext';
+import { getAuthSnapshot, isAuthRevisionCurrent } from './state/authSession';
+import { writeAccountStorage } from './utils/accountStorage';
 import { saveCommunity } from './utils/communityPersistence';
 import { track, trackPageview } from './utils/analytics';
 
@@ -46,6 +49,24 @@ const App: React.FC = () => {
   const [isMarketDataRefreshing, setIsMarketDataRefreshing] = useState(false);
   const [chatPanelOpen, setChatPanelOpen] = useState(false);
   const [appState, dispatch] = useReducer(appReducer, undefined, getInitialState);
+  const session = useAuth();
+  useEffect(() => {
+    if (AUTH_BYPASS_ENABLED) return;
+    if (session.account && appState.user?.id !== session.account.id) {
+      dispatch({ type: 'LOGIN_SUCCESS', payload: authService.mapAuthUser(session.account) });
+    } else if (session.account && appState.user) {
+      const mapped = authService.mapAuthUser(session.account);
+      if (appState.user.memberLevel !== mapped.memberLevel || appState.user.username !== mapped.username
+        || appState.user.email !== mapped.email) {
+        dispatch({ type: 'SET_APP_STATE', payload: { user: { ...appState.user,
+          username: mapped.username, email: mapped.email, avatar: mapped.avatar, memberLevel: mapped.memberLevel } } });
+      }
+    } else if (!session.token && appState.user && appState.user.id !== mockUser.id) {
+      dispatch({ type: 'LOGOUT' });
+      setChatPanelOpen(false);
+      setIsMarketDataRefreshing(false);
+    }
+  }, [session.account, session.token, appState.user]);
 
   useEffect(() => {
     stocksRef.current = appState.stocks;
@@ -62,7 +83,7 @@ const App: React.FC = () => {
       return;
     }
 
-    window.localStorage.setItem(STOCK_POOL_STORAGE_KEY, JSON.stringify(appState.stocks));
+    writeAccountStorage(STOCK_POOL_STORAGE_KEY, appState.user.id, appState.stocks);
   }, [appState.stocks, appState.user]);
 
   // 原生返回键和通知/分享链接都走浏览器历史栈，避免 Android 直接退出应用或
@@ -113,9 +134,11 @@ const App: React.FC = () => {
       return;
     }
 
+    const revision = getAuthSnapshot().revision;
     setIsMarketDataRefreshing(true);
     try {
       const response = await getMarketQuotes(symbols);
+      if (!isAuthRevisionCurrent(revision)) return;
 
       if (response.quotes.length === 0) {
         if (options.notify) {
@@ -146,12 +169,13 @@ const App: React.FC = () => {
         }
       }
     } catch (error) {
+      if (!isAuthRevisionCurrent(revision)) return;
       console.warn('Market data refresh failed:', error);
       if (options.notify) {
         message.warning('行情服务暂不可用，当前继续显示本地样例数据');
       }
     } finally {
-      setIsMarketDataRefreshing(false);
+      if (isAuthRevisionCurrent(revision)) setIsMarketDataRefreshing(false);
     }
   }, [message, appState.selectedStock]);
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from . import db
+
 import ipaddress
 import json
 import os
@@ -105,12 +107,7 @@ def _bypass_proxy_for_model_host(base_url: Optional[str], provider: Optional[str
     _add_to_no_proxy({host, parent})
 
 
-CONFIG_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_MODEL_CONFIG_PATH",
-        str(Path(__file__).resolve().parents[1] / ".model_config.json"),
-    )
-)
+CONFIG_PATH = db.data_path('.model_config.json', 'DEEPFOCUS_MODEL_CONFIG_PATH')
 
 MODEL_POOL_ENV = "DEEPFOCUS_LLM_POOL_JSON"
 

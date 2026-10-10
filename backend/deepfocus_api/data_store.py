@@ -28,12 +28,7 @@ from .shared_utils import utc_now_iso
 # 不影响其它并发请求的正常落库。
 DEEP_NO_PERSIST: ContextVar[bool] = ContextVar("deep_no_persist", default=False)
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_DATA_STORE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".data_store.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.data_store.sqlite3', 'DEEPFOCUS_DATA_STORE_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

@@ -23,12 +23,7 @@ from typing import Any, Callable, Iterable, Optional
 from .schemas import RealtimeMessageCreateRequest
 
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_RECALL_INGEST_STATE_PATH",
-        str(Path(__file__).resolve().parents[1] / ".recall_ingest.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.recall_ingest.sqlite3', 'DEEPFOCUS_RECALL_INGEST_STATE_PATH')
 MAX_CONTENT_CHARS = 1200
 
 

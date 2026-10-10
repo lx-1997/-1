@@ -26,12 +26,7 @@ from .shared_utils import utc_now_iso
 
 
 def _db_path() -> Path:
-    return Path(
-        os.getenv(
-            "DEEPFOCUS_ONTOLOGY_DB_PATH",
-            str(Path(__file__).resolve().parents[1] / ".investment_ontology.sqlite3"),
-        )
-    )
+    return db.data_path('.investment_ontology.sqlite3', 'DEEPFOCUS_ONTOLOGY_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

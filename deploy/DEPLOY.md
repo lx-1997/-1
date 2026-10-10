@@ -11,7 +11,7 @@
                     └─ 其它             ─> frontend (nginx 静态)
 ```
 
-三个容器：`frontend`(打包好的静态页) / `backend`(FastAPI) / `caddy`(反代+TLS)。
+四个容器：`frontend`(静态页) / `backend`(FastAPI) / `research-workbench`(Node + Chromium) / `caddy`(反代+TLS)。工作台仅暴露于容器内部网络。
 
 ## 前置条件
 
@@ -48,7 +48,10 @@ docker compose up -d --build
 
 ## 数据与持久化
 
-- 后端运行时的 SQLite（账号、缓存等）存在 Docker 卷 `backend_data`，容器重建不丢。
+- 所有后端运行时存储通过 `DEEPFOCUS_DATA_DIR=/data` 写入卷 `backend_data`。专用数据库路径环境变量优先；升级旧部署时先备份原文件并迁移到 `/data`，不要仅改路径。
+- 研报下载、任务记录、导出与浏览器登录状态分别保存在工作台持久卷中；模型配置通过 `/data/.model_config.json` 与后端共享。
+- 后端采用一个 API worker；量化结果落库保留 1 小时。重启前未完成的量化任务标记为中断，由用户重新提交，不自动重复调用模型。
+- 发布前执行 `bash scripts/check-container-delivery.sh`，验证干净启动、公开路由、工作台和容器重建后的 SQLite 持久化。
 - 行情/新闻等**公开数据源开箱即用**，不配任何 key 也能跑。
 - 想要更高额度/更多覆盖，在 `.env` 里填免费 key（Tushare / Finnhub / AlphaVantage）。
 - 想接真实大模型分析，在 `.env` 配 `DEEPFOCUS_LLM_PROVIDER=openai` + `OPENAI_API_KEY`（默认 mock 不影响行情/新闻）。

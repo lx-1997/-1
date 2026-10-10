@@ -1,5 +1,6 @@
+import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, invalidateAuthSession } from '../state/authSession';
 import { Stock } from '../types';
-import { apiGet, apiPost, DF_WEB_TOKEN, getApiBaseUrls } from './apiClient';
+import { apiGet, apiPost, DF_WEB_TOKEN, getApiBaseUrls, sessionOwnsRequest } from './apiClient';
 
 // === agentTaskService types ===
 
@@ -511,7 +512,7 @@ export async function runToolResearch(
   message: string, symbol = '', name = '',
   history: Array<[string, string]> = [],   // 最近几轮 [问,答]——web 端多轮记忆（后端只喂 LLM，不进确定性路由）
   attachment?: { filename: string; text: string },
-  options?: { roundtable?: boolean; context_hint?: string; timeoutMs?: number },
+  options?: { roundtable?: boolean; context_hint?: string; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<ToolResearchResult> {
   const normalizedMessage = message.trim();
   if (!normalizedMessage) {
@@ -529,7 +530,7 @@ export async function runToolResearch(
       ...(options?.context_hint ? { context_hint: options.context_hint.slice(0, 16000) } : {}),
       history: history.slice(-3),
       ...(attachment?.text ? { attachment: { filename: attachment.filename, text: attachment.text } } : {}),
-    }, { timeout: Math.max(5000, Math.min(90000, options?.timeoutMs ?? 90000)) });
+    }, { timeout: Math.max(5000, Math.min(90000, options?.timeoutMs ?? 90000)), signal: options?.signal });
   } catch (e: any) {
     // 带上 HTTP 状态码：402(非会员额度用完→升级)/403(匿名→登录)，前端据此分流
     return { ok: false, answer: '', tool_trace: [], error: e?.response?.data?.detail || e?.message || '请求失败', status: e?.response?.status };
@@ -611,7 +612,8 @@ export function runToolResearchStream(
     onDone?: () => void;
   }
 ): () => void {
-  const token = (() => { try { return window.localStorage.getItem('auth_token') || ''; } catch { return ''; } })();
+  const session = getAuthSnapshot();
+  const token = session.token || '';
   const ctrl = new AbortController();
   let stopped = false;
   let terminal = false;
@@ -648,6 +650,7 @@ export function runToolResearchStream(
     handlers.onDone?.();
     return () => { stopped = true; ctrl.abort(); };
   }
+  const unregister = registerSessionCleanup(() => { stopped = true; clearTimeoutGuard(); ctrl.abort(); });
   armTimeoutGuard();
   (async () => {
     let lastError = 'AI 服务连接失败';
@@ -666,7 +669,7 @@ export function runToolResearchStream(
             headers: {
               'Content-Type': 'application/json',
               'X-DF-Web': DF_WEB_TOKEN,
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              ...(token && sessionOwnsRequest(base) ? { Authorization: `Bearer ${token}` } : {}),
             },
             body: JSON.stringify({
               message: normalizedMessage,
@@ -679,6 +682,7 @@ export function runToolResearchStream(
             }),
             signal: ctrl.signal,
           });
+          if (stopped || !isAuthRevisionCurrent(session.revision)) return;
           armTimeoutGuard();
           if (!resp.ok) {
             let detail = `请求失败 (${resp.status})`;
@@ -688,7 +692,10 @@ export function runToolResearchStream(
             } catch { /* 保留 HTTP 状态提示 */ }
             clearTimeoutGuard();
             terminal = true;
-            handlers.onError?.(detail, resp.status);
+            if (resp.status === 401 && token && sessionOwnsRequest(base)) {
+              invalidateAuthSession(token);
+              window.dispatchEvent(new CustomEvent('df:auth-kicked', { detail }));
+            } else handlers.onError?.(detail, resp.status);
             return;
           }
           if (!resp.body) throw new Error('无法读取实时响应');
@@ -697,7 +704,7 @@ export function runToolResearchStream(
           let buffer = '';
           while (!stopped) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done || stopped || !isAuthRevisionCurrent(session.revision)) break;
             // 服务器会定期发 status/keep-alive；按“无活动”而非总耗时计时，
             // 真实圆桌持续有进度时不会被误切到快速通道。
             armTimeoutGuard();
@@ -755,7 +762,7 @@ export function runToolResearchStream(
           }
           reader.releaseLock();
           clearTimeoutGuard();
-          handlers.onDone?.();
+          if (!stopped && isAuthRevisionCurrent(session.revision)) handlers.onDone?.();
           return;
         } catch (error: any) {
           if (error?.name === 'AbortError' || stopped) return;
@@ -768,9 +775,9 @@ export function runToolResearchStream(
       if (!stopped && !terminal) { terminal = true; handlers.onError?.(lastError); }
     } catch (error: any) {
       if (error?.name !== 'AbortError' && !stopped) handlers.onError?.(error?.message || lastError);
-    }
+    } finally { unregister(); }
   })();
-  return () => { stopped = true; clearTimeoutGuard(); ctrl.abort(); };
+  return () => { stopped = true; clearTimeoutGuard(); ctrl.abort(); unregister(); };
 }
 
 export async function getAgentTask(taskId: string): Promise<InvestmentTaskRecord> {

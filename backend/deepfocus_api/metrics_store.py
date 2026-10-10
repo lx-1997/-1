@@ -11,12 +11,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_METRICS_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".metrics.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.metrics.sqlite3', 'DEEPFOCUS_METRICS_DB_PATH')
 
 
 _PRAGMA_DONE = False

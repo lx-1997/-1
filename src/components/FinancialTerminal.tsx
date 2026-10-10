@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost } from '../services/apiClient';
+import { drainRealtimeMessages, fetchRealtimeMessagePage, newestMessageCursor, type RealtimeMessageCursor } from '../services/realtimeCursor';
 import {
   listRealtimeMessages,
   getRealtimeMessageById,
@@ -21,10 +22,11 @@ import {
   extractFileText,
   generateResearchDeepDraft,
   generateResearchDeepDraftSmart,
+  type AiAnalysisLike,
   type ResearchDeepDraftResponse
 } from '../services/researchService';
 import { getZsxqStream, type ZsxqTopic } from '../services/zsxqStreamService';
-import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
+import { useAccountWatchlist } from '../hooks/useAccountWatchlist';
 import { searchMarketSymbols } from '../services/marketService';
 import { DEFAULT_SEARCH_KEYS } from '../utils/symbolAliases';
 import { loadRecallPrefs, saveRecallPrefs, requestBrowserPermission, evaluateAndNotify, RECALL_PREFS_EVENT, subscribeWebPush, subscribeEmailRecall, getNotificationPermission } from '../utils/signalRecall';
@@ -61,6 +63,11 @@ import TerminalInvestorCompass from './TerminalInvestorCompass';
 import AccentThemePicker from './AccentThemePicker';
 import ResearchDeepDraft, { type ResearchDeepDraftInput, type ResearchDeepDraftEvidence, type ResearchDeepDraftSource } from './ResearchDeepDraft';
 import ArticleOriginalReader from './ArticleOriginalReader';
+import { useAuth } from '../context/AuthContext';
+import { getAuthSnapshot, getAuthorizationScope, isAuthRevisionCurrent, registerSessionCleanup } from '../state/authSession';
+import { useAccountAiHistory } from '../hooks/useAccountAiHistory';
+import { readAccountStorage, writeAccountStorage } from '../utils/accountStorage';
+import TerminalClock from './terminal/TerminalClock';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
@@ -197,6 +204,7 @@ interface AiBgTask {
   status: 'running' | 'done' | 'error';
   stage: string;
   result: AiAnalysis | null;
+  quick?: AiAnalysisLike | null;  // 快轨速览卡：深稿完成前先行渲染
   deepDraft: ResearchDeepDraftInput;
   error: string;
   hidden?: boolean;   // 运行中被移除：完成后静默入缓存，不再提醒
@@ -235,7 +243,6 @@ interface AiConversationRecord {
   roundtable?: DulusRoundtableResponse | null;
   turns?: AiConversationTurn[];
 }
-const AI_CONVERSATIONS_KEY = 'df.ai.conversations.v1';
 
 // 把研报 AI 解读拼成可分享的纯文本正文（落地页/深链阅读用；不带站点脚注，由分享文案/落地页自带品牌）。
 // 分享的是我们自己的解读（增值内容），绝不含第三方研报原文/PDF。
@@ -1030,10 +1037,16 @@ function dedupeMessages(list: RealtimeMessageRecord[]): RealtimeMessageRecord[] 
 }
 
 const FEED_CACHE_KEY = 'bbt.feed_cache.v1';
+const FEED_CURSOR_KEY = 'bbt.feed_cursor';
+function feedStorageScope(base: string): string { return `${base}:${getAuthorizationScope(getAuthSnapshot().account)}`; }
+function loadFeedCursor(): RealtimeMessageCursor | null {
+  const cursor = readAccountStorage<RealtimeMessageCursor | null>(feedStorageScope(FEED_CURSOR_KEY), getAuthSnapshot().account?.id ?? null, null);
+  return cursor?.created_at && cursor.id ? cursor : newestMessageCursor(loadCachedFeed());
+}
 const FEED_CACHE_SYNC_KEY = 'bbt.feed_cache_synced_at.v1';
 const FEED_CACHE_LIMIT = 80;
 function loadCachedFeed(): RealtimeMessageRecord[] {
-  const cached = LS.read<unknown>(FEED_CACHE_KEY, []);
+  const cached = readAccountStorage<unknown>(feedStorageScope(FEED_CACHE_KEY), getAuthSnapshot().account?.id ?? null, []);
   if (!Array.isArray(cached)) return [];
   return cached.filter((item): item is RealtimeMessageRecord => Boolean(
     item && typeof item === 'object' && typeof item.id === 'string' && typeof item.title === 'string'
@@ -1041,7 +1054,7 @@ function loadCachedFeed(): RealtimeMessageRecord[] {
   )).filter(item => !isTradeAlphaMessage(item)).slice(0, FEED_CACHE_LIMIT);
 }
 function saveCachedFeed(messages: RealtimeMessageRecord[]) {
-  LS.write(FEED_CACHE_KEY, messages.filter(m => !isTradeAlphaMessage(m)).slice(0, FEED_CACHE_LIMIT));
+  writeAccountStorage(feedStorageScope(FEED_CACHE_KEY), getAuthSnapshot().account?.id ?? null, messages.filter(m => !isTradeAlphaMessage(m)).slice(0, FEED_CACHE_LIMIT));
   LS.write(FEED_CACHE_SYNC_KEY, Date.now());
 }
 function loadCachedFeedSyncAt(): number | null {
@@ -1058,6 +1071,7 @@ function formatSyncAge(timestamp: number | null): string {
 }
 
 const FinancialTerminal: React.FC<{ appState?: any }> = () => {
+  const session = useAuth();
   const { theme, toggleTheme } = useTheme();   // 深/浅色主题切换（持久化在 localStorage，由 ThemeProvider 写 <html data-theme>）
   // 新手引导显隐状态（自动触发逻辑在各弹窗 state 声明之后，避免 TDZ）
   const [showOnb, setShowOnb] = useState(false);
@@ -1252,13 +1266,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [searchMsgs, setSearchMsgs] = useState<RealtimeMessageRecord[]>([]);  // 选股/搜索时：服务端全量历史检索结果
   const [searchLoading, setSearchLoading] = useState(false);
   const [status, setStatus] = useState<StreamConnectionStatus>('connecting');
-  // 壳层自己的时间心跳：让顶部状态栏在没有行情变更时也保持真实、可感知的动态。
-  const [terminalClock, setTerminalClock] = useState(() => beijingParts(new Date()).clock);
-  useEffect(() => {
-    const tick = () => setTerminalClock(beijingParts(new Date()).clock);
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
   // 默认进入市场快讯；用户切换到左侧其它内容模块后记住选择。
   const [feedFilter, setFeedFilter] = useState<string>(() => {
     try {
@@ -1283,6 +1290,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [eqW, setEqW] = useState<number>(() => Math.max(EQ_MIN, Math.min(EQ_MAX, LS.read('bbt.eqw', 330))));
   useEffect(() => { LS.write('bbt.eqw', eqW); }, [eqW]);
   const eqNarrow = eqW < EQ_NARROW;
+  // PC 宽屏「市场雷达」右栏：≥1366px 才挂第三列；窄屏/移动端不渲染，不挤压资讯主列
+  const [railWide, setRailWide] = useState<boolean>(() => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(min-width: 1366px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1366px)');
+    const onChange = (e: MediaQueryListEvent) => setRailWide(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const gridRef = useRef<HTMLDivElement>(null);
   const aiWorkspaceRef = useRef<HTMLElement>(null);
   const toolWorkspaceRef = useRef<HTMLElement>(null);
@@ -1369,6 +1384,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiDeepDraft, setAiDeepDraft] = useState<ResearchDeepDraftInput>(null);
   const [dfExpanded, setDfExpanded] = useState(false);  // 稻草财经 视角深度点评：长文默认收起，点「展开全文」看全
   const [aiLoading, setAiLoading] = useState(false);
+  // 快轨速览已上屏、深度稿仍在生成：true 时加载大卡让位给速览结果卡
+  const [aiQuickPending, setAiQuickPending] = useState(false);
   // 文章原文：解读生成期间在阅读模态直接展示（点击即可读，AI 完成后自动切换为解读）
   const [aiOriginal, setAiOriginal] = useState('');
   // 同一会话内重复打开同一条资讯/研报时直接复用已完成的解读；服务端仍负责
@@ -1402,11 +1419,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const paletteActiveRef = useRef<HTMLDivElement>(null);
   const seen = useRef<Set<string>>(new Set(messages.map(message => message.id)));
   const prevPrice = useRef<Record<string, number>>({});
-  const latestTsRef = useRef<string>('');  // 已加载消息的最新时间戳（增量轮询用）
+  const feedCursorRef = useRef<RealtimeMessageCursor | null>(null);
+  const cursorOwnerRef = useRef<string | null | undefined>(undefined);
+  if (cursorOwnerRef.current !== (session.account?.id ?? null)) {
+    cursorOwnerRef.current = session.account?.id ?? null; feedCursorRef.current = loadFeedCursor();
+  }
 
   // 自选股 + 名称(可编辑、持久化)
-  const [watchlist, setWatchlist] = useState<string[]>(() => LS.read('bbt.watchlist', DEFAULT_WATCHLIST));
-  const [names, setNames] = useState<Record<string, string>>(() => ({ ...DEFAULT_NAMES, ...LS.read('bbt.names', {} as Record<string, string>) }));
+  const { watchlist, names, setWatchlist, setNames, watchlistRef, namesRef } = useAccountWatchlist(
+    session.account?.id ?? null, DEFAULT_WATCHLIST, DEFAULT_NAMES, symbols => {
+      if (getNotificationPermission() === 'granted' && loadRecallPrefs().browserEnabled) void subscribeWebPush({ symbols });
+    });
   const [sortKey, setSortKey] = useState<SortKey>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
@@ -1736,16 +1759,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 刷新时从本地会话快照同步恢复登录态（有 token 才信缓存）：首帧直接渲染已登录工作台，
   // /auth/me 异步校准；token 失效（拦截器清 token）回落匿名。无缓存时首帧先渲染匿名 hero 再跳变——
   // 用户感知为「刷新刚开始弹到另一个界面」。
-  const [cachedSession] = useState(() => (authService.getStoredToken() ? authService.loadSessionCache() : null));
-  const [authUser, setAuthUser] = useState<string | null>(cachedSession?.u ?? null);
-  const authUserRef = useRef<string | null>(cachedSession?.u ?? null);
-  const refreshMembershipRef = useRef<(() => void) | null>(null);  // 解决定义顺序：签到发奖后刷新会员态
-  // 已登录用户的专属邀请码——用于让所有分享卡的二维码带 ?ref=，扫码注册即归到分享者名下（拉新闭环）。
+  const authUser = session.account?.username ?? null;
+  const authUserRef = useRef<string | null>(authUser);
+  const refreshMembershipRef = useRef<(() => void) | null>(null);
   const inviteCodeRef = useRef<string>('');
-  const [membership, setMembership] = useState<authService.Membership | null>(cachedSession?.m ?? null);  // 会员状态：体验期/尊享会员
-  const [isAdmin, setIsAdmin] = useState(cachedSession?.r === 'admin');  // 后端角色=管理员（决定是否显示「管理员」标签，不再写死「站长」）
-  const [trialClaimable, setTrialClaimable] = useState(!!cachedSession?.t);  // 可领「登录送 3 天体验会员」
-  const [joinedAt, setJoinedAt] = useState(cachedSession?.c ?? '');  // 注册时间(account.created_at)，判「新人前三天」福利
+  const membership = session.account?.membership ?? null;
+  const isAdmin = session.account?.role === 'admin';
+  const trialClaimable = !!session.account?.trial_claimable;
+  const joinedAt = session.account?.created_at ?? '';
+  const setMembership = useCallback((value: authService.Membership | null) => session.patchAccount({ membership: value }), [session.patchAccount]);
+  const setTrialClaimable = useCallback((value: boolean) => session.patchAccount({ trial_claimable: value }), [session.patchAccount]);
   const [expiryDismissed, setExpiryDismissed] = useState(false);  // 本次会话关闭到期续费条
   const [trialClaiming, setTrialClaiming] = useState(false);    // 领取请求进行中
   const [acctOpen, setAcctOpen] = useState(false);  // 头像下拉（账号 + 会员 + 邀请 + 登出）
@@ -1811,12 +1834,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiHistoryQuery, setAiHistoryQuery] = useState('');
   const [editingAiConversationId, setEditingAiConversationId] = useState<string | null>(null);
   const [editingAiConversationTitle, setEditingAiConversationTitle] = useState('');
-  const [aiConversations, setAiConversations] = useState<AiConversationRecord[]>(() => {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(AI_CONVERSATIONS_KEY) || '[]');
-      return Array.isArray(parsed) ? normalizeAiConversationHistory(parsed as AiConversationRecord[], 30) : [];
-    } catch { return []; }
-  });
+  const [aiConversations, setAiConversations] = useAccountAiHistory<AiConversationRecord>(session.account?.id ?? null);
   const [activeAiConversationId, setActiveAiConversationId] = useState<string | null>(null);
   const hasSavedAiHistory = useMemo(
     () => aiConversations.some(record => Boolean(record.answer || record.turns?.some(turn => turn.answer))),
@@ -1831,11 +1849,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       ...(record.turns || []).flatMap(turn => [turn.question, turn.answer]),
     ].some(text => String(text || '').toLowerCase().includes(query)));
   }, [aiConversations, aiHistoryQuery]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(AI_CONVERSATIONS_KEY, JSON.stringify(normalizeAiConversationHistory(aiConversations, 30)));
-    } catch { /* 私有模式/额度不足时不影响对话 */ }
-  }, [aiConversations]);
   // 登录后把服务端的用户级 AI 历史合并进本地会话：跨设备可见，同时复用同一套
   // question + mode + attachment 去重规则，不会把 quick/deep 或不同附件串成一条。
   useEffect(() => {
@@ -1884,14 +1897,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     };
     void loadServerAiHistory();
     return () => { cancelled = true; };
-  }, [authUser]);
+  }, [authUser, setAiConversations]);
   const rememberAiConversation = useCallback((record: AiConversationRecord) => {
     setAiConversations(previous => {
       const existing = previous.find(item => item.id === record.id);
       const next = { ...existing, ...record, title: existing?.title || record.title, turns: record.turns || existing?.turns };
       return normalizeAiConversationHistory([next, ...previous.filter(item => item.id !== record.id)], 30);
     });
-  }, []);
+  }, [setAiConversations]);
   const completeAiConversation = useCallback((record: AiConversationRecord, turn: AiConversationTurn) => {
     setAiConversations(previous => {
       const existing = previous.find(item => item.id === record.id);
@@ -1911,7 +1924,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       };
       return normalizeAiConversationHistory([next, ...previous.filter(item => item.id !== record.id)], 30);
     });
-  }, []);
+  }, [setAiConversations]);
   const ensureAiConversationId = useCallback(() => {
     const id = activeAiConversationId || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     if (!activeAiConversationId) setActiveAiConversationId(id);
@@ -1942,18 +1955,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const clean = title.trim().slice(0, 40);
     if (clean) setAiConversations(previous => previous.map(record => record.id === id ? { ...record, title: clean } : record));
     setEditingAiConversationId(null); setEditingAiConversationTitle('');
-  }, []);
+  }, [setAiConversations]);
   const removeAiConversation = useCallback((id: string) => {
     setAiConversations(previous => previous.filter(record => record.id !== id));
     if (activeAiConversationId === id) resetAiConversation();
-  }, [activeAiConversationId, resetAiConversation]);
+  }, [activeAiConversationId, resetAiConversation, setAiConversations]);
   const rememberAiFeedback = useCallback((verdict: 'up' | 'down') => {
     if (!activeAiConversationId) return;
     setAiConversations(previous => previous.map(record => {
       if (record.id !== activeAiConversationId || !record.turns?.length) return record;
       return { ...record, turns: record.turns.map((turn, index) => index === record.turns!.length - 1 ? { ...turn, feedback: verdict } : turn) };
     }));
-  }, [activeAiConversationId]);
+  }, [activeAiConversationId, setAiConversations]);
   useEffect(() => () => { aiStreamCancelRef.current?.(); }, []);
   const activeAiPreviousTurns = useMemo(() => {
     const record = aiConversations.find(item => item.id === activeAiConversationId);
@@ -2016,19 +2029,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [isNarrowViewport] = useState(() => isMobileView());
   const attachAiFile = useCallback(async (file: File) => {
     if (!file) return;
+    const revision = getAuthSnapshot().revision;
     setAiAttachmentBusy(true); setAiAttachmentErr('');
     try {
       const result = await extractFileText(file);
+      if (!isAuthRevisionCurrent(revision)) return;
       if (!result.text.trim()) throw new Error('文件里没有可读取的文字内容');
       setAiAttachment({ filename: result.filename || file.name, text: result.text, charCount: result.char_count, truncated: result.truncated, parser: result.parser });
     } catch (error: any) {
+      if (!isAuthRevisionCurrent(revision)) return;
       setAiAttachment(null);
       setAiAttachmentErr(error?.response?.data?.detail || error?.message || '文件读取失败，请换一个 PDF、Word、Excel、CSV 或文本文件');
-    } finally { setAiAttachmentBusy(false); }
+    } finally { if (isAuthRevisionCurrent(revision)) setAiAttachmentBusy(false); }
   }, []);
   const askAi = useCallback(async (q?: string) => {
     const msg = (q ?? aiInput).trim();
     if (!msg || aiBusy || deepAnswerBusy) return;
+    const revision = getAuthSnapshot().revision;
+    const fallbackController = new AbortController();
     // 快速问答必须始终走 quick 路由。此前这里按问题关键词自动打开圆桌，
     // 导致“宁德时代和比亚迪更偏向谁”这类普通提问也进入深研链路，
     // SSE 卡住后又与兜底请求竞态，最终用户看到 500。深度圆桌只由顶部模式按钮触发。
@@ -2051,7 +2069,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         settled = true; aiStreamCancelRef.current = null; setAiBusy(false); setAiRoundtableActive(false); setAiLiveStatus(''); resolve();
       };
       const applyResult = (r: Awaited<ReturnType<typeof runToolResearch>>) => {
-        if (settled) return;
+        if (settled || !isAuthRevisionCurrent(revision)) return;
         if (!r.ok && r.status === 402) {
           setUpgradeReason(r.error || '今日免费 AI 问答已用完，开通会员畅享无限');
           setUpgradeOpen(true); setAiInput(msg); settle(); return;
@@ -2090,13 +2108,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         settle();
       };
       const runFallback = async (reason?: string) => {
-        if (settled || fallbackRunning) return;
+        if (settled || fallbackRunning || !isAuthRevisionCurrent(revision)) return;
         fallbackRunning = true;
         setAiLiveStatus(reason ? '实时连接暂时不稳，正在继续完成研究' : '正在继续完成研究');
         const result = await runToolResearch(
           msg, '', '', aiHistoryRef.current,
           attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
-          { roundtable: false },
+          { roundtable: false, signal: fallbackController.signal },
         );
         applyResult(result);
       };
@@ -2106,8 +2124,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         history: aiHistoryRef.current,
         attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
       }, {
-        onStatus: status => { if (status) setAiLiveStatus(status); },
+        onStatus: status => { if (status && isAuthRevisionCurrent(revision)) setAiLiveStatus(status); },
         onTool: (event, phase) => {
+          if (!isAuthRevisionCurrent(revision)) return;
           const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
           setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
           setAiTools(previous => {
@@ -2123,6 +2142,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onFinal: result => applyResult(result),
         onFallback: reason => { void runFallback(reason); },
         onError: (error, status) => {
+          if (!isAuthRevisionCurrent(revision)) return;
           if (status === 402 || status === 403 || (status === 401 && !authUserRef.current)) {
             applyResult({ ok: false, answer: '', tool_trace: [], error, status });
           } else {
@@ -2133,7 +2153,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       });
       aiStreamCancelRef.current = () => {
         if (settled) return;
-        cancelTransport(); setAiInput(msg); setAiErr('已停止本次研究，问题已保留，可修改后重试。'); settle();
+        cancelTransport(); fallbackController.abort(); setAiInput(msg); setAiErr('已停止本次研究，问题已保留，可修改后重试。'); settle();
       };
     });
   }, [aiAttachment, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
@@ -2141,6 +2161,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const askDeepAnswer = useCallback(async (q?: string) => {
     const msg = (q ?? aiInput).trim();
     if (!msg || deepAnswerBusy || aiBusy) return;
+    const revision = getAuthSnapshot().revision;
     const conversationId = ensureAiConversationId();
     const turnId = `${conversationId}-deep-${Date.now()}`;
     const attachmentForRequest = aiAttachment;
@@ -2177,8 +2198,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           history: aiHistoryRef.current,
           attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
         }, {
-          onStatus: status => { if (status) setAiLiveStatus(status); },
+          onStatus: status => { if (status && isAuthRevisionCurrent(revision)) setAiLiveStatus(status); },
           onTool: (event, phase) => {
+            if (!isAuthRevisionCurrent(revision)) return;
             const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
             setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
             setAiTools(previous => {
@@ -2214,6 +2236,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           reject(error);
         };
       });
+      if (!isAuthRevisionCurrent(revision)) return;
       if (!result.roundtable) throw new Error('深度研判响应缺少圆桌结论');
       const deepResult = result.roundtable;
       setDeepAnswer(deepResult);
@@ -2229,6 +2252,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setAiAttachment(null); setAiAttachmentErr('');
       logAct('deep_answer_done', msg.slice(0, 60));
     } catch (e: any) {
+      if (!isAuthRevisionCurrent(revision)) return;
       const status = e?.response?.status;
       const detail = e?.response?.data?.detail || e?.message || '深度研判暂时不可用，请稍后重试';
       aiStreamCancelRef.current = null;
@@ -2254,6 +2278,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
             { roundtable: false, timeoutMs: 90000 },
           );
+          if (!isAuthRevisionCurrent(revision)) return;
           if (fallback.ok && fallback.answer) {
             setAiAnswer(fallback.answer);
             setAiTools(fallback.tool_trace || []);
@@ -2278,14 +2303,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             setDeepAnswerErr(`${detail}；快速问答也未返回结果，请稍后重试`);
           }
         } catch (fallbackError: any) {
+          if (!isAuthRevisionCurrent(revision)) return;
           setDeepAnswerErr(`${detail}；快速问答也失败：${fallbackError?.message || '网络异常'}`);
         }
       }
     } finally {
-      aiStreamCancelRef.current = null;
-      setDeepAnswerBusy(false);
-      setAiRoundtableActive(false);
-      setAiLiveStatus('');
+      if (isAuthRevisionCurrent(revision)) {
+        aiStreamCancelRef.current = null;
+        setDeepAnswerBusy(false);
+        setAiRoundtableActive(false);
+        setAiLiveStatus('');
+      }
     }
   }, [aiAttachment, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
   const submitAiQuestion = useCallback((q?: string) => {
@@ -2329,6 +2357,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     deepInFlightRef.current = false;
   }, []);
   const startDeep = useCallback(async (force = false) => {
+    const revision = getAuthSnapshot().revision;
     const sym = deepSymbol.trim();
     if (!sym || deepBusy || deepStartingRef.current) return;
     deepStartingRef.current = true;
@@ -2337,14 +2366,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       const nm = (namesRef.current[sym] || '').trim();  // 名称自动从自选名称表带上；取不到就空，agent 会从行情取真名
       const { task_id } = await startDeepResearch(sym, nm, 'CN', force);
+      if (!isAuthRevisionCurrent(revision)) return;
       stopDeepPoll();
       deepPollRef.current = window.setInterval(async () => {
-        if (deepInFlightRef.current) return;  // 上一次轮询还没回来 → 跳过本次，避免请求叠加
+        if (!isAuthRevisionCurrent(revision) || deepInFlightRef.current) return;  // 上一次轮询还没回来 → 跳过本次，避免请求叠加
         deepPollsRef.current += 1;
         if (deepPollsRef.current > 90) { stopDeepPoll(); setDeepBusy(false); setDeepErr('研判超时，请稍后重试'); return; }
         deepInFlightRef.current = true;
         try {
           const t = await pollDeepResearch(task_id);
+          if (!isAuthRevisionCurrent(revision)) return;
           setDeepTask(t);
           if (t.status === 'done' || t.status === 'error') {
             stopDeepPoll(); setDeepBusy(false);
@@ -2352,13 +2383,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             else logAct('deep_research_done', sym);
           }
         } catch { /* 单次轮询失败不致命，继续；maxPolls 兜底 */ }
-        finally { deepInFlightRef.current = false; }
+        finally { if (isAuthRevisionCurrent(revision)) deepInFlightRef.current = false; }
       }, 2000);
     } catch (e: any) {
+      if (!isAuthRevisionCurrent(revision)) return;
       setDeepBusy(false);
       setDeepErr(e?.response?.data?.detail || e?.message || '发起失败，请稍后重试');
     } finally {
-      deepStartingRef.current = false;
+      if (isAuthRevisionCurrent(revision)) deepStartingRef.current = false;
     }
   }, [deepSymbol, deepBusy, logAct, stopDeepPoll]);
   const enterDeepMode = useCallback(() => {
@@ -2437,25 +2469,30 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       .then(r => { if (r.exists) setReviewToday(r.review); }).catch(() => {});
   }, []);
   const refreshMembership = useCallback(() => {
-    authService.fetchAccount().then(u => { if (u) { setMembership(u.membership ?? null); setIsAdmin(u.role === 'admin'); setTrialClaimable(!!u.trial_claimable); setJoinedAt(u.created_at || ''); authService.saveSessionCache({ u: u.username, m: u.membership ?? null, r: u.role, t: !!u.trial_claimable, c: u.created_at || '' }); } }).catch(() => {});
-    authService.fetchSupportUnread().then(n => applySupportUnread(n, false)).catch(() => {});  // 进页面只对齐红点、不弹
-    if (authService.getStoredToken()) {  // 邀请奖励可兑换卡数（醒目角标）
-      authService.fetchReferral().then(d => setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0))).catch(() => {});
+    const revision = getAuthSnapshot().revision;
+    void session.refresh();
+    authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n, false); }).catch(() => {});
+    if (authService.getStoredToken()) {
+      authService.fetchReferral().then(d => { if (isAuthRevisionCurrent(revision)) setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0)); }).catch(() => {});
     }
-  }, [applySupportUnread]);
+  }, [session.refresh, applySupportUnread]);
   refreshMembershipRef.current = refreshMembership;  // 供 openReview 等先定义的回调延迟调用
   const openSupport = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     setAcctOpen(false); setSupportOpen(true);
     const msgs = await authService.fetchSupportThread();
+    if (!isAuthRevisionCurrent(revision)) return;
     setSupportMsgs(msgs); supportUnreadRef.current = 0; setSupportUnread(0);
   }, []);
   const submitRedeem = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     const code = redeemInput.trim();
     if (!code || redeemBusyRef.current) return;  // ref 同步拦截连点，避免「第一次成功、第二次报已使用」
     redeemBusyRef.current = true;
     setRedeemBusy(true);
     try {
       const r = await authService.redeemCode(code);
+      if (!isAuthRevisionCurrent(revision)) return;
       setMembership(r.membership ?? null);
       setRedeemOpen(false); setRedeemInput('');
       if (r.already) {
@@ -2466,14 +2503,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       }
       refreshMembership();
     } catch (e: any) {
+      if (!isAuthRevisionCurrent(revision)) return;
       showToast('❌ ' + (e?.message || '兑换失败，请检查兑换码'));
-    } finally { redeemBusyRef.current = false; setRedeemBusy(false); }
-  }, [redeemInput, showToast, refreshMembership]);
+    } finally { if (isAuthRevisionCurrent(revision)) { redeemBusyRef.current = false; setRedeemBusy(false); } }
+  }, [redeemInput, showToast, refreshMembership, setMembership]);
   const openBuy = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     setAcctOpen(false);
     logAct('open_buy', '开通/续费会员');   // 购买意向：谁点开了购买页（看板可见）
     buyOpenAtRef.current = Date.now(); buyQrViewedRef.current = false; buyOutcomeRef.current = ''; setBuyPaid(false);
     const c = await authService.fetchPaymentConfig();
+    if (!isAuthRevisionCurrent(revision)) return;
     // 锚定方向修正：默认选中「每天均价最低」的套餐（通常是年卡）而非最便宜的月卡——
     // 默认项是零成本的选择架构，原「月卡打头+默认月卡」系统性把用户往最低客单价推。
     const pkgs = c?.packages || [];
@@ -2541,15 +2581,19 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         : `想购买【${pkg.label} ¥${pkg.price}】会员，用户名：${authUser || ''}，请问如何付款开通？🙏${bonusNote}`)
       : '';
     setBuyOpen(false); setSupportOpen(true);
+    const revision = getAuthSnapshot().revision;
     const msgs = await authService.fetchSupportThread();
+    if (!isAuthRevisionCurrent(revision)) return;
     setSupportMsgs(msgs); supportUnreadRef.current = 0; setSupportUnread(0);
     if (text) setSupportText(text);
   }, [payCfg, buyPkg, authUser, logAct, isNewUser]);
   const sendSupportMsg = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     const text = supportText.trim();
     if (!text || supportSending) return;
     setSupportSending(true);
     const msg = await authService.sendSupport(text);
+    if (!isAuthRevisionCurrent(revision)) return;
     if (msg) { setSupportMsgs(prev => [...prev, msg]); setSupportText(''); logAct('support_msg', text.slice(0, 60)); }
     else showToast('发送失败，请稍后再试');
     setSupportSending(false);
@@ -2557,13 +2601,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 登录后轮询管理员回复：弹窗开着→刷新对话(并标已读)；关着→只更新未读红点。每 45s。
   useEffect(() => {
     if (!authUser) return;
+    const revision = getAuthSnapshot().revision;
     const tick = () => {
-      if (supportOpen) authService.fetchSupportThread().then(m => { setSupportMsgs(m); supportUnreadRef.current = 0; setSupportUnread(0); }).catch(() => {});
-      else authService.fetchSupportUnread().then(n => applySupportUnread(n, true)).catch(() => {});  // 新回复到达 → 弹提示
+      if (supportOpen) authService.fetchSupportThread().then(m => { if (!isAuthRevisionCurrent(revision)) return; setSupportMsgs(m); supportUnreadRef.current = 0; setSupportUnread(0); }).catch(() => {});
+      else authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n, true); }).catch(() => {});  // 新回复到达 → 弹提示
     };
     const id = visiblePoll(tick, 45000);
     return () => window.clearInterval(id);
-  }, [authUser, supportOpen, applySupportUnread]);
+  }, [authUser, supportOpen, applySupportUnread, session.revision]);
   // 管理员：轮询「用户发来的未读私信数」→ 主页醒目提醒（立即一次 + 每 45s）
   useEffect(() => {
     if (!authUser || !isAdmin) { setAdminUnread(0); return; }
@@ -2611,7 +2656,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteData, setInviteData] = useState<authService.InviteOverview | null>(null);
   const [inviteCopied, setInviteCopied] = useState('');
-  useEffect(() => { authUserRef.current = authUser; }, [authUser]);
+  authUserRef.current = authUser;
   useEffect(() => {
     if (!authUser) { setShowAcctHint(false); return; }
     try { if (!localStorage.getItem('bbt_acct_hint_v1')) setShowAcctHint(true); } catch { /* */ }
@@ -2665,18 +2710,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     };
   }, [showOnb]);
   const openInvite = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     setInviteOpen(true); setInviteData(null);
-    try { setInviteData(await authService.fetchInvite()); } catch { /* */ }
+    try { const data = await authService.fetchInvite(); if (isAuthRevisionCurrent(revision)) setInviteData(data); } catch { /* */ }
   }, []);
   const openBookmarks = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     setAcctOpen(false); setBookmarksOpen(true);
-    try { const items = await authService.fetchBookmarks(); setBookmarkList(items); setBookmarks(new Set(items.map(i => i.message_id))); } catch { /* */ }
+    try { const items = await authService.fetchBookmarks(); if (!isAuthRevisionCurrent(revision)) return; setBookmarkList(items); setBookmarks(new Set(items.map(i => i.message_id))); } catch { /* */ }
   }, []);
   // 「🎯 我的战绩」：打开弹层即回写 seen_at（mark_seen），红点当场清零；数字与微信 digest 同源（都出台账）
   const openCalls = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     setAcctOpen(false); setCallsOpen(true);
     logAct('call_view', '我的战绩');
     const [list, sum] = await Promise.all([authService.fetchMyCalls(undefined, true), authService.fetchCallSummary()]);
+    if (!isAuthRevisionCurrent(revision)) return;
     setCallsList(list); setCallsSummary(sum); setCallsUnseen(0);
   }, [logAct]);
   // 站长内置看板：按登录态向后端取看板直达 URL（令牌不入前端包），新标签打开运营看板
@@ -2697,33 +2746,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       window.open(site + '/api/weixin/console?token=' + encodeURIComponent(r.token), '_blank', 'noopener');
     } catch { showToast('⚠️ 无权访问或登录已过期'); }
   }, [showToast]);
-  // 进入页面用已存令牌验证一次：有效则恢复登录态（一次 /auth/me 同时拿到用户名+会员+角色，避免重复请求）。
-  // token 失效(401)由拦截器清除；网络瞬断等其他失败不清 token，下次进页面再试，避免误登出。
+  // AuthProvider owns token validation for both the full app and terminal.
   useEffect(() => {
-    if (!authService.getStoredToken()) return;
-    let cancelled = false;
-    authService.fetchAccount().then(u => {
-      if (cancelled) return;
-      if (!u) {
-        // /auth/me 失败：token 已被拦截器清掉(401 过期)→ 缓存登录态作废旧、回落匿名；
-        // token 还在(网络瞬断等)→ 保持缓存登录态，下次再校准，避免误闪匿名屏。
-        if (!authService.getStoredToken()) {
-          setAuthUser(null);
-          authUserRef.current = null;
-          setMembership(null); setIsAdmin(false); setTrialClaimable(false); setJoinedAt('');
-          authService.clearSessionCache();
-        }
-        return;
-      }
-      setAuthUser(u.username);
-      setMembership(u.membership ?? null); setIsAdmin(u.role === 'admin'); setTrialClaimable(!!u.trial_claimable); setJoinedAt(u.created_at || '');
-      authService.saveSessionCache({ u: u.username, m: u.membership ?? null, r: u.role, t: !!u.trial_claimable, c: u.created_at || '' });
-      authService.fetchSupportUnread().then(n => applySupportUnread(n, false)).catch(() => {});
-      authService.fetchReferral().then(d => setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0))).catch(() => {});
-      authService.fetchInvite().then(o => { inviteCodeRef.current = o.code || ''; }).catch(() => {});
-    });
-    return () => { cancelled = true; };
-  }, [applySupportUnread]);
+    if (!authUser) return;
+    const revision = getAuthSnapshot().revision;
+    authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n, false); }).catch(() => {});
+    authService.fetchReferral().then(d => { if (isAuthRevisionCurrent(revision)) setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0)); }).catch(() => {});
+    authService.fetchInvite().then(o => { if (isAuthRevisionCurrent(revision)) inviteCodeRef.current = o.code || ''; }).catch(() => {});
+  }, [authUser, applySupportUnread, session.revision]);
   // 网关：已登录直接执行；否则记住意图、弹登录框，登录成功后自动续做那一步。
   const requireLogin = useCallback((run: () => void, reason: string) => {
     if (authUserRef.current) { run(); return; }
@@ -2809,8 +2839,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const id = bmId(m);
     if (!id) return;
     requireLogin(async () => {
+      const revision = getAuthSnapshot().revision;
       try {
         const r = await authService.toggleBookmark({ message_id: id, title: m.title || '', topic: topicOverride || m.topic || '', url: m.url || '', symbol: m.symbol || '' });
+        if (!isAuthRevisionCurrent(revision)) return;
         setBookmarks(prev => { const n = new Set(prev); if (r.bookmarked) n.add(id); else n.delete(id); return n; });
         logAct(r.bookmarked ? 'bookmark' : 'unbookmark', (topicOverride || m.topic || '') + ':' + (m.title || '').slice(0, 60));
         showToast(r.bookmarked ? '⭐ 已收藏 · 点头像「我的收藏」查看' : '已取消收藏');
@@ -2819,9 +2851,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [requireLogin, showToast, logAct]);
   // 登录态变化：拉本账号收藏集合
   useEffect(() => {
-    if (authUser) { authService.fetchBookmarks().then(items => setBookmarks(new Set(items.map(i => i.message_id)))).catch(() => {}); }
+    const revision = getAuthSnapshot().revision;
+    if (authUser) { authService.fetchBookmarks().then(items => { if (isAuthRevisionCurrent(revision)) setBookmarks(new Set(items.map(i => i.message_id))); }).catch(() => {}); }
     else { setBookmarks(new Set()); }
-  }, [authUser]);
+  }, [authUser, session.revision]);
   // 登录态变化：拉战绩未读（settled 且未看）→ 菜单行红点 + 进站一次性 toast。
   // 站内触达是 100% 的地板：微信 token 冷推不到时，兑现时刻在这里等用户自然回访。
   useEffect(() => {
@@ -2839,12 +2872,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       }
     })();
     return () => { dead = true; };
-  }, [authUser, showToast]);
+  }, [authUser, showToast, session.revision]);
   const onAuthed = useCallback((username: string, isNew?: boolean) => {
-    setAuthUser(username);
     authUserRef.current = username;
     refreshMembership();  // 登录后拉会员状态
-    authService.fetchInvite().then(o => { inviteCodeRef.current = o.code || ''; }).catch(() => {});
+    const revision = getAuthSnapshot().revision;
+    authService.fetchInvite().then(o => { if (isAuthRevisionCurrent(revision)) inviteCodeRef.current = o.code || ''; }).catch(() => {});
     const next = pendingActionRef.current;
     pendingActionRef.current = null;
     if (next) { next(); if (isNew) logAct('signup', '注册(带意图直达)'); return; }
@@ -2964,49 +2997,33 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 领取「登录送 3 天体验会员」：未登录先弹登录，登录后自动领取；每账号仅一次
   const onClaimTrial = useCallback(() => {
     requireLogin(async () => {
+      const revision = getAuthSnapshot().revision;
       setTrialClaiming(true);
       try {
         const r = await authService.claimTrial();
+        if (!isAuthRevisionCurrent(revision)) return;
         setMembership(r.membership ?? null);
         setTrialClaimable(false);
         logAct('claim_trial', `${r.days}天体验会员`);
         showToast(`🎉 已领取 ${r.days} 天体验会员，已解锁全部功能`);
       } catch (e: any) {
+        if (!isAuthRevisionCurrent(revision)) return;
         setTrialClaimable(false);  // 后端判定已领/已是会员 → 收起入口
         showToast('❌ ' + (e?.message || '领取失败，请稍后再试'));
-      } finally { setTrialClaiming(false); }
+      } finally { if (isAuthRevisionCurrent(revision)) setTrialClaiming(false); }
     }, '领取 3 天体验会员');
-  }, [requireLogin, showToast]);
+  }, [requireLogin, showToast, logAct, setMembership, setTrialClaimable]);
   const onLogout = useCallback(() => {
     authService.logout();
-    setAuthUser(null);
-    authUserRef.current = null;
-    inviteCodeRef.current = '';
-    pendingActionRef.current = null;
-    setMembership(null); setIsAdmin(false); setTrialClaimable(false); setSupportUnread(0); setSupportOpen(false); setSupportMsgs([]); setRedeemOpen(false); setBuyOpen(false);
-    setAcctOpen(false);
     showToast('已退出登录');
   }, [showToast]);
-
-  // 单设备登录：账号在其他设备登录后，本端被挤下线（apiClient 拦截器捕获 401 标记后广播）→ 清态 + 明确提示
   useEffect(() => {
-    const onKicked = (e: Event) => {
-      authService.logout();
-      setAuthUser(null);
-      authUserRef.current = null;
-      pendingActionRef.current = null;
-      setMembership(null); setIsAdmin(false); setTrialClaimable(false); setSupportUnread(0); setSupportOpen(false); setSupportMsgs([]); setRedeemOpen(false); setBuyOpen(false);
-      setAcctOpen(false);
-      const msg = ((e as CustomEvent)?.detail as string) || '账号已在其他设备登录，你已被挤下线';
-      showToast('⚠️ ' + msg);
-    };
+    const onKicked = (event: Event) => showToast('⚠️ ' + (((event as CustomEvent).detail as string) || '登录已过期，请重新登录'));
     window.addEventListener('df:auth-kicked', onKicked);
     return () => window.removeEventListener('df:auth-kicked', onKicked);
   }, [showToast]);
 
   // ---- 自选股按账号同步：未登录走 localStorage（仅本地、互不影响）；登录后绑定账号、跨设备一致 ----
-  const watchlistRef = useRef(watchlist);
-  const namesRef = useRef(names);
   // Android WebView 前台通知：按用户偏好过滤并排队展示，突发多条时不再互相覆盖。
   const [nativeBackgroundEnabled, setNativeBackgroundEnabled] = useState(false);
   const [nativeBackgroundPermission, setNativeBackgroundPermission] = useState('unknown');
@@ -3276,58 +3293,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       }
     }
   }, [refreshNativeBackgroundStatus, showToast]);
-  const wlHydrating = useRef(false);   // 程序化加载期间抑制回存，避免「加载即回存」抖动
-  const wlSaveTimer = useRef<number | undefined>(undefined);
-  const scheduleWatchlistSave = useCallback(() => {
-    window.clearTimeout(wlSaveTimer.current);
-    wlSaveTimer.current = window.setTimeout(() => {
-      saveWatchlist(watchlistRef.current, namesRef.current).catch(() => { /* 同步失败不打扰用户，下次改动再试 */ });
-      // 推送订阅跟着自选走：否则订阅行里的 symbols 是建行时快照，之后加的自选股永远收不到召回
-      if (getNotificationPermission() === 'granted' && loadRecallPrefs().browserEnabled) {
-        void subscribeWebPush({ symbols: watchlistRef.current });
-      }
-    }, 800);
-  }, []);
-  // 自选股变化 → 登录态防抖存服务器；未登录存本地
-  useEffect(() => {
-    watchlistRef.current = watchlist;
-    if (wlHydrating.current) return;
-    if (authUserRef.current) scheduleWatchlistSave();
-    else LS.write('bbt.watchlist', watchlist);
-  }, [watchlist, scheduleWatchlistSave]);
-  // 名称变化 → 同上
-  useEffect(() => {
-    namesRef.current = names;
-    if (wlHydrating.current) return;
-    if (authUserRef.current) scheduleWatchlistSave();
-    else LS.write('bbt.names', names);
-  }, [names, scheduleWatchlistSave]);
-  // 登录态切换：登录→拉账号自选（无则用当前列表做种子）；登出→回退到本地游客列表
-  useEffect(() => {
-    let cancelled = false;
-    if (authUser) {
-      wlHydrating.current = true;
-      fetchWatchlist().then(data => {
-        if (cancelled) return;
-        if (data && Array.isArray(data.symbols) && data.symbols.length) {
-          setWatchlist(data.symbols);
-          setNames({ ...DEFAULT_NAMES, ...(data.names || {}) });
-          window.setTimeout(() => { wlHydrating.current = false; }, 0);  // 等状态生效后再放开回存
-        } else {
-          // 该账号首次：用当前（游客）列表做种子并落库，之后即绑定账号
-          wlHydrating.current = false;
-          saveWatchlist(watchlistRef.current, namesRef.current).catch(() => { /* 忽略 */ });
-        }
-      }).catch(() => { if (!cancelled) wlHydrating.current = false; });
-    } else {
-      // 登出：恢复本地游客自选股
-      wlHydrating.current = true;
-      setWatchlist(LS.read('bbt.watchlist', DEFAULT_WATCHLIST));
-      setNames({ ...DEFAULT_NAMES, ...LS.read('bbt.names', {} as Record<string, string>) });
-      window.setTimeout(() => { wlHydrating.current = false; }, 0);
-    }
-    return () => { cancelled = true; };
-  }, [authUser]);
+  useLayoutEffect(() => registerSessionCleanup(() => {
+    aiStreamCancelRef.current?.();
+    resetAiConversation();
+    stopDeepPoll(); deepStartingRef.current = false; setDeepBusy(false); setDeepTask(null); setDeepErr(''); setDeepSymbol('');
+    authUserRef.current = null; inviteCodeRef.current = '';
+    if (getAuthSnapshot().account) pendingActionRef.current = null;
+    setSupportUnread(0); supportUnreadRef.current = 0; setSupportOpen(false); setSupportMsgs([]); setSupportText(''); setSupportSending(false);
+    setRedeemOpen(false); setRedeemBusy(false); redeemBusyRef.current = false; setTrialClaiming(false); setBuyOpen(false); setAcctOpen(false); setUpgradeOpen(false); setInviteOpen(false); setInviteData(null);
+    setBookmarks(new Set()); setBookmarksOpen(false); setBookmarkList([]);
+    setCallsOpen(false); setCallsList([]); setCallsSummary(null); setCallsUnseen(0);
+    setCheckin(null); checkinDayRef.current = ''; callsToastRef.current = false; setRefAvail(0);
+    setNewsPreview(null); setArticleOriginal(null); setArticleTextError('');
+    setDeepAnswerBusy(false); setAiAttachmentBusy(false); setAiQuotaLeft(null);
+    aiTasksRef.current.clear(); aiInterpretCacheRef.current.clear(); aiViewingTaskRef.current = '';
+    setAiTasksVersion(v => v + 1); setAiTasksOpen(false); setAiReport(null); setAiResult(null); setAiDeepDraft(null); setAiLoading(false); setAiQuickPending(false);
+  }), [session.revision, resetAiConversation, stopDeepPoll]);
 
   // ---- 研报一键 AI 分析（多模态解读：在线 file_id 或本地文件）----
   // 匿名免费体验额度：每天 1 次（与后端按 IP 每日限额对齐）。本机存"今天用过没"，跨天自动恢复。
@@ -3335,10 +3316,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const markAiFreeUsed = useCallback(() => { try { localStorage.setItem('df_ai_free_day', new Date().toLocaleDateString('en-CA')); } catch { /* */ } }, []);
 
   // ===== AI 解读后台任务：立即返回不占界面，完成经 toast/浮标回到阅读模态 =====
-  const openAiReading = useCallback((v: { report: { title?: string; date?: string } | null; meta: { org?: string; symbol?: string; preview_url?: string } | null; result: AiAnalysis | null; deepDraft: ResearchDeepDraftInput; loading?: boolean; error?: string; original?: string }) => {
+  const openAiReading = useCallback((v: { report: { title?: string; date?: string } | null; meta: { org?: string; symbol?: string; preview_url?: string } | null; result: AiAnalysis | null; deepDraft: ResearchDeepDraftInput; loading?: boolean; error?: string; original?: string; quick?: boolean }) => {
     aiViewingTaskRef.current = '';
     setAiReport(v.report); setAiReportMeta(v.meta); setAiResult(v.result); setAiDeepDraft(v.deepDraft);
-    setAiLoading(!!v.loading);
+    setAiLoading(!!v.loading); setAiQuickPending(!!v.quick);
     setAiOriginal(v.original || '');
     setAiError(v.error || ''); setAiModalExpanded(false); setDfExpanded(true);
     setAiCopied(false); setAiTextCopied(false);
@@ -3350,7 +3331,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const t = aiTasksRef.current.get(key);
     if (!t) return;
     if (t.status === 'running') {
-      openAiReading({ report: t.report, meta: t.meta, result: null, deepDraft: null, loading: true, original: t.content });
+      openAiReading({ report: t.report, meta: t.meta, result: (t.quick as AiAnalysis) || null, deepDraft: null, loading: true, original: t.content, quick: !!t.quick });
       aiViewingTaskRef.current = key;  // 跟随任务：阶段/进度/完成实时同步进模态
       return;
     }
@@ -3383,10 +3364,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, []);
 
   const settleAiTask = useCallback((key: string, title: string, result: AiAnalysis, deepDraft: ResearchDeepDraftInput) => {
-    aiInterpretCacheRef.current.set(key, { result, deepDraft: deepDraft || undefined });
     const cur = aiTasksRef.current.get(key);
+    if (!cur) return;
+    aiInterpretCacheRef.current.set(key, { result, deepDraft: deepDraft || undefined });
     if (cur) { cur.status = 'done'; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1); }
-    if (aiViewingTaskRef.current === key) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); }
+    if (aiViewingTaskRef.current === key) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); setAiQuickPending(false); }
     if (!authUserRef.current) markAiFreeUsed();  // 匿名免费体验已消费 → 下次起需登录
     if (!cur || !cur.hidden) showToast(`✅ 解读完成：${clipTitle(title)}，点击查看`, () => openAiTaskView(key));
   }, [markAiFreeUsed, showToast, openAiTaskView]);
@@ -3394,17 +3376,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const failAiTask = useCallback((key: string, msg: string) => {
     const cur = aiTasksRef.current.get(key);
     if (!cur) return;
-    cur.status = 'error'; cur.error = msg; setAiTasksVersion(v => v + 1);
-    if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); }
+    cur.status = 'error'; cur.error = msg;
+    if (!cur.result && cur.quick) cur.result = cur.quick as AiAnalysis;
+    setAiTasksVersion(v => v + 1);
+    if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); setAiQuickPending(false); }
     else showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
   }, [showToast, openAiTaskView]);
 
   // 401/402/403 是即时认证/配额/登录门槛：不留任务，直接给升级弹窗或登录引导
   const gateAiTask = useCallback((key: string, status: unknown, detail: unknown) => {
+    if (!aiTasksRef.current.has(key)) return;
     removeAiTask(key);
     if (aiViewingTaskRef.current === key) {
       aiViewingTaskRef.current = '';
-      setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiLoading(false); setAiError('');
+      setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiLoading(false); setAiError(''); setAiQuickPending(false);
     }
     if (Number(status) === 402) { setUpgradeReason((detail as string) || 'AI 解读是会员功能，开通即可无限解读'); setUpgradeOpen(true); }
     else showToast('登录即可继续解读 · 送 3 天尊享会员 🎁（右上角登录）');
@@ -3423,6 +3408,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [showToast, openAiTaskView]);
 
   const runAiAnalysis = useCallback(async (r: ResearchWireItem) => {
+    const revision = getAuthSnapshot().revision;
     // 匿名用户：免费体验「一次」AI 解读，第二次起 toast 引导登录（不再弹全局登录框打断阅读流）。
     if (!authUserRef.current && aiFreeUsed()) {
       showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
@@ -3458,12 +3444,21 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         max_pages: RESEARCH_DEEP_DRAFT_MAX_PAGES,
         symbol: (r.instruments && r.instruments[0]) || undefined,
       }, (detail) => {
+        if (!isAuthRevisionCurrent(revision)) return;
         const cur = aiTasksRef.current.get(cacheKey);
         if (cur && cur.stage !== detail) { cur.stage = detail; setAiTasksVersion(v => v + 1); }
+      }, (quick) => {
+        if (!isAuthRevisionCurrent(revision)) return;
+        // 快轨速览上屏：深稿完成前先给方向感；深稿 settle 时自动替换
+        const cur = aiTasksRef.current.get(cacheKey);
+        if (cur) { cur.quick = quick; cur.stage = '速览完成 · 深度解读继续生成中'; setAiTasksVersion(v => v + 1); }
+        if (aiViewingTaskRef.current === cacheKey) { setAiResult(quick as AiAnalysis); setAiQuickPending(true); }
       });
       const compact = deep.compact || compactFromDeepDraft(deep);
+      if (!isAuthRevisionCurrent(revision)) return;
       settleAiTask(cacheKey, r.title, compact, deep as unknown as ResearchDeepDraftInput);
     } catch (deepError: any) {
+      if (!isAuthRevisionCurrent(revision)) return;
       const deepStatus = deepError?.response?.status ?? deepError?.status;
       const deepDetail = deepError?.response?.data?.detail ?? deepError?.detail;
       if (deepStatus === 401 || deepStatus === 402 || deepStatus === 403) { gateAiTask(cacheKey, deepStatus, deepDetail); return; }
@@ -3474,15 +3469,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       const deepTimedOut = deepError?.code === 'ECONNABORTED' || /timeout/i.test(deepError?.message || '');
       const routeUnavailable = [405, 408, 501, 502, 504].includes(Number(deepStatus)) || deepTimedOut
         || (Number(deepStatus) === 404 && (!deepDetail || /^(not found|method not allowed)$/i.test(String(deepDetail).trim())));
-      if (!routeUnavailable) {
+      if (!routeUnavailable || deepError?.streamDeliveredResult) {
         failAiTask(cacheKey, deepTimedOut ? '深度稿生成超时了，请稍后重试。' : (deepDetail || deepError?.message || '深度稿生成失败，请稍后重试'));
         return;
       }
       // 灰度/旧后端可能还没有 deep-draft 路由；自动回退旧 compact，避免入口失效。
       try {
         const res = await apiPost<AiAnalysis>('/api/research/vision-analyze', sourceBody, { timeout: 150000 });
+        if (!isAuthRevisionCurrent(revision)) return;
         settleAiTask(cacheKey, r.title, res, null);
       } catch (e: any) {
+      if (!isAuthRevisionCurrent(revision)) return;
         const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
         if (status === 401 || status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
         const timedOut = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '') || /timeout/i.test(deepError?.message || '');
@@ -3495,6 +3492,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // 快讯/文章解读：同研报后台任务化，完成经 toast/浮标回看。
   const runNewsAi = useCallback(async (m: RealtimeMessageRecord) => {
+    const revision = getAuthSnapshot().revision;
     if (!authUserRef.current && aiFreeUsed()) {
       showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
       return;
@@ -3521,8 +3519,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       const res = await apiPost<AiAnalysis>('/api/news/ai-analyze',
         { title: m.title, content: m.content || '', url: m.url || '', message_id: m.id }, { timeout: 120000 });
+      if (!isAuthRevisionCurrent(revision)) return;
       settleAiTask(cacheKey, m.title, res, null);
     } catch (e: any) {
+      if (!isAuthRevisionCurrent(revision)) return;
       const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
       if (status === 401 || status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
       failAiTask(cacheKey, (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) ? '解读超时了，请重试。' : (detail || e?.message || 'AI 解读失败，请稍后重试'));
@@ -4199,6 +4199,40 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const pinnedIds = useMemo(() => new Set([...heads.kx, ...heads.wz].map((m: any) => m?.id).filter(Boolean) as string[]), [heads]);
   const ybHeadKeys = useMemo(() => new Set(heads.yb.map((y: any) => y.file_id || y.id).filter(Boolean) as string[]), [heads]);
 
+  // 「市场雷达」右栏：头条复用 heads；重要快讯=带信号色的快讯（利好/利空/紧急），排除已上头条的
+  const railSignals = useMemo(() => dedupedMessages.filter(m => (m.topic || '') === '快讯'
+    && (m.severity === 'critical' || m.severity === 'warning' || m.severity === 'success')
+    && !pinnedIds.has(m.id)).slice(0, 8), [dedupedMessages, pinnedIds]);
+  const railOn = railWide && !maxed;
+  const railHeadItems = useMemo(() => ([
+    ...heads.kx.map((m: any) => ({ kind: 'kx' as const, m })),
+    ...heads.wz.map((m: any) => ({ kind: 'wz' as const, m })),
+    ...heads.yb.map((m: any) => ({ kind: 'yb' as const, m })),
+  ]), [heads]);
+  const railRow = (kind: 'kx' | 'wz' | 'yb', m: any, rank: number) => {
+    const time = kind === 'yb'
+      ? ((m.date || fmtReportDate(m.created_at) || '').length >= 10 ? (m.date || '').slice(5) : (m.date || fmtReportDate(m.created_at) || ''))
+      : fmtTimeSmart(m.created_at);
+    const onClick = kind === 'yb' ? () => runAiAnalysis(m) : kind === 'wz' ? () => openArticleContent(m) : () => copyNews(m);
+    const sev: RealtimeMessageSeverity | null = (m.severity === 'critical' || m.severity === 'warning' || m.severity === 'success') ? m.severity : null;
+    return (
+      <div key={`rail-${kind}-${m.id || m.filename || rank}`} className="bbt-rail-it" onClick={onClick}
+        role="button" tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+        title={kind === 'kx' ? '点击复制' : kind === 'wz' ? '点开原文' : 'AI解析研报'}>
+        <span className={`bbt-rail-rank${rank <= 3 ? ' bbt-rail-rank--top' : ''}`}>{String(rank).padStart(2, '0')}</span>
+        <span className="bbt-rail-main">
+          <span className="bbt-rail-title">{stripUrls(m.title) || m.title}</span>
+          <span className="bbt-rail-meta">
+            <span className={`bbt-htag c-${kind}`}>{kind === 'kx' ? '快讯' : kind === 'wz' ? '文章' : '研报'}</span>
+            {sev && <span className={`bbt-ntag tag-${sev}`} title={String(m.metadata?.ai_impact || '') || undefined}>{SEV_TAG[sev]}</span>}
+            <span className="bbt-rail-time">{time}</span>
+          </span>
+        </span>
+      </div>
+    );
+  };
+
   // 自选相关·今日：当天 + 命中任一自选股关键词的快讯/文章，置顶到头条下方高亮（去掉已在头条的）
   // 「自选」tab 数据源：所有匹配自选股关键词的快讯/文章，时间从新到旧（dedupedMessages 已倒序）
   // 早报/综述/盘前盘后类「大盘汇总」文章：正文海量、顺带提及一堆个股，命中即标会变噪音
@@ -4516,8 +4550,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     });
   }, []);
   const loadInitial = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     try {
-      const initial = (await listRealtimeMessages({ limit: 150 })).filter(m => !isTradeAlphaMessage(m));
+      const page = await fetchRealtimeMessagePage({ limit: 150 });
+      if (!isAuthRevisionCurrent(revision)) return;
+      const initial = page.messages.filter(m => !isTradeAlphaMessage(m));
+      if (!feedCursorRef.current) {
+        feedCursorRef.current = page.next_cursor || newestMessageCursor(page.messages);
+        writeAccountStorage(feedStorageScope(FEED_CURSOR_KEY), getAuthSnapshot().account?.id ?? null, feedCursorRef.current);
+      }
       initial.forEach(message => seen.current.add(message.id));
       setMessages(previous => {
         const byId = new Map([...previous, ...initial].map(message => [message.id, message]));
@@ -4529,9 +4570,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       });
       markFeedSynced();
       setFeedLoadError(false);
-    } catch { setFeedLoadError(true); } finally { setFeedBooted(true); }  // 首批拉取结束（成败皆算）→ 撤掉骨架屏
+    } catch { if (isAuthRevisionCurrent(revision)) setFeedLoadError(true); } finally { if (isAuthRevisionCurrent(revision)) setFeedBooted(true); }  // 首批拉取结束（成败皆算）→ 撤掉骨架屏
   }, [markFeedSynced]);
   useEffect(() => {
+    const revision = getAuthSnapshot().revision;
     loadInitial();
     // 实时信号同时喂两条线：①渲染快讯列表；②盯盘召回——自选股出快讯/异动时把用户叫回来。
     // evaluateAndNotify 内部按最新偏好自判：未开启盯盘(browserEnabled=false)时为廉价空操作，
@@ -4545,7 +4587,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       stream?.close();
       stream = createRealtimeMessageStream({
         onMessage: m => {
-          if (isTradeAlphaMessage(m)) return;
+          if (!isAuthRevisionCurrent(revision) || isTradeAlphaMessage(m)) return;
           const isFresh = !seen.current.has(m.id);
           mergeMessages([m]);
           setFeedLoadError(false);
@@ -4553,6 +4595,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           if (isFresh) showNewsPopup(m);
         },
           onStatus: nextStatus => {
+            if (!isAuthRevisionCurrent(revision)) return;
             setStatus(nextStatus);
             if (nextStatus === 'live') {
               markFeedSynced();
@@ -4579,12 +4622,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       stream?.close();
       stream = null;
     };
-  }, [loadInitial, markFeedSynced, mergeMessages, showNewsPopup]);
+  }, [loadInitial, markFeedSynced, mergeMessages, showNewsPopup, session.revision]);
 
   // 市场快讯不能只依赖 SSE：用户从其它工作区点进来时，实时流可能尚未完成首连，
   // 这时首屏会短暂拿不到任何消息。切到「市场快讯」立即按 topic 补拉并合并进同一消息池，
   // 同时用请求序号忽略用户快速切换产生的过期响应，避免旧结果覆盖当前视图。
   const loadFastNews = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     const requestId = fastNewsRequestRef.current + 1;
     fastNewsRequestRef.current = requestId;
     setFastNewsLoading(true);
@@ -4592,7 +4636,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       const result = (await listRealtimeMessages({ topic: '快讯', limit: 200 }))
         .filter(message => !isTradeAlphaMessage(message));
-      if (requestId !== fastNewsRequestRef.current) return;
+      if (!isAuthRevisionCurrent(revision) || requestId !== fastNewsRequestRef.current) return;
       mergeMessages(result);
       markFeedSynced();
       setFeedLoadError(false);
@@ -4626,8 +4670,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 用于角标真实计数 + 「文章」标签展示全部，而非只展示混进窗口的那几篇。
   const [articles, setArticles] = useState<RealtimeMessageRecord[]>([]);
   const loadArticles = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
     try {
-      setArticles((await listRealtimeMessages({ topic: '文章', limit: 200 })).filter(m => !isTradeAlphaMessage(m)));
+      const result = await listRealtimeMessages({ topic: '文章', limit: 200 });
+      if (!isAuthRevisionCurrent(revision)) return;
+      setArticles(result.filter(m => !isTradeAlphaMessage(m)));
       markFeedSynced();
     } catch { /* 保留上一批文章，下一轮自动重试 */ }
   }, [markFeedSynced]);
@@ -4636,7 +4683,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     // 文章通常不走快讯 SSE，按分钟校对一次，避免“全部/精选/自选”视图滞后两分钟。
     const t = visiblePoll(() => void loadArticles(), 60000);
     return () => window.clearInterval(t);
-  }, [loadArticles]);
+  }, [loadArticles, session.revision]);
   // 文章/研报来自各自的轮询接口，不一定经过快讯 SSE；用首次快照建立基线，后续新增条目复用同一弹窗筛选。
   const articlePopupSeenRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -4651,6 +4698,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       showNewsPopup(article);
     });
   }, [articles, showNewsPopup]);
+  useLayoutEffect(() => {
+    const cached = loadCachedFeed();
+    messagesRef.current = cached; seen.current = new Set(cached.map(message => message.id));
+    feedCursorRef.current = loadFeedCursor(); fastNewsRequestRef.current++;
+    setMessages(cached); setArticles([]); setSearchMsgs([]); setArticleHistory([]);
+    setFeedBooted(false); setFeedLoadError(false); setHistDone(false); setHistLoading(false);
+    setArticleHistDone(false); setSearchLoading(false); setFastNewsLoading(false);
+    setNewsPopupQueue([]); setNewsPage(1); setFeedAnchor(null); setActive(null);
+    articlePopupSeenRef.current.clear();
+  }, [session.revision]);
   const reportPopupSeenRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const initial = reportPopupSeenRef.current.size === 0;
@@ -4749,8 +4806,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     };
   }, [dedupedMessages, articles, matchWatchlist, personalInterests, interestSignals, bookmarks, pinnedIds]);
 
-  useEffect(() => { if (messages.length) latestTsRef.current = messages[0].created_at || latestTsRef.current; }, [messages]);
-
   // 实时兜底：SSE 断线/切后台时，每 5s 增量轮询(只取更新的，响应极小)+ 回前台/网络恢复立即拉取。
   // SSE 健康(live)时新消息已经实时推过来了 → 兜底放缓到 30s 校对一次，请求量降 83%。
   const sseLiveRef = useRef(false);
@@ -4758,22 +4813,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => {
     let cancelled = false;
     let lastPollAt = 0;
+    let polling = false;
+    const controller = new AbortController();
+    const revision = getAuthSnapshot().revision;
     const poll = async (force = false) => {
-      if (!force && sseLiveRef.current && Date.now() - lastPollAt < 30000) return;
-      lastPollAt = Date.now();
+      if (polling || cancelled || (!force && sseLiveRef.current && Date.now() - lastPollAt < 30000)) return;
+      polling = true; lastPollAt = Date.now();
       try {
-        const since = latestTsRef.current;
-        const latest = await listRealtimeMessages(since ? { since, limit: 60 } : { limit: 60 });
-        if (!cancelled) {
-          markFeedSynced();
-          // 增量轮询只要成功返回，就说明资讯接口已经恢复；否则首次失败留下的错误态
-          // 会一直占着首屏，直到用户手动刷新或重新切换模块。
-          setFeedLoadError(false);
-          if (latest.length) mergeMessages(latest);
-        }
-      } catch {
-        if (!cancelled) setFeedLoadError(true);
-      }
+        await drainRealtimeMessages(feedCursorRef.current, (latest, cursor) => {
+          if (cancelled || !isAuthRevisionCurrent(revision)) return;
+          mergeMessages(latest);
+          feedCursorRef.current = cursor;
+          writeAccountStorage(feedStorageScope(FEED_CURSOR_KEY), getAuthSnapshot().account?.id ?? null, cursor);
+        }, controller.signal);
+        if (!cancelled && isAuthRevisionCurrent(revision)) { markFeedSynced(); setFeedLoadError(false); }
+      } catch { if (!cancelled && isAuthRevisionCurrent(revision)) setFeedLoadError(true); }
+      finally { polling = false; }
     };
     // 首次请求和 SSE 建连是并行的；给首批请求一次短暂的自动补偿，避免刚点进市场快讯
     // 时恰好撞上后端冷启动/网络抖动，只能靠用户手动刷新才能看到内容。
@@ -4785,13 +4840,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     window.addEventListener('online', onOnline);
     window.addEventListener('focus', onVisible);
     return () => {
-      cancelled = true; window.clearInterval(timer);
+      cancelled = true; controller.abort(); window.clearInterval(timer);
       window.clearTimeout(bootstrapRetry);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('focus', onVisible);
     };
-  }, [markFeedSynced, mergeMessages]);
+  }, [markFeedSynced, mergeMessages, session.revision]);
 
   // 何时改用「服务端取数」：搜索/选股时(全量历史检索)，或在「文章」标签(文章在实时流里稀疏，需按主题向服务器要)
   const useServerFeed = useMemo(() => newsSearching || feedFilter === '文章' || feedFilter === '自选', [newsSearching, feedFilter]);
@@ -4850,7 +4905,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
     };
-  }, [useServerFeed, newsManual, _aliasKey, feedFilter, watchlistAliasKey, markFeedSynced]);
+  }, [useServerFeed, newsManual, _aliasKey, feedFilter, watchlistAliasKey, markFeedSynced, session.revision]);
 
   const feed = useMemo(() => {
     if (feedFilter === '自选') return watchlistFeed;   // 自选 tab：匹配自选股的快讯/文章，时间倒序
@@ -4896,6 +4951,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   );
   // 资讯翻页：翻到已加载末页且服务器可能还有更旧 → 先回源拉一批历史，再翻过去
   const goNewsPage = useCallback(async (p: number) => {
+    const revision = getAuthSnapshot().revision;
     // 离开第 1 页 → 冻结此刻最新时间为锚点(没有则用首行时间);回到第 1 页 → 解冻恢复实时
     if (p <= 1) setFeedAnchor(null);
     else setFeedAnchor(prev => prev || (newsRows[0]?.created_at || null));
@@ -4906,12 +4962,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       try {
         const oldest = newsRows.length ? newsRows[newsRows.length - 1].created_at : undefined;
         const older = await listRealtimeMessages({ topic: '文章', ...(oldest ? { before: oldest } : {}), limit: 200 });
+        if (!isAuthRevisionCurrent(revision)) return;
         const known = new Set([...searchMsgs, ...articles, ...articleHistory].map(m => m.id));
         const fresh = older.filter(o => !known.has(o.id));
         if (fresh.length) setArticleHistory(prev => dedupeMessages([...prev, ...older]));
         // <200 或回源没带来任何新行(全是重复) → 标记到底,避免「下一页」点了没反应卡死
         if (older.length < 200 || fresh.length === 0) setArticleHistDone(true);
-      } catch { /* 下轮再试 */ } finally { setHistLoading(false); }
+      } catch { /* 下轮再试 */ } finally { if (isAuthRevisionCurrent(revision)) setHistLoading(false); }
     }
     if (!useServerFeed && p * pageSize > newsRows.length && !histDone && !histLoading) {
       setHistLoading(true);
@@ -4919,13 +4976,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const known = new Set(messages.map(m => m.id));
         const oldest = messages.length ? messages[messages.length - 1].created_at : undefined;
         const older = await listRealtimeMessages({ ...(oldest ? { before: oldest } : {}), limit: 200 });
+        if (!isAuthRevisionCurrent(revision)) return;
         const fresh = older.filter(o => !known.has(o.id));
         if (fresh.length) mergeMessages(older);
         // <200 或回源没带来任何新行(全是重复) → 标记到底,避免「下一页」点了没反应卡死
         if (older.length < 200 || fresh.length === 0) setHistDone(true);
-      } catch { /* 下轮再试 */ } finally { setHistLoading(false); }
+      } catch { /* 下轮再试 */ } finally { if (isAuthRevisionCurrent(revision)) setHistLoading(false); }
     }
-    setNewsPage(Math.max(1, p));
+    if (isAuthRevisionCurrent(revision)) setNewsPage(Math.max(1, p));
   }, [feedFilter, newsSearching, useServerFeed, pageSize, newsRows, histDone, histLoading, articleHistDone, articleHistory, searchMsgs, articles, messages, mergeMessages]);
 
   // 切换标签/搜索/选股/改每页 时，资讯回到第 1 页(并解冻锚点)；文章历史批次随之作废重拉
@@ -5021,10 +5079,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 {kind === 'yb' && m.preview_url && canViewResearchOriginal && <button className="bbt-nsrc" title="查看研报原文 PDF（会员）" disabled={pdfLoadingUrl === m.preview_url} onClick={e => { e.stopPropagation(); openResearchOriginal(m.preview_url); }}>{pdfLoadingUrl === m.preview_url ? '加载中…' : '原文'}</button>}
                 {kind === 'wz' && (articleOriginalUrl(m)
                   ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
-                  : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); openArticleContent(m); }}>全文</button> : null))}
+                  : (stripUrls(m.content) && stripUrls(m.content) !== (m.title || '').trim() ? <button className="bbt-nsrc bbt-aux" title="读全文" onClick={e => { e.stopPropagation(); openArticleContent(m); }}>全文</button> : null))}
                 {/* 头条文章也可分享（与普通文章行一致：公开落地页 /article/{id} 软墙引流）；研报不给分享(第三方版权) */}
                 {kind === 'wz' && (
-                  <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
+                  <span className="bbt-aux" onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
                     <ShareButton
                       className="bbt-nsrc"
                       modalTitle="分享文章"
@@ -5161,7 +5219,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <>
               <button className="bbt-nsrc" title="复制" onClick={e => { e.stopPropagation(); copyNews(m); }}>{copiedNewsId === m.id ? '✓ 已复制' : '复制'}</button>
               {/* 金十式快讯图卡：微信群里流通的是截图，卡片自带二维码回流入口 */}
-              <button className="bbt-nsrc" title="生成快讯图卡（带二维码，适合发微信群）" onClick={e => { e.stopPropagation(); void saveNewsImage(m); }}>存图</button>
+              <button className="bbt-nsrc bbt-aux" title="生成快讯图卡（带二维码，适合发微信群）" onClick={e => { e.stopPropagation(); void saveNewsImage(m); }}>存图</button>
             </>
           ) : (
             <>
@@ -5170,11 +5228,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               {articleOriginalUrl(m)
                 ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
                 : (m.topic === '文章'
-                  ? <button className="bbt-nsrc" title="读全文" onClick={e => { e.stopPropagation(); openArticleContent(m); }}>全文</button>
+                  ? <button className="bbt-nsrc bbt-aux" title="读全文" onClick={e => { e.stopPropagation(); openArticleContent(m); }}>全文</button>
                   : null)}
               {/* 文章分享：链接指向公开落地页 /article/{id}（软墙，全文会员专享）。span 兜住冒泡，不触发整行的 AI 解读 */}
               {m.topic === '文章' && (
-                <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
+                <span className="bbt-aux" onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}>
                   <ShareButton
                     className="bbt-nsrc"
                     modalTitle="分享文章"
@@ -5707,7 +5765,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <div className="bbt-promo-orbit orbit-a" />
             <div className="bbt-promo-orbit orbit-b" />
             <div className="bbt-promo-console">
-              <div className="bbt-promo-console-head"><span>MARKET SIGNALS</span><b>{terminalClock}</b></div>
+              <div className="bbt-promo-console-head"><span>MARKET SIGNALS</span><TerminalClock /></div>
               <div className="bbt-promo-console-line line-main"><i /> 自选池正在扫描 <strong>{watchlist.length}</strong> 个标的</div>
               <div className="bbt-promo-console-line"><i /> 证据流 <strong>{status === 'live' ? 'LIVE' : 'SYNCING'}</strong></div>
               <div className="bbt-promo-bars"><i /><i /><i /><i /><i /><i /><i /><i /></div>
@@ -5829,7 +5887,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <div className="bbt-live-rail" aria-label="实时工作台状态">
         <span className={`bbt-live-chip is-${status}`}><i aria-hidden="true" />{status === 'live' ? 'LIVE' : status === 'paused' ? '后台暂停' : status === 'error' || status === 'closed' ? '离线' : '同步中'}</span>
         <span className="bbt-live-copy">资讯连接 <b>{status === 'live' ? '已连接' : '自动重试中'}</b></span>
-        <span className="bbt-live-copy">北京时间 <b>{terminalClock}</b></span>
+        <span className="bbt-live-copy">北京时间 <TerminalClock /></span>
         <span className="bbt-live-copy">自选 <b>{watchlist.length}</b> 只</span>
         <span className="bbt-live-wave" aria-hidden="true"><i /><i /><i /><i /><i /></span>
         <span className="bbt-live-sync">最近同步 {formatSyncAge(feedSyncedAt)}</span>
@@ -6256,7 +6314,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </section>
       )}
 
-      <div ref={gridRef} className={`bbt-grid${maxed ? ' bbt-grid--maxed' : ''}`} style={{ ['--eqw' as any]: `${eqW}px` }}>
+      <div ref={gridRef} className={`bbt-grid${maxed ? ' bbt-grid--maxed' : ''}${railOn ? ' bbt-grid--rail' : ''}`} style={{ ['--eqw' as any]: `${eqW}px` }}>
         {/* 行情监视 */}
         <section className={`bbt-panel bbt-watchlist-panel${maxed && maxed !== 'eq' ? ' bbt-hide' : ''}${collapsed.eq ? ' bbt-panel--collapsed' : ''}${(eqNarrow && maxed !== 'eq') ? ' bbt-eq--narrow' : ''}`}>
           <div className="bbt-ph" onClick={e => { if ((e.target as HTMLElement).closest('button')) return; if (window.innerWidth <= 820) toggleCollapse('eq'); }}>
@@ -6517,11 +6575,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     : newsQuery.trim() ? `无「${newsQuery.trim()}」相关${feedFilter === '快讯' ? '快讯' : feedFilter === '文章' ? '深度文章' : '资讯'}`
                       : active ? `无 ${activeName} 相关${feedFilter === '快讯' ? '快讯' : feedFilter === '文章' ? '深度文章' : '资讯'}` : '暂无最新快讯 · 开市后实时滚动更新'}</div>}
               {/* ⭐内容优先：真实资讯头条放在本区最上面(用户反馈"把大家关注的新闻放在最上面")，
-                  运营/激活类卡片(开启盯盘/复盘)统一挪到本区末尾，见下方 */}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && renderHeads([...heads.kx.map((m: any) => headlineRow('kx', m)), ...heads.wz.map((m: any) => headlineRow('wz', m)), ...heads.yb.map((m: any) => headlineRow('yb', m))])}
+                  运营/激活类卡片(开启盯盘/复盘)统一挪到本区末尾，见下方。
+                  宽屏右栏「市场雷达」已承载头条 → 内联头条不再重复渲染（窄屏/最大化时照旧） */}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && feedFilter === 'all' && renderHeads([...heads.kx.map((m: any) => headlineRow('kx', m)), ...heads.wz.map((m: any) => headlineRow('wz', m)), ...heads.yb.map((m: any) => headlineRow('yb', m))])}
               {/* 自选相关已独立成「自选」tab，ALL 里不再内嵌 */}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === '快讯' && renderHeads(heads.kx.map((m: any) => headlineRow('kx', m)))}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === '文章' && renderHeads(heads.wz.map((m: any) => headlineRow('wz', m)))}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && feedFilter === '快讯' && renderHeads(heads.kx.map((m: any) => headlineRow('kx', m)))}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && feedFilter === '文章' && renderHeads(heads.wz.map((m: any) => headlineRow('wz', m)))}
               {/* 回访首屏「我的」视角：3 秒看到"与我有关"的变化（数据全现成：quotes+watchlistFeed），点击直切自选 tab */}
               {authUser && watchlist.length > 0 && newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && (() => {
                 let up = 0, down = 0;
@@ -6652,6 +6711,31 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           )}
           {isResearch && <div className="bbt-pf">海外投行研报{resQuery.trim() ? ` · 检索「${resQuery.trim()}」` : ''} · <span className={resLoading ? 'bbt-up' : ''}>{resLoading ? '● 同步中…' : `每分钟自动同步${resSyncedAt ? ` · 同步于 ${fmtTime(resSyncedAt.toISOString())}` : ''}`}</span> · 点条目 → AI 解读</div>}
         </section>
+
+        {/* 「市场雷达」右栏：今日头条 + 重要级快讯的常驻快速入口（仅 PC 宽屏，见 railWide） */}
+        {railOn && (
+          <aside className="bbt-rail" aria-label="市场雷达">
+            <div className="bbt-ph">市场雷达</div>
+            <div className="bbt-rail-body">
+              {railHeadItems.length > 0 && (
+                <div className="bbt-rail-sec">
+                  <div className="bbt-rail-sec-h">今日头条</div>
+                  {railHeadItems.map((it, i) => railRow(it.kind, it.m, i + 1))}
+                </div>
+              )}
+              {railSignals.length > 0 && (
+                <div className="bbt-rail-sec">
+                  <div className="bbt-rail-sec-h">重要快讯</div>
+                  {railSignals.map((m, i) => railRow('kx', m, i + 1))}
+                </div>
+              )}
+              {railHeadItems.length === 0 && railSignals.length === 0 && (
+                <div className="bbt-rail-empty">暂无头条与重要快讯</div>
+              )}
+            </div>
+            <div className="bbt-pf">点快讯复制 · 点文章读原文 · 点研报 AI 解析</div>
+          </aside>
+        )}
       </div>
 
       <div className="bbt-status">
@@ -6795,7 +6879,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   />
                 </div>
               ) : <>
-              {aiLoading && (() => {
+              {aiLoading && !aiQuickPending && (() => {
                 // 进度按耗时渐近爬升（预估节奏）；跟随后台任务时用其真实阶段文本与开始时刻。
                 const task = aiViewingTaskRef.current ? aiTasksRef.current.get(aiViewingTaskRef.current) : undefined;
                 const pulse = task && task.status === 'running' ? aiTaskPulse(task) : { elapsed: 0, progress: 6 };
@@ -6825,7 +6909,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 );
               })()}
               {!aiLoading && aiError && <div className="bbt-empty bbt-ai-err">⚠ {aiError}</div>}
-              {!aiLoading && aiResult && (() => {
+              {aiResult && (!aiLoading || aiQuickPending) && (() => {
                 const compactReport = !!aiReportMeta;
                 const newsReport = !compactReport;
                 const allBull = aiResult.bullish?.length ? aiResult.bullish : (aiResult.key_points || []);
@@ -6841,6 +6925,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 ].filter(Boolean).join('\n\n') : '';
                 return (
                 <>
+                  {aiQuickPending && <div className="bbt-ai-quick-badge">⚡ 速览版 · 深度解读后台生成中，完成后自动替换并提醒你</div>}
                   {(aiResult.subject || aiResult.rating || aiResult.target_price) && (
                     <div className="bbt-ai-tags">
                       {aiResult.subject && <button type="button" className="bbt-ai-chip bbt-ai-chip--subject bbt-ai-chip--act" title={`下钻 ${aiResult.subject}：入自选并打开个股工作区`} onClick={() => handleSymbolChipClick(aiResult.subject!)}>标的 {aiResult.subject}</button>}

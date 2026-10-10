@@ -113,10 +113,10 @@ def test_performance_brake_levels():
     assert defensive["thr_delta"] > cautious["thr_delta"]
 
 
-def test_ifind_unavailable_failsafe(fund, monkeypatch):
+def test_all_quote_sources_unavailable_failsafe(fund, monkeypatch):
     monkeypatch.setattr(ai_fund, "ifind_enabled", lambda: False)
     out = ai_fund.run_tick()
-    assert out["ok"] is False and out["reason"] == "ifind_unavailable"
+    assert out["ok"] is False and out["reason"] == "no_quotes"
     snap = ai_fund.get_snapshot()
     assert snap["position_count"] == 0 and snap["data_quality"]["level"] == "degraded"
     assert snap["persona"]["name"] == "阿尔法" and "mood" in snap and "stats" in snap

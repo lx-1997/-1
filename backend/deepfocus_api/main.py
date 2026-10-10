@@ -78,6 +78,7 @@ from .auth import (
     rotate_session,
     self_register_enabled,
 )
+from .ownership import current_owner_id
 from .user_prefs import get_watchlist as get_user_watchlist, set_watchlist as set_user_watchlist
 from . import support_store
 from . import membership_codes
@@ -264,7 +265,9 @@ from .backtest_engine import (
 )
 from .backtest_executor import run_backtest, list_backtest_results
 from .quant_lab import run_quant_lab
-from .quant_jobs import cancel_quant_job, create_quant_job, get_quant_job
+from .portfolio_api import router as portfolio_router
+from .quant_jobs import cancel_quant_job, create_quant_job, get_quant_job, init_quant_jobs, shutdown_quant_jobs
+from .cost_quotas import QuotaExceeded, QuotaLease, reserve as reserve_quota, complete as complete_quota, release as release_quota, used as quota_used, quota_scope
 from .agent_loop import run_agent_research_loop
 from .market_dashboard import (
     fetch_market_dashboard,
@@ -1385,6 +1388,7 @@ from .schemas import (
     ProfessionalWorkbenchFileIngestRequest,
     RagQueryRequest,
     RealtimeMessageCreateRequest,
+    RealtimeMessageCursor,
     RealtimeMessageListResponse,
     RecallDeliveryLogResponse,
     RecallDeliveryResult,
@@ -1512,6 +1516,7 @@ async def lifespan(app: FastAPI):
     configure_data_source_egress()  # 数据源域名绕过出网代理（封锁环境下仍能直连取数）
     init_auth()  # 建认证表（统一存储层）+ 按 env 预置管理员
     init_task_db()
+    init_quant_jobs()
     init_data_source_db()
     init_professional_research_db()
     init_realtime_message_db()
@@ -1649,7 +1654,7 @@ async def lifespan(app: FastAPI):
         await asyncio.wait_for(asyncio.gather(*_bg_tasks, return_exceptions=True), timeout=4.0)
     except (asyncio.TimeoutError, BaseException):
         pass
-    for _closer in (stop_agent_worker, stop_research_workbench):
+    for _closer in (stop_agent_worker, shutdown_quant_jobs, stop_research_workbench):
         try:
             await asyncio.wait_for(_closer(), timeout=4.0)
         except (asyncio.TimeoutError, BaseException):
@@ -3065,7 +3070,7 @@ def _build_system_readiness_checks() -> list[SystemReadinessCheck]:
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     include_in_schema=False,
 )
-async def research_workbench_root(request: Request):
+async def research_workbench_root(request: Request, _admin: dict = Depends(require_admin)):
     return await proxy_research_workbench(request, "")
 
 
@@ -3074,7 +3079,7 @@ async def research_workbench_root(request: Request):
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     include_in_schema=False,
 )
-async def research_workbench_proxy(path: str, request: Request):
+async def research_workbench_proxy(path: str, request: Request, _admin: dict = Depends(require_admin)):
     return await proxy_research_workbench(request, path)
 
 
@@ -4133,19 +4138,20 @@ register_tool(AgentTool(
 async def _tool_get_briefing_today() -> Any:
     """投研晨报：市场环境速判 + 组合风险 → 买方一句话行动建议。读缓存(30min)秒回，缺则现算一次再缓存。"""
     from . import data_store
-    cached = data_store.latest("wx_briefing", "TODAY", max_age_seconds=1800)
+    briefing_key = f"TODAY:{current_owner_id() or 'public'}"
+    cached = data_store.latest("wx_briefing", briefing_key, max_age_seconds=1800)
     if isinstance(cached, dict) and cached:
         return cached
     from .risk_management import get_risk_summary
     inputs = await _gather_macro_inputs()
     macro = build_macro_review(**inputs)
     portfolio = build_portfolio_review(
-        get_risk_summary(), sp500_history=inputs["sp500_history"], rates_history=inputs["rates_history"],
+        _private_risk_summary(), sp500_history=inputs["sp500_history"], rates_history=inputs["rates_history"],
     )
     b = build_briefing(macro, portfolio)
     out = {"headline": b.headline, "macro_verdict": b.macro_verdict, "portfolio_verdict": b.portfolio_verdict}
     try:
-        data_store.record("wx_briefing", "TODAY", out)
+        data_store.record("wx_briefing", briefing_key, out)
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -4176,7 +4182,7 @@ async def portfolio_review() -> PortfolioReviewResponse:
     except Exception:
         sp500, rates = [], []
 
-    summary = get_risk_summary()
+    summary = _private_risk_summary()
     # 有持仓才拉实时价（空仓零开销）；用 Google Finance 准实时价刷新 current_price 后重算盈亏/回撤。
     if summary.get("open_positions"):
         try:
@@ -4248,7 +4254,7 @@ async def briefing_today(symbols: str = "") -> BriefingResponse:
     inputs = await _gather_macro_inputs()
     macro = build_macro_review(**inputs)
     portfolio = build_portfolio_review(
-        get_risk_summary(),
+        _private_risk_summary(),
         sp500_history=inputs["sp500_history"],
         rates_history=inputs["rates_history"],
     )
@@ -5046,11 +5052,11 @@ async def customs_trade_hs_detail(
     return await fetch_customs_hs_detail_snapshot(query=query, code=code, months=months)
 
 
-async def _wait_for_customs_agent_task(task_id: str, *, timeout_seconds: float) -> InvestmentTaskRecord:
+async def _wait_for_customs_agent_task(task_id: str, *, timeout_seconds: float, owner_user_id: Optional[str] = None) -> InvestmentTaskRecord:
     deadline = datetime.now(timezone.utc).timestamp() + timeout_seconds
     while datetime.now(timezone.utc).timestamp() < deadline:
-        task = get_investment_task(task_id)
-        if not task:
+        task = get_investment_task(task_id, owner_user_id=owner_user_id)
+        if not task or task.owner_user_id != owner_user_id:
             raise HTTPException(status_code=404, detail="Agent task not found")
         if task.status == "completed":
             return task
@@ -5093,6 +5099,7 @@ def _customs_agent_task_to_fingpt(task: InvestmentTaskRecord) -> FinGptTaskRespo
 @app.post("/api/customs-trade/ai-analysis", response_model=FinGptTaskResponse)
 async def customs_trade_ai_analysis(request: CustomsTradeAnalysisRequest) -> FinGptTaskResponse:
     try:
+        owner = current_owner_id()
         tab_labels = {
             "chapters": "HS2商品结构",
             "exports": "重点进出口商品",
@@ -5124,9 +5131,10 @@ async def customs_trade_ai_analysis(request: CustomsTradeAnalysisRequest) -> Fin
                     "focus_type": request.focus_type,
                 },
                 priority=1,
-            )
+            ),
+            owner_user_id=owner,
         )
-        completed = await _wait_for_customs_agent_task(task.id, timeout_seconds=95)
+        completed = await _wait_for_customs_agent_task(task.id, timeout_seconds=95, owner_user_id=owner)
         return _customs_agent_task_to_fingpt(completed)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -9195,6 +9203,40 @@ async def _generate_research_ai_result(
     return await _RESEARCH_AI_SINGLEFLIGHT.run(cache_key, _generate)
 
 
+def _reserve_cost_quota(key: str, limit: int) -> Optional[QuotaLease]:
+    try:
+        return reserve_quota(key, limit, initial_consumed=metrics_get_daily(key))
+    except QuotaExceeded:
+        return None
+    except Exception as exc:
+        logger.exception("Cost quota storage unavailable")
+        raise HTTPException(status_code=503, detail="额度服务暂时不可用，请稍后重试") from exc
+
+
+def _complete_cost_quota(key: str) -> None:
+    if isinstance(key, QuotaLease):
+        if not complete_quota(key):
+            return
+    metrics_incr(str(key))
+
+
+def _release_cost_quota(key: str) -> None:
+    if isinstance(key, QuotaLease):
+        release_quota(key)
+
+
+def _private_risk_summary() -> dict:
+    owner = current_owner_id()
+    return get_risk_summary(owner_user_id=owner) if owner else {}
+
+
+def _owner_args(user: dict) -> dict[str, Any]:
+    owner = str(user.get("sub") or "").strip()
+    if not owner:
+        raise HTTPException(status_code=401, detail="请重新登录")
+    return {"owner_user_id": owner, "is_admin": str(user.get("role") or "").lower() == "admin"}
+
+
 def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] = None, *, cached: bool = False) -> Optional[str]:
     """AI 解读额度闸（付费墙 + 省 token）。返回计数 key（成功后 incr）或 None（会员无限）。
 
@@ -9220,17 +9262,19 @@ def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] 
         fkey = f"q:aifree:anon:{ip}"
         if not cached:
             raise HTTPException(status_code=403, detail=f"该{label} AI 解读尚未生成——登录即可解读，还送 3 天尊享会员 🎁")
-        if metrics_get_daily(fkey) >= free_limit:
+        lease = _reserve_cost_quota(fkey, free_limit)
+        if lease is None:
             raise HTTPException(status_code=403, detail="今日免费体验已用完——登录即可继续解读，还送 3 天尊享会员 🎁")
-        return fkey
+        return lease
     # 登录非会员：未缓存不生成、引导开通；已缓存每天免费读 free_limit 次
     uid = str(user.get("sub", ""))
     fkey = f"q:aifree:{uid}"
     if not cached:
         raise HTTPException(status_code=402, detail=f"AI 解读是会员功能——开通会员即可无限解读{label}，{hint}")
-    if metrics_get_daily(fkey) >= free_limit:
+    lease = _reserve_cost_quota(fkey, free_limit)
+    if lease is None:
         raise HTTPException(status_code=402, detail=f"今日免费 AI 解读已用完（非会员每天 {free_limit} 次）。开通会员畅享无限——{hint}")
-    return fkey
+    return lease
 
 
 def _upgrade_hint() -> str:
@@ -9264,14 +9308,16 @@ def _check_agent_quota(user: Optional[dict], request: Optional[Request] = None) 
         if tier in ("premium", "lifetime"):
             return None
         fkey = f"q:agentqa:{uid}"
-        if metrics_get_daily(fkey) >= _AGENT_FREE_QA:
+        lease = _reserve_cost_quota(fkey, _AGENT_FREE_QA)
+        if lease is None:
             raise HTTPException(status_code=402, detail=f"今日免费 AI 问答已用完（非会员每天 {_AGENT_FREE_QA} 次）。开通会员畅享无限——{_upgrade_hint()}")
-        return fkey
+        return lease
     ip = _client_ip(request) if request is not None else "?"
     fkey = f"q:agentqa:anon:{ip}"
-    if metrics_get_daily(fkey) >= _AGENT_FREE_QA_ANON:
+    lease = _reserve_cost_quota(fkey, _AGENT_FREE_QA_ANON)
+    if lease is None:
         raise HTTPException(status_code=403, detail="登录即可继续用 AI 投研问答，还送 3 天尊享会员 🎁")
-    return fkey
+    return lease
 
 
 def _record_agent_chain(*, mode: str, route: str, message: str, trace: list, elapsed_ms: int,
@@ -9313,26 +9359,29 @@ def _check_dulus_deep_quota(user: Optional[dict], request: Optional[Request] = N
         if tier in ("premium", "lifetime"):
             return None
         quota_key = f"q:dulusdeep:{uid}"
-        if metrics_get_daily(quota_key) >= _DULUS_DEEP_FREE:
+        lease = _reserve_cost_quota(quota_key, _DULUS_DEEP_FREE)
+        if lease is None:
             raise HTTPException(status_code=402, detail=f"今日深度研判已用完（非会员每天 {_DULUS_DEEP_FREE} 次）。开通会员畅享无限——{_upgrade_hint()}")
-        return quota_key
+        return lease
     ip = _client_ip(request) if request is not None else "?"
     quota_key = f"q:dulusdeep:anon:{ip}"
-    if metrics_get_daily(quota_key) >= _DULUS_DEEP_FREE:
+    lease = _reserve_cost_quota(quota_key, _DULUS_DEEP_FREE)
+    if lease is None:
         raise HTTPException(status_code=403, detail="今日深度研判体验已用完，登录后明天继续使用 🎁")
-    return quota_key
+    return lease
 
 
 def _dulus_deep_quota_left(quota_key: Optional[str]) -> Optional[int]:
     if not quota_key:
         return None
     try:
-        return max(0, _DULUS_DEEP_FREE - metrics_get_daily(quota_key))
+        return max(0, _DULUS_DEEP_FREE - quota_used(quota_key))
     except Exception:  # noqa: BLE001
         return None
 
 
 @app.post("/api/research/vision-analyze", response_model=ResearchVisionAnalysisResponse)
+@quota_scope
 async def api_research_vision_analyze(
     request: ResearchVisionAnalyzeRequest,
     http_req: Request,
@@ -9404,7 +9453,7 @@ async def api_research_vision_analyze(
     # 允许继续走一次新版生成，避免被历史结果永久卡住。
     refresh_cached = cached_result is not None and report_depth_needs_refresh(cached_result)
     if cached_result is not None and not (refresh_cached and quota_key is None):
-        if quota_key: metrics_incr(quota_key)  # 命中缓存也计 1 次（非会员每日免费额度）
+        if quota_key: _complete_cost_quota(quota_key)  # 命中缓存也计 1 次（非会员每日免费额度）
         return _build_response(cached_result)
 
     # 走到这里必为会员（非会员未缓存已被 _check_ai_quota 拦下，不会触发生成）
@@ -9423,11 +9472,12 @@ async def api_research_vision_analyze(
 
     if cache_ref and cache_key != cache_ref:
         metrics_set_ai_cache(cache_ref, result)  # 给研报博客/头条保留最新结构的无版本别名
-    if quota_key: metrics_incr(quota_key)
+    if quota_key: _complete_cost_quota(quota_key)
     return _build_response(result, core_result_holder[0] if core_result_holder else None)
 
 
 @app.post("/api/research/deep-draft", response_model=ResearchDeepDraftResponse)
+@quota_scope
 async def api_research_deep_draft(
     request: ResearchDeepDraftRequest,
     http_req: Request,
@@ -9581,7 +9631,7 @@ async def api_research_deep_draft(
 
     if isinstance(cached_result, dict) and cached_result:
         if quota_key:
-            metrics_incr(quota_key)
+            _complete_cost_quota(quota_key)
         return _response(cached_result)
 
     try:
@@ -9600,11 +9650,12 @@ async def api_research_deep_draft(
         except Exception:
             raise HTTPException(status_code=502, detail=f"深度研报稿生成失败：{str(exc)[:160]}") from exc
     if quota_key:
-        metrics_incr(quota_key)
+        _complete_cost_quota(quota_key)
     return _response(payload, core_result_holder[0] if core_result_holder else None)
 
 
 @app.post("/api/news/ai-analyze", response_model=ResearchVisionAnalysisResponse)
+@quota_scope
 async def api_news_ai_analyze(
     request: NewsAnalyzeRequest,
     http_req: Request,
@@ -9675,7 +9726,7 @@ async def api_news_ai_analyze(
         return _attach_core_agent_metadata(response, core_result)
 
     if cached_result is not None:
-        if quota_key: metrics_incr(quota_key)
+        if quota_key: _complete_cost_quota(quota_key)
         return _resp(cached_result)
     # 走到这里必为会员（非会员未缓存已被 _check_ai_quota 拦下，不会触发生成）
     core_result: Any = None
@@ -9700,7 +9751,7 @@ async def api_news_ai_analyze(
     if original_source_note:
         result["source_note"] = original_source_note
     metrics_set_ai_cache(cache_key, result)
-    if quota_key: metrics_incr(quota_key)
+    if quota_key: _complete_cost_quota(quota_key)
     return _resp(result, core_result)
 
 
@@ -9849,7 +9900,15 @@ async def api_list_realtime_messages(
     q: Optional[str] = None,
     anyq: Optional[str] = None,
     limit: int = 80,
+    after_created_at: Optional[str] = None,
+    after_id: Optional[str] = None,
+    order: str = "desc",
 ) -> RealtimeMessageListResponse:
+    if bool(after_created_at) != bool(after_id):
+        raise HTTPException(status_code=422, detail="增量游标需要时间和消息 ID")
+    if order not in {"asc", "desc"}:
+        raise HTTPException(status_code=422, detail="order 必须为 asc 或 desc")
+    page_size = max(1, min(limit, 200))
     hide_futoucaixin = _should_hide_futoucaixin(request)
     only_futoucaixin = _should_only_futoucaixin(request, topic)
     messages = list_realtime_messages(
@@ -9862,14 +9921,26 @@ async def api_list_realtime_messages(
         anyq=anyq,
         exclude_futoucaixin=hide_futoucaixin,
         only_futoucaixin=only_futoucaixin,
-        limit=max(1, min(limit, 200)),
+        limit=page_size + 1,
+        after_created_at=after_created_at,
+        after_id=after_id,
+        order=order,
     )
+    has_more = len(messages) > page_size
+    messages = messages[:page_size]
+    # Advance over scanned rows as well as visible rows to avoid repeating a
+    # page containing restricted records. A descending snapshot starts at its
+    # newest row; subsequent ascending pages drain every new message.
+    edge = (messages[-1] if order == "asc" else messages[0]) if messages else None
+    cursor = RealtimeMessageCursor(created_at=edge.created_at, id=edge.id) if edge else None
     # 权限不变：该隐藏的 lxaa 仍隐藏，dao2 仍走受限视图。
     # 只修正「最新」语义：无搜索/标的/历史翻页时，不再返回超龄快讯。
     trim_stale_latest = hide_futoucaixin and not any((symbol, before, q, anyq))
     if trim_stale_latest:
         messages = [m for m in messages if not _is_stale_filtered_view_flash(m)]
     return RealtimeMessageListResponse(
+        next_cursor=cursor,
+        has_more=has_more if order == "asc" else False,
         messages=[
             viewed
             for m in messages
@@ -11752,25 +11823,27 @@ async def list_agent_tools_endpoint() -> AgentToolListResponse:
 
 
 @app.get("/api/agents/tasks", response_model=InvestmentTaskListResponse)
-async def list_agent_tasks(limit: int = 50) -> InvestmentTaskListResponse:
-    return InvestmentTaskListResponse(tasks=list_investment_tasks(limit=limit))
+async def list_agent_tasks(limit: int = 50, _user: dict = Depends(require_current_user)) -> InvestmentTaskListResponse:
+    return InvestmentTaskListResponse(tasks=list_investment_tasks(limit=limit, **_owner_args(_user)))
 
 
 @app.post("/api/agents/tasks", response_model=InvestmentTaskRecord)
-async def create_agent_task(request: InvestmentTaskCreateRequest) -> InvestmentTaskRecord:
-    return create_investment_task(request)
+async def create_agent_task(request: InvestmentTaskCreateRequest, _user: dict = Depends(require_current_user)) -> InvestmentTaskRecord:
+    return create_investment_task(request, owner_user_id=_owner_args(_user)["owner_user_id"])
 
 
 @app.get("/api/agents/tasks/{task_id}", response_model=InvestmentTaskRecord)
-async def get_agent_task(task_id: str) -> InvestmentTaskRecord:
-    task = get_investment_task(task_id)
+async def get_agent_task(task_id: str, _user: dict = Depends(require_current_user)) -> InvestmentTaskRecord:
+    task = get_investment_task(task_id, **_owner_args(_user))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
 
 
 @app.get("/api/agents/tasks/{task_id}/events")
-async def stream_agent_task_events(task_id: str, request: Request) -> StreamingResponse:
+async def stream_agent_task_events(task_id: str, request: Request, _user: dict = Depends(require_current_user)) -> StreamingResponse:
+    if not get_investment_task(task_id, **_owner_args(_user)):
+        raise HTTPException(status_code=404, detail="Task not found")
     return StreamingResponse(
         agent_task_event_stream(task_id, request),
         media_type="text/event-stream",
@@ -11779,16 +11852,16 @@ async def stream_agent_task_events(task_id: str, request: Request) -> StreamingR
 
 
 @app.post("/api/agents/tasks/{task_id}/retry", response_model=InvestmentTaskRecord)
-async def retry_agent_task(task_id: str) -> InvestmentTaskRecord:
-    task = retry_investment_task(task_id)
+async def retry_agent_task(task_id: str, _user: dict = Depends(require_current_user)) -> InvestmentTaskRecord:
+    task = retry_investment_task(task_id, **_owner_args(_user))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
 
 
 @app.post("/api/agents/tasks/{task_id}/cancel", response_model=InvestmentTaskRecord)
-async def cancel_agent_task(task_id: str) -> InvestmentTaskRecord:
-    task = cancel_investment_task(task_id)
+async def cancel_agent_task(task_id: str, _user: dict = Depends(require_current_user)) -> InvestmentTaskRecord:
+    task = cancel_investment_task(task_id, **_owner_args(_user))
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
@@ -11811,15 +11884,23 @@ async def dulus_memory(
     _user: Optional[dict] = Depends(optional_current_user),
 ) -> DulusMemoryListResponse:
     requested = str(scope or "").strip()
-    if requested.startswith("user:"):
+    if requested == "user" or requested.startswith("user:"):
+        if not _user:
+            raise HTTPException(status_code=401, detail="登录后查看 AI 历史")
         username = str((_user or {}).get("username") or (_user or {}).get("id") or "").strip()
-        if not username or requested != f"user:{username}"[:24]:
+        if requested.startswith("user:") and requested not in {f"user:{username}", f"user:{username}"[:24]}:
             raise HTTPException(status_code=403, detail="无权读取该用户的 AI 历史")
+        return list_dulus_memories(limit=limit, scope="user", **_owner_args(_user))
     return list_dulus_memories(limit=limit, scope=requested or "__shared__")
 
 
 @app.post("/api/dulus/memory", response_model=DulusMemoryRecord)
-async def dulus_memory_create(request: DulusMemoryCreateRequest) -> DulusMemoryRecord:
+async def dulus_memory_create(request: DulusMemoryCreateRequest, _user: dict = Depends(require_current_user)) -> DulusMemoryRecord:
+    if request.scope == "user" or request.scope.startswith("user:"):
+        request = request.model_copy(update={"scope": "user"})
+        return create_dulus_memory(request, owner_user_id=_owner_args(_user)["owner_user_id"])
+    if not _owner_args(_user)["is_admin"]:
+        raise HTTPException(status_code=403, detail="共享记忆需要管理员权限")
     return create_dulus_memory(request)
 
 
@@ -11829,6 +11910,7 @@ async def dulus_webbridge_inspect(request: DulusWebBridgeInspectRequest) -> Dulu
 
 
 @app.post("/api/dulus/roundtable", response_model=DulusRoundtableResponse)
+@quota_scope
 async def dulus_roundtable(
     request: DulusRoundtableRequest,
     http_req: Request,
@@ -11837,8 +11919,9 @@ async def dulus_roundtable(
     clean_selection_context = sanitize_stock_selection_context(request.objective, request.context)
     clarification_preflight = stock_selection_needs_clarification(request.objective, clean_selection_context)
     quota_key = (
-        _check_dulus_deep_quota(_user, http_req)
-        if request.mode == "deep_research" and not clarification_preflight
+        (_check_dulus_deep_quota(_user, http_req) if request.mode == "deep_research"
+         else _check_agent_quota(_user, http_req))
+        if not clarification_preflight
         else None
     )
     from . import agent_tools as _agent_tools
@@ -11867,9 +11950,11 @@ async def dulus_roundtable(
         result = core_result.raw
         # 只返回“请补充市场/周期/风险偏好”时没有启动圆桌或取数，不消耗深度研判额度。
         clarification_only = result.decision == "research_more" and not result.turns and not result.tool_traces
-        if quota_key and not clarification_only:
-            metrics_incr(quota_key)
-        if quota_key:
+        if quota_key and not clarification_only and result.synthesis.strip():
+            _complete_cost_quota(quota_key)
+        elif quota_key:
+            _release_cost_quota(quota_key)
+        if quota_key and request.mode == "deep_research":
             result.quota_left = _dulus_deep_quota_left(quota_key)
         result = _attach_core_agent_metadata(result, core_result)
         try:
@@ -11882,7 +11967,7 @@ async def dulus_roundtable(
                     content=result.synthesis,
                     tags=["deep", "ai_chat", f"owner:{_owner[:80]}"],
                     source="ai_chat",
-                ))
+                ), owner_user_id=str(_user["sub"]))
         except Exception:
             logging.getLogger(__name__).warning("ai chat history persistence failed", exc_info=True)
         return result
@@ -12875,19 +12960,31 @@ async def cross_module_research(request: CrossModuleResearchRequest) -> CrossMod
 
 
 @app.post("/api/agents/research-loop/stream")
+@quota_scope
 async def research_loop_stream(
     request: Request,
     symbol: str = "",
     question: str = "",
+    _user: Optional[dict] = Depends(optional_current_user),
 ):
     if not symbol or not question:
         raise HTTPException(status_code=400, detail="symbol and question are required")
+    quota_key = _check_dulus_deep_quota(_user, request)
 
     async def event_generator() -> AsyncIterator[str]:
-        async for event in run_agent_research_loop(llm, symbol, question, request):
-            if await request.is_disconnected():
-                break
-            yield event
+        execution = run_agent_research_loop(llm, symbol, question, request)
+        try:
+            async for event in execution:
+                if await request.is_disconnected():
+                    break
+                if quota_key and "event: research_synthesize\n" in event:
+                    data = next((line[6:] for line in event.splitlines() if line.startswith("data: ")), "{}")
+                    payload = json.loads(data)
+                    if payload.get("executive_summary") and not payload.get("degraded"):
+                        _complete_cost_quota(quota_key)
+                yield event
+        finally:
+            await execution.aclose()
 
     return StreamingResponse(
         event_generator(),
@@ -12938,7 +13035,7 @@ def _agent_quota_left(quota_key: Optional[str]) -> Optional[int]:
         return None
     limit = _AGENT_FREE_QA_ANON if ":anon:" in quota_key else _AGENT_FREE_QA
     try:
-        return max(0, limit - metrics_get_daily(quota_key))
+        return max(0, limit - quota_used(quota_key))
     except Exception:  # noqa: BLE001
         return None
 
@@ -13080,6 +13177,7 @@ async def _run_web_roundtable(
 
 
 @app.post("/api/agents/tool-research")
+@quota_scope
 async def tool_research(request: Request, message: str = "", symbol: str = "", name: str = "", history: str = "",
                         _user: Optional[dict] = Depends(optional_current_user)) -> dict[str, Any]:
     """终端统一 AI 对话：复用微信端的 Orchestrator，再映射为网页既有响应结构。
@@ -13153,8 +13251,11 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
                 return {"ok": False, "answer": "", "tool_trace": roundtable_trace, "reason": "多专家圆桌未返回结论"}
             _record_agent_chain(mode=request_mode, route="roundtable", message=message, trace=roundtable_trace,
                                 elapsed_ms=int((time.perf_counter() - _ai_started) * 1000), answer=answer, ok=True)
-            if quota_key:
-                metrics_incr(quota_key)
+            clarification_only = roundtable_result.decision == "research_more" and not roundtable_result.turns and not roundtable_result.tool_traces
+            if quota_key and not clarification_only:
+                _complete_cost_quota(quota_key)
+            elif quota_key:
+                _release_cost_quota(quota_key)
             from .compliance import ai_label as _ai_label
             from .privacy_guard import scrub_internal_text as _scrub_internal_text
             return {
@@ -13222,13 +13323,15 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
                 scope="user",
                 hall="ai_chat", title=message.strip(), content=answer,
                 tags=_tags, source="ai_chat",
-            ))
+            ), owner_user_id=str(_user["sub"]))
     except Exception:
         pass
     if answer:
         needs_clarification = str(getattr(routed, "title", "") or "") == "先确定选股范围"
         if quota_key and not needs_clarification:
-            metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败不扣）
+            _complete_cost_quota(quota_key)  # 出答案才计 1 次免费额度（失败不扣）
+        elif quota_key:
+            _release_cost_quota(quota_key)
         from .compliance import ai_label as _ai_label
         from .privacy_guard import scrub_internal_text as _scrub_internal_text
         trace: list[dict[str, Any]] = []
@@ -13268,6 +13371,7 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
 
 
 @app.post("/api/agents/tool-research/stream")
+@quota_scope
 async def tool_research_stream(request: Request, message: str = "", symbol: str = "", name: str = "", history: str = "",
                                _user: Optional[dict] = Depends(optional_current_user)):
     """统一研究路由的 SSE 版：实时发送路由、取数和核对进度，最后返回与 JSON 端点同口径的答案。
@@ -13331,6 +13435,8 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
         hint = "\n\n".join(hint_parts)
 
         async def run() -> None:
+            roundtable_task = None
+            run_hint = hint
             from . import agent_tools as _agent_tools
             _tok = _agent_tools._BINDING_USER.set(_uname)  # web 登录用户 → get_my_watchlist 可用
             try:
@@ -13365,7 +13471,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
 
                     await emit("tool_start", {"tool": "research_harness"})
                     roundtable_task = asyncio.create_task(_run_web_roundtable(
-                        message.strip(), hint, stock, _ifind, emit_research_progress,
+                        message.strip(), run_hint, stock, _ifind, emit_research_progress,
                     ))
                     roundtable_statuses = (
                         "正在并行读取行情、财报、快讯、文章与研报",
@@ -13391,8 +13497,11 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                     roundtable_result, roundtable_trace = await roundtable_task
                     answer = (roundtable_result.synthesis or "").strip()
                     if answer:
-                        if quota_key:
-                            metrics_incr(quota_key)
+                        clarification_only = roundtable_result.decision == "research_more" and not roundtable_result.turns and not roundtable_result.tool_traces
+                        if quota_key and not clarification_only:
+                            _complete_cost_quota(quota_key)
+                        elif quota_key:
+                            _release_cost_quota(quota_key)
                         for item in roundtable_trace:
                             # 研究 Harness 的真实数据调用已经在完成时通过 progress 回传；
                             # 这里只补充汇总轨迹与专家节点，避免思考区重复计数。
@@ -13437,7 +13546,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                         from .ashare_review import gather_market_structure
                         market_structure = await asyncio.wait_for(gather_market_structure(), timeout=10.0)
                         if market_structure:
-                            hint = f"{hint}\n\n【本轮预取的A股市场硬数据】{json.dumps(market_structure, ensure_ascii=False)}"
+                            run_hint = f"{run_hint}\n\n【本轮预取的A股市场硬数据】{json.dumps(market_structure, ensure_ascii=False)}"
                     except Exception:
                         pass
                 routed = await _route_orchestrator_chat(
@@ -13452,7 +13561,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                     tool_max_rounds=int(os.getenv("DEEPFOCUS_WEB_QA_MAX_ROUNDS", "6") or 6),
                     force_research=(request_mode != "quick") and not _is_smalltalk_or_service(message),
                     skip_professional=True,
-                    context_prefix=hint,
+                    context_prefix=run_hint,
                     emit=emit,
                     enrich_comparison=True,
                 )
@@ -13471,13 +13580,15 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                             scope="user",
                             hall="ai_chat", title=message.strip(), content=answer,
                             tags=_tags, source="ai_chat",
-                        ))
+                        ), owner_user_id=str(_user["sub"]))
                 except Exception:
                     pass
                 if answer:
                     needs_clarification = str(getattr(routed, "title", "") or "") == "先确定选股范围"
                     if quota_key and not needs_clarification:
-                        metrics_incr(quota_key)  # 出答案才计 1 次免费额度（失败/fallback 不扣）
+                        _complete_cost_quota(quota_key)  # 出答案才计 1 次免费额度（失败/fallback 不扣）
+                    elif quota_key:
+                        _release_cost_quota(quota_key)
                     from .compliance import ai_label as _ai_label
                     from .privacy_guard import scrub_internal_text as _scrub_internal_text
                     trace: list[dict[str, Any]] = []
@@ -13521,6 +13632,9 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                                     elapsed_ms=elapsed, answer="", ok=False, error=str(exc))
                 await queue.put(_sse_frame("error", {"message": str(exc)[:200]}))
             finally:
+                if roundtable_task is not None and not roundtable_task.done():
+                    roundtable_task.cancel()
+                    await asyncio.gather(roundtable_task, return_exceptions=True)
                 _agent_tools._BINDING_USER.reset(_tok)
                 await queue.put(None)  # 哨兵：通知生成器结束
 
@@ -13539,6 +13653,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                 yield item
         finally:
             task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     return StreamingResponse(
         event_generator(),
@@ -14025,252 +14140,7 @@ async def orchestrator_chat(request: OrchestratorChatRequest, http_request: Requ
         _agent_tools._BINDING_USER.reset(_binding_token)
 
 
-@app.post("/api/risk/greeks", response_model=GreeksResponse)
-async def risk_greeks(request: GreeksRequest) -> GreeksResponse:
-    result = calculate_greeks(
-        underlying_price=request.underlying_price,
-        strike=request.strike,
-        days_to_expiry=request.days_to_expiry,
-        risk_free_rate=request.risk_free_rate,
-        implied_vol=request.implied_vol,
-        option_type=request.option_type,
-    )
-    return GreeksResponse(**result)
-
-
-@app.get("/api/risk/positions", response_model=PositionListResponse)
-async def risk_positions(status: Optional[str] = None) -> PositionListResponse:
-    positions = list_positions(status=status if status else None)
-    enriched = []
-    for pos in positions:
-        risk = calculate_position_risk(pos)
-        enriched.append({**pos, **risk})
-    return PositionListResponse(positions=[PositionRecord(**p) for p in enriched])
-
-
-@app.post("/api/risk/positions", response_model=PositionRecord)
-async def risk_create_position(request: PositionCreateRequest) -> PositionRecord:
-    pos = create_position(
-        symbol=request.symbol,
-        name=request.name,
-        market=request.market,
-        asset_class=request.asset_class,
-        direction=request.direction,
-        entry_price=request.entry_price,
-        quantity=request.quantity,
-        stop_loss=request.stop_loss,
-        take_profit=request.take_profit,
-        position_size_pct=request.position_size_pct,
-        sector=request.sector,
-        strategy=request.strategy,
-        notes=request.notes,
-        tags=request.tags,
-        greeks=request.greeks,
-    )
-    risk = calculate_position_risk(pos)
-    return PositionRecord(**{**pos, **risk})
-
-
-@app.get("/api/risk/positions/{position_id}", response_model=PositionRecord)
-async def risk_get_position(position_id: str) -> PositionRecord:
-    pos = get_position(position_id)
-    if not pos:
-        raise HTTPException(status_code=404, detail="Position not found")
-    risk = calculate_position_risk(pos)
-    return PositionRecord(**{**pos, **risk})
-
-
-@app.put("/api/risk/positions/{position_id}", response_model=PositionRecord)
-async def risk_update_position(position_id: str, request: PositionUpdateRequest) -> PositionRecord:
-    updates = {k: v for k, v in request.model_dump().items() if v is not None}
-    pos = update_position(position_id, **updates)
-    if not pos:
-        raise HTTPException(status_code=404, detail="Position not found")
-    risk = calculate_position_risk(pos)
-    return PositionRecord(**{**pos, **risk})
-
-
-@app.delete("/api/risk/positions/{position_id}")
-async def risk_delete_position(position_id: str) -> dict:
-    if not delete_position(position_id):
-        raise HTTPException(status_code=404, detail="Position not found")
-    return {"status": "deleted", "id": position_id}
-
-
-@app.post("/api/risk/positions/{position_id}/close", response_model=PositionRecord)
-async def risk_close_position(position_id: str, request: PositionCloseRequest) -> PositionRecord:
-    try:
-        pos = close_position(position_id, request.exit_price, request.exit_reason)
-    except PositionAlreadyClosedError:
-        raise HTTPException(status_code=409, detail="该持仓已平仓，请勿重复平仓。")
-    if not pos:
-        raise HTTPException(status_code=404, detail="Position not found")
-    risk = calculate_position_risk(pos)
-    return PositionRecord(**{**pos, **risk})
-
-
-@app.post("/api/risk/positions/refresh")
-async def risk_refresh_prices() -> dict:
-    updated = refresh_position_prices()
-    return {"status": "ok", "updated_count": len(updated), "positions": updated}
-
-
-@app.get("/api/risk/summary", response_model=RiskSummaryResponse)
-async def risk_summary() -> RiskSummaryResponse:
-    data = get_risk_summary()
-    from .risk_management import calculate_position_risk
-    enriched = []
-    for pos in data.get("open_positions", []):
-        risk = calculate_position_risk(pos)
-        enriched.append({**pos, **risk})
-    data["open_positions"] = enriched
-    return RiskSummaryResponse(**data)
-
-
-@app.get("/api/risk/limits")
-async def risk_limits() -> list[RiskLimitRecord]:
-    limits = get_risk_limits()
-    return [RiskLimitRecord(**lim) for lim in limits]
-
-
-@app.put("/api/risk/limits/{key}", response_model=RiskLimitRecord)
-async def risk_update_limit(key: str, request: RiskLimitUpdateRequest) -> RiskLimitRecord:
-    lim = update_risk_limit(key, request.value, request.enabled)
-    if not lim:
-        raise HTTPException(status_code=404, detail="Risk limit not found")
-    return RiskLimitRecord(**lim)
-
-
-@app.get("/api/risk/pnl", response_model=PnlSummaryResponse)
-async def risk_pnl_summary() -> PnlSummaryResponse:
-    return PnlSummaryResponse(**get_pnl_summary())
-
-
-@app.get("/api/risk/pnl/records")
-async def risk_pnl_records(position_id: Optional[str] = None, limit: int = 100) -> list[PnlRecord]:
-    records = list_pnl_records(position_id=position_id, limit=limit)
-    return [PnlRecord(**r) for r in records]
-
-
-@app.post("/api/risk/backtest", response_model=RiskBacktestResponse)
-async def risk_backtest(request: RiskBacktestRequest) -> RiskBacktestResponse:
-    result = await run_risk_backtest(request)
-    return RiskBacktestResponse(**result)
-
-
-@app.post("/api/quant/lab", response_model=QuantLabResponse)
-async def quant_lab(payload: QuantLabRequest, request: Request) -> QuantLabResponse:
-    require_current_user(request)
-    result = await run_quant_lab(payload)
-    return QuantLabResponse(**result)
-
-
-@app.post("/api/quant/lab/jobs")
-async def quant_lab_job_start(payload: QuantLabRequest, request: Request) -> dict[str, Any]:
-    claims = require_current_user(request)
-    owner = str(claims.get("sub") or claims.get("username") or "").strip()
-    try:
-        return await create_quant_job(owner, payload)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-
-
-@app.get("/api/quant/lab/jobs/{job_id}")
-async def quant_lab_job_poll(job_id: str, request: Request) -> dict[str, Any]:
-    claims = require_current_user(request)
-    owner = str(claims.get("sub") or claims.get("username") or "").strip()
-    job = get_quant_job(owner, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="量化任务不存在")
-    return job
-
-
-@app.delete("/api/quant/lab/jobs/{job_id}")
-async def quant_lab_job_cancel(job_id: str, request: Request) -> dict[str, Any]:
-    claims = require_current_user(request)
-    owner = str(claims.get("sub") or claims.get("username") or "").strip()
-    job = await cancel_quant_job(owner, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="量化任务不存在")
-    return job
-
-
-@app.post("/api/backtest/{backtest_id}/run")
-async def backtest_run(backtest_id: str, request: Request) -> StreamingResponse:
-    bt = get_backtest(backtest_id)
-    if not bt:
-        raise HTTPException(status_code=404, detail="Backtest not found")
-    if bt.get("status") == "running":
-        raise HTTPException(status_code=409, detail="Backtest is already running")
-
-    async def event_gen():
-        async for event in run_backtest(backtest_id, request):
-            if await request.is_disconnected():
-                break
-            yield event
-
-    return StreamingResponse(
-        event_gen(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache", "Connection": "keep-alive",
-            "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*",
-        },
-    )
-
-
-@app.get("/api/backtest/aggregate")
-async def backtest_aggregate_for_research(symbol: str = "") -> dict:
-    if not symbol:
-        return {"backtests": [], "symbol": "", "total": 0}
-    return await list_backtest_results(symbol)
-
-
-@app.get("/api/backtest", response_model=BacktestListResponse)
-async def backtest_list(limit: int = 50) -> BacktestListResponse:
-    backtests = list_backtests(limit=limit)
-    return BacktestListResponse(backtests=[BacktestRecord(**bt) for bt in backtests])
-
-
-@app.post("/api/backtest", response_model=BacktestRecord)
-async def backtest_create(request: BacktestCreateRequest) -> BacktestRecord:
-    bt = create_backtest(
-        name=request.name,
-        market=request.market,
-        strategy_type=request.strategy_type,
-        symbols=request.symbols,
-        start_date=request.start_date,
-        end_date=request.end_date,
-        initial_capital=request.initial_capital,
-        benchmark=request.benchmark,
-        parameters=request.parameters,
-    )
-    return BacktestRecord(**bt)
-
-
-@app.get("/api/backtest/{backtest_id}", response_model=BacktestRecord)
-async def backtest_get(backtest_id: str) -> BacktestRecord:
-    bt = get_backtest(backtest_id)
-    if not bt:
-        raise HTTPException(status_code=404, detail="Backtest not found")
-    return BacktestRecord(**bt)
-
-
-@app.delete("/api/backtest/{backtest_id}")
-async def backtest_delete(backtest_id: str) -> dict:
-    if not delete_backtest(backtest_id):
-        raise HTTPException(status_code=404, detail="Backtest not found")
-    return {"status": "deleted", "id": backtest_id}
-
-
-@app.post("/api/backtest/metrics", response_model=BacktestMetricsResponse)
-async def backtest_metrics(request: BacktestMetricsRequest) -> BacktestMetricsResponse:
-    metrics = calculate_backtest_metrics(
-        equity_curve=request.equity_curve,
-        benchmark_curve=request.benchmark_curve,
-        initial_capital=request.initial_capital,
-    )
-    return BacktestMetricsResponse(**metrics)
+app.include_router(portfolio_router)
 
 
 @app.get("/api/market-dashboard", response_model=MarketDashboardResponse)

@@ -660,8 +660,15 @@ class RealtimeMessageRecord(BaseModel):
     created_at: str
 
 
+class RealtimeMessageCursor(BaseModel):
+    created_at: str
+    id: str
+
+
 class RealtimeMessageListResponse(BaseModel):
     messages: list[RealtimeMessageRecord]
+    next_cursor: Optional[RealtimeMessageCursor] = None
+    has_more: bool = False
 
 
 RecallChannel = Literal["email", "webpush", "wechat", "fcm"]
@@ -2175,6 +2182,7 @@ class AgentLogEntry(BaseModel):
 
 class InvestmentTaskRecord(BaseModel):
     id: str
+    owner_user_id: Optional[str] = None
     title: str
     symbol: Optional[str] = None
     asset_name: Optional[str] = None
@@ -2526,6 +2534,7 @@ class DulusMemoryCreateRequest(BaseModel):
 
 class DulusMemoryRecord(BaseModel):
     id: str
+    owner_user_id: Optional[str] = None
     scope: str
     hall: str
     title: str
@@ -2885,6 +2894,7 @@ class PositionCloseRequest(BaseModel):
 
 class PositionRecord(BaseModel):
     id: str
+    owner_user_id: Optional[str] = None
     symbol: str
     name: str
     market: str
@@ -3057,6 +3067,7 @@ class BacktestCreateRequest(BaseModel):
 
 class BacktestRecord(BaseModel):
     id: str
+    owner_user_id: Optional[str] = None
     name: str
     market: str
     strategy_type: str

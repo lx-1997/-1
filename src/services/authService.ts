@@ -1,5 +1,6 @@
-import { apiDelete, apiGet, apiPost } from './apiClient';
+import { apiDelete, apiGet, apiPost, getAuthenticationApiBaseUrl } from './apiClient';
 import { User } from '../types';
+import { authenticateSession, getAuthSnapshot, invalidateAuthSession } from '../state/authSession';
 
 /**
  * 真实认证服务（替换演示态登录）。
@@ -7,8 +8,6 @@ import { User } from '../types';
  * 令牌存于 localStorage 的 `auth_token`，与 apiClient 的请求拦截器约定一致——
  * 拦截器会在每次请求自动注入 `Authorization: Bearer <token>`，并在 401 时清理 + 跳登录页。
  */
-
-const TOKEN_KEY = 'auth_token';
 
 export type AuthRole = 'admin' | 'analyst' | 'viewer';
 
@@ -48,27 +47,14 @@ const ROLE_TO_LEVEL: Record<AuthRole, User['memberLevel']> = {
   viewer: 'free'
 };
 
-export function getStoredToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(TOKEN_KEY);
-}
-
-function storeToken(token: string): void {
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(TOKEN_KEY, token);
-  }
-}
-
-export function clearToken(): void {
-  if (typeof window !== 'undefined') {
-    window.localStorage.removeItem(TOKEN_KEY);
-  }
-}
+export function getStoredToken(): string | null { return getAuthSnapshot().token; }
+export function clearToken(): void { invalidateAuthSession(); }
 
 // ---- 会话快照缓存：刷新首帧同步恢复登录态，避免「先闪匿名首页、/auth/me 回来再跳工作台」的界面跳变 ----
 const SESSION_CACHE_KEY = 'df_session_cache_v1';
 
 export interface SessionCache {
+  i?: string;                   // stable account ID
   u: string;                    // username
   m: Membership | null;         // 会员态
   r: AuthRole;                  // 角色
@@ -115,8 +101,7 @@ export function mapAuthUser(authUser: AuthUser): User {
 }
 
 function toSession(resp: TokenResponse): AuthSession {
-  storeToken(resp.access_token);
-  saveSessionCache({ u: resp.user.username, m: resp.user.membership ?? null, r: resp.user.role, t: !!resp.user.trial_claimable, c: resp.user.created_at || '' });
+  authenticateSession(resp.user, resp.access_token, getAuthenticationApiBaseUrl());
   return { token: resp.access_token, user: mapAuthUser(resp.user), authUser: resp.user };
 }
 
@@ -350,6 +335,5 @@ export async function fetchSupportUnread(): Promise<number> {
 }
 
 export function logout(): void {
-  clearToken();
-  clearSessionCache();
+  invalidateAuthSession();
 }

@@ -1,5 +1,7 @@
 name: CI
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -7,8 +9,40 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
+          cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npm test -- --watchAll=false
+      - run: npm run test:ci
       - run: npm run build
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: backend
+      PYTHONDONTWRITEBYTECODE: '1'
+      DEEPFOCUS_DATA_DIR: ${{ runner.temp }}/daocaijing-test-data
+      DEEPFOCUS_MODEL_CONFIG_PATH: ${{ runner.temp }}/daocaijing-test-data/model.json
+      DEEPFOCUS_LLM_PROVIDER: mock
+      DEEPFOCUS_RESEARCH_WORKBENCH_AUTOSTART: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements-cloud.txt
+      - run: pip install -r backend/requirements-cloud.txt pytest==8.2.0 pytest-asyncio==0.23.6
+      - name: Backend regressions
+        run: pytest backend/deepfocus_api/tests --asyncio-mode=auto
+      - name: API contract
+        run: python scripts/check-api-contract.py --output api-contract.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-contract
+          path: api-contract.json
+  container-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cold start, public routing and persistent data
+        run: bash scripts/check-container-delivery.sh

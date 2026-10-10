@@ -8,18 +8,15 @@
 """
 from __future__ import annotations
 
+from . import db
+
 import json
 import sqlite3
 from pathlib import Path
 
 from . import securities_master
 
-DB_PATH = Path(
-    __import__("os").getenv(
-        "DEEPFOCUS_REALTIME_MESSAGE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".realtime_messages.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.realtime_messages.sqlite3', 'DEEPFOCUS_REALTIME_MESSAGE_DB_PATH')
 
 _ALIAS_SCAN_CHARS = 500  # 正文只扫前 500 字，控制长文打标成本
 

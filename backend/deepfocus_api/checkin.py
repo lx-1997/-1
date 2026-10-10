@@ -39,12 +39,7 @@ MILESTONES: list[tuple[int, int]] = [
 
 
 def _db_path() -> Path:
-    return Path(
-        os.getenv(
-            "DEEPFOCUS_CHECKIN_DB_PATH",
-            str(Path(__file__).resolve().parents[1] / ".checkin.sqlite3"),
-        )
-    )
+    return db.data_path('.checkin.sqlite3', 'DEEPFOCUS_CHECKIN_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

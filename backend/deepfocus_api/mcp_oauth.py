@@ -49,12 +49,7 @@ RS_METADATA_PATH = "/.well-known/oauth-protected-resource"
 
 
 def _db_path() -> Path:
-    return Path(
-        os.getenv(
-            "DEEPFOCUS_MCP_OAUTH_DB_PATH",
-            str(Path(__file__).resolve().parents[1] / ".mcp_oauth.sqlite3"),
-        )
-    )
+    return db.data_path('.mcp_oauth.sqlite3', 'DEEPFOCUS_MCP_OAUTH_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

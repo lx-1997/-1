@@ -6,17 +6,14 @@ alias 匹配只收 ≥2 字符的简称，降低单词/单字误命中。
 """
 from __future__ import annotations
 
+from . import db
+
 import os
 import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_REALTIME_MESSAGE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".realtime_messages.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.realtime_messages.sqlite3', 'DEEPFOCUS_REALTIME_MESSAGE_DB_PATH')
 
 # 内置热门港美股（A股由构建脚本全量覆盖；港美股列表源杂且时效差，先保交易热点，随自选积累再扩）。
 # 键=symbol（终端自选口径），值=中文简称（alias 匹配用）。

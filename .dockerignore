@@ -21,3 +21,24 @@ e2e
 tmp
 artifacts
 upstream
+
+# Never bake runtime credentials or local caches into distributable images.
+**/.env
+**/.env.*
+!**/.env.example
+backend/.*
+!backend/.env.example
+backend/**/.*.json
+backend/payment_qr
+backend/community_qr
+backend/celebrity_media
+backend/data
+modules/research-workbench/node_modules
+modules/research-workbench/.tool-runs
+modules/research-workbench/.zsxq-browser-profile
+modules/research-workbench/downloads
+modules/research-workbench/exports
+modules/research-workbench/.*cookie*
+.Codex
+.agents
+.claude

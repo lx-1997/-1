@@ -9,6 +9,7 @@ from typing import Any, AsyncIterator, Optional
 
 from fastapi import Request
 
+from .ownership import current_owner_id
 from .cross_module_aggregator import (
     build_injection_block,
     gather_all_for_stock,
@@ -226,7 +227,7 @@ async def run_agent_research_loop(
     sym = symbol.upper().strip()
     t0 = time.time()
 
-    cache_key = f"{sym}\x00{question.strip().lower()}"
+    cache_key = f"{current_owner_id() or 'public'}\x00{sym}\x00{question.strip().lower()}"
     cache_entry = _LOOP_CACHE.get(cache_key)
     if cache_entry and (time.time() - cache_entry[0]) > _LOOP_CACHE_TTL_SECONDS:
         _LOOP_CACHE.pop(cache_key, None)

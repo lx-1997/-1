@@ -12,7 +12,7 @@
     "backend": "cd backend && .venv/bin/uvicorn deepfocus_api.main:app --host 0.0.0.0 --port 8300 --reload",
     "backend:long": "cd backend && DEEPFOCUS_TRADINGAGENTS_TIMEOUT_SECONDS=3600 .venv/bin/uvicorn deepfocus_api.main:app --host 0.0.0.0 --port 8300",
     "postinstall": "npm run research-workbench:install",
-    "research-workbench:install": "npm --prefix modules/research-workbench install",
+    "research-workbench:install": "npm --prefix modules/research-workbench ci",
     "research-workbench": "npm --prefix modules/research-workbench run tool",
     "tradingagents:install": "bash scripts/install-tradingagents-runtime.sh",
     "build": "react-scripts build",
@@ -31,7 +31,8 @@
     "desktop:pack": "npm run research-workbench:install && npm run build:desktop && electron-builder",
     "desktop:pack:mac": "npm run research-workbench:install && npm run build:desktop && electron-builder --mac --universal",
     "desktop:pack:win": "npm run research-workbench:install && npm run build:desktop && electron-builder --win --x64",
-    "electron-pack": "npm run desktop:pack"
+    "electron-pack": "npm run desktop:pack",
+    "check:api": "python3 scripts/check-api-contract.py"
   },
   "dependencies": {
     "@ant-design/icons": "^5.2.6",
@@ -125,5 +126,8 @@
       "icon": "public/logo512.png",
       "category": "Finance"
     }
+  },
+  "engines": {
+    "node": ">=22.3.0"
   }
 }

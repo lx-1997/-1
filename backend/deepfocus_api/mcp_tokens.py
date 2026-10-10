@@ -41,12 +41,7 @@ _WINDOWS: dict = {}  # {token_hash: deque[float]} 最近 60s
 
 
 def _db_path() -> Path:
-    return Path(
-        os.getenv(
-            "DEEPFOCUS_MCP_TOKEN_DB_PATH",
-            str(Path(__file__).resolve().parents[1] / ".mcp_tokens.sqlite3"),
-        )
-    )
+    return db.data_path('.mcp_tokens.sqlite3', 'DEEPFOCUS_MCP_TOKEN_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

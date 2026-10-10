@@ -9,6 +9,7 @@ from .risk_management import list_positions, get_risk_summary
 from .data_sources import list_data_items
 from .market_dashboard import fetch_market_dashboard as _fetch_market_dashboard
 from .shared_utils import safe_float, safe_int, utc_now_iso
+from .ownership import current_owner_id
 
 
 async def gather_market_quotes(symbols: list[str]) -> dict[str, Any]:
@@ -61,8 +62,11 @@ async def gather_macro_brief() -> dict[str, Any]:
 
 
 async def gather_risk_context(symbols: Optional[list[str]] = None) -> dict[str, Any]:
+    owner = current_owner_id()
+    if not owner:
+        return {"positions": [], "total_positions": 0, "total_matched": 0}
     try:
-        all_positions = list_positions(status="open")
+        all_positions = list_positions(status="open", owner_user_id=owner)
         matched = []
         if symbols:
             normalized = {s.upper().strip() for s in symbols}
@@ -85,7 +89,7 @@ async def gather_risk_context(symbols: Optional[list[str]] = None) -> dict[str, 
                 "sector": p.get("sector"),
             })
 
-        summary = get_risk_summary() if matched else {}
+        summary = get_risk_summary(owner_user_id=owner) if matched else {}
 
         return {
             "positions": positions,

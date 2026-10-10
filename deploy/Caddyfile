@@ -4,7 +4,7 @@
 	encode zstd gzip
 
 	# API + health + research-workbench → backend
-	@backend path /api/* /health /research-workbench /research-workbench/*
+	@backend path /api/* /mcp /health /research-workbench /research-workbench/* /.well-known/* /s/* /robots.txt /llms.txt /BingSiteAuth.xml /indexnow-key.txt /sitemap.xml /feed.xml /feed /feed/* /tutorial /developers /developers/* /review /review/* /stocks /stocks/* /stock/* /articles /article/* /about /partners /notes /note/* /reports /report/* /research /research/* /lhb /lhb/* /track-record /qa /qa/* /og/* /learn /learn/* /compare/*
 	handle @backend {
 		reverse_proxy backend:8300
 	}

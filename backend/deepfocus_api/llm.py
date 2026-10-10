@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
+from .ownership import current_owner_id
 from .agent_tools import TOOL_REGISTRY, execute_tool, openai_tool_specs
 from .compliance import neutralize_text
 from .mcp_tools import discover_mcp_agent_tools
@@ -1484,7 +1485,7 @@ class CloudResearchLLM:
 
         q_norm = question.strip()
         cache_key = (
-            hashlib.sha1(f"{q_norm}\x00{context_hint}\x00{ifind_user}".encode("utf-8")).hexdigest()
+            hashlib.sha1(f"{current_owner_id() or 'public'}\x00{q_norm}\x00{context_hint}\x00{ifind_user}".encode("utf-8")).hexdigest()
             if q_norm and not _PERSONAL_QUESTION_RE.search(q_norm)
             else ""
         )

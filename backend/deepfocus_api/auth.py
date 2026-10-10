@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import storage
+from .ownership import bind_owner
 from .storage import Base, session_scope
 
 logger = logging.getLogger("deepfocus.auth")
@@ -203,40 +204,45 @@ def rotate_session(user_id: str) -> str:
     """登录/注册时新增一个会话标识并落库（最多保留最近 N 台）；返回新 sid（写进本次签发的 JWT）。
     超过 N 台时，最早登录的那台 sid 被挤出列表 → 其 token 下次鉴权失配被挤下线。"""
     sid = secrets.token_hex(8)
-    try:
-        with session_scope() as session:
-            user = session.get(User, user_id)
-            if user is not None:
-                cur = [s for s in (user.session_id or "").split(",") if s]
-                cur.append(sid)
-                user.session_id = ",".join(cur[-_MAX_DEVICES:])  # 只保留最近 N 台
-    except Exception as exc:  # noqa: BLE001 - 失败不阻断登录（退化为多端可用）
-        logger.warning("更新会话标识失败：%s", exc)
+    with session_scope() as session:
+        if storage.is_sqlite():
+            session.execute(text("BEGIN IMMEDIATE"))
+        user = session.get(User, user_id, with_for_update=True)
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=401, detail="账号不存在或已停用")
+        cur = [s for s in (user.session_id or "").split(",") if s]
+        cur.append(sid)
+        user.session_id = ",".join(cur[-_MAX_DEVICES:])
     return sid
 
 
 def session_is_current(claims: Optional[dict]) -> bool:
-    """多设备(≤N)登录校验：token 的 sid 必须在该用户库内当前会话列表中。
-    - 旧 token 无 sid（本特性上线前签发）→ 宽限放行（12h 内自然过期换新）。
-    - 库内 session_id 为空（从没登录过新版）→ 放行。
-    - 校验异常 → 放行，绝不误伤正常用户。"""
-    if not claims:
-        return False
-    sid = claims.get("sid")
-    if not sid:
-        return True
-    uid = claims.get("sub")
-    if not uid:
-        return True
+    """校验账号及会话；缺失账号、失效会话和存储异常一律拒绝。"""
+    return validated_claims(claims) is not None
+
+
+def validated_claims(claims: Optional[dict]) -> Optional[dict]:
+    """认证唯一入口：账号有效、会话有效，权限以当前数据库记录为准。
+
+    尚无 session_id 的存量账号只兼容无 sid 的旧令牌；首次登录/改密写入
+    session_id 后立即收口，不允许缺失 sid 的令牌绕过会话撤销。
+    """
+    if not claims or not str(claims.get("sub") or "").strip():
+        return None
     try:
         with session_scope() as session:
-            user = session.get(User, uid)
-            cur = getattr(user, "session_id", None) if user else None
-        if not cur:
-            return True
-        return sid in [s for s in cur.split(",") if s]
-    except Exception:  # noqa: BLE001
-        return True
+            user = session.get(User, str(claims["sub"]))
+            if user is None or not user.is_active or user.role not in VALID_ROLES:
+                return None
+            current = [s for s in (user.session_id or "").split(",") if s]
+            sid = str(claims.get("sid") or "")
+            if (current and sid not in current) or (not current and sid):
+                return None
+            return {**claims, "sub": user.id, "role": user.role,
+                    "username": user.username, "email": user.email}
+    except Exception:
+        logger.exception("账号/会话校验失败，拒绝本次认证")
+        return None
 
 
 def decode_token(token: str) -> Optional[dict]:
@@ -1159,9 +1165,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         token = bearer_token(request)
-        claims = decode_token(token) if token else None
+        claims = validated_claims(decode_token(token)) if token else None
         request.state.auth_claims = claims
+        with bind_owner(claims["sub"] if claims else None):
+            return await self._dispatch_authorized(request, call_next, claims)
 
+    async def _dispatch_authorized(self, request: Request, call_next, claims: Optional[dict]):
         if not auth_required():
             return await call_next(request)
         if request.method == "OPTIONS":  # 放行 CORS 预检
@@ -1189,11 +1198,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 def current_claims(request: Request) -> Optional[dict]:
     """读取中间件挂载的 claims；缺失时就地解析 Bearer（兼容未经中间件的调用路径）。"""
-    claims = getattr(request.state, "auth_claims", None)
-    if claims is not None:
-        return claims
+    if hasattr(request.state, "auth_claims"):
+        return request.state.auth_claims
     token = bearer_token(request)
-    return decode_token(token) if token else None
+    return validated_claims(decode_token(token)) if token else None
 
 
 def require_current_user(request: Request) -> dict:

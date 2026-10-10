@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from . import db
+
 import asyncio
 import hashlib
 import json
@@ -136,7 +138,7 @@ _PUSH_DEBOUNCE = 1.5        # 被新快讯唤醒后稍等，聚合同一时刻�
 _PUSH_GAP_MAX = 0.5         # 错峰：相邻两条 send 的最大间隔（秒），摊平并发尖峰、降反垃圾风险
 # ⭐推送游标持久化：重启/部署不再丢推（原 cursor=now 每次重启把停机窗口内的快讯全跳过）。
 # 重启后从上次推到处续推；但回补不超过 _CURSOR_MAX_LOOKBACK 秒——长时间停机只补最近一段，防一次性刷屏（反垃圾红线）。
-_CURSOR_FILE = Path(os.getenv("DEEPFOCUS_WX_PUSH_CURSOR_FILE", str(Path(__file__).resolve().parents[1] / ".wx_push_cursor")))
+_CURSOR_FILE = db.data_path('.wx_push_cursor', 'DEEPFOCUS_WX_PUSH_CURSOR_FILE')
 _CURSOR_MAX_LOOKBACK = float(os.getenv("DEEPFOCUS_WX_PUSH_MAX_LOOKBACK_SECONDS", "900"))  # 默认 15 分钟
 
 
@@ -393,8 +395,7 @@ def _schedule_command_reply(question: str, b: Dict[str, Any]) -> Optional[str]:
 # ⭐会员状态转移检测（到期断流通知）：推送停止的瞬间是用户对产品价值感知最清晰的时刻，
 # 静默断流=静默流失。用 JSON 状态文件记录每个绑定上一轮的会员判定，true→false 即发一次性
 # 服务状态通知（发送成功才落状态，token 冷则下轮重试）。
-_MEMBER_STATE_FILE = Path(os.getenv("DEEPFOCUS_WX_MEMBER_STATE_FILE",
-                                    str(Path(__file__).resolve().parents[1] / ".wx_member_state.json")))
+_MEMBER_STATE_FILE = db.data_path('.wx_member_state.json', 'DEEPFOCUS_WX_MEMBER_STATE_FILE')
 
 
 def _load_member_state() -> Dict[str, bool]:

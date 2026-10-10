@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from . import db
+
 import json
 import logging
 from pathlib import Path
@@ -14,7 +16,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger("deepfocus.payment")
 
-_DIR = Path(__file__).resolve().parents[1]
+_DIR = db.data_path("")
 _CFG_PATH = _DIR / ".payment_config.json"
 _QR_DIR = _DIR / "payment_qr"
 _PROVIDERS = ("wechat", "alipay")
@@ -128,7 +130,7 @@ def save_qr(which: str, data: bytes) -> bool:
     if key is None or not data:
         return False
     try:
-        _QR_DIR.mkdir(exist_ok=True)
+        _QR_DIR.mkdir(parents=True, exist_ok=True)
         (_QR_DIR / f"{key}.png").write_bytes(data)
         return True
     except Exception as exc:  # noqa: BLE001

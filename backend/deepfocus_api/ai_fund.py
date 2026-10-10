@@ -224,8 +224,7 @@ def _phase(now: Optional[datetime] = None) -> tuple[str, str]:
 
 
 def _db_path() -> Path:
-    return Path(os.getenv("DEEPFOCUS_AIFUND_DB_PATH",
-                          str(Path(__file__).resolve().parents[1] / ".ai_fund.sqlite3")))
+    return db.data_path('.ai_fund.sqlite3', 'DEEPFOCUS_AIFUND_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

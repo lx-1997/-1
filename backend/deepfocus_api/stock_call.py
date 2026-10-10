@@ -30,12 +30,7 @@ from .shared_utils import utc_now_iso
 
 logger = logging.getLogger("deepfocus.stock_call")
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_CALLS_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".stock_call.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.stock_call.sqlite3', 'DEEPFOCUS_CALLS_DB_PATH')
 
 BJ_TZ = timezone(timedelta(hours=8))
 

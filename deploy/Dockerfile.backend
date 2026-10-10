@@ -2,7 +2,8 @@
 FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app/backend \
+    DEEPFOCUS_DATA_DIR=/data
 
 WORKDIR /app
 RUN apt-get update \
@@ -14,9 +15,11 @@ COPY backend/requirements-cloud.txt /app/requirements-cloud.txt
 RUN pip install --no-cache-dir -r requirements-cloud.txt
 
 # App code (deepfocus_api + finogrid). Dev SQLite/.venv/.env excluded via .dockerignore.
-COPY backend/ /app/
+COPY backend/ /app/backend/
+COPY public/logo512.png /app/public/logo512.png
+COPY public/logo192.png /app/public/logo192.png
 
-# Run from /data so the runtime SQLite files (cwd-relative) live on a volume.
+# All runtime stores resolve DEEPFOCUS_DATA_DIR; keep code and data separate.
 RUN mkdir -p /data
 WORKDIR /data
 

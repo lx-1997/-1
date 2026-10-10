@@ -67,4 +67,4 @@ def test_public_page_is_softwall(env):
     assert "看完整解读" in html                     # 软墙 CTA
     assert f"report={rec['id']}" in html            # 登录深链 ?report={id}
     assert long_body not in html                    # 完整解读正文不外露（仅导语）
-    assert "✦ DeepFocus AI 研报速读" in html        # 标注为我方增值解读（非第三方原文/PDF）
+    assert "✦ 稻草财经 AI 研报速读" in html        # 标注为我方增值解读（非第三方原文/PDF）

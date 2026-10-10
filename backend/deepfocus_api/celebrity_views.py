@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from . import db
+
 import hashlib
 import json
 import logging
@@ -42,7 +44,7 @@ logger = logging.getLogger("deepfocus.celebrity")
 
 CST = timezone(timedelta(hours=8))
 
-_DIR = Path(__file__).resolve().parents[1]  # backend/
+_DIR = db.data_path("")  # backend/
 _CFG_PATH = _DIR / ".celebrity_views.json"
 _MEDIA_DIR = _DIR / "celebrity_media"
 
@@ -219,7 +221,7 @@ def save_media(name: str, data: bytes) -> Optional[str]:
     if safe is None or not data:
         return None
     try:
-        _MEDIA_DIR.mkdir(exist_ok=True)
+        _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
         (_MEDIA_DIR / safe).write_bytes(data)
         return safe
     except Exception as exc:  # noqa: BLE001
@@ -257,7 +259,7 @@ def _ensure_sample_media() -> None:
     if p.exists():
         return
     try:
-        _MEDIA_DIR.mkdir(exist_ok=True)
+        _MEDIA_DIR.mkdir(parents=True, exist_ok=True)
         framerate = 8000
         duration = 1.2
         freq = 440.0

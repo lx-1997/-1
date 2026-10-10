@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import FinancialTerminal from './components/FinancialTerminal';
 import ErrorBoundary from './components/ErrorBoundary';
+import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import './index.css';
 import './components/PublicTerminalSimplify.css';
@@ -22,21 +23,23 @@ root.render(
   <React.StrictMode>
     <BrowserRouter>
       <ThemeProvider>
-        <ErrorBoundary>
-          {TERMINAL_ONLY && ONTOLOGY_PATH ? (
-            <React.Suspense fallback={null}>
-              <OntologyStandalone />
-            </React.Suspense>
-          ) : TERMINAL_ONLY ? (
-            <div className="terminal-only-root">
-              <FinancialTerminal />
-            </div>
-          ) : (
-            <React.Suspense fallback={null}>
-              <AppShell />
-            </React.Suspense>
-          )}
-        </ErrorBoundary>
+        <AuthProvider>
+          <ErrorBoundary>
+            {TERMINAL_ONLY && ONTOLOGY_PATH ? (
+              <React.Suspense fallback={null}>
+                <OntologyStandalone />
+              </React.Suspense>
+            ) : TERMINAL_ONLY ? (
+              <div className="terminal-only-root">
+                <FinancialTerminal />
+              </div>
+            ) : (
+              <React.Suspense fallback={null}>
+                <AppShell />
+              </React.Suspense>
+            )}
+          </ErrorBoundary>
+        </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
   </React.StrictMode>

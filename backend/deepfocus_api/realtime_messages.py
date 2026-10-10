@@ -28,12 +28,7 @@ from .schemas import (
 )
 
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_REALTIME_MESSAGE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".realtime_messages.sqlite3"),
-    )
-)
+DB_PATH = db.data_path(".realtime_messages.sqlite3", "DEEPFOCUS_REALTIME_MESSAGE_DB_PATH")
 
 MAX_MESSAGES = int(os.getenv("DEEPFOCUS_REALTIME_MAX_MESSAGES", "20000"))
 MAX_SUBSCRIBERS = int(os.getenv("DEEPFOCUS_REALTIME_MAX_SUBSCRIBERS", "300"))
@@ -153,6 +148,7 @@ def init_realtime_message_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_realtime_messages_created ON realtime_messages(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_realtime_messages_symbol ON realtime_messages(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_realtime_messages_cursor ON realtime_messages(created_at, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_realtime_messages_topic ON realtime_messages(topic)")
         conn.commit()
 
@@ -286,6 +282,9 @@ def list_realtime_messages(
     only_futoucaixin: bool = False,
     exclude_tradealpha: bool = True,
     limit: int = 80,
+    after_created_at: Optional[str] = None,
+    after_id: Optional[str] = None,
+    order: str = "desc",
 ) -> list[RealtimeMessageRecord]:
     init_realtime_message_db()
     clauses: list[str] = []
@@ -326,20 +325,28 @@ def list_realtime_messages(
                 ors.append("(title LIKE ? OR content LIKE ?)")
                 values.extend([like, like])
             clauses.append("(" + " OR ".join(ors) + ")")
-    if since and since.strip():  # 增量：只取比本地更新的（轮询用，响应极小）
+    if order not in {"asc", "desc"}:
+        raise ValueError("order must be asc or desc")
+    if bool(after_created_at) != bool(after_id):
+        raise ValueError("after_created_at and after_id must be provided together")
+    if after_created_at and after_id:
+        clauses.append("(created_at > ? OR (created_at = ? AND id > ?))")
+        values.extend([after_created_at.strip(), after_created_at.strip(), after_id.strip()])
+    elif since and since.strip():  # 旧时间戳轮询兼容
         clauses.append("created_at > ?")
         values.append(since.strip())
     if before and before.strip():  # 翻页：只取比游标更旧的（向历史回翻）
         clauses.append("created_at < ?")
         values.append(before.strip())
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    values.append(max(1, min(limit, 200)))
+    # HTTP 层最多展示 200；允许额外取 1 条以准确判断 has_more。
+    values.append(max(1, min(limit, 201)))
     with _connect() as conn:
         rows = conn.execute(
             f"""
             SELECT * FROM realtime_messages
             {where}
-            ORDER BY created_at DESC
+            ORDER BY created_at {order.upper()}, id {order.upper()}
             LIMIT ?
             """,
             values,

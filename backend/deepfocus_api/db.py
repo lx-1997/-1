@@ -8,10 +8,27 @@
 from __future__ import annotations
 
 import sqlite3
+import os
+from pathlib import Path
 from typing import Any
 
 
+def data_path(filename: str, env_var: str | None = None) -> Path:
+    """Resolve persisted data: per-store override > DATA_DIR > legacy backend path.
+
+    Keeping the legacy default avoids moving existing deployments implicitly.
+    Containers set DEEPFOCUS_DATA_DIR to their mounted persistent volume.
+    """
+    explicit = os.getenv(env_var, "").strip() if env_var else ""
+    if explicit:
+        return Path(explicit).expanduser()
+    directory = os.getenv("DEEPFOCUS_DATA_DIR", "").strip()
+    return (Path(directory).expanduser() if directory else Path(__file__).resolve().parents[1]) / filename
+
+
 def connect(path: Any, *, timeout: float = 10.0) -> sqlite3.Connection:
+    if str(path) != ":memory:" and not str(path).startswith("file:"):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=timeout)
     try:
         conn.execute("PRAGMA journal_mode=WAL")

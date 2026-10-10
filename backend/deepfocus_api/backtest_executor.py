@@ -12,11 +12,12 @@ from fastapi import Request
 from .backtest_data import extract_price_series, fetch_historical_ohlcv
 from .backtest_engine import (
     calculate_backtest_metrics,
+    claim_backtest,
     create_backtest,
     get_backtest,
     update_backtest,
 )
-from .shared_utils import safe_float, utc_now_iso
+from .shared_utils import safe_float, utc_now_iso, profit_factor
 
 
 def _sse(event_type: str, payload: dict[str, Any], event_id: str | None = None) -> str:
@@ -34,284 +35,144 @@ def _apply_slippage(price: float, direction: int, slippage: float) -> float:
     return price * (1 + direction * slippage)
 
 
-async def _execute_momentum_strategy(
-    bars: list[dict[str, Any]],
-    params: dict[str, Any],
-    initial_capital: float = 100000,
-    commission: float = DEFAULT_COMMISSION,
-    slippage: float = DEFAULT_SLIPPAGE,
+async def _execute_strategy(
+    kind: str, bars: list[dict[str, Any]], params: dict[str, Any],
+    initial_capital: float, commission: float, slippage: float,
 ) -> dict[str, Any]:
-    lookback = int(params.get("lookback", 20))
-    top_n = int(params.get("top_n", 1))
-    holding_period = int(params.get("holding_period", 5))
-
-    if len(bars) < lookback + holding_period:
-        return {"trades": [], "equity_curve": [initial_capital], "error": "insufficient data"}
-
-    equity = initial_capital
-    positions: float = 0
-    equity_curve = [equity]
-    trades: list[dict[str, Any]] = []
-    cash = initial_capital
-
-    for i in range(lookback, len(bars) - holding_period, holding_period):
-        momentum = bars[i]["close"] / bars[i - lookback]["close"] - 1
-        entry_price = bars[i]["close"] * (1 + slippage)
-
-        should_buy = momentum > 0.05
-        should_sell = momentum < -0.05
-
-        if should_buy and cash > 0:
-            positions = cash / entry_price
-            cash = 0
-            trades.append({
-                "date": bars[i]["date"], "action": "buy", "price": round(entry_price, 2),
-                "shares": round(positions, 2), "value": round(positions * entry_price, 2),
-                "commission": round(positions * entry_price * commission, 2), "reason": f"动量信号 {momentum:.2%}",
-            })
-
-        elif should_sell and positions > 0:
-            exit_price = bars[i]["close"] * (1 - slippage)
-            cash = positions * exit_price * (1 - commission)
-            pnl = cash - equity
-            trades.append({
-                "date": bars[i]["date"], "action": "sell", "price": round(exit_price, 2),
-                "shares": round(positions, 2), "value": round(positions * exit_price, 2),
-                "commission": round(positions * exit_price * commission, 2), "pnl": round(pnl, 2),
-                "reason": f"动量反转 {momentum:.2%}",
-            })
-            positions = 0
-
-        equity = cash + positions * bars[i]["close"]
-        equity_curve.append(round(equity, 2))
-
-    if positions > 0:
-        last_price = bars[-1]["close"] * (1 - slippage)
-        cash = positions * last_price * (1 - commission)
-        trades.append({
-            "date": bars[-1]["date"], "action": "sell_exit", "price": round(last_price, 2),
-            "shares": round(positions, 2), "pnl": round(cash + equity_curve[0] - equity_curve[-1], 2),
-        })
-        equity_curve.append(round(cash, 2))
-
-    return {"trades": trades, "equity_curve": equity_curve, "final_equity": round(equity_curve[-1], 2)}
-
-
-async def _execute_mean_reversion_strategy(
-    bars: list[dict[str, Any]],
-    params: dict[str, Any],
-    initial_capital: float = 100000,
-    commission: float = DEFAULT_COMMISSION,
-    slippage: float = DEFAULT_SLIPPAGE,
-) -> dict[str, Any]:
-    window = int(params.get("window", 20))
-    entry_z = float(params.get("entry_z", 2.0))
-    exit_z = float(params.get("exit_z", 0.5))
-    holding_period = int(params.get("holding_period", 10))
-
-    if len(bars) < window + 10:
-        return {"trades": [], "equity_curve": [initial_capital], "error": "insufficient data"}
-
+    """One cash ledger for every strategy; equity is marked on each bar date."""
+    if initial_capital <= 0 or not 0 <= commission < 1 or not 0 <= slippage < 1:
+        raise ValueError("capital must be positive; commission and slippage must be in [0, 1)")
+    bars = sorted(bars, key=lambda bar: str(bar["date"]))
     closes = extract_price_series(bars)
-    equity = initial_capital
-    positions: float = 0
-    equity_curve = [equity]
-    trades: list[dict[str, Any]] = []
-    cash = initial_capital
-    in_position = False
+    cash = float(initial_capital)
+    shares = 0.0
+    entry_cost = 0.0
+    entry_index = 0
     entry_date = ""
-
-    for i in range(window, len(bars)):
-        window_closes = closes[i - window:i]
-        mean = sum(window_closes) / window
-        std = math.sqrt(sum((c - mean) ** 2 for c in window_closes) / window) or 1e-9
-        z = (closes[i] - mean) / std
-        current_price = bars[i]["close"]
-
-        if not in_position and z < -entry_z:
-            entry_price = current_price * (1 + slippage)
-            positions = cash / entry_price
-            cash = 0
-            entry_date = bars[i]["date"]
-            in_position = True
-            trades.append({
-                "date": entry_date, "action": "buy", "price": round(entry_price, 2),
-                "shares": round(positions, 2), "value": round(positions * entry_price, 2),
-                "commission": round(positions * entry_price * commission, 2),
-                "reason": f"超卖 Z={z:.1f}",
-            })
-
-        elif in_position and (z > exit_z or z > -0.3):
-            exit_date_dt = datetime.strptime(bars[i]["date"], "%Y-%m-%d")
-            entry_date_dt = datetime.strptime(entry_date, "%Y-%m-%d")
-            if (exit_date_dt - entry_date_dt).days < holding_period:
-                equity_val = cash + positions * current_price
-                equity_curve.append(round(equity_val, 2))
-                continue
-
-            exit_price = current_price * (1 - slippage)
-            cash = positions * exit_price * (1 - commission)
-            pnl = cash - equity
-            trades.append({
-                "date": bars[i]["date"], "action": "sell", "price": round(exit_price, 2),
-                "shares": round(positions, 2), "value": round(positions * exit_price, 2),
-                "commission": round(positions * exit_price * commission, 2),
-                "pnl": round(pnl, 2), "reason": f"回归均值 Z={z:.1f}",
-            })
-            positions = 0
-            in_position = False
-
-        equity = cash + positions * current_price
-        equity_curve.append(round(equity, 2))
-
-    if in_position:
-        last_price = bars[-1]["close"] * (1 - slippage)
-        cash = positions * last_price * (1 - commission)
-        equity_curve.append(round(cash, 2))
-
-    return {"trades": trades, "equity_curve": equity_curve, "final_equity": round(equity_curve[-1], 2)}
-
-
-async def _execute_trend_following_strategy(
-    bars: list[dict[str, Any]],
-    params: dict[str, Any],
-    initial_capital: float = 100000,
-    commission: float = DEFAULT_COMMISSION,
-    slippage: float = DEFAULT_SLIPPAGE,
-) -> dict[str, Any]:
-    fast_ma = int(params.get("fast_ma", 20))
-    slow_ma = int(params.get("slow_ma", 60))
-    signal_ma = int(params.get("signal_ma", 9))
-
-    if len(bars) < slow_ma + 10:
-        return {"trades": [], "equity_curve": [initial_capital], "error": "insufficient data"}
-
-    closes = extract_price_series(bars)
-    cash = initial_capital
-    positions: float = 0
-    equity_curve = [initial_capital]
     trades: list[dict[str, Any]] = []
-    in_position = False
-    prev_macd = 0
+    equity_curve = [cash]
+    equity_dates = [""]
+    lookback = max(1, int(params.get("lookback", 20)))
+    window = max(2, int(params.get("window", 50 if kind == "breakout" else 20)))
+    holding = max(1, int(params.get("holding_period", 5 if kind == "momentum" else 10)))
+    fast_ma = max(1, int(params.get("fast_ma", 20)))
+    slow_ma = max(fast_ma + 1, int(params.get("slow_ma", 60)))
+    signal_ma = max(1, int(params.get("signal_ma", 9)))
+    signal_line = None
 
-    for i in range(slow_ma, len(bars)):
-        ema_fast = _ema(closes[:i + 1], fast_ma)
-        ema_slow = _ema(closes[:i + 1], slow_ma)
-        macd = ema_fast - ema_slow
-        signal = macd if i == slow_ma else _ema_last(prev_macd, macd, signal_ma)
-        prev_macd = macd
-        macd_diff = macd - signal
-        price = bars[i]["close"]
+    def buy(bar, reason):
+        nonlocal cash, shares, entry_cost, entry_index, entry_date
+        price = _apply_slippage(float(bar["close"]), 1, slippage)
+        entry_cost = cash
+        shares = cash / (price * (1 + commission))
+        value = shares * price
+        fee = value * commission
+        cash = max(0.0, cash - value - fee)
+        entry_index = i
+        entry_date = str(bar["date"])
+        trades.append({"date": entry_date, "action": "buy", "price": round(price, 2),
+                       "shares": round(shares, 6), "value": round(value, 2),
+                       "commission": round(fee, 2), "reason": reason})
 
-        if not in_position and macd_diff > 0 and macd > 0:
-            ep = price * (1 + slippage)
-            positions = cash / ep
-            cash = 0
-            in_position = True
-            trades.append({
-                "date": bars[i]["date"], "action": "buy", "price": round(ep, 2),
-                "shares": round(positions, 2), "value": round(positions * ep, 2),
-                "commission": round(positions * ep * commission, 2),
-                "reason": f"MACD金叉 diff={macd_diff:.2f}",
-            })
+    def sell(bar, reason, action="sell"):
+        nonlocal cash, shares, entry_cost
+        price = _apply_slippage(float(bar["close"]), -1, slippage)
+        value = shares * price
+        fee = value * commission
+        proceeds = value - fee
+        trades.append({"date": str(bar["date"]), "action": action, "price": round(price, 2),
+                       "shares": round(shares, 6), "value": round(value, 2),
+                       "commission": round(fee, 2), "pnl": round(proceeds - entry_cost, 2),
+                       "reason": reason, "return_pct": round((proceeds / entry_cost - 1) * 100, 4)})
+        cash += proceeds
+        shares = entry_cost = 0.0
 
-        elif in_position and (macd_diff < 0):
-            ep = price * (1 - slippage)
-            cash_val = positions * ep * (1 - commission)
-            pnl = cash_val - (equity_curve[-1] if equity_curve else initial_capital)
-            trades.append({
-                "date": bars[i]["date"], "action": "sell", "price": round(ep, 2),
-                "shares": round(positions, 2), "value": round(positions * ep, 2),
-                "commission": round(positions * ep * commission, 2),
-                "pnl": round(pnl, 2), "reason": f"MACD死叉 diff={macd_diff:.2f}",
-            })
-            cash = cash_val
-            positions = 0
-            in_position = False
+    for i, bar in enumerate(bars):
+        price = float(bar["close"])
+        if price <= 0 or not math.isfinite(price):
+            raise ValueError("historical closes must be finite and positive")
+        should_buy = should_sell = False
+        buy_reason = sell_reason = ""
+        if kind == "momentum" and i >= lookback and (i - lookback) % holding == 0:
+            momentum = price / closes[i - lookback] - 1
+            should_buy, should_sell = momentum > 0.05, momentum < -0.05
+            buy_reason, sell_reason = f"动量信号 {momentum:.2%}", f"动量反转 {momentum:.2%}"
+        elif kind == "mean_reversion" and i >= window:
+            values = closes[i - window:i]
+            mean = sum(values) / window
+            std = math.sqrt(sum((v - mean) ** 2 for v in values) / window) or 1e-9
+            z = (price - mean) / std
+            should_buy = z < -float(params.get("entry_z", 2.0))
+            held_days = (datetime.strptime(str(bar["date"]), "%Y-%m-%d") - datetime.strptime(entry_date, "%Y-%m-%d")).days if shares else 0
+            should_sell = shares > 0 and held_days >= holding and (z > float(params.get("exit_z", 0.5)) or z > -0.3)
+            buy_reason, sell_reason = f"超卖 Z={z:.1f}", f"回归均值 Z={z:.1f}"
+        elif kind == "trend_following" and i >= slow_ma:
+            macd = _ema(closes[:i + 1], fast_ma) - _ema(closes[:i + 1], slow_ma)
+            signal_line = macd if signal_line is None else _ema_last(signal_line, macd, signal_ma)
+            diff = macd - signal_line
+            should_buy, should_sell = diff > 0 and macd > 0, diff < 0
+            buy_reason, sell_reason = f"MACD金叉 diff={diff:.2f}", f"MACD死叉 diff={diff:.2f}"
+        elif kind == "breakout" and i >= window:
+            history = bars[i - window:i]
+            high = max(float(b["high"]) for b in history)
+            low = min(float(b["low"]) for b in history)
+            avg_volume = sum(float(b.get("volume", 0)) for b in history) / window
+            should_buy = price > high and float(bar.get("volume", 0)) > avg_volume * float(params.get("volume_mult", 1.5))
+            should_sell = price < low or i - entry_index >= holding
+            buy_reason = f"突破{window}日高点"
+            sell_reason = "跌破支撑" if price < low else f"持仓{holding}日退出"
+        if shares and should_sell:
+            sell(bar, sell_reason)
+        elif not shares and should_buy and cash > 0:
+            buy(bar, buy_reason)
+        equity_curve.append(round(cash + shares * price, 2))
+        equity_dates.append(str(bar["date"]))
+    if shares:
+        sell(bars[-1], "回测结束平仓", "sell_exit")
+        equity_curve[-1] = round(cash, 2)
+    return {"trades": trades, "equity_curve": equity_curve, "equity_dates": equity_dates,
+            "final_equity": round(cash, 2)}
 
-        eq = cash + positions * price
-        equity_curve.append(round(eq, 2))
 
-    if in_position:
-        lp = bars[-1]["close"] * (1 - slippage)
-        cash = positions * lp * (1 - commission)
-        equity_curve.append(round(cash, 2))
-
-    return {"trades": trades, "equity_curve": equity_curve, "final_equity": round(equity_curve[-1], 2)}
+async def _execute_momentum_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
+    return await _execute_strategy("momentum", bars, params, initial_capital, commission, slippage)
 
 
-async def _execute_breakout_strategy(
-    bars: list[dict[str, Any]],
-    params: dict[str, Any],
-    initial_capital: float = 100000,
-    commission: float = DEFAULT_COMMISSION,
-    slippage: float = DEFAULT_SLIPPAGE,
-) -> dict[str, Any]:
-    window = int(params.get("window", 50))
-    volume_mult = float(params.get("volume_mult", 1.5))
-    holding_period = int(params.get("holding_period", 10))
+async def _execute_mean_reversion_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
+    return await _execute_strategy("mean_reversion", bars, params, initial_capital, commission, slippage)
 
-    if len(bars) < window + 10:
-        return {"trades": [], "equity_curve": [initial_capital], "error": "insufficient data"}
 
-    cash = initial_capital
-    positions: float = 0
-    equity_curve = [initial_capital]
-    trades: list[dict[str, Any]] = []
-    in_position = False
-    entry_hold = 0
-    entry_date = ""
+async def _execute_trend_following_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
+    return await _execute_strategy("trend_following", bars, params, initial_capital, commission, slippage)
 
-    for i in range(window, len(bars)):
-        window_high = max(b["high"] for b in bars[i - window:i])
-        window_low = min(b["low"] for b in bars[i - window:i])
-        avg_vol = sum(b["volume"] for b in bars[i - window:i]) / window
-        price = bars[i]["close"]
-        vol = bars[i]["volume"]
 
-        if not in_position and price > window_high and vol > avg_vol * volume_mult:
-            ep = price * (1 + slippage)
-            positions = cash / ep
-            cash = 0
-            in_position = True
-            entry_hold = 0
-            entry_date = bars[i]["date"]
-            trades.append({
-                "date": entry_date, "action": "buy", "price": round(ep, 2),
-                "shares": round(positions, 2), "value": round(positions * ep, 2),
-                "commission": round(positions * ep * commission, 2),
-                "reason": f"突破{window}日高点 vol={vol/avg_vol:.1f}x",
-            })
+async def _execute_breakout_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
+    return await _execute_strategy("breakout", bars, params, initial_capital, commission, slippage)
 
-        elif in_position:
-            entry_hold += 1
-            should_exit = (price < window_low or entry_hold >= holding_period)
 
-            if should_exit:
-                ep = price * (1 - slippage)
-                cash_val = positions * ep * (1 - commission)
-                pnl = cash_val - (equity_curve[-1] if equity_curve else initial_capital)
-                trades.append({
-                    "date": bars[i]["date"], "action": "sell", "price": round(ep, 2),
-                    "shares": round(positions, 2), "value": round(positions * ep, 2),
-                    "commission": round(positions * ep * commission, 2),
-                    "pnl": round(pnl, 2),
-                    "reason": "跌破支撑" if price < window_low else f"持仓{holding_period}日止盈",
-                })
-                cash = cash_val
-                positions = 0
-                in_position = False
+def _combine_equity_curves(results: dict[str, dict[str, Any]], initial_capital: float, allocations: int) -> tuple[list[str], list[float]]:
+    """Calendar union with carry-forward marks; missing sleeves remain cash."""
+    dates = sorted({date for result in results.values() for date in result.get("equity_dates", []) if date})
+    allocation = initial_capital / max(allocations, 1)
+    marks = {symbol: allocation for symbol in results}
+    curves = {symbol: dict(zip(result.get("equity_dates", []), result["equity_curve"])) for symbol, result in results.items()}
+    output = [float(initial_capital)]
+    for date in dates:
+        for symbol, curve in curves.items():
+            if date in curve:
+                marks[symbol] = curve[date]
+        output.append(round(sum(marks.values()) + allocation * max(0, allocations - len(results)), 2))
+    return [""] + dates, output
 
-        eq = cash + positions * price
-        equity_curve.append(round(eq, 2))
 
-    if in_position:
-        lp = bars[-1]["close"] * (1 - slippage)
-        cash = positions * lp * (1 - commission)
-        equity_curve.append(round(cash, 2))
-
-    return {"trades": trades, "equity_curve": equity_curve, "final_equity": round(equity_curve[-1], 2)}
-
+def _trade_metrics(metrics, trades):
+    closed = [float(t["pnl"]) for t in trades if "pnl" in t]
+    gains = sum(pnl for pnl in closed if pnl > 0)
+    losses = -sum(pnl for pnl in closed if pnl < 0)
+    metrics.update(total_trades=len(closed), win_rate=round(100 * sum(pnl > 0 for pnl in closed) / len(closed), 1) if closed else 0,
+                   profit_factor=profit_factor(gains, losses),
+                   avg_trade_return=round(sum(float(t.get("return_pct", 0)) for t in trades if "pnl" in t) / len(closed), 2) if closed else 0)
+    return metrics
 
 def _ema(values: list[float], period: int) -> float:
     if not values:
@@ -338,7 +199,7 @@ STRATEGY_RUNNERS = {
 }
 
 
-async def run_backtest(
+async def _run_backtest_impl(
     backtest_id: str,
     request: Optional[Request] = None,
 ) -> AsyncIterator[str]:
@@ -371,7 +232,8 @@ async def run_backtest(
     total_symbols = len(syms)
     for idx, sym in enumerate(syms):
         if request and await request.is_disconnected():
-            break
+            update_backtest(backtest_id, status="failed", error="client disconnected", progress=0)
+            return
         yield _sse("bt_data_fetch", {
             "backtest_id": backtest_id, "symbol": sym.upper(),
             "detail": f"获取 {sym.upper()} 历史数据...", "status": "working",
@@ -379,6 +241,8 @@ async def run_backtest(
         try:
             data = await fetch_historical_ohlcv(sym, bt["start_date"], bt["end_date"])
             bars = data.get("bars", [])
+            if not bars:
+                raise ValueError("no historical bars available")
             all_bars[sym.upper()] = bars
             _sources.add(str(data.get("source", "")))
             yield _sse("bt_data_fetch", {
@@ -403,13 +267,12 @@ async def run_backtest(
     strategy_type = bt.get("strategy_type", "momentum")
     runner = STRATEGY_RUNNERS.get(strategy_type, _execute_momentum_strategy)
     symbol_results: dict[str, dict[str, Any]] = {}
-    combined_equity = bt["initial_capital"]
-    combined_curve: list[float] = [combined_equity]
     all_trades_log: list[dict[str, Any]] = []
 
     for idx, (sym, bars) in enumerate(all_bars.items()):
         if request and await request.is_disconnected():
-            break
+            update_backtest(backtest_id, status="failed", error="client disconnected", progress=0)
+            return
         yield _sse("bt_execute", {
             "backtest_id": backtest_id, "symbol": sym,
             "detail": f"执行 {sym} {strategy_type} 策略回测...", "status": "working",
@@ -432,17 +295,16 @@ async def run_backtest(
         trades_log = result.get("trades", [])
         eq_curve = result.get("equity_curve", [bt["initial_capital"]])
 
-        metrics = calculate_backtest_metrics(eq_curve, initial_capital=bt["initial_capital"] / max(len(all_bars), 1))
+        metrics = _trade_metrics(calculate_backtest_metrics(eq_curve, initial_capital=bt["initial_capital"] / max(len(all_bars), 1)), trades_log)
 
         symbol_results[sym] = {
             "metrics": metrics,
             "trades": len(trades_log),
             "equity_curve": eq_curve,
+            "equity_dates": result.get("equity_dates", []),
             "final_equity": result.get("final_equity", 0),
         }
-        combined_equity += result.get("final_equity", 0) - bt["initial_capital"] / max(len(all_bars), 1)
-        combined_curve.append(round(combined_equity, 2))
-        all_trades_log.extend(trades_log)
+        all_trades_log.extend({**trade, "symbol": sym} for trade in trades_log)
 
         yield _sse("bt_execute", {
             "backtest_id": backtest_id, "symbol": sym,
@@ -460,16 +322,19 @@ async def run_backtest(
         progress = 25 + int(65 * (idx + 1) / len(all_bars))
         update_backtest(backtest_id, progress=progress)
 
-    if len(combined_curve) < 2:
-        combined_curve = [bt["initial_capital"], bt["initial_capital"]]
-
-    final_metrics = calculate_backtest_metrics(combined_curve, initial_capital=bt["initial_capital"])
+    combined_dates, combined_curve = _combine_equity_curves(symbol_results, bt["initial_capital"], len(all_bars))
+    if not symbol_results:
+        update_backtest(backtest_id, status="failed", error="all strategies failed", progress=0)
+        yield _sse("bt_error", {"backtest_id": backtest_id, "error": "all strategies failed"})
+        return
+    final_metrics = _trade_metrics(calculate_backtest_metrics(combined_curve, initial_capital=bt["initial_capital"]), all_trades_log)
     all_trades_log.sort(key=lambda t: t.get("date", ""))
 
     result_payload = {
         "metrics": final_metrics,
         "total_trades": len(all_trades_log),
         "equity_curve": combined_curve,
+        "equity_dates": combined_dates,
         "symbol_results": symbol_results,
         "trades_log": all_trades_log[:50],
         "commission": commission,
@@ -484,6 +349,7 @@ async def run_backtest(
             "metrics": final_metrics,
             "total_trades": len(all_trades_log),
             "equity_curve": combined_curve,
+            "equity_dates": combined_dates,
             "symbol_results": {s: {"metrics": r["metrics"], "trades": r["trades"]} for s, r in symbol_results.items()},
         })
         yield _sse("bt_done", {"backtest_id": backtest_id, "total_trades": len(all_trades_log),
@@ -492,9 +358,28 @@ async def run_backtest(
         pass
 
 
-async def list_backtest_results(symbol: str) -> dict[str, Any]:
+async def run_backtest(backtest_id: str, request: Optional[Request] = None) -> AsyncIterator[str]:
+    current = get_backtest(backtest_id)
+    if current and current.get("status") == "completed" and current.get("result"):
+        yield _sse("bt_result", {"backtest_id": backtest_id, "status": "completed", **current["result"]})
+        yield _sse("bt_done", {"backtest_id": backtest_id, "cached": True})
+        return
+    if not claim_backtest(backtest_id):
+        yield _sse("bt_error", {"backtest_id": backtest_id, "error": "backtest is already running or unavailable"})
+        return
+    try:
+        async for event in _run_backtest_impl(backtest_id, request):
+            yield event
+    finally:
+        # Only the generator which acquired the claim can terminate this run.
+        current = get_backtest(backtest_id)
+        if current and current.get("status") == "running":
+            update_backtest(backtest_id, status="failed", error="execution interrupted", progress=0)
+
+
+async def list_backtest_results(symbol: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> dict[str, Any]:
     from .backtest_engine import list_backtests as lb
-    all_bt = lb(limit=100)
+    all_bt = lb(limit=100, owner_user_id=owner_user_id, is_admin=is_admin)
     matched = [b for b in all_bt if symbol.upper() in [s.upper() for s in b.get("symbols", [])]]
     return {"backtests": matched, "symbol": symbol.upper(), "total": len(matched)}
 

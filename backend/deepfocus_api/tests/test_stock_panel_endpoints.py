@@ -17,25 +17,26 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from deepfocus_api import auth, data_store
+from deepfocus_api import auth, data_store, storage
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     asyncio.set_event_loop(asyncio.new_event_loop())
     monkeypatch.setenv("DEEPFOCUS_JWT_SECRET", "test-secret-key")
+    monkeypatch.setenv("DEEPFOCUS_DATABASE_URL", f"sqlite:///{tmp_path / 'auth.sqlite3'}")
     monkeypatch.delenv("DEEPFOCUS_AUTH_REQUIRED", raising=False)
     monkeypatch.setattr(data_store, "DB_PATH", tmp_path / "ds.sqlite3")
     data_store.init_data_store()
     from deepfocus_api.main import app
 
-    # 无 sid 的 token：session_is_current 宽限放行（不查库），无需真实用户落库。
-    user = auth.AuthUserOut(
-        id="u-test", email="t@t.local", username="tester", role="member",
-        is_active=True, created_at=datetime.now(timezone.utc),
-    )
-    token = auth.create_access_token(user)
-    return TestClient(app), {"Authorization": f"Bearer {token}"}
+    # 使用真实账号与当前 session；源模块仍 mock，鉴权不能依赖虚构 JWT 用户。
+    storage.reset_engine_for_tests()
+    storage.Base.metadata.create_all(storage.get_engine())
+    user = auth.create_user("t@t.local", "tester", "password1", role="analyst")
+    token = auth.create_access_token(user, auth.rotate_session(user.id))
+    yield TestClient(app), {"Authorization": f"Bearer {token}"}
+    storage.reset_engine_for_tests()
 
 
 _PANEL_PATHS = (

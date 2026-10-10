@@ -12,14 +12,15 @@ export interface WatchlistData {
 }
 
 /** 读取当前账号的自选股；empty=true 表示该账号尚无记录（首次，前端用当前/默认列表做种子）。 */
-export async function fetchWatchlist(): Promise<WatchlistData> {
-  return apiGet<WatchlistData>('/api/me/watchlist');
+export async function fetchWatchlist(signal?: AbortSignal): Promise<WatchlistData> {
+  return apiGet<WatchlistData>('/api/me/watchlist', { signal });
 }
 
 /** 整表保存当前账号的自选股（覆盖式）。 */
 export async function saveWatchlist(
   symbols: string[],
-  names: Record<string, string>
+  names: Record<string, string>,
+  signal?: AbortSignal
 ): Promise<WatchlistData> {
-  return apiPost<WatchlistData>('/api/me/watchlist', { symbols, names });
+  return apiPost<WatchlistData>('/api/me/watchlist', { symbols, names }, { signal });
 }

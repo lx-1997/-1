@@ -57,12 +57,7 @@ def _deep_link(message: RealtimeMessageRecord) -> str:
 def _tracked_click_url(delivery_id: str) -> str:
     return f"{_public_base_url()}/api/realtime/recall/click/{delivery_id}"
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_RECALL_SUBSCRIPTION_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".recall_subscriptions.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.recall_subscriptions.sqlite3', 'DEEPFOCUS_RECALL_SUBSCRIPTION_DB_PATH')
 
 MAX_DELIVERY_LOG = 50
 _recent_deliveries: list[RecallDeliveryResult] = []

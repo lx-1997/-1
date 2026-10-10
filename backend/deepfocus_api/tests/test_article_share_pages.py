@@ -36,17 +36,17 @@ def test_article_page_soft_wall_no_fulltext_leak():
     assert "某公司发布重大利好公告" in page          # 标题公开
     assert "这是文章导语第一句" in page               # 短导语公开（120字预览）
     assert _TAIL_MARKER not in page                   # ⭐ 导语之外的全文尾部不泄漏
-    assert "打开 DeepFocus · 会员读全文" in page        # 软墙 CTA（全文会员专享，2026-08-07）
+    assert "打开 稻草财经 · 会员读全文" in page        # 软墙 CTA（全文会员专享，2026-08-07）
     assert "?article=a-1" in page                      # 登录深链
-    assert "DeepFocus" in page                         # 对外署名 DeepFocus
+    assert "稻草财经" in page                         # 对外署名
     assert "DAO财经" not in page                        # ⭐ 内部聚合源名不外露(品牌红线)
     assert '"@type": "NewsArticle"' in page            # 结构化数据
 
 
 def test_public_source_neutralizes_internal_names():
-    assert seo_pages._public_source("DAO财经") == "DeepFocus"
-    assert seo_pages._public_source("道财经") == "DeepFocus"
-    assert seo_pages._public_source("") == "DeepFocus"
+    assert seo_pages._public_source("DAO财经") == "稻草财经"
+    assert seo_pages._public_source("道财经") == "稻草财经"
+    assert seo_pages._public_source("") == "稻草财经"
     assert seo_pages._public_source("Morgan Stanley") == "Morgan Stanley"  # 正经外部源保留
 
 
@@ -68,11 +68,12 @@ def test_articles_hub_and_sitemap():
 # ── HTTP 路由 ───────────────────────────────────────────────
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    data_store.DB_PATH = tmp_path / "data.sqlite3"
+    monkeypatch.setattr(data_store, "DB_PATH", tmp_path / "data.sqlite3")
     data_store.init_data_store()
     monkeypatch.setattr(rm, "DB_PATH", tmp_path / "rt.sqlite3")
     rm.init_realtime_message_db()
     from deepfocus_api import main as main_mod
+    monkeypatch.setattr(main_mod, "_sitemap_cache", None)
     return TestClient(main_mod.app)
 
 
@@ -95,16 +96,16 @@ def _make_futou_article(content="受限文章正文"):
 def _make_futou_flash():
     return rm.create_realtime_message(RealtimeMessageCreateRequest(
         title="受限来源快讯", content="受限快讯正文", topic="快讯",
-        severity="info", source_name="DAO财经", source_id="lxaa88002",
-        source_type="dao-news", tags=["快讯"],
+        severity="info", source_name="DAO财经", source_id="88002",
+        source_type="dao-news", url="https://backend.futoucaixin.cn/news/88002", tags=["快讯"],
     ))
 
 
 def _make_futou_report():
     return rm.create_realtime_message(RealtimeMessageCreateRequest(
         title="受限来源研报", content="受限研报摘要", topic="研报",
-        severity="info", source_name="DAO财经", source_id="lxaarpt88004",
-        source_type="dao-report", tags=["研报"],
+        severity="info", source_name="DAO财经", source_id="88004",
+        source_type="dao-report", url="https://backend.futoucaixin.cn/reports/88004", tags=["研报"],
     ))
 
 
@@ -121,7 +122,7 @@ def test_article_route_serves_soft_wall(client):
     r = client.get(f"/article/{art.id}")
     assert r.status_code == 200
     assert "重大资产重组获批" in r.text
-    assert "打开 DeepFocus · 会员读全文" in r.text
+    assert "打开 稻草财经 · 会员读全文" in r.text
     assert _TAIL_MARKER not in r.text  # 全文尾部不泄漏
 
 
@@ -173,21 +174,23 @@ def test_list_endpoint_member_wall_anonymous(client):
     assert msgs["快讯"]["content"] == flash_content  # 快讯全文不受影响
 
 
-def test_anonymous_cannot_see_futou_messages(client, monkeypatch):
-    """匿名的列表、单条深链、公开落地页和头条全部隐藏；普通来源仍可见。"""
+def test_anonymous_reads_retained_futou_sources_with_article_softwall(client, monkeypatch):
+    """匿名可看富途消息/标题/落地页；文章的全文会员墙仍生效。"""
     article = _make_futou_article()
     flash = _make_futou_flash()
     report = _make_futou_report()
     normal = _make_normal_flash()
 
     listed = {m["id"] for m in client.get("/api/realtime/messages", params={"limit": 20}).json()["messages"]}
-    assert article.id not in listed and flash.id not in listed and report.id not in listed
+    assert article.id in listed and flash.id in listed and report.id in listed
     assert normal.id in listed
-    assert client.get(f"/api/realtime/messages/{article.id}").status_code == 404
-    assert client.get(f"/api/realtime/messages/{flash.id}").status_code == 404
-    assert client.get(f"/api/realtime/messages/{report.id}").status_code == 404
-    assert client.get(f"/article/{article.id}").status_code == 404
-    assert client.get(f"/article/{flash.id}").status_code == 404
+    article_response = client.get(f"/api/realtime/messages/{article.id}")
+    assert article_response.status_code == 200
+    assert "全文为会员专享内容" in article_response.json()["content"]
+    assert client.get(f"/api/realtime/messages/{flash.id}").status_code == 200
+    assert client.get(f"/api/realtime/messages/{report.id}").status_code == 200
+    assert client.get(f"/article/{article.id}").status_code == 200
+    assert client.get(f"/article/{flash.id}").status_code == 200
 
     from deepfocus_api import main as main_mod
     monkeypatch.setattr(main_mod, "_HEADLINES", {
@@ -196,12 +199,13 @@ def test_anonymous_cannot_see_futou_messages(client, monkeypatch):
         "yb": [main_mod._hl_pack_msg(report, "restricted")], "generated_at": "now",
     })
     headlines = client.get("/api/headlines").json()
-    assert [m["id"] for m in headlines["kx"]] == [normal.id]
-    assert headlines["wz"] == []
-    assert headlines["yb"] == []
+    assert [m["id"] for m in headlines["kx"]] == [flash.id, normal.id]
+    assert [m["id"] for m in headlines["wz"]] == [article.id]
+    assert [m["id"] for m in headlines["yb"]] == [report.id]
+    # 搜索引擎 sitemap/feed 继续仅收录普通源；站内文章索引遵循账号来源策略。
     assert article.id not in client.get("/sitemap.xml").text
     assert article.id not in client.get("/feed.xml").text
-    assert article.id not in client.get("/articles").text
+    assert article.id in client.get("/articles").text
 
     async def _empty(*_args, **_kwargs):
         return []
@@ -209,7 +213,7 @@ def test_anonymous_cannot_see_futou_messages(client, monkeypatch):
     for name in ("_usearch_stocks", "_usearch_reports", "_usearch_terms", "_usearch_boards"):
         monkeypatch.setattr(main_mod, name, _empty)
     search = client.get("/api/search/universal", params={"q": "受限来源"}).json()
-    assert search["news"] == []
+    assert {item["id"] for item in search["news"]} == {article.id, flash.id, report.id}
 
 
 def test_exclude_futou_query_keeps_full_limit(client):
@@ -218,7 +222,7 @@ def test_exclude_futou_query_keeps_full_limit(client):
     for i in range(5):
         rm.create_realtime_message(RealtimeMessageCreateRequest(
             title=f"受限快讯 {i}", content="x", topic="快讯", severity="info",
-            source_id=f"lxaa99{i}", source_type="dao-news",
+            source_id=f"99{i}", source_type="dao-news", url=f"https://backend.futoucaixin.cn/news/99{i}",
         ))
     report = _make_futou_report()
     rows = rm.list_realtime_messages(exclude_futoucaixin=True, limit=1)
@@ -226,23 +230,29 @@ def test_exclude_futou_query_keeps_full_limit(client):
     assert rm.is_futoucaixin_message(report)
 
 
-def test_filtered_latest_hides_stale_flash_but_keeps_history_search(client):
-    """匿名最新流不把超过 72h 的普通源快讯伪装成「最新」；
-    只修复最新流的语义，明确的历史搜索仍可取回。
-    """
+def test_filtered_latest_hides_stale_flash_but_keeps_history_search(member_client):
+    """dao2 过滤流隐藏超过 72h 快讯；明确历史搜索及匿名完整流仍可取回。"""
+    client = member_client
+    registered = client.post("/api/auth/register", json={
+        "username": "dao2", "password": "password1", "email": "dao2@example.com",
+    })
+    assert registered.status_code == 200, registered.text
+    headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
     stale = _make_normal_flash()
     stale_created = (datetime.now(timezone.utc) - timedelta(hours=96)).isoformat()
     with rm._connect() as conn:
         conn.execute("UPDATE realtime_messages SET created_at=? WHERE id=?", (stale_created, stale.id))
         conn.commit()
 
-    latest = client.get("/api/realtime/messages", params={"topic": "快讯", "limit": 20})
+    latest = client.get("/api/realtime/messages", headers=headers, params={"topic": "快讯", "limit": 20})
     assert latest.status_code == 200
     assert stale.id not in {m["id"] for m in latest.json()["messages"]}
 
-    history = client.get("/api/realtime/messages", params={"topic": "快讯", "q": "普通来源", "limit": 20})
+    history = client.get("/api/realtime/messages", headers=headers, params={"topic": "快讯", "q": "普通来源", "limit": 20})
     assert history.status_code == 200
     assert stale.id in {m["id"] for m in history.json()["messages"]}
+    anonymous = client.get("/api/realtime/messages", params={"topic": "快讯", "limit": 20})
+    assert stale.id in {m["id"] for m in anonymous.json()["messages"]}
 
 
 def test_sse_transform_can_drop_restricted_message(client):
@@ -277,7 +287,7 @@ def test_sse_transform_can_drop_restricted_message(client):
 @pytest.fixture()
 def member_client(tmp_path, monkeypatch):
     """client + 独立 auth 库：用于「会员带 token 解锁全文」正向路径。"""
-    data_store.DB_PATH = tmp_path / "data.sqlite3"
+    monkeypatch.setattr(data_store, "DB_PATH", tmp_path / "data.sqlite3")
     data_store.init_data_store()
     monkeypatch.setattr(rm, "DB_PATH", tmp_path / "rt.sqlite3")
     rm.init_realtime_message_db()
@@ -288,6 +298,7 @@ def member_client(tmp_path, monkeypatch):
     storage.reset_engine_for_tests()
     auth_mod.init_auth()
     from deepfocus_api import main as main_mod
+    monkeypatch.setattr(main_mod, "_sitemap_cache", None)
     yield TestClient(main_mod.app)
     storage.reset_engine_for_tests()
 
@@ -327,7 +338,11 @@ def test_dao2_is_restricted_and_regular_user_reads_all_retained_sources(member_c
     assert article.id not in dao2_ids and flash.id not in dao2_ids and report.id not in dao2_ids
     assert normal.id in dao2_ids
     assert c.get(f"/api/realtime/messages/{article.id}", headers=dao2_headers).status_code == 404
+    assert c.get(f"/api/realtime/messages/{flash.id}", headers=dao2_headers).status_code == 404
     assert c.get(f"/api/realtime/messages/{report.id}", headers=dao2_headers).status_code == 404
+    assert c.get(f"/article/{article.id}", headers=dao2_headers).status_code == 404
+    assert c.get(f"/article/{flash.id}", headers=dao2_headers).status_code == 404
+    assert article.id not in c.get("/articles", headers=dao2_headers).text
 
     from deepfocus_api import main as main_mod
     monkeypatch.setattr(main_mod, "_HEADLINES", {

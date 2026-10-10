@@ -18,12 +18,7 @@ preview_url 在出口处按 file_id 实时富化，保持与在线路径一致�
 注意：只能从上线时刻起向前累积（在线源只给最新窗口，无法回填更早历史）。
 """
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_RESEARCH_ARCHIVE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".research_archive.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.research_archive.sqlite3', 'DEEPFOCUS_RESEARCH_ARCHIVE_DB_PATH')
 _MAX_ARCHIVE = int(os.getenv("DEEPFOCUS_RESEARCH_ARCHIVE_MAX", "8000"))  # 容量上限，超量删最老
 
 

@@ -36,8 +36,7 @@ from . import db
 from .auth import require_current_user
 from .shared_utils import utc_now_iso
 
-DB_PATH = Path(os.getenv("DEEPFOCUS_WEBHOOK_DB_PATH",
-                          str(Path(__file__).resolve().parents[1] / ".webhooks.sqlite3")))
+DB_PATH = db.data_path('.webhooks.sqlite3', 'DEEPFOCUS_WEBHOOK_DB_PATH')
 ALLOW_LOCAL = os.getenv("DEEPFOCUS_WEBHOOK_ALLOW_LOCAL", "").strip() == "1"
 TIMEOUT_S = 8.0
 MAX_SUBS_PER_USER = 10

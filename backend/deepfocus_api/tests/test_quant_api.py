@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from deepfocus_api import main
+from deepfocus_api import main, portfolio_api
 
 
 def test_quant_job_routes_require_login_and_preserve_owner(monkeypatch):
@@ -10,7 +10,7 @@ def test_quant_job_routes_require_login_and_preserve_owner(monkeypatch):
     anonymous = client.post("/api/quant/lab/jobs", json=payload)
     assert anonymous.status_code == 401
 
-    monkeypatch.setattr(main, "require_current_user", lambda request: {"sub": "user-42", "username": "quant-user"})
+    monkeypatch.setattr(portfolio_api, "require_current_user", lambda request: {"sub": "user-42", "username": "quant-user"})
 
     async def fake_create(owner, request):
         assert owner == "user-42"
@@ -26,9 +26,9 @@ def test_quant_job_routes_require_login_and_preserve_owner(monkeypatch):
         assert owner == "user-42"
         return {"job_id": job_id, "status": "cancelled", "progress": 50, "stage": "任务已取消"}
 
-    monkeypatch.setattr(main, "create_quant_job", fake_create)
-    monkeypatch.setattr(main, "get_quant_job", fake_get)
-    monkeypatch.setattr(main, "cancel_quant_job", fake_cancel)
+    monkeypatch.setattr(portfolio_api, "create_quant_job", fake_create)
+    monkeypatch.setattr(portfolio_api, "get_quant_job", fake_get)
+    monkeypatch.setattr(portfolio_api, "cancel_quant_job", fake_cancel)
 
     created = client.post("/api/quant/lab/jobs", json=payload)
     polled = client.get("/api/quant/lab/jobs/job-1")

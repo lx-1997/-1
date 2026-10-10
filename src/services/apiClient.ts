@@ -1,81 +1,61 @@
 import axios, { AxiosRequestConfig, Method } from 'axios';
 import { Capacitor } from '@capacitor/core';
+import { getAuthSnapshot, invalidateAuthSession, isAuthRevisionCurrent, registerSessionCleanup } from '../state/authSession';
 
 const configuredApiBaseUrl = process.env.REACT_APP_API_BASE_URL?.replace(/\/$/, '');
 let preferredApiBaseUrl: string | null = null;
+let authenticatedApiBaseUrl: string | null = null;
 
 // 前端专属请求标识：网页端 API 调用都带它，nginx 校验，挡裸 curl/脚本扒接口
 export const DF_WEB_TOKEN = ['dfw', '2vQ9', 'k7Rm'].join('_');  // 拼接，避免整串明文
 
-axios.interceptors.request.use(config => {
-  const token = localStorage.getItem('auth_token');
-  if (token && config.headers) {
+// An isolated client avoids attaching account tokens to unrelated third-party Axios calls.
+export const apiTransport = axios.create();
+
+function requestOrigin(url: string): string | null {
+  try { return new URL(url, typeof window !== 'undefined' ? window.location.origin : undefined).origin; } catch { return null; }
+}
+export function sessionOwnsRequest(url: string): boolean {
+  const session = getAuthSnapshot();
+  const expected = session.apiOrigin || configuredApiBaseUrl || getApiBaseUrls()[0];
+  return !/^https?:\/\//i.test(url) || requestOrigin(url) === requestOrigin(expected || '');
+}
+
+apiTransport.interceptors.request.use(config => {
+  const { token } = getAuthSnapshot();
+  if (token && config.headers && sessionOwnsRequest(config.url || '')) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 }, error => Promise.reject(error));
 
-axios.interceptors.response.use(
-  response => response,
-  error => {
-    if (axios.isAxiosError(error)) {
-      if (error.response?.status === 401) {
-        const reqUrl = error.config?.url || '';
-        // 只有「当前站点自己」的 401 才允许动全局登录态。并行回退源（如开发机上的
-        // http://127.0.0.1:8300 本地后端）不认生产 token 会回 401——那与当前会话无关，
-        // 绝不能因此清 token/跳转（否则生产页面会被本机开发后端“误踢”下线）。
-        const sameOrigin = !/^https?:\/\//i.test(reqUrl)
-          || (typeof window !== 'undefined' && reqUrl.startsWith(window.location.origin + '/'));
-        if (!sameOrigin) {
-          return Promise.reject(new Error('登录已过期，请重新登录'));
-        }
-        // 登录/注册接口的 401 = 凭证错误：交回调用方在表单内提示，绝不跳转/清 token。
-        const isAuthAttempt = /\/api\/auth\/(login|register)/.test(reqUrl);
-        const detail: string = (error.response?.data as any)?.detail || '';
-        // 单设备登录被挤下线：清 token + 广播事件（让页面优雅提示并切登录态），不强制跳转 /login。
-        if (/挤下线|其他设备登录/.test(detail)) {
-          localStorage.removeItem('auth_token');
-          try { window.dispatchEvent(new CustomEvent('df:auth-kicked', { detail })); } catch { /* */ }
-          return Promise.reject(new Error(detail));
-        }
-        // /api/auth/me 的 401 = 启动校验存量 token 失效（如自然过期）：清掉即可，调用方自会落到未登录态；
-        // 整页跳 /login 反而造成一次无谓刷新（终端在任意路径都能渲染登录入口）。
-        if (/\/api\/auth\/me/.test(reqUrl)) {
-          localStorage.removeItem('auth_token');
-          return Promise.reject(new Error('登录已过期，请重新登录'));
-        }
-        if (!isAuthAttempt) {
-          // 后台/可选请求（离线召回补订阅、自选同步等）对未登录或令牌失效回 401 时，绝不能整页跳 /login：
-          // 终端在任意路径都内联渲染登录入口，而 window.location.href='/login' 的整页 reload 会让刚 401 的
-          // 那个后台请求随新页面重新发起 → 再 401 → 再 reload → 无限刷新死循环（线上实测每秒数次、500+ 请求）。
-          const hadToken = !!localStorage.getItem('auth_token');
-          localStorage.removeItem('auth_token');
-          if (hadToken) {
-            // 确有令牌却被拒 = 登录确实过期：软清登录态 + 广播事件（页面据此切未登录态并提示），不刷新。
-            try { window.dispatchEvent(new CustomEvent('df:auth-kicked', { detail: '登录已过期，请重新登录' })); } catch { /* */ }
-          }
-          // 匿名（无 token）命中受保护端点的 401 属预期：静默拒绝即可，不提示、不跳转、不刷新。
-          return Promise.reject(new Error('登录已过期，请重新登录'));
-        }
-        // 落到下方统一抽取后端 detail（如「用户名或密码错误」）。
+apiTransport.interceptors.response.use(response => response, error => {
+  if (!axios.isAxiosError(error)) return Promise.reject(error);
+  // Keep Axios' error identity/code/cancellation information so fallback can distinguish
+  // an unreachable source from an HTTP rejection or an uncertain timed-out write.
+  if (!error.response) return Promise.reject(error);
+  const reqUrl = error.config?.url || '';
+  const isAuthAttempt = /\/api\/auth\/(login|register)/.test(reqUrl);
+  const data = error.response.data as { detail?: unknown; error?: string; message?: string } | undefined;
+  const detail = data?.detail;
+  if (error.response.status === 401 && !isAuthAttempt && sessionOwnsRequest(reqUrl)) {
+    const authorization = error.config?.headers?.Authorization;
+    const sentToken = typeof authorization === 'string' ? authorization.replace(/^Bearer\s+/i, '') : null;
+    // A response from a previous or anonymous session cannot invalidate a newer login.
+    if (sentToken && invalidateAuthSession(sentToken)) {
+      const reason = typeof detail === 'string' && /挤下线|其他设备登录/.test(detail)
+        ? detail : '登录已过期，请重新登录';
+      if (!/\/api\/auth\/me/.test(reqUrl)) {
+        window.dispatchEvent(new CustomEvent('df:auth-kicked', { detail: reason }));
       }
-      const status = error.response?.status;
-      const detail = (error.response?.data as any)?.detail;
-      const message = detail
-        || error.response?.data?.error
-        || error.response?.data?.message
-        || `请求失败 (${status || '网络错误'})`;
-      // ⭐保留 status/detail 到 Error 上：否则非 401 错误被拍平成纯 new Error(message)，调用方 e.response.status 全失效——
-      // AI 解读的 402(非会员→升级弹窗) / 403(匿名→登录注册弹窗) 一直没触发，只能掉到 setAiError 显示一行死提示。
-      const err = new Error(message) as Error & { status?: number; detail?: unknown; response?: unknown };
-      err.status = status;
-      err.detail = detail;
-      err.response = error.response;  // 保留原始 response → 全站 e.response.status / e.response.data.detail 的判断继续可用
-      return Promise.reject(err);
     }
-    return Promise.reject(error);
   }
-);
+  const enriched = error as typeof error & { status?: number; detail?: unknown };
+  enriched.status = error.response.status;
+  enriched.detail = detail;
+  enriched.message = formatErrorMessage(error);
+  return Promise.reject(enriched);
+});
 
 function formatErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
@@ -156,7 +136,8 @@ function getPrioritizedApiBaseUrls(): string[] {
 }
 
 function isRetryableConnectionError(error: unknown): boolean {
-  return axios.isAxiosError(error) && !error.response;
+  return axios.isAxiosError(error) && !error.response && !axios.isCancel(error)
+    && !['ECONNABORTED', 'ETIMEDOUT', 'ERR_CANCELED'].includes(error.code || '');
 }
 
 async function requestWithFallback<T>(
@@ -175,6 +156,7 @@ async function requestWithFallback<T>(
     try {
       const response = await requestFromApiBase<T>(apiBaseUrl, method, path, data, config);
       preferredApiBaseUrl = apiBaseUrl;
+      if (/^\/api\/auth\/(login|register)$/.test(path)) authenticatedApiBaseUrl = apiBaseUrl;
       return response;
     } catch (error) {
       lastError = error;
@@ -195,16 +177,29 @@ async function requestFromApiBase<T>(
   config: AxiosRequestConfig,
   signal?: AbortSignal
 ): Promise<T> {
-  const response = await axios.request<T>({
-    ...config,
-    method,
-    url: `${apiBaseUrl}${path}`,
-    data,
-    timeout: config.timeout ?? 20000,
-    headers: { ...(config.headers || {}), 'X-DF-Web': DF_WEB_TOKEN },  // 前端专属标识，挡裸 curl 扒接口
-    signal: signal || config.signal
-  });
-  return response.data;
+  const session = getAuthSnapshot();
+  const controller = new AbortController();
+  const parentSignal = signal || config.signal;
+  const abort = () => controller.abort();
+  parentSignal?.addEventListener?.('abort', abort, { once: true });
+  if (parentSignal?.aborted) controller.abort();
+  const unregister = registerSessionCleanup(abort);
+  try {
+    const response = await apiTransport.request<T>({
+      ...config,
+      method,
+      url: `${apiBaseUrl}${path}`,
+      data,
+      timeout: config.timeout ?? 20000,
+      headers: { ...(config.headers || {}), 'X-DF-Web': DF_WEB_TOKEN },  // 前端专属标识，挡裸 curl 扒接口
+      signal: controller.signal
+    });
+    if (!isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Account changed');
+    return response.data;
+  } finally {
+    unregister();
+    parentSignal?.removeEventListener?.('abort', abort);
+  }
 }
 
 async function requestReadWithFallback<T>(
@@ -231,6 +226,15 @@ async function requestReadWithFallback<T>(
       typeof AbortController !== 'undefined' ? new AbortController() : null
     ));
 
+    const cancelAll = () => {
+      if (settled) return;
+      settled = true;
+      controllers.forEach(controller => controller?.abort());
+      reject(new axios.CanceledError('Request cancelled'));
+    };
+    config.signal?.addEventListener?.('abort', cancelAll, { once: true });
+    const removeAbortListener = () => config.signal?.removeEventListener?.('abort', cancelAll);
+    if (config.signal?.aborted) { cancelAll(); removeAbortListener(); return; }
     apiBaseUrls.forEach((apiBaseUrl, index) => {
       requestFromApiBase<T>(apiBaseUrl, 'GET', path, undefined, config, controllers[index]?.signal)
         .then(response => {
@@ -239,6 +243,7 @@ async function requestReadWithFallback<T>(
           }
 
           settled = true;
+          removeAbortListener();
           preferredApiBaseUrl = apiBaseUrl;
           controllers.forEach((controller, controllerIndex) => {
             if (controllerIndex !== index) {
@@ -256,6 +261,8 @@ async function requestReadWithFallback<T>(
           pending -= 1;
 
           if (pending === 0) {
+            settled = true;
+            removeAbortListener();
             const nonRetryable = errors.find(item => !isRetryableConnectionError(item.error));
             reject(nonRetryable?.error || errors[errors.length - 1]?.error || new Error('API request failed'));
           }
@@ -272,10 +279,22 @@ export function apiPost<T>(path: string, data?: unknown, config?: AxiosRequestCo
   return requestWithFallback<T>('POST', path, data, config);
 }
 
+export function apiPut<T>(path: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+  return requestWithFallback<T>('PUT', path, data, config);
+}
+
 export function apiPatch<T>(path: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
   return requestWithFallback<T>('PATCH', path, data, config);
 }
 
 export function apiDelete<T = void>(path: string, config?: AxiosRequestConfig): Promise<T> {
   return requestWithFallback<T>('DELETE', path, undefined, config);
+}
+
+export function getAuthenticationApiBaseUrl(): string | null { return authenticatedApiBaseUrl || getActiveApiBaseUrl(); }
+
+export function getActiveApiBaseUrl(): string {
+  const origin = getAuthSnapshot().apiOrigin;
+  return (origin && getApiBaseUrls().find(base => requestOrigin(base) === requestOrigin(origin)))
+    || getPrioritizedApiBaseUrls()[0] || '';
 }

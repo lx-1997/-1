@@ -7,9 +7,10 @@ import os
 import re
 import sqlite3
 from . import db
+from .ownership import current_owner_id, owner_filter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -43,7 +44,7 @@ from .research_harness import (
     stock_selection_needs_clarification,
 )
 
-DB_PATH = Path(os.getenv("DULUS_MEMORY_DB_PATH") or Path(__file__).resolve().parents[1] / ".dulus_memory.sqlite3")
+DB_PATH = db.data_path(".dulus_memory.sqlite3", "DULUS_MEMORY_DB_PATH")
 WEBBRIDGE_DEFAULT_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
 WEBBRIDGE_POLICY = (
     "Authorized WebBridge 只允许本机或 DULUS_WEBBRIDGE_ALLOWED_HOSTS 白名单域名；"
@@ -90,10 +91,12 @@ PARTICIPANT_DEFINITIONS: dict[str, dict[str, str]] = {
 def init_dulus_runtime_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dulus_memory (
                 id TEXT PRIMARY KEY,
+                owner_user_id TEXT,
                 scope TEXT NOT NULL,
                 hall TEXT NOT NULL,
                 title TEXT NOT NULL,
@@ -106,17 +109,45 @@ def init_dulus_runtime_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dulus_memory_created ON dulus_memory(created_at DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dulus_memory_scope ON dulus_memory(scope, hall)")
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(dulus_memory)")}
+        if "owner_user_id" not in columns:
+            conn.execute("ALTER TABLE dulus_memory ADD COLUMN owner_user_id TEXT")
+            _migrate_legacy_memory_owners(conn)
+        # 旧圆桌摘要包含用户输入与结论，但没有可靠账号标识；保留历史，仅管理员可读。
+        conn.execute("UPDATE dulus_memory SET scope='user' WHERE scope='session' AND source='roundtable'")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dulus_memory_owner ON dulus_memory(owner_user_id, created_at)")
         conn.commit()
     _ensure_default_memory_buckets()
 
 
-def list_dulus_memories(limit: int = 20, scope: str | None = None) -> DulusMemoryListResponse:
+def _migrate_legacy_memory_owners(conn: sqlite3.Connection) -> None:
+    """只迁移可精确定位到现存账号的旧标签；截断、冲突或未知归属保留 NULL。"""
+    from .auth import user_id_of_username
+    for row in conn.execute("SELECT id, tags_json FROM dulus_memory WHERE scope='user' AND owner_user_id IS NULL").fetchall():
+        try:
+            tags = json.loads(row["tags_json"] or "[]")
+            names = {tag[6:] for tag in tags if isinstance(tag, str) and tag.startswith("owner:") and len(tag) < 40 and tag[6:]}
+            if len(names) != 1:
+                continue
+            uid = user_id_of_username(next(iter(names)))
+        except Exception:
+            # 认证存储不可用不能靠猜测补归属；legacy 留给管理员管理。
+            continue
+        if uid:
+            conn.execute("UPDATE dulus_memory SET owner_user_id=? WHERE id=? AND owner_user_id IS NULL", (uid, row["id"]))
+
+
+def list_dulus_memories(limit: int = 20, scope: str | None = None, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> DulusMemoryListResponse:
     init_dulus_runtime_db()
     safe_limit = max(1, min(limit, 100))
     query = "SELECT * FROM dulus_memory"
     params: list[Any] = []
     user_scope = str(scope or "").strip()
-    if user_scope.startswith("user:"):
+    if owner_user_id is not None and (user_scope == "user" or user_scope.startswith("user:")):
+        clause, owners = owner_filter(owner_user_id, is_admin)
+        query += " WHERE scope = 'user'" + (f" AND {clause}" if clause else "")
+        params.extend(owners)
+    elif user_scope.startswith("user:"):
         owner = user_scope[5:].strip()[:80]
         query += " WHERE scope = 'user' AND hall = 'ai_chat' AND tags_json LIKE ?"
         params.append(f'%"owner:{owner}"%')
@@ -125,6 +156,12 @@ def list_dulus_memories(limit: int = 20, scope: str | None = None) -> DulusMemor
     elif scope:
         query += " WHERE scope = ?"
         params.append(scope)
+    elif owner_user_id is not None:
+        # 有身份的宽泛查询也不能包含其他用户的私有记忆。
+        clause, owners = owner_filter(owner_user_id, is_admin)
+        if clause:
+            query += f" WHERE (scope != 'user' OR {clause})"
+            params.extend(owners)
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(safe_limit)
     with _connect() as conn:
@@ -132,7 +169,7 @@ def list_dulus_memories(limit: int = 20, scope: str | None = None) -> DulusMemor
     return DulusMemoryListResponse(memories=[_memory_from_row(row) for row in rows])
 
 
-def create_dulus_memory(request: DulusMemoryCreateRequest) -> DulusMemoryRecord:
+def create_dulus_memory(request: DulusMemoryCreateRequest, *, owner_user_id: Optional[str] = None) -> DulusMemoryRecord:
     init_dulus_runtime_db()
     return _save_memory(
         scope=request.scope,
@@ -141,6 +178,7 @@ def create_dulus_memory(request: DulusMemoryCreateRequest) -> DulusMemoryRecord:
         content=request.content,
         tags=request.tags,
         source=request.source,
+        owner_user_id=owner_user_id,
     )
 
 
@@ -2006,6 +2044,7 @@ def _memory_from_row(row: sqlite3.Row) -> DulusMemoryRecord:
         tags = []
     return DulusMemoryRecord(
         id=str(row["id"]),
+        owner_user_id=row["owner_user_id"] if "owner_user_id" in row.keys() else None,
         scope=str(row["scope"]),
         hall=str(row["hall"]),
         title=str(row["title"]),
@@ -2024,12 +2063,14 @@ def _save_memory(
     content: str,
     tags: list[str],
     source: str,
+    owner_user_id: Optional[str] = None,
 ) -> DulusMemoryRecord:
     now = datetime.now(timezone.utc).isoformat()
     memory_id = f"mem_{int(datetime.now(timezone.utc).timestamp() * 1000)}_{abs(hash((title, content, now))) % 100000}"
     clean_tags = [tag.strip()[:40] for tag in tags if tag.strip()][:12]
     record = DulusMemoryRecord(
         id=memory_id,
+        owner_user_id=owner_user_id if scope == "user" else None,
         scope=scope[:24] or "session",
         hall=hall[:40] or "events",
         title=title.strip()[:180] or "Untitled memory",
@@ -2041,8 +2082,8 @@ def _save_memory(
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         candidates = conn.execute(
-            "SELECT * FROM dulus_memory WHERE scope=? AND hall=? AND title=? ORDER BY created_at DESC",
-            (record.scope, record.hall, record.title),
+            "SELECT * FROM dulus_memory WHERE scope=? AND hall=? AND title=? AND owner_user_id IS ? ORDER BY created_at DESC",
+            (record.scope, record.hall, record.title, record.owner_user_id),
         ).fetchall()
         record_owner = next((tag for tag in record.tags if tag.startswith("owner:")), "")
         record_attachment = next((tag for tag in record.tags if tag.startswith("attachment:")), "")
@@ -2059,7 +2100,9 @@ def _save_memory(
             if existing_attachment == "attachment:附件":
                 existing_attachment = ""
             same_identity = (
-                record.scope != "user" or (record_owner and record_owner == existing_owner)
+                record.scope != "user"
+                or bool(record.owner_user_id and record.owner_user_id == existing["owner_user_id"])
+                or bool(record_owner and record_owner == existing_owner)
             ) and (record.source != "ai_chat" or record_attachment == existing_attachment)
             same_content = same_identity and re.sub(r"\s+", " ", str(existing["content"])).strip().casefold() == normalized_content
             same_ai_key = (
@@ -2080,6 +2123,7 @@ def _save_memory(
                 conn.commit()
                 return DulusMemoryRecord(
                     id=str(existing["id"]), scope=str(existing["scope"]), hall=str(existing["hall"]),
+                    owner_user_id=record.owner_user_id,
                     title=str(existing["title"]), content=record.content, tags=record.tags,
                     source=str(existing["source"]), created_at=record.created_at,
                 )
@@ -2087,11 +2131,12 @@ def _save_memory(
             return _memory_from_row(existing)
         conn.execute(
             """
-            INSERT INTO dulus_memory (id, scope, hall, title, content, tags_json, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO dulus_memory (id, owner_user_id, scope, hall, title, content, tags_json, source, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id,
+                record.owner_user_id,
                 record.scope,
                 record.hall,
                 record.title,
@@ -2126,7 +2171,11 @@ def _save_roundtable_memory(
     decision: str,
     confidence: float,
 ) -> None:
+    owner_user_id = current_owner_id()
+    if owner_user_id is None:
+        return
     try:
+        init_dulus_runtime_db()
         title = f"圆桌：{request.objective[:56]}"
         content = "\n".join([
             f"目标：{request.objective}",
@@ -2137,7 +2186,7 @@ def _save_roundtable_memory(
         tags = ["roundtable", request.mode]
         if request.stock:
             tags.append(request.stock.symbol)
-        _save_memory(scope="session", hall="events", title=title, content=content, tags=tags, source="roundtable")
+        _save_memory(scope="user", hall="events", title=title, content=content, tags=tags, source="roundtable", owner_user_id=owner_user_id)
     except Exception:
         pass
 

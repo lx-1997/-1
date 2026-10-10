@@ -74,7 +74,7 @@ def test_model_result_is_normalised_to_article_contract(monkeypatch):
             }
 
     monkeypatch.setattr(digest, "CloudResearchLLM", lambda: FakeLLM())
-    document = digest._make_document(_pdf(), source_id="source-a", title="样例研报")
+    document = digest._make_document(_pdf("Revenue grew 20 percent. Track orders next quarter.\n" * 25), source_id="source-a", title="样例研报")
     result = asyncio.run(
         digest.generate_deep_draft(
             ResearchDeepDraftRequest(title="样例研报", symbol="TEST"),

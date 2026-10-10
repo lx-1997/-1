@@ -7,6 +7,13 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_institution_notes_pages_until_cutoff(monkeypatch) -> None:
+    from datetime import datetime, timezone
+    from deepfocus_api import agent_tools
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 31, 7, tzinfo=timezone.utc).astimezone(tz)
+    monkeypatch.setattr(agent_tools, "_dt", FixedDateTime)
     from deepfocus_api import agent_tools
 
     calls: list[str] = []

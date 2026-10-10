@@ -1,5 +1,7 @@
+import axios from 'axios';
+import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, invalidateAuthSession } from '../state/authSession';
 import { DataQuality, Post, Stock } from '../types';
-import { apiGet, apiPost, DF_WEB_TOKEN } from './apiClient';
+import { apiGet, apiPost, DF_WEB_TOKEN, getActiveApiBaseUrl, sessionOwnsRequest } from './apiClient';
 
 // === aiResearchService types ===
 
@@ -935,13 +937,14 @@ export function generateResearchDeepDraft(
 /** 深度解读流式版：SSE 阶段进度实时回报（获取原文→页数/字符→生成中→兜底提示），
  * 完成后返回与 POST 端点完全同构的结果。流不可用（旧后端 404/405、首个事件前
  * 网络失败）时静默回退普通 POST；402/403/422 与生成错误按 axios 形状抛出，
- * 复用调用方现有处理链。 */
+ * 复用调用方现有处理链。onQuick：后端快轨先产出的十秒级速览卡（AiAnalysis 形状）。 */
 export async function generateResearchDeepDraftSmart(
   payload: ResearchDeepDraftRequest,
   onStage?: (detail: string) => void,
+  onQuick?: (quick: AiAnalysisLike) => void,
 ): Promise<ResearchDeepDraftResponse> {
   try {
-    return await streamResearchDeepDraft(payload, onStage);
+    return await streamResearchDeepDraft(payload, onStage, onQuick);
   } catch (err: any) {
     const status = err?.response?.status;
     if (status === 402 || status === 403 || status === 422) throw err;
@@ -950,63 +953,101 @@ export async function generateResearchDeepDraftSmart(
   }
 }
 
+// 速览卡与旧 compact 视觉卡同形状；独立定义避免反向依赖组件层类型。
+export interface AiAnalysisLike {
+  title?: string;
+  subject?: string;
+  one_liner?: string;
+  summary?: string;
+  bullish?: string[];
+  bearish?: string[];
+  key_points?: string[];
+  instruments?: string[];
+  confidence?: number;
+  provider?: string;
+  source_note?: string;
+  quick?: boolean;
+}
+
 async function streamResearchDeepDraft(
   payload: ResearchDeepDraftRequest,
   onStage?: (detail: string) => void,
+  onQuick?: (quick: AiAnalysisLike) => void,
 ): Promise<ResearchDeepDraftResponse> {
-  const token = localStorage.getItem('auth_token');
-  const resp = await fetch('/api/research/deep-draft/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-DF-Web': DF_WEB_TOKEN,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!resp.ok || !resp.body) {
-    let detail = '';
-    try { detail = (await resp.json())?.detail || ''; } catch { /* 保留状态码提示 */ }
-    const err: any = new Error(detail || `HTTP ${resp.status}`);
-    err.response = { status: resp.status, data: { detail } };
-    throw err;
-  }
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  let result: ResearchDeepDraftResponse | null = null;
-  let sawEvent = false;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = frame.split('\n').find(l => l.startsWith('data:'));
-      if (!line) continue;
-      let evt: any;
-      try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
-      sawEvent = true;
-      if (evt.type === 'stage' && onStage && evt.detail) onStage(evt.detail);
-      else if (evt.type === 'done' && evt.data) result = evt.data;
-      else if (evt.type === 'error') {
-        const err: any = new Error(evt.detail || '生成失败');
-        err.response = { status: evt.status || 502, data: { detail: evt.detail } };
-        throw err;
+  const session = getAuthSnapshot();
+  const token = session.token;
+  const controller = new AbortController();
+  const unregister = registerSessionCleanup(() => controller.abort());
+  const base = getActiveApiBaseUrl();
+  let deliveredQuick = false;
+  try {
+    const resp = await fetch(`${base}/api/research/deep-draft/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-DF-Web': DF_WEB_TOKEN,
+        ...(token && sessionOwnsRequest(base) ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Account changed');
+    if (!resp.ok || !resp.body) {
+      let detail = '';
+      try { detail = (await resp.json())?.detail || ''; } catch { /* 保留状态码提示 */ }
+      if (resp.status === 401 && token && sessionOwnsRequest(base)) invalidateAuthSession(token);
+      const err: any = new Error(detail || `HTTP ${resp.status}`);
+      err.response = { status: resp.status, data: { detail } };
+      throw err;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let result: ResearchDeepDraftResponse | null = null;
+    let sawEvent = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (!isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Account changed');
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = frame.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        let evt: any;
+        try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        sawEvent = true;
+        if (!isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Account changed');
+        if (evt.type === 'stage' && onStage && evt.detail) onStage(evt.detail);
+        else if (evt.type === 'quick' && evt.data) {
+          deliveredQuick = true;
+          onQuick?.(evt.data);
+        }
+        else if (evt.type === 'done' && evt.data) result = evt.data;
+        else if (evt.type === 'error') {
+          const err: any = new Error(evt.detail || '生成失败');
+          err.response = { status: evt.status || 502, data: { detail: evt.detail } };
+          throw err;
+        }
       }
     }
-  }
-  if (result) return result;
-  if (!sawEvent) {
-    const err: any = new Error('stream unavailable');
-    err.streamUnavailable = true;
+    if (result) return result;
+    if (!sawEvent) {
+      const err: any = new Error('stream unavailable');
+      err.streamUnavailable = true;
+      throw err;
+    }
+    const err: any = new Error('解读中断，请重试');
+    err.response = { status: 502, data: { detail: '解读中断，请重试' } };
     throw err;
-  }
-  const err: any = new Error('解读中断，请重试');
-  err.response = { status: 502, data: { detail: '解读中断，请重试' } };
-  throw err;
+  } catch (err: any) {
+    // Once the useful preview was delivered, a broken deep stream must not
+    // trigger another billable compact request in the caller.
+    if (deliveredQuick && err && typeof err === 'object') err.streamDeliveredResult = true;
+    throw err;
+  } finally { unregister(); }
 }
 
 /** 图片型研报（无文字层）的多模态视觉解读——渲染页面图像交给视觉模型读图出观点。 */

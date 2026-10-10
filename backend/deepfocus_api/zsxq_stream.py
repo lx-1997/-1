@@ -211,12 +211,7 @@ async def fetch_stream(
 # 分享落地页持久化：白名单用户分享机构纪要 → /note/{id} 公开软墙页（标题+短导语钩子，
 # 不放全文/不透来源/noindex）。只存构建钩子所需的最小字段，不存全文——降低第三方内容留存面。
 # --------------------------------------------------------------------------- #
-SHARE_DB = Path(
-    os.getenv(
-        "DEEPFOCUS_ZSXQ_SHARE_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".zsxq_share.sqlite3"),
-    )
-)
+SHARE_DB = db.data_path('.zsxq_share.sqlite3', 'DEEPFOCUS_ZSXQ_SHARE_DB_PATH')
 _SHARE_MAX = 8000        # 行数上限，滚动裁剪（1.8G 机器守内存/磁盘）
 _SHARE_LEAD_LEN = 100    # 公开导语长度：够钩子、远不够全文
 

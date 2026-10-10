@@ -22,12 +22,7 @@ from .schemas import (
 )
 
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_MCP_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".mcp_hub.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.mcp_hub.sqlite3', 'DEEPFOCUS_MCP_DB_PATH')
 
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DEEPFOCUS_MCP_HTTP_TIMEOUT_SECONDS", "20"))
 MCP_PROTOCOL_VERSION = os.getenv("DEEPFOCUS_MCP_PROTOCOL_VERSION", "2025-06-18")

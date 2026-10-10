@@ -38,12 +38,7 @@ _AUTH_FAIL_MAX = int(os.getenv("DEEPFOCUS_PARTNER_AUTHFAIL_MAX", "20"))  # 每 I
 
 
 def _db_path() -> Path:
-    return Path(
-        os.getenv(
-            "DEEPFOCUS_PARTNER_API_DB_PATH",
-            str(Path(__file__).resolve().parents[1] / ".partner_api.sqlite3"),
-        )
-    )
+    return db.data_path('.partner_api.sqlite3', 'DEEPFOCUS_PARTNER_API_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

@@ -5,6 +5,7 @@ import math
 import os
 import sqlite3
 from . import db
+from .ownership import owner_filter
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,15 +23,10 @@ from .shared_utils import (
     utc_now_iso,
 )
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_RISK_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".risk_management.sqlite3"),
-    )
-)
+DB_PATH = db.data_path(".risk_management.sqlite3", "DEEPFOCUS_RISK_DB_PATH")
 
 _POSITION_FIELDS = [
-    "id", "symbol", "name", "market", "asset_class", "direction",
+    "id", "owner_user_id", "symbol", "name", "market", "asset_class", "direction",
     "entry_price", "entry_date", "quantity", "current_price",
     "stop_loss", "take_profit", "position_size_pct", "sector",
     "strategy", "notes", "tags_json", "greeks_json",
@@ -56,9 +52,11 @@ def _connect() -> sqlite3.Connection:
 
 def init_risk_db() -> None:
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS positions (
                 id TEXT PRIMARY KEY,
+                owner_user_id TEXT,
                 symbol TEXT NOT NULL,
                 name TEXT NOT NULL DEFAULT '',
                 market TEXT NOT NULL DEFAULT 'US',
@@ -123,6 +121,10 @@ def init_risk_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pnl_position ON pnl_records(position_id)"
         )
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(positions)")}
+        if "owner_user_id" not in columns:
+            conn.execute("ALTER TABLE positions ADD COLUMN owner_user_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_positions_owner ON positions(owner_user_id, status)")
         _seed_default_risk_limits(conn)
         conn.commit()
 
@@ -444,12 +446,15 @@ def create_position(
     notes: str = "",
     tags: Optional[list[str]] = None,
     greeks: Optional[dict[str, float]] = None,
+    *,
+    owner_user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     init_risk_db()
     now = utc_now_iso()
     pos_id = str(uuid.uuid4())
     record = {
         "id": pos_id,
+        "owner_user_id": owner_user_id,
         "symbol": symbol.upper(),
         "name": name,
         "market": market,
@@ -482,34 +487,36 @@ def create_position(
     return get_position(pos_id) or record
 
 
-def get_position(position_id: str) -> Optional[dict[str, Any]]:
+def get_position(position_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> Optional[dict[str, Any]]:
     init_risk_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM positions WHERE id = ?", (position_id,)
+            "SELECT * FROM positions WHERE id = ?" + (f" AND {clause}" if clause else ""), [position_id, *values]
         ).fetchone()
     if not row:
         return None
     return _row_to_dict(row, _POSITION_FIELDS)
 
 
-def list_positions(status: Optional[str] = None) -> list[dict[str, Any]]:
+def list_positions(status: Optional[str] = None, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> list[dict[str, Any]]:
     init_risk_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
+    clauses = [clause] if clause else []
+    if status:
+        clauses.append("status = ?")
+        values.append(status)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
     with _connect() as conn:
-        if status:
-            rows = conn.execute(
-                "SELECT * FROM positions WHERE status = ? ORDER BY created_at DESC",
-                (status,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM positions ORDER BY created_at DESC"
-            ).fetchall()
+        rows = conn.execute("SELECT * FROM positions" + where + " ORDER BY created_at DESC", values).fetchall()
     return [_row_to_dict(dict(row), _POSITION_FIELDS) for row in rows]
 
 
 def update_position(
     position_id: str,
+    *,
+    owner_user_id: Optional[str] = None,
+    is_admin: bool = False,
     **kwargs: Any,
 ) -> Optional[dict[str, Any]]:
     init_risk_db()
@@ -520,13 +527,12 @@ def update_position(
         "position_size_pct", "sector", "strategy", "notes", "status",
     }
     updates = {k: v for k, v in kwargs.items() if k in allowed}
-    if not updates:
-        return get_position(position_id)
-
     if "tags" in kwargs:
         updates["tags_json"] = json.dumps(kwargs["tags"], ensure_ascii=False)
     if "greeks" in kwargs:
         updates["greeks_json"] = json.dumps(kwargs["greeks"], ensure_ascii=False)
+    if not updates:
+        return get_position(position_id, owner_user_id=owner_user_id, is_admin=is_admin)
 
     updates["updated_at"] = now
     if updates.get("status") == "closed":
@@ -534,20 +540,26 @@ def update_position(
 
     set_clause = ", ".join([f"{k} = :{k}" for k in updates])
     updates["id"] = position_id
+    clause, owner_values = owner_filter(owner_user_id, is_admin)
+    where = "id = :id"
+    if clause:
+        where += " AND owner_user_id = :request_owner"
+        updates["request_owner"] = owner_values[0]
 
     with _connect() as conn:
         conn.execute(
-            f"UPDATE positions SET {set_clause} WHERE id = :id",
+            f"UPDATE positions SET {set_clause} WHERE {where}",
             updates,
         )
         conn.commit()
-    return get_position(position_id)
+    return get_position(position_id, owner_user_id=owner_user_id, is_admin=is_admin)
 
 
-def delete_position(position_id: str) -> bool:
+def delete_position(position_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> bool:
     init_risk_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
-        cursor = conn.execute("DELETE FROM positions WHERE id = ?", (position_id,))
+        cursor = conn.execute("DELETE FROM positions WHERE id = ?" + (f" AND {clause}" if clause else ""), [position_id, *values])
         conn.commit()
         return cursor.rowcount > 0
 
@@ -560,36 +572,35 @@ def close_position(
     position_id: str,
     exit_price: float,
     exit_reason: str = "",
+    *,
+    owner_user_id: Optional[str] = None,
+    is_admin: bool = False,
 ) -> Optional[dict[str, Any]]:
-    pos = get_position(position_id)
-    if not pos:
-        return None
-    if pos.get("status") == "closed":
-        raise PositionAlreadyClosedError(position_id)
-
-    entry_price = safe_float(pos.get("entry_price"), 0)
-    quantity = safe_float(pos.get("quantity"), 0)
-    direction = pos.get("direction", "long")
-
-    if direction == "long":
-        realized_pnl = (exit_price - entry_price) * quantity
-    else:
-        realized_pnl = (entry_price - exit_price) * quantity
-
-    return_pct = (realized_pnl / (entry_price * quantity) * 100) if entry_price > 0 and quantity > 0 else 0
-
-    entry_date = pos.get("entry_date", "")
-    holding_days = 0
-    if entry_date:
-        try:
-            entry_dt = datetime.strptime(entry_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            holding_days = (datetime.now(timezone.utc) - entry_dt).days
-        except ValueError:
-            pass
-
+    init_risk_db()
     now = utc_now_iso()
     pnl_id = str(uuid.uuid4())
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        # 读取、计算和记账共用一份锁内快照，防止重复平仓或并发修改成本/数量造成账实不符。
+        clause, values = owner_filter(owner_user_id, is_admin)
+        current = conn.execute("SELECT * FROM positions WHERE id=?" + (f" AND {clause}" if clause else ""), [position_id, *values]).fetchone()
+        if current is None:
+            return None
+        if current["status"] == "closed":
+            raise PositionAlreadyClosedError(position_id)
+        pos = dict(current)
+        entry_price = safe_float(pos.get("entry_price"), 0)
+        quantity = safe_float(pos.get("quantity"), 0)
+        direction = pos.get("direction", "long")
+        realized_pnl = (exit_price - entry_price) * quantity if direction == "long" else (entry_price - exit_price) * quantity
+        return_pct = (realized_pnl / (entry_price * quantity) * 100) if entry_price > 0 and quantity > 0 else 0
+        holding_days = 0
+        if pos.get("entry_date"):
+            try:
+                entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                holding_days = (datetime.now(timezone.utc) - entry_dt).days
+            except ValueError:
+                pass
         conn.execute(
             """INSERT INTO pnl_records (id, position_id, symbol, date, entry_price, exit_price,
                quantity, realized_pnl, unrealized_pnl, total_pnl, return_pct, holding_days,
@@ -610,11 +621,11 @@ def close_position(
         )
         conn.commit()
 
-    return get_position(position_id)
+    return get_position(position_id, owner_user_id=owner_user_id, is_admin=is_admin)
 
 
-def refresh_position_prices() -> list[dict[str, Any]]:
-    open_positions = list_positions(status="open")
+def refresh_position_prices(*, owner_user_id: Optional[str] = None, is_admin: bool = False) -> list[dict[str, Any]]:
+    open_positions = list_positions(status="open", owner_user_id=owner_user_id, is_admin=is_admin)
     if not open_positions:
         return []
 
@@ -641,7 +652,7 @@ def refresh_position_prices() -> list[dict[str, Any]]:
     for pos in open_positions:
         current_price = price_map.get(pos["symbol"].upper())
         if current_price and current_price > 0:
-            update_position(pos["id"], current_price=current_price)
+            update_position(pos["id"], current_price=current_price, owner_user_id=owner_user_id, is_admin=is_admin)
             pos["current_price"] = current_price
             updated.append(pos)
 
@@ -679,14 +690,14 @@ def update_risk_limit(key: str, value: float, enabled: Optional[bool] = None) ->
     return dict(row) if row else None
 
 
-def get_risk_summary() -> dict[str, Any]:
-    positions = list_positions()
+def get_risk_summary(*, owner_user_id: Optional[str] = None, is_admin: bool = False) -> dict[str, Any]:
+    positions = list_positions(owner_user_id=owner_user_id, is_admin=is_admin)
     open_positions = [p for p in positions if p.get("status") == "open"]
     closed_positions = [p for p in positions if p.get("status") == "closed"]
 
     portfolio = calculate_portfolio_metrics(open_positions)
 
-    pnl_records = list_pnl_records()
+    pnl_records = list_pnl_records(owner_user_id=owner_user_id, is_admin=is_admin)
     daily_returns = [r.get("return_pct", 0) / 100 for r in pnl_records if r.get("return_pct")]
     var_result = calculate_var(
         daily_returns,
@@ -747,24 +758,21 @@ def get_risk_summary() -> dict[str, Any]:
     }
 
 
-def list_pnl_records(position_id: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+def list_pnl_records(position_id: Optional[str] = None, limit: int = 100, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> list[dict[str, Any]]:
     init_risk_db()
+    clause, values = owner_filter(owner_user_id, is_admin, column="p.owner_user_id")
+    clauses = [clause] if clause else []
+    if position_id:
+        clauses.append("r.position_id = ?")
+        values.append(position_id)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
     with _connect() as conn:
-        if position_id:
-            rows = conn.execute(
-                "SELECT * FROM pnl_records WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
-                (position_id, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM pnl_records ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        rows = conn.execute("SELECT r.* FROM pnl_records r JOIN positions p ON p.id=r.position_id" + where + " ORDER BY r.created_at DESC LIMIT ?", [*values, max(1, min(limit, 1000))]).fetchall()
     return [dict(row) for row in rows]
 
 
-def get_pnl_summary() -> dict[str, Any]:
-    records = list_pnl_records(limit=500)
+def get_pnl_summary(*, owner_user_id: Optional[str] = None, is_admin: bool = False) -> dict[str, Any]:
+    records = list_pnl_records(limit=500, owner_user_id=owner_user_id, is_admin=is_admin)
     if not records:
         return {
             "total_realized_pnl": 0,

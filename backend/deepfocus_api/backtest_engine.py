@@ -5,6 +5,7 @@ import math
 import os
 import sqlite3
 from . import db
+from .ownership import owner_filter
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,15 +19,10 @@ from .shared_utils import (
     utc_now_iso,
 )
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_BACKTEST_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".backtest_engine.sqlite3"),
-    )
-)
+DB_PATH = db.data_path(".backtest_engine.sqlite3", "DEEPFOCUS_BACKTEST_DB_PATH")
 
 _BACKTEST_FIELDS = [
-    "id", "name", "market", "strategy_type", "symbols_json",
+    "id", "owner_user_id", "name", "market", "strategy_type", "symbols_json",
     "start_date", "end_date", "initial_capital", "benchmark",
     "parameters_json", "status", "progress",
     "result_json", "error",
@@ -44,9 +40,11 @@ def _connect() -> sqlite3.Connection:
 
 def init_backtest_db() -> None:
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS backtests (
                 id TEXT PRIMARY KEY,
+                owner_user_id TEXT,
                 name TEXT NOT NULL DEFAULT '',
                 market TEXT NOT NULL DEFAULT 'US',
                 strategy_type TEXT NOT NULL DEFAULT 'momentum',
@@ -68,6 +66,10 @@ def init_backtest_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_backtests_status ON backtests(status)"
         )
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(backtests)")}
+        if "owner_user_id" not in columns:
+            conn.execute("ALTER TABLE backtests ADD COLUMN owner_user_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_backtests_owner ON backtests(owner_user_id, created_at)")
         conn.commit()
 
 
@@ -81,6 +83,8 @@ def create_backtest(
     initial_capital: float = 100000,
     benchmark: str = "SPY",
     parameters: Optional[dict[str, Any]] = None,
+    *,
+    owner_user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     init_backtest_db()
     now = utc_now_iso()
@@ -93,6 +97,7 @@ def create_backtest(
 
     record = {
         "id": bt_id,
+        "owner_user_id": owner_user_id,
         "name": name,
         "market": market,
         "strategy_type": strategy_type,
@@ -120,11 +125,12 @@ def create_backtest(
     return get_backtest(bt_id) or record
 
 
-def get_backtest(backtest_id: str) -> Optional[dict[str, Any]]:
+def get_backtest(backtest_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> Optional[dict[str, Any]]:
     init_backtest_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM backtests WHERE id = ?", (backtest_id,)
+            "SELECT * FROM backtests WHERE id = ?" + (f" AND {clause}" if clause else ""), [backtest_id, *values]
         ).fetchone()
     if not row:
         return None
@@ -144,12 +150,13 @@ def get_backtest(backtest_id: str) -> Optional[dict[str, Any]]:
     return result
 
 
-def list_backtests(limit: int = 50) -> list[dict[str, Any]]:
+def list_backtests(limit: int = 50, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> list[dict[str, Any]]:
     init_backtest_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM backtests ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            "SELECT * FROM backtests" + (f" WHERE {clause}" if clause else "") + " ORDER BY created_at DESC LIMIT ?",
+            [*values, max(1, min(limit, 200))],
         ).fetchall()
     results = []
     for row in rows:
@@ -170,7 +177,7 @@ def list_backtests(limit: int = 50) -> list[dict[str, Any]]:
     return results
 
 
-def update_backtest(backtest_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+def update_backtest(backtest_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False, **kwargs: Any) -> Optional[dict[str, Any]]:
     init_backtest_db()
     now = utc_now_iso()
     allowed = {"name", "market", "strategy_type", "start_date", "end_date",
@@ -188,22 +195,42 @@ def update_backtest(backtest_id: str, **kwargs: Any) -> Optional[dict[str, Any]]
         updates["completed_at"] = now
     updates["updated_at"] = now
     updates["id"] = backtest_id
+    clause, owner_values = owner_filter(owner_user_id, is_admin)
+    where = "id = :id"
+    if clause:
+        where += " AND owner_user_id = :request_owner"
+        updates["request_owner"] = owner_values[0]
 
-    set_clause = ", ".join([f"{k} = :{k}" for k in updates if k != "id"])
+    set_clause = ", ".join([f"{k} = :{k}" for k in updates if k not in {"id", "request_owner"}])
 
     with _connect() as conn:
         conn.execute(
-            f"UPDATE backtests SET {set_clause} WHERE id = :id",
+            f"UPDATE backtests SET {set_clause} WHERE {where}",
             updates,
         )
         conn.commit()
-    return get_backtest(backtest_id)
+    return get_backtest(backtest_id, owner_user_id=owner_user_id, is_admin=is_admin)
 
 
-def delete_backtest(backtest_id: str) -> bool:
+def claim_backtest(backtest_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> bool:
+    """原子占有一次运行；连接重放不能重跑 running/completed 的记录。"""
     init_backtest_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
     with _connect() as conn:
-        cursor = conn.execute("DELETE FROM backtests WHERE id = ?", (backtest_id,))
+        cursor = conn.execute(
+            "UPDATE backtests SET status='running', progress=5, error=NULL, updated_at=? WHERE id=? AND status IN ('pending','failed')"
+            + (f" AND {clause}" if clause else ""),
+            [utc_now_iso(), backtest_id, *values],
+        )
+        conn.commit()
+    return cursor.rowcount == 1
+
+
+def delete_backtest(backtest_id: str, *, owner_user_id: Optional[str] = None, is_admin: bool = False) -> bool:
+    init_backtest_db()
+    clause, values = owner_filter(owner_user_id, is_admin)
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM backtests WHERE id = ?" + (f" AND {clause}" if clause else ""), [backtest_id, *values])
         conn.commit()
         return cursor.rowcount > 0
 

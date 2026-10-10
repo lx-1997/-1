@@ -25,6 +25,8 @@ from typing import Any, Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from .cost_quotas import quota_scope
+from .ownership import bind_owner
 from . import mcp_oauth, mcp_tokens
 from .mcp_local import PROTOCOL_VERSION
 
@@ -743,6 +745,7 @@ async def _tool_aifund(args: dict) -> Any:
     return await asyncio.to_thread(_aifund_snapshot, str(args.get("strategy") or "").strip())
 
 
+@quota_scope
 async def _tool_ask_ai(args: dict, user_out) -> dict:
     question = str(args.get("question") or "").strip()[:_ASK_MAX_CHARS]
     if not question:
@@ -751,6 +754,7 @@ async def _tool_ask_ai(args: dict, user_out) -> dict:
     from .main import (
         OrchestratorChatRequest,
         _check_agent_quota,
+        _complete_cost_quota,
         _record_agent_chain,
         _route_orchestrator_chat,
         metrics_incr,
@@ -793,8 +797,8 @@ async def _tool_ask_ai(args: dict, user_out) -> dict:
     finally:
         _agent_tools._BINDING_USER.reset(tok)
     answer = (getattr(routed, "content", "") or "").strip()
-    if quota_key:
-        metrics_incr(quota_key)  # 与网页端一致：成功回答才扣次
+    if quota_key and answer and str(getattr(routed, "title", "") or "") != "先确定选股范围":
+        _complete_cost_quota(quota_key)
     from .compliance import ai_label
     from .privacy_guard import scrub_internal_text
 
@@ -894,67 +898,68 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
     if not isinstance(arguments, dict):
         return _rpc_error(request_id, -32602, "Tool arguments must be an object", session_id)
 
-    try:
-        if tool_name == "ping":
-            value = await _tool_ping(user_out)
-        elif tool_name == "search_market_symbols":
-            value = await _tool_search_symbols(arguments)
-        elif tool_name == "get_market_quotes":
-            value = await _tool_quotes(arguments)
-        elif tool_name == "get_review_today":
-            value = await _tool_review_today()
-        elif tool_name == "get_review":
-            value = await _tool_review(arguments)
-        elif tool_name == "list_reviews":
-            value = await _tool_reviews(arguments)
-        elif tool_name == "get_stock_verdict":
-            value = await _tool_verdict(arguments)
-        elif tool_name == "search_news":
-            value = await _tool_news(arguments)
-        elif tool_name == "search_research":
-            value = await _tool_research(arguments)
-        elif tool_name == "get_theme_stocks":
-            value = await _tool_theme_stocks(arguments)
-        elif tool_name == "get_stock_themes":
-            value = await _tool_stock_themes(arguments)
-        elif tool_name == "get_kline":
-            value = await _tool_kline(arguments)
-        elif tool_name == "get_market_dashboard":
-            value = await _tool_dashboard()
-        elif tool_name == "get_risk_radar":
-            value = await _tool_risk_radar(arguments)
-        elif tool_name == "get_theme_boards":
-            value = await _tool_theme_boards(arguments)
-        elif tool_name == "get_limit_up_ladder":
-            value = await _tool_limit_up(arguments)
-        elif tool_name == "get_dragon_tiger":
-            value = await _tool_dragon_tiger(arguments)
-        elif tool_name == "get_market_calendar":
-            value = await _tool_calendar(arguments)
-        elif tool_name == "universal_search":
-            value = await _tool_usearch(arguments)
-        elif tool_name == "get_headlines":
-            value = await _tool_headlines()
-        elif tool_name == "get_track_record":
-            value = await _tool_track_record()
-        elif tool_name == "get_ai_fund_snapshot":
-            value = await _tool_aifund(arguments)
-        elif tool_name == "search_stock_reports":
-            value = await _tool_stock_reports(arguments)
-        elif tool_name == "search_minutes":
-            value = await _tool_search_minutes(arguments)
-        elif tool_name == "get_minutes_sentiment":
-            value = await _tool_minutes_sentiment(arguments)
-        elif tool_name == "ask_ai":
-            value = await _tool_ask_ai(arguments, user_out)
-        else:
-            return _rpc_error(request_id, -32602, f"Unknown tool: {tool_name}", session_id)
-    except ValueError as exc:
-        return _result(request_id, {**_text_result({"error": str(exc)}), "isError": True}, session_id)
-    except HTTPException as exc:  # 会员墙 402/403 等：把引导语原样给到客户端模型
-        return _result(request_id, {**_text_result({"error": str(exc.detail or exc)}), "isError": True}, session_id)
-    except Exception as exc:  # noqa: BLE001 - MCP 错误保持 JSON-RPC 形态返回给客户端模型
-        return _result(request_id, {**_text_result({"error": f"服务暂时不可用：{exc}"}), "isError": True}, session_id)
+    with bind_owner(user_id):
+        try:
+            if tool_name == "ping":
+                value = await _tool_ping(user_out)
+            elif tool_name == "search_market_symbols":
+                value = await _tool_search_symbols(arguments)
+            elif tool_name == "get_market_quotes":
+                value = await _tool_quotes(arguments)
+            elif tool_name == "get_review_today":
+                value = await _tool_review_today()
+            elif tool_name == "get_review":
+                value = await _tool_review(arguments)
+            elif tool_name == "list_reviews":
+                value = await _tool_reviews(arguments)
+            elif tool_name == "get_stock_verdict":
+                value = await _tool_verdict(arguments)
+            elif tool_name == "search_news":
+                value = await _tool_news(arguments)
+            elif tool_name == "search_research":
+                value = await _tool_research(arguments)
+            elif tool_name == "get_theme_stocks":
+                value = await _tool_theme_stocks(arguments)
+            elif tool_name == "get_stock_themes":
+                value = await _tool_stock_themes(arguments)
+            elif tool_name == "get_kline":
+                value = await _tool_kline(arguments)
+            elif tool_name == "get_market_dashboard":
+                value = await _tool_dashboard()
+            elif tool_name == "get_risk_radar":
+                value = await _tool_risk_radar(arguments)
+            elif tool_name == "get_theme_boards":
+                value = await _tool_theme_boards(arguments)
+            elif tool_name == "get_limit_up_ladder":
+                value = await _tool_limit_up(arguments)
+            elif tool_name == "get_dragon_tiger":
+                value = await _tool_dragon_tiger(arguments)
+            elif tool_name == "get_market_calendar":
+                value = await _tool_calendar(arguments)
+            elif tool_name == "universal_search":
+                value = await _tool_usearch(arguments)
+            elif tool_name == "get_headlines":
+                value = await _tool_headlines()
+            elif tool_name == "get_track_record":
+                value = await _tool_track_record()
+            elif tool_name == "get_ai_fund_snapshot":
+                value = await _tool_aifund(arguments)
+            elif tool_name == "search_stock_reports":
+                value = await _tool_stock_reports(arguments)
+            elif tool_name == "search_minutes":
+                value = await _tool_search_minutes(arguments)
+            elif tool_name == "get_minutes_sentiment":
+                value = await _tool_minutes_sentiment(arguments)
+            elif tool_name == "ask_ai":
+                value = await _tool_ask_ai(arguments, user_out)
+            else:
+                return _rpc_error(request_id, -32602, f"Unknown tool: {tool_name}", session_id)
+        except ValueError as exc:
+            return _result(request_id, {**_text_result({"error": str(exc)}), "isError": True}, session_id)
+        except HTTPException as exc:  # 会员墙 402/403 等：把引导语原样给到客户端模型
+            return _result(request_id, {**_text_result({"error": str(exc.detail or exc)}), "isError": True}, session_id)
+        except Exception as exc:  # noqa: BLE001 - MCP 错误保持 JSON-RPC 形态返回给客户端模型
+            return _result(request_id, {**_text_result({"error": f"服务暂时不可用：{exc}"}), "isError": True}, session_id)
 
     mcp_tokens.record_success(token_hash, token_prefix)
     try:

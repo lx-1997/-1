@@ -31,7 +31,7 @@ from .research_workbench import WORKBENCH_DIR
 # 知识星球「海外投行报告」星球 ID（与研报工作台默认一致）；同机 Node 工作台内部地址
 ZSXQ_GROUP = os.getenv("ZSXQ_GROUP", "88888142214212").strip()
 _WORKBENCH_PORT = os.getenv("RESEARCH_WORKBENCH_INTERNAL_PORT", "3927").strip()
-_WORKBENCH_BASE = f"http://127.0.0.1:{_WORKBENCH_PORT}"
+_WORKBENCH_BASE = os.getenv("RESEARCH_WORKBENCH_UPSTREAM_URL", f"http://127.0.0.1:{_WORKBENCH_PORT}").rstrip("/")
 
 # 研报登录态（ZSXQ cookie）热更新：存到本地文件，运行时可经网页一键替换、即时生效、免重启/免SSH。
 # 若设置了 override，则每次检索把它作为 payload.cookie 传给工作台（优先级高于工作台 env ZSXQ_COOKIE）。

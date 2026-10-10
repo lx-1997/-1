@@ -118,12 +118,7 @@ SOURCE_TIERS: list[tuple[str, str, tuple[str, ...]]] = [
 
 
 def _db_path() -> Path:
-    return Path(
-        os.getenv(
-            "DEEPFOCUS_CONTENT_ONTOLOGY_DB_PATH",
-            str(Path(__file__).resolve().parents[1] / ".content_ontology.sqlite3"),
-        )
-    )
+    return db.data_path('.content_ontology.sqlite3', 'DEEPFOCUS_CONTENT_ONTOLOGY_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

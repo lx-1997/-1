@@ -16,12 +16,7 @@ from .shared_utils import utc_now_iso
 （iLink 出站强制带 context_token，见 [[wechat-push-channel]]）。
 """
 
-DB_PATH = Path(
-    os.getenv(
-        "DEEPFOCUS_WEIXIN_BIND_DB_PATH",
-        str(Path(__file__).resolve().parents[1] / ".weixin_bind.sqlite3"),
-    )
-)
+DB_PATH = db.data_path('.weixin_bind.sqlite3', 'DEEPFOCUS_WEIXIN_BIND_DB_PATH')
 
 
 def _connect() -> sqlite3.Connection:

@@ -75,7 +75,7 @@ def test_temporary_preview_rejects_non_workbench_url(monkeypatch):
 
 def test_wire_file_uses_stream_path_and_keeps_membership_gate(monkeypatch):
     monkeypatch.setattr(main, "_SERVE_RESEARCH_ORIGINAL", True)
-    monkeypatch.setattr(main, "require_current_user", lambda request: {"sub": "u-test", "username": "paid-user"})
+    monkeypatch.setattr(main, "require_current_user", lambda request: {"sub": "u-test", "username": "lx199710"})
     monkeypatch.setattr(main, "membership_of_username", lambda value: {"tier": "premium"})
     monkeypatch.setattr(ifind_api, "allowed_usernames", lambda: set())
     monkeypatch.setattr(main, "metrics_incr_research", lambda *args: None)
@@ -138,3 +138,12 @@ def test_auth_middleware_only_bypasses_wire_file_when_one_time_token_is_present(
     assert allowed.status_code == 204
     assert blocked.status_code == 401
     assert calls == ["/api/research/wire-file"]
+
+
+def test_wire_file_rejects_non_allowlisted_account(monkeypatch):
+    monkeypatch.setattr(main, "_SERVE_RESEARCH_ORIGINAL", True)
+    monkeypatch.setattr(main, "require_current_user", lambda request: {"sub": "ordinary", "username": "paid-user"})
+    monkeypatch.setattr(main, "membership_of_username", lambda value: {"tier": "premium"})
+    with pytest.raises(Exception) as exc:
+        asyncio.run(main.api_research_wire_file(_request(), file_id="fid-3", name="report.pdf"))
+    assert getattr(exc.value, "status_code", None) == 402
