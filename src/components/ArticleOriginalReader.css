@@ -47,6 +47,7 @@
 .bbt-article-reader__source p { margin: 4px 8px 2px; color: var(--mute, #95a3b3); font-family: Georgia, 'Times New Roman', serif; font-size: 13px; line-height: 1.7; }
 .bbt-article-reader__empty { padding: 48px 0; color: var(--mute, #95a3b3); text-align: center; }
 .bbt-article-reader__footer { margin-top: 32px; padding-top: 13px; border-top: 1px solid var(--line-2, rgba(255,255,255,.12)); color: var(--mute, #95a3b3); font-size: 10px; line-height: 1.6; }
+.bbt-article-reader__copy-note { margin: 0 0 14px; padding-bottom: 9px; border-bottom: 1px dashed var(--line-2, rgba(255,255,255,.12)); color: var(--mute, #95a3b3); font-size: 11px; letter-spacing: .02em; }
 
 .bbt-article-reader--loading { padding: 52px 44px; box-sizing: border-box; }
 .bbt-article-reader--loading h2 { margin: 12px 0 8px; color: var(--text-strong, #f2f6fa); font-size: 22px; }

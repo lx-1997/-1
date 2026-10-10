@@ -82,7 +82,7 @@ const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
         {sourceImageUrl && (
           <figure className="bbt-article-reader__source-file" aria-label="文章原始文件">
             <figcaption>
-              原文原件 · 来源截图{isPdf ? '（PDF）' : ''}
+              上游原件 · {isPdf ? 'PDF' : '截图'}按原样呈现
             </figcaption>
             {isPdf ? (
               <object className="bbt-article-reader__pdf" data={sourceImageUrl} type="application/pdf" aria-label="文章原始 PDF">
@@ -95,6 +95,7 @@ const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
         )}
 
         <div className="bbt-article-reader__body">
+          {sourceImageUrl && <div className="bbt-article-reader__copy-note">文字对照版 · 自动提取自原件，个别字句可能有误差</div>}
           {source.sections.map((section, sectionIndex) => (
             <section key={`section-${sectionIndex}`} className="bbt-article-reader__section">
               {section.heading && <h2>{section.heading}</h2>}
@@ -109,17 +110,15 @@ const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
         </div>
 
         {!hasBody && !loading && !sourceImageUrl && <div className="bbt-article-reader__empty">暂无可阅读正文</div>}
-        {sourceImageUrl
-          ? <div className="bbt-article-reader__alert bbt-article-reader__alert--muted">上方为上游原始文件（真原文）；下方文字为机器提取副本，仅供检索与无障碍阅读，可能存在识别误差。</div>
-          : parser === 'stored-fallback'
-            ? <div className="bbt-article-reader__alert bbt-article-reader__alert--muted bbt-article-reader__alert--with-action">
-              <span>来源全文暂时无法读取，已先展示已收录正文；稍后可重试补齐全文。</span>
-              {onRetry && <button type="button" onClick={onRetry}>重试读取</button>}
-            </div>
-            : truncated && <div className="bbt-article-reader__alert bbt-article-reader__alert--muted">原文较长，当前显示的是已提取的前段文字。</div>}
+        {!sourceImageUrl && parser === 'stored-fallback'
+          ? <div className="bbt-article-reader__alert bbt-article-reader__alert--muted bbt-article-reader__alert--with-action">
+            <span>来源全文暂时无法读取，已先展示已收录正文；稍后可重试补齐全文。</span>
+            {onRetry && <button type="button" onClick={onRetry}>重试读取</button>}
+          </div>
+          : !sourceImageUrl && truncated && <div className="bbt-article-reader__alert bbt-article-reader__alert--muted">原文较长，当前显示的是已提取的前段文字。</div>}
         <footer className="bbt-article-reader__footer">
           {sourceImageUrl
-            ? '原件直出：不经 AI 转写、不裁剪；链接为一次性预览，仅本次阅读有效。'
+            ? '正文以上游原件为准，文字版便于快速浏览与引用。'
             : '已自动隐藏网页导航、相关推荐和版权尾巴，仅保留文章正文。'}
         </footer>
       </div>
