@@ -6,9 +6,11 @@ import {
   WeiboOutlined,
   QqOutlined,
   LinkOutlined,
-  CopyOutlined
+  CopyOutlined,
+  PictureOutlined
 } from '@ant-design/icons';
 import { createShareSnapshot } from '../services/shareService';
+import { shareImageNative } from '../utils/share';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -44,6 +46,8 @@ interface ShareModalProps {
   modalTitle?: string;
   /** 极简模式：只给「可复制文案 + 可跳转链接」，不展开 12 平台/生成链接等（文章分享用）。 */
   simple?: boolean;
+  /** 提供时展示「微信分享图」：调用方现场绘制图文长图，本弹窗负责分享/复制/预览兜底。 */
+  shareImage?: () => Promise<Blob | null>;
 }
 
 // 终端暗色皮肤：Modal 走 portal 挂在 body 下、拿不到 .bbt 作用域里的变量，
@@ -77,6 +81,7 @@ const ShareModal: React.FC<ShareModalProps> = ({
   content,
   modalTitle,
   simple,
+  shareImage,
 }) => {
   // 旧调用方（社区帖子）按需转换；不再伪造 https://deepfocus.com/post/ 链接（历史死代码，域名是错的）。
   const target: ShareTarget = content
@@ -85,13 +90,17 @@ const ShareModal: React.FC<ShareModalProps> = ({
   const [customMessage, setCustomMessage] = useState('');
   const [shareUrl, setShareUrl] = useState(target.url ?? '');
   const [generatingLink, setGeneratingLink] = useState(false);
+  // 图文长图：生成中 / 兜底预览（复制与原生分享都不可用时，长按或下载保存）
+  const [imgBusy, setImgBusy] = useState(false);
+  const [imgPreview, setImgPreview] = useState('');
   // 一旦有链接（自带或现场生成）即翻转为「带链接」模式：显示链接区、社交分享附带链接。
   const hasUrl = Boolean(shareUrl);
 
-  // 目标切换（换一条结论分享）时同步链接，并清空上次自定义文案。
+  // 目标切换（换一条结论分享）时同步链接，并清空上次自定义文案与预览图。
   useEffect(() => {
     setShareUrl(target.url ?? '');
     setCustomMessage('');
+    setImgPreview('');
   }, [target.url, target.title, target.summary]);
 
   // 生成公开只读页：把结论存成后端快照，拿到免登录、可被搜索/转发的 URL。
@@ -195,6 +204,47 @@ const ShareModal: React.FC<ShareModalProps> = ({
     copyToClipboard(shareUrl, '链接已复制到剪贴板');
   };
 
+  // 图文长图：移动端优先原生分享面板（可发微信/朋友圈/存相册），桌面复制到剪贴板，
+  // 都不可用再回退弹内嵌预览（手机长按保存 / 桌面下载）。
+  const blobToDataUrl = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    });
+
+  const handleShareImage = async () => {
+    if (!shareImage || imgBusy) return;
+    setImgBusy(true);
+    try {
+      const blob = await shareImage();
+      if (!blob) { message.warning('图片生成失败，请重试'); return; }
+      const coarse = typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      if (coarse) {
+        const r = await shareImageNative(blob, { filename: '稻草财经-分享图.png', title: '稻草财经', text: target.title || '稻草财经 · 金融数据' });
+        if (r === 'shared') return;
+      }
+      let clipboardOk = false;
+      try {
+        const Cl = (window as any).ClipboardItem;
+        if (!coarse && navigator.clipboard && Cl) {
+          await navigator.clipboard.write([new Cl({ 'image/png': blob })]);
+          clipboardOk = true;
+        }
+      } catch { clipboardOk = false; }
+      if (clipboardOk) {
+        message.success('图片已复制到剪贴板，可直接粘贴到微信/文档');
+        return;
+      }
+      setImgPreview(await blobToDataUrl(blob));
+    } catch {
+      message.warning('图片生成失败，请重试');
+    } finally {
+      setImgBusy(false);
+    }
+  };
+
   // 复制完整内容（极简模式用带品牌行的 wechat 文案，与文本框展示一致）
   const copyContent = () => {
     copyToClipboard(customMessage || generateShareContent(simple ? 'wechat' : 'default'), '文案已复制到剪贴板');
@@ -245,8 +295,20 @@ const ShareModal: React.FC<ShareModalProps> = ({
       <style>{DARK_MODAL_CSS}</style>
       <div style={{ padding: '16px 0' }}>
         {simple ? (
-          /* 极简模式：三动作收敛——复制文案 / 复制链接 /（生成分享图待接终端出图链路，先隐藏） */
+          /* 极简模式：分享图（调用方提供出图回调时）→ 复制文案 → 复制链接 */
           <div>
+            {shareImage && (
+              <Button
+                type="primary"
+                icon={<PictureOutlined />}
+                loading={imgBusy}
+                onClick={handleShareImage}
+                block
+                style={{ marginBottom: 10 }}
+              >
+                {imgBusy ? '生成分享图…' : '微信分享图（图文长图）'}
+              </Button>
+            )}
             <Title level={5} style={{ marginTop: 0 }}>分享文案</Title>
             <TextArea
               rows={4}
@@ -270,6 +332,18 @@ const ShareModal: React.FC<ShareModalProps> = ({
                 <a href={shareUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 8, whiteSpace: 'nowrap' }}>
                   打开 ↗
                 </a>
+              </div>
+            )}
+            {imgPreview && (
+              <div style={{ marginTop: 12, textAlign: 'center' }}>
+                <img
+                  src={imgPreview}
+                  alt="分享图预览"
+                  style={{ maxWidth: '100%', maxHeight: 420, border: '1px solid var(--line-2, #1c2530)', borderRadius: 6 }}
+                />
+                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--mute2, #9aa6b2)' }}>
+                  手机长按图片保存后发到微信；桌面可 <a href={imgPreview} download="稻草财经-分享图.png">下载图片</a>
+                </div>
               </div>
             )}
           </div>

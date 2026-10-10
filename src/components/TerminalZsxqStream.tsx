@@ -10,6 +10,8 @@ import {
   type NoteSentiment,
 } from '../services/zsxqStreamService';
 import ShareButton from './common/ShareButton';
+import { drawNoteShareImage } from '../utils/noteShareImage';
+import { apiGet } from '../services/apiClient';
 import './TerminalZsxqStream.css';
 
 // 知识星球图走后端代理：绕客户端防盗链/token 失效，让长图能高清放大 + 下载成可查看的图片文件。
@@ -25,7 +27,8 @@ const cleanSourceBrand = (value: string): string =>
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-// 机构纪要分享钩子：只取标题 + ≤100 字导语（第三方付费内容不外泄全文）。落地页 /note/{id} 同口径 noindex 软墙。
+// 机构纪要分享钩子：文案口径=标题 + ≤100 字导语（第三方付费内容不外泄全文文本）；
+// 分享图为完整版（2026-10-10 用户拍板）：正文 + 原图合成长图，软墙仅对 /note/{id} 落地页文本生效。
 const noteShareTarget = (item: ZsxqTopic) => {
   const flat = cleanSourceBrand(item.text || '').replace(/\s+/g, ' ').trim();
   const lead = flat.length > 100 ? flat.slice(0, 100) + '…' : flat;
@@ -169,6 +172,23 @@ const TopicRow: React.FC<{
   const cleanText = cleanSourceBrand(item.text || '');
   const long = cleanText.length > COLLAPSE_CHARS;
   const bodyText = !long || expanded ? cleanText : cleanText.slice(0, COLLAPSE_CHARS).trimEnd() + '…';
+  // 分享长图用完整正文（不受卡片折叠限制）；落地页二维码仍指向 /note/{id}
+  const drawShareImage = useCallback(async (): Promise<Blob | null> => {
+    const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
+    let qr: { size: number; matrix: number[][] } | null = null;
+    try {
+      qr = await apiGet<{ size: number; matrix: number[][] }>('/api/qr', { params: { data: `${site}/note/${item.id}` } });
+    } catch { qr = null; }
+    const fulls = item.image_fulls?.length ? item.image_fulls : item.images;
+    return drawNoteShareImage({
+      title: cleanSourceBrand(item.title || '机构纪要'),
+      date: fmtDateTime(item.create_time || item.date),
+      text: cleanText,
+      imageUrls: fulls.map(u => zsxqImg(u)),
+      site,
+      qr,
+    });
+  }, [item, cleanText]);
   return (
     <div className={'tzs-item' + (focused ? ' tzs-item--focus' : '')} id={item.id ? `zsxq-${item.id}` : undefined}>
       <div className="tzs-item-head">
@@ -180,9 +200,10 @@ const TopicRow: React.FC<{
           <ShareButton
             className="tzs-share"
             modalTitle="分享机构纪要"
-            tooltip="分享这条机构纪要（仅标题+摘要，落地页不含全文）"
+            tooltip="分享这条机构纪要（长图含全文与原图；落地页仅标题导语）"
             simple
             target={() => noteShareTarget(item)}
+            shareImage={drawShareImage}
           >分享</ShareButton>
         )}
       </div>

@@ -15,6 +15,8 @@ interface ShareButtonProps {
   children?: React.ReactNode;
   /** 极简分享弹窗：只给可复制文案 + 可跳转链接。 */
   simple?: boolean;
+  /** 提供时弹窗展示「微信分享图」：调用方现场绘制图文长图。 */
+  shareImage?: () => Promise<Blob | null>;
 }
 
 /**
@@ -28,6 +30,7 @@ const ShareButton: React.FC<ShareButtonProps> = ({
   tooltip = '把这段结论生成分享文案',
   children,
   simple,
+  shareImage,
 }) => {
   const [active, setActive] = useState<ShareTarget | null>(null);
 
@@ -45,6 +48,7 @@ const ShareButton: React.FC<ShareButtonProps> = ({
         content={active ?? undefined}
         modalTitle={modalTitle}
         simple={simple}
+        shareImage={shareImage}
         onCancel={() => setActive(null)}
       />
     </>
