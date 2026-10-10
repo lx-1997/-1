@@ -75,3 +75,50 @@ it('stops dispatching frames from a chunk when its quick callback changes the ac
   expect(onStage).not.toHaveBeenCalled();
   expect(apiPost).not.toHaveBeenCalled();
 });
+
+it('marks clean EOF before a final result as an interrupted transport', async () => {
+  streamFrames([{ type: 'stage', detail: 'Generating' }]);
+  await expect(generateResearchDeepDraftSmart({ title: 'Report' })).rejects.toMatchObject({
+    streamInterrupted: true, response: { status: 502 },
+  });
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
+it('keeps a backend error distinct from transport EOF', async () => {
+  streamFrames([{ type: 'error', status: 502, detail: 'Provider unavailable' }]);
+  let error: any;
+  try { await generateResearchDeepDraftSmart({ title: 'Report' }); } catch (caught) { error = caught; }
+  expect(error).toMatchObject({ response: { status: 502 } });
+  expect(error.streamInterrupted).toBeUndefined();
+});
+
+it('aborts the stream when its caller unmounts or cancels without starting a fallback', async () => {
+  const controller = new AbortController();
+  let signal: AbortSignal | undefined;
+  global.fetch = jest.fn().mockImplementation((_url, options) => new Promise((_resolve, reject) => {
+    signal = options.signal;
+    signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+  }));
+  const research = generateResearchDeepDraftSmart({ title: 'Report' }, undefined, undefined, controller.signal);
+  controller.abort();
+  await expect(research).rejects.toMatchObject({ code: 'ERR_CANCELED' });
+  expect(signal!.aborted).toBe(true);
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
+it('never starts a request for an already cancelled caller', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  global.fetch = jest.fn();
+  await expect(generateResearchDeepDraftSmart({ title: 'Report' }, undefined, undefined, controller.signal)).rejects.toMatchObject({ code: 'ERR_CANCELED' });
+  expect(global.fetch).not.toHaveBeenCalled();
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
+it('forwards caller cancellation to the older non-stream fallback', async () => {
+  const controller = new AbortController();
+  streamFrames([]);
+  (apiPost as jest.Mock).mockResolvedValueOnce({ title: 'Fallback' });
+  expect(await generateResearchDeepDraftSmart({ title: 'Report' }, undefined, undefined, controller.signal)).toEqual({ title: 'Fallback' });
+  expect(apiPost).toHaveBeenCalledWith('/api/research/deep-draft', { title: 'Report' }, expect.objectContaining({ signal: controller.signal }));
+});

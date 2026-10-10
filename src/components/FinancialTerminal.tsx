@@ -200,6 +200,7 @@ interface AiBgTask {
   meta: { org?: string; symbol?: string; preview_url?: string } | null;
   content?: string;   // 文章原文：解读生成期间即可在阅读模态直接阅读，无需等待
   restart: () => void;
+  cancel?: () => void;
   startedAt: number;
   status: 'running' | 'done' | 'error';
   stage: string;
@@ -208,6 +209,45 @@ interface AiBgTask {
   deepDraft: ResearchDeepDraftInput;
   error: string;
   hidden?: boolean;   // 运行中被移除：完成后静默入缓存，不再提醒
+}
+
+export function isResearchNetworkDrop(error: any): boolean {
+  if (!error || error.streamDeliveredResult || ['AbortError', 'CanceledError'].includes(error.name)
+    || ['ERR_CANCELED', 'ECONNABORTED', 'ETIMEDOUT'].includes(error.code)) return false;
+  const status = error.response?.status ?? error.status;
+  // Only the reader marks EOF without a done frame; backend 502 errors do not.
+  if (error.streamInterrupted) return true;
+  if (status !== undefined) return false;
+  return error.code === 'ERR_NETWORK'
+    || /^(?:NetworkError\b|Network request failed\b|Network error\b|Failed to fetch\b|Load failed\b)/i.test(String(error.message || ''));
+}
+
+/** Own the delayed retries so a new task or account cannot inherit an old timer. */
+export function createResearchRetryQueue(isCurrent: (revision: number) => boolean = isAuthRevisionCurrent) {
+  const entries = new Map<string, { attempts: number; timer?: number }>();
+  const reset = (key: string) => {
+    const entry = entries.get(key);
+    if (entry?.timer !== undefined) window.clearTimeout(entry.timer);
+    entries.delete(key);
+  };
+  return {
+    reset,
+    clear: () => { for (const key of Array.from(entries.keys())) reset(key); },
+    schedule: (key: string, revision: number, isActive: () => boolean, retry: () => void): number => {
+      if (!isCurrent(revision) || !isActive()) return 0;
+      const previous = entries.get(key);
+      if (previous?.timer !== undefined) return previous.attempts;
+      if ((previous?.attempts || 0) >= 2) return 0;
+      const entry = { attempts: (previous?.attempts || 0) + 1, timer: undefined as number | undefined };
+      entries.set(key, entry);
+      entry.timer = window.setTimeout(() => {
+        if (entries.get(key) !== entry) return;
+        entry.timer = undefined;
+        if (isCurrent(revision) && isActive()) retry();
+      }, 6000);
+      return entry.attempts;
+    },
+  };
 }
 
 // 进度按耗时渐近爬升（预估节奏）：深稿分钟级、快讯十秒级；完成即被真实结果替代。
@@ -1391,6 +1431,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 同一会话内重复打开同一条资讯/研报时直接复用已完成的解读；服务端仍负责
   // 跨用户持久缓存，这里只做前端瞬时缓存，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
+  const [aiRetries] = useState(() => createResearchRetryQueue());
+  const aiMountedRef = useRef(true);
+  useEffect(() => {
+    aiMountedRef.current = true;
+    return () => {
+      aiMountedRef.current = false; aiRetries.clear();
+      for (const task of Array.from(aiTasksRef.current.values())) task.cancel?.();
+    };
+  }, [aiRetries]);
   const [aiError, setAiError] = useState('');
   const [upgradeOpen, setUpgradeOpen] = useState(false);   // 开通会员引导弹层
   const [upgradeReason, setUpgradeReason] = useState('');
@@ -1408,7 +1457,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [shareImgNote, setShareImgNote] = useState('');
   const [shareImgCoarse, setShareImgCoarse] = useState(false);  // 移动端（触屏）：只引导长按
   const showToast = useCallback((msg: string, action?: () => void) => {
-    setToast(msg); setToastAct(action || null);
+    setToast(msg); setToastAct(() => action || null);
     window.setTimeout(() => setToast(''), 2800);
   }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -3294,6 +3343,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     }
   }, [refreshNativeBackgroundStatus, showToast]);
   useLayoutEffect(() => registerSessionCleanup(() => {
+    aiRetries.clear();
     aiStreamCancelRef.current?.();
     resetAiConversation();
     stopDeepPoll(); deepStartingRef.current = false; setDeepBusy(false); setDeepTask(null); setDeepErr(''); setDeepSymbol('');
@@ -3308,7 +3358,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setDeepAnswerBusy(false); setAiAttachmentBusy(false); setAiQuotaLeft(null);
     aiTasksRef.current.clear(); aiInterpretCacheRef.current.clear(); aiViewingTaskRef.current = '';
     setAiTasksVersion(v => v + 1); setAiTasksOpen(false); setAiReport(null); setAiResult(null); setAiDeepDraft(null); setAiLoading(false); setAiQuickPending(false);
-  }), [session.revision, resetAiConversation, stopDeepPoll]);
+  }), [session.revision, resetAiConversation, stopDeepPoll, aiRetries]);
 
   // ---- 研报一键 AI 分析（多模态解读：在线 file_id 或本地文件）----
   // 匿名免费体验额度：每天 1 次（与后端按 IP 每日限额对齐）。本机存"今天用过没"，跨天自动恢复。
@@ -3339,12 +3389,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (t.status === 'error') { aiViewingTaskRef.current = key; aiRetryRef.current = t.restart; }
   }, [openAiReading]);
 
-  const removeAiTask = useCallback((key: string) => {
+  const removeAiTask = useCallback((key: string, preserveRetry = false) => {
+    if (!preserveRetry) aiRetries.reset(key);
+    aiTasksRef.current.get(key)?.cancel?.();
     aiTasksRef.current.delete(key);
     setAiTasksVersion(v => v + 1);
-  }, []);
+  }, [aiRetries]);
 
   const registerAiTask = useCallback((task: AiBgTask) => {
+    aiTasksRef.current.get(task.key)?.cancel?.();
     aiTasksRef.current.set(task.key, task);
     // 浮标只留轻量历史：已结束任务超过 6 条丢最旧
     const finished = Array.from(aiTasksRef.current.values()).filter(t => t.status !== 'running');
@@ -3366,22 +3419,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const settleAiTask = useCallback((key: string, title: string, result: AiAnalysis, deepDraft: ResearchDeepDraftInput) => {
     const cur = aiTasksRef.current.get(key);
     if (!cur) return;
+    aiRetries.reset(key);
     aiInterpretCacheRef.current.set(key, { result, deepDraft: deepDraft || undefined });
     if (cur) { cur.status = 'done'; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1); }
     if (aiViewingTaskRef.current === key) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); setAiQuickPending(false); }
     if (!authUserRef.current) markAiFreeUsed();  // 匿名免费体验已消费 → 下次起需登录
     if (!cur || !cur.hidden) showToast(`✅ 解读完成：${clipTitle(title)}，点击查看`, () => openAiTaskView(key));
-  }, [markAiFreeUsed, showToast, openAiTaskView]);
+  }, [markAiFreeUsed, showToast, openAiTaskView, aiRetries]);
 
   const failAiTask = useCallback((key: string, msg: string) => {
     const cur = aiTasksRef.current.get(key);
     if (!cur) return;
+    aiRetries.reset(key);
     cur.status = 'error'; cur.error = msg;
     if (!cur.result && cur.quick) cur.result = cur.quick as AiAnalysis;
     setAiTasksVersion(v => v + 1);
     if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); setAiQuickPending(false); }
-    else showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
-  }, [showToast, openAiTaskView]);
+    else if (!cur.hidden) showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
+  }, [showToast, openAiTaskView, aiRetries]);
 
   // 401/402/403 是即时认证/配额/登录门槛：不留任务，直接给升级弹窗或登录引导
   const gateAiTask = useCallback((key: string, status: unknown, detail: unknown) => {
@@ -3407,7 +3462,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     return true;
   }, [showToast, openAiTaskView]);
 
-  const runAiAnalysis = useCallback(async (r: ResearchWireItem) => {
+  const runAiAnalysis = useCallback(async (r: ResearchWireItem, hidden = false) => {
     const revision = getAuthSnapshot().revision;
     // 匿名用户：免费体验「一次」AI 解读，第二次起 toast 引导登录（不再弹全局登录框打断阅读流）。
     if (!authUserRef.current && aiFreeUsed()) {
@@ -3430,12 +3485,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       return;
     }
     if (resumeAiTask(cacheKey)) return;
-    registerAiTask({
+    const controller = new AbortController();
+    const task: AiBgTask = {
       key: cacheKey, kind: 'report', title: r.title, report: r, meta,
+      cancel: () => controller.abort(),
+      hidden,
       restart: () => { removeAiTask(cacheKey); runAiAnalysis(r); },
       startedAt: Date.now(), status: 'running', stage: '', result: null, deepDraft: null, error: '',
-    });
-    showToast('✦ 已转入后台解读，完成后提醒你');
+    };
+    const isTaskCurrent = () => aiMountedRef.current && isAuthRevisionCurrent(revision)
+      && aiTasksRef.current.get(cacheKey) === task;
+    registerAiTask(task);
+    if (!hidden) showToast('✦ 已转入后台解读，完成后提醒你');
     try {
       // 研报主路径：文章式深度稿。返回中附带 compact 时复用它；否则从文章结构投影，
       // 保证旧分享/出图仍可用。
@@ -3444,21 +3505,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         max_pages: RESEARCH_DEEP_DRAFT_MAX_PAGES,
         symbol: (r.instruments && r.instruments[0]) || undefined,
       }, (detail) => {
-        if (!isAuthRevisionCurrent(revision)) return;
+        if (!isTaskCurrent()) return;
         const cur = aiTasksRef.current.get(cacheKey);
-        if (cur && cur.stage !== detail) { cur.stage = detail; setAiTasksVersion(v => v + 1); }
+        // 速览已出后，深度阶段的「模型解读中」让位给更准确的速览文案
+        const stageText = cur?.quick && detail.startsWith('模型解读中') ? '速览完成 · 深度解读继续生成中' : detail;
+        if (cur && cur.stage !== stageText) { cur.stage = stageText; setAiTasksVersion(v => v + 1); }
       }, (quick) => {
-        if (!isAuthRevisionCurrent(revision)) return;
+        if (!isTaskCurrent()) return;
         // 快轨速览上屏：深稿完成前先给方向感；深稿 settle 时自动替换
         const cur = aiTasksRef.current.get(cacheKey);
         if (cur) { cur.quick = quick; cur.stage = '速览完成 · 深度解读继续生成中'; setAiTasksVersion(v => v + 1); }
+        if (!authUserRef.current) markAiFreeUsed();
         if (aiViewingTaskRef.current === cacheKey) { setAiResult(quick as AiAnalysis); setAiQuickPending(true); }
-      });
+      }, controller.signal);
       const compact = deep.compact || compactFromDeepDraft(deep);
-      if (!isAuthRevisionCurrent(revision)) return;
+      if (!isTaskCurrent()) return;
       settleAiTask(cacheKey, r.title, compact, deep as unknown as ResearchDeepDraftInput);
     } catch (deepError: any) {
-      if (!isAuthRevisionCurrent(revision)) return;
+      if (!isTaskCurrent()) return;
       const deepStatus = deepError?.response?.status ?? deepError?.status;
       const deepDetail = deepError?.response?.data?.detail ?? deepError?.detail;
       if (deepStatus === 401 || deepStatus === 402 || deepStatus === 403) { gateAiTask(cacheKey, deepStatus, deepDetail); return; }
@@ -3467,6 +3531,33 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       // missing route.  The backend returns 422/502 for those cases; keep the
       // 404 fallback narrow so we do not burn a second compact request.
       const deepTimedOut = deepError?.code === 'ECONNABORTED' || /timeout/i.test(deepError?.message || '');
+      if (task.quick || deepError?.streamDeliveredResult) {
+        failAiTask(cacheKey, '速览已保留，深度解读中断；可稍后手动重试。');
+        return;
+      }
+      if (['AbortError', 'CanceledError'].includes(deepError?.name) || deepError?.code === 'ERR_CANCELED') {
+        removeAiTask(cacheKey);
+        return;
+      }
+      // Only explicit transport failures retry. The server cancels unfinished
+      // generation on disconnect, so retrying may start the draft again.
+      const networkDropped = isResearchNetworkDrop(deepError);
+      if (networkDropped) {
+        const attempts = aiRetries.schedule(cacheKey, revision, () => isTaskCurrent() && task.status === 'running', () => {
+          removeAiTask(cacheKey, true);
+          void runAiAnalysis(r, !!task.hidden);
+        });
+        if (attempts) {
+          task.stage = '网络波动，6 秒后自动重试';
+          setAiTasksVersion(v => v + 1);
+          if (!task.hidden) showToast(`网络波动，6 秒后自动重试（${attempts}/2）`, () => {
+            if (isTaskCurrent()) openAiTaskView(cacheKey);
+          });
+          return;
+        }
+        failAiTask(cacheKey, '网络多次中断，请稍后在浮标里手动重试。');
+        return;
+      }
       const routeUnavailable = [405, 408, 501, 502, 504].includes(Number(deepStatus)) || deepTimedOut
         || (Number(deepStatus) === 404 && (!deepDetail || /^(not found|method not allowed)$/i.test(String(deepDetail).trim())));
       if (!routeUnavailable || deepError?.streamDeliveredResult) {
@@ -3475,20 +3566,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       }
       // 灰度/旧后端可能还没有 deep-draft 路由；自动回退旧 compact，避免入口失效。
       try {
-        const res = await apiPost<AiAnalysis>('/api/research/vision-analyze', sourceBody, { timeout: 150000 });
-        if (!isAuthRevisionCurrent(revision)) return;
+        const res = await apiPost<AiAnalysis>('/api/research/vision-analyze', sourceBody, { timeout: 150000, signal: controller.signal });
+        if (!isTaskCurrent()) return;
         settleAiTask(cacheKey, r.title, res, null);
       } catch (e: any) {
-      if (!isAuthRevisionCurrent(revision)) return;
+        if (!isTaskCurrent()) return;
         const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
         if (status === 401 || status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
         const timedOut = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '') || /timeout/i.test(deepError?.message || '');
         failAiTask(cacheKey, timedOut
-          ? '深度稿生成超时了，请稍后再试（后台缓存完成后通常会更快）。'
+          ? '深度稿生成超时了，请稍后再试。'
           : (detail || deepDetail || e?.message || deepError?.message || 'AI 解读失败，请稍后重试'));
       }
     }
-  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
+  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask, aiRetries]);
 
   // 快讯/文章解读：同研报后台任务化，完成经 toast/浮标回看。
   const runNewsAi = useCallback(async (m: RealtimeMessageRecord) => {

@@ -930,8 +930,9 @@ export interface ResearchDeepDraftRequest {
  * separate from visionAnalyzeReport so old cached cards remain readable during rollout. */
 export function generateResearchDeepDraft(
   payload: ResearchDeepDraftRequest,
+  signal?: AbortSignal,
 ): Promise<ResearchDeepDraftResponse> {
-  return apiPost<ResearchDeepDraftResponse>('/api/research/deep-draft', payload, { timeout: 360000 });
+  return apiPost<ResearchDeepDraftResponse>('/api/research/deep-draft', payload, { timeout: 360000, signal });
 }
 
 /** 深度解读流式版：SSE 阶段进度实时回报（获取原文→页数/字符→生成中→兜底提示），
@@ -942,13 +943,15 @@ export async function generateResearchDeepDraftSmart(
   payload: ResearchDeepDraftRequest,
   onStage?: (detail: string) => void,
   onQuick?: (quick: AiAnalysisLike) => void,
+  signal?: AbortSignal,
 ): Promise<ResearchDeepDraftResponse> {
   try {
-    return await streamResearchDeepDraft(payload, onStage, onQuick);
+    return await streamResearchDeepDraft(payload, onStage, onQuick, signal);
   } catch (err: any) {
+    if (signal?.aborted) throw new axios.CanceledError('Research canceled');
     const status = err?.response?.status;
     if (status === 402 || status === 403 || status === 422) throw err;
-    if (err?.streamUnavailable) return generateResearchDeepDraft(payload);
+    if (err?.streamUnavailable) return generateResearchDeepDraft(payload, signal);
     throw err;
   }
 }
@@ -973,10 +976,14 @@ async function streamResearchDeepDraft(
   payload: ResearchDeepDraftRequest,
   onStage?: (detail: string) => void,
   onQuick?: (quick: AiAnalysisLike) => void,
+  signal?: AbortSignal,
 ): Promise<ResearchDeepDraftResponse> {
+  if (signal?.aborted) throw new axios.CanceledError('Research canceled');
   const session = getAuthSnapshot();
   const token = session.token;
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
   const unregister = registerSessionCleanup(() => controller.abort());
   const base = getActiveApiBaseUrl();
   let deliveredQuick = false;
@@ -991,7 +998,7 @@ async function streamResearchDeepDraft(
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    if (!isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Account changed');
+    if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
     if (!resp.ok || !resp.body) {
       let detail = '';
       try { detail = (await resp.json())?.detail || ''; } catch { /* 保留状态码提示 */ }
@@ -1007,7 +1014,7 @@ async function streamResearchDeepDraft(
     let sawEvent = false;
     for (;;) {
       const { value, done } = await reader.read();
-      if (!isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Account changed');
+      if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
       if (done) break;
       buf += decoder.decode(value, { stream: true });
       let idx: number;
@@ -1019,7 +1026,7 @@ async function streamResearchDeepDraft(
         let evt: any;
         try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
         sawEvent = true;
-        if (!isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Account changed');
+        if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
         if (evt.type === 'stage' && onStage && evt.detail) onStage(evt.detail);
         else if (evt.type === 'quick' && evt.data) {
           deliveredQuick = true;
@@ -1040,6 +1047,7 @@ async function streamResearchDeepDraft(
       throw err;
     }
     const err: any = new Error('解读中断，请重试');
+    err.streamInterrupted = true;
     err.response = { status: 502, data: { detail: '解读中断，请重试' } };
     throw err;
   } catch (err: any) {
@@ -1047,7 +1055,7 @@ async function streamResearchDeepDraft(
     // trigger another billable compact request in the caller.
     if (deliveredQuick && err && typeof err === 'object') err.streamDeliveredResult = true;
     throw err;
-  } finally { unregister(); }
+  } finally { unregister(); signal?.removeEventListener('abort', abort); }
 }
 
 /** 图片型研报（无文字层）的多模态视觉解读——渲染页面图像交给视觉模型读图出观点。 */

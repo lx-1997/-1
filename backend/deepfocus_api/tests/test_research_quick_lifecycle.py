@@ -116,3 +116,107 @@ async def test_failed_deep_draft_after_delivered_quick_keeps_one_quota(monkeypat
     assert any(event["type"] == "quick" for event in events)
     assert events[-1]["type"] == "error"
     assert quotas.used("quick-test") == 1
+
+
+def _track_queue_waiters(monkeypatch):
+    waiting = asyncio.Event()
+    waiters = []
+    queue_type = asyncio.Queue
+
+    class TrackedQueue(queue_type):
+        async def get(self):
+            waiters.append(asyncio.current_task())
+            waiting.set()
+            return await super().get()
+
+    monkeypatch.setattr(research_stream.asyncio, "Queue", TrackedQueue)
+    return waiting, waiters
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quick_delivered", [True, False])
+async def test_disconnect_after_deep_starts_cancels_generation_and_queue_waiter(monkeypatch, quick_delivered):
+    started, closed = asyncio.Event(), asyncio.Event()
+    queue_waiting, queue_waiters = _track_queue_waiters(monkeypatch)
+    generation_tasks = []
+    cache_writes = []
+
+    async def quick(request, documents):
+        if not quick_delivered:
+            raise RuntimeError("Quick provider failed")
+        return QUICK
+
+    async def deep(request, documents, progress):
+        generation_tasks.append(asyncio.current_task())
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(research_stream, "generate_deep_quick", quick)
+    monkeypatch.setattr(research_stream, "generate_deep_draft", deep)
+    monkeypatch.setattr(main, "metrics_set_ai_cache", lambda key, value: cache_writes.append((key, value)))
+    prior = set(asyncio.all_tasks())
+    response = await _response()
+    events = []
+    async for chunk in response.body_iterator:
+        events.append(_event(chunk))
+        if events[-1].get("stage") == "generate":
+            break
+    assert any(event["type"] == "quick" for event in events) is quick_delivered
+
+    next_event = asyncio.create_task(response.body_iterator.__anext__())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(queue_waiting.wait(), timeout=1)
+    assert generation_tasks and not generation_tasks[0].done()
+    assert queue_waiters and not queue_waiters[0].done()
+    next_event.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await next_event
+
+    assert closed.is_set()
+    assert all(task.cancelled() for task in generation_tasks + queue_waiters)
+    assert quotas.used("quick-test") == int(quick_delivered)
+    assert not any(key == "quick-test" for key, _value in cache_writes)
+    assert response._quota_scope.heartbeat.done()
+    assert not [task for task in asyncio.all_tasks() - prior if not task.done()]
+
+
+@pytest.mark.asyncio
+async def test_first_delta_reaches_client_when_queue_waiter_consumes_it(monkeypatch):
+    queue_waiting, queue_waiters = _track_queue_waiters(monkeypatch)
+    finish = asyncio.Event()
+
+    async def quick(request, documents):
+        return None
+
+    async def deep(request, documents, progress):
+        # Ensure the token goes to the pending queue.get task rather than
+        # remaining in the queue for the later drain loop.
+        await queue_waiting.wait()
+        progress("llm_delta", "first meaningful token")
+        await finish.wait()
+        return ResearchDeepDraftResponse(title="Deep result", provider="test-deep")
+
+    monkeypatch.setattr(research_stream, "generate_deep_quick", quick)
+    monkeypatch.setattr(research_stream, "generate_deep_draft", deep)
+    prior = set(asyncio.all_tasks())
+    response = await _response()
+
+    async def first_thought():
+        async for chunk in response.body_iterator:
+            event = _event(chunk)
+            if event["type"] == "thought":
+                return event
+        raise AssertionError("The first model token was not delivered")
+
+    thought = await asyncio.wait_for(first_thought(), timeout=1)
+    assert thought["delta"] == "first meaningful token"
+    assert queue_waiters[0].done() and not queue_waiters[0].cancelled()
+    finish.set()
+    events = [_event(chunk) async for chunk in response.body_iterator]
+    assert events[-1]["type"] == "done"
+    assert quotas.used("quick-test") == 1
+    assert response._quota_scope.heartbeat.done()
+    assert not [task for task in asyncio.all_tasks() - prior if not task.done()]

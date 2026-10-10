@@ -66,3 +66,37 @@ it('cancels a debounced save before switching account and never seeds B with the
   expect(result.current.watchlist).toEqual([]);
   expect(saveList).not.toHaveBeenCalled();
 });
+
+it('keeps the pending list identity stable until server hydration finishes', () => {
+  authenticateSession(user('A'), 'test-a', 'https://example.test');
+  fetchList.mockImplementationOnce(() => new Promise(() => {}));
+  const { result, rerender } = renderHook(() => useAccountWatchlist('A', defaults, defaultNames));
+  const pendingSymbols = result.current.watchlist;
+  const pendingNames = result.current.names;
+  rerender(); rerender();
+  expect(result.current.watchlist).toBe(pendingSymbols);
+  expect(result.current.names).toBe(pendingNames);
+  expect(fetchList).toHaveBeenCalledTimes(1);
+});
+
+it('keeps an anonymous empty list stable across unrelated renders', () => {
+  localStorage.setItem('bbt.watchlist', '[]');
+  const { result, rerender } = renderHook(() => useAccountWatchlist(null, defaults, defaultNames));
+  const symbols = result.current.watchlist;
+  rerender(); rerender();
+  expect(result.current.watchlist).toBe(symbols);
+  expect(symbols).toEqual([]);
+  expect(fetchList).not.toHaveBeenCalled();
+});
+
+it('keeps a deliberately empty server list stable after hydration', async () => {
+  authenticateSession(user('A'), 'test-a', 'https://example.test');
+  fetchList.mockResolvedValueOnce({ symbols: [], names: {}, empty: false });
+  const { result, rerender } = renderHook(() => useAccountWatchlist('A', defaults, defaultNames));
+  await settle();
+  const symbols = result.current.watchlist;
+  rerender(); rerender();
+  expect(result.current.watchlist).toBe(symbols);
+  expect(fetchList).toHaveBeenCalledTimes(1);
+  expect(saveList).not.toHaveBeenCalled();
+});

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
 import { getAuthSnapshot, isAuthRevisionCurrent } from '../state/authSession';
 
 interface WatchlistState { owner: string | null; symbols: string[]; names: Record<string, string>; ready: boolean; dirty: boolean }
+const EMPTY_SYMBOLS: string[] = [];
 function readGuest(defaults: string[], defaultNames: Record<string, string>) {
   let symbols = defaults, names = defaultNames;
   try {
@@ -19,7 +20,8 @@ export function useAccountWatchlist(accountId: string | null, defaults: string[]
   const sessionRevision = getAuthSnapshot().revision;
   const [state, setState] = useState<WatchlistState>(() => ({ owner: accountId, ...readGuest(defaults, defaultNames), ready: !accountId, dirty: false }));
   const savedCallback = useRef(onSaved); savedCallback.current = onSaved;
-  const visible = state.owner === accountId && state.ready ? state : { symbols: [] as string[], names: defaultNames };
+  const pending = useMemo(() => ({ symbols: EMPTY_SYMBOLS, names: defaultNames }), [defaultNames]);
+  const visible = state.owner === accountId && state.ready ? state : pending;
   const watchlistRef = useRef(visible.symbols); watchlistRef.current = visible.symbols;
   const namesRef = useRef(visible.names); namesRef.current = visible.names;
 
@@ -27,7 +29,7 @@ export function useAccountWatchlist(accountId: string | null, defaults: string[]
     const controller = new AbortController();
     const revision = getAuthSnapshot().revision;
     const guest = readGuest(defaults, defaultNames);
-    setState({ owner: accountId, ...(accountId ? { symbols: [], names: defaultNames } : guest), ready: !accountId, dirty: false });
+    setState({ owner: accountId, ...(accountId ? pending : guest), ready: !accountId, dirty: false });
     if (accountId) {
       void fetchWatchlist(controller.signal).then(data => {
         if (controller.signal.aborted || !isAuthRevisionCurrent(revision)) return;
@@ -40,7 +42,7 @@ export function useAccountWatchlist(accountId: string | null, defaults: string[]
       }).catch(() => { /* Never overwrite a server list after failed hydration. */ });
     }
     return () => controller.abort();
-  }, [accountId, sessionRevision, defaults, defaultNames]);
+  }, [accountId, sessionRevision, defaults, defaultNames, pending]);
 
   const change = useCallback((field: 'symbols' | 'names', value: React.SetStateAction<any>) => {
     if ((getAuthSnapshot().account?.id ?? null) !== accountId) return;

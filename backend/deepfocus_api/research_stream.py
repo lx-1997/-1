@@ -161,7 +161,7 @@ async def api_research_deep_draft_stream(
         quick_cache_key = f"quick:{cache_key}" if cache_key else ""
         quick = metrics_get_ai_cache(quick_cache_key) if quick_cache_key else None
         if not isinstance(quick, dict) or not quick.get("one_liner"):
-            yield _sse({"type": "stage", "stage": "quick", "detail": "速览生成中（约 10 秒，先出方向感）…"})
+            yield _sse({"type": "stage", "stage": "quick", "detail": "速览生成中，先出方向感…"})
             try:
                 quick = await asyncio.wait_for(
                     generate_deep_quick(request, documents=docs),

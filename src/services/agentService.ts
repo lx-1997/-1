@@ -591,6 +591,14 @@ export async function pollDeepResearch(taskId: string): Promise<DeepTask> {
 // AI 原生 tool-use 流式研究：边调工具(行情/估值/iFinD/搜我们的资讯/复盘)边推进度，最后给答案。
 // 手动带 Authorization 头——iFinD 灰度按登录用户名识别(lx199710)。返回 cancel 函数。
 export interface ToolEvent { tool: string; ok?: boolean; summary?: string; references?: ToolReference[]; }
+export function friendlyStreamError(message?: string): string {
+  const text = String(message || '');
+  if (/networkerror|failed to fetch|load failed/i.test(text)) {
+    return '网络连接不稳定，请稍后重试；多次失败请重新登录后再试';
+  }
+  return text || 'AI 服务连接失败';
+}
+
 export function runToolResearchStream(
   payload: {
     message: string;
@@ -772,9 +780,9 @@ export function runToolResearchStream(
         }
       }
       clearTimeoutGuard();
-      if (!stopped && !terminal) { terminal = true; handlers.onError?.(lastError); }
+      if (!stopped && !terminal) { terminal = true; handlers.onError?.(friendlyStreamError(lastError)); }
     } catch (error: any) {
-      if (error?.name !== 'AbortError' && !stopped) handlers.onError?.(error?.message || lastError);
+      if (error?.name !== 'AbortError' && !stopped) handlers.onError?.(friendlyStreamError(error?.message || lastError));
     } finally { unregister(); }
   })();
   return () => { stopped = true; clearTimeoutGuard(); ctrl.abort(); unregister(); };

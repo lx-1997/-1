@@ -50,6 +50,8 @@ description: >-
 
 详细分步与历史坑见 `references/backend-patch.md`。
 
+多模块发布或有并发上线时，先读 `references/batch-release-guard.md`，验证完整生产候选和全部哈希。
+
 ---
 
 ## 流程 B:前端全量重建发布(FinancialTerminal 等 src/ 改动)
