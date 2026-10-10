@@ -3471,7 +3471,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         symbol: (r.instruments && r.instruments[0]) || undefined,
       }, (detail) => {
         const cur = aiTasksRef.current.get(cacheKey);
-        if (cur && cur.stage !== detail) { cur.stage = detail; setAiTasksVersion(v => v + 1); }
+        // 速览已出后，深度阶段的「模型解读中」让位给更准确的速览文案
+        const stageText = cur?.quick && detail.startsWith('模型解读中') ? '速览完成 · 深度解读继续生成中' : detail;
+        if (cur && cur.stage !== stageText) { cur.stage = stageText; setAiTasksVersion(v => v + 1); }
       }, (quick) => {
         // 快轨速览上屏：深稿完成前先给方向感；深稿 settle 时自动替换
         const cur = aiTasksRef.current.get(cacheKey);

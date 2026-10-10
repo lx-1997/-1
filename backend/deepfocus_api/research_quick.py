@@ -23,7 +23,7 @@ _QUICK_TEXT_CHARS = 20_000      # 每篇文档送入模型的最大字符数（�
 _QUICK_MAX_TOKENS = 1_200
 _QUICK_CALL_TIMEOUT = 40        # 单次调用秒数
 _QUICK_TOTAL_TIMEOUT = 55       # 含一次重试的总预算
-_QUICK_VISION_MAX_PAGES = 2     # 扫描版快轨只读前 2 页（视觉单页 ~10s，预算内必须完成）
+_QUICK_VISION_MAX_PAGES = 1     # 扫描版快轨只读封面页（页视觉 ~10s + 综合；2 页实测仍超 30s 预算）
 _QUICK_VISION_TIMEOUT = 30
 
 _QUICK_SCHEMA_HINT = (
@@ -106,7 +106,7 @@ def _quick_normalise(
         "instruments": _string_list(data.get("instruments"), 4),
         "confidence": _quick_confidence(data.get("confidence")),
         "provider": f"{provider} 速览",
-        "source_note": "速览版：10 秒快读；完整深度解读生成后自动替换",
+        "source_note": "速览版：快速通读；完整深度解读生成后自动替换",
         "quick": True,
         "quick_vision": vision,
     }

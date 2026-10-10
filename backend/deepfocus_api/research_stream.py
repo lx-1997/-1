@@ -151,7 +151,7 @@ async def api_research_deep_draft_stream(
         quick_cache_key = f"quick:{cache_key}" if cache_key else ""
         quick = metrics_get_ai_cache(quick_cache_key) if quick_cache_key else None
         if not isinstance(quick, dict) or not quick.get("one_liner"):
-            yield _sse({"type": "stage", "stage": "quick", "detail": "速览生成中（约 10 秒，先出方向感）…"})
+            yield _sse({"type": "stage", "stage": "quick", "detail": "速览生成中，先出方向感…"})
             try:
                 quick = await asyncio.wait_for(
                     generate_deep_quick(request, documents=docs),
@@ -211,7 +211,10 @@ async def api_research_deep_draft_stream(
                 yield _sse({"type": "tick", "elapsed": elapsed})
             payload = gen_task.result()
         except asyncio.CancelledError:
-            gen_task.cancel()
+            # 客户端断开（移动网络掉线/切后台）不取消生成：继续跑完并写入缓存，
+            # 用户重试即命中缓存秒出；仅解除引用，异常就地吞掉防 unhandled 警告。
+            if not gen_task.done():
+                gen_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             raise
         except Exception as exc:
             status = getattr(exc, "status_code", 502)
