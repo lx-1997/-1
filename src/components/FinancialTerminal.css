@@ -3521,8 +3521,10 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   .bbt-side-articles .bbt-grid.bbt-grid--rail > .bbt-rail,
   .bbt-side-notes .bbt-grid.bbt-grid--rail > .bbt-rail,
   .bbt-side-reports .bbt-grid.bbt-grid--rail > .bbt-rail { grid-column: 3; }
-  .bbt-side-stocks .bbt-grid.bbt-grid--rail { grid-template-columns: var(--eqw, minmax(200px, 0.42fr)) 6px minmax(0, 1.9fr) 6px clamp(232px, 17vw, 300px); }
-  .bbt-side-stocks .bbt-grid.bbt-grid--rail > .bbt-rail { grid-column: 5; }
+  /* stocks 态：资讯面板本就 display:none，可见列为 自选|沟槽|右栏；
+     右栏列 minmax 收尾吸收剩余宽度（纯 clamp 会留右侧空洞，实测踩坑） */
+  .bbt-side-stocks .bbt-grid.bbt-grid--rail { grid-template-columns: var(--eqw, minmax(200px, 0.42fr)) 6px minmax(clamp(232px, 17vw, 300px), 1fr); }
+  .bbt-side-stocks .bbt-grid.bbt-grid--rail > .bbt-rail { grid-column: 3; }
 }
 
 /* 每日复盘是独立信息模块，不再作为资讯列表末尾的一张附加卡片。 */
@@ -5837,6 +5839,11 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   /* 移动端底部有快讯/文章/研报导航栏：浮标上移避免遮挡入口 */
   .bbt-ai-tasks { right: 12px; bottom: 96px; }
   .bbt-ai-tasks-pill { padding: 7px 12px; font-size: 12px; }
+  /* 「更多」菜单移动端紧凑化：收窄限高、行距收紧、长标签单行截断 */
+  .bbt-more-pop { width: min(88vw, 320px); max-height: 66vh; padding: 10px; }
+  .bbt-more-section { padding: 7px 10px 3px; }
+  .bbt-acct-row { padding: 7px 9px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bbt-popup-filter { padding: 8px 9px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .bbt-with-sidebar .bbt-nrow:not(.bbt-nrow--stale), .bbt-live-chip i, .bbt-live-wave i { animation: none; }
@@ -5936,3 +5943,123 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   100% { box-shadow: none; background: transparent; }
 }
 .bbt-detail--flash { animation: bbt-detail-flash 1.1s ease-out 1; }
+
+/* ===== AI 常驻挂件：可拖拽浮标 + 双页签面板 ===== */
+.bbt-ai-dock {
+  position: fixed;
+  right: 18px;
+  bottom: 74px;
+  z-index: 96;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  touch-action: none;
+}
+.bbt-ai-dock.is-placed { right: auto; bottom: auto; }
+.bbt-ai-dock-fab {
+  min-width: 52px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(227, 169, 79, .5);
+  background: rgba(13, 17, 25, .94);
+  color: var(--amber);
+  font-size: 13.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: grab;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .45);
+  user-select: none;
+  touch-action: none;
+}
+.bbt-ai-dock-fab:active { cursor: grabbing; }
+.bbt-ai-dock-fab.is-open { border-color: var(--amber); color: #ffd98a; }
+.bbt-ai-dock-fab.is-busy { border-color: rgba(145, 202, 255, .55); color: #cfe4fb; }
+.bbt-ai-dock-badge {
+  font-style: normal;
+  background: var(--amber);
+  color: #14181f;
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+.bbt-ai-dock-panel {
+  width: min(400px, 94vw);
+  max-height: min(560px, 72vh);
+  overflow: auto;
+  background: rgba(13, 17, 25, .97);
+  border: 1px solid rgba(227, 169, 79, .35);
+  border-radius: 14px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, .5);
+  padding: 10px;
+}
+.bbt-ai-dock-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.bbt-ai-dock-tabs button {
+  background: transparent;
+  border: 1px solid #232a36;
+  color: #8a93a3;
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.bbt-ai-dock-tabs button.active { border-color: var(--amber); color: var(--amber); }
+.bbt-ai-dock-tabs .bbt-ai-dock-x { margin-left: auto; border: none; font-size: 13px; padding: 3px 7px; }
+.bbt-ai-dock-empty { color: #8a93a3; font-size: 12.5px; margin: 10px 4px; }
+.bbt-ai-dock-convlist { display: flex; flex-direction: column; gap: 6px; }
+.bbt-ai-dock-conv {
+  text-align: left;
+  background: #12151c;
+  border: 1px solid #222733;
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.bbt-ai-dock-conv b { color: #e6ebf2; font-size: 13px; font-weight: 600; }
+.bbt-ai-dock-conv small { color: #8a93a3; font-size: 12px; }
+.bbt-ai-dock-conv:hover { border-color: rgba(227, 169, 79, .45); }
+.bbt-ai-dock-expand {
+  background: none;
+  border: none;
+  color: #6ab0ff;
+  font-size: 12px;
+  padding: 8px 4px 2px;
+  cursor: pointer;
+  text-align: right;
+  width: 100%;
+}
+.bbt-ai-dock-inputrow { display: flex; gap: 6px; margin-top: 8px; }
+.bbt-ai-dock-inputrow input {
+  flex: 1;
+  background: #0c1018;
+  border: 1px solid #232a36;
+  border-radius: 9px;
+  color: #e6ebf2;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.bbt-ai-dock-inputrow button {
+  background: var(--amber);
+  border: none;
+  color: #14181f;
+  font-weight: 700;
+  border-radius: 9px;
+  padding: 0 13px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.bbt-ai-dock-inputrow button:disabled { opacity: .45; cursor: default; }
+.bbt-ai-dock-tasks { display: flex; flex-direction: column; gap: 6px; }

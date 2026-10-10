@@ -46,6 +46,7 @@ import { copyText } from '../utils/clipboard';
 import { shareImageNative } from '../utils/share';
 import { drawResearchDeepDraftImage, researchDeepDraftToText } from '../utils/researchDeepDraftImage';
 import { normalizeAiConversationHistory } from '../utils/aiConversationHistory';
+import { hydrateInterpretCache, persistInterpretEntry } from '../utils/aiInterpretCache';
 import { normalizePublisherName } from '../utils/displayBrand';
 import { visiblePoll } from '../utils/visiblePoll';
 import { getNativeBackgroundStatus, getNativePushToken, nativeBackgroundSupported, openNativeBatterySettings, openNativeNotificationSettings, requestNativeBatteryOptimization, setNativeBackgroundFilters, startNativeBackground, stopNativeBackground } from '../services/nativeBackground';
@@ -1479,9 +1480,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiQuickPending, setAiQuickPending] = useState(false);
   // 文章原文：解读生成期间在阅读模态直接展示（点击即可读，AI 完成后自动切换为解读）
   const [aiOriginal, setAiOriginal] = useState('');
-  // 同一会话内重复打开同一条资讯/研报时直接复用已完成的解读；服务端仍负责
-  // 跨用户持久缓存，这里只做前端瞬时缓存，不改变额度口径。
+  // 重复打开同一条资讯/研报时直接复用已完成的解读（内存 + 本机持久，刷新/隔天仍秒开）；
+  // 服务端仍负责跨用户持久缓存，这里只影响打开速度，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
+  useEffect(() => {
+    // 本机持久层：上次会话（刷新/隔天）完成的解读直接灌回，点开不再重跑。
+    hydrateInterpretCache(aiInterpretCacheRef.current, raw => (
+      raw && raw.result ? { result: raw.result as AiAnalysis, deepDraft: (raw.deepDraft ?? undefined) as ResearchDeepDraftInput | undefined } : null
+    ));
+  }, []);
   const [aiRetries] = useState(() => createResearchRetryQueue());
   const aiMountedRef = useRef(true);
   useEffect(() => {
@@ -3472,6 +3479,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!cur) return;
     aiRetries.reset(key);
     aiInterpretCacheRef.current.set(key, { result, deepDraft: deepDraft || undefined });
+    persistInterpretEntry(key, { result, deepDraft: deepDraft || undefined });
     if (cur) { cur.status = 'done'; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1); }
     if (aiViewingTaskRef.current === key) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); setAiQuickPending(false); }
     if (!authUserRef.current) markAiFreeUsed();  // 匿名免费体验已消费 → 下次起需登录
@@ -5698,8 +5706,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); focusSideModule('stocks', '自选'); }}>◌ 我的股票{watchlist.length ? ` · ${watchlist.length} 只` : ''}</button>
                   <div className="bbt-more-section">研究工具</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openReview(); }}>📊 A股收盘复盘{authUser && checkin && checkin.streak > 0 ? ` · 连续 ${checkin.streak} 天` : ''}</button>
-                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openSideTool('risk'); }}>🛡️ 跨市场风险预警 · A/H/美Top20</button>
-                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openSideTool('strategy'); if (!authUser) { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); } }}>🧪 QuantLab 量化系统 · 信号/仓位/回测</button>
+                  <button className="bbt-acct-row" title="A/H/美 Top20 每日风险预警" onClick={() => { setHelpMenuOpen(false); openSideTool('risk'); }}>🛡️ 跨市场风险预警 · A/H/美</button>
+                  <button className="bbt-acct-row" title="信号 / 仓位 / 回测" onClick={() => { setHelpMenuOpen(false); openSideTool('strategy'); if (!authUser) { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); } }}>🧪 QuantLab 量化系统</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }}>🤖 AI 模拟盘</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_ontology', '投资本体'); window.location.href = '/ontology'; }}>🧬 决策本体</button>
                   {groupCfg?.enabled !== false && <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openGroup(); }}>💬 用户交流群{!groupSeen ? ' · 免费' : ''}</button>}
