@@ -1643,8 +1643,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     init_ai_fund_db()
     if trade and not _in_session():
         trade = False  # ⭐硬闸门：非交易时段绝不买卖(无论谁调用)，A股收盘/周末只观察盯市
-    if not ifind_enabled():
-        return {"ok": False, "reason": "ifind_unavailable", "traded": [], "data_quality": get_snapshot(fund_id).get("data_quality")}
+    # iFinD 未配置/配额耗尽不整体熔断：_quote 自动落新浪免费行情继续盯市与交易(2026-10-10 生产实证，
+    # 此闸门曾致引擎 34 天静默停摆)；全源失效时下方 no_quotes 兜底退出。
 
     with _connect() as conn:
         universe = _universe(conn, cfg)
@@ -2001,7 +2001,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     _deposit_musing(nav, cfg)
 
     return {"ok": True, "traded": traded, "watch": watch, "nav": nav, "regime": regime.get("regime"),
-            "data_quality": {"level": "live", "label": "实时撮合", "detail": "iFinD 行情 + 东财日线/资金流撮合", "reasons": []}}
+            "data_quality": {"level": "live", "label": "实时撮合", "detail": "iFinD/新浪免费行情 + 东财日线/资金流撮合", "reasons": []}}
 
 
 # --------------------------------------------------------------------------- #
@@ -2258,7 +2258,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
 
     pos_out, market_value, degraded = [], 0.0, False
     for p in positions:
-        q = _quote(p["symbol"]) if ifind_enabled() else None
+        q = _quote(p["symbol"])   # iFinD 缺失时 _quote 内部落新浪免费行情，不再按成本价僵化估值
         price = safe_float(q.get("latest")) if q else None
         if price is None:
             price = float(p["avg_cost"]); degraded = True
@@ -2365,11 +2365,11 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     commentary = (decisions_like[0]["narrative"] if decisions_like else "") or _commentary([], {}, mood, len(pos_out), nav_pct, stats, cfg)
 
     if not ifind_enabled():
-        dq = {"level": "degraded", "label": "等待行情接入", "detail": "iFinD A股实时行情未在本环境配置，模拟盘暂以成本价估值、暂停交易。", "reasons": ["ifind_unconfigured"]}
+        dq = {"level": "degraded", "label": "免费行情兜底", "detail": "iFinD 未配置，以新浪免费实时行情盯市与交易(估值/资金流维度缺失，评分自动降维)。", "reasons": ["ifind_unconfigured"]}
     elif degraded:
         dq = {"level": "degraded", "label": "部分盯市降级", "detail": "个别持仓实时取价失败，暂以成本价估值。", "reasons": ["quote_partial"]}
     else:
-        dq = {"level": "live", "label": "实时", "detail": "iFinD 行情 + 东财日线/资金流。", "reasons": []}
+        dq = {"level": "live", "label": "实时", "detail": "iFinD/新浪免费行情 + 东财日线/资金流。", "reasons": []}
 
     return {
         "fund_id": fund_id, "started_at": st["started_at"], "started_nav": started_nav,
@@ -2409,7 +2409,7 @@ def _agent_nav(conn, cfg: AgentConfig):
     cash = float(st["cash"]); started_nav = float(st["started_nav"])
     mv = 0.0; pc = 0
     for p in _positions(conn, cfg.fund_id):
-        q = _quote(p["symbol"]) if ifind_enabled() else None
+        q = _quote(p["symbol"])   # iFinD 缺失时 _quote 内部落新浪免费行情，不再按成本价僵化估值
         price = safe_float(q.get("latest")) if q else None
         if price is None:
             price = float(p["avg_cost"])
