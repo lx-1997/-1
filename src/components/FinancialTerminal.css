@@ -5747,6 +5747,9 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   .bbt-live-copy:nth-of-type(2) { display: none; }
   .bbt-live-wave { margin-left: auto; }
   .bbt-live-sync { margin-left: 0; }
+  /* 移动端底部有快讯/文章/研报导航栏：浮标上移避免遮挡入口 */
+  .bbt-ai-tasks { right: 12px; bottom: 96px; }
+  .bbt-ai-tasks-pill { padding: 7px 12px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .bbt-with-sidebar .bbt-nrow:not(.bbt-nrow--stale), .bbt-live-chip i, .bbt-live-wave i { animation: none; }
