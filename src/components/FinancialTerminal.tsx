@@ -3399,7 +3399,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     else showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
   }, [showToast, openAiTaskView]);
 
-  // 402/403 是即时配额/登录门槛：不留任务，直接给升级弹窗或登录引导
+  // 401/402/403 是即时认证/配额/登录门槛：不留任务，直接给升级弹窗或登录引导
   const gateAiTask = useCallback((key: string, status: unknown, detail: unknown) => {
     removeAiTask(key);
     if (aiViewingTaskRef.current === key) {
@@ -3466,7 +3466,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     } catch (deepError: any) {
       const deepStatus = deepError?.response?.status ?? deepError?.status;
       const deepDetail = deepError?.response?.data?.detail ?? deepError?.detail;
-      if (deepStatus === 402 || deepStatus === 403) { gateAiTask(cacheKey, deepStatus, deepDetail); return; }
+      if (deepStatus === 401 || deepStatus === 402 || deepStatus === 403) { gateAiTask(cacheKey, deepStatus, deepDetail); return; }
       // 仅在明确的「路由未部署」状态回退旧 compact；其余失败进失败任务（可从浮标重试）。
       // A source-level 404 (for example a deleted workbench file) is not a
       // missing route.  The backend returns 422/502 for those cases; keep the
@@ -3484,7 +3484,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         settleAiTask(cacheKey, r.title, res, null);
       } catch (e: any) {
         const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
-        if (status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
+        if (status === 401 || status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
         const timedOut = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '') || /timeout/i.test(deepError?.message || '');
         failAiTask(cacheKey, timedOut
           ? '深度稿生成超时了，请稍后再试（后台缓存完成后通常会更快）。'
@@ -3524,7 +3524,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       settleAiTask(cacheKey, m.title, res, null);
     } catch (e: any) {
       const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
-      if (status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
+      if (status === 401 || status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
       failAiTask(cacheKey, (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) ? '解读超时了，请重试。' : (detail || e?.message || 'AI 解读失败，请稍后重试'));
     }
   }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
