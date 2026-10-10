@@ -711,6 +711,14 @@ def _title_only_one_liner(title: Optional[str]) -> str:
     return f"该条目仅有标题、原文正文不可得，据标题概括：{text}"
 
 
+def is_title_only_result(result: Optional[dict]) -> bool:
+    """识别「模型对可用正文仍返回全空字段→按标题降级」的解读产物。
+
+    此类结果是模型当次调用失败（而非内容真的只有标题），不该写 14 天长缓存——
+    否则抓取/模型质量改善后用户仍长期看到降级壳。"""
+    return str((result or {}).get("one_liner", "")).startswith("该条目仅有标题")
+
+
 async def analyze_news(title: Optional[str], content: str, url: Optional[str] = None) -> dict[str, Any]:
     """对一条财经新闻做大白话 AI 解读，返回与研报同构的结构（可复用同一前端卡片）。
 
@@ -755,6 +763,7 @@ async def analyze_news(title: Optional[str], content: str, url: Optional[str] = 
     # summary 均为空串）。原样交给 _normalize_result 会抛「模型未返回可用解读」→ 接口
     # 502，用户看到"AI 解读失败"且重试同样失败。这里降级为只用标题本身的一句话概括
     # （不新增任何事实），并把 source_note 标成"仅据标题"，让前端照常展示取材边界。
+    degraded = False
     try:
         result = _normalize_result(
             data,
@@ -773,11 +782,16 @@ async def analyze_news(title: Optional[str], content: str, url: Optional[str] = 
             logic_line_limit=3,
             backfill_logic_lines=False,
         )
-        source_note = source_note or "⚠ 原文信息有限，本解读仅据标题概括，未逐条核验"
+        # 必须覆盖而非 or：抓到全文但模型仍空返回时，「已读取原文全文」会与
+        # 「据标题概括」的正文同屏矛盾（页脚声称读了全文、正文说正文不可得）。
+        source_note = "⚠ 原文信息有限，本解读仅据标题概括，未逐条核验"
+        degraded = True
     result = normalize_news_result(result)
     if source_note:
         result["source_note"] = source_note
-    if data_store is not None:
+    # 模型空返回的降级产物不进缓存：这是当次调用失败而非内容本质，缓存住会让
+    # 用户在抓取/模型质量改善后仍长期看到降级壳（重试有机会拿到完整解读）。
+    if data_store is not None and not degraded:
         try:
             await asyncio.to_thread(data_store.record, "news_ai", cache_key, result)
         except Exception:

@@ -336,6 +336,7 @@ from .research_vision import (
     analyze_news,
     ensure_logic_lines,
     ensure_report_depth,
+    is_title_only_result,
     normalize_news_result,
     report_depth_needs_refresh,
 )
@@ -9701,6 +9702,14 @@ async def api_news_ai_analyze(
         _disc = _nz(result.get("disclaimer", "") or "").strip()
         if not _has_ai(_disc):  # AI 生成内容显式标识(《标识办法》2025-09-01 施行)——含缓存读路径
             _disc = (_disc + "；" if _disc else "") + _AI_NOTICE
+        # 取料充分度：降级标注（⚠ 仅据标题）优先于「已读取原文全文」——两者同屏必须一致，
+        # 不能页脚说读了全文、正文却说正文不可得（历史 bug：无条件覆盖导致自相矛盾）。
+        _src_note = (result.get("source_note") or "").strip()
+        if original_source_note and not _src_note.startswith("⚠"):
+            _src_note = original_source_note
+        if not _src_note.startswith("⚠") and is_title_only_result(result):
+            # 修复前写入缓存的降级结果带着错误的「已读取原文全文」，读路径按正文特征治愈
+            _src_note = "⚠ 原文信息有限，本解读仅据标题概括，未逐条核验"
         _logic_lines = result.get("logic_lines", [])
         response = ResearchVisionAnalysisResponse(
             title=title or "新闻解读", subject=_nz(result.get("subject", "")),
@@ -9717,7 +9726,7 @@ async def api_news_ai_analyze(
             rating=result.get("rating"), target_price=result.get("target_price"),
             confidence=result.get("confidence", 0.5), provider=_AI_BRAND,
             disclaimer=_disc,
-            source_note=original_source_note or result.get("source_note", ""),  # 取料充分度：已读全文/仅据标题，前端诚实展示
+            source_note=_src_note,
             data_quality=DataQuality(
                 level="degraded", label="AI 生成",
                 detail="内容由 AI 生成：自动解读，仅供参考、非投资建议", reasons=["ai-no-citation"],
@@ -9748,9 +9757,12 @@ async def api_news_ai_analyze(
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
-    if original_source_note:
+    # 降级标注优先；模型空返回的「据标题概括」产物不进缓存——重试才有机会拿到完整解读
+    result_note = (result.get("source_note") or "").strip()
+    if original_source_note and not result_note.startswith("⚠"):
         result["source_note"] = original_source_note
-    metrics_set_ai_cache(cache_key, result)
+    if not is_title_only_result(result):
+        metrics_set_ai_cache(cache_key, result)
     if quota_key: _complete_cost_quota(quota_key)
     return _resp(result, core_result)
 
