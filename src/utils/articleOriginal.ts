@@ -109,6 +109,27 @@ function sharedPrefix(a: string, b: string): number {
   return index;
 }
 
+function bigramDice(a: string, b: string): number {
+  const left = compareKey(a);
+  const right = compareKey(b);
+  if (left.length < 8 || right.length < 8) return 0;
+  const grams = new Set<string>();
+  for (let index = 0; index < left.length - 1; index += 1) grams.add(left.slice(index, index + 2));
+  if (!grams.size) return 0;
+  const total = right.length - 1;
+  let hits = 0;
+  for (let index = 0; index < total; index += 1) {
+    if (grams.has(right.slice(index, index + 2))) hits += 1;
+  }
+  return (2 * hits) / (grams.size + total);
+}
+
+/** 改写式复述（同主语换措辞的翻译变体）逐字前缀短，靠字符二元组重合度兜底。 */
+function restatesClaim(source: string, current: string): boolean {
+  const prefix = sharedPrefix(source, current);
+  return prefix >= 28 || (prefix >= 8 && bigramDice(source, current) >= 0.5);
+}
+
 function findPairPartner(lines: string[], index: number, consumed: Set<number>): number {
   // Look a bounded distance ahead for the other language of a bilingual pair,
   // skipping reader chrome (toggle labels, author credits) that OCR or a
@@ -179,7 +200,11 @@ function isRelatedCardHeadline(lines: string[], index: number): boolean {
 }
 
 function isFooterStart(value: string): boolean {
-  return /^(?:more\s+from\b|更多来自|top\s+reads?\b|热门阅读|suggested\s+topics?\b|read\s+next\b|latest\b|our\s+standards\b|purchase\s+licen[cs]ing\s+rights\b|lseg\s+products\b|stay\s+informed\b|follow\s+us\b|home\s+首页|首页\s+news|terms?\s+of\s+service|manage\s+cookies|trademarks?|privacy\s+policy|careers\b|advertise\b|ad\s+choices|©\s*\d{4})/i.test(value);
+  // Newsletter cross-reference items（「阅读更多：…」/「Read more: …」指向的是
+  // 其它文章的一行摘要，不是本文内容）与站点 footer 一样视为正文结束边界。
+  return /^(?:more\s+from\b|更多来自|top\s+reads?\b|热门阅读|suggested\s+topics?\b|read\s+next\b|latest\b|our\s+standards\b|purchase\s+licen[cs]ing\s+rights\b|lseg\s+products\b|stay\s+informed\b|follow\s+us\b|home\s+首页|首页\s+news|terms?\s+of\s+service|manage\s+cookies|trademarks?|privacy\s+policy|careers\b|advertise\b|ad\s+choices|©\s*\d{4})/i.test(value)
+    || /^(?:阅读更多|相关阅读|延伸阅读|更多阅读)\s*[:：]/i.test(value)
+    || /^(?:read\s+more\b|点击阅读原文|继续阅读)\s*[:：]?$/i.test(value);
 }
 
 const PUBLISHER_CHROME_LINES = new Set([
@@ -338,7 +363,7 @@ function readTakeaways(lines: string[], headingIndex: number, endIndex: number):
     if (next && isPair(current, next)) {
       // Bloomberg-style takeaways repeat the first body claim with more detail.
       // Treat that repeated claim as the start of the article body, not another takeaway.
-      if (sourceLines.some(source => sharedPrefix(source, current) >= 28)) break;
+      if (sourceLines.some(source => restatesClaim(source, current))) break;
       items.push(toParagraph(current, next));
       sourceLines.push(current);
       consumed.add(index); consumed.add(index + 1);

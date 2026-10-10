@@ -49,6 +49,23 @@ describe('article original reader parser', () => {
     expect(doc.byline).toBe('作者：研究组');
   });
 
+  it('stops takeaways at a paraphrased restatement of the first claim and keeps it in the body', () => {
+    const doc = parseArticleOriginal({
+      title: '彭博社：内存短缺冲击持续 华为利润降幅扩大',
+      paragraphs: [
+        '💬 Takeaways by Bloomberg AI',
+        '华为技术有限公司由于内存成本上升，导致利润大幅下滑。',
+        'Huawei Technologies Co. posted a deep profit decline due to rising memory costs.',
+        '华为技术有限公司在应对内存成本上涨时，利润出现明显下降。',
+        'Huawei Technologies Co. posted a deep profit decline after the Chinese tech champion grappled with rising memory costs.',
+      ],
+    });
+
+    expect(doc.takeaways.map(item => item.text)).toEqual(['华为技术有限公司由于内存成本上升，导致利润大幅下滑。']);
+    const body = doc.sections.flatMap(section => section.paragraphs).map(paragraph => paragraph.text);
+    expect(body).toContain('华为技术有限公司在应对内存成本上涨时，利润出现明显下降。');
+  });
+
   it('turns stored HTML fragments into clean readable paragraphs', () => {
     const doc = parseArticleOriginal({
       title: 'HTML 文章',
@@ -58,6 +75,25 @@ describe('article original reader parser', () => {
     const body = doc.sections.flatMap(section => section.paragraphs).map(paragraph => paragraph.text);
     expect(body).toEqual(['第一段正文。', '第二段正文。']);
     expect(body.join(' ')).not.toContain('<p');
+  });
+
+  it('cuts the body at newsletter cross-reference items (阅读更多 / Read more)', () => {
+    const doc = parseArticleOriginal({
+      title: '晨报速览',
+      paragraphs: [
+        '晨报速览',
+        '第一段正文，讲清楚今天的主线。',
+        '第二段正文，补充数据与背景。',
+        '阅读更多：在欧元区历史上，法国的债券风险远远高于意大利。',
+        '阅读更多：帕德尔价值 3 亿美元的英国业务似乎要破灭了',
+        'More From Bloomberg 更多来自彭博社的信息',
+      ],
+    });
+
+    const body = doc.sections.flatMap(section => section.paragraphs).map(paragraph => paragraph.text);
+    expect(body).toEqual(['第一段正文，讲清楚今天的主线。', '第二段正文，补充数据与背景。']);
+    expect(body.join(' ')).not.toContain('阅读更多');
+    expect(body.join(' ')).not.toContain('帕德尔');
   });
 
   it('removes single-line Reuters chrome and stops at related content', () => {
