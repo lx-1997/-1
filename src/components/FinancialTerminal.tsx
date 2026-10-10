@@ -1386,6 +1386,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 同一会话内重复打开同一条资讯/研报时直接复用已完成的解读；服务端仍负责
   // 跨用户持久缓存，这里只做前端瞬时缓存，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
+  const aiRetryAttemptsRef = useRef<Map<string, number>>(new Map());  // 网络类失败自动重试计数（每篇上限 2 次）
   const [aiError, setAiError] = useState('');
   const [upgradeOpen, setUpgradeOpen] = useState(false);   // 开通会员引导弹层
   const [upgradeReason, setUpgradeReason] = useState('');
@@ -3491,6 +3492,28 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       // missing route.  The backend returns 422/502 for those cases; keep the
       // 404 fallback narrow so we do not burn a second compact request.
       const deepTimedOut = deepError?.code === 'ECONNABORTED' || /timeout/i.test(deepError?.message || '');
+      // 移动网络易断连（NAT 杀长连接）：无 response 的网络类失败自动转后台延迟重试——
+      // 服务端对断连已改为继续生成并写缓存，几秒后重试大概率直接命中。
+      const networkDropped = /network/i.test(deepError?.message || '') || (!deepError?.response && !deepTimedOut);
+      if (networkDropped) {
+        const attempts = (aiRetryAttemptsRef.current.get(cacheKey) || 0) + 1;
+        aiRetryAttemptsRef.current.set(cacheKey, attempts);
+        if (attempts <= 2) {
+          registerAiTask({
+            key: cacheKey, kind: 'report', title: r.title, report: r, meta,
+            restart: () => { removeAiTask(cacheKey); aiRetryAttemptsRef.current.delete(cacheKey); runAiAnalysis(r); },
+            startedAt: Date.now(), status: 'running', stage: '网络波动，自动重试中', result: null, deepDraft: null, error: '',
+          });
+          showToast(`网络波动，已转后台自动重试（${attempts}/2）`, () => openAiTaskView(cacheKey));
+          window.setTimeout(() => {
+            if ((aiTasksRef.current.get(cacheKey)?.status || '') === 'running') { removeAiTask(cacheKey); runAiAnalysis(r); }
+          }, 6000);
+          return;
+        }
+        aiRetryAttemptsRef.current.delete(cacheKey);
+        failAiTask(cacheKey, '网络多次中断，请稍后在浮标里点重试（生成已完成的话会秒出）。');
+        return;
+      }
       const routeUnavailable = [405, 408, 501, 502, 504].includes(Number(deepStatus)) || deepTimedOut
         || (Number(deepStatus) === 404 && (!deepDetail || /^(not found|method not allowed)$/i.test(String(deepDetail).trim())));
       if (!routeUnavailable) {
@@ -3510,7 +3533,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           : (detail || deepDetail || e?.message || deepError?.message || 'AI 解读失败，请稍后重试'));
       }
     }
-  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
+  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
 
   // 快讯/文章解读：同研报后台任务化，完成经 toast/浮标回看。
   const runNewsAi = useCallback(async (m: RealtimeMessageRecord) => {
