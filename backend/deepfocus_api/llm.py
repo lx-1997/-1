@@ -2412,12 +2412,17 @@ def _is_retryable_pool_error(exc: Exception) -> bool:
     ))
 
 
+_MODEL_MAX_OUTPUT = {"glm-4-flash-250414": 8000}  # coding 套餐对单请求输出有上限，超限会掐断流
+
 def _payload_for_candidate(base: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     """按候选模型清洗 payload：enable_thinking 是 qwen3 专属键，
     发给「始终思考」的别家模型（GLM 1210）会被 400 拒绝——非 qwen3 一律剥离。"""
     p = dict(base)
     model = str(candidate.get("model") or p.get("model") or "")
     p["model"] = model or p.get("model")
+    cap = _MODEL_MAX_OUTPUT.get(model)
+    if cap and int(p.get("max_tokens") or 0) > cap:
+        p["max_tokens"] = cap
     if not _is_qwen3_thinking_model(model):
         extra = dict(p.get("extra_body") or {})
         if extra.pop("enable_thinking", None) is not None:
