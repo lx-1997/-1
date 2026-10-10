@@ -5688,7 +5688,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   {groupCfg?.enabled !== false && <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openGroup(); }}>💬 用户交流群{!groupSeen ? ' · 免费' : ''}</button>}
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); logAct('invite_click', '邀请得会员'); requireLogin(openReferral, '邀请得会员'); }}>🎁 邀请好友{refAvail > 0 ? ` · ${refAvail} 份奖励` : ''}</button>
                   <div className="bbt-more-section">偏好与帮助</div>
-                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); logAct('open_tutorial', '使用教程'); window.location.href = '/tutorial'; }}>📘 使用教程</button>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); logAct('open_tutorial', '开发者文档'); window.location.href = '/tutorial'; }}>📘 开发者文档</button>
                   <button
                     className="bbt-acct-row"
                     onClick={toggleNativeBackground}

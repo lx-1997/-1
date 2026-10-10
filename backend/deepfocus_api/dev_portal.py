@@ -317,7 +317,7 @@ if(jwt) loadWh(); else document.getElementById('loginHint').style.display='block
 
 _TUTORIAL_PAGE_TMPL = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>使用教程 · 稻草财经</title>
+<title>开发者接入指南 · 稻草财经</title>
 <style>
 :root{--bg:#0b0d12;--panel:#12151c;--line:#222733;--text:#e6ebf2;--mute:#8a93a3;--amber:#ffb000;--blue:#6ab0ff;--green:#2bd96a}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
@@ -348,7 +348,7 @@ _TUTORIAL_PAGE_TMPL = """<!doctype html><html lang="zh-CN"><head><meta charset="
 .ft{max-width:1100px;margin:0 auto;padding:20px;color:var(--mute);font-size:12.5px;border-top:1px solid var(--line)}
 </style></head><body>
 <div class="top"><div class="top-in">
-<span class="brand">稻草财经 · <span>使用教程</span></span>
+<span class="brand">稻草财经 · <span>开发者接入指南</span></span>
 <span class="sp"></span>
 <a href="/">返回终端</a><a href="/developers">开发者平台</a><a href="/api/mcp/setup">MCP 控制台</a>
 </div></div>
@@ -389,7 +389,7 @@ async def tutorial_page() -> HTMLResponse:
     """网站独立教程模块：与 /developers/guide 同源渲染《开发者接入指南》，带目录与代码复制。"""
     p = _guide_md_path()
     if p is None:
-        return HTMLResponse(_TUTORIAL_PAGE_TMPL.replace("__BODY__", "<h1>使用教程</h1><p>文档文件未部署，请稍后再试。</p>"))
+        return HTMLResponse(_TUTORIAL_PAGE_TMPL.replace("__BODY__", "<h1>开发者接入指南</h1><p>文档文件未部署，请稍后再试。</p>"))
     raw = p.read_text(encoding="utf-8")
     try:
         import markdown
