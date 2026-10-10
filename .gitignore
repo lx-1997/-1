@@ -128,3 +128,12 @@ upstream/
 
 # pdf 去水印工具的生成态测试样本（可由 create_test_pdfs.py 复现，不入库）
 tools/pdf_watermark_remover/*.pdf
+
+# 会话工具状态 / 构建预览产物（生成态不入库）
+.Codex/
+/output/
+/preview/
+
+# 运行时 SQLite 备份与代码备份（历史快照，不入库）
+*.sqlite3.bak-*
+backend/deepfocus_api/*.py.bak-*
