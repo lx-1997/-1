@@ -1,4 +1,4 @@
-import { createResearchRetryQueue, isResearchNetworkDrop } from '../../components/FinancialTerminal';
+import { createResearchRetryQueue, isResearchNetworkDrop, isResearchRouteUnavailable } from '../../components/FinancialTerminal';
 
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => { jest.clearAllTimers(); jest.useRealTimers(); });
@@ -77,6 +77,35 @@ it.each(['Failed to fetch', 'NetworkError when attempting to fetch resource.', '
 it('recognizes only the stream reader EOF error rather than general 502 responses', () => {
   expect(isResearchNetworkDrop(Object.assign(new Error('解读中断，请重试'), { streamInterrupted: true, response: { status: 502 } }))).toBe(true);
   expect(isResearchNetworkDrop(Object.assign(new Error('Provider unavailable'), { response: { status: 502 } }))).toBe(false);
+});
+
+it.each([
+  { response: { status: 404, data: { detail: 'Not Found' } } },
+  { response: { status: 404, data: { detail: 'Method Not Allowed' } } },
+  { response: { status: 404 } },
+  { response: { status: 405 } },
+  { status: 501 },
+  { response: { status: 501, data: { detail: 'Not Implemented' } } },
+])('allows a compact compatibility request only for a missing route or capability %#', error => {
+  expect(isResearchRouteUnavailable(error)).toBe(true);
+});
+
+it.each([
+  { response: { status: 404, data: { detail: '研报文件不存在' } } },
+  { response: { status: 408 } },
+  { response: { status: 502 } },
+  { response: { status: 504 } },
+  { response: { status: 500 } },
+  { code: 'ECONNABORTED', message: 'timeout of 360000ms exceeded' },
+  { code: 'ETIMEDOUT' },
+  { response: { status: 405 }, message: 'Provider timeout' },
+  { response: { status: 501 }, code: 'ETIMEDOUT' },
+  { response: { status: 501, data: { detail: 'Provider failed during generation' } } },
+  { response: { status: 405, data: { detail: 'Provider timeout' } } },
+  { response: { status: 404 }, streamInterrupted: true },
+  { response: { status: 405 }, streamDeliveredResult: true },
+])('does not replace an executed, timed out or source-missing deep request with compact %#', error => {
+  expect(isResearchRouteUnavailable(error)).toBe(false);
 });
 
 it.each([

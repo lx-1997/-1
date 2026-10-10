@@ -936,8 +936,8 @@ export function generateResearchDeepDraft(
 }
 
 /** 深度解读流式版：SSE 阶段进度实时回报（获取原文→页数/字符→生成中→兜底提示），
- * 完成后返回与 POST 端点完全同构的结果。流不可用（旧后端 404/405、首个事件前
- * 网络失败）时静默回退普通 POST；402/403/422 与生成错误按 axios 形状抛出，
+ * 完成后返回与 POST 端点完全同构的结果。仅 HTTP 明确表示旧后端缺少流接口
+ * （404/405/501）时回退普通 POST；断流及生成错误按 axios 形状抛出，
  * 复用调用方现有处理链。onQuick：后端快轨先产出的十秒级速览卡（AiAnalysis 形状）。 */
 export async function generateResearchDeepDraftSmart(
   payload: ResearchDeepDraftRequest,
@@ -1002,16 +1002,20 @@ async function streamResearchDeepDraft(
     if (!resp.ok || !resp.body) {
       let detail = '';
       try { detail = (await resp.json())?.detail || ''; } catch { /* 保留状态码提示 */ }
+      if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
       if (resp.status === 401 && token && sessionOwnsRequest(base)) invalidateAuthSession(token);
       const err: any = new Error(detail || `HTTP ${resp.status}`);
       err.response = { status: resp.status, data: { detail } };
+      const missingCapability = resp.status === 405
+        || (resp.status === 404 && (!detail || /^(not found|method not allowed)$/i.test(String(detail).trim())))
+        || (resp.status === 501 && (!detail || /^(not implemented|method not allowed)$/i.test(String(detail).trim())));
+      if (missingCapability && !/timeout/i.test(String(detail))) err.streamUnavailable = true;
       throw err;
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
     let result: ResearchDeepDraftResponse | null = null;
-    let sawEvent = false;
     for (;;) {
       const { value, done } = await reader.read();
       if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
@@ -1025,7 +1029,6 @@ async function streamResearchDeepDraft(
         if (!line) continue;
         let evt: any;
         try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
-        sawEvent = true;
         if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
         if (evt.type === 'stage' && onStage && evt.detail) onStage(evt.detail);
         else if (evt.type === 'quick' && evt.data) {
@@ -1041,11 +1044,6 @@ async function streamResearchDeepDraft(
       }
     }
     if (result) return result;
-    if (!sawEvent) {
-      const err: any = new Error('stream unavailable');
-      err.streamUnavailable = true;
-      throw err;
-    }
     const err: any = new Error('解读中断，请重试');
     err.streamInterrupted = true;
     err.response = { status: 502, data: { detail: '解读中断，请重试' } };

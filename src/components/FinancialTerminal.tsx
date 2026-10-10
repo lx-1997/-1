@@ -222,6 +222,20 @@ export function isResearchNetworkDrop(error: any): boolean {
     || /^(?:NetworkError\b|Network request failed\b|Network error\b|Failed to fetch\b|Load failed\b)/i.test(String(error.message || ''));
 }
 
+export function isResearchRouteUnavailable(error: any): boolean {
+  // A timeout or generation error can arrive after model work has started.
+  // Only a missing endpoint/capability permits a second compact request.
+  const detail = error?.response?.data?.detail ?? error?.detail;
+  if (!error || error.streamInterrupted || error.streamDeliveredResult
+    || ['AbortError', 'CanceledError'].includes(error.name)
+    || ['ERR_CANCELED', 'ECONNABORTED', 'ETIMEDOUT'].includes(error.code)
+    || /timeout/i.test(String(error.message || '') + ' ' + String(detail || ''))) return false;
+  const status = Number(error.response?.status ?? error.status);
+  if (status === 405) return true;
+  if (status === 501) return !detail || /^(not implemented|method not allowed)$/i.test(String(detail).trim());
+  return status === 404 && (!detail || /^(not found|method not allowed)$/i.test(String(detail).trim()));
+}
+
 /** Own the delayed retries so a new task or account cannot inherit an old timer. */
 export function createResearchRetryQueue(isCurrent: (revision: number) => boolean = isAuthRevisionCurrent) {
   const entries = new Map<string, { attempts: number; timer?: number }>();
@@ -3558,8 +3572,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         failAiTask(cacheKey, '网络多次中断，请稍后在浮标里手动重试。');
         return;
       }
-      const routeUnavailable = [405, 408, 501, 502, 504].includes(Number(deepStatus)) || deepTimedOut
-        || (Number(deepStatus) === 404 && (!deepDetail || /^(not found|method not allowed)$/i.test(String(deepDetail).trim())));
+      const routeUnavailable = isResearchRouteUnavailable(deepError);
       if (!routeUnavailable || deepError?.streamDeliveredResult) {
         failAiTask(cacheKey, deepTimedOut ? '深度稿生成超时了，请稍后重试。' : (deepDetail || deepError?.message || '深度稿生成失败，请稍后重试'));
         return;

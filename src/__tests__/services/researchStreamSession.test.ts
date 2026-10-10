@@ -84,6 +84,38 @@ it('marks clean EOF before a final result as an interrupted transport', async ()
   expect(apiPost).not.toHaveBeenCalled();
 });
 
+it('treats an empty successful stream as interrupted without issuing a legacy request', async () => {
+  streamFrames([]);
+  await expect(generateResearchDeepDraftSmart({ title: 'Report' })).rejects.toMatchObject({
+    streamInterrupted: true, response: { status: 502 },
+  });
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
+it.each([
+  { status: 404, detail: 'Not Found' },
+  { status: 404, detail: '' },
+  { status: 405, detail: 'Method Not Allowed' },
+  { status: 501, detail: 'Not Implemented' },
+  { status: 501, detail: 'Method Not Allowed' },
+])('uses legacy POST only when HTTP explicitly identifies a missing stream capability %#', async ({ status, detail }) => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: false, status, json: async () => ({ detail }) });
+  (apiPost as jest.Mock).mockResolvedValueOnce({ title: 'Legacy deep result' });
+  expect(await generateResearchDeepDraftSmart({ title: 'Report' })).toEqual({ title: 'Legacy deep result' });
+  expect(apiPost).toHaveBeenCalledTimes(1);
+  expect(apiPost).toHaveBeenCalledWith('/api/research/deep-draft', { title: 'Report' }, expect.objectContaining({ timeout: 360000 }));
+});
+
+it.each([
+  { status: 404, detail: '研报文件不存在' },
+  { status: 501, detail: 'Provider failed during generation' },
+  { status: 405, detail: 'Provider timeout' },
+])('does not start legacy generation after a source or provider HTTP failure %#', async ({ status, detail }) => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: false, status, json: async () => ({ detail }) });
+  await expect(generateResearchDeepDraftSmart({ title: 'Report' })).rejects.toMatchObject({ response: { status } });
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
 it('keeps a backend error distinct from transport EOF', async () => {
   streamFrames([{ type: 'error', status: 502, detail: 'Provider unavailable' }]);
   let error: any;
@@ -117,8 +149,20 @@ it('never starts a request for an already cancelled caller', async () => {
 
 it('forwards caller cancellation to the older non-stream fallback', async () => {
   const controller = new AbortController();
-  streamFrames([]);
+  global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({ detail: 'Not Found' }) });
   (apiPost as jest.Mock).mockResolvedValueOnce({ title: 'Fallback' });
   expect(await generateResearchDeepDraftSmart({ title: 'Report' }, undefined, undefined, controller.signal)).toEqual({ title: 'Fallback' });
   expect(apiPost).toHaveBeenCalledWith('/api/research/deep-draft', { title: 'Report' }, expect.objectContaining({ signal: controller.signal }));
+});
+
+it('does not start legacy generation when the account changes while reading a missing-route response', async () => {
+  let resolveDetail!: (value: { detail: string }) => void;
+  const pendingDetail = new Promise<{ detail: string }>(resolve => { resolveDetail = resolve; });
+  global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, json: () => pendingDetail });
+  const research = generateResearchDeepDraftSmart({ title: 'Report' });
+  await Promise.resolve();
+  authenticateSession({ ...account, id: 'B' }, 'test-b', 'https://example.test');
+  resolveDetail({ detail: 'Not Found' });
+  await expect(research).rejects.toMatchObject({ code: 'ERR_CANCELED' });
+  expect(apiPost).not.toHaveBeenCalled();
 });

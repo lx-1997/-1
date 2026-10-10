@@ -174,3 +174,55 @@ it('keeps an anonymous empty watchlist terminal interactive across rerenders', a
   await act(async () => { view.unmount(); });
   expect(research.mock.calls[0][3]!.aborted).toBe(true);
 });
+
+function httpFailure(status: number, detail: string) {
+  return Object.assign(new Error(detail || `HTTP ${status}`), {
+    response: { status, data: { detail } },
+  });
+}
+
+it.each([
+  { label: '502 provider failure', error: httpFailure(502, 'Provider unavailable'), visible: 'Provider unavailable' },
+  { label: '502 source failure', error: httpFailure(502, 'Source document could not be loaded'), visible: 'Source document could not be loaded' },
+  { label: '501 unsupported provider operation', error: httpFailure(501, 'Provider cannot analyze this document'), visible: 'Provider cannot analyze this document' },
+  { label: '408 response', error: httpFailure(408, 'Request was interrupted'), visible: 'Request was interrupted' },
+  { label: '504 response', error: httpFailure(504, 'Gateway did not complete the request'), visible: 'Gateway did not complete the request' },
+  { label: 'ECONNABORTED', error: Object.assign(new Error('Request took too long'), { code: 'ECONNABORTED' }), visible: '深度稿生成超时了，请稍后重试。' },
+  { label: 'ETIMEDOUT', error: Object.assign(new Error('Research timeout'), { code: 'ETIMEDOUT' }), visible: '深度稿生成超时了，请稍后重试。' },
+  { label: 'timeout message', error: new Error('Research timeout'), visible: '深度稿生成超时了，请稍后重试。' },
+  { label: '404 deleted source', error: httpFailure(404, 'file not found: fixture.pdf'), visible: 'file not found: fixture.pdf' },
+])('keeps $label without a paid fallback or automatic retry, and permits an explicit manual retry', async ({ error, visible }) => {
+  research.mockRejectedValue(error);
+  await openReport();
+  expectNoCompactRequest();
+  expect(screen.queryByText(/网络波动，6 秒后自动重试/)).not.toBeInTheDocument();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /解读失败：研报断流集成回归/ })); });
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toHaveTextContent(visible);
+  await act(async () => { jest.advanceTimersByTime(18_000); });
+  expect(research).toHaveBeenCalledTimes(1);
+  expectNoCompactRequest();
+  pendingResearch();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '↻ 重试' })); });
+  expect(research).toHaveBeenCalledTimes(2);
+  await act(async () => { jest.advanceTimersByTime(18_000); });
+  expect(research).toHaveBeenCalledTimes(2);
+  expectNoCompactRequest();
+});
+
+it.each([
+  { status: 404, detail: 'Not Found' },
+  { status: 405, detail: 'Method Not Allowed' },
+  { status: 501, detail: 'Not Implemented' },
+])('keeps the legacy compact fallback for a missing route ($status)', async ({ status, detail }) => {
+  research.mockRejectedValueOnce(httpFailure(status, detail));
+  (apiPost as jest.Mock).mockImplementation(async (path: string) => path === '/api/research/vision-analyze'
+    ? { one_liner: '兼容后端解读完成', summary: '旧后端仍可正常解读' }
+    : {});
+  await openReport();
+  expect(apiPost).toHaveBeenCalledWith('/api/research/vision-analyze', expect.objectContaining({ file_id: report.file_id }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /解读完成：研报断流集成回归/ })); });
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toHaveTextContent('兼容后端解读完成');
+  await act(async () => { jest.advanceTimersByTime(18_000); });
+  expect(research).toHaveBeenCalledTimes(1);
+  expect((apiPost as jest.Mock).mock.calls.filter(([path]) => path === '/api/research/vision-analyze')).toHaveLength(1);
+});
