@@ -2441,14 +2441,19 @@ def _thinking_disable_conflict(payload: dict[str, Any], exc: Exception) -> bool:
 
 def _without_thinking_disable(payload: dict[str, Any]) -> dict[str, Any]:
     """去掉禁思考键，并按 1210 的指引设 thinking_budget=low：
-    「始终思考」模型不禁用也会思考，预算全花在思考上会榨干 max_tokens 致正文为空。"""
+    「始终思考」模型不禁用也会思考，预算全花在思考上会榨干 max_tokens 致正文为空。
+    GLM 的 1210 指引是 thinking.type 用 low/high/max——原地 disabled→low 保留其私有键位，
+    不额外塞 Qwen 风格的 thinking_budget（GLM 端点会拒）。"""
     p = dict(payload)
     extra = dict(p.get("extra_body") or {})
     extra.pop("enable_thinking", None)
     thinking = extra.get("thinking")
     if isinstance(thinking, dict) and thinking.get("type") == "disabled":
-        extra.pop("thinking", None)
-    extra.setdefault("thinking_budget", "low")
+        if str(p.get("model") or "").lower().startswith("glm-"):
+            extra["thinking"] = {**thinking, "type": "low"}
+        else:
+            extra.pop("thinking", None)
+            extra.setdefault("thinking_budget", "low")
     p["extra_body"] = extra
     return p
 
