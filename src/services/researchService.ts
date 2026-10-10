@@ -935,13 +935,14 @@ export function generateResearchDeepDraft(
 /** 深度解读流式版：SSE 阶段进度实时回报（获取原文→页数/字符→生成中→兜底提示），
  * 完成后返回与 POST 端点完全同构的结果。流不可用（旧后端 404/405、首个事件前
  * 网络失败）时静默回退普通 POST；402/403/422 与生成错误按 axios 形状抛出，
- * 复用调用方现有处理链。 */
+ * 复用调用方现有处理链。onQuick：后端快轨先产出的十秒级速览卡（AiAnalysis 形状）。 */
 export async function generateResearchDeepDraftSmart(
   payload: ResearchDeepDraftRequest,
   onStage?: (detail: string) => void,
+  onQuick?: (quick: AiAnalysisLike) => void,
 ): Promise<ResearchDeepDraftResponse> {
   try {
-    return await streamResearchDeepDraft(payload, onStage);
+    return await streamResearchDeepDraft(payload, onStage, onQuick);
   } catch (err: any) {
     const status = err?.response?.status;
     if (status === 402 || status === 403 || status === 422) throw err;
@@ -950,9 +951,26 @@ export async function generateResearchDeepDraftSmart(
   }
 }
 
+// 速览卡与旧 compact 视觉卡同形状；独立定义避免反向依赖组件层类型。
+export interface AiAnalysisLike {
+  title?: string;
+  subject?: string;
+  one_liner?: string;
+  summary?: string;
+  bullish?: string[];
+  bearish?: string[];
+  key_points?: string[];
+  instruments?: string[];
+  confidence?: number;
+  provider?: string;
+  source_note?: string;
+  quick?: boolean;
+}
+
 async function streamResearchDeepDraft(
   payload: ResearchDeepDraftRequest,
   onStage?: (detail: string) => void,
+  onQuick?: (quick: AiAnalysisLike) => void,
 ): Promise<ResearchDeepDraftResponse> {
   const token = localStorage.getItem('auth_token');
   const resp = await fetch('/api/research/deep-draft/stream', {
@@ -990,6 +1008,7 @@ async function streamResearchDeepDraft(
       try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
       sawEvent = true;
       if (evt.type === 'stage' && onStage && evt.detail) onStage(evt.detail);
+      else if (evt.type === 'quick' && evt.data && onQuick) onQuick(evt.data);
       else if (evt.type === 'done' && evt.data) result = evt.data;
       else if (evt.type === 'error') {
         const err: any = new Error(evt.detail || '生成失败');

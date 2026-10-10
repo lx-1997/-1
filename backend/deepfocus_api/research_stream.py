@@ -32,6 +32,7 @@ from .research_digest import (
     neutralize_deep_draft,
     resolve_source_documents,
 )
+from .research_quick import generate_deep_quick
 
 router = APIRouter()
 
@@ -144,6 +145,26 @@ async def api_research_deep_draft_stream(
                 "chars": text_chars,
                 "detail": f"原文已获取 · {pages} 页 · " + ("文本层 %d 字符" % text_chars if text_chars else "扫描版，走视觉解读"),
             })
+
+        # 快轨：先推一版十秒级速览（独立缓存 quick:<key>），深度稿随后继续生成。
+        # 速览失败静默跳过——它只是增强层，绝不阻塞深稿主链路。
+        quick_cache_key = f"quick:{cache_key}" if cache_key else ""
+        quick = metrics_get_ai_cache(quick_cache_key) if quick_cache_key else None
+        if not isinstance(quick, dict) or not quick.get("one_liner"):
+            yield _sse({"type": "stage", "stage": "quick", "detail": "速览生成中（约 10 秒，先出方向感）…"})
+            try:
+                quick = await asyncio.wait_for(
+                    generate_deep_quick(request, documents=docs),
+                    timeout=60,
+                )
+            except Exception as exc:
+                print(f"[deep-quick] 快轨异常跳过：{type(exc).__name__}: {str(exc)[:120]}")
+                quick = None
+            if isinstance(quick, dict) and quick.get("one_liner") and quick_cache_key:
+                metrics_set_ai_cache(quick_cache_key, quick)
+        if isinstance(quick, dict) and quick.get("one_liner"):
+            yield _sse({"type": "quick", "data": quick})
+
         yield _sse({"type": "stage", "stage": "generate", "detail": "模型解读中（长报告约 1-3 分钟，完成即缓存秒开）"})
 
         started = asyncio.get_event_loop().time()
