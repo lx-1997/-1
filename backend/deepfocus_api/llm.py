@@ -91,12 +91,12 @@ _RECENT_WINDOW_NUMBERS = {
 def _recent_content_bundle_args(question: str) -> dict[str, Any] | None:
     """Detect an explicit recent/all-content request that must use the auditable bundle."""
     text = str(question or "").strip()
-    if not text or not re.search(r"最近|近期|近\s*[一二两三四五六七八九十\d]+|过去\s*[一二两三四五六七八九十\d]+", text):
+    if not text or not re.search(r"最近|近期|近\s*[一二两三四五六七八九十\d]+|过去\s*[一二两三四五六七八九十\d]+|这\s*[一二两三四五六七八九十\d]+\s*天", text):
         return None
     if not re.search(r"机构纪要|快讯|文章|研报|资讯|内容|全部|所有", text, re.I):
         return None
     days = 2
-    match = re.search(r"(?:最近|近|过去)\s*([一二两三四五六七八九十\d]+)\s*天", text)
+    match = re.search(r"(?:最近|近|过去|这)\s*([一二两三四五六七八九十\d]+)\s*天", text)
     if match:
         token = match.group(1)
         days = int(token) if token.isdigit() else _RECENT_WINDOW_NUMBERS.get(token, 2)
@@ -109,6 +109,115 @@ def _recent_content_bundle_args(question: str) -> dict[str, Any] | None:
     return {"days": max(1, min(days, 30)), "limit": 500, "query": ""}
 
 
+_DIGEST_JUNK_TITLE_RE = re.compile("[\\s【】\\[\\]()（）「」·:：,，。、|｜\\-—_#*>▶►\\U0001F000-\\U0001FAFF\\u2600-\\u27BF\\uFE0F]")
+_DIGEST_BRACKET_TITLE_RE = re.compile("^[（(【\\[].+[）)】\\]]$")
+
+
+def _clean_digest_rows_for_model(rows: Any) -> list[dict[str, Any]]:
+    """给汇总类问答的 evidence 做最后一道确定性清洗。
+
+    池内模型会原样复述索引脏行（纯括号标题、索引注释、冒号残句），提示词拦不住，
+    在压缩器里直接淘汰：①去装饰后有效字符不足 6 或整体被括号包裹的注记式标题；
+    ②summary 是索引注释（『在多个主题中的提及』）或以冒号残句结尾的置空；
+    ③同标题去重只留首条，最多 24 行；④摘要被置空的行只用于补足前 10 条，
+    有摘要的行优先——否则模型会给无摘要条目渲染出『：...』省略号。
+    """
+    kept: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "").strip()
+        bare = _DIGEST_JUNK_TITLE_RE.sub("", title)
+        if len(bare) < 6 or _DIGEST_BRACKET_TITLE_RE.match(title):
+            continue
+        summary = str(row.get("summary") or "").strip()
+        if not summary or summary == title or "在多个主题中的提及" in summary or summary.endswith(("：", ":")):
+            summary = ""
+        key = bare[:32]
+        if key in seen:
+            continue
+        seen.add(key)
+        item = {**row, "summary": summary}
+        if summary:
+            kept.append(item)
+            if len(kept) >= 24:
+                break
+        else:
+            pending.append(item)
+    if len(kept) < 10:
+        return (kept + pending)[:10] if kept or pending else kept
+    return kept[:24]
+
+
+def _render_recent_digest_answer(bundle_data: Any) -> str | None:
+    """汇总类问答的确定性成稿：条目列表由命中明细直接渲染。
+
+    实测系统提示/工具 instruction/末位用户消息三种提示词位置都无法让池内模型
+    稳定产出分组条目，而标题/日期/摘要是纯数据渲染，无需模型；沿用
+    _grounded_stock_screen_answer 的「不经模型二次改写」范式。
+    数据源优先级：sources.<源>.items（全量命中明细）> evidence（索引聚合簇，
+    实测 57 篇命中聚合后只剩 4 簇，直接用会严重欠采样）。清洗后不足 3 条时
+    返回 None 仍走模型，避免把单条结果渲染成空洞列表。
+    """
+    if not isinstance(bundle_data, dict):
+        return None
+    window_days = bundle_data.get("window_days") or 2
+    candidates: list[dict[str, Any]] = []
+    for src_label, src in (bundle_data.get("sources") or {}).items():
+        if not isinstance(src, dict):
+            continue
+        matched = int(src.get("count") or (src.get("coverage") or {}).get("matched_count") or 0)
+        for item in (src.get("items") or [])[:200]:
+            if isinstance(item, dict):
+                candidates.append({
+                    "title": item.get("title"),
+                    "summary": item.get("summary"),
+                    "published_at": item.get("published_at") or item.get("date"),
+                    "_label": str(src_label),
+                    "_matched": matched,
+                })
+    if not candidates:
+        for row in (bundle_data.get("evidence") or []):
+            if isinstance(row, dict):
+                candidates.append({**row, "_label": "", "_matched": 0})
+    rows = _clean_digest_rows_for_model(candidates)
+    if len(rows) < 3:
+        return None
+    matched_by_src: dict[str, int] = {}
+    for row in rows:
+        row_label = str(row.get("_label") or "")
+        if row_label:
+            matched_by_src[row_label] = max(matched_by_src.get(row_label, 0), int(row.get("_matched") or 0))
+    if len(matched_by_src) > 1:
+        src_label = "站内五类资料"
+        matched = sum(matched_by_src.values()) or len(rows)
+    else:
+        src_label = next(iter(matched_by_src), "站内资料")
+        matched = next(iter(matched_by_src.values()), 0) or len(rows)
+    rows.sort(key=lambda row: str(row.get("published_at") or ""), reverse=True)
+    shown = rows[:16]
+    lines: list[str] = [f"最近{window_days}天{src_label}共{matched}篇，最近更新在前，逐条列出：", ""]
+    for row in shown:
+        title = str(row.get("title") or "").strip()
+        date = str(row.get("published_at") or "")[:10]
+        summary = " ".join(str(row.get("summary") or "").split())
+        if title and summary.startswith(title):
+            summary = summary[len(title):].strip()   # 纪要正文常以标题开头，去重不浪费截断预算
+        summary = re.sub("[—\-–_]{3,}", "；", summary).strip("；:： #-—…")[:160]
+        line = f"〔{title}〕" + (f"（{date}）" if date else "")
+        if summary:
+            line += f"：{summary}"
+        lines.append(line)
+    tail = ""
+    if matched > len(shown):
+        tail += f"其余 {matched - len(shown)} 条为更早条目或重复主题，已纳入全量扫描、未逐条展开。"
+    lines.append("")
+    lines.append((tail + "以上为站内资料的结构化整理，观点归属原发布机构。").strip())
+    return "\n".join(lines)
+
+
 def _compact_recent_bundle_for_model(result: dict[str, Any]) -> dict[str, Any]:
     """Keep all coverage/index facts and only the ranked evidence rows for the LLM context."""
     return {
@@ -118,8 +227,13 @@ def _compact_recent_bundle_for_model(result: dict[str, Any]) -> dict[str, Any]:
         "coverage_complete": bool(result.get("coverage_complete")),
         "index": result.get("index") or {},
         "analysis": result.get("analysis") or {},
-        "evidence": list(result.get("evidence") or [])[:32],
-        "instruction": "以上 coverage 是全量扫描统计；evidence 是统一索引按相关性/新鲜度排序后的代表证据。不得把未返回的条目补写成事实。",
+        "evidence": _clean_digest_rows_for_model(result.get("evidence")),
+        "instruction": (
+            "以上 coverage 是全量扫描统计；evidence 是统一索引按相关性/新鲜度排序后的代表证据。不得把未返回的条目补写成事实。"
+            "呈现契约：第一段禁止空泛概述（如『涵盖了多个主题/行业』）；第一句先引用 coverage 给量化概览（共命中几条·分几个主题），"
+            "随后按主题分组逐条落内容：〔标题〕（日期）+1~2句核心观点，涉及个股必须点名；"
+            "全文最多列16条最有信息量的条目，其余如实写『该组另有X条从略』；末尾用不超过3句给主线与风险。"
+        ),
     }
 
 
@@ -1595,8 +1709,9 @@ class CloudResearchLLM:
             "与 get_recent_research(海外投行研报)、get_daily_review。可如实告诉用户你已结合【本站近期快讯/研报/复盘】作答(但绝不点名任何外部数据源/服务商)。\n"
             "⭐用户要求『最近N天全部/所有』『最近两天机构纪要总结』或四类资料汇总时，必须先调用 get_recent_content_digest(days=N, query留空=窗口内全部)。"
             "该工具会对快讯、文章、投行研报、机构纪要使用同一截止时间并返回扫描/命中/是否完整；不得用单次8条结果冒充全量，也不得在未完成扫描时写『全部』。"
-            "此类总结的呈现红线：第一段就要逐条落内容——机构纪要/研报每条=〔标题〕（日期）+1~2句核心观点（涉及个股必须点名），快讯按主题归类；"
-            "禁止用『主要涵盖了多个行业和主题』这类空泛概述段落开场；逐条列完后末尾用不超过3句收一条主线。\n"
+            "此类总结的呈现红线：禁止用『主要涵盖了多个行业和主题』这类空泛概述段落开场；第一句先给量化概览（本窗口命中多少条、归成几组），"
+            "随后直接分组列条目——每条=〔标题〕（日期）+1~2句核心观点（涉及个股必须点名）；条目多时每组只列最有信息量的几条，"
+            "并如实注明『该组另有X条从略』，不得把从略写成全部；末尾用不超过3句收主线与风险。\n"
             "⭐用户问『目标价/目标位/半年内或未来12个月空间』时，不能只报行情或卖方聚合表：先取当前行情，再必须补查本站『投行研报』和『机构纪要』，优先使用最近18个月且明确提到该标的的观点、评级、目标价或估值假设。若两类资料均无命中，明确写『本站暂无可核验的相关研报/机构纪要』；超过18个月的共识只能作为已剔除的历史数据，绝不能写成当前目标价或半年空间。\n"
             "5) 闲聊/问候/产品功能/客服计费：直接自然简短回答，不取数、不硬凑投研。\n"
             "如果【最近对话】里已经有完整数据，用户当前只说『一句结论/别展开/简短点』，这是改写请求：不要再调工具，只用上文改写。\n"
@@ -1660,6 +1775,7 @@ class CloudResearchLLM:
         # preference.  Read the four sources before the first completion so the
         # model cannot answer from a single default 8-row institution-note page.
         recent_bundle_args = _recent_content_bundle_args(question)
+        bundle_data: dict[str, Any] = {}
         advertised_tool_names = {
             str(((spec.get("function") or {}).get("name") or "")) for spec in tool_specs
         }
@@ -1866,6 +1982,12 @@ class CloudResearchLLM:
                         })
                         forcing_tool = True
                         continue
+                    # 汇总类问答确定性成稿：条目列表由 evidence 直接渲染，绕开
+                    # 审计轮的 700 字截断与池内模型的结构随机性（三种提示词位置实测无效）。
+                    if recent_bundle_args and isinstance(bundle_data, dict) and bundle_data:
+                        digest_final = _render_recent_digest_answer(bundle_data)
+                        if digest_final:
+                            return result_payload(_respect_explicit_brevity(question, digest_final), round_index, False)
                     answer = _strip_thinking_blocks(message.content or "").strip()
                     answer = _grounded_market_quote_answer(question, messages) or await audit_answer(answer)
                     answer = _comparison_period_guard(question, answer, comparison_basis)
