@@ -1,4 +1,8 @@
 import { hydrateInterpretCache, persistInterpretEntry, type CachedInterpretation } from '../../utils/aiInterpretCache';
+import { accountStorageKey } from '../../utils/accountStorage';
+
+// 测试无登录态 → guest 域（与 utils.scopedKey 的计算保持一致）
+const STORE_KEY = accountStorageKey('df_ai_interpret_cache_v1', null);
 
 describe('aiInterpretCache', () => {
   beforeEach(() => localStorage.clear());
@@ -16,7 +20,7 @@ describe('aiInterpretCache', () => {
       fresh: { result: 1, savedAt: Date.now() },
       stale: { result: 2, savedAt: Date.now() - 8 * 24 * 60 * 60 * 1000 },
     };
-    localStorage.setItem('df_ai_interpret_cache_v1', JSON.stringify(store));
+    localStorage.setItem(STORE_KEY, JSON.stringify(store));
     const into = new Map<string, unknown>();
     hydrateInterpretCache(into, raw => raw.result);
 
@@ -54,7 +58,7 @@ describe('aiInterpretCache', () => {
     for (let i = 0; i < 15; i += 1) {
       persistInterpretEntry(`big-${i}`, { result: 'y'.repeat(200_000) });
     }
-    const store = JSON.parse(localStorage.getItem('df_ai_interpret_cache_v1') || '{}');
+    const store = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
     const total = Object.values(store).reduce((sum: number, e: any) => sum + JSON.stringify(e).length, 0);
     expect(total).toBeLessThanOrEqual(2_000_000 + 250_000);  // 预算 + 单条容差
     expect(Object.keys(store)).toContain('big-14');           // 最新一条永远在
@@ -69,13 +73,13 @@ describe('aiInterpretCache', () => {
     localStorage.setItem('df_ai_interpret_cache_v1', JSON.stringify(bloated));
     expect(persistInterpretEntry('fresh', { result: { ok: true } })).toBe(true);
 
-    const store = JSON.parse(localStorage.getItem('df_ai_interpret_cache_v1') || '{}');
+    const store = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
     expect(store.fresh).toBeTruthy();
     expect(Object.keys(store).length).toBeLessThan(12);  // 弃置过旧条目
   });
 
   it('tolerates corrupted store content', () => {
-    localStorage.setItem('df_ai_interpret_cache_v1', '{not json');
+    localStorage.setItem(STORE_KEY, '{not json');
     const into = new Map<string, unknown>();
     expect(() => hydrateInterpretCache(into, raw => raw.result)).not.toThrow();
     expect(into.size).toBe(0);

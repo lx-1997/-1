@@ -9239,44 +9239,18 @@ def _owner_args(user: dict) -> dict[str, Any]:
 
 
 def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] = None, *, cached: bool = False) -> Optional[str]:
-    """AI 解读额度闸（付费墙 + 省 token）。返回计数 key（成功后 incr）或 None（会员无限）。
-
-    策略：
-    - 会员(premium/lifetime)：无限 → None（生成 + 读取都放行）。
-    - 非会员 / 未登录：**绝不触发新生成（省 token）**，只有结果【已缓存】才放行，且每天免费 1 次（研报/文章共享，env DEEPFOCUS_FREE_AI_READ）。
-        · 未缓存 → 匿名抛 403（含「登录」→ 前端走登录弹窗）/ 登录非会员抛 402（→ 前端走升级弹窗）。
-        · 已缓存但今日免费额度用完 → 同上提示。
-    用 403（匿名）而非 401，避免前端拦截器把它当「登录失效」整页跳转。kind: yb(研报)/wz(文章)。"""
-    # 会员 → 无限（生成/读取都放行）
+    """AI 解读额度闸（付费墙 + 省 token）。会员(premium/lifetime)无限；非会员与匿名一律不放行
+    （2026-10-11 起会员专属，此前的「缓存结果每日免费读 1 次」一并取消）。
+    登录非会员抛 402（→前端升级弹窗）；匿名抛 403（→前端登录弹窗）。kind: yb(研报)/wz(文章)。"""
+    label = "研报" if kind == "yb" else "文章"
     if user:
         uid = str(user.get("sub", ""))
         u = get_user_out_by_id(uid)
         tier = (u.membership or {}).get("tier") if (u and u.membership) else None
         if tier in ("premium", "lifetime"):
             return None
-    free_limit = int(os.getenv("DEEPFOCUS_FREE_AI_READ", "1") or 1)
-    label = "研报" if kind == "yb" else "文章"
-    hint = _upgrade_hint()
-    if not user:
-        # 匿名：未缓存不生成、直接引导登录；已缓存每天免费读 free_limit 次
-        ip = _client_ip(request) if request is not None else "?"
-        fkey = f"q:aifree:anon:{ip}"
-        if not cached:
-            raise HTTPException(status_code=403, detail=f"该{label} AI 解读尚未生成——登录即可解读，还送 3 天尊享会员 🎁")
-        lease = _reserve_cost_quota(fkey, free_limit)
-        if lease is None:
-            raise HTTPException(status_code=403, detail="今日免费体验已用完——登录即可继续解读，还送 3 天尊享会员 🎁")
-        return lease
-    # 登录非会员：未缓存不生成、引导开通；已缓存每天免费读 free_limit 次
-    uid = str(user.get("sub", ""))
-    fkey = f"q:aifree:{uid}"
-    if not cached:
-        raise HTTPException(status_code=402, detail=f"AI 解读是会员功能——开通会员即可无限解读{label}，{hint}")
-    lease = _reserve_cost_quota(fkey, free_limit)
-    if lease is None:
-        raise HTTPException(status_code=402, detail=f"今日免费 AI 解读已用完（非会员每天 {free_limit} 次）。开通会员畅享无限——{hint}")
-    return lease
-
+        raise HTTPException(status_code=402, detail=f"AI 解读是会员功能——开通会员即可无限解读{label}，{_upgrade_hint()}")
+    raise HTTPException(status_code=403, detail=f"{label} AI 解读为会员专属能力——登录并开通会员后使用")
 
 def _upgrade_hint() -> str:
     """402 升级话术尾巴：只有配了自助发卡店铺（storefront_url）才承诺「自助下单、秒级开通」。
@@ -9297,9 +9271,8 @@ _AGENT_FREE_QA_ANON = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA_ANON", "1") or 1)
 
 
 def _check_agent_quota(user: Optional[dict], request: Optional[Request] = None) -> Optional[str]:
-    """AI 投研问答额度闸。返回计数 key（成功后 incr）或 None（会员/管理员无限）。
-    会员(premium/lifetime)/管理员 → 无限；登录非会员 → 每天 _AGENT_FREE_QA 次；匿名 → 每天 _AGENT_FREE_QA_ANON 次后引导登录。
-    超额：登录非会员抛 402（→前端升级弹窗）；匿名抛 403（→前端登录弹窗，用 403 而非 401 避免被当登录失效整页跳转）。"""
+    """AI 投研问答额度闸：会员(premium/lifetime)/管理员无限；非会员与匿名一律不放行（2026-10-11 起会员专属）。
+    登录非会员抛 402（→前端升级弹窗）；匿名抛 403（→前端登录弹窗，用 403 而非 401 避免被当登录失效整页跳转）。"""
     if user:
         if str(user.get("role") or "").strip().lower() == "admin":
             return None
@@ -9308,18 +9281,8 @@ def _check_agent_quota(user: Optional[dict], request: Optional[Request] = None) 
         tier = (u.membership or {}).get("tier") if (u and u.membership) else None
         if tier in ("premium", "lifetime"):
             return None
-        fkey = f"q:agentqa:{uid}"
-        lease = _reserve_cost_quota(fkey, _AGENT_FREE_QA)
-        if lease is None:
-            raise HTTPException(status_code=402, detail=f"今日免费 AI 问答已用完（非会员每天 {_AGENT_FREE_QA} 次）。开通会员畅享无限——{_upgrade_hint()}")
-        return lease
-    ip = _client_ip(request) if request is not None else "?"
-    fkey = f"q:agentqa:anon:{ip}"
-    lease = _reserve_cost_quota(fkey, _AGENT_FREE_QA_ANON)
-    if lease is None:
-        raise HTTPException(status_code=403, detail="登录即可继续用 AI 投研问答，还送 3 天尊享会员 🎁")
-    return lease
-
+        raise HTTPException(status_code=402, detail=f"AI 投研问答为会员专属能力。开通会员畅享无限——{_upgrade_hint()}")
+    raise HTTPException(status_code=403, detail="AI 投研问答为会员专属能力——登录并开通会员后使用")
 
 def _record_agent_chain(*, mode: str, route: str, message: str, trace: list, elapsed_ms: int,
                         answer: str, ok: bool, error: str = "") -> None:
@@ -9351,6 +9314,8 @@ _DULUS_DEEP_FREE = int(os.getenv("DEEPFOCUS_FREE_DEEP_ANSWER", "1") or 1)
 
 
 def _check_dulus_deep_quota(user: Optional[dict], request: Optional[Request] = None) -> Optional[str]:
+    """深度研判额度闸：会员(premium/lifetime)/管理员无限；非会员与匿名一律不放行（2026-10-11 起会员专属）。
+    登录非会员抛 402（→前端升级弹窗）；匿名抛 403（→前端登录弹窗）。"""
     if user:
         if str(user.get("role") or "").strip().lower() == "admin":
             return None
@@ -9359,18 +9324,8 @@ def _check_dulus_deep_quota(user: Optional[dict], request: Optional[Request] = N
         tier = (record.membership or {}).get("tier") if (record and record.membership) else None
         if tier in ("premium", "lifetime"):
             return None
-        quota_key = f"q:dulusdeep:{uid}"
-        lease = _reserve_cost_quota(quota_key, _DULUS_DEEP_FREE)
-        if lease is None:
-            raise HTTPException(status_code=402, detail=f"今日深度研判已用完（非会员每天 {_DULUS_DEEP_FREE} 次）。开通会员畅享无限——{_upgrade_hint()}")
-        return lease
-    ip = _client_ip(request) if request is not None else "?"
-    quota_key = f"q:dulusdeep:anon:{ip}"
-    lease = _reserve_cost_quota(quota_key, _DULUS_DEEP_FREE)
-    if lease is None:
-        raise HTTPException(status_code=403, detail="今日深度研判体验已用完，登录后明天继续使用 🎁")
-    return lease
-
+        raise HTTPException(status_code=402, detail=f"深度研判为会员专属能力。开通会员畅享无限——{_upgrade_hint()}")
+    raise HTTPException(status_code=403, detail="深度研判为会员专属能力——登录并开通会员后使用")
 
 def _dulus_deep_quota_left(quota_key: Optional[str]) -> Optional[int]:
     if not quota_key:
