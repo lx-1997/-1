@@ -7140,7 +7140,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
 
-      {(() => {
+      {/* AI 常驻挂件：AI 完整对话页激活时隐藏——同屏已是完整对话，挂件纯属冗余遮挡 */}
+      {sideNavKey !== 'ai' && (() => {
         const running = aiTasks.filter(t => t.status === 'running');
         const done = aiTasks.filter(t => t.status === 'done').length;
         return (
