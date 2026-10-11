@@ -3672,7 +3672,9 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 .bbt-ai-chat-head { flex: 0 0 auto; min-height: 47px; padding: 0 18px; border-bottom: 1px solid rgba(112,149,190,.17); }
 .bbt-ai-chat-head span:last-child { color: #6f94b5; font-size: 10px; font-weight: 500; }
 .bbt-ai-session-mode { padding: 5px 9px; border: 1px solid rgba(86,157,218,.22); border-radius: 999px; color: #8cb7dc; background: rgba(44,107,166,.12); font-size: 10px; font-weight: 700; }
-.bbt-ai-chat-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 18px clamp(16px, 3vw, 34px); }
+.bbt-ai-chat-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: auto; padding: 18px clamp(16px, 3vw, 34px); }
+/* position: relative 是滚动定位的基准：答案落点用 latest.offsetTop-12 计算且 offsetTop
+   以最近定位祖先为参照，容器不定位时会量到页面根节点，打开历史长答案会滚进内容中段。 */
 .bbt-ai-latest-answer { scroll-margin-top: 12px; }
 .bbt-ai-welcome { max-width: 640px; margin: clamp(42px, 9vh, 92px) auto 0; text-align: center; }
 .bbt-ai-welcome-mark { display: grid; width: 46px; height: 46px; place-items: center; margin: 0 auto 14px; border: 1px solid rgba(86,168,239,.42); border-radius: 14px; color: #9bd3ff; background: linear-gradient(135deg, rgba(71,143,230,.32), rgba(71,94,180,.24)); box-shadow: 0 0 28px rgba(61,147,235,.18); font-size: 22px; }

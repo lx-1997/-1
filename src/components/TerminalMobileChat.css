@@ -233,3 +233,84 @@
   }
   .bbt-side-ai .bbt-ai-history-label { display: none; }
 }
+
+@media (max-width: 640px) {
+  /* ---- 五轮: 历史条收成单行胶囊轨 ----
+     此前残留三处桌面残迹：①「历史记录」行只剩 ＋/‹ 两个孤儿按钮独占一行（＋与顶栏
+     「新会话」重复、‹在单行轨道上收无可收）；②✎/× 是 hover/focus 悬浮钮，触屏点选
+     会话后 :focus-within 让它常显、绝对定位正好压在单行标题上；③横向滚动条裸露成一
+     条灰带、浅色主题下面板底色 #f9fbfe 也压不掉。收敛：头部行与搜索框整行移除、轨道
+     恒展开、胶囊底色移到 item 层让 ✎/× 内联进胶囊右端。
+     [data-theme] 前缀把特异性抬到与浅色皮肤规则同档（本文件在 FinancialTerminal.css
+     之后加载，同特异性按文件序取胜），避免逐条写 [data-theme="light"] 孪生规则。 */
+  [data-theme] .bbt-side-ai .bbt-ai-history-panel {
+    max-height: none;
+    padding: 2px 12px 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .bbt-side-ai .bbt-ai-history-head,
+  .bbt-side-ai .bbt-ai-history-search { display: none; }
+  /* 桌面折叠态在手机上不成立（无收起钮可恢复），强制按展开渲染 */
+  [data-theme] .bbt-side-ai .bbt-ai-workspace-grid--history-collapsed .bbt-ai-history-list { display: flex; }
+  [data-theme] .bbt-side-ai .bbt-ai-history-list {
+    gap: 7px;
+    padding: 3px 0 7px;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  [data-theme] .bbt-side-ai .bbt-ai-history-list::-webkit-scrollbar { display: none; }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item {
+    flex: 0 0 auto;
+    width: 216px;
+    margin: 0;
+    border: 0;
+    border-radius: 18px;
+    background: #f4f5f7;
+  }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item:hover { background: #eef1f5; }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item.is-active { background: #e8eef7; }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item-main,
+  [data-theme] .bbt-side-ai .bbt-ai-history-item.is-active .bbt-ai-history-item-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 0 0 13px;
+    border: 0;
+    border-radius: 18px;
+    background: transparent;
+    color: #1a2430;
+  }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: inherit;   /* 基础规则给暗色主题用的浅蓝 #dbeafa 在浅灰胶囊上不可读 */
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item.is-active .bbt-ai-history-item-title { font-weight: 600; }
+  .bbt-side-ai .bbt-ai-history-item-meta,
+  .bbt-side-ai .bbt-ai-history-item-file { display: none; }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item-actions { position: static; flex: 0 0 auto; gap: 0; opacity: 1; }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item-actions button {
+    width: 27px;
+    height: 27px;
+    border-radius: 50%;
+    color: #98a4b1;
+    background: transparent;
+    font-size: 13px;
+  }
+  [data-theme] .bbt-side-ai .bbt-ai-history-item-actions button:last-child { margin-right: 3px; }
+  [data-theme] .bbt-side-ai .bbt-ai-history-rename { min-height: 32px; font-size: 12px; }
+
+  /* ---- 阅读面：回答起点定位后正文不贴输入框底边，手势滚动不穿透到页面 ----
+     paddingBottom 需与 [data-theme="light"] 的 body padding 规则同特异性才能压过 16px */
+  .bbt-side-ai .bbt-ai-chat-body,
+  [data-theme] .bbt-side-ai .bbt-ai-chat-body {
+    padding-bottom: 22px;
+    overscroll-behavior: contain;
+  }
+}
