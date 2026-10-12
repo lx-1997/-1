@@ -79,6 +79,7 @@ from .auth import (
     self_register_enabled,
 )
 from .ownership import current_owner_id
+from .bounded_cache import ByteBoundedTTLCache, get_cache_stats, prune_caches, clear_caches
 from .user_prefs import get_watchlist as get_user_watchlist, set_watchlist as set_user_watchlist
 from . import support_store
 from . import membership_codes
@@ -1500,6 +1501,13 @@ def _allowed_origins() -> list[str]:
     ]
     return list(dict.fromkeys([*origins, *local_origins]))
 
+async def run_memory_cache_maintenance() -> None:
+    """Release expired process caches even when their keys receive no traffic."""
+    while True:
+        await asyncio.sleep(60.0)
+        await asyncio.to_thread(prune_caches)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     def _spawn_bg(name: str, factory):
@@ -1589,6 +1597,7 @@ async def lifespan(app: FastAPI):
     from .cache_warmer import run_cache_warmer
 
     cache_warmer_task = _spawn_bg("cache_warmer", run_cache_warmer)
+    memory_cache_task = _spawn_bg("memory_cache_maintenance", run_memory_cache_maintenance)
     # 研报预解读：后台把最新研报逐篇 AI 解读并缓存，用户点开即秒回
     research_prewarm_task = _spawn_bg("research_prewarm", run_research_prewarm)
     # 研报列表缓存保活：让研报面板每次加载都秒开
@@ -1651,7 +1660,7 @@ async def lifespan(app: FastAPI):
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
-    _bg_tasks = (dao_bridge_task, recall_ingest_task, cache_warmer_task, research_prewarm_task,
+    _bg_tasks = (memory_cache_task, dao_bridge_task, recall_ingest_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
                  ashare_review_task, morning_briefing_task, watchlist_scan_task, call_settle_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
                  ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task, marketing_task)
@@ -1666,6 +1675,8 @@ async def lifespan(app: FastAPI):
             await asyncio.wait_for(_closer(), timeout=4.0)
         except (asyncio.TimeoutError, BaseException):
             pass
+
+    await asyncio.to_thread(clear_caches)
 
 
 AI_ANSWER_PROTOCOL_VERSION = "research-v4-buy-side"
@@ -2546,6 +2557,12 @@ async def admin_codes_generate(
     note = str(body.get("note") or note or "")
     codes = membership_codes.generate_codes(count, tier, days, note)
     return {"ok": True, "count": len(codes), "tier": tier, "days": days, "note": note, "codes": codes}
+
+
+@app.get("/api/admin/runtime-cache-stats")
+async def runtime_cache_stats(_admin: dict = Depends(require_admin)) -> dict[str, Any]:
+    """Administrator-only numeric accounting; never expose keys or content."""
+    return {"caches": await asyncio.to_thread(get_cache_stats), "byte_accounting": "estimated_retained_bytes"}
 
 
 @app.get("/api/admin/codes")
@@ -4905,8 +4922,13 @@ async def api_zsxq_sentiment_summary(force: bool = False) -> dict[str, Any]:
     from .note_sentiment import get_daily_sentiment  # noqa: PLC0415
     return await get_daily_sentiment(force=force)
 _ZSXQ_IMG_MAX = 25 * 1024 * 1024       # 单图上限 25MB，防超大响应打爆 1.8G 内存
-_ZSXQ_WM_CACHE: "dict[str, tuple[bytes, str]]" = {}   # url→(带品牌栏字节, content-type)，view/download 复用
 _ZSXQ_WM_CACHE_MAX = 24
+_ZSXQ_WM_CACHE = ByteBoundedTTLCache(
+    name="branded_images", max_entries=_ZSXQ_WM_CACHE_MAX,
+    max_bytes=int(os.getenv("DEEPFOCUS_IMAGE_CACHE_BYTES", str(32 * 1024 * 1024))),
+    max_item_bytes=int(os.getenv("DEEPFOCUS_IMAGE_CACHE_ITEM_BYTES", str(4 * 1024 * 1024))),
+    ttl_seconds=86400.0,
+)
 
 
 def _brand_zsxq_image(raw: bytes, content_type: str) -> "tuple[bytes, str]":
@@ -4996,8 +5018,6 @@ async def api_zsxq_image(request: Request, u: str = "", dl: int = 0) -> Response
             raise HTTPException(status_code=400, detail="非图片内容")
         content, ct = await asyncio.to_thread(_brand_zsxq_image, r.content, ct)  # PIL 阻塞→线程池
         _ZSXQ_WM_CACHE[url] = (content, ct)
-        while len(_ZSXQ_WM_CACHE) > _ZSXQ_WM_CACHE_MAX:
-            _ZSXQ_WM_CACHE.pop(next(iter(_ZSXQ_WM_CACHE)), None)
     headers = {"Cache-Control": "public, max-age=86400"}  # 浏览器缓存一天，省我们带宽
     if dl:
         ext = "png" if "png" in ct.lower() else "jpg"
@@ -6046,7 +6066,13 @@ def _market_for(file_id: Any, title: str = "", cached: Any = None) -> str:
     return "A" if (insts or subj) else ""
 
 
-_WIRE_RESP_CACHE: dict[str, tuple[float, ResearchWireResponse]] = {}
+_WIRE_RESP_CACHE = ByteBoundedTTLCache(
+    name="research_wire_responses",
+    max_entries=int(os.getenv("DEEPFOCUS_WIRE_RESP_CACHE_ENTRIES", "48")),
+    max_bytes=int(os.getenv("DEEPFOCUS_WIRE_RESP_CACHE_BYTES", str(16 * 1024 * 1024))),
+    max_item_bytes=2 * 1024 * 1024,
+    ttl_seconds=float(os.getenv("DEEPFOCUS_WIRE_RESP_TTL", "45")),
+)
 
 
 def _wire_etag(resp: "ResearchWireResponse") -> str:
@@ -6147,8 +6173,6 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                 ),
             )
             _WIRE_RESP_CACHE[_rk] = (time.monotonic(), _resp)
-            if len(_WIRE_RESP_CACHE) > 80:  # 防无界增长
-                _WIRE_RESP_CACHE.pop(next(iter(_WIRE_RESP_CACHE)), None)
             # 预热：列表刷新时后台自动处理最新 5 篇 PDF，第一个用户点「原文」也秒开
             if not q.strip() and not before:
                 _trigger_pdf_prewarm(rows[:5])

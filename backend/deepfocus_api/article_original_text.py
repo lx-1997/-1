@@ -25,6 +25,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from .async_singleflight import AsyncSingleFlight
+from .bounded_cache import ByteBoundedTTLCache
 from .file_tools import MAX_UPLOAD_BYTES, extract_file_bytes
 from .llm import CloudResearchLLM
 from .report_url_ingest import (
@@ -54,7 +55,13 @@ _MAX_CACHE_ENTRIES = 512
 _ARTICLE_TEXT_FLIGHT: AsyncSingleFlight["ArticleOriginalText"] = AsyncSingleFlight()
 # Deliberately process-local: the generic data store has public history
 # endpoints, so member-only original text must never be persisted there.
-_ARTICLE_TEXT_CACHE: dict[str, tuple[float, "ArticleOriginalText"]] = {}
+_ARTICLE_TEXT_CACHE = ByteBoundedTTLCache(
+    name="article_original_text",
+    max_entries=_MAX_CACHE_ENTRIES,
+    max_bytes=int(os.getenv("DEEPFOCUS_ARTICLE_TEXT_CACHE_BYTES", str(32 * 1024 * 1024))),
+    max_item_bytes=int(os.getenv("DEEPFOCUS_ARTICLE_TEXT_CACHE_ITEM_BYTES", str(2 * 1024 * 1024))),
+    ttl_seconds=_CACHE_SECONDS,
+)
 _HTML_BLOCK_MARKUP_RE = re.compile(
     r"<\s*/?\s*(?:br|p|div|li|h[1-6]|blockquote|article|section|header|footer)\b[^>]*>",
     re.I,
@@ -884,19 +891,21 @@ def _get_cached(key: str) -> Optional[ArticleOriginalText]:
     hit = _ARTICLE_TEXT_CACHE.get(key)
     if hit is None:
         return None
-    cached_at, result = hit
-    ttl = _FALLBACK_CACHE_SECONDS if result.parser == "stored-fallback" else _CACHE_SECONDS
-    if time.monotonic() - cached_at > ttl:
-        _ARTICLE_TEXT_CACHE.pop(key, None)
-        return None
-    return result
+    _, result = hit  # The bounded cache enforces each entry's absolute TTL.
+    # Frozen dataclasses can still contain a mutable paragraph list. Give each
+    # reader its own list without copying the immutable body strings.
+    return ArticleOriginalText(list(result.paragraphs), result.parser, result.truncated)
 
 
 def _put_cached(key: str, result: ArticleOriginalText) -> None:
-    if len(_ARTICLE_TEXT_CACHE) >= _MAX_CACHE_ENTRIES and key not in _ARTICLE_TEXT_CACHE:
-        oldest = min(_ARTICLE_TEXT_CACHE, key=lambda item: _ARTICLE_TEXT_CACHE[item][0])
-        _ARTICLE_TEXT_CACHE.pop(oldest, None)
-    _ARTICLE_TEXT_CACHE[key] = (time.monotonic(), result)
+    ttl = _FALLBACK_CACHE_SECONDS if result.parser == "stored-fallback" else _CACHE_SECONDS
+    try:
+        retained = ArticleOriginalText(list(result.paragraphs), result.parser, result.truncated)
+        _ARTICLE_TEXT_CACHE.set(key, (time.monotonic(), retained), ttl_seconds=ttl)
+    except Exception:
+        # Caching is optional. A large article or a failed size estimate must
+        # still return the complete extracted body to the current reader.
+        pass
 
 
 def article_source_file_url(message: RealtimeMessageRecord) -> str:

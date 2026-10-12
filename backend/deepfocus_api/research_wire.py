@@ -11,17 +11,28 @@ import json
 import os
 import re
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
+from .bounded_cache import ByteBoundedTTLCache
 
 # 在线列表缓存（按关键词缓存「整池」，与请求条数无关；冷抓 ~12-30s，命中 ~0.1s）。
 # TTL 默认 600s，远大于后台保活刷新周期 → 用户请求永远命中热缓存、不会撞到冷抓；
 # 新鲜度由后台 wire-refresher 周期性回源保证，而非靠对用户请求过期。
-_WIRE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _WIRE_TTL = float(os.getenv("DEEPFOCUS_WIRE_CACHE_TTL", "600"))
+# Freshness and physical retention are separate: keep a bounded one-hour
+# stale grace for upstream failures, then actually release the old pool.
+_WIRE_STALE_TTL = max(_WIRE_TTL, float(os.getenv("DEEPFOCUS_WIRE_STALE_TTL", "3600")))
+_WIRE_CACHE = ByteBoundedTTLCache(
+    name="research_wire_pool",
+    max_entries=int(os.getenv("DEEPFOCUS_WIRE_CACHE_MAX_ENTRIES", "24")),
+    max_bytes=int(os.getenv("DEEPFOCUS_WIRE_CACHE_BYTES", str(16 * 1024 * 1024))),
+    max_item_bytes=int(os.getenv("DEEPFOCUS_WIRE_CACHE_ITEM_BYTES", str(2 * 1024 * 1024))),
+    ttl_seconds=_WIRE_STALE_TTL,
+)
 # 一次回源抓取的「池」上限（去重前，交给工作台 resultLimit；搜索非下载、不受 ZSXQ 下载限额影响）
 _WIRE_POOL = int(os.getenv("DEEPFOCUS_WIRE_POOL", "500"))
 _ANNOTATED_WIRE_IDS: set[str] = set()
@@ -154,17 +165,20 @@ async def fetch_research_wire_online(
 ) -> dict[str, Any]:
     """在线从同机 Node 工作台拉海外投行研报：空关键词=最新，带关键词=搜索。
 
-    带 TTL 缓存（默认 150s）：知识星球检索每次约 8s，缓存后重复加载秒回。
+    新鲜 TTL 默认 600s；有界 stale grace 默认一小时。缓存只影响重算，完整列表不截断。
     返回与 list_research_wire 同构的 dict（online=True）；调用方失败时回退本地磁盘。
     """
     want = max(1, min(int(limit or 60), 500))
     kw = (query or "").strip()
     cache_key = kw  # 只按关键词缓存「整池」，请求条数仅决定返回多少（切片），不影响命中
     now = time.monotonic()
+    _WIRE_CACHE.prune_expired()
 
     def _slice(full: dict[str, Any]) -> dict[str, Any]:
         items = full.get("items") or []
-        return {**full, "items": items[:want], "total": len(items)}
+        # Endpoint enrichment is allowed to mutate its own result; it must not
+        # change the cached pool or its retained-byte accounting.
+        return deepcopy({**full, "items": items[:want], "total": len(items), "stale": bool(full.get("stale", False))})
 
     hit = _WIRE_CACHE.get(cache_key)
     if use_cache and hit and (now - hit[0]) < _WIRE_TTL:
@@ -181,7 +195,7 @@ async def fetch_research_wire_online(
             data = resp.json()
     except Exception:
         if hit:  # 抓取失败 → 回退上次成功结果（stale-while-revalidate），绝不让用户看空/报错
-            return _slice(hit[1])
+            return _slice({**hit[1], "stale": True})
         raise
     items: list[dict[str, Any]] = []
     seen_titles: set[str] = set()  # 同一篇研报常被重复发布（file_id 不同、标题同），按标题去重保留最新
@@ -236,14 +250,19 @@ async def fetch_research_wire_online(
                     _ANNOTATED_WIRE_IDS.pop()
         except Exception:  # noqa: BLE001 - indexing must not break the source list
             pass
-    full = {"items": items, "total": len(items), "exists": True, "online": True}
+    full = {"items": items, "total": len(items), "exists": True, "online": True,
+            "stale": False, "fetched_at": datetime.now(timezone.utc).isoformat()}
     if items:  # 仅缓存成功的非空结果，避免缓存住偶发空响应
-        _WIRE_CACHE[cache_key] = (now, full)
-        if len(_WIRE_CACHE) > 60:  # 防无界增长
-            oldest = min(_WIRE_CACHE.items(), key=lambda kv: kv[1][0])[0]
-            _WIRE_CACHE.pop(oldest, None)
+        try:
+            if cache_key:
+                # Rare searches should evict one another before the latest
+                # list. Reading updates LRU only, never its absolute TTL.
+                _WIRE_CACHE.get("")
+            _WIRE_CACHE.set(cache_key, (time.monotonic(), full), ttl_seconds=_WIRE_STALE_TTL)
+        except Exception:
+            pass  # Oversize/un-cacheable pools still return all requested rows.
     elif hit:  # 偶发空响应 → 也回退上次成功结果
-        return _slice(hit[1])
+        return _slice({**hit[1], "stale": True})
     return _slice(full)
 
 DEFAULT_OUT = "downloads/海外投行报告"
