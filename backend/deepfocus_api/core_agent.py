@@ -12,12 +12,15 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 from collections import OrderedDict, deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping
+
+from .llm_runtime import llm_deadline
 
 
 CORE_AGENT_PROTOCOL_VERSION = "core-agent-v1"
@@ -533,7 +536,8 @@ class CoreAgent:
     async def _with_timeout(self, awaitable: Awaitable[Any], timeout: float | None) -> Any:
         if timeout is None or timeout <= 0:
             return await awaitable
-        return await asyncio.wait_for(awaitable, timeout=float(timeout))
+        with llm_deadline(float(timeout)):
+            return await asyncio.wait_for(awaitable, timeout=float(timeout))
 
     async def run_chat(
         self,
@@ -549,6 +553,23 @@ class CoreAgent:
         req = request.normalized()
         mode = self._resolve_mode(req)
         profile = self.profile(mode)
+        # A tool loop and its fallback share one turn budget. The per-call
+        # timeout remains available to adapters, but cannot restart the clock.
+        total_timeout = req.metadata.get("total_timeout_seconds", req.timeout_seconds or profile.timeout_seconds)
+        try:
+            total_timeout = float(total_timeout)
+            if not 0 < total_timeout < float("inf"):
+                raise ValueError("invalid turn budget")
+        except (TypeError, ValueError):
+            total_timeout = float(profile.timeout_seconds)
+        deadline = time.monotonic() + total_timeout
+
+        def remaining_time() -> float:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError("研究运行已耗尽整体时间预算")
+            return remaining
+
         run_id, started_at = self._new_run()
         provider, model = _provider_model(self.llm)
         result = CoreAgentResult(
@@ -615,7 +636,8 @@ class CoreAgent:
                 # allow-list would turn a compatibility shim into an
                 # unrestricted tool executor.  The production
                 # ``CloudResearchLLM`` implements this keyword explicitly.
-                raw = await self.llm.run_tool_agent(**kwargs)
+                remaining_timeout = remaining_time()
+                raw = await self._with_timeout(self.llm.run_tool_agent(**kwargs), remaining_timeout)
             except asyncio.CancelledError:
                 result.status = "cancelled"
                 result.route = "tool-agent"
@@ -628,6 +650,16 @@ class CoreAgent:
                     emit=emit,
                 )
                 raise
+            except asyncio.TimeoutError:
+                result.status = "failed"
+                result.route = "tool-agent"
+                result.error = "研究运行已超过总体时间预算，请缩小问题范围后重试"
+                result.completed_at = _utc_now()
+                await self._event(
+                    run_id, "error", phase="research", title="研究运行超时",
+                    message=result.error, payload={"error_type": "TimeoutError"}, emit=emit,
+                )
+                return result
             except Exception as exc:
                 await self._event(
                     run_id,
@@ -699,6 +731,7 @@ class CoreAgent:
 
         try:
             # Keep the existing Pydantic request/response shape at the edge.
+            remaining_timeout = remaining_time()
             if (
                 legacy_request is not None
                 and mode in {"research", "orchestrator"}
@@ -706,13 +739,13 @@ class CoreAgent:
             ):
                 raw = await self._with_timeout(
                     self.llm.orchestrator_chat(legacy_request),
-                    req.timeout_seconds or profile.timeout_seconds,
+                    remaining_timeout,
                 )
                 result.route = "orchestrator"
             elif legacy_request is not None and hasattr(self.llm, "general_chat"):
                 raw = await self._with_timeout(
                     self.llm.general_chat(legacy_request),
-                    req.timeout_seconds or profile.timeout_seconds,
+                    remaining_timeout,
                 )
                 result.route = "general-chat"
             elif hasattr(self.llm, "general_chat"):
@@ -726,7 +759,7 @@ class CoreAgent:
                             context={},
                         )
                     ),
-                    req.timeout_seconds or profile.timeout_seconds,
+                    remaining_timeout,
                 )
                 result.route = "general-chat"
             else:

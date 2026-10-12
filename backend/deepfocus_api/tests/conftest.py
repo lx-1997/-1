@@ -24,10 +24,14 @@ def _ensure_event_loop():
 @pytest.fixture(autouse=True)
 def _clear_llm_result_caches():
     """LLM 结果缓存是模块级状态，跨用例复用会让 mock 断言（调用次数/事件序列）失真。每个用例前后清空。"""
-    from deepfocus_api import agent_loop, llm
+    from deepfocus_api import agent_loop, llm, llm_runtime
 
     llm._TOOL_ANSWER_CACHE.clear()
     agent_loop._LOOP_CACHE.clear()
+    llm_runtime._COOLDOWNS.clear()
+    llm_runtime._VISION_UNSUPPORTED.clear()
     yield
     llm._TOOL_ANSWER_CACHE.clear()
     agent_loop._LOOP_CACHE.clear()
+    llm_runtime._COOLDOWNS.clear()
+    llm_runtime._VISION_UNSUPPORTED.clear()

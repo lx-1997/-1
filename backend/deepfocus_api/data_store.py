@@ -9,15 +9,20 @@
 """
 from __future__ import annotations
 
+import asyncio
+import atexit
+import concurrent.futures
 import json
-import os
+import logging
+import queue
 import sqlite3
-from . import db
+import threading
 import time
+from contextlib import closing
 from contextvars import ContextVar
-from pathlib import Path
 from typing import Any, Optional
 
+from . import db
 from .shared_utils import utc_now_iso
 
 # ⭐ 持久化抑制开关（深度研判用）。深度研判全程以 iFinD 灰度数据取证、产出机构级结论，
@@ -29,17 +34,21 @@ from .shared_utils import utc_now_iso
 DEEP_NO_PERSIST: ContextVar[bool] = ContextVar("deep_no_persist", default=False)
 
 DB_PATH = db.data_path('.data_store.sqlite3', 'DEEPFOCUS_DATA_STORE_DB_PATH')
+logger = logging.getLogger(__name__)
 
 
 def _connect() -> sqlite3.Connection:
-    conn = db.connect(DB_PATH)
+    # 落库是加性缓存；锁争用最多等 1s，不能长时间占住 writer。
+    conn = db.connect(DB_PATH, timeout=1.0)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_data_store() -> None:
+    global _WRITES_CLOSED
+    _WRITES_CLOSED = False
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with _connect() as conn:
+    with closing(_connect()) as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS data_points (
@@ -61,42 +70,155 @@ def init_data_store() -> None:
     prune()  # 启动时修剪一次，给每个序列封顶（绝不抛）
 
 
-# 每个 (kind, symbol) 序列最多保留多少条；以及每多少次写入触发一次修剪（避免无界增长）。
+# 每次写入只修剪当前序列，用 lookup 索引封顶；请求路径不做全表窗口排序。
 KEEP_PER_SERIES = 500
-_PRUNE_EVERY = 200
-_write_count = 0
+
+
+def _record_values(kind: str, sym: str, values: tuple[Any, ...]) -> bool:
+    try:
+        with closing(_connect()) as conn:
+            conn.execute(
+                "INSERT INTO data_points(kind, symbol, market, payload_json, recorded_at, recorded_ts) "
+                "VALUES (?,?,?,?,?,?)", values,
+            )
+            _prune_series(conn, kind, sym, max(1, int(KEEP_PER_SERIES)))
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _record_params(kind: str, symbol: str, payload: Any, market: str) -> tuple[Any, ...] | None:
+    # 必须在调用方检查 ContextVar，writer 线程不能继承深度研判的任务上下文。
+    if DEEP_NO_PERSIST.get():
+        return None
+    sym = (symbol or "").upper().strip()
+    if not kind or not sym or payload is None:
+        return None
+    try:
+        return (kind, sym, (market or "").upper(),
+                json.dumps(payload, ensure_ascii=False, default=str), utc_now_iso(), time.time())
+    except Exception:
+        return None
 
 
 def record(kind: str, symbol: str, payload: Any, *, market: str = "") -> None:
-    """写穿一条带时间戳的数据点（历史积累）。失败静默——持久化绝不能拖垮主流程。"""
-    global _write_count
-    # ⭐ 深度研判进行中：抑制本上下文的一切落库（防 iFinD 衍生结论泄漏到公开历史/SEO）。
-    if DEEP_NO_PERSIST.get():
-        return
-    sym = (symbol or "").upper().strip()
-    if not kind or not sym or payload is None:
-        return
-    try:
-        with _connect() as conn:
-            conn.execute(
-                "INSERT INTO data_points(kind, symbol, market, payload_json, recorded_at, recorded_ts) "
-                "VALUES (?,?,?,?,?,?)",
-                (
-                    kind,
-                    sym,
-                    (market or "").upper(),
-                    json.dumps(payload, ensure_ascii=False, default=str),
-                    utc_now_iso(),
-                    time.time(),
-                ),
-            )
-            conn.commit()
-    except Exception:
-        return
-    # 周期性修剪，控制长跑进程下表的无界增长（修剪自身失败静默，不影响写入成功）。
-    _write_count += 1
-    if _write_count % _PRUNE_EVERY == 0:
-        prune()
+    """同步写穿（CLI/同步调用兼容）；async 路径使用 await async_record()。"""
+    values = _record_params(kind, symbol, payload, market)
+    if values is not None:
+        _record_values(values[0], values[1], values)
+
+
+# 一条专用线程，严格限制排队条数和 JSON 字节数，避免 ThreadPoolExecutor 无界队列。
+_WRITE_QUEUE_MAX = 128
+_WRITE_QUEUE_BYTES = 8 * 1024 * 1024
+_WRITER: "_DataWriter | None" = None
+_WRITER_LOCK = threading.Lock()
+_WRITES_CLOSED = False
+
+
+class _DataWriter:
+    def __init__(self) -> None:
+        self.jobs: queue.Queue = queue.Queue(maxsize=_WRITE_QUEUE_MAX)
+        self.lock = threading.Lock()
+        self.pending_bytes = 0
+        self.closing = False
+        self.thread = threading.Thread(target=self._run, name="data-store-writer", daemon=True)
+        self.thread.start()
+
+    def submit(self, values: tuple[Any, ...], size: int) -> concurrent.futures.Future | None:
+        with self.lock:
+            if self.closing or self.pending_bytes + size > _WRITE_QUEUE_BYTES:
+                return None
+            future: concurrent.futures.Future = concurrent.futures.Future()
+            try:
+                self.jobs.put_nowait((values, size, future))
+            except queue.Full:
+                return None
+            self.pending_bytes += size
+            return future
+
+    def _run(self) -> None:
+        while True:
+            try:
+                values, size, future = self.jobs.get(timeout=0.1)
+            except queue.Empty:
+                with self.lock:
+                    if self.closing:
+                        return
+                continue
+            try:
+                result = _record_values(values[0], values[1], values)
+                if not future.done():
+                    future.set_result(result)
+            except Exception as exc:
+                if not future.done():
+                    future.set_exception(exc)
+            finally:
+                with self.lock:
+                    self.pending_bytes -= size
+                self.jobs.task_done()
+
+
+async def async_record(
+    kind: str, symbol: str, payload: Any, *, market: str = "", queue_timeout: float = 5.0,
+) -> bool:
+    """事件循环之外落库，await 后可立即读到；失败/队列过载返回 False。
+
+    已入队的写入即使请求取消仍会提交。尚未入队的取消不会产生写入。
+    容量含正在提交的 JSON；超过整个字节预算的单条直接降级，不能撑爆 API 内存。
+    """
+    global _WRITER
+    values = _record_params(kind, symbol, payload, market)
+    if values is None:
+        return False
+    # Python Unicode 最多每字符 4 bytes；用保守上界避免额外编码复制大 JSON。
+    size = len(values[3]) * 4
+    if size > _WRITE_QUEUE_BYTES:
+        return False
+    with _WRITER_LOCK:
+        if _WRITES_CLOSED:
+            return False
+        if _WRITER is None:
+            _WRITER = _DataWriter()
+        writer = _WRITER
+    deadline = time.monotonic() + max(0.0, queue_timeout)
+    while True:
+        future = writer.submit(values, size)
+        if future is not None:
+            # shield 阻止取消 wrap_future，worker 才能完成已接收的写入。
+            return await asyncio.shield(asyncio.wrap_future(future))
+        if writer.closing or time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.01)
+
+
+def _shutdown_writer(timeout: float = 5.0) -> bool:
+    global _WRITES_CLOSED, _WRITER
+    with _WRITER_LOCK:
+        _WRITES_CLOSED = True
+        writer = _WRITER
+        if writer is None:
+            return True
+        with writer.lock:
+            writer.closing = True
+    writer.thread.join(timeout=max(0.0, timeout))
+    drained = not writer.thread.is_alive()
+    if drained:
+        with _WRITER_LOCK:
+            if _WRITER is writer:
+                _WRITER = None
+    else:
+        logger.warning("data-store writer drain timed out; %s jobs remain", writer.jobs.qsize())
+    return drained
+
+
+async def shutdown_data_store(timeout: float = 5.0) -> bool:
+    """生命周期关闭：停止接收、尽力排空，join 在事件循环外且有超时。"""
+    return await asyncio.to_thread(_shutdown_writer, timeout)
+
+
+atexit.register(_shutdown_writer)
 
 
 def latest(kind: str, symbol: str, *, max_age_seconds: Optional[float] = None) -> Optional[dict]:
@@ -105,10 +227,10 @@ def latest(kind: str, symbol: str, *, max_age_seconds: Optional[float] = None) -
     if not sym:
         return None
     try:
-        with _connect() as conn:
+        with closing(_connect()) as conn:
             row = conn.execute(
                 "SELECT payload_json, recorded_ts FROM data_points "
-                "WHERE kind=? AND symbol=? ORDER BY recorded_ts DESC LIMIT 1",
+                "WHERE kind=? AND symbol=? ORDER BY recorded_ts DESC, id DESC LIMIT 1",
                 (kind, sym),
             ).fetchone()
     except Exception:
@@ -129,10 +251,10 @@ def history(kind: str, symbol: str, *, limit: int = 200) -> list[dict]:
     if not sym:
         return []
     try:
-        with _connect() as conn:
+        with closing(_connect()) as conn:
             rows = conn.execute(
                 "SELECT payload_json, recorded_at FROM data_points "
-                "WHERE kind=? AND symbol=? ORDER BY recorded_ts DESC LIMIT ?",
+                "WHERE kind=? AND symbol=? ORDER BY recorded_ts DESC, id DESC LIMIT ?",
                 (kind, sym, max(1, min(int(limit), 1000))),
             ).fetchall()
     except Exception:
@@ -174,7 +296,7 @@ def hot_symbols(
     sql += " GROUP BY symbol ORDER BY n DESC, ts DESC LIMIT ?"
     params.append(max(1, min(int(limit), 200)))
     try:
-        with _connect() as conn:
+        with closing(_connect()) as conn:
             rows = conn.execute(sql, params).fetchall()
     except Exception:
         return []
@@ -187,7 +309,7 @@ def hot_symbols(
 def stats() -> dict[str, Any]:
     """数据沉淀概览（观测性种子）：每类数据点数 / 覆盖标的数 / 最新时间。失败 → 空。"""
     try:
-        with _connect() as conn:
+        with closing(_connect()) as conn:
             rows = conn.execute(
                 "SELECT kind, COUNT(*) AS n, COUNT(DISTINCT symbol) AS symbols, MAX(recorded_at) AS latest "
                 "FROM data_points GROUP BY kind ORDER BY n DESC"
@@ -204,30 +326,30 @@ def stats() -> dict[str, Any]:
     }
 
 
+def _prune_series(conn: sqlite3.Connection, kind: str, symbol: str, keep: int) -> int:
+    cur = conn.execute(
+        "DELETE FROM data_points WHERE kind=? AND symbol=? AND id IN ("
+        "SELECT id FROM data_points WHERE kind=? AND symbol=? "
+        "ORDER BY recorded_ts DESC, id DESC LIMIT -1 OFFSET ?)",
+        (kind, symbol, kind, symbol, keep),
+    )
+    return cur.rowcount or 0
+
+
 def prune(keep_per_series: Optional[int] = None) -> int:
     """每个 (kind, symbol) 只保留最近 keep_per_series 条，删除更旧的。返回删除行数。失败 → 0。
 
     keep_per_series 缺省时运行时读模块级 KEEP_PER_SERIES（避免默认参数定义期绑定，便于配置/测试）。
-    用窗口函数按时间倒序排名（需 SQLite ≥3.25），删掉排名超出保留数的行。绝不抛——修剪失败不影响主流程。
+    启动/离线维护专用。每个序列独立提交，避免全表窗口排序和长写锁；请求 record 不调用此函数。
     """
     keep = KEEP_PER_SERIES if keep_per_series is None else keep_per_series
     try:
-        with _connect() as conn:
-            cur = conn.execute(
-                """
-                DELETE FROM data_points
-                WHERE id IN (
-                    SELECT id FROM (
-                        SELECT id, ROW_NUMBER() OVER (
-                            PARTITION BY kind, symbol ORDER BY recorded_ts DESC
-                        ) AS rn
-                        FROM data_points
-                    ) WHERE rn > ?
-                )
-                """,
-                (max(1, int(keep)),),
-            )
-            conn.commit()
-            return cur.rowcount or 0
+        with closing(_connect()) as conn:
+            series = conn.execute("SELECT DISTINCT kind, symbol FROM data_points").fetchall()
+            deleted = 0
+            for row in series:
+                deleted += _prune_series(conn, row["kind"], row["symbol"], max(1, int(keep)))
+                conn.commit()
+            return deleted
     except Exception:
         return 0

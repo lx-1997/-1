@@ -22,6 +22,7 @@ from . import ifind_api
 from .eastmoney_data import fetch_eastmoney_index
 from .eastmoney_reports import query_eastmoney_reports
 from .llm import CloudResearchLLM, _extract_json
+from .llm_runtime import llm_deadline
 from .realtime_messages import list_realtime_messages
 
 CN_TZ = timezone(timedelta(hours=8))
@@ -628,51 +629,45 @@ async def _agentic_linkages(candidates: list[dict], now: datetime) -> Optional[l
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        client = llm._client()
-        for _round in range(4):
-            resp = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=llm.model, messages=messages, tools=tool_specs,
-                    tool_choice="auto", max_tokens=1500,
-                ),
-                timeout=45.0,
-            )
-            msg = resp.choices[0].message
-            tcs = list(getattr(msg, "tool_calls", None) or [])
-            if not tcs:
-                parsed = _extract_keep(msg.content)
-                return _apply_keep(candidates, parsed) if parsed is not None else None
-            messages.append({
-                "role": "assistant", "content": msg.content or "",
-                "tool_calls": [{
-                    "id": tc.id, "type": "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments or "{}"},
-                } for tc in tcs],
-            })
-            for tc in tcs:
-                try:
-                    args = json.loads(tc.function.arguments or "{}")
-                except (ValueError, TypeError):
-                    args = {}
-                result = await execute_tool(tc.function.name, args)
-                content = json.dumps(result, ensure_ascii=False)
-                if len(content) > 3000:
-                    content = content[:3000] + "…(截断)"
+        with llm_deadline(45.0):
+            for _round in range(4):
+                resp = await llm._completion({
+                    "model": llm.model, "messages": messages, "tools": tool_specs,
+                    "tool_choice": "auto", "max_tokens": 1500,
+                }, timeout_seconds=45.0)
+                msg = resp.choices[0].message
+                tcs = list(getattr(msg, "tool_calls", None) or [])
+                if not tcs:
+                    parsed = _extract_keep(msg.content)
+                    return _apply_keep(candidates, parsed) if parsed is not None else None
                 messages.append({
-                    "role": "tool", "tool_call_id": tc.id,
-                    "name": tc.function.name, "content": content,
+                    "role": "assistant", "content": msg.content or "",
+                    "tool_calls": [{
+                        "id": tc.id, "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments or "{}"},
+                    } for tc in tcs],
                 })
-        # 用满轮次仍未给 JSON → 去掉工具逼一次最终结构化结论
-        final = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=llm.model,
-                messages=messages + [{"role": "user", "content": "基于以上检索，现在只输出最终 JSON：{\"keep\":[...]}。不要解释。"}],
-                max_tokens=1200,
-            ),
-            timeout=45.0,
-        )
-        parsed = _extract_keep(final.choices[0].message.content)
-        return _apply_keep(candidates, parsed) if parsed is not None else None
+                for tc in tcs:
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except (ValueError, TypeError):
+                        args = {}
+                    result = await execute_tool(tc.function.name, args)
+                    content = json.dumps(result, ensure_ascii=False)
+                    if len(content) > 3000:
+                        content = content[:3000] + "…(截断)"
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc.id,
+                        "name": tc.function.name, "content": content,
+                    })
+            # 用满轮次仍未给 JSON → 去掉工具逼一次最终结构化结论
+            final = await llm._completion({
+                "model": llm.model,
+                "messages": messages + [{"role": "user", "content": "基于以上检索，现在只输出最终 JSON：{\"keep\":[...]}。不要解释。"}],
+                "max_tokens": 1200,
+            }, timeout_seconds=45.0)
+            parsed = _extract_keep(final.choices[0].message.content)
+            return _apply_keep(candidates, parsed) if parsed is not None else None
     except Exception:
         return None
 

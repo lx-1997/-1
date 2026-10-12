@@ -4,7 +4,11 @@
 """
 from __future__ import annotations
 
+import asyncio
+import sqlite3
+import threading
 import time
+from contextlib import closing
 
 import pytest
 
@@ -93,11 +97,187 @@ def test_prune_independent_per_kind_symbol(store):
     assert len(store.history("quote", "AAPL")) == 2
 
 
-def test_record_triggers_periodic_prune(store, monkeypatch):
-    monkeypatch.setattr(store, "_PRUNE_EVERY", 5)
+def test_record_caps_current_series_without_full_table_prune(store, monkeypatch):
     monkeypatch.setattr(store, "KEEP_PER_SERIES", 2)
-    monkeypatch.setattr(store, "_write_count", 0)
-    for i in range(5):  # 第 5 次写入触发 prune()（缺省 keep 运行时读 KEEP_PER_SERIES=2）
+    monkeypatch.setattr(store, "prune", lambda *args: pytest.fail("request did full-table maintenance"))
+    for i in range(5):
         store.record("verdict", "AAPL", {"i": i})
-        time.sleep(0.002)
-    assert len(store.history("verdict", "AAPL")) == 2
+        assert len(store.history("verdict", "AAPL")) <= 2
+    assert [row["payload"]["i"] for row in store.history("verdict", "AAPL")] == [4, 3]
+
+
+def test_data_store_closes_connections_and_uses_wal(store, monkeypatch):
+    original = store._connect
+    connections = []
+
+    def tracked_connect():
+        connection = original()
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(store, "_connect", tracked_connect)
+    store.init_data_store()
+    store.record("verdict", "AAPL", {"v": 1})
+    store.latest("verdict", "AAPL")
+    store.history("verdict", "AAPL")
+    store.hot_symbols()
+    store.stats()
+    store.prune()
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+    with closing(sqlite3.connect(store.DB_PATH)) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_db_connect_honors_timeout_and_closes_if_setup_fails(store, monkeypatch):
+    with closing(store.db.connect(store.DB_PATH, timeout=0.05)) as connection:
+        assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 50
+
+    class FailingConnection:
+        closed = False
+
+        def execute(self, statement):
+            raise RuntimeError("setup failed")
+
+        def close(self):
+            self.closed = True
+
+    connection = FailingConnection()
+    monkeypatch.setattr(store.db.sqlite3, "connect", lambda *a, **kw: connection)
+    with pytest.raises(RuntimeError, match="setup failed"):
+        store.db.connect(":memory:")
+    assert connection.closed
+
+
+def test_async_record_runs_off_loop_and_is_visible_before_return(store, monkeypatch):
+    original = store._record_values
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_record(*args):
+        entered.set()
+        assert release.wait(timeout=2)
+        return original(*args)
+
+    monkeypatch.setattr(store, "_record_values", slow_record)
+
+    async def run():
+        task = asyncio.create_task(store.async_record("quote", "aapl", {"price": 99}))
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert entered.is_set()
+        # writer 卡住时事件循环仍能推进，且函数还没谎报已提交。
+        for _ in range(3):
+            await asyncio.sleep(0.005)
+            assert not task.done()
+        release.set()
+        assert await task
+        assert store.latest("quote", "AAPL") == {"price": 99}
+        assert await store.shutdown_data_store()
+
+    asyncio.run(run())
+
+
+def test_async_record_respects_deep_context_and_cancelled_request_drains(store, monkeypatch):
+    original = store._record_values
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_record(*args):
+        entered.set()
+        assert release.wait(timeout=2)
+        return original(*args)
+
+    monkeypatch.setattr(store, "_record_values", slow_record)
+
+    async def run():
+        token = store.DEEP_NO_PERSIST.set(True)
+        try:
+            assert not await store.async_record("deep", "AAPL", {"secret": 1})
+        finally:
+            store.DEEP_NO_PERSIST.reset(token)
+        assert not entered.is_set()
+        task = asyncio.create_task(store.async_record("quote", "AAPL", {"price": 10}))
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert entered.is_set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        assert await store.shutdown_data_store()
+        assert store.latest("quote", "AAPL") == {"price": 10}
+        assert store.latest("deep", "AAPL") is None
+        assert not await store.async_record("quote", "AAPL", {"price": 20})
+
+    asyncio.run(run())
+
+
+def test_writer_bounds_inflight_bytes_and_overload_does_not_block_loop(store, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(store, "_WRITE_QUEUE_BYTES", 32)
+    monkeypatch.setattr(store, "_WRITE_QUEUE_MAX", 2)
+
+    def slow_record(*args):
+        entered.set()
+        assert release.wait(timeout=2)
+        return True
+
+    monkeypatch.setattr(store, "_record_values", slow_record)
+
+    async def run():
+        # JSON "1234" 的保守计费=16，第一条在提交、第二条在队列，容量已满。
+        first = asyncio.create_task(store.async_record("quote", "AAPL", 1234))
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.005)
+        second = asyncio.create_task(store.async_record("quote", "MSFT", 1234))
+        await asyncio.sleep(0.01)
+        assert store._WRITER.pending_bytes == 32
+        assert not await store.async_record("quote", "TSLA", 1234, queue_timeout=0.01)
+        assert store._WRITER.pending_bytes == 32
+        release.set()
+        assert await first and await second
+        assert await store.shutdown_data_store()
+
+    asyncio.run(run())
+
+
+def test_writer_queue_count_is_bounded(store, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(store, "_WRITE_QUEUE_BYTES", 256)
+    monkeypatch.setattr(store, "_WRITE_QUEUE_MAX", 2)
+
+    def slow_record(*args):
+        entered.set()
+        assert release.wait(timeout=2)
+        return True
+
+    monkeypatch.setattr(store, "_record_values", slow_record)
+
+    async def run():
+        active = asyncio.create_task(store.async_record("quote", "AAPL", 1))
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.005)
+        queued = [asyncio.create_task(store.async_record("quote", symbol, 1))
+                  for symbol in ("MSFT", "TSLA")]
+        await asyncio.sleep(0.01)
+        assert store._WRITER.jobs.qsize() == 2
+        assert not await store.async_record("quote", "NVDA", 1, queue_timeout=0)
+        assert store._WRITER.jobs.qsize() == 2
+        release.set()
+        assert await active
+        assert all(await asyncio.gather(*queued))
+        assert await store.shutdown_data_store()
+
+    asyncio.run(run())

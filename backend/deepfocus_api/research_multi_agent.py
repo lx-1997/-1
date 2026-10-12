@@ -13,13 +13,14 @@ import hashlib
 import json
 import os
 import re
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from statistics import mean
 from typing import Any, Optional
 
 import fitz
 
-from .llm import CloudResearchLLM
+from .llm import CloudResearchLLM, VisionUnavailableError
 from . import research_vision as rv
 
 
@@ -40,7 +41,7 @@ _TOTAL_TIMEOUT_SECONDS = max(
 _PAGE_SUMMARY_ENABLED = os.getenv("DEEPFOCUS_RESEARCH_PAGE_SUMMARY", "1").strip().lower() not in {
     "0", "false", "no", "off",
 }
-_PAGE_CONCURRENCY = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PAGE_CONCURRENCY", "3") or 3))
+_PAGE_CONCURRENCY = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PAGE_CONCURRENCY", "2") or 2))
 _PAGE_TIMEOUT_SECONDS = max(
     15.0, float(os.getenv("DEEPFOCUS_RESEARCH_PAGE_TIMEOUT_SECONDS", "45") or 45),
 )
@@ -49,6 +50,12 @@ _PAGE_TOTAL_TIMEOUT_SECONDS = max(
 )
 _PAGE_SYNTHESIS_TIMEOUT_SECONDS = max(
     20.0, float(os.getenv("DEEPFOCUS_RESEARCH_PAGE_SYNTHESIS_TIMEOUT_SECONDS", "75") or 75),
+)
+_ANALYSIS_TIMEOUT_SECONDS = max(
+    30.0, float(os.getenv("DEEPFOCUS_RESEARCH_TOTAL_SECONDS", "240") or 240),
+)
+_QUEUE_TIMEOUT_SECONDS = max(
+    1.0, float(os.getenv("DEEPFOCUS_RESEARCH_QUEUE_SECONDS", "15") or 15),
 )
 _CACHE_VERSION = "agents-v4"
 _PAGE_CACHE_VERSION = "pages-v1"
@@ -72,6 +79,14 @@ _SENSITIVE_CONTENT_RE = re.compile(r"content\[(\d+)\]")
 
 class ResearchMultiAgentBusy(RuntimeError):
     """A background prewarm yielded to an interactive analysis batch."""
+
+    status_code = 503
+
+
+class ResearchAnalysisTimeout(RuntimeError):
+    """The complete analysis budget, including queueing and fallbacks, expired."""
+
+    status_code = 504
 
 
 def multi_agent_enabled() -> bool:
@@ -147,6 +162,9 @@ _page_sem: Optional[asyncio.Semaphore] = None
 _page_sem_loop: Optional[asyncio.AbstractEventLoop] = None
 _batch_sem: Optional[asyncio.Semaphore] = None
 _batch_sem_loop: Optional[asyncio.AbstractEventLoop] = None
+_batch_foreground_waiters = 0
+_batch_background_owner: Optional[asyncio.Task] = None
+_batch_preempted: set[asyncio.Task] = set()
 
 
 def _agent_semaphore() -> asyncio.Semaphore:
@@ -171,12 +189,65 @@ def _page_semaphore() -> asyncio.Semaphore:
 
 def _batch_semaphore() -> asyncio.Semaphore:
     """Keep each three-Agent batch together so sibling reports cannot starve it."""
-    global _batch_sem, _batch_sem_loop
+    global _batch_sem, _batch_sem_loop, _batch_foreground_waiters, _batch_background_owner
     loop = asyncio.get_running_loop()
     if _batch_sem is None or _batch_sem_loop is not loop:
         _batch_sem = asyncio.Semaphore(1)
         _batch_sem_loop = loop
+        _batch_foreground_waiters = 0
+        _batch_background_owner = None
+        _batch_preempted.clear()
     return _batch_sem
+
+
+@asynccontextmanager
+async def _batch_lease(*, background: bool = False):
+    """Bound queueing and let a running prewarm yield once to a user request.
+
+    Cancellation is translated only for a prewarm explicitly displaced here;
+    service shutdown and caller disconnects retain normal cancellation behavior.
+    Child tasks are drained by the batch before its semaphore is released.
+    """
+    global _batch_foreground_waiters, _batch_background_owner
+    sem = _batch_semaphore()
+    owner = asyncio.current_task()
+    acquired = False
+    if background and (sem.locked() or _batch_foreground_waiters):
+        raise ResearchMultiAgentBusy("交互式研报解读正在运行，后台预热稍后重试")
+    if not background:
+        _batch_foreground_waiters += 1
+        running_background = _batch_background_owner
+        if running_background is not None and running_background not in _batch_preempted:
+            _batch_preempted.add(running_background)
+            running_background.cancel()
+    try:
+        try:
+            if background:
+                # An available Semaphore.acquire completes without yielding,
+                # so two prewarms cannot both pass the idle check and queue.
+                await sem.acquire()
+            else:
+                await asyncio.wait_for(sem.acquire(), timeout=_QUEUE_TIMEOUT_SECONDS)
+            acquired = True
+        except asyncio.TimeoutError as exc:
+            raise ResearchMultiAgentBusy("研报解读任务繁忙，排队超时，请稍后重试") from exc
+        finally:
+            if not background:
+                _batch_foreground_waiters -= 1
+        if background:
+            _batch_background_owner = owner
+        try:
+            yield
+        except asyncio.CancelledError:
+            if background and owner in _batch_preempted:
+                raise ResearchMultiAgentBusy("前台研报解读优先，后台预热稍后重试") from None
+            raise
+    finally:
+        if _batch_background_owner is owner:
+            _batch_background_owner = None
+        _batch_preempted.discard(owner)
+        if acquired:
+            sem.release()
 
 
 def _build_prompt(role: _Role, title: Optional[str], symbol: Optional[str]) -> str:
@@ -417,6 +488,8 @@ async def _call_page(
                     return _compact_page_result(data, page)
                 if attempt == 1:
                     raise RuntimeError(f"第 {page} 页未返回可用 JSON")
+            except VisionUnavailableError:
+                raise
             except RuntimeError as exc:
                 match = _SENSITIVE_CONTENT_RE.search(str(exc))
                 # A single image is content[1] (content[0] is the prompt).  A
@@ -527,20 +600,19 @@ async def _analyze_images_per_page(
 ) -> dict[str, Any]:
     """Read selected pages concurrently, then synthesize their bounded notes."""
     key = _page_summary_key(pdf_bytes, max_pages, title, symbol)
-    cached = _cache_get(key)
+    cached = await asyncio.to_thread(_cache_get, key)
     if cached is not None:
         return cached
-    batch_sem = _batch_semaphore()
-    if background and batch_sem.locked():
-        raise ResearchMultiAgentBusy("交互式研报解读正在运行，后台预热稍后重试")
-    async with batch_sem:
-        late_cached = _cache_get(key)
+    async with _batch_lease(background=background):
+        late_cached = await asyncio.to_thread(_cache_get, key)
         if late_cached is not None:
             return late_cached
+        llm = CloudResearchLLM()
+        if not getattr(llm, "has_vision_provider", lambda: True)():
+            raise VisionUnavailableError("当前没有可用的视觉模型")
         images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
         if not images:
             raise RuntimeError("PDF 没有可渲染的页面")
-        llm = CloudResearchLLM()
         if llm.provider == "mock":
             raise RuntimeError("当前为本地演示模型，无法做页级视觉解读")
         total_pages = len(images)
@@ -561,6 +633,9 @@ async def _analyze_images_per_page(
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+        unavailable = next((value for value in values if isinstance(value, VisionUnavailableError)), None)
+        if unavailable is not None:
+            raise unavailable
         page_results = [value for value in values if _page_result_is_usable(value)]
         # A page-level miss is expected under transient provider limits.  Keep
         # enough coverage to synthesize, otherwise use the existing role-wide
@@ -577,7 +652,7 @@ async def _analyze_images_per_page(
             result = _merge_page_fallback(
                 page_results, provider=f"{llm.model} · page merge", total_pages=total_pages,
             )
-    _cache_put(key, result)
+        await asyncio.to_thread(_cache_put, key, result)
     return result
 
 
@@ -616,7 +691,7 @@ def _cache_get(key: str) -> Optional[dict[str, Any]]:
         from . import data_store
 
         cached = data_store.latest("vision", key, max_age_seconds=_cache_max_age_seconds())
-        return cached if isinstance(cached, dict) and cached else None
+        return cached if isinstance(cached, dict) and cached and not rv.report_is_degraded(cached) else None
     except Exception:
         return None
 
@@ -642,6 +717,7 @@ async def _analyze_images_parallel(
     symbol: Optional[str],
     max_pages: int,
     background: bool = False,
+    text_unavailable: bool = False,
 ) -> dict[str, Any]:
     page_warning = ""
     if _PAGE_SUMMARY_ENABLED:
@@ -653,7 +729,7 @@ async def _analyze_images_parallel(
                 max_pages=max_pages,
                 background=background,
             )
-        except (ResearchMultiAgentBusy, asyncio.CancelledError):
+        except (ResearchMultiAgentBusy, VisionUnavailableError, asyncio.CancelledError):
             raise
         except Exception as exc:  # noqa: BLE001 - preserve the role-wide fallback
             # The page path is intentionally additive: provider rate limits,
@@ -662,7 +738,7 @@ async def _analyze_images_parallel(
             page_warning = str(exc)[:240]
 
     key = _cache_key(pdf_bytes, max_pages, title, symbol)
-    cached = _cache_get(key)
+    cached = await asyncio.to_thread(_cache_get, key)
     if cached is not None:
         return cached
 
@@ -672,27 +748,27 @@ async def _analyze_images_parallel(
         # hit its own cache and never pays for a duplicate render.
         return await rv.analyze_pdf_vision(
             pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            text_unavailable=text_unavailable,
         )
 
-    # Queue before starting the per-report deadline.  With a 3-slot global child
-    # semaphore, interleaving three reports (nine tasks) made later reports time
-    # out while merely waiting for slots.
-    batch_sem = _batch_semaphore()
-    if background and batch_sem.locked():
-        raise ResearchMultiAgentBusy("交互式研报解读正在运行，后台预热稍后重试")
-    async with batch_sem:
+    # Keep sibling roles together; queueing is bounded and is included in the
+    # overall deadline established at the adaptive entry point.
+    async with _batch_lease(background=background):
         # A prewarm and an HTTP request can miss the inner cache concurrently.
         # Recheck after queueing so the follower does not pay for three duplicate calls.
-        late_cached = _cache_get(key)
+        late_cached = await asyncio.to_thread(_cache_get, key)
         if late_cached is not None:
             return late_cached
+        llm = CloudResearchLLM()
+        if not getattr(llm, "has_vision_provider", lambda: True)():
+            raise VisionUnavailableError("当前没有可用的视觉模型")
         images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
         if len(images) < _MIN_IMAGES:
             return await rv.analyze_pdf_vision(
                 pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+                text_unavailable=text_unavailable,
             )
 
-        llm = CloudResearchLLM()
         if llm.provider == "mock":
             raise RuntimeError("当前为本地演示模型，无法做多 Agent 研报解读；请配置云端视觉模型。")
 
@@ -718,6 +794,8 @@ async def _analyze_images_parallel(
             for role, task in zip(_ROLES, tasks):
                 try:
                     results[role.key] = task.result()
+                except VisionUnavailableError:
+                    raise
                 except Exception as exc:  # noqa: BLE001 - aggregate role failures into one clear error
                     errors.append(f"{role.label}: {str(exc)[:100]}")
             if errors:
@@ -730,13 +808,13 @@ async def _analyze_images_parallel(
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-    result = _merge_results(results, provider=f"{llm.model} · 3 agents", pages=len(images))
-    result["agent_count"] = 3
-    result["analysis_mode"] = "multi_agent_vision"
-    if page_warning:
-        result["page_parallel_warning"] = page_warning
-    _cache_put(key, result)
-    return result
+        result = _merge_results(results, provider=f"{llm.model} · 3 agents", pages=len(images))
+        result["agent_count"] = 3
+        result["analysis_mode"] = "multi_agent_vision"
+        if page_warning:
+            result["page_parallel_warning"] = page_warning
+        await asyncio.to_thread(_cache_put, key, result)
+        return result
 
 
 async def _analyze_text_parallel(
@@ -749,7 +827,7 @@ async def _analyze_text_parallel(
 ) -> dict[str, Any]:
     """Extract once, then run facts/thesis/risk text agents concurrently."""
     key = _cache_key(pdf_bytes, max_pages, title, symbol)
-    cached = _cache_get(key)
+    cached = await asyncio.to_thread(_cache_get, key)
     if cached is not None:
         return cached
 
@@ -764,11 +842,8 @@ async def _analyze_text_parallel(
     if len(text) < rv.MIN_TEXT_CHARS:
         raise rv.PdfTextUnavailable("文本层过少，转视觉解读")
 
-    batch_sem = _batch_semaphore()
-    if background and batch_sem.locked():
-        raise ResearchMultiAgentBusy("交互式研报解读正在运行，后台预热稍后重试")
-    async with batch_sem:
-        late_cached = _cache_get(key)
+    async with _batch_lease(background=background):
+        late_cached = await asyncio.to_thread(_cache_get, key)
         if late_cached is not None:
             return late_cached
 
@@ -804,18 +879,18 @@ async def _analyze_text_parallel(
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    result = _merge_results(
-        results,
-        provider=f"{llm.model} · 3 agents",
-        pages=min(rv.MAX_VISION_PAGES, max(1, max_pages)),
-    )
-    result["agent_count"] = 3
-    result["analysis_mode"] = "multi_agent_text"
-    _cache_put(key, result)
-    return result
+        result = _merge_results(
+            results,
+            provider=f"{llm.model} · 3 agents",
+            pages=min(rv.MAX_VISION_PAGES, max(1, max_pages)),
+        )
+        result["agent_count"] = 3
+        result["analysis_mode"] = "multi_agent_text"
+        await asyncio.to_thread(_cache_put, key, result)
+        return result
 
 
-async def analyze_pdf_adaptive(
+async def _analyze_pdf_adaptive_impl(
     pdf_bytes: bytes,
     *,
     title: Optional[str] = None,
@@ -847,6 +922,7 @@ async def analyze_pdf_adaptive(
         return await rv.analyze_pdf_auto(
             pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
         )
+    text_unavailable = False
     try:
         return await _analyze_text_parallel(
             pdf_bytes, title=title, symbol=symbol, max_pages=max_pages, background=background,
@@ -863,7 +939,7 @@ async def analyze_pdf_adaptive(
         except rv.PdfTextUnavailable:
             # A provider failure on the text route should not prevent a scanned
             # report from trying the visual route below.
-            pass
+            text_unavailable = True
         except Exception:
             raise
         else:
@@ -889,6 +965,12 @@ async def analyze_pdf_adaptive(
     try:
         return await _analyze_images_parallel(
             pdf_bytes, title=title, symbol=symbol, max_pages=max_pages, background=background,
+            text_unavailable=text_unavailable,
+        )
+    except VisionUnavailableError:
+        return await rv.analyze_pdf_without_vision(
+            pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            text_unavailable=text_unavailable,
         )
     except (ResearchMultiAgentBusy, asyncio.CancelledError):
         raise
@@ -899,8 +981,31 @@ async def analyze_pdf_adaptive(
         # that complete result at the caller.
         result = await rv.analyze_pdf_vision(
             pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            text_unavailable=text_unavailable,
         )
         result = dict(result)
         result.setdefault("analysis_mode", "single_agent_fallback")
         result.setdefault("multi_agent_warning", str(exc)[:240])
         return result
+
+
+async def analyze_pdf_adaptive(
+    pdf_bytes: bytes,
+    *,
+    title: Optional[str] = None,
+    symbol: Optional[str] = None,
+    max_pages: int = 6,
+    background: bool = False,
+    text_only: bool = False,
+) -> dict[str, Any]:
+    """Apply one deadline to extraction, queueing, agents and all fallbacks."""
+    try:
+        return await asyncio.wait_for(
+            _analyze_pdf_adaptive_impl(
+                pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+                background=background, text_only=text_only,
+            ),
+            timeout=_ANALYSIS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        raise ResearchAnalysisTimeout("研报解读超过整体等待时限，请稍后重试") from exc

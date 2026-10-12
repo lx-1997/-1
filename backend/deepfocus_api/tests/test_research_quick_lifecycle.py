@@ -220,3 +220,70 @@ async def test_first_delta_reaches_client_when_queue_waiter_consumes_it(monkeypa
     assert quotas.used("quick-test") == 1
     assert response._quota_scope.heartbeat.done()
     assert not [task for task in asyncio.all_tasks() - prior if not task.done()]
+
+
+@pytest.mark.asyncio
+async def test_stream_total_budget_includes_quick_queue_wait(monkeypatch):
+    gate = asyncio.Semaphore(0)
+    monkeypatch.setattr(main, "_AI_ANALYZE_SEM", gate)
+    monkeypatch.setattr(research_stream, "_STREAM_TOTAL_TIMEOUT_SECONDS", 0.04)
+    calls = []
+
+    async def forbidden(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("A timed-out queue must not begin model work")
+
+    monkeypatch.setattr(research_stream, "generate_deep_quick", forbidden)
+    monkeypatch.setattr(research_stream, "generate_deep_draft", forbidden)
+    prior = set(asyncio.all_tasks())
+    response = await _response()
+    events = [_event(chunk) async for chunk in response.body_iterator]
+    assert events[-1]["type"] == "error"
+    assert events[-1]["status"] == 504
+    assert calls == []
+    # Python 3.9 retains cancelled semaphore futures until the next release;
+    # no live waiter or generation task may survive the request.
+    assert all(waiter.cancelled() for waiter in gate._waiters or [])
+    assert quotas.used("quick-test") == 0
+    assert not [task for task in asyncio.all_tasks() - prior if not task.done()]
+
+
+@pytest.mark.asyncio
+async def test_stream_total_timeout_cancels_deep_and_preserves_delivered_preview(monkeypatch):
+    monkeypatch.setattr(research_stream, "_STREAM_TOTAL_TIMEOUT_SECONDS", 0.05)
+    started, closed = asyncio.Event(), asyncio.Event()
+    writes = []
+
+    async def deep(*args, **kwargs):
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(research_stream, "generate_deep_draft", deep)
+    monkeypatch.setattr(main, "metrics_set_ai_cache", lambda key, value: writes.append(key))
+    prior = set(asyncio.all_tasks())
+    response = await _response()
+    events = [_event(chunk) async for chunk in response.body_iterator]
+    assert started.is_set() and closed.is_set()
+    assert any(event["type"] == "quick" for event in events)
+    assert events[-1]["type"] == "error" and events[-1]["status"] == 504
+    assert "quick-test" not in writes
+    assert quotas.used("quick-test") == 1
+    assert not [task for task in asyncio.all_tasks() - prior if not task.done()]
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_persist_local_fallback(monkeypatch):
+    writes = []
+
+    async def fallback(*args, **kwargs):
+        return ResearchDeepDraftResponse(title="原文摘录", provider="local-fallback")
+
+    monkeypatch.setattr(research_stream, "generate_deep_draft", fallback)
+    monkeypatch.setattr(main, "metrics_set_ai_cache", lambda key, value: writes.append(key))
+    response = await _response()
+    events = [_event(chunk) async for chunk in response.body_iterator]
+    assert events[-1]["type"] == "done"
+    assert "quick-test" not in writes

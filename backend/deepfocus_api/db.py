@@ -31,9 +31,13 @@ def connect(path: Any, *, timeout: float = 10.0) -> sqlite3.Connection:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=timeout)
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
-        pass  # 库文件只读或文件系统不支持共享内存时保持原 journal 模式
-    conn.execute("PRAGMA busy_timeout=10000")
-    conn.execute("PRAGMA synchronous=NORMAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass  # 库文件只读或文件系统不支持共享内存时保持原 journal 模式
+        conn.execute(f"PRAGMA busy_timeout={max(0, int(timeout * 1000))}")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except BaseException:
+        conn.close()
+        raise
     return conn

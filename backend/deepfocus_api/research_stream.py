@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any, AsyncIterator, Optional
 
 import anyio
@@ -26,6 +27,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from .auth import optional_current_user
+from .analysis_limiter import AnalysisBusy
 from .cost_quotas import quota_scope
 from .research_digest import (
     ResearchDeepDraftRequest,
@@ -37,6 +39,9 @@ from .research_digest import (
 from .research_quick import generate_deep_quick
 
 router = APIRouter()
+_STREAM_TOTAL_TIMEOUT_SECONDS = max(
+    60.0, float(os.getenv("DEEPFOCUS_RESEARCH_STREAM_TOTAL_SECONDS", "330") or 330),
+)
 
 
 def _sse(payload: dict[str, Any]) -> str:
@@ -104,20 +109,27 @@ async def api_research_deep_draft_stream(
             metrics_set_ai_cache,
         )
 
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _STREAM_TOTAL_TIMEOUT_SECONDS
+
+        async def within_deadline(awaitable, *, limit: Optional[float] = None):
+            remaining = max(0.0, deadline - loop.time())
+            return await asyncio.wait_for(awaitable, timeout=min(remaining, limit) if limit is not None else remaining)
+
         title = (request.title or "研报深度解读").strip()
         cache_key = deep_draft_cache_key(request)
         legacy_cache_key = legacy_deep_draft_cache_key(request) if cache_key else ""
 
         yield _sse({"type": "stage", "stage": "resolve", "detail": "正在获取研报原文…"})
 
-        cached = metrics_get_ai_cache(cache_key) if cache_key else None
+        cached = await asyncio.to_thread(metrics_get_ai_cache, cache_key) if cache_key else None
         if not _valid_cached_draft(cached):
             cached = None
         if cached is None and legacy_cache_key:
-            legacy_cached = metrics_get_ai_cache(legacy_cache_key)
+            legacy_cached = await asyncio.to_thread(metrics_get_ai_cache, legacy_cache_key)
             if _valid_cached_draft(legacy_cached):
                 cached = legacy_cached
-                metrics_set_ai_cache(cache_key, legacy_cached)
+                await asyncio.to_thread(metrics_set_ai_cache, cache_key, legacy_cached)
         if cached is not None:
             try:
                 quota_key = _check_ai_quota(_user, "yb", http_req, cached=True)
@@ -142,7 +154,10 @@ async def api_research_deep_draft_stream(
 
         # 原文解析放在生成之外：能把「拿到几页/多少文本」作为真实进度回报
         try:
-            docs = await resolve_source_documents(request)
+            docs = await within_deadline(resolve_source_documents(request))
+        except asyncio.TimeoutError:
+            yield _sse({"type": "error", "status": 504, "detail": "研报原文获取超过整体等待时限，请稍后重试"})
+            return
         except Exception as exc:
             yield _sse({"type": "error", "status": 502, "detail": f"研报原文获取失败：{str(exc)[:120]}"})
             return
@@ -159,19 +174,27 @@ async def api_research_deep_draft_stream(
         # 快轨：先推一版十秒级速览（独立缓存 quick:<key>），深度稿随后继续生成。
         # 速览失败静默跳过——它只是增强层，绝不阻塞深稿主链路。
         quick_cache_key = f"quick:{cache_key}" if cache_key else ""
-        quick = metrics_get_ai_cache(quick_cache_key) if quick_cache_key else None
+        quick = await asyncio.to_thread(metrics_get_ai_cache, quick_cache_key) if quick_cache_key else None
         if not isinstance(quick, dict) or not quick.get("one_liner"):
             yield _sse({"type": "stage", "stage": "quick", "detail": "速览生成中，先出方向感…"})
+            async def generate_quick():
+                async with _AI_ANALYZE_SEM:
+                    return await generate_deep_quick(request, documents=docs)
             try:
-                quick = await asyncio.wait_for(
-                    generate_deep_quick(request, documents=docs),
-                    timeout=60,
-                )
+                quick = await within_deadline(generate_quick(), limit=60)
+            except AnalysisBusy as exc:
+                yield _sse({"type": "error", "status": 503, "detail": str(exc)[:160]})
+                return
+            except asyncio.TimeoutError:
+                if loop.time() >= deadline:
+                    yield _sse({"type": "error", "status": 504, "detail": "研报解读超过整体等待时限，请稍后重试"})
+                    return
+                quick = None
             except Exception as exc:
                 print(f"[deep-quick] 快轨异常跳过：{type(exc).__name__}: {str(exc)[:120]}")
                 quick = None
             if isinstance(quick, dict) and quick.get("one_liner") and quick_cache_key:
-                metrics_set_ai_cache(quick_cache_key, quick)
+                await asyncio.to_thread(metrics_set_ai_cache, quick_cache_key, quick)
         if isinstance(quick, dict) and quick.get("one_liner"):
             # A useful preview already fulfils the request even if the client
             # disconnects before the deep draft; completing the same lease
@@ -183,29 +206,33 @@ async def api_research_deep_draft_stream(
         yield _sse({"type": "stage", "stage": "generate", "detail": "模型解读中（长报告约 1-3 分钟，完成即缓存秒开）"})
 
         started = asyncio.get_event_loop().time()
-        delta_queue: asyncio.Queue = asyncio.Queue()
+        delta_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
         _delta_buf: list[str] = []
 
         def _progress(kind: str, value: Any) -> None:
             if kind == "llm_delta" and value:
                 try:
-                    delta_queue.put_nowait(str(value))
+                    if delta_queue.full():
+                        delta_queue.get_nowait()
+                    delta_queue.put_nowait(str(value)[-512:])
                 except Exception:
                     pass
 
         async def _generate() -> dict[str, Any]:
-            late_cached = metrics_get_ai_cache(cache_key)
+            late_cached = await asyncio.to_thread(metrics_get_ai_cache, cache_key)
             if _valid_cached_draft(late_cached):
                 return late_cached
             async with _AI_ANALYZE_SEM:
                 result = await generate_deep_draft(request, documents=docs, progress=_progress)
             payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
-            metrics_set_ai_cache(cache_key, payload)
+            if _valid_cached_draft(payload):
+                await asyncio.to_thread(metrics_set_ai_cache, cache_key, payload)
             if legacy_cache_key and legacy_cache_key != cache_key:
-                metrics_set_ai_cache(legacy_cache_key, payload)
+                if _valid_cached_draft(payload):
+                    await asyncio.to_thread(metrics_set_ai_cache, legacy_cache_key, payload)
             return payload
 
-        gen_task = asyncio.create_task(_generate())
+        gen_task = asyncio.create_task(within_deadline(_generate()))
         get_task: Optional[asyncio.Task] = None
         try:
             while True:
@@ -230,6 +257,13 @@ async def api_research_deep_draft_stream(
                 elapsed = int(asyncio.get_event_loop().time() - started)
                 yield _sse({"type": "tick", "elapsed": elapsed})
             payload = gen_task.result()
+        except asyncio.TimeoutError:
+            preview_note = "；速览仍可查看" if isinstance(quick, dict) and quick.get("one_liner") else ""
+            yield _sse({"type": "error", "status": 504, "detail": f"研报解读超过整体等待时限，已停止本轮生成{preview_note}，请稍后重试"})
+            return
+        except AnalysisBusy as exc:
+            yield _sse({"type": "error", "status": 503, "detail": str(exc)[:160]})
+            return
         except Exception as exc:
             status = getattr(exc, "status_code", 502)
             detail = str(getattr(exc, "detail", "") or str(exc))[:160]

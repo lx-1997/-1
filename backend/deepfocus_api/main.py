@@ -149,6 +149,8 @@ from .data_store import (
     init_data_store,
     latest as data_latest,
     record as record_datapoint,
+    async_record as async_record_datapoint,
+    shutdown_data_store,
     stats as data_stats,
 )
 from . import seo_pages
@@ -176,6 +178,9 @@ from .metrics_store import (
 from . import referral
 from .llm import CloudResearchLLM, extract_citable_sources, tool_agent_to_orchestrator_response
 from .core_agent import CoreAgent, CoreAgentRequest
+from .llm_runtime import close_llm_clients, llm_deadline
+from .analysis_limiter import AnalysisLimiter, AnalysisBusy
+from .ai_question_routing import is_static_explanation
 from .market_data import fetch_market_quotes, search_market_symbols
 from .market_layers import build_market_data_layer_status
 from .major_event_skill import (
@@ -1537,7 +1542,7 @@ async def lifespan(app: FastAPI):
         _WEIXIN_MGR.start()
         print("[weixin] iLink 渠道已启动（多租户扫码即问）")
     init_share_snapshot_db()
-    init_data_store()  # 持久化数据层：速判卡/行情写穿落库，历史积累 + 读缓存
+    await asyncio.to_thread(init_data_store)  # 历史修剪不占用 API 事件循环
     init_metrics_db()  # 站点指标：页面访问 / 研报下载计数
     # 新信号落库广播后，扇出到离线召回订阅（邮件 / Web Push）。
     register_post_message_hook(lambda message: dispatch_recall(message))
@@ -1656,7 +1661,7 @@ async def lifespan(app: FastAPI):
         await asyncio.wait_for(asyncio.gather(*_bg_tasks, return_exceptions=True), timeout=4.0)
     except (asyncio.TimeoutError, BaseException):
         pass
-    for _closer in (stop_agent_worker, shutdown_quant_jobs, stop_research_workbench):
+    for _closer in (stop_agent_worker, shutdown_quant_jobs, stop_research_workbench, close_llm_clients, shutdown_data_store):
         try:
             await asyncio.wait_for(_closer(), timeout=4.0)
         except (asyncio.TimeoutError, BaseException):
@@ -3685,7 +3690,7 @@ async def _build_stock_tear_sheet_core(
     # ⚠️ 凡用到 iFinD 数据(白名单 quote 覆盖 use_ifind，或全员估值补强 ifind_val)绝不写入共享 verdict——
     # 该数据点被零鉴权 /api/data/history 与公开 SEO 页读取，写入会把 iFinD 衍生数据泄漏对外（违授权红线 + 破隔离）。
     if persist and not use_ifind and ifind_val is None:
-        record_datapoint(
+        await async_record_datapoint(
             "verdict", sym,
             {
                 "verdict": ts.overall_verdict,
@@ -3734,7 +3739,7 @@ async def _tool_get_stock_verdict(symbol: str, market: Optional[str] = None) -> 
     """
     sym = (symbol or "").strip().upper()
     cache_key = f"{sym}|{(market or '').upper()}"
-    cached = data_latest("verdict_tool", cache_key, max_age_seconds=_VERDICT_TOOL_CACHE_TTL)
+    cached = await asyncio.to_thread(data_latest, "verdict_tool", cache_key, max_age_seconds=_VERDICT_TOOL_CACHE_TTL)
     if cached:
         return {**cached, "cached": True}
 
@@ -3760,7 +3765,7 @@ async def _tool_get_stock_verdict(symbol: str, market: Optional[str] = None) -> 
             for dim in ts.dimensions
         ],
     }
-    record_datapoint("verdict_tool", cache_key, result)  # 写入缓存（同时供历史）
+    await async_record_datapoint("verdict_tool", cache_key, result)  # 写入缓存（同时供历史）
     return result
 
 
@@ -3785,7 +3790,7 @@ register_tool(AgentTool(
 async def _tool_get_verdict_history(symbol: str, market: Optional[str] = None) -> Any:
     """工具：读取该标的速判卡结论随时间的历史（来自持久化数据层，随平台运行积累）。"""
     sym = (symbol or "").strip().upper()
-    items = data_history("verdict", sym, limit=20)
+    items = await asyncio.to_thread(data_history, "verdict", sym, limit=20)
     return {
         "symbol": sym,
         "count": len(items),
@@ -4148,7 +4153,7 @@ async def _tool_get_briefing_today() -> Any:
     """投研晨报：市场环境速判 + 组合风险 → 买方一句话行动建议。读缓存(30min)秒回，缺则现算一次再缓存。"""
     from . import data_store
     briefing_key = f"TODAY:{current_owner_id() or 'public'}"
-    cached = data_store.latest("wx_briefing", briefing_key, max_age_seconds=1800)
+    cached = await asyncio.to_thread(data_store.latest, "wx_briefing", briefing_key, max_age_seconds=1800)
     if isinstance(cached, dict) and cached:
         return cached
     from .risk_management import get_risk_summary
@@ -4160,7 +4165,7 @@ async def _tool_get_briefing_today() -> Any:
     b = build_briefing(macro, portfolio)
     out = {"headline": b.headline, "macro_verdict": b.macro_verdict, "portfolio_verdict": b.portfolio_verdict}
     try:
-        data_store.record("wx_briefing", briefing_key, out)
+        await data_store.async_record("wx_briefing", briefing_key, out)
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -6103,7 +6108,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
     try:
         online = await fetch_research_wire_online(limit=limit, query=q)
         if online.get("items"):
-            research_archive.upsert(online["items"])  # 每次在线结果落归档，累积历史
+            await asyncio.to_thread(research_archive.upsert, online["items"])  # 每次在线结果落归档，累积历史
         # 最新视图(空 q)：合并历史归档 → 能往回翻；搜索(带 q)走在线全索引；带 before 翻更早
         if not q.strip() or (before or "").strip():
             rows = research_archive.query(limit=limit, query_text=q, before=before, before_id=before_id) or online.get("items") or []
@@ -6113,7 +6118,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
             archived = False
         if rows:
             # 一次性批量取所有研报的 AI 缓存（替代逐条 2 次 SQLite 读，几十并发下从 ~1.6s 降到几十 ms）
-            cache_map = metrics_get_ai_cache_many([row["file_id"] for row in rows if row.get("file_id")])
+            cache_map = await asyncio.to_thread(metrics_get_ai_cache_many, [row["file_id"] for row in rows if row.get("file_id")])
             online_items = [
                 ResearchWireItem(
                     id=row["id"], title=row["title"], org=row.get("org") or "海外投行", date=row["date"],
@@ -6151,7 +6156,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
     except Exception:  # 在线失败（工作台未起/cookie 失效/网络）→ 先试归档，再回退本地抓取舱
         arch_rows = research_archive.query(limit=limit, query_text=q, before=before, before_id=before_id)
         if arch_rows:
-            cache_map = metrics_get_ai_cache_many([r["file_id"] for r in arch_rows if r.get("file_id")])
+            cache_map = await asyncio.to_thread(metrics_get_ai_cache_many, [r["file_id"] for r in arch_rows if r.get("file_id")])
             return _wire_conditional(request, ResearchWireResponse(
                 items=[_enrich_research_wire_item(ResearchWireItem(
                     id=r["id"], title=r["title"], org=r.get("org") or "海外投行", date=r["date"],
@@ -6228,7 +6233,7 @@ async def api_research_workbench_pdf(
     _require_research_original_access(claims)
     path = _safe_workbench_file_path(out, filename)
     media_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
-    metrics_incr_research(filename, filename)  # 研报下载/打开计数（本地原文）
+    await asyncio.to_thread(metrics_incr_research, filename, filename)  # 研报下载/打开计数（本地原文）
     if media_type == "application/pdf":
         # 抓取舱文件与在线 wire-file 必须走同一套去水印 + 稻草财经 打标。
         # 用 to_thread 读大 PDF，避免阻塞 uvicorn 事件循环；apply_pdf_brand 内部按
@@ -6398,14 +6403,14 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
     # ── 快路径：已落盘的 PDF 直接返回，跳过网络下载 ──────────────
     try:
         from .pdf_brand import get_raw_by_file_id  # noqa: PLC0415
-        raw_cached = get_raw_by_file_id(file_id)
+        raw_cached = await asyncio.to_thread(get_raw_by_file_id, file_id)
         if raw_cached is not None:
             return raw_cached, "application/pdf"
     except Exception:
         pass
     try:
         from .pdf_brand import get_cached_by_file_id  # noqa: PLC0415
-        cached = get_cached_by_file_id(file_id)
+        cached = await asyncio.to_thread(get_cached_by_file_id, file_id)
         if cached is not None:
             return cached, "application/pdf"
     except Exception:
@@ -6454,7 +6459,7 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
         if ct.lower().startswith("application/pdf") or safe_name.lower().endswith(".pdf"):
             from .pdf_brand import store_raw_pdf  # noqa: PLC0415
 
-            store_raw_pdf(file_id, raw)
+            await asyncio.to_thread(store_raw_pdf, file_id, raw)
         return raw, ct
 
 
@@ -6609,7 +6614,7 @@ async def api_research_wire_file(
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"在线预览失败：{str(exc)[:80]}")
-    metrics_incr_research(file_id, safe_name)  # 研报下载/打开计数
+    await asyncio.to_thread(metrics_incr_research, file_id, safe_name)  # 研报下载/打开计数
     return response
 
 
@@ -6619,9 +6624,9 @@ _MOBILE_UA_RE = re.compile(r"(Mobile|Android|iPhone|iPad|iPod|Windows Phone|Harm
 @app.post("/api/metrics/pageview")
 async def api_metrics_pageview(request: Request) -> dict[str, Any]:
     """记录一次页面访问（前端加载时调用一次）。附带设备类型与时段分布，不回传总量。"""
-    metrics_incr("pageview")
+    await asyncio.to_thread(metrics_incr, "pageview")
     ua = request.headers.get("user-agent") or ""
-    metrics_incr("pv_mobile" if _MOBILE_UA_RE.search(ua) else "pv_desktop")
+    await asyncio.to_thread(metrics_incr, "pv_mobile" if _MOBILE_UA_RE.search(ua) else "pv_desktop")
     try:
         metrics_incr_hourly(datetime.now(timezone.utc).astimezone().hour)
     except Exception:  # noqa: BLE001
@@ -6638,11 +6643,11 @@ async def api_metrics_event(name: str = "", title: str = "") -> dict[str, Any]:
     key = (name or "").strip()
     if key not in _METRICS_ALLOWED_EVENTS:
         raise HTTPException(status_code=400, detail="不支持的事件")
-    metrics_incr(key)
+    await asyncio.to_thread(metrics_incr, key)
     if key == "copy_news" and title.strip():
         import hashlib as _hl
         ref = "kx:" + _hl.sha1(title.strip().encode("utf-8")).hexdigest()[:16]
-        metrics_incr_news_heat(ref, title.strip())
+        await asyncio.to_thread(metrics_incr_news_heat, ref, title.strip())
     return {"ok": True}
 
 
@@ -7390,10 +7395,10 @@ async def _send_settlement_digests(events_by_user: dict, now_bj: datetime) -> tu
                 continue  # 先记后发(唯一索引兜底并发):宁可漏发不可双发
             if await mgr.push_to_user(uid, text):
                 delivered += 1
-                metrics_incr("call:settle_push_delivered")
+                await asyncio.to_thread(metrics_incr, "call:settle_push_delivered")
             else:
                 cold += 1  # token 冷→只站内(红点是地板、微信是加成;不重试,待用户自然回访)
-                metrics_incr("call:settle_push_cold_skip")
+                await asyncio.to_thread(metrics_incr, "call:settle_push_cold_skip")
         except Exception as exc:  # noqa: BLE001 —— 单人发送失败不拖垮其他用户
             print(f"[call-settle] digest→{uid[:12]} 发送异常:{type(exc).__name__}")
     return delivered, cold
@@ -8479,7 +8484,7 @@ async def run_seo_submit() -> None:
             for m in list_realtime_messages(topic="文章", exclude_futoucaixin=True, limit=120):
                 urls.append(f"{base}/article/{m.id}")
             urls = list(dict.fromkeys(u for u in urls if u))  # 去重保序
-            state = data_latest("seo_submit_state", "global") or {}
+            state = await asyncio.to_thread(data_latest, "seo_submit_state", "global") or {}
             pushed = set(state.get("pushed") or [])
             new_urls = [u for u in urls if u not in pushed]
             if new_urls:
@@ -8488,7 +8493,7 @@ async def run_seo_submit() -> None:
                 accepted = any((res.get(k) or {}).get("ok") for k in ("baidu", "indexnow"))
                 if accepted:
                     pushed.update(new_urls)
-                    record_datapoint("seo_submit_state", "global", {"pushed": list(pushed)[-5000:]})
+                    await async_record_datapoint("seo_submit_state", "global", {"pushed": list(pushed)[-5000:]})
                 print(f"[seo-submit] 推送 {len(new_urls)} 个新 URL（{'已入队' if accepted else '失败,下轮重试'}）：{res}")
         except asyncio.CancelledError:
             raise
@@ -8513,22 +8518,22 @@ async def run_seo_prewarm() -> None:
     while True:
         done = 0
         try:
-            for h in data_hot_symbols("verdict", days=60, limit=60):
+            for h in await asyncio.to_thread(data_hot_symbols, "verdict", days=60, limit=60):
                 if done >= per_cycle:
                     break
                 sym = (h.get("symbol") or "").upper()
                 mkt = h.get("market") or ""
-                if not sym or data_latest("seo_tear_sheet", sym, max_age_seconds=fresh):
+                if not sym or await asyncio.to_thread(data_latest, "seo_tear_sheet", sym, max_age_seconds=fresh):
                     continue
                 try:
                     async with _seo_build_semaphore:
-                        if data_latest("seo_tear_sheet", sym, max_age_seconds=fresh):
+                        if await asyncio.to_thread(data_latest, "seo_tear_sheet", sym, max_age_seconds=fresh):
                             continue
                         ts = await _build_stock_tear_sheet_core(sym, market=mkt)
                     ts_dict = ts.model_dump(mode="json")
                     for heavy in ("price_series", "sp500_series", "us10y_series"):
                         ts_dict.pop(heavy, None)
-                    record_datapoint("seo_tear_sheet", sym, ts_dict, market=mkt.upper())
+                    await async_record_datapoint("seo_tear_sheet", sym, ts_dict, market=mkt.upper())
                     done += 1
                 except asyncio.CancelledError:
                     raise
@@ -8570,8 +8575,8 @@ async def run_news_prewarm() -> None:
         print("[news-prewarm] 未启用")
         return
     import hashlib as _hashlib
-    per_cycle = int(os.getenv("DEEPFOCUS_NEWS_PREWARM_PER_CYCLE", "12"))
-    interval = float(os.getenv("DEEPFOCUS_NEWS_PREWARM_CYCLE_SECONDS", "300"))
+    per_cycle = max(1, min(3, int(os.getenv("DEEPFOCUS_NEWS_PREWARM_PER_CYCLE", "3"))))
+    interval = max(600.0, float(os.getenv("DEEPFOCUS_NEWS_PREWARM_CYCLE_SECONDS", "600")))
     await asyncio.sleep(40)
     print(f"[news-prewarm] 启动：每轮 {per_cycle} 篇文章、周期 {interval}s")
     while True:
@@ -8603,15 +8608,16 @@ async def run_news_prewarm() -> None:
                 if len(title + content) < 60 and not url:
                     continue
                 key = "news:v5:" + _hashlib.sha1(f"{title}\n{model_content}".encode("utf-8")).hexdigest()[:20]
-                if not news_result_needs_refresh(metrics_get_ai_cache(key), title):
+                if not news_result_needs_refresh(await asyncio.to_thread(metrics_get_ai_cache, key), title):
                     continue
                 try:
-                    result = await analyze_news(title, model_content, url=model_url)
+                    async with _AI_ANALYZE_SEM.background():
+                        result = await analyze_news(title, model_content, url=model_url)
                     if news_result_needs_refresh(result, title):
                         continue
                     if original_source_note and result.get("source_note", "") in ("", "基于提供的正文"):
                         result["source_note"] = original_source_note
-                    metrics_set_ai_cache(key, result)
+                    await asyncio.to_thread(metrics_set_ai_cache, key, result)
                     done += 1
                 except asyncio.CancelledError:
                     raise
@@ -8826,14 +8832,14 @@ async def run_research_prewarm() -> None:
     if (os.getenv("DEEPFOCUS_RESEARCH_PREWARM", "0").strip().lower() in {"0", "false", "no"}):
         print("[prewarm] 研报预解读未启用")
         return
-    per_cycle = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_PER_CYCLE", "30")))
+    per_cycle = max(1, min(6, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_PER_CYCLE", "6"))))
     gap = float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_GAP_SECONDS", "3"))
-    cycle = float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CYCLE_SECONDS", "1800"))
+    cycle = max(600.0, float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CYCLE_SECONDS", "1800")))
     jitter_ratio = min(0.45, max(0.0, float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_JITTER_RATIO", "0"))))
     non_a_only = os.getenv("DEEPFOCUS_RESEARCH_PREWARM_NON_A_ONLY", "0").strip().lower() in {
         "1", "true", "yes", "on",
     }
-    workers = max(1, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CONCURRENCY", "2")))
+    workers = max(1, min(2, int(os.getenv("DEEPFOCUS_BACKGROUND_CONCURRENCY", "1"))))
     # 每日下载预算：ZSXQ 有「单自然日下载量」限额，超了会整天拒绝下载。务必远低于其阈值。
     daily_max = int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_DAILY_MAX", "40"))
     # 为「新报告」预留的额度：回填(补历史)只能用 daily_max - fresh_reserve 以内，绝不挤占新报告。
@@ -8862,7 +8868,7 @@ async def run_research_prewarm() -> None:
             already_local = has_cached_file_id(fid)
             # 下载额度/源站限额只拦网络下载；本地已有 PDF 的 AI 缓存补齐仍可继续。
             if (banned["hit"] and not already_local) or (
-                not already_local and metrics_get_daily(_DL_KEY) >= daily_max
+                not already_local and await asyncio.to_thread(metrics_get_daily, _DL_KEY) >= daily_max
             ):
                 return
             try:
@@ -8880,28 +8886,32 @@ async def run_research_prewarm() -> None:
                     print(f"[prewarm] 下载失败 {fid}: {type(exc).__name__}: {msg[:50]}")
                 return
             if not already_local:
-                metrics_incr(_DL_KEY)  # 只有真实下载才占外部源当日配额；磁盘命中不重复计数
+                await asyncio.to_thread(metrics_incr, _DL_KEY)  # 只有真实下载才占外部源当日配额；磁盘命中不重复计数
             if not ai:
                 # 仅补原文去水印缓存（已 AI 解读过的存量），让用户点开秒看，不再重复烧模型 token。
                 done_counter["n"] += 1
                 await asyncio.sleep(gap)
                 return
             try:
-                async with _AI_ANALYZE_SEM:  # 与用户请求共用总闸，防止预热绕过并发上限
+                async with _AI_ANALYZE_SEM.background():  # 预热不排队，并给在线解读保留容量
                     # 供应链/行业 deck 的关键标的和风险常在第 5–14 页；预热也必须
                     # 使用交互式解读同一页数，否则用户命中预热缓存时仍会得到标题级摘要。
                     result = await analyze_pdf_adaptive(
                         content, title=item.get("title", "研报"), max_pages=14, background=True,
                     )
-                metrics_set_ai_cache(ai_cache_key, result)
+                if result.get("vision_unavailable") or result.get("provider") == "text-only-fallback":
+                    return
+                await asyncio.to_thread(metrics_set_ai_cache, ai_cache_key, result)
                 if ai_cache_key != fid:  # 保留无版本别名给研报博客/头条标的提取
-                    metrics_set_ai_cache(fid, result)
+                    await asyncio.to_thread(metrics_set_ai_cache, fid, result)
                 warmed_at[fid] = time.time()
                 done_counter["n"] += 1
             except asyncio.CancelledError:
                 raise
             except ResearchMultiAgentBusy:
                 print(f"[prewarm] 交互式解读优先，本轮跳过 {fid}")
+            except (AnalysisBusy, ResearchMultiAgentBusy):
+                return  # 在线请求优先，下一轮仍可预热此报告
             except Exception as exc:  # noqa: BLE001 - 解读失败：拉黑，避免反复下载烧预算
                 failed_fids.add(fid)
                 print(f"[prewarm] 解读失败(已拉黑本轮) {fid}: {type(exc).__name__}: {str(exc)[:50]}")
@@ -8911,7 +8921,7 @@ async def run_research_prewarm() -> None:
         done_counter["n"] = 0
         banned["hit"] = False
         try:
-            used = metrics_get_daily(_DL_KEY)
+            used = await asyncio.to_thread(metrics_get_daily, _DL_KEY)
             download_cap = research_prewarm_download_cap(
                 daily_max, datetime.now(ai_fund.BJ_TZ).hour,
             )
@@ -8920,11 +8930,16 @@ async def run_research_prewarm() -> None:
             fresh: list[dict] = []
             migrate: list[dict] = []
             pdf_only: list[dict] = []  # 已 AI 解读但原文未去水印落盘 → 仅补 PDF 成品缓存(列表近新优先)，让用户点开秒看
-            for it in (data.get("items") or []):
+            candidate_items = data.get("items") or []
+            candidate_cache = await asyncio.to_thread(
+                metrics_get_ai_cache_many,
+                [analysis_cache_key(str(it.get("file_id") or "").strip()) for it in candidate_items],
+            )
+            for it in candidate_items:
                 fid = str(it.get("file_id") or "").strip()
                 if not fid or fid in failed_fids:
                     continue
-                cached = metrics_get_ai_cache(analysis_cache_key(fid))
+                cached = candidate_cache.get(analysis_cache_key(fid))
                 # 严格排除 A 股：未知市场也不自动下载，避免误把标题含糊的 A 股研报拉下来。
                 # 用户手动打开原文走独立接口，不受这个后台候选过滤影响。
                 if non_a_only and _market_for(fid, str(it.get("title") or ""), cached) not in {"HK", "US"}:
@@ -8984,7 +8999,7 @@ async def run_research_prewarm() -> None:
                 sem = asyncio.Semaphore(workers)
                 pdf_ids = {id(x) for x in pdf_pending}  # 仅这批走「只补 PDF、不重解读」
                 await asyncio.gather(*[_warm_one(it, sem, ai=(id(it) not in pdf_ids)) for it in pending], return_exceptions=True)
-                print(f"[prewarm] 本轮完成 {done_counter['n']} 篇，当日累计 {metrics_get_daily(_DL_KEY)}/{daily_max}")
+                print(f"[prewarm] 本轮完成 {done_counter['n']} 篇，当日累计 {await asyncio.to_thread(metrics_get_daily, _DL_KEY)}/{daily_max}")
             elif used >= download_cap:
                 print(f"[prewarm] 当前分时下载额度已用尽（{used}/{download_cap}，日上限{daily_max}），等待下一时段")
         except asyncio.CancelledError:
@@ -9166,7 +9181,10 @@ async def _resolve_research_pdf_bytes(request: ResearchVisionAnalyzeRequest) -> 
 
 # AI 解读并发闸：2 核/1.8G 小机器上，限制同时进行的 PDF 渲染+LLM 解读数，避免 CPU 打满/内存爆。
 # 超出的请求排队等待（前端有 150s 超时兜底）；结果有缓存，重复点开秒回不占额度。
-_AI_ANALYZE_SEM = asyncio.Semaphore(int(os.getenv("DEEPFOCUS_AI_ANALYZE_CONCURRENCY", "3")))
+_AI_ANALYZE_SEM = AnalysisLimiter(
+    int(os.getenv("DEEPFOCUS_AI_ANALYZE_CONCURRENCY", "2")),
+    foreground_wait_seconds=float(os.getenv("DEEPFOCUS_AI_QUEUE_TIMEOUT", "20")),
+)
 _RESEARCH_AI_SINGLEFLIGHT: AsyncSingleFlight[dict[str, Any]] = AsyncSingleFlight()
 
 
@@ -9178,10 +9196,10 @@ async def _generate_research_ai_result(
     core_result_holder: Optional[list[Any]] = None,
 ) -> dict[str, Any]:
     """Generate one report analysis per cache key, even across concurrent requests."""
-    async def _generate() -> dict[str, Any]:
+    async def _generate_inner() -> dict[str, Any]:
         # A request may have filled the cache after the endpoint's first lookup.
         if cache_key:
-            late_cached = metrics_get_ai_cache(cache_key)
+            late_cached = await asyncio.to_thread(metrics_get_ai_cache, cache_key)
             # 旧的“首屏级”结果不能阻止会员请求生成新版深度解读；
             # 完整缓存仍然走秒回路径。
             if late_cached is not None and not report_depth_needs_refresh(late_cached):
@@ -9213,9 +9231,14 @@ async def _generate_research_ai_result(
             if core_result_holder is not None:
                 core_result_holder.append(core_result)
             result = core_result.raw
-        if cache_key:
-            metrics_set_ai_cache(cache_key, result)
+        if cache_key and not result.get("vision_unavailable") and result.get("provider") != "text-only-fallback":
+            await asyncio.to_thread(metrics_set_ai_cache, cache_key, result)
         return result
+
+    async def _generate() -> dict[str, Any]:
+        with llm_deadline(140.0):
+            return await asyncio.wait_for(_generate_inner(), timeout=140.0)
+
 
     return await _RESEARCH_AI_SINGLEFLIGHT.run(cache_key, _generate)
 
@@ -9365,10 +9388,10 @@ async def api_research_vision_analyze(
     title = (request.title or "研报").strip()
     cache_ref = (request.file_id or request.workbench_filename or request.pdf_url or "").strip()
     cache_key = analysis_cache_key(cache_ref)
-    cached_result = metrics_get_ai_cache(cache_key) if cache_key else None  # 先探缓存，决定非会员能否放行
+    cached_result = await asyncio.to_thread(metrics_get_ai_cache, cache_key) if cache_key else None  # 先探缓存，决定非会员能否放行
     quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None)
-    metrics_incr("ai_research")  # 统计 AI 解读点击次数
-    metrics_incr_ai_ref((request.file_id or request.workbench_filename or "").strip(), (request.title or "").strip())  # AI 解读榜
+    await asyncio.to_thread(metrics_incr, "ai_research")  # 统计 AI 解读点击次数
+    await asyncio.to_thread(metrics_incr_ai_ref, (request.file_id or request.workbench_filename or "").strip(), (request.title or "").strip())  # AI 解读榜
 
     def _build_response(
         result: dict[str, Any],
@@ -9439,11 +9462,15 @@ async def api_research_vision_analyze(
         )
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001 - 统一转成 502，前端给友好提示
-        raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
+    except AnalysisBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=408, detail="研报解读超过本轮等待预算") from exc
+    except Exception as exc:  # noqa: BLE001 - 保留容量/时限错误的可重试状态
+        raise HTTPException(status_code=getattr(exc, "status_code", 502), detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
 
-    if cache_ref and cache_key != cache_ref:
-        metrics_set_ai_cache(cache_ref, result)  # 给研报博客/头条保留最新结构的无版本别名
+    if cache_ref and cache_key != cache_ref and not result.get("vision_unavailable") and result.get("provider") != "text-only-fallback":
+        await asyncio.to_thread(metrics_set_ai_cache, cache_ref, result)  # 给研报博客/头条保留最新结构的无版本别名
     if quota_key: _complete_cost_quota(quota_key)
     return _build_response(result, core_result_holder[0] if core_result_holder else None)
 
@@ -9483,7 +9510,7 @@ async def api_research_deep_draft(
         # 模型失败的确定性兜底不当长期缓存：瞬时 LLM 故障会被缓存成永久降级解读
         # （provider=local-fallback、置信 ~0.12、章节只是原文摘录"页面线索"）。
         # 按未命中处理，下次点击重试生成；LLM 仍不可用时现场兜底，UX 相同但缓存不再被毒化。
-        if value.get("provider") == "local-fallback":
+        if value.get("provider") in {"local-fallback", "text-only-fallback"} or value.get("vision_unavailable"):
             return False
         try:
             ResearchDeepDraftResponse.model_validate(value)
@@ -9498,7 +9525,7 @@ async def api_research_deep_draft(
     # workbench paths.  A v2 key is retained as a migration fallback below.
     cache_key = deep_draft_cache_key(request)
     legacy_cache_key = legacy_deep_draft_cache_key(request) if cache_key else ""
-    cached_result = metrics_get_ai_cache(cache_key)
+    cached_result = await asyncio.to_thread(metrics_get_ai_cache, cache_key)
     # A partially written/legacy cache must not be treated as a readable hit:
     # otherwise an anonymous caller could pass the quota gate and receive a
     # 500 when the response model validates it.  Members will transparently
@@ -9509,13 +9536,13 @@ async def api_research_deep_draft(
     # best-effort: a torn/legacy payload still goes through the normal miss
     # path and is never exposed just because it exists in SQLite.
     if cached_result is None and legacy_cache_key:
-        legacy_cached = metrics_get_ai_cache(legacy_cache_key)
+        legacy_cached = await asyncio.to_thread(metrics_get_ai_cache, legacy_cache_key)
         if _valid_cached_draft(legacy_cached):
             cached_result = legacy_cached
-            metrics_set_ai_cache(cache_key, legacy_cached)
+            await asyncio.to_thread(metrics_set_ai_cache, cache_key, legacy_cached)
     quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None)
-    metrics_incr("ai_research")
-    metrics_incr_ai_ref((request.file_id or request.workbench_filename or request.filename or "").strip(), title)
+    await asyncio.to_thread(metrics_incr, "ai_research")
+    await asyncio.to_thread(metrics_incr_ai_ref, (request.file_id or request.workbench_filename or request.filename or "").strip(), title)
 
     def _response(value: Any, core_result: Any = None) -> ResearchDeepDraftResponse:
         if isinstance(value, ResearchDeepDraftResponse):
@@ -9552,8 +9579,8 @@ async def api_research_deep_draft(
         return _attach_core_agent_metadata(response, core_result)
 
     core_result_holder: list[Any] = []
-    async def _generate() -> dict[str, Any]:
-        late_cached = metrics_get_ai_cache(cache_key)
+    async def _generate_inner() -> dict[str, Any]:
+        late_cached = await asyncio.to_thread(metrics_get_ai_cache, cache_key)
         if _valid_cached_draft(late_cached):
             # Another waiter may have filled the cache after the first lookup.
             # Validate that late hit as well; a torn/legacy payload must not be
@@ -9561,9 +9588,9 @@ async def api_research_deep_draft(
             # every concurrent caller.
             return late_cached
         if legacy_cache_key:
-            late_legacy = metrics_get_ai_cache(legacy_cache_key)
+            late_legacy = await asyncio.to_thread(metrics_get_ai_cache, legacy_cache_key)
             if _valid_cached_draft(late_legacy):
-                metrics_set_ai_cache(cache_key, late_legacy)
+                await asyncio.to_thread(metrics_set_ai_cache, cache_key, late_legacy)
                 return late_legacy
         resolved = resolve_source_documents(request)
         # Keep the hook easy to replace in tests/alternate archive adapters:
@@ -9585,7 +9612,7 @@ async def api_research_deep_draft(
                     stock=request.symbol,
                     attachments=[request.filename or request.workbench_filename or "研报资料"],
                     channel="web",
-                    timeout_seconds=480.0,
+                    timeout_seconds=330.0,
                 ),
                 lambda: generate_deep_draft(request, documents=docs),
                 route="deep-draft",
@@ -9593,13 +9620,20 @@ async def api_research_deep_draft(
             core_result_holder.append(core_result)
             result = core_result.raw
         payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
-        metrics_set_ai_cache(cache_key, payload)
+        if payload.get("provider") in {"local-fallback", "text-only-fallback"} or payload.get("vision_unavailable"):
+            return payload
+        await asyncio.to_thread(metrics_set_ai_cache, cache_key, payload)
         # Keep the request-shaped v2 alias during the rollout so an older
         # backend process (or a rollback) can still reuse this same result.
         # The source-stable v3 key remains the canonical cross-user entry.
         if legacy_cache_key and legacy_cache_key != cache_key:
-            metrics_set_ai_cache(legacy_cache_key, payload)
+            await asyncio.to_thread(metrics_set_ai_cache, legacy_cache_key, payload)
         return payload
+
+    async def _generate() -> dict[str, Any]:
+        with llm_deadline(330.0):
+            return await asyncio.wait_for(_generate_inner(), timeout=330.0)
+
 
     if isinstance(cached_result, dict) and cached_result:
         if quota_key:
@@ -9610,6 +9644,10 @@ async def api_research_deep_draft(
         payload = await _RESEARCH_AI_SINGLEFLIGHT.run(cache_key, _generate)
     except HTTPException:
         raise
+    except AnalysisBusy as exc:
+        raise HTTPException(status_code=503, detail="解读排队繁忙，请稍后重试") from exc
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=408, detail="研报解读超过本轮等待预算，请稍后重试") from exc
     except Exception as exc:  # noqa: BLE001 - keep endpoint error wording stable
         logger.exception("deep-draft generation failed: title=%s source=%s", title[:120], (request.file_id or request.workbench_filename or request.filename or "")[:160])
         # Provider outages, including upstream 402 balance exhaustion, must
@@ -9660,13 +9698,13 @@ async def api_news_ai_analyze(
                 original_source_note = "⚠ 原文提取未完成，仅使用已收录正文"
     # v5 rejects old zero-confidence/title-repetition cards in both cache layers.
     cache_key = "news:v5:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
-    cached_result = None if request.refresh else metrics_get_ai_cache(cache_key)
+    cached_result = None if request.refresh else await asyncio.to_thread(metrics_get_ai_cache, cache_key)
     if news_result_needs_refresh(cached_result, title):
         cached_result = None
     quota_key = _check_ai_quota(_user, "wz", http_req, cached=cached_result is not None)
-    metrics_incr("ai_news")  # 统计文章 AI 解读点击次数
+    await asyncio.to_thread(metrics_incr, "ai_news")  # 统计文章 AI 解读点击次数
     if title:  # 文章热度榜
-        metrics_incr_news_heat("wz:" + _hashlib.sha1(title.encode("utf-8")).hexdigest()[:16], title)
+        await asyncio.to_thread(metrics_incr_news_heat, "wz:" + _hashlib.sha1(title.encode("utf-8")).hexdigest()[:16], title)
 
     def _resp(result: dict[str, Any], core_result: Any = None) -> ResearchVisionAnalysisResponse:
         from .compliance import neutralize_text as _nz, AI_CONTENT_NOTICE as _AI_NOTICE, has_ai_label as _has_ai  # 荐股/操作措辞中性化——叙述字段过护栏(含缓存读路径)
@@ -9727,6 +9765,10 @@ async def api_news_ai_analyze(
             result = core_result.raw
     except HTTPException:
         raise
+    except AnalysisBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=408, detail="文章解读超过本轮等待预算") from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
     # Never turn a failed generation into a completed, long-lived interpretation.
@@ -9735,7 +9777,7 @@ async def api_news_ai_analyze(
     result_note = (result.get("source_note") or "").strip()
     if original_source_note and result_note in ("", "基于提供的正文"):
         result["source_note"] = original_source_note
-    metrics_set_ai_cache(cache_key, result)
+    await asyncio.to_thread(metrics_set_ai_cache, cache_key, result)
     if quota_key: _complete_cost_quota(quota_key)
     return _resp(result, core_result)
 
@@ -10778,13 +10820,13 @@ def _seo_related_stocks(symbol: str, market: str) -> list[dict[str, Any]]:
 async def public_stocks_hub() -> HTMLResponse:
     items = []
     seen_norm: set[str] = set()  # 同一标的前导零变体（0148/00148）只留热度最高的一条
-    for h in data_hot_symbols("verdict", days=30, limit=50):
+    for h in await asyncio.to_thread(data_hot_symbols, "verdict", days=30, limit=50):
         sym_u = str(h.get("symbol") or "").upper()
         nk = (str(h.get("market") or "").upper()) + ":" + (sym_u.lstrip("0") or sym_u)  # 市场维度防跨市场同码误删
         if nk in seen_norm:
             continue
         seen_norm.add(nk)
-        v = data_latest("verdict", h["symbol"]) or {}
+        v = await asyncio.to_thread(data_latest, "verdict", h["symbol"]) or {}
         items.append({**h, "verdict": v.get("verdict"), "change_percent": v.get("change_percent")})
     return HTMLResponse(seo_pages.render_stocks_hub_html(items))
 
@@ -10816,10 +10858,10 @@ async def public_stock_page(symbol: str, request: Request, market: str = "") -> 
     sym = (symbol or "").strip().upper()
     if not _SEO_SYMBOL_RE.match(sym):
         return HTMLResponse(render_not_found_html(), status_code=404)
-    ts_dict = data_latest("seo_tear_sheet", sym, max_age_seconds=_SEO_TS_TTL)
+    ts_dict = await asyncio.to_thread(data_latest, "seo_tear_sheet", sym, max_age_seconds=_SEO_TS_TTL)
     if not ts_dict:
         async with _seo_build_semaphore:
-            ts_dict = data_latest("seo_tear_sheet", sym, max_age_seconds=_SEO_TS_TTL)  # 排队期间可能已被同标的请求建好
+            ts_dict = await asyncio.to_thread(data_latest, "seo_tear_sheet", sym, max_age_seconds=_SEO_TS_TTL)  # 排队期间可能已被同标的请求建好
             if not ts_dict:
                 try:
                     ts = await asyncio.wait_for(_build_stock_tear_sheet_core(sym, market=market), timeout=_SEO_TS_BUILD_TIMEOUT)
@@ -10831,8 +10873,8 @@ async def public_stock_page(symbol: str, request: Request, market: str = "") -> 
                 ts_dict = ts.model_dump(mode="json")
                 for heavy in ("price_series", "sp500_series", "us10y_series"):  # 页面不画图，不存大序列
                     ts_dict.pop(heavy, None)
-                record_datapoint("seo_tear_sheet", sym, ts_dict, market=(market or "").upper())
-    record_datapoint("seo_view", sym, {"path": "stock"}, market=(market or "").upper())  # 页面热度（推荐/榜单信号）
+                await async_record_datapoint("seo_tear_sheet", sym, ts_dict, market=(market or "").upper())
+    await async_record_datapoint("seo_view", sym, {"path": "stock"}, market=(market or "").upper())  # 页面热度（推荐/榜单信号）
     related = _seo_related_stocks(sym, (market or "").upper())
     return HTMLResponse(seo_pages.render_stock_page_html(ts_dict, related, page_url=_canonical_url(request)))
 
@@ -11143,7 +11185,7 @@ async def public_qa_hub() -> HTMLResponse:
 async def public_qa_page(slug: str, request: Request) -> HTMLResponse:
     if not _QA_SLUG_RE.match(slug or ""):
         return HTMLResponse(render_not_found_html(), status_code=404)
-    qa = data_latest("wx_qa", slug)
+    qa = await asyncio.to_thread(data_latest, "wx_qa", slug)
     if not qa or not (qa.get("q") or "").strip():
         return HTMLResponse(render_not_found_html(), status_code=404)
     qa = {"slug": slug, "q": qa.get("q"), "answer": qa.get("answer")}
@@ -11157,7 +11199,7 @@ async def og_stock(symbol: str) -> Response:
     sym = (symbol or "").strip().upper()
     if not _SEO_SYMBOL_RE.match(sym):
         return Response(og_image.generic_card(), media_type="image/png")
-    return Response(og_image.stock_card(data_latest("seo_tear_sheet", sym) or {}, sym), media_type="image/png")
+    return Response(og_image.stock_card(await asyncio.to_thread(data_latest, "seo_tear_sheet", sym) or {}, sym), media_type="image/png")
 
 
 @app.get("/og/review/{date_str}.png", include_in_schema=False)
@@ -11172,7 +11214,7 @@ async def og_review(date_str: str) -> Response:
 async def og_qa(slug: str) -> Response:
     if not _QA_SLUG_RE.match(slug or ""):
         return Response(og_image.generic_card(), media_type="image/png")
-    return Response(og_image.qa_card(data_latest("wx_qa", slug) or {}, slug), media_type="image/png")
+    return Response(og_image.qa_card(await asyncio.to_thread(data_latest, "wx_qa", slug) or {}, slug), media_type="image/png")
 
 
 @app.get("/learn", response_class=HTMLResponse, include_in_schema=False)
@@ -11201,8 +11243,8 @@ async def public_compare_page(pair: str, request: Request) -> HTMLResponse:
     a_sym, b_sym = a_sym.strip().upper(), b_sym.strip().upper()
     if not (_SEO_SYMBOL_RE.match(a_sym) and _SEO_SYMBOL_RE.match(b_sym)) or a_sym == b_sym:
         return HTMLResponse(render_not_found_html(), status_code=404)
-    a = data_latest("seo_tear_sheet", a_sym, max_age_seconds=_SEO_TS_TTL * 24)
-    b = data_latest("seo_tear_sheet", b_sym, max_age_seconds=_SEO_TS_TTL * 24)
+    a = await asyncio.to_thread(data_latest, "seo_tear_sheet", a_sym, max_age_seconds=_SEO_TS_TTL * 24)
+    b = await asyncio.to_thread(data_latest, "seo_tear_sheet", b_sym, max_age_seconds=_SEO_TS_TTL * 24)
     if not a or not b:
         return HTMLResponse(render_not_found_html(), status_code=404)
     return HTMLResponse(seo_pages.render_compare_page_html(a, b, page_url=_canonical_url(request)))
@@ -11744,7 +11786,7 @@ async def api_get_data_source(source_id: str) -> DataSourceRecord:
 @app.get("/api/data/stats")
 async def data_store_stats() -> dict:
     """持久化数据层沉淀概览：每类数据点数 / 覆盖标的 / 最新时间（数据积累的观测性入口）。"""
-    return data_stats()
+    return await asyncio.to_thread(data_stats)
 
 
 @app.get("/api/data/history")
@@ -11753,7 +11795,7 @@ async def data_store_history(symbol: str, kind: str = "verdict", limit: int = 20
     sym = symbol.strip().upper()
     if not sym:
         raise HTTPException(status_code=400, detail="symbol 不能为空")
-    return {"symbol": sym, "kind": kind, "items": data_history(kind, sym, limit=limit)}
+    return {"symbol": sym, "kind": kind, "items": await asyncio.to_thread(data_history, kind, sym, limit=limit)}
 
 
 @app.get("/api/agents/health", response_model=AgentRuntimeHealthResponse)
@@ -12869,6 +12911,45 @@ def _is_comparison_intent(message: str) -> bool:
     ))
 
 
+def _web_qa_timeout_seconds(mode: str) -> float:
+    deep = mode != "quick"
+    default = 240.0 if deep else 60.0
+    key = "DEEPFOCUS_WEB_DEEP_TOTAL_TIMEOUT" if deep else "DEEPFOCUS_WEB_QA_TOTAL_TIMEOUT"
+    try:
+        value = float(os.getenv(key, str(default)))
+        return max(10.0, min(value, 600.0)) if 0 < value < float("inf") else default
+    except (TypeError, ValueError):
+        return default
+
+
+async def _web_qa_with_deadline(awaitable, mode: str, started: float):
+    remaining = max(0.0, _web_qa_timeout_seconds(mode) - (time.perf_counter() - started))
+    return await asyncio.wait_for(awaitable, timeout=remaining)
+
+
+def _web_qa_round_budget(message: str, *, has_attachment: bool = False) -> int:
+    # Comparisons and documents may need extra evidence rounds. Their total
+    # time budget is unchanged; a cap must not silently remove evidence.
+    comparison = bool(re.search(r"对比|比较|更偏向|谁更好|哪个更好|哪个更值得|谁更值得|怎么选|选哪只|排序|两只谁|几只谁", message or ""))
+    default = 6 if has_attachment or comparison else 4
+    try:
+        return max(1, min(int(os.getenv("DEEPFOCUS_WEB_QA_MAX_ROUNDS", str(default)) or default), 8))
+    except (TypeError, ValueError):
+        return default
+
+
+async def _run_static_explanation(message: str, *, emit=None):
+    """Explain stable definitions through the tool-free CoreAgent profile."""
+    return await core_agent.run_chat(
+        CoreAgentRequest(objective=message, mode="chat", channel="web", timeout_seconds=20.0),
+        legacy_request=GeneralChatRequest(
+            message=message + "\n只解释所问概念，不推测当前行情，不添加交易建议。",
+            history=[], context={},
+        ),
+        emit=emit, prefer_tool_agent=False,
+    )
+
+
 def _requires_site_evidence(message: str) -> bool:
     """网页端投研问题需要把公开数据和稻草财经内容放在同一条证据链里。"""
     msg = (message or "").lower()
@@ -13264,21 +13345,21 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
                     and not roundtable_result.tool_traces
                 ),
             }
-        routed = await _route_orchestrator_chat(
+        routed = await _web_qa_with_deadline(_route_orchestrator_chat(
             terminal_request,
             _ifind=_ifind,
-            tool_timeout=float(os.getenv("DEEPFOCUS_WEB_QA_TIMEOUT", "60") or 60),
-            tool_max_rounds=int(os.getenv("DEEPFOCUS_WEB_QA_MAX_ROUNDS", "6") or 6),
+            tool_timeout=float(os.getenv("DEEPFOCUS_WEB_QA_TIMEOUT", "25") or 25),
+            tool_max_rounds=_web_qa_round_budget(message, has_attachment=bool(attachment)),
             force_research=(request_mode != "quick") and not _is_smalltalk_or_service(message),
             # 附件正文已经作为本轮上下文给模型；不要让「专业研报库」抢走问题并去读另一份全局报告。
             skip_professional=True,
             context_prefix=hint,
             enrich_comparison=True,
-        )
+        ), request_mode, _ai_started)
     except Exception as exc:  # noqa: BLE001
         elapsed = int((time.perf_counter() - _ai_started) * 1000)
-        metrics_incr("ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
-        metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
+        await asyncio.to_thread(metrics_incr, "ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
+        await asyncio.to_thread(metrics_incr, f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
         _record_agent_chain(mode=request_mode, route="error", message=message, trace=[],
                             elapsed_ms=elapsed, answer="", ok=False, error=str(exc))
         return {"ok": False, "answer": "", "tool_trace": [], "error": str(exc)[:160]}
@@ -13286,15 +13367,15 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
         _agent_tools._BINDING_USER.reset(_tok)
     answer = (getattr(routed, "content", "") or "").strip()
     _ai_elapsed_ms = int((time.perf_counter() - _ai_started) * 1000)
-    metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if _ai_elapsed_ms < 15000 else 'lt60s' if _ai_elapsed_ms < 60000 else 'gte60s'}")
-    metrics_incr("ai_deep_completed" if request_mode != "quick" else "ai_quick_completed")
+    await asyncio.to_thread(metrics_incr, f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if _ai_elapsed_ms < 15000 else 'lt60s' if _ai_elapsed_ms < 60000 else 'gte60s'}")
+    await asyncio.to_thread(metrics_incr, "ai_deep_completed" if request_mode != "quick" else "ai_quick_completed")
     try:
         _trace = getattr(routed, "reasoning_trace", None) or []
         for _step in _trace:
             if getattr(_step, "ok", True) is False or (isinstance(_step, dict) and _step.get("ok") is False):
-                metrics_incr("ai_tool_failed")
+                await asyncio.to_thread(metrics_incr, "ai_tool_failed")
             else:
-                metrics_incr("ai_tool_succeeded")
+                await asyncio.to_thread(metrics_incr, "ai_tool_succeeded")
     except Exception:
         pass
     try:
@@ -13522,7 +13603,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                             ),
                         }))
                     else:
-                        await queue.put(_sse_frame("fallback", {"reason": "多专家圆桌未返回结论"}))
+                        await queue.put(_sse_frame("error", {"message": "多专家研究未返回结论，请稍后重试", "status": 502}))
                     return
                 # 大盘问题先把硬行情快照注入本轮上下文。这样即使模型工具调用
                 # 短暂超时，回答仍然有真实指数、成交额和涨跌家数可引用。
@@ -13534,7 +13615,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                             run_hint = f"{run_hint}\n\n【本轮预取的A股市场硬数据】{json.dumps(market_structure, ensure_ascii=False)}"
                     except Exception:
                         pass
-                routed = await _route_orchestrator_chat(
+                routed = await _web_qa_with_deadline(_route_orchestrator_chat(
                     OrchestratorChatRequest(
                         message=message.strip(),
                         stock=stock,
@@ -13542,18 +13623,18 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                         reasoning_mode="thinking",
                     ),
                     _ifind=_ifind,
-                    tool_timeout=float(os.getenv("DEEPFOCUS_WEB_QA_TIMEOUT", "60") or 60),
-                    tool_max_rounds=int(os.getenv("DEEPFOCUS_WEB_QA_MAX_ROUNDS", "6") or 6),
+                    tool_timeout=float(os.getenv("DEEPFOCUS_WEB_QA_TIMEOUT", "25") or 25),
+                    tool_max_rounds=_web_qa_round_budget(message, has_attachment=bool(attachment)),
                     force_research=(request_mode != "quick") and not _is_smalltalk_or_service(message),
                     skip_professional=True,
                     context_prefix=run_hint,
                     emit=emit,
                     enrich_comparison=True,
-                )
+                ), request_mode, _ai_started)
                 answer = (getattr(routed, "content", "") or "").strip()
                 _ai_elapsed_ms = int((time.perf_counter() - _ai_started) * 1000)
-                metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if _ai_elapsed_ms < 15000 else 'lt60s' if _ai_elapsed_ms < 60000 else 'gte60s'}")
-                metrics_incr("ai_deep_completed" if request_mode != "quick" else "ai_quick_completed")
+                await asyncio.to_thread(metrics_incr, f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if _ai_elapsed_ms < 15000 else 'lt60s' if _ai_elapsed_ms < 60000 else 'gte60s'}")
+                await asyncio.to_thread(metrics_incr, "ai_deep_completed" if request_mode != "quick" else "ai_quick_completed")
                 try:
                     if answer and _user:
                         _owner = str((_user or {}).get('username') or (_user or {}).get('id') or '').strip()
@@ -13611,8 +13692,8 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                     await queue.put(_sse_frame("fallback", {"reason": "统一研究路由未返回结果"}))
             except Exception as exc:
                 elapsed = int((time.perf_counter() - _ai_started) * 1000)
-                metrics_incr("ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
-                metrics_incr(f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
+                await asyncio.to_thread(metrics_incr, "ai_deep_failed" if request_mode != "quick" else "ai_quick_failed")
+                await asyncio.to_thread(metrics_incr, f"ai_latency_{'deep' if request_mode != 'quick' else 'quick'}_{'lt15s' if elapsed < 15000 else 'lt60s' if elapsed < 60000 else 'gte60s'}")
                 _record_agent_chain(mode=request_mode, route="error", message=message, trace=[],
                                     elapsed_ms=elapsed, answer="", ok=False, error=str(exc))
                 await queue.put(_sse_frame("error", {"message": str(exc)[:200]}))
@@ -13804,14 +13885,14 @@ async def deep_research_start(request: Request, symbol: str = "", name: str = ""
                 return {"task_id": seeded, "status": "done", "reused": True, "shared": True}
     # 每日配额（普通会员）：只有真要烧 LLM 时才计；复用/缓存命中不扣
     qkey = f"q:deep:{owner}"
-    if not unlimited and metrics_get_daily(qkey) >= _DEEP_QUOTA:
+    if not unlimited and await asyncio.to_thread(metrics_get_daily, qkey) >= _DEEP_QUOTA:
         raise HTTPException(status_code=402, detail=f"今日深度研判次数已用完（会员每天 {_DEEP_QUOTA} 次，热门股当日结果全站共享不计次）。明天再来～")
     if await dr.in_flight_count() >= dr.GLOBAL_INFLIGHT_CAP:
         raise HTTPException(status_code=429, detail="深度研判排队中，请稍候再试")
 
     task = await dr.create_task(owner, ifind_used, symbol, name, market)
     if not unlimited:
-        metrics_incr(qkey)
+        await asyncio.to_thread(metrics_incr, qkey)
     # create_task 会复制当前 context：先注入 owner，让后台取证中的站内资讯工具
     # 也执行 dao2 的来源隔离；随后立即 reset，不污染当前请求。
     from . import agent_tools as _agent_tools
@@ -13854,6 +13935,17 @@ async def _route_orchestrator_chat(
     **绝不参与确定性技能路由(detect_*)**——否则上一轮技能的长答案(满是 增持/减持/股东/A股 等关键词)会让
       detector 在后续每一轮反复重命中，造成「某技能触发过一次后，之后问啥都一直调它」(本次修复的根因)。
       故技能路由只看 request.message(当前这条干净问题)。"""
+    if is_static_explanation(request.message, has_attachment=bool(request.attached_files)):
+        core_result = await _run_static_explanation(request.message, emit=emit)
+        if not core_result.ok or not core_result.answer:
+            raise RuntimeError(core_result.error or "概念解释暂未返回")
+        return _attach_core_agent_metadata(OrchestratorChatResponse(
+            provider=core_result.provider, model=core_result.model,
+            generated_at=datetime.now(timezone.utc), engine=request.engine,
+            title="概念解释", content=core_result.answer, chips=["基础知识"],
+            handled_inline=True, should_create_task=False,
+        ), core_result)
+
     # New clients carry contextual material in a separate field.  It is fed
     # to the model/tool adapter below, never folded into the current message
     # that deterministic skill detectors inspect.
@@ -13958,6 +14050,7 @@ async def _route_orchestrator_chat(
                     ifind_user=_ifind,
                     timeout_seconds=tool_timeout,
                     max_rounds=tool_max_rounds,
+                    metadata={"total_timeout_seconds": max(60.0, float(tool_timeout or 60.0))},
                     require_tool_first=require_tool_first,
                     require_site_evidence=_requires_site_evidence(request.message),
                 ),

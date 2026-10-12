@@ -69,6 +69,7 @@ def test_deepseek_uses_openai_compatible_client(monkeypatch):
     assert captured == {
         "api_key": "deep-secret",
         "base_url": "https://api.deepseek.com/v1",
+        "max_retries": 0,
     }
 
 

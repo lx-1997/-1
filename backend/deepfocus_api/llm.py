@@ -19,6 +19,12 @@ from .agent_tools import TOOL_REGISTRY, execute_tool, openai_tool_specs
 from .compliance import neutralize_text
 from .mcp_tools import discover_mcp_agent_tools
 from .model_config import load_model_config
+from .llm_runtime import (
+    CompletionDeadline, DeadlineStream, ModelPoolUnavailableError, VisionUnavailableError,
+    borrow_client, cooldown_slot, get_cached_client, is_vision_capability_error,
+    llm_deadline, mark_vision_unsupported, payload_has_images, pool_slot_key,
+    recover_slot, release_client, slot_available, vision_supported,
+)
 from .schemas import (
     AgentBriefRequest,
     Capability,
@@ -373,12 +379,6 @@ class CloudResearchLLM:
     endpoint when configured.
     """
 
-    def __init__(self) -> None:
-        # 进程内轮询游标只记录槽位，不记录或输出密钥；每个请求从不同候选开始。
-        self._pool_cursor = 0
-        # 短暂熔断异常槽位，避免无效 Key 在每次轮询中反复制造延迟；不持久化、不含密钥。
-        self._pool_cooldowns: dict[str, float] = {}
-
     @property
     def config(self) -> dict[str, Any]:
         return load_model_config()
@@ -407,67 +407,39 @@ class CloudResearchLLM:
         return []
 
     def _pool_candidates(self) -> list[dict[str, Any]]:
-        pool = self._pool_configs()
-        if not pool:
-            return []
-        now = time.monotonic()
-        available = [item for item in pool if self._pool_slot_key(item) not in self._pool_cooldowns
-                     or self._pool_cooldowns[self._pool_slot_key(item)] <= now]
-        if not available:
-            # 所有槽均在冷却时，允许一轮半开探测，避免永久熔断。
-            self._pool_cooldowns.clear()
-            available = pool
-        # The first configured slot is the product's preferred model. Keep it
-        # first on every healthy request; fall through to later slots only
-        # when it is cooling down after a retryable provider failure.
-        # This makes a Qwen-primary/GLM-backup pool behave as advertised and
-        # avoids silently consuming the backup quota on ordinary traffic.
-        return available
+        # Shared by every CloudResearchLLM instance/request. In particular, do
+        # not reopen exhausted credentials when every configured slot fails.
+        return [item for item in self._pool_configs() if slot_available(item)]
+
+    def has_vision_provider(self) -> bool:
+        return any(vision_supported(item) for item in self._pool_candidates())
 
     @staticmethod
     def _pool_slot_key(config: dict[str, Any]) -> str:
-        return "|".join(str(config.get(key) or "") for key in ("label", "provider", "base_url", "model"))
+        return pool_slot_key(config)
 
     def _cooldown_pool_slot(self, config: dict[str, Any], exc: Exception) -> None:
-        status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-        try:
-            status = int(status) if status is not None else None
-        except (TypeError, ValueError):
-            status = None
-        seconds = 300.0 if status in {401, 403} else (30.0 if status == 429 else 15.0)
-        self._pool_cooldowns[self._pool_slot_key(config)] = time.monotonic() + seconds
+        cooldown_slot(config, exc)
 
     def _recover_pool_slot(self, config: dict[str, Any]) -> None:
-        self._pool_cooldowns.pop(self._pool_slot_key(config), None)
+        recover_slot(config)
 
     @staticmethod
     def _client_for_config(config: dict[str, Any]) -> AsyncOpenAI:
         provider = str(config.get("provider") or "").lower()
+        if provider not in {"minimax", "openai", "deepseek", "openai-compatible", "cloud"}:
+            raise RuntimeError(f"Unsupported DEEPFOCUS_LLM_PROVIDER={provider}")
+        if not config.get("api_key"):
+            raise RuntimeError(f"当前 {provider} 模型缺少 API Key，请在设置 → 模型配置中保存 API Key。")
+        effective = dict(config)
         if provider == "minimax":
-            api_key = config.get("api_key")
-            if not api_key:
-                raise RuntimeError("当前 MiniMax 模型缺少 API Key，请在设置 → 模型配置中保存 API Key。")
-            return AsyncOpenAI(
-                api_key=api_key,
-                base_url=config.get("base_url") or "https://api.minimaxi.com/v1",
-            )
-
-        # DeepSeek exposes the same chat-completions contract; model_config
-        # supplies its official endpoint preset while this adapter keeps the
-        # provider-specific name for observability.
-        if provider in {"openai", "deepseek", "openai-compatible", "cloud"}:
-            api_key = config.get("api_key")
-            if not api_key:
-                raise RuntimeError(f"当前 {provider} 模型缺少 API Key，请在设置 → 模型配置中保存 API Key。")
-            base_url = config.get("base_url") or None
-            return AsyncOpenAI(api_key=api_key, base_url=base_url)
-
-        raise RuntimeError(f"Unsupported DEEPFOCUS_LLM_PROVIDER={provider}")
+            effective["base_url"] = config.get("base_url") or "https://api.minimaxi.com/v1"
+        return get_cached_client(effective, AsyncOpenAI)
 
     def _client(self) -> AsyncOpenAI:
         candidates = self._pool_candidates()
         if not candidates:
-            raise RuntimeError(f"Unsupported DEEPFOCUS_LLM_PROVIDER={self.config.get('provider')}")
+            raise ModelPoolUnavailableError("模型池暂不可用：配置槽位正在冷却或缺少凭证。")
         return self._client_for_config(candidates[0])
 
     async def _completion(
@@ -476,80 +448,104 @@ class CloudResearchLLM:
         *,
         timeout_seconds: float,
     ) -> Any:
-        """调用模型池：正常请求轮询，限流/鉴权/网络/5xx 时本次请求换下一槽。
-
-        这不是固定主备：每个新请求都会从下一个槽开始；失败只影响当前请求，避免把
-        某个 Key 永久标记成主节点。单槽时仍通过 ``_client``，保留既有测试和扩展点。
-        """
+        """Preferred slot and failover share one deadline; SDK retries are off."""
+        deadline = CompletionDeadline.after(timeout_seconds)
+        requires_vision = payload_has_images(payload)
         candidates = self._pool_candidates()
+        if requires_vision:
+            candidates = [item for item in candidates if vision_supported(item)]
+            if not candidates:
+                raise VisionUnavailableError("当前模型池没有可用视觉模型；请配置支持图片的模型或使用 OCR 文字提取。")
         if not candidates:
-            raise RuntimeError(f"Unsupported DEEPFOCUS_LLM_PROVIDER={self.config.get('provider')}")
+            raise ModelPoolUnavailableError("模型池暂不可用：配置槽位正在冷却或缺少凭证。")
         last_exc: Exception | None = None
-        for index, candidate in enumerate(candidates):
+        for candidate in candidates:
+            # Once the total budget is gone, do not construct/call or trip a
+            # healthy backup that never had a chance to receive a request.
+            deadline.remaining()
             request_payload = _payload_for_candidate(payload, candidate)
             if _is_qwen3_thinking_model(request_payload.get("model")):
-                # 百炼 qwen3.x 默认输出 reasoning_content 且计入 max_tokens/配额：
-                # 结构化调用只要最终答案，隐藏推理既耗预算又可能截断 JSON。这里在
-                # 唯一漏斗层统一关掉，等价于 MiniMax-M3/Kimi 各分支的处理。
                 extra = dict(request_payload.get("extra_body") or {})
                 extra.setdefault("enable_thinking", False)
                 request_payload["extra_body"] = extra
             elif str(request_payload.get("model") or "").lower().startswith("glm-"):
-                # Zhipu GLM-5.3-Flash is always a thinking model, but its
-                # OpenAI-compatible endpoint supports disabling the hidden
-                # reasoning stream with this provider-specific shape.
+                # GLM-5.3-Flash supports this shape, verified against its
+                # OpenAI-compatible endpoint. Retry only an actual 1210 conflict.
                 extra = dict(request_payload.get("extra_body") or {})
                 extra.setdefault("thinking", {"type": "disabled"})
                 request_payload["extra_body"] = extra
+            # Preserve the existing single-slot client injection hook, but a
+            # vision-filtered pool must use its selected image-capable slot.
+            client = (self._client() if len(candidates) == 1 and len(self._pool_candidates()) == 1
+                      else self._client_for_config(candidate))
+            borrow_client(client)
+            leased_stream = False
             try:
-                # 单槽走可替换的 _client()，兼容现有注入式测试；多槽按候选显式建 client。
-                client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
-                response = await asyncio.wait_for(
-                    client.chat.completions.create(**request_payload),
-                    timeout=timeout_seconds,
-                )
-                # Some Qwen-compatible endpoints return only hidden reasoning
-                # when the completion budget is exhausted. Treat an empty
-                # public answer as a failed slot so the configured backup can
-                # produce the user-visible result.
-                try:
-                    message = response.choices[0].message
-                    content = getattr(message, "content", None)
-                    reasoning = getattr(message, "reasoning_content", None)
-                    # 带 tool_calls 的推理轮(content=None+reasoning)是正常取数步骤，不是预算耗尽。
-                    if (not str(content or "").strip() and str(reasoning or "").strip()
-                            and not getattr(message, "tool_calls", None)):
-                        empty_error = RuntimeError("模型返回空正文")
-                        empty_error.status_code = 502
-                        raise empty_error
-                except (AttributeError, IndexError):
-                    pass
-                self._recover_pool_slot(candidate)
-                return response
-            except Exception as exc:
-                # 「始终思考」型模型（百炼 1210）会 400 拒绝 enable_thinking=False：
-                # 去掉禁用键原地重试一次，思考内容由 _strip_thinking_blocks 兜底剥离。
-                if _thinking_disable_conflict(request_payload, exc):
+                for attempt in range(2):
                     try:
-                        client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
+                        remaining = deadline.remaining()
                         response = await asyncio.wait_for(
-                            client.chat.completions.create(**_without_thinking_disable(request_payload)),
-                            timeout=timeout_seconds,
+                            client.chat.completions.create(**request_payload), timeout=remaining,
                         )
+                        if request_payload.get("stream"):
+                            def note_stream_failure(exc: Exception, slot=candidate) -> None:
+                                if requires_vision and is_vision_capability_error(exc):
+                                    mark_vision_unsupported(slot)
+                                elif _is_retryable_pool_error(exc):
+                                    self._cooldown_pool_slot(slot, exc)
+                            response = DeadlineStream(response, client, deadline, note_stream_failure)
+                            leased_stream = True
+                        else:
+                            try:
+                                message = response.choices[0].message
+                                content = getattr(message, "content", None)
+                                reasoning = getattr(message, "reasoning_content", None)
+                                # A tool call is a valid intermediate response.
+                                if (not str(content or "").strip() and str(reasoning or "").strip()
+                                        and not getattr(message, "tool_calls", None)):
+                                    empty_error = RuntimeError("模型返回空正文")
+                                    empty_error.status_code = 502
+                                    raise empty_error
+                            except (AttributeError, IndexError):
+                                pass
                         self._recover_pool_slot(candidate)
                         return response
-                    except Exception:
-                        pass  # 重试仍失败 → 走原失败处理（换槽/报错）
+                    except Exception as exc:
+                        if attempt == 0 and _thinking_disable_conflict(request_payload, exc):
+                            request_payload = _without_thinking_disable(request_payload)
+                            continue
+                        raise
+            except Exception as exc:
                 last_exc = exc
+                if requires_vision and is_vision_capability_error(exc):
+                    mark_vision_unsupported(candidate)
+                    continue
                 if not _is_retryable_pool_error(exc):
                     raise
                 self._cooldown_pool_slot(candidate, exc)
-                if index >= len(candidates) - 1:
-                    raise
+            finally:
+                if not leased_stream:
+                    release_client(client)
+        if requires_vision and not self.has_vision_provider():
+            raise VisionUnavailableError("当前模型池没有可用视觉模型；请配置支持图片的模型或使用 OCR 文字提取。") from last_exc
         assert last_exc is not None
         raise last_exc
 
     async def complete_json(
+        self,
+        prompt: str,
+        max_tokens: int = 2200,
+        timeout_seconds: float = 35,
+        force_json_first: bool = True,
+        retry_schema_hint: str | None = None,
+    ) -> dict[str, Any]:
+        with llm_deadline(timeout_seconds):
+            return await self._complete_json_in_budget(
+                prompt, max_tokens=max_tokens, timeout_seconds=timeout_seconds,
+                force_json_first=force_json_first, retry_schema_hint=retry_schema_hint,
+            )
+
+    async def _complete_json_in_budget(
         self,
         prompt: str,
         max_tokens: int = 2200,
@@ -623,6 +619,21 @@ class CloudResearchLLM:
         on_delta=None,
         retry_schema_hint: str | None = None,
     ) -> dict[str, Any]:
+        with llm_deadline(timeout_seconds):
+            return await self._complete_json_streaming_in_budget(
+                prompt, max_tokens=max_tokens, timeout_seconds=timeout_seconds,
+                on_delta=on_delta, retry_schema_hint=retry_schema_hint,
+            )
+
+    async def _complete_json_streaming_in_budget(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 2200,
+        timeout_seconds: float = 35,
+        on_delta=None,
+        retry_schema_hint: str | None = None,
+    ) -> dict[str, Any]:
         """流式版 complete_json：增量经 ``on_delta(piece)`` 实时回调（供 SSE 思考过程）。
 
         解析失败时回退非流式的完整重试阶梯；流式分片仅供展示，不参与解析正确性。
@@ -681,73 +692,47 @@ class CloudResearchLLM:
             extra.setdefault("enable_thinking", False)
             payload["extra_body"] = extra
 
-        candidates = self._pool_candidates()
-        if not candidates:
-            raise RuntimeError(f"Unsupported DEEPFOCUS_LLM_PROVIDER={config.get('provider')}")
-        last_exc: Exception | None = None
-        for index, candidate in enumerate(candidates):
-            request_payload = _payload_for_candidate(payload, candidate)
-            request_payload["stream"] = True
+        payload["stream"] = True
+        deadline = CompletionDeadline.after(timeout_seconds)
+        attempts = max(1, len(self._pool_configs()))
+        for index in range(attempts):
+            stream = None
             try:
-                client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
+                stream = await self._completion(payload, timeout_seconds=deadline.remaining())
                 parts: list[str] = []
-                async with asyncio.timeout(timeout_seconds):
-                    stream = await client.chat.completions.create(**request_payload)
-                    async for chunk in stream:
-                        if not getattr(chunk, "choices", None):
-                            continue
-                        piece = getattr(chunk.choices[0].delta, "content", None) or ""
-                        if piece:
-                            parts.append(piece)
-                            if on_delta:
-                                try:
-                                    on_delta(piece)
-                                except Exception:
-                                    pass
+                async for chunk in stream:
+                    if not getattr(chunk, "choices", None):
+                        continue
+                    piece = getattr(chunk.choices[0].delta, "content", None) or ""
+                    if piece:
+                        parts.append(piece)
+                        if on_delta:
+                            try:
+                                on_delta(piece)
+                            except Exception:
+                                pass
                 text = _strip_thinking_blocks("".join(parts))
                 if not text.strip():
                     empty_error = RuntimeError("模型返回空正文")
                     empty_error.status_code = 502
+                    mark_failed = getattr(stream, "mark_failed", None)
+                    if mark_failed:
+                        mark_failed(empty_error)
                     raise empty_error
-                self._recover_pool_slot(candidate)
                 return text
             except Exception as exc:
-                # 「始终思考」型模型 400 拒绝禁思考 → 去掉禁用键原地重试一次
-                #（思考内容已由 _strip_thinking_blocks 兜底剥离）；仍失败走换槽/报错。
-                if _thinking_disable_conflict(request_payload, exc):
-                    try:
-                        retry_client = self._client() if len(candidates) == 1 else self._client_for_config(candidate)
-                        retry_payload = _without_thinking_disable(request_payload)
-                        # 始终思考模型的推理也计入 max_tokens：抬高预算给正文留空间
-                        retry_payload["max_tokens"] = max(int(retry_payload.get("max_tokens") or 0), 30000)
-                        parts2: list[str] = []
-                        async with asyncio.timeout(timeout_seconds):
-                            stream2 = await retry_client.chat.completions.create(**retry_payload)
-                            async for chunk2 in stream2:
-                                if not getattr(chunk2, "choices", None):
-                                    continue
-                                piece2 = getattr(chunk2.choices[0].delta, "content", None) or ""
-                                if piece2:
-                                    parts2.append(piece2)
-                                    if on_delta:
-                                        try:
-                                            on_delta(piece2)
-                                        except Exception:
-                                            pass
-                        text2 = _strip_thinking_blocks("".join(parts2))
-                        if text2.strip():
-                            self._recover_pool_slot(candidate)
-                            return text2
-                    except Exception as retry_exc:
-                        print(f"[llm] 禁思考冲突重试仍失败：{type(retry_exc).__name__}: {str(retry_exc)[:160]}")
-                last_exc = exc
-                self._cooldown_pool_slot(candidate, exc)
-                if index >= len(candidates) - 1:
-                    break
-        assert last_exc is not None
-        if isinstance(last_exc, TimeoutError):
-            raise RuntimeError(f"云模型 {timeout_seconds:.0f} 秒内未返回，请稍后重试或换用更快的模型。") from last_exc
-        raise RuntimeError(f"云模型调用失败：{_clean_error(last_exc)}") from last_exc
+                if (_is_retryable_pool_error(exc) and index < attempts - 1
+                        and self._pool_candidates() and time.monotonic() < deadline.expires_at):
+                    continue
+                if isinstance(exc, asyncio.TimeoutError):
+                    raise RuntimeError(f"云模型 {timeout_seconds:.0f} 秒内未返回，请稍后重试或换用更快的模型。") from exc
+                raise RuntimeError(f"云模型调用失败：{_clean_error(exc)}") from exc
+            finally:
+                if stream is not None:
+                    close = getattr(stream, "close", None)
+                    if close:
+                        await close()
+        raise RuntimeError("模型池没有返回正文")
 
     async def _complete_text(
         self,
@@ -756,6 +741,7 @@ class CloudResearchLLM:
         force_json: bool,
         timeout_seconds: float,
     ) -> str:
+        deadline = CompletionDeadline.after(timeout_seconds)
         config = self.config
         payload: dict[str, Any] = {
             "model": self.model,
@@ -788,12 +774,12 @@ class CloudResearchLLM:
             payload["response_format"] = {"type": "json_object"}
 
         try:
-            response = await self._completion(payload, timeout_seconds=timeout_seconds)
+            response = await self._completion(payload, timeout_seconds=deadline.remaining())
         except Exception as exc:
             if force_json and _looks_like_response_format_error(exc):
                 payload.pop("response_format", None)
                 try:
-                    response = await self._completion(payload, timeout_seconds=timeout_seconds)
+                    response = await self._completion(payload, timeout_seconds=deadline.remaining())
                 except asyncio.TimeoutError as timeout_exc:
                     raise RuntimeError(f"云模型 {timeout_seconds:.0f} 秒内未返回，请稍后重试或换用更快的模型。") from timeout_exc
             elif isinstance(exc, asyncio.TimeoutError):
@@ -821,6 +807,10 @@ class CloudResearchLLM:
         if not image_pngs:
             raise RuntimeError("没有可分析的页面图像")
 
+        if not self.has_vision_provider():
+            raise VisionUnavailableError("当前模型池没有可用视觉模型；请配置支持图片的模型或使用 OCR 文字提取。")
+        deadline = CompletionDeadline.after(timeout_seconds)
+
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         for png in image_pngs:
             b64 = base64.b64encode(png).decode("ascii")
@@ -847,10 +837,12 @@ class CloudResearchLLM:
             payload["response_format"] = {"type": "json_object"}
 
         async def _create() -> Any:
-            return await self._completion(payload, timeout_seconds=timeout_seconds)
+            return await self._completion(payload, timeout_seconds=deadline.remaining())
 
         try:
             response = await _create()
+        except VisionUnavailableError:
+            raise
         except Exception as exc:
             if force_json and _looks_like_response_format_error(exc):
                 payload.pop("response_format", None)
@@ -1046,22 +1038,27 @@ class CloudResearchLLM:
         stripper = _ThinkingStripper()
         emitted = False
         truncated = False
-        async for chunk in stream:
-            try:
-                choice = chunk.choices[0]
-            except (AttributeError, IndexError):
-                continue
-            if choice.finish_reason == "length":
-                # 流式迭代里最后一个带 choices 的 chunk 会带 finish_reason，能在不引入
-                # 额外延迟的前提下判断"这是被砍断的"而不是"说完了"。
-                truncated = True
-            delta = choice.delta.content or ""
-            if not delta:
-                continue
-            visible = stripper.feed(delta)
-            if visible:
-                emitted = True
-                yield visible
+        try:
+            async for chunk in stream:
+                try:
+                    choice = chunk.choices[0]
+                except (AttributeError, IndexError):
+                    continue
+                if choice.finish_reason == "length":
+                    # 流式迭代里最后一个带 choices 的 chunk 会带 finish_reason，能在不引入
+                    # 额外延迟的前提下判断"这是被砍断的"而不是"说完了"。
+                    truncated = True
+                delta = choice.delta.content or ""
+                if not delta:
+                    continue
+                visible = stripper.feed(delta)
+                if visible:
+                    emitted = True
+                    yield visible
+        finally:
+            close = getattr(stream, "close", None)
+            if close:
+                await close()
         tail = stripper.flush()
         if tail:
             emitted = True

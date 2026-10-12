@@ -2,7 +2,7 @@
 研报 PDF 去水印 + 打 daocaijing 品牌水印
 
 缓存三层（速度递减）:
-  1. 内存 LRU（最近 N 篇，零延迟）
+  1. 内存 LRU（同时限制条数与总字节，零延迟）
   2. 磁盘 SHA-256（/opt/deepfocus/pdf_cache/，秒级 I/O）
   3. 实时处理（首次 2-5 秒，结果同时写入上两层）
 
@@ -60,8 +60,59 @@ _PROC_VERSION = os.getenv("PDF_BRAND_PROC_VERSION", "v17")
 _SWEPT = False
 
 # ── 内存 LRU ──────────────────────────────────────────────────────────────────
-_MEM_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
 _MEM_CACHE_MAX = int(os.getenv("PDF_BRAND_MEM_CACHE", "100"))
+_MEM_CACHE_MAX_BYTES = int(os.getenv("PDF_BRAND_MEM_CACHE_BYTES", str(48 * 1024 * 1024)))
+_MEM_CACHE_MAX_ITEM_BYTES = int(os.getenv("PDF_BRAND_MEM_CACHE_ITEM_BYTES", str(16 * 1024 * 1024)))
+
+
+class _MemoryPDFCache:
+    """字节/条数双上限的线程安全 LRU；同一 PDF 的别名按两份保守计费。"""
+    def __init__(self) -> None:
+        self._values: OrderedDict[str, bytes] = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    @property
+    def bytes_used(self) -> int:
+        with self._lock:
+            return self._bytes
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._values)
+
+    def __contains__(self, key: str) -> bool:
+        with self._lock:
+            return key in self._values
+
+    def clear(self) -> None:
+        with self._lock:
+            self._values.clear()
+            self._bytes = 0
+
+    def get(self, key: str) -> bytes | None:
+        with self._lock:
+            value = self._values.get(key)
+            if value is not None:
+                self._values.move_to_end(key)
+            return value
+
+    def put(self, key: str, data: bytes) -> None:
+        with self._lock:
+            previous = self._values.pop(key, None)
+            if previous is not None:
+                self._bytes -= len(previous)
+            size = len(data)
+            if _MEM_CACHE_MAX <= 0 or size > min(_MEM_CACHE_MAX_BYTES, _MEM_CACHE_MAX_ITEM_BYTES):
+                return  # 超大文件只走磁盘，不把其他热点全部挤掉。
+            self._values[key] = data
+            self._bytes += size
+            while len(self._values) > _MEM_CACHE_MAX or self._bytes > _MEM_CACHE_MAX_BYTES:
+                _, evicted = self._values.popitem(last=False)
+                self._bytes -= len(evicted)
+
+
+_MEM_CACHE = _MemoryPDFCache()
 
 # ── 预热已见集合 ──────────────────────────────────────────────────────────────
 _PREWARM_SEEN: set = set()
@@ -265,10 +316,11 @@ def _rgb_is_light_gray(r: float, g: float, b: float) -> bool:
     return (max(r, g, b) - min(r, g, b) < 0.16) and (r + g + b) / 3 > 0.55
 
 def _mem_put(key: str, data: bytes) -> None:
-    _MEM_CACHE[key] = data
-    _MEM_CACHE.move_to_end(key)
-    while len(_MEM_CACHE) > _MEM_CACHE_MAX:
-        _MEM_CACHE.popitem(last=False)
+    _MEM_CACHE.put(key, data)
+
+
+def _mem_get(key: str) -> bytes | None:
+    return _MEM_CACHE.get(key)
 
 
 def _fid_cache_path(file_id: str) -> Path:
@@ -311,9 +363,9 @@ def get_cached_by_file_id(file_id: str) -> "bytes | None":
     if not file_id:
         return None
     mem_key = _fid_mem_key(file_id)
-    if mem_key in _MEM_CACHE:
-        _MEM_CACHE.move_to_end(mem_key)
-        return _MEM_CACHE[mem_key]
+    cached = _mem_get(mem_key)
+    if cached is not None:
+        return cached
     try:
         p = _fid_cache_path(file_id)
         if p.exists():
@@ -348,9 +400,9 @@ def get_raw_by_file_id(file_id: str) -> "bytes | None":
     if not file_id:
         return None
     mem_key = f"fid:raw:{file_id}"
-    if mem_key in _MEM_CACHE:
-        _MEM_CACHE.move_to_end(mem_key)
-        return _MEM_CACHE[mem_key]
+    cached = _mem_get(mem_key)
+    if cached is not None:
+        return cached
     try:
         p = _fid_raw_cache_path(file_id)
         if p.exists():
@@ -364,7 +416,7 @@ def get_raw_by_file_id(file_id: str) -> "bytes | None":
 
 def store_raw_pdf(file_id: str, data: bytes) -> None:
     """落盘原始 PDF 供 AI 解读复用。去水印成品仅服务人类阅读链路；AI 只需原始字节，
-    跳过去水印可省掉 ~640MB 的处理子进程（小内存服务器上会被 OOM 击杀）。尽力而为，失败静默。"""
+    跳过去水印可省掉首次处理的 CPU/内存开销。尽力而为，失败静默。"""
     if not file_id or not data:
         return
     try:
@@ -1955,9 +2007,9 @@ async def apply_pdf_brand(content: bytes, *, file_id: str = "") -> bytes:
 
     key = _content_cache_key(content)
 
-    if key in _MEM_CACHE:
-        _MEM_CACHE.move_to_end(key)
-        return _MEM_CACHE[key]
+    cached = _mem_get(key)
+    if cached is not None:
+        return cached
 
     cache_file = None
     try:
@@ -1988,9 +2040,9 @@ async def apply_pdf_brand(content: bytes, *, file_id: str = "") -> bytes:
             cached_fid = get_cached_by_file_id(file_id)
             if cached_fid is not None:
                 return cached_fid
-        if key in _MEM_CACHE:
-            _MEM_CACHE.move_to_end(key)
-            return _MEM_CACHE[key]
+        cached = _mem_get(key)
+        if cached is not None:
+            return cached
         try:
             if cache_file is not None and cache_file.exists():
                 data = cache_file.read_bytes()

@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import re
+import shutil
 import subprocess
+import time
 from html import unescape as _html_unescape
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -18,7 +21,7 @@ from urllib.parse import urlparse
 import fitz  # PyMuPDF
 import httpx
 
-from .llm import CloudResearchLLM, _extract_json
+from .llm import CloudResearchLLM, VisionUnavailableError, _extract_json
 
 _SENSITIVE_CONTENT_RE = re.compile(r"content\[(\d+)\]")
 
@@ -85,6 +88,7 @@ MAX_VISION_PAGES = 14  # 厚 deck(如高盛十大产业主线 46 页)的重点�
 MIN_TEXT_CHARS = 400  # 文本层够多时走快速文本通道（~5-10s），否则回退视觉（~30-50s）
 MAX_TEXT_CHARS = 7000
 OCR_MAX_PAGES = 32
+OCR_TOTAL_SECONDS = max(5.0, float(os.getenv("DEEPFOCUS_RESEARCH_OCR_TOTAL_SECONDS", "45") or 45))
 _VISION_DISCLAIMER = "本结论基于研报页面图像的 AI 视觉解读，非逐句溯源，可能遗漏或误读，请以原文为准。"
 _TEXT_DISCLAIMER = "本结论基于研报文本的 AI 摘要，可能遗漏图表信息，请以原文为准。"
 
@@ -528,9 +532,20 @@ def _clamp_confidence(value: Any) -> float:
     return max(0.0, min(1.0, number))
 
 
+def report_is_degraded(data: Any) -> bool:
+    """A temporary provider/source fallback must never become a cache hit."""
+    if not isinstance(data, dict):
+        return True
+    return (
+        bool(data.get("vision_unavailable"))
+        or str(data.get("provider") or "").strip().lower() in {"local-fallback", "text-only-fallback"}
+        or data.get("analysis_mode") == "text_extraction_fallback"
+    )
+
+
 def report_depth_needs_refresh(data: Any) -> bool:
     """Return whether a cached report predates the logic-line output contract."""
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or report_is_degraded(data):
         return True
     # v5 只要求完整的逻辑线层；历史缓存里的六维 df_take 不再触发重新生成，
     # 出口层（ensure_report_depth）会直接剥掉，避免为删字段烧一遍 token。
@@ -637,12 +652,16 @@ def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int = MAX_VISION_PAGES) -> 
 
 def extract_pdf_ocr_text(pdf_bytes: bytes, *, max_pages: int = OCR_MAX_PAGES) -> str:
     """OCR scanned PDF pages into plain text; never asks a vision model to interpret them."""
-    if not pdf_bytes:
+    if not pdf_bytes or shutil.which("tesseract") is None:
         return ""
     parts: list[str] = []
+    deadline = time.monotonic() + OCR_TOTAL_SECONDS
     try:
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
             for index in range(min(max(1, int(max_pages)), OCR_MAX_PAGES, doc.page_count)):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
                 page = doc.load_page(index)
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                 try:
@@ -651,10 +670,18 @@ def extract_pdf_ocr_text(pdf_bytes: bytes, *, max_pages: int = OCR_MAX_PAGES) ->
                         # 封面页版式复杂时 tesseract 会跑满超时；预算从 12s 收紧到 6s，
                         # 避免无文字层 PDF 在注定为空的 OCR 上白等（实测这类页面成功识别
                         # 通常 <3s，超时页多数到 12s 也出不了字）。
-                        input=pix.tobytes("png"), capture_output=True, timeout=6, check=False,
+                        input=pix.tobytes("png"), capture_output=True, timeout=min(6.0, remaining), check=False,
                     )
-                except (FileNotFoundError, subprocess.TimeoutExpired):
-                    return ""
+                except FileNotFoundError:
+                    break
+                except subprocess.TimeoutExpired:
+                    # Keep useful pages already read; one slow cover page
+                    # must not discard the rest of a readable scanned report.
+                    continue
+                if proc.returncode != 0:
+                    # Missing language packs and other setup failures cannot
+                    # improve by running the same OCR command on every page.
+                    break
                 text = (proc.stdout or b"").decode("utf-8", "ignore").strip()
                 if text:
                     parts.append(f"[第 {index + 1} 页]\n{text}")
@@ -722,7 +749,49 @@ async def analyze_pdf_auto(
             max_pages=min(max(1, int(max_pages)), MAX_VISION_PAGES),
         )
     except PdfTextUnavailable:
-        return await analyze_pdf_vision(pdf_bytes, title=title, symbol=symbol, max_pages=max_pages)
+        return await analyze_pdf_vision(
+            pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            text_unavailable=True,
+        )
+
+
+async def analyze_pdf_without_vision(
+    pdf_bytes: bytes,
+    *,
+    title: Optional[str] = None,
+    symbol: Optional[str] = None,
+    max_pages: int = MAX_VISION_PAGES,
+    text_unavailable: bool = False,
+) -> dict[str, Any]:
+    """Use text/OCR when no image-capable provider is currently available."""
+    result = None
+    # A preceding text route already exhausted text-layer/OCR extraction for
+    # this request. Reuse that failure locally instead of spending another OCR
+    # budget; a later request is free to try again after tools/source recover.
+    if not text_unavailable:
+        try:
+            result = await analyze_pdf_text(
+                pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            )
+        except PdfTextUnavailable:
+            pass
+    if result is None:
+        result = _normalize_result(
+            {
+                "subject": symbol or "",
+                "one_liner": "视觉模型当前不可用，未提取到可解读的文字。",
+                "summary": "已尝试 PDF 文字层和 OCR，但没有获得足够的正文；本次未进行图片解读，请查看原文或稍后重试。",
+                "confidence": 0.0,
+            },
+            provider="text-only-fallback", pages=0,
+            disclaimer="本次未进行图片解读，也未形成正文解读，请以原文为准。",
+            compact_report=True,
+        )
+    result = dict(result)
+    result["analysis_mode"] = "text_extraction_fallback"
+    result["vision_unavailable"] = True
+    result["source_note"] = "视觉模型当前不可用；本次仅尝试 PDF 文字层与 OCR 文本提取。"
+    return result
 
 
 _FETCH_UA = (
@@ -863,7 +932,9 @@ async def analyze_news(
     try:
         from . import data_store
 
-        cached = None if refresh else data_store.latest("news_ai", cache_key, max_age_seconds=14 * 86400)
+        cached = None if refresh else await asyncio.to_thread(
+            data_store.latest, "news_ai", cache_key, max_age_seconds=14 * 86400,
+        )
         if isinstance(cached, dict) and not news_result_needs_refresh(cached, title):
             return normalize_news_result(cached)
     except Exception:
@@ -938,6 +1009,7 @@ async def analyze_pdf_vision(
     title: Optional[str] = None,
     symbol: Optional[str] = None,
     max_pages: int = 6,
+    text_unavailable: bool = False,
 ) -> dict[str, Any]:
     """渲染 PDF 页面并用视觉模型出解读。返回归一化的结果字典。
 
@@ -951,19 +1023,24 @@ async def analyze_pdf_vision(
     try:
         from . import data_store
 
-        cached = data_store.latest("vision", cache_key, max_age_seconds=14 * 86400)
-        if isinstance(cached, dict) and cached:
+        cached = await asyncio.to_thread(data_store.latest, "vision", cache_key, max_age_seconds=14 * 86400)
+        if isinstance(cached, dict) and cached and not report_is_degraded(cached):
             return cached
     except Exception:
         data_store = None
 
-    images = await asyncio.to_thread(render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
-    if not images:
-        raise RuntimeError("PDF 没有可渲染的页面")
-
     llm = CloudResearchLLM()
     if llm.provider == "mock":
         raise RuntimeError("当前为本地演示模型，无法做视觉解读；请在设置中配置云端视觉模型。")
+    if not getattr(llm, "has_vision_provider", lambda: True)():
+        return await analyze_pdf_without_vision(
+            pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+            text_unavailable=text_unavailable,
+        )
+
+    images = await asyncio.to_thread(render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
+    if not images:
+        raise RuntimeError("PDF 没有可渲染的页面")
 
     prompt = _build_vision_prompt(title, symbol)
     attempt_images = list(images)
@@ -979,6 +1056,11 @@ async def analyze_pdf_vision(
                 prompt, attempt_images, max_tokens=4200, timeout_seconds=180,
             )
             break
+        except VisionUnavailableError:
+            return await analyze_pdf_without_vision(
+                pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+                text_unavailable=text_unavailable,
+            )
         except RuntimeError as exc:
             message = str(exc)
             match = _SENSITIVE_CONTENT_RE.search(message)
@@ -1002,6 +1084,11 @@ async def analyze_pdf_vision(
                 retry_prompt, attempt_images, max_tokens=3200, timeout_seconds=160,
             )
             data = _parse_model_json(raw2)
+        except VisionUnavailableError:
+            return await analyze_pdf_without_vision(
+                pdf_bytes, title=title, symbol=symbol, max_pages=max_pages,
+                text_unavailable=text_unavailable,
+            )
         except Exception:  # noqa: BLE001
             data = {}
     try:
@@ -1013,7 +1100,7 @@ async def analyze_pdf_vision(
         raise RuntimeError("视觉模型未返回可用解读，可能页面过于模糊。")
     if data_store is not None:
         try:
-            data_store.record("vision", cache_key, result)
+            await asyncio.to_thread(data_store.record, "vision", cache_key, result)
         except Exception:
             pass
     return result
