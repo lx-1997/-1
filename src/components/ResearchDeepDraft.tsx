@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   Alert,
   Button,
@@ -558,10 +558,20 @@ const formatGeneratedAt = (value?: string) => {
   return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-const confidenceLabel = (value?: number) => {
-  if (value === undefined || Number.isNaN(value)) return '';
+const confidencePercent = (value?: number) => {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
   const percent = value <= 1 ? Math.round(value * 100) : Math.round(value);
-  return `证据置信度 ${Math.max(0, Math.min(100, percent))}%`;
+  return Math.max(0, Math.min(100, percent));
+};
+
+const confidenceLabel = (value?: number) => {
+  const percent = confidencePercent(value);
+  return percent === undefined ? '' : `证据置信度 ${percent}%`;
+};
+
+const confidenceTone = (value?: number) => {
+  const percent = confidencePercent(value);
+  return percent === undefined ? 'unknown' : percent < 50 ? 'low' : percent < 80 ? 'medium' : 'high';
 };
 
 const modeLabel = (value?: string) => {
@@ -652,7 +662,7 @@ const GlossaryHints: React.FC<{ entries?: ResearchDeepDraftGlossaryEntry[] }> = 
   const visible = (entries && entries.length ? entries : DEFAULT_GLOSSARY).slice(0, 5);
   return (
     <div className="research-deep-draft__glossary" aria-label="术语说明">
-      <span className="research-deep-draft__glossary-label"><InfoCircleOutlined /> 看不懂术语？</span>
+      <span className="research-deep-draft__glossary-label"><InfoCircleOutlined /> 术语说明</span>
       {visible.map((entry, index) => (
         <Tooltip title={entry.meaning} key={`${entry.term}-${index}`}>
           <span className="research-deep-draft__glossary-term" tabIndex={0}>
@@ -777,6 +787,32 @@ const ResearchDeepDraft: React.FC<ResearchDeepDraftProps> = ({
   className = ''
 }) => {
   const draft = useMemo(() => normalizeResearchDeepDraft(input), [input]);
+  const overviewRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    let printedDetails: HTMLDetailsElement | null = null;
+    let wasOpen = false;
+    const restoreOverview = () => {
+      if (printedDetails) {
+        printedDetails.open = wasOpen;
+        printedDetails = null;
+      }
+    };
+    const prepareOverview = () => {
+      const details = overviewRef.current;
+      if (!details || printedDetails) return;
+      printedDetails = details;
+      wasOpen = details.open;
+      details.open = true;
+    };
+    window.addEventListener('beforeprint', prepareOverview);
+    window.addEventListener('afterprint', restoreOverview);
+    return () => {
+      window.removeEventListener('beforeprint', prepareOverview);
+      window.removeEventListener('afterprint', restoreOverview);
+      restoreOverview();
+    };
+  }, []);
 
   if (loading && !draft) {
     return (
@@ -830,10 +866,12 @@ const ResearchDeepDraft: React.FC<ResearchDeepDraftProps> = ({
     draft.symbol,
     sourceCount ? `${sourceCount} 个来源` : '',
     draft.pages_analyzed ? `分析 ${draft.pages_analyzed} 页` : '',
-    draft.read_time_minutes ? `约 ${draft.read_time_minutes} 分钟阅读` : '',
     formatGeneratedAt(draft.generated_at)
   ].filter(Boolean);
   const coreConclusion = draft.core_conclusion || draft.thesis || draft.executive_summary || draft.one_liner;
+  const overviewThesis = draft.thesis && draft.thesis !== coreConclusion && draft.thesis !== draft.one_liner ? draft.thesis : '';
+  const overviewSummary = draft.executive_summary && draft.executive_summary !== coreConclusion && draft.executive_summary !== draft.one_liner ? draft.executive_summary : '';
+  const confidence = confidenceTone(draft.confidence);
   const risks = draft.risks || [];
   const watchlist = draft.watchlist || [];
   const sources = draft.sources || [];
@@ -844,9 +882,9 @@ const ResearchDeepDraft: React.FC<ResearchDeepDraftProps> = ({
         <div className="research-deep-draft__header-topline">
           <span className="research-deep-draft__eyebrow"><BookOutlined /> 深度研究稿</span>
           <div className="research-deep-draft__header-actions">
-            {draft.mode && <Tag color="blue">{modeLabel(draft.mode)}</Tag>}
+            {draft.mode && modeLabel(draft.mode) !== draft.mode && <Tag color="blue">{modeLabel(draft.mode)}</Tag>}
             <span className="research-deep-draft__reader-mode" aria-label="深读模式">
-              <ReadOutlined /> 深读 <small>{draft.read_time_minutes || '全文'}</small>
+              <ReadOutlined /> 深读 <small>{draft.read_time_minutes ? `${draft.read_time_minutes} 分钟` : '全文'}</small>
             </span>
             {onClose && <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} aria-label="关闭深度解读" />}
           </div>
@@ -866,7 +904,12 @@ const ResearchDeepDraft: React.FC<ResearchDeepDraftProps> = ({
           <div className="research-deep-draft__toc-title"><BookOutlined /> 目录</div>
           <a href="#research-deep-draft-conclusion">核心结论</a>
           {metricCards.length > 0 && <a href="#research-deep-draft-metrics">关键数字</a>}
-          {anchoredSections.map(({ section, index, anchor }) => <a href={`#${anchor}`} key={anchor}>{String(index + 1).padStart(2, '0')} {section.title}</a>)}
+          {anchoredSections.map(({ section, index, anchor }) => (
+            <a href={`#${anchor}`} key={anchor} className="research-deep-draft__toc-section">
+              <span className="research-deep-draft__toc-number">{String(index + 1).padStart(2, '0')}</span>
+              <span className="research-deep-draft__toc-label">{section.title}</span>
+            </a>
+          ))}
           {topLogic.length > 0 && <a href="#research-deep-draft-logic">逻辑线</a>}
           {globalTables.length > 0 && <a href="#research-deep-draft-tables">数据与对比</a>}
           {watchlist.length > 0 && <a href="#research-deep-draft-watchlist">跟踪清单</a>}
@@ -876,20 +919,36 @@ const ResearchDeepDraft: React.FC<ResearchDeepDraftProps> = ({
 
         <main className="research-deep-draft__body">
           <section id="research-deep-draft-conclusion" className="research-deep-draft__conclusion" aria-labelledby="research-deep-draft-conclusion-title">
-            <div className="research-deep-draft__section-kicker" id="research-deep-draft-conclusion-title"><SafetyCertificateOutlined /> 先看结论</div>
+            <div className="research-deep-draft__section-kicker" id="research-deep-draft-conclusion-title"><SafetyCertificateOutlined /> 核心判断</div>
           {draft.one_liner && <p className="research-deep-draft__one-liner">{draft.one_liner}</p>}
           {coreConclusion && coreConclusion !== draft.one_liner && <p className="research-deep-draft__core-conclusion">{coreConclusion}</p>}
-            {draft.thesis && draft.thesis !== coreConclusion && draft.thesis !== draft.one_liner && (
-              <div className="research-deep-draft__thesis"><b>主线</b><span>{draft.thesis}</span></div>
-            )}
-            {draft.executive_summary && draft.executive_summary !== coreConclusion && draft.executive_summary !== draft.one_liner && (
-              <details className="research-deep-draft__summary-details" open>
-                <summary><span>编辑摘要</span><small>关键数字、时间点与主体</small></summary>
-                {renderParagraphs(splitParagraphs(draft.executive_summary), 'research-deep-draft__summary')}
+            {(overviewThesis || overviewSummary) && (
+              <details className="research-deep-draft__overview-details" ref={overviewRef}>
+                <summary><span>研究摘要</span><small>论证主线与关键事实</small></summary>
+                <div className="research-deep-draft__overview-grid">
+                  {overviewThesis && (
+                    <div className="research-deep-draft__overview-item">
+                      <b className="research-deep-draft__overview-label">论证主线</b>
+                      <p>{overviewThesis}</p>
+                    </div>
+                  )}
+                  {overviewSummary && (
+                    <div className="research-deep-draft__overview-item">
+                      <b className="research-deep-draft__overview-label">关键事实</b>
+                      {renderParagraphs(splitParagraphs(overviewSummary), 'research-deep-draft__summary')}
+                    </div>
+                  )}
+                </div>
               </details>
             )}
             <div className="research-deep-draft__conclusion-meta">
-              {confidenceLabel(draft.confidence) && <Tag icon={<CheckCircleOutlined />} color="green">{confidenceLabel(draft.confidence)}</Tag>}
+              {confidenceLabel(draft.confidence) && (
+                <Tag className={`research-deep-draft__confidence--${confidence}`}
+                  icon={confidence === 'high' ? <CheckCircleOutlined /> : <WarningOutlined />}
+                  color={confidence === 'low' ? 'gold' : confidence === 'medium' ? 'default' : 'green'}>
+                  {confidenceLabel(draft.confidence)}
+                </Tag>
+              )}
               {draft.source_coverage && <Tag icon={<FileSearchOutlined />}>{draft.source_coverage}</Tag>}
               {loading && <Tag icon={<Spin size="small" />}>正在补全全文</Tag>}
             </div>

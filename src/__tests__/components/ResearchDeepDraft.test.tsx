@@ -92,4 +92,42 @@ describe('ResearchDeepDraft contract normalizer', () => {
     expect(queryByText('速读')).not.toBeInTheDocument();
     expect(queryByRole('button', { name: /深读/ })).not.toBeInTheDocument();
   });
+
+  it('groups supplementary summaries in one collapsed disclosure without dropping text', () => {
+    const { container, getByText } = render(<ResearchDeepDraft draft={{
+      title: '政策研究', one_liner: '核心观点。', core_conclusion: '关键判断。',
+      thesis: '完整论证主线。', executive_summary: '完整事实摘要。',
+      sections: [{ title: '政策背景', paragraphs: ['完整章节正文。'] }]
+    }} />);
+    const details = container.querySelector('details');
+    expect(details).not.toHaveAttribute('open');
+    expect(details?.querySelector('summary')).toHaveTextContent('研究摘要');
+    expect(details).toHaveTextContent('完整论证主线。');
+    expect(details).toHaveTextContent('完整事实摘要。');
+    expect(getByText('完整章节正文。')).toBeVisible();
+  });
+
+  it.each([[0.2, 'low'], [20, 'low'], [0.65, 'medium'], [0.9, 'high']])(
+    'uses the evidence score rather than a universal success badge for %s', (confidence, tone) => {
+      const { container } = render(<ResearchDeepDraft draft={{ title: '证据核验', confidence }} />);
+      const badge = container.querySelector(`[class*="research-deep-draft__confidence--${tone}"]`);
+      expect(badge).toBeInTheDocument();
+      if (tone === 'low') expect(badge).not.toHaveClass('ant-tag-green');
+    }
+  );
+
+  it.each([false, true])('prints the complete summary and restores its open state (%s)', (open) => {
+    const { container } = render(<ResearchDeepDraft draft={{
+      title: '打印研究', one_liner: '关键判断。', core_conclusion: '结论内容。',
+      thesis: '完整论证主线。', executive_summary: '完整事实摘要。'
+    }} />);
+    const details = container.querySelector('details')!;
+    details.open = open;
+    window.dispatchEvent(new Event('beforeprint'));
+    expect(details).toHaveAttribute('open');
+    expect(details).toHaveTextContent('完整论证主线。');
+    expect(details).toHaveTextContent('完整事实摘要。');
+    window.dispatchEvent(new Event('afterprint'));
+    expect(details.open).toBe(open);
+  });
 });
