@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Alert,
   App as AntdApp,
@@ -80,6 +80,9 @@ import type { DataQuality } from '../types';
 import './centers/researchAgent.css';
 import ShareButton from './common/ShareButton';
 import DataQualityBanner from './common/DataQualityBanner';
+import AiInterpretationExportActions from './common/AiInterpretationExportActions';
+import { buildAiInterpretationText } from '../utils/aiInterpretationExport';
+import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, subscribeAuth } from '../state/authSession';
 
 const { Text, Title } = Typography;
 const { TextArea, Search } = Input;
@@ -362,6 +365,7 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   const [metrics, setMetrics] = useState<ProfessionalMetricRecord[]>([]);
   const [analysis, setAnalysis] = useState<ProfessionalReportAnalysis | null>(null);
   const [ragResult, setRagResult] = useState<ProfessionalRagQueryResult | null>(null);
+  const [ragExportQuestion, setRagExportQuestion] = useState('');
   const [evalResult, setEvalResult] = useState<ProfessionalEvalRunResult | null>(null);
   const [ragQuestion, setRagQuestion] = useState(defaultQuestions[0]);
   const [aiBridgeDraft, setAiBridgeDraft] = useState('请基于当前研报、指标、引用和反证风险，生成一版可交给投研任务中心的执行 Brief。');
@@ -370,6 +374,25 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [querying, setQuerying] = useState(false);
+  const quickExportEpoch = useRef(0);
+  const analysisExportEpoch = useRef(0);
+  const ragExportEpoch = useRef(0);
+  const authRevision = useSyncExternalStore(subscribeAuth, () => getAuthSnapshot().revision);
+  useLayoutEffect(() => registerSessionCleanup(() => {
+    quickExportEpoch.current += 1;
+    analysisExportEpoch.current += 1;
+    ragExportEpoch.current += 1;
+    quickAiCacheRef.current.clear();
+    setQuickAnalysis(null);
+    setQuickVision(null);
+    setAnalysis(null);
+    setRagResult(null);
+    setRagExportQuestion('');
+    setQuerying(false);
+    setQuickAnalyzing(false);
+    setAnalyzing(false);
+    setQuickAnalyzeStep('');
+  }), [authRevision]);
   const [evaluating, setEvaluating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [urlDraft, setUrlDraft] = useState('');
@@ -577,9 +600,14 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
 
   useEffect(() => {
     if (selectedReport) {
+      analysisExportEpoch.current += 1;
+      ragExportEpoch.current += 1;
+      setAnalyzing(false);
+      setQuerying(false);
       void loadMetrics(selectedReport);
       setAnalysis(null);
       setRagResult(null);
+      setRagExportQuestion('');
       setEvalResult(null);
     }
   }, [loadMetrics, selectedReport?.id]);
@@ -799,18 +827,22 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
       message.warning('先选择一份研报');
       return;
     }
+    const revision = getAuthSnapshot().revision;
+    const epoch = ++analysisExportEpoch.current;
     setAnalyzing(true);
     try {
       const result = await analyzeProfessionalReport(selectedReport.id, {
         focus: ragQuestion || aiBridgeDraft,
         use_cloud_model: true
       });
+      if (!isAuthRevisionCurrent(revision) || epoch !== analysisExportEpoch.current) return;
       setAnalysis(result);
       setMetrics(result.key_metrics.length ? result.key_metrics : metrics);
     } catch (error) {
+      if (!isAuthRevisionCurrent(revision) || epoch !== analysisExportEpoch.current) return;
       message.error('研报复核失败');
     } finally {
-      setAnalyzing(false);
+      if (isAuthRevisionCurrent(revision) && epoch === analysisExportEpoch.current) setAnalyzing(false);
     }
   };
 
@@ -820,6 +852,8 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
       message.warning('输入要核验的问题');
       return;
     }
+    const revision = getAuthSnapshot().revision;
+    const epoch = ++ragExportEpoch.current;
     setQuerying(true);
     try {
       const result = await queryProfessionalRag({
@@ -829,11 +863,14 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
         top_k: 6,
         use_cloud_model: true
       });
+      if (!isAuthRevisionCurrent(revision) || epoch !== ragExportEpoch.current) return;
       setRagResult(result);
+      setRagExportQuestion(question);
     } catch (error) {
+      if (!isAuthRevisionCurrent(revision) || epoch !== ragExportEpoch.current) return;
       message.error('引用问答失败');
     } finally {
-      setQuerying(false);
+      if (isAuthRevisionCurrent(revision) && epoch === ragExportEpoch.current) setQuerying(false);
     }
   };
 
@@ -929,6 +966,8 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   ), [selectedQuickKey, overseaResults]);
 
   const selectEastmoney = (item: ResearchReportItem) => {
+    quickExportEpoch.current += 1;
+    setQuickAnalyzing(false);
     setSelectedQuickKey(`em:${item.id}`);
     setQuickAnalysis(null); setQuickVision(null);
     setPreviewTitle(item.title);
@@ -940,6 +979,8 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
   };
 
   const selectOversea = async (item: ResearchWorkbenchSearchItem) => {
+    quickExportEpoch.current += 1;
+    setQuickAnalyzing(false);
     const fileId = item.fileId || '';
     setSelectedQuickKey(`ov:${crawlItemKey(item)}`);
     setQuickAnalysis(null); setQuickVision(null);
@@ -971,6 +1012,8 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     }
     const seq = quickSearchSeq.current + 1;
     quickSearchSeq.current = seq;
+    quickExportEpoch.current += 1;
+    setQuickAnalyzing(false);
     setQuickLoading(true);
     setQuickSearched(true);
     setQuickAnalysis(null); setQuickVision(null);
@@ -1024,6 +1067,8 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
     payload: { pdf_url?: string; workbench_filename?: string; title?: string; symbol?: string },
     cacheKey?: string
   ) => {
+    const revision = getAuthSnapshot().revision;
+    const epoch = quickExportEpoch.current;
     const cached = cacheKey ? quickAiCacheRef.current.get(cacheKey) : undefined;
     if (cached?.vision) {
       setQuickVision(cached.vision);
@@ -1038,10 +1083,12 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
         workbench_out: WORKBENCH_DOWNLOAD_OUT,
         max_pages: 8
       });
+      if (!isAuthRevisionCurrent(revision) || epoch !== quickExportEpoch.current) return;
       setQuickVision(vision);
       if (cacheKey) quickAiCacheRef.current.set(cacheKey, { vision });
       message.success('AI 视觉解读完成');
     } catch (visionError: any) {
+      if (!isAuthRevisionCurrent(revision) || epoch !== quickExportEpoch.current) return;
       const detail = visionError?.response?.data?.detail || visionError?.message || '请稍后重试';
       message.error(`视觉解读失败：${detail}`);
     }
@@ -1052,6 +1099,9 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
       message.warning('海外投行抓取服务未启动，无法分析该来源');
       return;
     }
+    const revision = getAuthSnapshot().revision;
+    const epoch = ++quickExportEpoch.current;
+    const current = () => isAuthRevisionCurrent(revision) && epoch === quickExportEpoch.current;
     setQuickAnalyzing(true);
     setQuickAnalysis(null); setQuickVision(null);
     const cacheKey = `ov:${crawlItemKey(item)}`;
@@ -1065,11 +1115,14 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
       }
       setQuickAnalyzeStep('拉取研报中…');
       await startResearchWorkbenchDownload([item], { tag: crawlTag, out: WORKBENCH_DOWNLOAD_OUT });
+      if (!current()) return;
       const target = cleanReportTitle(item.name);
       let file: WorkbenchDownloadFile | undefined;
       for (let attempt = 0; attempt < 12 && !file; attempt += 1) {
         await new Promise(resolve => window.setTimeout(resolve, 2000));
+        if (!current()) return;
         const downloads = await listWorkbenchDownloads(WORKBENCH_DOWNLOAD_OUT).catch(() => null);
+        if (!current()) return;
         file = downloads?.files?.find(candidate => candidate.name === item.name || cleanReportTitle(candidate.name) === target);
       }
       if (!file) throw new Error('下载尚未完成，请稍后或在专业模式重试');
@@ -1081,27 +1134,35 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
         report_type: 'research',
         tags: ['研报快速研读', '海外投行报告']
       });
+      if (!current()) return;
       setQuickAnalyzeStep('AI 分析中…');
       const result = await analyzeProfessionalReport(report.id, { use_cloud_model: true });
+      if (!current()) return;
       setQuickAnalysis(result);
       quickAiCacheRef.current.set(cacheKey, { analysis: result });
       setReports(previous => [report, ...previous.filter(existing => existing.id !== report.id)]);
       setSelectedReportId(report.id);
       message.success('AI 分析完成');
     } catch (error: any) {
+      if (!current()) return;
       if (isEmptyTextError(error)) {
         await runVisionFallback({ workbench_filename: item.name, title: cleanReportTitle(item.name) }, cacheKey);
       } else {
         message.error(analyzeErrorMessage(error, '请稍后重试'));
       }
     } finally {
-      setQuickAnalyzing(false);
-      setQuickAnalyzeStep('');
+      if (current()) {
+        setQuickAnalyzing(false);
+        setQuickAnalyzeStep('');
+      }
     }
   };
 
   const runQuickAnalyze = async () => {
     if (selectedEastmoney) {
+      const revision = getAuthSnapshot().revision;
+      const epoch = ++quickExportEpoch.current;
+      const current = () => isAuthRevisionCurrent(revision) && epoch === quickExportEpoch.current;
       setQuickAnalyzing(true);
       setQuickAnalysis(null); setQuickVision(null);
       const cacheKey = selectedQuickKey;
@@ -1120,17 +1181,20 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
           report_type: 'research',
           tags: ['研报快速研读', '东方财富']
         });
+        if (!current()) return;
         setQuickAnalyzeStep('AI 分析中…');
         const result = await analyzeProfessionalReport(report.id, {
           focus: '请基于研报正文给出投资判断、关键证据、红旗与风险，以及需回原文核验的追问。',
           use_cloud_model: true
         });
+        if (!current()) return;
         setQuickAnalysis(result);
         quickAiCacheRef.current.set(cacheKey, { analysis: result });
         setReports(previous => [report, ...previous.filter(existing => existing.id !== report.id)]);
         setSelectedReportId(report.id);
         message.success('AI 分析完成');
       } catch (error: any) {
+        if (!current()) return;
         if (isEmptyTextError(error)) {
           await runVisionFallback({
             pdf_url: selectedEastmoney.pdf_url,
@@ -1141,8 +1205,10 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
           message.error(analyzeErrorMessage(error, '请确认链接可访问后重试'));
         }
       } finally {
-        setQuickAnalyzing(false);
-        setQuickAnalyzeStep('');
+        if (current()) {
+          setQuickAnalyzing(false);
+          setQuickAnalyzeStep('');
+        }
       }
       return;
     }
@@ -1381,6 +1447,12 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
               ) : null}
               <Alert type="warning" showIcon style={{ marginTop: 4 }} message={quickVision.disclaimer} />
               <Space wrap>
+                <AiInterpretationExportActions
+                  text={buildAiInterpretationText({ result: quickVision, title: previewTitle || '研报视觉解读' })}
+                  title={previewTitle || '研报视觉解读'}
+                  disabled={quickAnalyzing}
+                  scopeKey={`research-vision:${selectedQuickKey}:${authRevision}:${quickExportEpoch.current}`}
+                />
                 <ShareButton target={() => ({ title: previewTitle || '研报视觉解读', summary: quickVision.summary, byline: '由 稻草财经 研报视觉解读生成' })} />
                 <Button
                   icon={<SendOutlined />}
@@ -1430,6 +1502,12 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                 </div>
               ) : null}
               <Space wrap>
+                <AiInterpretationExportActions
+                  text={buildAiInterpretationText({ result: quickAnalysis, title: previewTitle || '研报分析' })}
+                  title={previewTitle || '研报分析'}
+                  disabled={quickAnalyzing}
+                  scopeKey={`research-quick:${selectedQuickKey}:${authRevision}:${quickExportEpoch.current}`}
+                />
                 <ShareButton target={() => ({ title: previewTitle || '研报分析', summary: quickAnalysis.summary, byline: '由 稻草财经 研报快速研读生成' })} />
                 <Button icon={<AuditOutlined />} onClick={() => setMode('pro')}>转专业模式深入</Button>
                 <Button
@@ -1821,9 +1899,15 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                           ))}
                         </div>
                       </div>
-                      <div style={{ marginTop: 8 }}>
+                      <Space wrap style={{ marginTop: 8 }}>
+                        <AiInterpretationExportActions
+                          text={buildAiInterpretationText({ result: analysis, title: selectedReport?.title || '研报复核' })}
+                          title={selectedReport?.title || '研报复核'}
+                          disabled={analyzing}
+                          scopeKey={`research-professional:${analysis.report.id}:${authRevision}:${analysisExportEpoch.current}`}
+                        />
                         <ShareButton target={() => ({ title: selectedReport?.title || '研报复核', summary: analysis.summary, byline: '由 稻草财经 投研工作台生成' })} />
-                      </div>
+                      </Space>
                       <div className="research-ic-thesis-row">
                         <div>
                           <span>Base Case</span>
@@ -2013,7 +2097,15 @@ const ResearchWorkbench: React.FC<ResearchWorkbenchProps> = ({ appState, onViewC
                 ) : ragResult ? (
                   <>
                     <p>{ragResult.answer}</p>
-                    <ShareButton target={() => ({ title: ragQuestion || '引用问答结论', summary: ragResult.answer, byline: '由 稻草财经 投研工作台引用核验生成' })} />
+                    <Space wrap>
+                      <AiInterpretationExportActions
+                        text={buildAiInterpretationText({ result: ragResult, title: ragExportQuestion || '引用问答结论' })}
+                        title={ragExportQuestion || '引用问答结论'}
+                        disabled={querying}
+                        scopeKey={`research-rag:${selectedReport?.id || activeSymbol}:${authRevision}:${ragExportEpoch.current}`}
+                      />
+                      <ShareButton target={() => ({ title: ragQuestion || '引用问答结论', summary: ragResult.answer, byline: '由 稻草财经 投研工作台引用核验生成' })} />
+                    </Space>
                     {ragResult.missing.length > 0 && (
                       <Alert
                         type="warning"

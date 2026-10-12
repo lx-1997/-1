@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Alert,
   Button,
@@ -71,6 +71,8 @@ import {
 } from '../services/marketService';
 import { AppState } from '../types';
 import CorpusOverview from './CorpusOverview';
+import AiInterpretationExportActions from './common/AiInterpretationExportActions';
+import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, subscribeAuth } from '../state/authSession';
 import './DataSourceCenter.css';
 
 const { Paragraph, Text, Title } = Typography;
@@ -246,6 +248,24 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
   const [interpretationText, setInterpretationText] = useState('');
   const [interpretationLoading, setInterpretationLoading] = useState(false);
   const [savingInterpretation, setSavingInterpretation] = useState(false);
+  const interpretationEpoch = useRef(0);
+  const authRevision = useSyncExternalStore(subscribeAuth, () => getAuthSnapshot().revision);
+  const interpretationAccountRevision = useRef(authRevision);
+  useLayoutEffect(() => {
+    const clearInterpretation = () => {
+      interpretationEpoch.current += 1;
+      setInterpretingItem(null);
+      setSelectedItem(null);
+      setInterpretationText('');
+      setInterpretationLoading(false);
+      setSavingInterpretation(false);
+    };
+    if (interpretationAccountRevision.current !== authRevision) {
+      interpretationAccountRevision.current = authRevision;
+      clearInterpretation();
+    }
+    return registerSessionCleanup(clearInterpretation);
+  }, [authRevision]);
   const [keywordCrawling, setKeywordCrawling] = useState(false);
   const [lastKeywordResult, setLastKeywordResult] = useState<DataSourceKeywordCrawlResult | null>(null);
   const [form, setForm] = useState<DataSourceCreate>(defaultForm);
@@ -618,9 +638,12 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
     if (!target) {
       return;
     }
+    const revision = getAuthSnapshot().revision;
+    const epoch = ++interpretationEpoch.current;
     setInterpretationLoading(true);
     try {
       const result = await interpretDataItem(target.id, true);
+      if (!isAuthRevisionCurrent(revision) || epoch !== interpretationEpoch.current) return;
       setInterpretationText(result.interpretation);
       setItems(prev => prev.map(current => current.id === result.item.id ? result.item : current));
       if (selectedItem?.id === result.item.id) {
@@ -628,6 +651,7 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
       }
       setInterpretingItem(result.item);
     } catch (error: any) {
+      if (!isAuthRevisionCurrent(revision) || epoch !== interpretationEpoch.current) return;
       if (error?.response?.status === 409) {
         setInterpretingItem(null);
         setInterpretationText('');
@@ -639,11 +663,13 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
         message.error(error?.response?.data?.detail || 'AI 解读失败');
       }
     } finally {
-      setInterpretationLoading(false);
+      if (isAuthRevisionCurrent(revision) && epoch === interpretationEpoch.current) setInterpretationLoading(false);
     }
   };
 
   const openInterpretation = async (item: DataSourceItemRecord) => {
+    interpretationEpoch.current += 1;
+    setInterpretationLoading(false);
     const saved = savedInterpretationOf(item);
     setInterpretingItem(item);
     setInterpretationText(saved);
@@ -656,11 +682,14 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
     if (!interpretingItem) {
       return;
     }
+    const revision = getAuthSnapshot().revision;
+    const epoch = interpretationEpoch.current;
     setSavingInterpretation(true);
     try {
       const updated = await updateDataItem(interpretingItem.id, {
         ai_interpretation: interpretationText
       });
+      if (!isAuthRevisionCurrent(revision) || epoch !== interpretationEpoch.current) return;
       setItems(prev => prev.map(item => item.id === updated.id ? updated : item));
       if (selectedItem?.id === updated.id) {
         setSelectedItem(updated);
@@ -669,9 +698,10 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
       await loadData();
       message.success('AI 解读已保存');
     } catch (error: any) {
+      if (!isAuthRevisionCurrent(revision) || epoch !== interpretationEpoch.current) return;
       message.error(error?.response?.data?.detail || '保存解读失败');
     } finally {
-      setSavingInterpretation(false);
+      if (isAuthRevisionCurrent(revision)) setSavingInterpretation(false);
     }
   };
 
@@ -1497,7 +1527,10 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
         </Row>
       </Space>
 
+      {/* Modal caches closed contents, so an account change must first remove the old dialog tree. */}
+      {interpretationAccountRevision.current === authRevision && <>
       <Modal
+        key={`data-source-details:${authRevision}`}
         title={selectedItem?.title}
         open={Boolean(selectedItem)}
         onCancel={() => setSelectedItem(null)}
@@ -1540,6 +1573,11 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
                 <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
                   {savedInterpretationOf(selectedItem)}
                 </Paragraph>
+                <AiInterpretationExportActions
+                  text={savedInterpretationOf(selectedItem)}
+                  title={selectedItem.title}
+                  scopeKey={`data-source-saved:${selectedItem.id}:${authRevision}`}
+                />
               </Card>
             )}
             <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 480, overflow: 'auto', background: 'var(--surface-muted)', padding: 12 }}>
@@ -1550,12 +1588,13 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
       </Modal>
 
       <Modal
+        key={`data-source-interpretation:${authRevision}`}
         title={interpretingItem ? `AI 解读：${interpretingItem.title}` : 'AI 解读'}
         open={Boolean(interpretingItem)}
-        onCancel={() => setInterpretingItem(null)}
+        onCancel={() => { interpretationEpoch.current += 1; setInterpretingItem(null); setInterpretationLoading(false); }}
         width={860}
         footer={[
-          <Button key="cancel" onClick={() => setInterpretingItem(null)}>关闭</Button>,
+          <Button key="cancel" onClick={() => { interpretationEpoch.current += 1; setInterpretingItem(null); setInterpretationLoading(false); }}>关闭</Button>,
           <Button
             key="regen"
             icon={<ExperimentOutlined />}
@@ -1587,8 +1626,17 @@ const DataSourceCenter: React.FC<DataSourceCenterProps> = ({ appState }) => {
             onChange={event => setInterpretationText(event.target.value)}
             placeholder={interpretationLoading ? 'AI 正在解读...' : '点击重新解读生成内容，或直接输入你的解读。'}
           />
+          {interpretationText.trim() && (
+            <AiInterpretationExportActions
+              text={interpretationText}
+              title={interpretingItem?.title || 'AI 解读'}
+              disabled={interpretationLoading}
+              scopeKey={`data-source-edit:${interpretingItem?.id}:${authRevision}:${interpretationEpoch.current}`}
+            />
+          )}
         </Space>
       </Modal>
+      </>}
 
       <Modal
         title="编辑资料标签"

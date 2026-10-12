@@ -16,6 +16,8 @@ import {
 } from '../services/eventService';
 import ShareButton from './common/ShareButton';
 import ShareModal, { ShareTarget } from './ShareModal';
+import AiInterpretationExportActions from './common/AiInterpretationExportActions';
+import { buildAiInterpretationText } from '../utils/aiInterpretationExport';
 import * as authService from '../services/authService';
 import { runToolResearch, runToolResearchStream, listDulusMemory, sendAgentFeedback, startDeepResearch, pollDeepResearch, type ToolTraceItem, type DeepTask, type DulusRoundtableResponse, type DulusContentScopeItem } from '../services/agentService';
 import {
@@ -3417,6 +3419,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setDeepAnswerBusy(false); setAiAttachmentBusy(false); setAiQuotaLeft(null);
     aiTasksRef.current.clear(); aiInterpretCacheRef.current.clear(); aiViewingTaskRef.current = '';
     setAiTasksVersion(v => v + 1); setAiTasksOpen(false); setAiReport(null); setAiResult(null); setAiDeepDraft(null); setAiLoading(false); setAiQuickPending(false);
+    setShareImgUrl(''); setShareImgNote(''); setShareImgCoarse(false); setAiImgBusy(false);
   }), [session.revision, resetAiConversation, stopDeepPoll, aiRetries]);
 
   // ---- 研报一键 AI 分析（多模态解读：在线 file_id 或本地文件）----
@@ -3431,7 +3434,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setAiLoading(!!v.loading); setAiQuickPending(!!v.quick);
     setAiOriginal(v.original || '');
     setAiError(v.error || ''); setAiModalExpanded(false); setDfExpanded(true);
-    setAiCopied(false); setAiTextCopied(false);
+    setAiCopied(false); setAiTextCopied(false); setAiImgBusy(false);
     aiRetryRef.current = v.retry || null;
     setAiTasksOpen(false);
   }, []);
@@ -3750,7 +3753,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     aiViewingTaskRef.current = '';
     aiRetryRef.current = null;
     setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiModalExpanded(false);
-    setAiError(''); setAiCopied(false); setDfExpanded(false); setAiLoading(false);
+    setAiError(''); setAiCopied(false); setDfExpanded(false); setAiLoading(false); setAiImgBusy(false);
   }, []);
 
   // 研报「原文」：带 JWT 头 fetch 取 PDF Blob → createObjectURL → 新标签打开（会员专享，402 → 升级弹窗）
@@ -3948,18 +3951,31 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [aiDeepDraft, aiReport, qrShareTarget]);
 
   const [aiImgBusy, setAiImgBusy] = useState(false);
+  const aiExportMountedRef = useRef(false);
+  useEffect(() => {
+    aiExportMountedRef.current = true;
+    return () => { aiExportMountedRef.current = false; };
+  }, []);
+  const aiImageScopeRef = useRef({ result: aiResult, draft: aiDeepDraft, report: aiReport });
+  aiImageScopeRef.current = { result: aiResult, draft: aiDeepDraft, report: aiReport };
   const shareAiImage = useCallback(async () => {
+    const revision = getAuthSnapshot().revision;
+    const snapshot = aiImageScopeRef.current;
+    const isCurrent = () => aiExportMountedRef.current && isAuthRevisionCurrent(revision) && aiImageScopeRef.current.result === snapshot.result
+      && aiImageScopeRef.current.draft === snapshot.draft && aiImageScopeRef.current.report === snapshot.report;
     setAiImgBusy(true);
     try {
       // 微信转发优先使用紧凑卡片，避免把完整 32 页研报塞进一张超长图。
       // 完整研报仍可在当前阅读器中查看和复制文字。
       const blob = await drawShareCard();
+      if (!isCurrent()) return;
       if (!blob) { showToast('⚠️ 图片生成失败，请重试'); return; }
       pingMetric('copy_image');
       const coarse = typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
       // 移动端优先原生分享面板（可直接发朋友圈/好友/存图）；不支持/失败再回退长按弹图
       if (coarse) {
         const r = await shareImageNative(blob, { filename: '稻草财经-微信分享图.png', title: '稻草财经 金融终端', text: aiReport?.title || '稻草财经 · AI 解析' });
+        if (!isCurrent()) return;
         if (r === 'shared') return;
       }
       // 桌面：尝试直接复制图片到剪贴板（部分浏览器如 Firefox 不支持 → 抛错走弹图）
@@ -3968,6 +3984,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const Cl = (window as any).ClipboardItem;
         if (!coarse && navigator.clipboard && Cl) {
           await navigator.clipboard.write([new Cl({ 'image/png': blob })]);
+          if (!isCurrent()) return;
           clipboardOk = true;
         }
       } catch { clipboardOk = false; }
@@ -3977,12 +3994,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         return;
       }
       // 不支持复制图片：弹出大图，引导保存（移动端只长按、桌面右键/下载）。用 data: URL 保证长按可存
+      const imageUrl = await blobToDataUrl(blob);
+      if (!isCurrent()) return;
       setShareImgCoarse(coarse);
-      setShareImgUrl(await blobToDataUrl(blob));
+      setShareImgUrl(imageUrl);
       setShareImgNote(coarse
         ? '👇 长按图片保存到相册，再发到微信；也可直接点「分享」'
         : '右键图片选择「图片另存为」，或点下方「下载图片」');
-    } finally { setAiImgBusy(false); }
+    } catch { if (isCurrent()) showToast('图片生成失败，请重试'); }
+    finally { if (isCurrent()) setAiImgBusy(false); }
   }, [aiDeepDraft, aiReport, drawDeepDraftCard, drawShareCard, pingMetric, showToast]);
 
   // 把图片呈现给用户：桌面复制剪贴板，移动端/不支持则弹图长按保存
@@ -4578,70 +4598,27 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setShareImgNote(''); setShareImgCoarse(false);
   }, []);
 
-  // 一键复制解读全文：末尾巧妙带上站点网址，复制即传播
+  const aiExportText = useMemo(() => buildAiInterpretationText({
+    result: aiResult, deepDraft: aiDeepDraft, title: aiReport?.title, date: aiReport?.date,
+    site: (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com',
+  }), [aiResult, aiDeepDraft, aiReport]);
+
+  // 复制与完整图片使用同一份正在阅读的正文。
   const copyAiResult = useCallback(async () => {
-    const r = aiResult;
-    if (!r) return;
-    // 与图片导出保持同一数据源：深度稿正文可能远超 compact 投影，不能
-    // 再从 aiResult 拼接，否则复制出来的文字会丢掉章节/表格/跟踪项。
-    if (aiDeepDraft) {
-      const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-      const deepText = researchDeepDraftToText(aiDeepDraft, {
-        title: aiReport?.title || undefined,
-        date: aiReport?.date || undefined,
-        site,
-      });
-      if (await copyText(deepText)) {
-        setAiTextCopied(true); window.setTimeout(() => setAiTextCopied(false), 1800);
-        pingMetric('copy_text'); logAct('copy', aiReport?.title); showToast('✅ 深度解读已复制');
-      } else {
-        setAiTextCopied(false); showToast('⚠️ 复制失败，请手动选择文本');
-      }
-      return;
-    }
-    const compactReport = !!aiReportMeta;
-    const allBull = (r.bullish?.length ? r.bullish : r.key_points) || [];
-    const allBear = (r.bearish?.length ? r.bearish : r.risks) || [];
-    const logicLines = (r.logic_lines || []).filter(line => line && (line.title || line.evidence || line.chain || line.impact || line.watch));
-    const bull = allBull;
-    const bear = allBear;
-    const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-    const L: string[] = [];
-    L.push(`📊 AI 解读 | ${aiReport?.title || r.title || ''}`);
-    if (aiReport?.date) L.push(`🗓 ${aiReport.date}`);
-    const meta = [r.subject && `标的 ${r.subject}`, r.rating && `评级 ${r.rating}`, r.target_price && `目标价 ${r.target_price}`].filter(Boolean);
-    if (meta.length) { L.push(''); L.push(meta.join('  |  ')); }
-    if (r.instruments?.length) { L.push('', `📈 提及个股：${r.instruments.join('、')}`); }
-    const conclusion = r.one_liner || (compactReport ? r.summary : '');
-    if (conclusion) { L.push(''); L.push(compactReport ? `💡 ${conclusion}` : `【核心结论】${conclusion}`); }
-    if (r.summary && r.summary.trim() !== (conclusion || '').trim()) { L.push('', compactReport ? '【综合综述】' : '【事件摘要】', r.summary); }
-    if (logicLines.length) {
-      L.push('', compactReport ? `【稻草财经 视角 · ${logicLines.length}条独立逻辑线】` : '【关键信息链 · 仅列原文明确内容】');
-      logicLines.forEach((line, i) => {
-        L.push(`${i + 1}. ${line.title || `逻辑线 ${i + 1}`}`);
-        if (line.evidence) L.push(`事实：${line.evidence}`);
-        if (line.chain) L.push(`${compactReport ? '传导' : '关联'}：${line.chain}`);
-        if (line.impact) L.push(`影响：${line.impact}`);
-        if (line.watch) L.push(`验证：${line.watch}`);
-      });
-    }
-    if (r.core_logic) { L.push('', compactReport ? '【核心逻辑】' : '【影响逻辑】', r.core_logic); }
-    if (bull.length) { L.push('', compactReport ? '【关键利好】' : '【积极因素（原文）】', ...bull.map((b, i) => `${i + 1}. ${b}`)); }
-    if (bear.length) { L.push('', compactReport ? '【主要风险】' : '【风险与不确定性】', ...bear.map((b, i) => `${i + 1}. ${b}`)); }
-    if (!compactReport && r.takeaway) { L.push('', `📌 关注重点：${r.takeaway}`); }
-    L.push('', '——————————', compactReport ? '稻草财经 终端 · AI 速读 · 提前发现' : '稻草财经 终端 · AI 新闻简报', site);
-    const text = L.join('\n');
-    try {
-      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); }
-      else {
-        const ta = document.createElement('textarea');
-        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-      }
-      setAiTextCopied(true); window.setTimeout(() => setAiTextCopied(false), 1800);
-      pingMetric('copy_text'); logAct('copy', aiReport?.title); showToast('✅ 已复制文字');
-    } catch { setAiTextCopied(false); showToast('⚠️ 复制失败，请手动选择文本'); }
-  }, [aiResult, aiDeepDraft, aiReport, aiReportMeta, pingMetric, logAct, showToast]);
+    const revision = getAuthSnapshot().revision;
+    const snapshot = aiImageScopeRef.current;
+    const isCurrent = () => aiExportMountedRef.current && isAuthRevisionCurrent(revision)
+      && aiImageScopeRef.current.result === snapshot.result && aiImageScopeRef.current.draft === snapshot.draft
+      && aiImageScopeRef.current.report === snapshot.report;
+    if (!aiExportText || aiLoading) return;
+    const copied = await copyText(aiExportText, isCurrent);
+    if (!isCurrent()) return;
+    setAiTextCopied(copied);
+    if (copied) {
+      window.setTimeout(() => { if (isCurrent()) setAiTextCopied(false); }, 1800);
+      pingMetric('copy_text'); logAct('copy', aiReport?.title); showToast('已复制完整解读文字');
+    } else showToast('复制失败，请手动选择文本');
+  }, [aiExportText, aiLoading, aiReport, pingMetric, logAct, showToast]);
 
   // ---- 命令面板远程搜索(去抖)----
   // 统一搜索：股票之外顺带聚合 快讯/研报/板块/名词学堂（/api/search/universal，端点缺失时优雅回退纯股票搜索）——
@@ -7006,9 +6983,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   {aiModalExpanded ? '↙ 还原' : '⛶ 放大'}
                 </button>
               )}
-              {aiResult && <button className="bbt-doc-copy" onClick={shareAiImage} disabled={aiImgBusy}>{aiImgBusy ? '生成中…' : '🖼 图片'}</button>}
               <button className="bbt-doc-close" onClick={closeAi} aria-label="关闭">✕ 关闭</button>
             </div>
+            {!aiLoading && (aiResult || aiDeepDraft) && aiExportText && <AiInterpretationExportActions
+              className="ai-interpretation-export--terminal"
+              text={aiExportText}
+              title={aiReport.title}
+              scopeKey={`${aiReport.title || ''}:${aiReport.date || ''}`}
+              onCopied={kind => { pingMetric(kind === 'text' ? 'copy_text' : 'copy_image'); logAct('copy', aiReport.title); }}
+            />}
             <div className={`bbt-ai-body${aiDeepDraft ? ' bbt-ai-body--deep' : ''}`}>
               {aiDeepDraft ? (
                 <div className="bbt-ai-deep-wrap">

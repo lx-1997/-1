@@ -4,16 +4,18 @@
  * 否则「复制邀请文案 / 链接 / 复盘」在微信里静默失败（分享恰恰都发生在微信里）。
  * iOS Safari 的 execCommand 复制需要 contentEditable + Range 选区的老套路才稳。
  */
-export async function copyText(text: string): Promise<boolean> {
-  if (!text) return false;
+export async function copyText(text: string, isCurrent: () => boolean = () => true): Promise<boolean> {
+  if (!text || !isCurrent()) return false;
   try {
     if (navigator.clipboard?.writeText && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
-      return true;
+      return isCurrent();
     }
   } catch { /* 落到 execCommand */ }
+  if (!isCurrent()) return false;
+  let ta: HTMLTextAreaElement | null = null;
   try {
-    const ta = document.createElement('textarea');
+    ta = document.createElement('textarea');
     ta.value = text;
     ta.contentEditable = 'true';
     ta.style.position = 'fixed';
@@ -28,11 +30,13 @@ export async function copyText(text: string): Promise<boolean> {
     sel?.removeAllRanges();
     sel?.addRange(range);
     ta.setSelectionRange(0, text.length);
+    if (!isCurrent()) return false;
     const ok = document.execCommand('copy');
     sel?.removeAllRanges();
-    document.body.removeChild(ta);
-    return ok;
+    return ok && isCurrent();
   } catch {
     return false;
+  } finally {
+    ta?.remove();
   }
 }
