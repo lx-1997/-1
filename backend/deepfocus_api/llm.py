@@ -577,7 +577,8 @@ class CloudResearchLLM:
             f"{prompt}\n\n"
             "上一次输出不是有效 JSON 或内容为空。请重新生成更短的 JSON object："
             f"{retry_schema_hint or '必须填充 title, summary, key_points, signals, risks, actions, sources, confidence；'}"
-            "不要 Markdown，不要解释文字；数组字段最多 3 项，每项不超过 18 个中文字符。"
+            + ("不要 Markdown，不要解释文字。" if retry_schema_hint else
+             "不要 Markdown，不要解释文字；数组字段最多 3 项，每项不超过 18 个中文字符。")
         )
         retry_text = await self._complete_text(
             retry_prompt,
@@ -594,7 +595,8 @@ class CloudResearchLLM:
                 f"{prompt}\n\n"
                 "上一次输出不是合法 JSON。请重新生成更短的严格 JSON："
                 f"{retry_schema_hint or ''}"
-                "不要 Markdown，不要解释文字；数组字段最多 5 项，每项不超过 24 个中文字符。"
+                + ("不要 Markdown，不要解释文字。" if retry_schema_hint else
+                 "不要 Markdown，不要解释文字；数组字段最多 5 项，每项不超过 24 个中文字符。")
             )
             retry_text = await self._complete_text(
                 retry_prompt,

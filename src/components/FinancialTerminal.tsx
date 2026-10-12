@@ -46,7 +46,7 @@ import { copyText } from '../utils/clipboard';
 import { shareImageNative } from '../utils/share';
 import { drawResearchDeepDraftImage, researchDeepDraftToText } from '../utils/researchDeepDraftImage';
 import { normalizeAiConversationHistory } from '../utils/aiConversationHistory';
-import { hydrateInterpretCache, persistInterpretEntry } from '../utils/aiInterpretCache';
+import { hydrateInterpretCache, persistInterpretEntry, isReusableNewsInterpretation, newsInterpretationCacheKey, dropInterpretCache } from '../utils/aiInterpretCache';
 import { normalizePublisherName } from '../utils/displayBrand';
 import { visiblePoll } from '../utils/visiblePoll';
 import { getNativeBackgroundStatus, getNativePushToken, nativeBackgroundSupported, openNativeBatterySettings, openNativeNotificationSettings, requestNativeBatteryOptimization, setNativeBackgroundFilters, startNativeBackground, stopNativeBackground } from '../services/nativeBackground';
@@ -1428,6 +1428,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [reportShareBusy, setReportShareBusy] = useState(false);
   const [shareModal, setShareModal] = useState<{ open: boolean; target: ShareTarget | null }>({ open: false, target: null });
   const aiRetryRef = useRef<null | (() => void)>(null);
+  const newsRegenerateRef = useRef<(message: RealtimeMessageRecord) => void>(() => {});
   // AI 解读后台任务表：ref 持有真身 + 版本号触发渲染（任务少，免整表拷贝）。
   const aiTasksRef = useRef<Map<string, AiBgTask>>(new Map());
   const [aiTasksVersion, setAiTasksVersion] = useState(0);
@@ -3424,14 +3425,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const markAiFreeUsed = useCallback(() => { try { localStorage.setItem('df_ai_free_day', new Date().toLocaleDateString('en-CA')); } catch { /* */ } }, []);
 
   // ===== AI 解读后台任务：立即返回不占界面，完成经 toast/浮标回到阅读模态 =====
-  const openAiReading = useCallback((v: { report: { title?: string; date?: string } | null; meta: { org?: string; symbol?: string; preview_url?: string } | null; result: AiAnalysis | null; deepDraft: ResearchDeepDraftInput; loading?: boolean; error?: string; original?: string; quick?: boolean }) => {
+  const openAiReading = useCallback((v: { report: { title?: string; date?: string } | null; meta: { org?: string; symbol?: string; preview_url?: string } | null; result: AiAnalysis | null; deepDraft: ResearchDeepDraftInput; loading?: boolean; error?: string; original?: string; quick?: boolean; retry?: () => void }) => {
     aiViewingTaskRef.current = '';
     setAiReport(v.report); setAiReportMeta(v.meta); setAiResult(v.result); setAiDeepDraft(v.deepDraft);
     setAiLoading(!!v.loading); setAiQuickPending(!!v.quick);
     setAiOriginal(v.original || '');
     setAiError(v.error || ''); setAiModalExpanded(false); setDfExpanded(true);
     setAiCopied(false); setAiTextCopied(false);
-    aiRetryRef.current = null;
+    aiRetryRef.current = v.retry || null;
     setAiTasksOpen(false);
   }, []);
 
@@ -3443,7 +3444,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       aiViewingTaskRef.current = key;  // 跟随任务：阶段/进度/完成实时同步进模态
       return;
     }
-    openAiReading({ report: t.report, meta: t.meta, result: t.result, deepDraft: t.deepDraft, error: t.status === 'error' ? t.error : '' });
+    openAiReading({ report: t.report, meta: t.meta, result: t.result, deepDraft: t.deepDraft, error: t.status === 'error' ? t.error : '', retry: t.kind === 'news' ? () => newsRegenerateRef.current({
+      id: t.key.replace(/^news:(?:v5:)?/, ''), title: t.report?.title || t.title,
+      content: t.content || '', url: '', created_at: t.report?.date || '',
+    } as RealtimeMessageRecord) : undefined });
     if (t.status === 'error') { aiViewingTaskRef.current = key; aiRetryRef.current = t.restart; }
   }, [openAiReading]);
 
@@ -3493,7 +3497,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     cur.status = 'error'; cur.error = msg;
     if (!cur.result && cur.quick) cur.result = cur.quick as AiAnalysis;
     setAiTasksVersion(v => v + 1);
-    if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); setAiQuickPending(false); }
+    if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); setAiQuickPending(false); aiRetryRef.current = cur.restart; }
     else if (!cur.hidden) showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
   }, [showToast, openAiTaskView, aiRetries]);
 
@@ -3640,26 +3644,34 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask, aiRetries]);
 
   // 快讯/文章解读：同研报后台任务化，完成经 toast/浮标回看。
-  const runNewsAi = useCallback(async (m: RealtimeMessageRecord) => {
+  const runNewsAi = useCallback(async (m: RealtimeMessageRecord, refresh = false) => {
     const revision = getAuthSnapshot().revision;
+    // Older task histories strip only "news:" from the new versioned key.
+    if (m.id?.startsWith('v5:')) m = { ...m, id: m.id.slice(3) };
     if (!authUserRef.current && aiFreeUsed()) {
       showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
       return;
     }
     logAct('ai_news', m.title);
     const report = { title: m.title, date: (m.created_at || '').slice(0, 10) };
-    const cacheKey = `news:${m.id || `${m.title}:${(m.content || '').slice(0, 80)}`}`;
+    const cacheKey = newsInterpretationCacheKey(m.id, m.title, m.content || '');
+    if (refresh) {
+      aiInterpretCacheRef.current.delete(cacheKey);
+      dropInterpretCache(cacheKey);
+      removeAiTask(cacheKey);
+    }
     const cached = aiInterpretCacheRef.current.get(cacheKey);
-    if (cached) {
-      openAiReading({ report, meta: null, result: cached.result, deepDraft: null });
+    if (cached && isReusableNewsInterpretation(cached.result)) {
+      openAiReading({ report, meta: null, result: cached.result, deepDraft: null, retry: () => void runNewsAi(m, true) });
       if (!authUserRef.current) markAiFreeUsed();
       return;
     }
+    if (cached) { aiInterpretCacheRef.current.delete(cacheKey); dropInterpretCache(cacheKey); }
     if (resumeAiTask(cacheKey)) return;
     registerAiTask({
       key: cacheKey, kind: 'news', title: m.title, report, meta: null,
       content: (m.content || '').slice(0, 20000),
-      restart: () => { removeAiTask(cacheKey); runNewsAi(m); },
+      restart: () => { void runNewsAi(m, true); },
       startedAt: Date.now(), status: 'running', stage: '', result: null, deepDraft: null, error: '',
     });
     // 立即打开阅读模态展示文章原文：解读在后台生成，完成后自动切换为解读结果
@@ -3667,9 +3679,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     showToast('✦ 已转入后台解读，完成后提醒你');
     try {
       const res = await apiPost<AiAnalysis>('/api/news/ai-analyze',
-        { title: m.title, content: m.content || '', url: m.url || '', message_id: m.id }, { timeout: 120000 });
+        { title: m.title, content: m.content || '', url: m.url || '', message_id: m.id, refresh }, { timeout: 150000 });
       if (!isAuthRevisionCurrent(revision)) return;
+      if (!isReusableNewsInterpretation(res)) throw new Error('解读未提取出有效事实，请重试。');
       settleAiTask(cacheKey, m.title, res, null);
+      if (aiViewingTaskRef.current === cacheKey) aiRetryRef.current = () => void runNewsAi(m, true);
     } catch (e: any) {
       if (!isAuthRevisionCurrent(revision)) return;
       const status = e?.response?.status ?? e?.status; const detail = e?.response?.data?.detail ?? e?.detail;
@@ -3677,6 +3691,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       failAiTask(cacheKey, (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) ? '解读超时了，请重试。' : (detail || e?.message || 'AI 解读失败，请稍后重试'));
     }
   }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
+  useEffect(() => { newsRegenerateRef.current = m => { void runNewsAi(m, true); }; }, [runNewsAi]);
 
   // 后台任务浮标：有运行中任务才开秒表 tick；进度/已用时长由 aiTaskPulse 按开始时刻推导。
   const [, setAiTick] = useState(0);
@@ -7111,6 +7126,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 {aiResult && aiReportMeta && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={shareReportInsight} disabled={reportShareBusy}>{reportShareBusy ? '生成链接中…' : '🔗 分享解读'}</button>}
                 {aiReportMeta?.preview_url && canViewResearchOriginal && <button className="bbt-ai-btn bbt-ai-btn--src" onClick={() => openResearchOriginal(aiReportMeta!.preview_url!)} disabled={!!pdfLoadingUrl}>{pdfLoadingUrl === aiReportMeta.preview_url ? '加载中…' : '原文 ↗'}</button>}
                 {aiError && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={() => aiRetryRef.current?.()}>↻ 重试</button>}
+                {aiResult && !aiReportMeta && !aiError && aiRetryRef.current && <button className="bbt-ai-btn bbt-ai-btn--copy" onClick={() => aiRetryRef.current?.()}>↻ 重新解读</button>}
                 <button className="bbt-ai-btn bbt-ai-btn--close" onClick={closeAi}>关闭</button>
               </div>
             )}

@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import fitz
+import httpx
 import pytest
 
 from deepfocus_api import research_vision as rv
@@ -147,6 +148,281 @@ def test_integrated_logic_lines_are_normalized_and_backfilled():
     assert first["chain"] == "订单增加→出货提升"
     assert first["impact"] == "相关公司"
     assert first["watch"] == "跟踪下季度出货"
+
+
+# --- news quality and cache recovery ---------------------------------------
+
+_SANCTIONS_TITLE = "路透社：中国因台湾问题对巴拉圭和伯利兹的部长实施制裁"
+_SANCTIONS_BODY = (
+    "中国自周一起对巴拉圭通信部长及伯利兹外长实施制裁，原因是这两个国家仍与台湾保持关系。"
+    "相关措施包括禁止两人入境香港和澳门，并禁止中国机构和个人与其进行交易或合作。"
+)
+
+
+def _failed_sanctions_result():
+    return {
+        "one_liner": "中国因台湾问题对巴拉圭和伯利兹的部长实施制裁",
+        "summary": "中国对巴拉圭和伯利兹的部长实施制裁，原因是台湾问题。具体措施和影响尚不明确。",
+        "core_logic": "", "logic_lines": [], "bullish": [], "bearish": [],
+        "confidence": 0.0,
+    }
+
+
+def _good_sanctions_result():
+    return {
+        "subject": "巴拉圭通信部长、伯利兹外长",
+        "one_liner": "两名部长被限制入境香港、澳门，并受到交易合作禁令",
+        "summary": "制裁从周一起实施，涉及巴拉圭通信部长及伯利兹外长。两人不得入境香港和澳门；中国机构和个人不得与其进行交易或合作。",
+        "core_logic": "两国仍与台湾保持关系，因此中国对相关部长实施制裁。",
+        "logic_lines": [
+            {"title": "两名部长入境受限", "evidence": "禁止两人入境香港和澳门", "chain": "", "impact": "巴拉圭通信部长、伯利兹外长", "watch": ""},
+            {"title": "交易合作受限", "evidence": "禁止中国机构和个人与两人交易或合作", "chain": "", "impact": "中国机构和个人", "watch": ""},
+        ],
+        "bullish": [], "bearish": [], "confidence": 0.85,
+    }
+
+
+@pytest.fixture
+def news_runtime(monkeypatch):
+    """Keep news tests deterministic and prevent writes to the shared store."""
+    from deepfocus_api import data_store
+
+    def setup(replies, cached=None):
+        class NewsLLM:
+            provider = "test"
+            model = "test-news-model"
+
+            def __init__(self):
+                self.replies = list(replies)
+                self.calls = []
+
+            async def complete_json(self, prompt, **kwargs):
+                self.calls.append((prompt, kwargs))
+                reply = self.replies.pop(0)
+                if isinstance(reply, Exception):
+                    raise reply
+                return reply
+
+        fake = NewsLLM()
+        writes = []
+        reads = []
+
+        def latest(kind, key, **kwargs):
+            reads.append((kind, key))
+            return cached
+
+        monkeypatch.setattr(rv, "CloudResearchLLM", lambda: fake)
+        monkeypatch.setattr(data_store, "latest", latest)
+        monkeypatch.setattr(data_store, "record", lambda kind, key, value: writes.append((kind, key, value)))
+        return fake, reads, writes
+
+    return setup
+
+
+def test_news_normalization_removes_legacy_report_placeholders_only():
+    legacy = rv.ensure_logic_lines({"summary": "事件摘要", "confidence": 0.0})
+    assert legacy["logic_lines"][0]["title"] == "信息边界"
+    cleaned = rv.normalize_news_result(legacy)
+    assert cleaned["logic_lines"] == []
+    assert rv.ensure_logic_lines(legacy)["logic_lines"]  # Report behavior remains intact.
+
+    cleaned = rv.normalize_news_result({
+        "summary": "两人不得入境香港和澳门。",
+        "core_logic": "原文未明确说明", "takeaway": "原文未提及",
+        "logic_lines": legacy["logic_lines"] + [{
+            "title": "入境限制", "evidence": "禁止入境香港和澳门",
+            "chain": "原文未明确说明", "impact": "两名部长", "watch": "原文未给出验证条件。",
+        }],
+    })
+    assert len(cleaned["logic_lines"]) == 1
+    assert cleaned["logic_lines"][0]["evidence"] == "禁止入境香港和澳门"
+    assert cleaned["logic_lines"][0]["chain"] == ""
+    assert cleaned["logic_lines"][0]["watch"] == ""
+    assert cleaned["core_logic"] == cleaned["takeaway"] == ""
+
+
+def test_news_quality_rejects_zero_confidence_and_title_without_new_facts():
+    assert rv.news_result_needs_refresh(_failed_sanctions_result(), _SANCTIONS_TITLE)
+    assert rv.news_result_needs_refresh({
+        "one_liner": _SANCTIONS_TITLE, "summary": _SANCTIONS_TITLE, "confidence": 0.9,
+    }, _SANCTIONS_TITLE)
+    assert rv.news_result_needs_refresh({"summary": "摘要", "confidence": float("nan")})
+    assert not rv.news_result_needs_refresh(_good_sanctions_result(), _SANCTIONS_TITLE)
+    # One concrete detail is enough for a short event; no row-count quota.
+    assert not rv.news_result_needs_refresh({
+        "one_liner": "公司发布新品", "summary": "新品定价299元，下周一发售。", "confidence": 0.7,
+    }, "公司发布新品")
+    assert not rv.news_result_needs_refresh({
+        "one_liner": "公司发布新品", "summary": "公司发布新品，定价299元。", "confidence": 0.7,
+    }, "公司发布新品")
+
+
+def test_news_retries_failed_sanctions_reading_and_keeps_both_measures(news_runtime):
+    fake, _, writes = news_runtime([_failed_sanctions_result(), _good_sanctions_result()])
+    result = asyncio.run(rv.analyze_news(_SANCTIONS_TITLE, _SANCTIONS_BODY))
+    assert len(fake.calls) == 2
+    assert "香港和澳门" in result["summary"]
+    assert "交易或合作" in result["summary"]
+    assert len(result["logic_lines"]) == 2
+    assert result["source_note"] == "基于提供的正文"
+    assert len(writes) == 1 and writes[0][1].startswith("NEWS:v5:")
+    for prompt, kwargs in fake.calls:
+        assert "禁止两人入境香港和澳门" in prompt
+        assert "具体措施" in kwargs["retry_schema_hint"]
+        assert "logic_lines" in kwargs["retry_schema_hint"]
+    assert "上次解读未达到质量要求" in fake.calls[1][0]
+
+
+def test_news_bad_internal_cache_is_regenerated(news_runtime):
+    fake, reads, writes = news_runtime([_good_sanctions_result()], cached=rv.ensure_logic_lines(_failed_sanctions_result()))
+    result = asyncio.run(rv.analyze_news(_SANCTIONS_TITLE, _SANCTIONS_BODY))
+    assert len(fake.calls) == len(writes) == 1
+    assert reads[0][1].startswith("NEWS:v5:")
+    assert result["logic_lines"][0]["title"] != "信息边界"
+
+
+def test_news_refresh_bypasses_good_internal_cache(news_runtime):
+    fake, reads, writes = news_runtime([_good_sanctions_result()], cached=_good_sanctions_result())
+    result = asyncio.run(rv.analyze_news(_SANCTIONS_TITLE, _SANCTIONS_BODY, refresh=True))
+    assert reads == []
+    assert len(fake.calls) == len(writes) == 1
+    assert "交易或合作" in result["summary"]
+
+
+@pytest.mark.parametrize("reply", [_failed_sanctions_result(), {}, ValueError("invalid JSON")])
+def test_news_real_body_failure_is_retryable_and_never_cached(news_runtime, reply):
+    fake, _, writes = news_runtime([reply, reply])
+    with pytest.raises(RuntimeError, match="自动重试后仍未达到质量要求"):
+        asyncio.run(rv.analyze_news(_SANCTIONS_TITLE, _SANCTIONS_BODY))
+    assert len(fake.calls) == 2
+    assert writes == []
+
+
+def test_news_title_only_fallback_is_honest_and_never_cached(news_runtime):
+    fake, _, writes = news_runtime([{}])
+    result = asyncio.run(rv.analyze_news("某公司今日发布新款产品", ""))
+    assert len(fake.calls) == 1
+    assert rv.is_title_only_result(result)
+    assert result["source_note"].startswith("⚠")
+    assert result["logic_lines"] == []
+    assert result["confidence"] == 0.0
+    assert writes == []
+
+
+def test_news_short_lead_failure_does_not_claim_body_unavailable(news_runtime):
+    _, _, writes = news_runtime([{}])
+    result = asyncio.run(rv.analyze_news("公司发布新品", "新品定价299元，下周一发售。"))
+    assert "299元" in result["one_liner"]
+    assert "原文正文不可得" not in result["one_liner"]
+    assert "标题和导语" in result["source_note"]
+    assert writes == []
+
+
+def test_news_generation_timeout_leaves_time_for_bounded_retry(news_runtime, monkeypatch):
+    fake, _, writes = news_runtime([])
+    cancelled = []
+
+    async def blocked(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
+    fake.complete_json = blocked
+    monkeypatch.setattr(rv, "_NEWS_ATTEMPT_TIMEOUTS", (0.01, 0.01))
+
+    async def run():
+        with pytest.raises(RuntimeError, match="自动重试后仍未达到质量要求"):
+            await asyncio.wait_for(rv.analyze_news(_SANCTIONS_TITLE, _SANCTIONS_BODY), 0.5)
+
+    asyncio.run(run())
+    assert len(cancelled) == 2
+    assert writes == []
+
+
+@pytest.mark.parametrize("url", [
+    "https://files.example.com/article.PNG?download=1",
+    "https://files.example.com/article.pdf",
+])
+def test_article_media_urls_skip_http_fetch(monkeypatch, url):
+    def no_client(*args, **kwargs):
+        raise AssertionError("Image/PDF source must use the original-text reader, not HTML fetch")
+
+    monkeypatch.setattr(rv.httpx, "AsyncClient", no_client)
+    assert asyncio.run(rv._fetch_article_text(url)) == ""
+
+
+@pytest.mark.parametrize("content_type,content", [
+    ("image/png", b"\x89PNG\r\n\x1a\n" + b"image-data" * 100),
+    ("text/html", b"\x89PNG\r\n\x1a\n" + b"image-data" * 100),
+    ("application/pdf", b"%PDF-1.7\n" + b"pdf-data" * 100),
+    ("text/plain", b"binary\x00payload" * 100),
+    ("application/octet-stream", b"opaque-binary-data"),
+])
+def test_article_fetch_rejects_binary_response(monkeypatch, content_type, content):
+    response = httpx.Response(200, headers={"Content-Type": content_type}, content=content)
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url):
+            return response
+
+    monkeypatch.setattr(rv.httpx, "AsyncClient", Client)
+    assert asyncio.run(rv._fetch_article_text("https://files.example.com/source")) == ""
+
+
+@pytest.mark.parametrize("content_type", ["text/html; charset=utf-8", "application/xhtml+xml"])
+def test_article_fetch_keeps_html_body(monkeypatch, content_type):
+    paragraph = "公司将在下周推出新品，售价299元，并在三个城市同步销售。"
+    response = httpx.Response(
+        200, headers={"Content-Type": content_type},
+        content=f"<html><body><p>{paragraph}</p><p>{paragraph}</p><p>{paragraph}</p></body></html>".encode("utf-8"),
+    )
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url):
+            return response
+
+    monkeypatch.setattr(rv.httpx, "AsyncClient", Client)
+    text = asyncio.run(rv._fetch_article_text("https://news.example.com/story"))
+    assert paragraph in text
+    assert "<p>" not in text
+
+
+def test_article_missing_mime_keeps_utf8_text_at_probe_boundary():
+    assert rv._article_response_is_text(httpx.Response(200, content=("正文" * 300).encode("utf-8")))
+    assert not rv._article_response_is_text(httpx.Response(200, content=b"\xff" * 600))
+
+
+def test_news_media_source_skips_text_fetch_callback(news_runtime, monkeypatch):
+    fake, _, _ = news_runtime([_good_sanctions_result()])
+
+    async def no_fetch(*args, **kwargs):
+        raise AssertionError("Do not replace cleaned article prose with screenshot bytes")
+
+    monkeypatch.setattr(rv, "_fetch_article_text", no_fetch)
+    result = asyncio.run(rv.analyze_news(
+        _SANCTIONS_TITLE, _SANCTIONS_BODY, url="https://files.example.com/uploads/article.png",
+    ))
+    assert result["source_note"] == "基于提供的正文"
+    assert _SANCTIONS_BODY in fake.calls[0][0]
 
 
 # --- analyze_pdf_vision ----------------------------------------------------

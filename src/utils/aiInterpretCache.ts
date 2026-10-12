@@ -26,6 +26,72 @@ const LEGACY_MIGRATED_MARKER = 'df_ai_interpret_legacy_migrated_v1';
 const LEGACY_STORE_KEY = STORE_BASE;
 const LEGACY_HISTORY_KEY = HISTORY_BASE;
 
+const NEWS_CACHE_PREFIX = 'news:v5:';
+const FAILED_NEWS_STATES = new Set([
+  'error', 'failed', 'failure', 'degraded', 'fallback', 'title_only',
+  'empty', 'missing', 'unavailable', 'insufficient_source', 'insufficient_content',
+]);
+// These are generated boundary placeholders, not facts or useful analysis.
+const NEWS_PLACEHOLDER = /^(?:信息边界|信息不足|暂无(?:正文|内容|分析|结论)|无(?:相关|明确|可核验|可核对|可验证)|不适用|未知|待补充|详见原文|仅据标题|仅根据标题)|^原文(?:未|没有|不含|不足|缺少|无法)/;
+const NEWS_UNKNOWN_ONLY = /^(?:具体)?(?:制裁)?(?:措施|影响)(?:和|与|及)?(?:措施|影响)?(?:尚|仍|暂)?(?:不明确|未知|不明|未明确|未披露|尚未明确)[。.!！\s]*$/;
+const newsText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+const hasNewsDetail = (value: unknown): boolean => {
+  const text = newsText(value);
+  return !!text && !NEWS_PLACEHOLDER.test(text) && !NEWS_UNKNOWN_ONLY.test(text);
+};
+
+function newsRepeatsTitle(text: string, title: string): boolean {
+  const compact = (value: string) => value
+    .replace(/^(?:路透社|路透|彭博社|彭博|Reuters|Bloomberg)\s*[:：]\s*/i, '')
+    .replace(new RegExp('[^\\p{L}\\p{N}]', 'gu'), '').toLowerCase();
+  const source = compact(title);
+  const candidate = compact(text);
+  if (!source || !candidate) return false;
+  const remainder = candidate.includes(source) ? candidate.replace(source, '') : null;
+  return candidate === source
+    || (remainder !== null && ['据标题', '标题称', '据报道', '报道称', '消息称', '核心结论', '事件摘要'].includes(remainder))
+    || (source.includes(candidate) && candidate.length >= source.length * 0.7);
+}
+
+/** Reject title-only and failed-generation cards, while allowing short, factual news. */
+export function isReusableNewsInterpretation(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  const value = result as Record<string, unknown>;
+  // data_quality.level is deliberately excluded: existing successful AI results
+  // use "degraded" there to describe source provenance, not generation failure.
+  if (['analysis_status', 'source_status', 'status'].some(field => (
+    FAILED_NEWS_STATES.has(newsText(value[field]).toLowerCase())
+  ))) return false;
+  if (value.is_title_only === true || value.title_only === true) return false;
+  const sourceNote = newsText(value.source_note);
+  if (!/标题(?:和|与|及)导语/.test(sourceNote) && /仅(?:据|根据|有|含|读取|获取|获得).*标题|标题级(?:概括|摘要|解读)/.test(sourceNote)) return false;
+  if (typeof value.confidence === 'number' && (!Number.isFinite(value.confidence) || value.confidence <= 0)) return false;
+  if (!hasNewsDetail(value.summary) && !hasNewsDetail(value.one_liner)) return false;
+
+  const title = newsText(value.title);
+  const additionalDetail = (detail: unknown) => hasNewsDetail(detail) && (!title || !newsRepeatsTitle(newsText(detail), title));
+  // A complete short summary needs no invented causal chain. Without a title
+  // we cannot distinguish a summary from a title rewrite, so retain the detail check.
+  if (title && [value.summary, value.one_liner].some(additionalDetail)) return true;
+  const lines = Array.isArray(value.logic_lines) ? value.logic_lines : [];
+  if (lines.some(line => line && typeof line === 'object' && !Array.isArray(line)
+    && ['evidence', 'chain', 'impact', 'watch'].some(field => additionalDetail((line as Record<string, unknown>)[field])))) return true;
+  if (['core_logic', 'takeaway'].some(field => additionalDetail(value[field]))) return true;
+  return ['bullish', 'bearish', 'key_points', 'risks'].some(field => (
+    Array.isArray(value[field]) && (value[field] as unknown[]).some(additionalDetail)
+  ));
+}
+
+/** Versioned independently from reports so old news cards cannot mask a corrected response. */
+export function newsInterpretationCacheKey(id: string | number | null | undefined, title = '', content = ''): string {
+  const identity = String(id ?? '').trim();
+  return `${NEWS_CACHE_PREFIX}${identity || `${title}:${content.slice(0, 80)}`}`;
+}
+
+function canReuseInterpretation(key: string, result: unknown): boolean {
+  return !key.startsWith('news:') || (key.startsWith(NEWS_CACHE_PREFIX) && isReusableNewsInterpretation(result));
+}
+
 /** 当前账号域下的真实存储键（未登录 → guest 命名空间）。 */
 function scopedKey(base: string): string {
   let accountId: string | null = null;
@@ -100,6 +166,7 @@ export function hydrateInterpretCache<T>(
   const now = Date.now();
   for (const [key, entry] of Object.entries(store)) {
     if (!entry || typeof entry.savedAt !== 'number' || now - entry.savedAt > TTL_MS) continue;
+    if (!canReuseInterpretation(key, entry.result)) continue;
     const value = revive(entry);
     if (value !== null) into.set(key, value);
   }
@@ -107,6 +174,7 @@ export function hydrateInterpretCache<T>(
 
 /** 保存一条解读；返回是否真正落盘。超大条目与配额耗尽时会放弃（调用方据此决定是否入历史）。 */
 export function persistInterpretEntry(key: string, entry: { result: unknown; deepDraft?: unknown }): boolean {
+  if (!canReuseInterpretation(key, entry.result)) return false;
   try {
     const store = readStore();
     const record: CachedInterpretation = { result: entry.result, deepDraft: entry.deepDraft, savedAt: Date.now() };
@@ -144,6 +212,16 @@ export function persistInterpretEntry(key: string, entry: { result: unknown; dee
     // 存储不可用等异常：缓存是尽力而为的加速层。
     return false;
   }
+}
+
+/** Remove the current account's persisted result; callers also remove their in-memory entry. */
+export function dropInterpretCache(key: string): void {
+  try {
+    const store = readStore();
+    if (!Object.prototype.hasOwnProperty.call(store, key)) return;
+    delete store[key];
+    localStorage.setItem(scopedKey(STORE_BASE), JSON.stringify(store));
+  } catch { /* Unavailable storage must not block regeneration. */ }
 }
 
 /** 解读记录历史：只存展示元数据，解读正文复用上面的结果缓存。 */

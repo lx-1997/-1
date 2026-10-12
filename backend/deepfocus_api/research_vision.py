@@ -13,6 +13,7 @@ import re
 import subprocess
 from html import unescape as _html_unescape
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
 import httpx
@@ -170,13 +171,13 @@ _SCHEMA_BLOCK = (
 # 新闻解读和研报解读不是同一种任务。新闻通常只有一个事件，不能为了满足
 # 研报的「四条逻辑线」契约而重复拆解，更不能把标题中的正面措辞直接升级成
 # 看多判断。新闻使用这套更短、更中性的结构，字段名仍保持兼容前端/API。
-# v4：面向双受众重写——新手能看懂「发生了什么、对我关心的股票意味着什么」，
+# v5：面向双受众整理——新手能看懂「发生了什么、影响谁」，
 # 专业用户能拿到「数字、代码、验证节点」；信息不足就诚实留空，绝不凑模板。
 _NEWS_SCHEMA_BLOCK = (
     "{\n"
     '  "subject": "标的：涉及的公司、资产或主题；只填原文明确出现的名称/代码，无法判断则留空",\n'
     '  "one_liner": "核心结论：一句话说清「谁 + 发生了什么 + 直接影响」；有明确涨跌方向就点明（如利好/承压），没有就只述事实；避免『报道称』以外的转述套话，60字内",\n'
-    '  "summary": "事件摘要：2-3句。第一句按『新手模式』写——只用大白话+最关键的一个数字，不堆术语；后续句按『专业模式』补齐原文的数字、时间、规模、对比基准。不补充外部背景，不重复核心结论",\n'
+    '  "summary": "事件摘要：2-4句。用大白话说明具体发生了什么，再补齐原文的措施、涉及主体、数字、时间、规模和对比基准；政策/制裁新闻优先讲清适用对象与实际限制。短新闻按已有事实写，不凑句数。不补充外部背景，不重复标题或核心结论",\n'
     '  "core_logic": "影响逻辑：仅在原文明确写出因果关系时，用『因为A → 所以B → 影响C』的一句式说明；原文没有明确因果关系则留空，不要写『逻辑不明』凑字",\n'
     '  "logic_lines": [{"title":"原文明确的独立信息点，用具体主体开头（如『华为涨价』而非『提价分析』）", "evidence":"可直接核对的事实或数字，保留原文单位（台/亿元/%）", "chain":"原文明确写出的关联/因果；没有则留空", "impact":"原文明确提及的影响对象或方向；没有则留空", "watch":"原文给出的指标、时间点或不确定性；没有则留空"}],\n'
     '  "bullish": ["原文明确写出的积极影响或上行因素，每条带上『为什么』的半句话；没有则给空数组，不要自行推导，最多3条"],\n'
@@ -188,6 +189,14 @@ _NEWS_SCHEMA_BLOCK = (
     '  "takeaway": "关注重点：只写原文给出的后续节点或需要核对的指标，写成『接下来盯什么』；没有则留空",\n'
     '  "confidence": 0.0到1.0之间的数字（表示信息是否充分，不表示涨跌预测把握）\n'
     "}"
+)
+
+_NEWS_RETRY_SCHEMA_HINT = (
+    "必须保持新闻结构：subject、one_liner、summary、core_logic、logic_lines、bullish、bearish、"
+    "instruments、market、rating、target_price、takeaway、confidence；"
+    "logic_lines 为对象数组，每项含 title/evidence/chain/impact/watch，没有独立信息点则为空数组。"
+    "summary 必须保留正文中的具体措施、主体、数字和单位，可用完整句子；"
+    "不要改成 title/signals/actions/sources 通用任务结构，不要用信息缺口占位，不要只复述标题。"
 )
 
 # 研报解读定位：中性、完整地复述研报重点（结论 → 综述 → 逻辑线 → 核心因果 → 利好/风险），
@@ -224,6 +233,9 @@ _STYLE_RULE = (
     "结论/摘要先用大白话讲清事实，再补专业细节；专业术语第一次出现时用半句话括注解释（如 HBM（高带宽内存）），之后可直接用；"
     "②不要把标题或单一正面措辞改写成‘看多/看空’、‘利好/利空’结论，除非原文明确如此判断；"
     "③只保留原文真实出现的事实、数字、时间、公司和因果关系，不得根据常识补全；"
+    "必须先核对正文中的具体措施、适用对象、日期、金额与单位，再组织摘要；"
+    "例如原文已写入境限制或交易禁令，就明确写出限制内容，不能概括成『具体措施不明』；"
+    "允许把原文措施换成容易理解的说法，但不推演原文没写的市场涨跌、行业受益或外部背景；"
     "④信息不足的字段直接留空——空比『原文未明确说明』『原文未提及』这种占位句子好得多，"
     "前端会隐藏空字段；已生成的字段之间不得机械重复；"
     "⑤logic_lines 最多3条、宁缺毋滥：只有存在彼此不同且可核对的信息点时才填一条，"
@@ -273,23 +285,91 @@ def clean_generated_text(value: Any) -> str:
     return "\n".join(re.sub(r"[ \t\u00a0　]+", " ", line).strip() for line in text.splitlines()).strip()
 
 
+_NEWS_PLACEHOLDER_RE = re.compile(
+    r"^(?:原文未提及|原文未明确说明|原文未形成可独立核对的分项事实|"
+    r"原文未明确说明事实到影响的传导|原文未明确提及受益或受压对象|"
+    r"原文未给出验证条件|报告未明确给出验证条件|报告核心逻辑|"
+    r"原文涉及的标的或对象|具体措施和影响尚不明确|暂无可用信息|信息边界|信息不足)[。.!！\s]*$"
+)
+_NEWS_UNKNOWN_ONLY_RE = re.compile(
+    r"^(?:具体)?(?:制裁)?(?:措施|影响)(?:和|与|及)?(?:措施|影响)?"
+    r"(?:尚|仍|暂)?(?:不明确|未知|不明|未明确|未披露|尚未明确)[。.!！\s]*$"
+)
+_NEWS_ATTEMPT_TIMEOUTS = (55.0, 70.0)
+
+
+def _clean_news_field(value: Any) -> str:
+    text = clean_generated_text(value)
+    return "" if _NEWS_PLACEHOLDER_RE.fullmatch(text) or _NEWS_UNKNOWN_ONLY_RE.fullmatch(text) else text
+
+
 def normalize_news_result(data: Any) -> dict[str, Any]:
-    """Normalize a news result without the report-only four-line backfill."""
+    """Clean news prose and remove report placeholders from historical caches."""
     result = dict(data) if isinstance(data, dict) else {}
     scalar_fields = ("subject", "one_liner", "summary", "core_logic", "takeaway", "df_take", "rating", "target_price")
     for field in scalar_fields:
         if field in result:
-            result[field] = clean_generated_text(result.get(field))
+            result[field] = _clean_news_field(result.get(field))
     for field in ("bullish", "bearish", "key_points", "risks", "instruments"):
         if field in result:
-            cleaned_items = [clean_generated_text(item) for item in _as_str_list(result.get(field), 8)]
+            cleaned_items = [_clean_news_field(item) for item in _as_str_list(result.get(field), 8)]
             result[field] = [item for item in cleaned_items if item]
-    result["logic_lines"] = [
-        {field: clean_generated_text(line.get(field, "")) for field in _LOGIC_LINE_FIELDS}
-        for line in _normalize_logic_lines(result.get("logic_lines"), 3)
-        if isinstance(line, dict)
-    ]
+    lines: list[dict[str, str]] = []
+    for line in _normalize_logic_lines(result.get("logic_lines"), 6):
+        cleaned = {field: _clean_news_field(line.get(field, "")) for field in _LOGIC_LINE_FIELDS}
+        # A heading alone is not a fact. In particular, the old report fallback
+        # manufactures an "信息边界" heading over four missing-information rows.
+        if any(cleaned[field] for field in _LOGIC_LINE_FIELDS if field != "title"):
+            lines.append(cleaned)
+        if len(lines) >= 3:
+            break
+    result["logic_lines"] = lines
     return result
+
+
+def _news_repeats_title(text: str, title: Optional[str]) -> bool:
+    def compact(value: str) -> str:
+        # Publisher labels are metadata, not additional news detail.
+        value = re.sub(r"^(?:路透社|路透|彭博社|彭博|Reuters|Bloomberg)\s*[:：]\s*", "", value, flags=re.I)
+        return re.sub(r"[\W_]+", "", value).casefold()
+
+    source = compact(title or "")
+    candidate = compact(text)
+    if not source or not candidate:
+        return False
+    remainder = candidate.replace(source, "", 1) if source in candidate else None
+    return candidate == source or remainder in {
+        "据标题", "标题称", "据报道", "报道称", "消息称", "核心结论", "事件摘要",
+    } or (candidate in source and len(candidate) >= len(source) * 0.7)
+
+
+def news_result_needs_refresh(data: Any, title: Optional[str] = None) -> bool:
+    """Reject failed/news-title shells before serving or storing either cache.
+
+    No minimum row count or output length is imposed: one concrete event can
+    be complete. Zero confidence, missing prose and a title without any new
+    facts must not qualify as a successful article interpretation.
+    """
+    if not isinstance(data, dict) or not data or is_title_only_result(data):
+        return True
+    if "confidence" in data:
+        try:
+            confidence = float(data["confidence"])
+        except (TypeError, ValueError):
+            return True
+        if not math.isfinite(confidence) or confidence <= 0:
+            return True
+    result = normalize_news_result(data)
+    if not any(result.get(field) for field in ("one_liner", "summary")):
+        return True
+    details = [str(result.get(field) or "") for field in ("one_liner", "summary", "core_logic", "takeaway", "df_take")]
+    details.extend(result.get("bullish") or result.get("key_points") or [])
+    details.extend(result.get("bearish") or result.get("risks") or [])
+    details.extend(
+        line[field] for line in result["logic_lines"]
+        for field in _LOGIC_LINE_FIELDS if field != "title"
+    )
+    return not any(text and not _news_repeats_title(text, title) for text in details)
 
 
 _LOGIC_LINE_FIELDS = ("title", "evidence", "chain", "impact", "watch")
@@ -653,6 +733,37 @@ _STRIP_NOISE_RE = re.compile(r"(?is)<(script|style|noscript|template|svg)[^>]*>.
 _BLOCK_RE = re.compile(r"(?is)<(?:p|h[1-4]|li|blockquote|article|section|td)[^>]*>(.*?)</(?:p|h[1-4]|li|blockquote|article|section|td)>")
 _TAG_RE = re.compile(r"(?s)<[^>]+>")
 _WS_RE = re.compile(r"\s+")  # 块内空白(含换行/回车)统一折叠成单空格；段落间分隔由 join('\n') 保留
+_ARTICLE_MEDIA_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".pdf"})
+
+
+def _article_url_is_media(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return any(path.endswith(suffix) for suffix in _ARTICLE_MEDIA_SUFFIXES)
+
+
+def _article_response_is_text(response: httpx.Response) -> bool:
+    """Prevent source screenshots/PDF bytes from becoming model input prose."""
+    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type and not (content_type.startswith("text/") or content_type == "application/xhtml+xml"):
+        return False
+    head = response.content[:512]
+    if head.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"BM", b"%PDF-", b"RIFF")):
+        return False
+    if any(byte < 32 and byte not in (9, 10, 13) for byte in head):
+        return False
+    if not content_type:
+        # A missing MIME header is common on old article endpoints. Require
+        # recognizable markup or decodable text instead of guessing binary.
+        if head.lstrip().startswith(b"<"):
+            return True
+        try:
+            head.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # The 512-byte probe may end in the middle of a valid CJK code
+            # point. Reject invalid encoding, not that sampling boundary.
+            if exc.reason != "unexpected end of data":
+                return False
+    return True
 
 
 async def _fetch_article_text(url: Optional[str], max_chars: int = MAX_TEXT_CHARS) -> str:
@@ -663,13 +774,15 @@ async def _fetch_article_text(url: Optional[str], max_chars: int = MAX_TEXT_CHAR
     抽不出再整页去标签兜底。任何失败(超时/被墙/反爬/付费墙)都返回空串 → 上层回退「仅据标题」。"""
     if not url or not url.startswith(("http://", "https://")):
         return ""
+    if _article_url_is_media(url):
+        return ""
     try:
         async with httpx.AsyncClient(
             trust_env=False, timeout=8.0, follow_redirects=True,
             headers={"User-Agent": _FETCH_UA, "Accept": "text/html,application/xhtml+xml"},
         ) as client:
             resp = await client.get(url)
-        if resp.status_code != 200:
+        if resp.status_code != 200 or not _article_response_is_text(resp):
             return ""
         html = resp.text or ""
     except Exception:
@@ -719,7 +832,9 @@ def is_title_only_result(result: Optional[dict]) -> bool:
     return str((result or {}).get("one_liner", "")).startswith("该条目仅有标题")
 
 
-async def analyze_news(title: Optional[str], content: str, url: Optional[str] = None) -> dict[str, Any]:
+async def analyze_news(
+    title: Optional[str], content: str, url: Optional[str] = None, *, refresh: bool = False,
+) -> dict[str, Any]:
     """对一条财经新闻做大白话 AI 解读，返回与研报同构的结构（可复用同一前端卡片）。
 
     解读深度取决于喂进去的料：很多聚合「文章/综述」入库只有标题或一句导语，正文留在 url。
@@ -729,69 +844,87 @@ async def analyze_news(title: Optional[str], content: str, url: Optional[str] = 
     if len((title or "") + body) < 8:
         raise RuntimeError("新闻内容过短，无需解读")
     # 正文太薄(<200字，多半只有标题/导语)且有原文链接 → 尽力补抓全文。抓取失败静默回退。
-    source_note = ""
-    if len(body) < 200 and url:
+    source_note = "基于提供的正文"
+    if len(body) < 200 and url and not _article_url_is_media(url):
         fetched = await _fetch_article_text(url)
         if len(fetched) >= 300 and len(fetched) > len(body):
             body = fetched
-            source_note = "已读取原文全文"
-    thin = len(body) < 80  # 抓完仍极短 = 实质只有标题
+            source_note = "已读取原文正文"
+    thin = len(body) < 80
     if thin:
-        source_note = "⚠ 原文信息有限，本解读仅据标题概括"
+        source_note = (
+            "⚠ 原文信息有限，仅据现有标题和导语整理"
+            if body else "⚠ 原文信息有限，本解读仅据标题概括"
+        )
     # 同一条资讯(标题+最终正文相同)的 AI 解读结果稳定，按内容哈希缓存 14 天。
     # 抓到全文后 body 变化→哈希变→自然产生新的(更优的)缓存，不会复用旧的薄版本。
-    # v3 invalidates the old forced-four-line/news-stance interpretation.
-    cache_key = "NEWS:v4:" + hashlib.md5(((title or "") + "\x00" + body).encode("utf-8")).hexdigest()
+    # v5 invalidates report placeholders and zero-confidence/title-only shells.
+    cache_key = "NEWS:v5:" + hashlib.md5(((title or "") + "\x00" + body).encode("utf-8")).hexdigest()
     try:
         from . import data_store
 
-        cached = data_store.latest("news_ai", cache_key, max_age_seconds=14 * 86400)
-        if isinstance(cached, dict) and cached:
+        cached = None if refresh else data_store.latest("news_ai", cache_key, max_age_seconds=14 * 86400)
+        if isinstance(cached, dict) and not news_result_needs_refresh(cached, title):
             return normalize_news_result(cached)
     except Exception:
         data_store = None
     llm = CloudResearchLLM()
     if llm.provider == "mock":
         raise RuntimeError("当前为本地演示模型，无法做 AI 解读；请配置云端模型。")
-    # News has fewer fields than a report and should feel instant. Keep the
-    # output budget below the report budget; normalization supplies empty
-    # optional arrays instead of waiting for padded prose.
-    data = await llm.complete_json(
-        _build_news_prompt(title, body), max_tokens=1800, timeout_seconds=30,
-    )
-    # 正文太薄(只有标题)时，模型常按"不得编造"的纪律返回全空字段（实测 one_liner/
-    # summary 均为空串）。原样交给 _normalize_result 会抛「模型未返回可用解读」→ 接口
-    # 502，用户看到"AI 解读失败"且重试同样失败。这里降级为只用标题本身的一句话概括
-    # （不新增任何事实），并把 source_note 标成"仅据标题"，让前端照常展示取材边界。
-    degraded = False
-    try:
-        result = _normalize_result(
-            data,
-            provider=llm.model,
-            pages=0,
-            disclaimer=_TEXT_DISCLAIMER,
-            logic_line_limit=3,
-            backfill_logic_lines=False,
+    prompt = _build_news_prompt(title, body)
+    result: Optional[dict[str, Any]] = None
+    for attempt in range(1 if thin else 2):
+        retry_prompt = prompt if attempt == 0 else prompt + (
+            "\n\n上次解读未达到质量要求：请重新逐项核对正文中的具体措施、涉及主体、"
+            "日期、数字与单位，将原标题没有交代的事实写入 summary 或 logic_lines。"
+            "原文已给出细节时，不得说措施或影响不明；没有因果、市场影响就留空，"
+            "不要生成信息边界占位，也不要为了提高置信度编造事实。"
         )
-    except RuntimeError:
-        result = _normalize_result(
-            {"one_liner": _title_only_one_liner(title)},
-            provider=llm.model,
-            pages=0,
-            disclaimer=_TEXT_DISCLAIMER,
-            logic_line_limit=3,
-            backfill_logic_lines=False,
+        try:
+            data = await asyncio.wait_for(
+                llm.complete_json(
+                    retry_prompt, max_tokens=1800 if attempt == 0 else 2400,
+                    timeout_seconds=30 if attempt == 0 else 45,
+                    retry_schema_hint=_NEWS_RETRY_SCHEMA_HINT,
+                ),
+                timeout=_NEWS_ATTEMPT_TIMEOUTS[attempt],
+            )
+        except (ValueError, asyncio.TimeoutError):
+            # JSON retries can still yield an unusable object. A real body
+            # deserves another extraction attempt, not a "missing body" claim.
+            continue
+        if news_result_needs_refresh(data, title):
+            continue
+        try:
+            candidate = _normalize_result(
+                data, provider=llm.model, pages=0, disclaimer=_TEXT_DISCLAIMER,
+                logic_line_limit=3, backfill_logic_lines=False,
+            )
+        except RuntimeError:
+            continue
+        candidate = normalize_news_result(candidate)
+        if not news_result_needs_refresh(candidate, title):
+            result = candidate
+            break
+    if result is None:
+        if not thin:
+            raise RuntimeError("新闻解读未提取正文中的关键事实，自动重试后仍未达到质量要求，请重试。")
+        # A genuinely short source may have no additional facts. Describe the
+        # available title/lead honestly and never persist this degraded shell.
+        one_liner = (
+            f"原文信息有限，据现有标题和导语整理：{body}"
+            if body else _title_only_one_liner(title)
         )
-        # 必须覆盖而非 or：抓到全文但模型仍空返回时，「已读取原文全文」会与
-        # 「据标题概括」的正文同屏矛盾（页脚声称读了全文、正文说正文不可得）。
-        source_note = "⚠ 原文信息有限，本解读仅据标题概括，未逐条核验"
-        degraded = True
-    result = normalize_news_result(result)
-    if source_note:
-        result["source_note"] = source_note
-    # 模型空返回的降级产物不进缓存：这是当次调用失败而非内容本质，缓存住会让
-    # 用户在抓取/模型质量改善后仍长期看到降级壳（重试有机会拿到完整解读）。
-    if data_store is not None and not degraded:
+        result = _normalize_result(
+            {"one_liner": one_liner, "confidence": 0.0},
+            provider=llm.model, pages=0, disclaimer=_TEXT_DISCLAIMER,
+            logic_line_limit=3, backfill_logic_lines=False,
+        )
+        source_note += "，未逐条核验"
+    result["source_note"] = source_note
+    # Failed and title-only shells never enter the long-lived cache. A retry
+    # can then recover immediately when model/source quality improves.
+    if data_store is not None and not news_result_needs_refresh(result, title):
         try:
             await asyncio.to_thread(data_store.record, "news_ai", cache_key, result)
         except Exception:

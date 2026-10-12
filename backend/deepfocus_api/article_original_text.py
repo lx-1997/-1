@@ -392,6 +392,17 @@ class ArticleOriginalText:
     def content(self) -> str:
         return "\n\n".join(self.paragraphs)
 
+    @property
+    def source_note(self) -> str:
+        """Describe the actual extraction coverage without claiming a full read."""
+        if self.parser == "stored-fallback":
+            return "⚠ 原文提取未完成，仅使用已收录正文"
+        if self.truncated:
+            return "⚠ 原文仅提取部分内容，解读覆盖范围有限"
+        if self.parser == "stored-text":
+            return "已读取已收录正文"
+        return "已读取原文正文"
+
 
 @dataclass(frozen=True)
 class _DownloadedSource:

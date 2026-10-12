@@ -1176,6 +1176,8 @@ class NewsAnalyzeRequest(BaseModel):
     url: Optional[str] = None
     # 文章可带消息 id；服务端优先读取已预热的纯文字原文。
     message_id: Optional[str] = None
+    # Explicit user retry bypasses both news result caches; quota still applies.
+    refresh: bool = False
 
 
 class ResearchLogicLine(BaseModel):

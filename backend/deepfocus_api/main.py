@@ -338,6 +338,7 @@ from .research_vision import (
     ensure_report_depth,
     is_title_only_result,
     normalize_news_result,
+    news_result_needs_refresh,
     report_depth_needs_refresh,
 )
 from .research_digest import generate_deep_draft, neutralize_deep_draft, resolve_source_documents
@@ -8581,20 +8582,28 @@ async def run_news_prewarm() -> None:
                 # gets cached under a different raw-content key and the user
                 # still sees the unclean interpretation on first open.
                 model_content = content
+                model_url = url or None
+                original_source_note = ""
                 try:
                     original = await extract_article_original_text(m)
                     if original.content.strip():
                         model_content = original.content
+                        model_url = None  # Keep the cleaned source; do not re-fetch a screenshot as text.
+                        original_source_note = original.source_note
                 except Exception:  # noqa: BLE001 - keep prewarm best-effort
                     pass
                 # 太短且无原文链接才跳过；有链接的薄文章正好交给抓全文补料（这类才是「解读简略」的元凶）
                 if len(title + content) < 60 and not url:
                     continue
-                key = "news:v4:" + _hashlib.sha1(f"{title}\n{model_content}".encode("utf-8")).hexdigest()[:20]
-                if metrics_get_ai_cache(key):
+                key = "news:v5:" + _hashlib.sha1(f"{title}\n{model_content}".encode("utf-8")).hexdigest()[:20]
+                if not news_result_needs_refresh(metrics_get_ai_cache(key), title):
                     continue
                 try:
-                    result = await analyze_news(title, model_content, url=url or None)
+                    result = await analyze_news(title, model_content, url=model_url)
+                    if news_result_needs_refresh(result, title):
+                        continue
+                    if original_source_note and result.get("source_note", "") in ("", "基于提供的正文"):
+                        result["source_note"] = original_source_note
                     metrics_set_ai_cache(key, result)
                     done += 1
                 except asyncio.CancelledError:
@@ -9623,6 +9632,7 @@ async def api_news_ai_analyze(
     import hashlib as _hashlib
     title = (request.title or "").strip()
     content = (request.content or "").strip()
+    model_url = (request.url or "").strip() or None
     # 文章入库后已经在后台预热纯文字原文。带 message_id 时优先使用它，避免
     # 图片编码残片或只有导语的 content 被误当成完整正文交给模型。
     original_source_note = ""
@@ -9635,17 +9645,17 @@ async def api_news_ai_analyze(
                 # full-page capture is normally shorter than the raw page, so
                 # comparing lengths here accidentally sent Bloomberg/Reuters
                 # navigation and related stories back to the model.
-                if original.content.strip() and (
-                    original.parser != "stored-text" or len(original.content) >= 80
-                ):
+                if original.content.strip():
                     content = original.content
-                    original_source_note = "已读取原文全文"
+                    model_url = None  # The original extractor already handled HTML/PDF/image content.
+                    original_source_note = original.source_note
             except Exception:  # noqa: BLE001 - 保留导语作为降级输入
-                pass
-    # v3 invalidates the old forced-four-line/news-stance interpretation and
-    # keys the result on the actual body sent to the model.
-    cache_key = "news:v4:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
-    cached_result = metrics_get_ai_cache(cache_key)  # 先探缓存，决定非会员能否放行
+                original_source_note = "⚠ 原文提取未完成，仅使用已收录正文"
+    # v5 rejects old zero-confidence/title-repetition cards in both cache layers.
+    cache_key = "news:v5:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
+    cached_result = None if request.refresh else metrics_get_ai_cache(cache_key)
+    if news_result_needs_refresh(cached_result, title):
+        cached_result = None
     quota_key = _check_ai_quota(_user, "wz", http_req, cached=cached_result is not None)
     metrics_incr("ai_news")  # 统计文章 AI 解读点击次数
     if title:  # 文章热度榜
@@ -9660,7 +9670,7 @@ async def api_news_ai_analyze(
         # 取料充分度：降级标注（⚠ 仅据标题）优先于「已读取原文全文」——两者同屏必须一致，
         # 不能页脚说读了全文、正文却说正文不可得（历史 bug：无条件覆盖导致自相矛盾）。
         _src_note = (result.get("source_note") or "").strip()
-        if original_source_note and not _src_note.startswith("⚠"):
+        if original_source_note and _src_note in ("", "基于提供的正文"):
             _src_note = original_source_note
         if not _src_note.startswith("⚠") and is_title_only_result(result):
             # 修复前写入缓存的降级结果带着错误的「已读取原文全文」，读路径按正文特征治愈
@@ -9704,7 +9714,7 @@ async def api_news_ai_analyze(
                     channel="web",
                     timeout_seconds=150.0,
                 ),
-                lambda: analyze_news(title, content, url=(request.url or "").strip() or None),
+                lambda: analyze_news(title, content, url=model_url, refresh=request.refresh),
                 route="news-vision",
             )
             result = core_result.raw
@@ -9712,12 +9722,13 @@ async def api_news_ai_analyze(
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
-    # 降级标注优先；模型空返回的「据标题概括」产物不进缓存——重试才有机会拿到完整解读
+    # Never turn a failed generation into a completed, long-lived interpretation.
+    if news_result_needs_refresh(result, title):
+        raise HTTPException(status_code=502, detail="解读未通过内容完整性检查，请重试。")
     result_note = (result.get("source_note") or "").strip()
-    if original_source_note and not result_note.startswith("⚠"):
+    if original_source_note and result_note in ("", "基于提供的正文"):
         result["source_note"] = original_source_note
-    if not is_title_only_result(result):
-        metrics_set_ai_cache(cache_key, result)
+    metrics_set_ai_cache(cache_key, result)
     if quota_key: _complete_cost_quota(quota_key)
     return _resp(result, core_result)
 

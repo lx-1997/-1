@@ -1,11 +1,31 @@
-import { hydrateInterpretCache, persistInterpretEntry, type CachedInterpretation } from '../../utils/aiInterpretCache';
+import { dropInterpretCache, hydrateInterpretCache, isReusableNewsInterpretation, newsInterpretationCacheKey, persistInterpretEntry, type CachedInterpretation } from '../../utils/aiInterpretCache';
 import { accountStorageKey } from '../../utils/accountStorage';
+import { authenticateSession, invalidateAuthSession } from '../../state/authSession';
 
 // 测试无登录态 → guest 域（与 utils.scopedKey 的计算保持一致）
 const STORE_KEY = accountStorageKey('df_ai_interpret_cache_v1', null);
+const factualNews = {
+  summary: '中国对巴拉圭和伯利兹的部长实施制裁。',
+  logic_lines: [{ title: '制裁对象', evidence: '对象为两国部长，原因涉及台湾问题。' }],
+};
+const boundaryCard = {
+  one_liner: '中国因台湾问题对巴拉圭和伯利兹的部长实施制裁',
+  summary: '具体措施和影响尚不明确。',
+  logic_lines: [{
+    title: '信息边界',
+    evidence: '原文未形成可独立核对的分项事实。',
+    chain: '原文未明确说明事实到影响的传导。',
+    impact: '原文未明确提及受益或受压对象。',
+    watch: '原文未给出验证条件。',
+  }],
+};
+const signIn = (id: string) => authenticateSession({
+  id, username: id, email: null, role: 'viewer', is_active: true, created_at: '',
+}, `test-${id}`, 'https://example.test');
 
 describe('aiInterpretCache', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => { invalidateAuthSession(); localStorage.clear(); });
+  afterEach(() => invalidateAuthSession());
 
   it('round-trips an entry across hydration', () => {
     persistInterpretEntry('report:abc', { result: { one_liner: '结论' }, deepDraft: { title: '深稿' } });
@@ -83,5 +103,173 @@ describe('aiInterpretCache', () => {
     const into = new Map<string, unknown>();
     expect(() => hydrateInterpretCache(into, raw => raw.result)).not.toThrow();
     expect(into.size).toBe(0);
+  });
+
+  it('caches a short factual news item without requiring a confidence score', () => {
+    const key = newsInterpretationCacheKey('short');
+    expect(isReusableNewsInterpretation(factualNews)).toBe(true);
+    expect(persistInterpretEntry(key, { result: factualNews })).toBe(true);
+    const into = new Map<string, unknown>();
+    hydrateInterpretCache(into, raw => raw.result);
+    expect(into.get(key)).toEqual(factualNews);
+  });
+
+  it('caches a complete summary with concrete measures beyond its title and no logic lines', () => {
+    const result = {
+      title: '路透社：中国对两国部长实施制裁',
+      one_liner: '中国对两国部长实施制裁。',
+      summary: '制裁措施包括禁止入境，以及冻结境内财产。',
+      logic_lines: [], confidence: 0.8,
+    };
+    const key = newsInterpretationCacheKey('summary-facts');
+    expect(isReusableNewsInterpretation(result)).toBe(true);
+    expect(persistInterpretEntry(key, { result })).toBe(true);
+    const into = new Map<string, unknown>();
+    hydrateInterpretCache(into, raw => raw.result);
+    expect(into.get(key)).toEqual(result);
+  });
+
+  it('allows a one-line conclusion that adds a concrete measure beyond the title', () => {
+    expect(isReusableNewsInterpretation({
+      title: '中国对两国部长实施制裁', one_liner: '制裁包含禁止两国部长入境。',
+      summary: '', logic_lines: [],
+    })).toBe(true);
+  });
+
+  it.each([
+    '中国对两国部长实施制裁。',
+    '据报道：中国对两国部长实施制裁！',
+    '事件摘要：中国对两国部长实施制裁',
+    '中国对两国部长实施制裁',
+  ])('rejects a summary that only repeats the title after publisher/punctuation normalization: %s', summary => {
+    const result = { title: '路透社：中国对两国部长实施制裁', summary, logic_lines: [] };
+    expect(isReusableNewsInterpretation(result)).toBe(false);
+    expect(persistInterpretEntry(newsInterpretationCacheKey('repeat'), { result })).toBe(false);
+  });
+
+  it.each(['具体措施和影响尚不明确。', '影响未知。', '原文未明确说明。', '信息边界'])('rejects unknown-only prose despite having a title: %s', summary => {
+    expect(isReusableNewsInterpretation({
+      title: '路透社：中国对两国部长实施制裁',
+      one_liner: '中国对两国部长实施制裁。', summary, logic_lines: [],
+    })).toBe(false);
+  });
+
+  it('does not treat the repeated title in a logic row as additional evidence', () => {
+    const title = '中国对两国部长实施制裁';
+    expect(isReusableNewsInterpretation({
+      title, summary: title, logic_lines: [{ title: '制裁', evidence: title }],
+    })).toBe(false);
+  });
+
+  it('rejects zero-confidence cards even when the source note claims full text', () => {
+    const result = { ...factualNews, confidence: 0, source_note: '已读取原文全文' };
+    const key = newsInterpretationCacheKey('zero');
+    expect(isReusableNewsInterpretation(result)).toBe(false);
+    expect(persistInterpretEntry(key, { result })).toBe(false);
+    expect(localStorage.getItem(STORE_KEY)).toBeNull();
+  });
+
+  it.each([0, -0.1, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid confidence %s', confidence => {
+    expect(isReusableNewsInterpretation({ ...factualNews, confidence })).toBe(false);
+  });
+
+  it('rejects boundary placeholders and summary-only cards', () => {
+    expect(isReusableNewsInterpretation(boundaryCard)).toBe(false);
+    expect(persistInterpretEntry(newsInterpretationCacheKey('boundary'), { result: boundaryCard })).toBe(false);
+    expect(isReusableNewsInterpretation({ summary: factualNews.summary, one_liner: '部长受到制裁' })).toBe(false);
+    expect(isReusableNewsInterpretation({ ...factualNews, logic_lines: [{ title: '信息边界' }] })).toBe(false);
+  });
+
+  it('keeps concrete evidence when other lines acknowledge an information gap', () => {
+    const result = { ...factualNews, logic_lines: [...boundaryCard.logic_lines, ...factualNews.logic_lines] };
+    expect(isReusableNewsInterpretation(result)).toBe(true);
+  });
+
+  it.each(['⚠ 仅据标题概括', '仅根据标题解读', '仅读取标题，未获取正文', '标题级摘要'])('rejects title-only source note %s', source_note => {
+    expect(isReusableNewsInterpretation({ ...factualNews, source_note })).toBe(false);
+  });
+
+  it('keeps factual short leads readable while rejecting failed lead-only shells', () => {
+    const source_note = '⚠ 原文信息有限，仅据现有标题和导语整理';
+    expect(isReusableNewsInterpretation({ ...factualNews, confidence: 0.8, source_note })).toBe(true);
+    expect(isReusableNewsInterpretation({ ...boundaryCard, source_note })).toBe(false);
+  });
+
+  it.each([
+    { analysis_status: 'failed' }, { analysis_status: 'degraded' },
+    { source_status: 'title_only' }, { status: 'error' }, { is_title_only: true },
+  ])('honors explicit failed-generation or source status %s', status => {
+    expect(isReusableNewsInterpretation({ ...factualNews, ...status })).toBe(false);
+  });
+
+  it('does not mistake source-provenance data quality for generation failure', () => {
+    const result = { ...factualNews, confidence: 0.75, data_quality: { level: 'degraded', label: 'AI 解读' } };
+    expect(isReusableNewsInterpretation(result)).toBe(true);
+  });
+
+  it('ignores old-version and invalid persisted news but keeps report behavior', () => {
+    const currentKey = newsInterpretationCacheKey('current');
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      'news:legacy': { result: factualNews, savedAt: Date.now() },
+      'news:v4:previous': { result: factualNews, savedAt: Date.now() },
+      [currentKey]: { result: factualNews, savedAt: Date.now() },
+      [newsInterpretationCacheKey('bad')]: { result: boundaryCard, savedAt: Date.now() },
+      'report:unchanged': { result: { confidence: 0, summary: '标题级旧研报' }, savedAt: Date.now() },
+    }));
+    const into = new Map<string, unknown>();
+    hydrateInterpretCache(into, raw => raw.result);
+    expect(Array.from(into.keys()).sort()).toEqual([currentKey, 'report:unchanged'].sort());
+    expect(persistInterpretEntry('news:legacy', { result: factualNews })).toBe(false);
+    expect(persistInterpretEntry('report:zero', { result: { confidence: 0 } })).toBe(true);
+  });
+
+  it('uses the same id-first key with a versioned title/content fallback', () => {
+    expect(newsInterpretationCacheKey('123', 'Title', 'Body')).toBe('news:v5:123');
+    expect(newsInterpretationCacheKey('', 'Title', 'x'.repeat(90))).toBe(`news:v5:Title:${'x'.repeat(80)}`);
+  });
+
+  it('keeps news TTL enforcement alongside the quality check', () => {
+    const key = newsInterpretationCacheKey('expired');
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      [key]: { result: factualNews, savedAt: Date.now() - 8 * 24 * 60 * 60 * 1000 },
+    }));
+    const into = new Map<string, unknown>();
+    hydrateInterpretCache(into, raw => raw.result);
+    expect(into.has(key)).toBe(false);
+  });
+
+  it('filters old news during legacy migration while keeping migrated reports', () => {
+    localStorage.setItem('df_ai_interpret_cache_v1', JSON.stringify({
+      'news:legacy': { result: factualNews, savedAt: Date.now() },
+      'report:legacy': { result: { summary: '原有研报' }, savedAt: Date.now() },
+    }));
+    const into = new Map<string, unknown>();
+    hydrateInterpretCache(into, raw => raw.result);
+    expect(into.has('news:legacy')).toBe(false);
+    expect(into.get('report:legacy')).toEqual({ summary: '原有研报' });
+  });
+
+  it('drops only the requested result in the current account', () => {
+    const key = newsInterpretationCacheKey('shared-id');
+    signIn('A');
+    persistInterpretEntry(key, { result: factualNews });
+    persistInterpretEntry('report:keep', { result: { summary: '保留研报' } });
+    signIn('B');
+    const fromB = new Map<string, unknown>();
+    hydrateInterpretCache(fromB, raw => raw.result);
+    expect(fromB.size).toBe(0);
+    persistInterpretEntry(key, { result: { ...factualNews, summary: 'B 的解读' } });
+    dropInterpretCache(key);
+    hydrateInterpretCache(fromB, raw => raw.result);
+    expect(fromB.has(key)).toBe(false);
+    signIn('A');
+    const fromA = new Map<string, unknown>();
+    hydrateInterpretCache(fromA, raw => raw.result);
+    expect(fromA.get(key)).toEqual(factualNews);
+    dropInterpretCache(key);
+    const remaining = new Map<string, unknown>();
+    hydrateInterpretCache(remaining, raw => raw.result);
+    expect(remaining.has(key)).toBe(false);
+    expect(remaining.has('report:keep')).toBe(true);
   });
 });
