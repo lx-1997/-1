@@ -198,6 +198,13 @@ GET /api/quant/lab/jobs/{job_id} | 查看我的量化实验任务
 DELETE /api/quant/lab/jobs/{job_id} | 取消我的量化实验任务
 """)
 
+_group("research_tools", """
+GET /api/research-tools/catalog | 查看七项投研工具和输入要求
+POST /api/research-tools/jobs | 提交收益、组合、财报、机构、基金、债券或因子研究任务 | write
+GET /api/research-tools/jobs/{identifier} | 查看我的投研工具任务和报告
+DELETE /api/research-tools/jobs/{identifier} | 取消我的投研工具任务
+""")
+
 _group("alerts", """
 GET /api/me/research-alerts | 查看我的站内提醒
 GET /api/me/research-alerts/settings | 查看我的站内提醒设置
@@ -303,6 +310,8 @@ _FRONTEND_INTERACTIONS: dict[tuple[str, str], tuple[str, str]] = {
     ("GET", "/api/weixin/bind/status"): ("完成我的微信绑定", "需要前端扫码会话"),
     ("POST", "/api/backtest/{backtest_id}/run"): ("执行我的回测", "需要消费回测事件流"),
     ("POST", "/api/realtime/recall/subscriptions"): ("配置设备盯盘订阅", "需要前端设备授权与订阅地址归属校验"),
+    ("GET", "/api/research-tools/templates/{tool}"): ("下载投研工具输入模板", "请在 QuantLab 投研工具中下载模板或选择文件"),
+    ("POST", "/api/portfolio/statement/analyze"): ("复盘交割单文件", "需要用户选择自己的交割单文件"),
 }
 
 

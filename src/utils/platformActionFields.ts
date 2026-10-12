@@ -16,6 +16,8 @@ const FIELD_LABELS: Record<string, string> = {
   message_id: '资讯编号', position_id: '持仓编号', task_id: '任务编号', job_id: '实验编号',
   source_id: '数据源编号', item_id: '资料编号', report_id: '研报编号', subscription_id: '订阅编号',
   sub_id: '订阅编号', call_id: '判断编号', backtest_id: '回测编号', reason: '原因',
+  delta: '本次变更', added: '添加标的', removed: '移除标的',
+  tool: '研究工具', input: '输入内容', identifier: '标的名称或代码',
   sector: '行业', conviction: '确信程度', stance: '观点方向', type: '类型', category: '分类',
   api_key: '访问密钥', secret: '密钥', token: '访问凭证', password: '密码', authorization: '授权凭证',
 };

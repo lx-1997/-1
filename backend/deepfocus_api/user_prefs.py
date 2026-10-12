@@ -13,7 +13,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import DateTime, String, Text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .storage import Base, session_scope
@@ -77,3 +78,43 @@ def set_watchlist(user_id: str, symbols: list, names: dict) -> dict:
         row.names = json.dumps(nm, ensure_ascii=False)
         row.updated_at = datetime.now(timezone.utc)
     return {"symbols": syms, "names": nm}
+
+
+def update_watchlist(user_id: str, added: list, removed: list, names: dict) -> dict:
+    """Merge an account operation against the latest row, using compare-and-swap.
+
+    A model's earlier GET is a preview, never the authoritative write snapshot.
+    The conditional update also protects writers in another process/database.
+    """
+    additions, changed_names = _sanitize(added, names)
+    removals, _ = _sanitize(removed, {})
+    for _ in range(12):
+        try:
+            with session_scope() as session:
+                row = session.get(UserWatchlist, user_id)
+                original_symbols = row.symbols if row else None
+                original_names = row.names if row else None
+                current_symbols = json.loads(original_symbols or "[]")
+                current_names = json.loads(original_names or "{}")
+                symbols = list(dict.fromkeys([s for s in current_symbols if s not in removals] + additions))
+                if len(symbols) > _MAX_SYMBOLS:
+                    raise ValueError("最新自选已超过 100 只，暂不修改")
+                merged_names = {**current_names, **changed_names}
+                values = dict(symbols=json.dumps(symbols, ensure_ascii=False),
+                              names=json.dumps(merged_names, ensure_ascii=False),
+                              updated_at=datetime.now(timezone.utc))
+                if row is None:
+                    session.add(UserWatchlist(user_id=user_id, **values))
+                else:
+                    changed = session.execute(update(UserWatchlist).where(
+                        UserWatchlist.user_id == user_id,
+                        UserWatchlist.symbols == original_symbols,
+                        UserWatchlist.names == original_names,
+                    ).values(**values).execution_options(synchronize_session=False))
+                    if changed.rowcount != 1:
+                        continue
+            return {"symbols": symbols, "names": merged_names}
+        except IntegrityError:
+            # Another writer created the previously absent account row.
+            continue
+    raise ValueError("自选正在被其他操作更新，请核对最新列表后重试")

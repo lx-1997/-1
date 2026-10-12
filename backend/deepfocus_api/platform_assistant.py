@@ -45,7 +45,8 @@ VIEWS = {
     "market-dashboard": "宏观面板", "profile": "设置", "mcp-center": "工具连接", "skills": "技能",
 }
 _SUBJECT = re.compile(
-    r"自选|关注列表|观察池|任务中心|研究任务|深度任务|深度研究|深度研判|后台任务|任务进度|回测|quantlab|watchlist|backtest|research\s+task|"
+    r"自选|关注列表|观察池|任务中心|研究任务|深度任务|深度研究|深度研判|后台任务|任务进度|我的任务|(?:创建|取消|重试|停止).{0,16}任务|回测|quantlab|watchlist|backtest|research\s+task|"
+    r"投研工具|组合优化|收益分析|因子研究|基金穿透|可转债研究|机构持仓|财报研究|research.tools|"
     r"我的持仓|持仓管理|录入持仓|添加持仓|修改持仓|平仓|风险限额|资料库|证据库|数据源|"
     r"资料标签|上传|下载|导入|收藏|订阅|我的提醒|盯盘提醒|微信绑定|推送设置|提醒设置|个人设置|模型配置|"
     r"工具连接|mcp|研报库|平台功能|助手.*功能|平台.*功能|平台.*能力", re.I,
@@ -71,6 +72,7 @@ def _direct_write_authorized(objective: str, capability: dict) -> bool:
         (r"^/api/agents/tasks/[^/]+/retry$", r"任务|研究|task", r"重试|重新(?:运行|执行)|再跑|retry"),
         (r"^/api/agents/tasks/[^/]+/cancel$", r"任务|研究|task", r"取消|停止|终止|cancel|stop"),
         (r"^/api/backtest$|^/api/quant/lab/jobs$", r"回测|quantlab|backtest", r"创建|新增|添加|启动|运行|执行|开始|发起|create|add|start|run"),
+        (r"^/api/research-tools/jobs$", r"投研工具|组合优化|收益分析|因子研究|基金穿透|可转债研究|机构持仓|财报研究|research", r"创建|启动|运行|分析|研究|计算|优化|发起|create|start|run|analy"),
         (r"^/api/me/research-alerts/settings$", r"提醒|盯盘", r"开启|关闭|启用|停用|设置|修改|更新"),
         (r"^/api/me/research-alerts/[^/]+/read$", r"提醒|盯盘", r"标记.*已读"),
     )
@@ -203,11 +205,15 @@ async def _prepare_watchlist(app, request, claims, arguments, objective):
         raise ValueError("自选股最多 100 只，请先明确移除哪些标的")
     prepared = {**arguments, "body": {**body, "symbols": symbols, "names": names}}
     delta = {"added": [s for s in symbols if s not in old_symbols],
-             "removed": [s for s in old_symbols if s not in symbols], "names": names}
+             "removed": [s for s in old_symbols if s not in symbols],
+             "names": {s: n for s, n in names.items() if old_names.get(s) != n}}
+    prepared["body"]["delta"] = delta
     return prepared, delta
 
 
 async def _apply_watchlist_delta(app, request, claims, arguments, delta):
+    if "delta" not in (arguments.get("body") or {}):
+        raise ValueError("自选操作的确认内容已更新，尚未执行。请重新提出本次操作并核对新的确认卡片")
     current = await execute_capability(app, request, claims, "get:/api/me/watchlist", {}, internal_data=True)
     if not current["ok"]:
         raise ValueError("未能核对最新自选，暂不修改")
@@ -216,7 +222,7 @@ async def _apply_watchlist_delta(app, request, claims, arguments, delta):
     symbols = list(dict.fromkeys([*symbols, *delta["added"]]))
     if len(symbols) > 100:
         raise ValueError("最新自选已超过容量，暂不修改")
-    return {**arguments, "body": {"symbols": symbols, "names": {**existing.get("names", {}), **delta["names"]}}}
+    return {**arguments, "body": {"symbols": symbols, "names": {**existing.get("names", {}), **delta["names"]}, "delta": delta}}
 
 
 def _spec(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
@@ -262,7 +268,7 @@ class PlatformAssistant:
         self.app, self.llm = app, llm
         self.store = store or PlatformActionStore()
 
-    async def run(self, request: Request, claims: dict, body: dict, emit=None) -> dict:
+    async def run(self, request: Request, claims: dict, body: dict, emit=None, checkpoint=None) -> dict:
         objective = str(body.get("message") or "").strip()[:12000]
         actions: list[dict] = []
         trace: list[dict] = []
@@ -356,7 +362,12 @@ class PlatformAssistant:
                             capability_id = str(args.pop("capability_id", ""))
                             cap = _check_capability(self.app, claims, capability_id)
                             _reject_identity(args)
-                            key = json.dumps([capability_id, args], sort_keys=True, ensure_ascii=False)
+                            key_args = args
+                            if cap["path"] in {"/api/research-tools/jobs", "/api/agents/tasks"} and cap["method"] == "POST" and isinstance(args.get("body"), dict):
+                                # A provider-generated transport ID is not a new
+                                # business operation within the user's one turn.
+                                key_args = {**args, "body": {k: v for k, v in args["body"].items() if k != "request_id"}}
+                            key = json.dumps([capability_id, key_args], sort_keys=True, ensure_ascii=False)
                             watchlist_delta = None
                             if cap["path"] == "/api/me/watchlist" and cap["effect"] != "read":
                                 args, watchlist_delta = await _prepare_watchlist(self.app, request, claims, args, objective)
@@ -375,9 +386,16 @@ class PlatformAssistant:
                                     }))
                                     output = {"ok": True, "status": "needs_confirmation", "action": action}
                                 else:
+                                    # Persist the attempt before entering an HTTP boundary:
+                                    # a lost response cannot prove the write did not commit.
+                                    action.update(status="failed", error="操作结果尚未确认，可能已提交，请到对应页面核对；不会自动重试")
+                                    actions.append(action)
+                                    if checkpoint:
+                                        checkpoint(result)
                                     output = await execute_capability(self.app, request, claims, capability_id, args)
                                     action.update(status="completed" if output["ok"] else "failed", result=output.get("data"), error=_error_text(output["error"]) if output.get("error") is not None else None)
-                                actions.append(action)
+                                if action not in actions:
+                                    actions.append(action)
                                 performed[key] = output
                         else:
                             raise ValueError("工具未在平台能力清单中注册")
@@ -387,6 +405,8 @@ class PlatformAssistant:
                         output = {"ok": False, "error": str(exc)}
                     item = {"tool": name, "ok": output.get("ok", False), "summary": "等待确认" if output.get("status") == "needs_confirmation" else "已返回真实结果" if output.get("ok") else str(output.get("error", "操作失败"))[:160]}
                     trace.append(item)
+                    if checkpoint:
+                        checkpoint(result)
                     if emit:
                         await emit("tool_result", item)
                     encoded = json.dumps(output, ensure_ascii=False, default=str)
@@ -461,6 +481,7 @@ async def confirm_platform_action(request: Request):
     if status == "completed":
         return pending
     action = pending["action"]
+    cancelled = False
     try:
         arguments = pending["arguments"]
         if pending.get("watchlist_delta") is not None:
@@ -468,12 +489,19 @@ async def confirm_platform_action(request: Request):
         output = await execute_capability(request.app, request, claims, pending["capability_id"], arguments)
     except HTTPException as exc:
         output = {"ok": False, "status": exc.status_code, "error": exc.detail}
+    except ValueError as exc:
+        output = {"ok": False, "error": str(exc)}
+    except asyncio.CancelledError:
+        cancelled = True
+        output = {"ok": False, "error": "操作结果尚未确认，可能已提交，请到对应页面核对；不会自动重试"}
     except Exception:
         output = {"ok": False, "error": "操作结果暂未取得，请到对应页面核对；不会自动重试"}
     action.update(status="completed" if output["ok"] else "failed", result=output.get("data"), error=_error_text(output["error"]) if output.get("error") is not None else None)
     receipt = {"ok": output["ok"], "answer": f"{action['title']}：" + ("已完成" if output["ok"] else str(output.get("error"))),
                "tool_trace": [], "platform_actions": [action]}
     assistant.store.finish(str(claims["sub"]), token, receipt)
+    if cancelled:
+        raise asyncio.CancelledError
     return receipt
 
 
@@ -545,14 +573,33 @@ class PlatformAssistantMiddleware:
         except Exception:
             assistant.store.abort_unstarted_run(owner, request_id)
             raise
-        async def run(emit=None):
-            result = await assistant.run(request, claims, body, emit)
-            if result.get("ok") and quota and self.complete_quota:
-                self.complete_quota(quota)
+        def decorate(result):
             result.update(content=result["answer"], provider=assistant.llm.provider_name, model=assistant.llm.model,
                           generated_at=datetime.now(timezone.utc).isoformat(), title="平台助手", agent="Orchestrator",
                           engine=body.get("engine", "deepfocus"), chips=[], suggested_actions=[], should_create_task=False,
                           handled_inline=True, confidence=1.0 if result.get("platform_actions") else 0.8)
+            return result
+        def checkpoint(result):
+            assistant.store.checkpoint_run(owner, request_id, decorate(dict(result)))
+        def complete_quota(result):
+            if result.get("ok") and quota and self.complete_quota:
+                try:
+                    self.complete_quota(quota)
+                except Exception:
+                    result["quota_recording_pending"] = True
+                    result["answer"] += "\n额度记录暂未完成，操作回执已保留，请勿重复提交。"
+                    result["content"] = result["answer"]
+        async def run(emit=None):
+            try:
+                result = await assistant.run(request, claims, body, emit, checkpoint=checkpoint)
+            except asyncio.CancelledError:
+                recovered = assistant.store.interrupt_run(owner, request_id)
+                if recovered is not None:
+                    complete_quota(recovered)
+                    assistant.store.finish_run(owner, request_id, recovered)
+                raise
+            decorate(result)
+            complete_quota(result)
             try:
                 assistant.store.finish_run(owner, request_id, result)
             except Exception:

@@ -80,7 +80,7 @@ from .auth import (
 )
 from .ownership import current_owner_id
 from .bounded_cache import ByteBoundedTTLCache, get_cache_stats, prune_caches, clear_caches
-from .user_prefs import get_watchlist as get_user_watchlist, set_watchlist as set_user_watchlist
+from .user_prefs import get_watchlist as get_user_watchlist, set_watchlist as set_user_watchlist, update_watchlist as update_user_watchlist
 from . import support_store
 from . import membership_codes
 from . import payment_config
@@ -2856,12 +2856,19 @@ async def admin_support_reply(request: Request) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 账号自选股（登录态）：未登录走前端 localStorage，登录后绑定账号、跨设备同步
 # --------------------------------------------------------------------------- #
-from pydantic import BaseModel as _BaseModel  # noqa: E402
+from pydantic import BaseModel as _BaseModel, Field as _Field  # noqa: E402
+
+
+class WatchlistDelta(_BaseModel):
+    added: list[str] = _Field(default_factory=list, max_length=100)
+    removed: list[str] = _Field(default_factory=list, max_length=100)
+    names: dict[str, str] = _Field(default_factory=dict)
 
 
 class WatchlistPayload(_BaseModel):
     symbols: list[str] = []
     names: dict[str, str] = {}
+    delta: Optional[WatchlistDelta] = None
 
 
 @app.get("/api/me/watchlist")
@@ -2882,15 +2889,19 @@ async def api_save_watchlist(request: Request, payload: WatchlistPayload) -> dic
     把推送 symbols 刷成最新自选（代码+名称）——否则微信侧永远停留在同步那一刻的快照。"""
     claims = require_current_user(request)
     uid = str(claims.get("sub", ""))
-    result = set_user_watchlist(uid, payload.symbols, payload.names)
+    try:
+        result = (update_user_watchlist(uid, payload.delta.added, payload.delta.removed, payload.delta.names)
+                  if payload.delta is not None else set_user_watchlist(uid, payload.symbols, payload.names))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         from . import weixin_bind as _wxbind
         b = _wxbind.get_by_user(uid)
         if b and b.get("active") and (b.get("push_scope") or "off") == "watchlist":
             keys: list[str] = []
-            for s in payload.symbols:
+            for s in result["symbols"]:
                 keys.append(str(s))
-                n = str((payload.names or {}).get(s) or "").strip()
+                n = str(result["names"].get(s) or "").strip()
                 if n and n not in keys:
                     keys.append(n)
             _wxbind.set_push_config(uid, "watchlist", keys)

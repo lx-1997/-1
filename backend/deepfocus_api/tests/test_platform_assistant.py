@@ -126,6 +126,21 @@ def make_app(monkeypatch, tmp_path):
         watchlists = {"alice": {"symbols": ["AAPL"], "names": {"AAPL": "Apple"}}, "bob": {"symbols": [], "names": {}}}
         llm = FakeLLM(script)
 
+        def watchlist_apply(owner, body):
+            # Isolated API boundary follows the real endpoint's delta-first
+            # contract. Concurrent storage CAS is tested with real user_prefs;
+            # this synchronous in-memory merge only supplies route responses.
+            delta = body.get("delta")
+            if delta is None:
+                result = {"symbols": body.get("symbols", []), "names": body.get("names", {})}
+            else:
+                current = watchlists[owner]
+                symbols = [symbol for symbol in current["symbols"] if symbol not in delta["removed"]]
+                result = {"symbols": list(dict.fromkeys([*symbols, *delta["added"]])),
+                          "names": {**current["names"], **delta["names"]}}
+            watchlists[owner] = copy.deepcopy(result)
+            return result
+
         @app.get("/api/me/watchlist")
         async def read_watchlist(request: Request):
             claims = auth.require_current_user(request)
@@ -137,8 +152,8 @@ def make_app(monkeypatch, tmp_path):
             claims = auth.require_current_user(request)
             body = await request.json()
             seen.append(("save", claims["sub"], body))
-            watchlists[claims["sub"]] = body
-            return {"saved": True, **body}
+            result = watchlist_apply(claims["sub"], body)
+            return {"saved": True, **result}
 
         @app.get("/api/items/{item_id}")
         async def read_item(item_id: str, request: Request, limit: int = 1):
@@ -193,7 +208,8 @@ def make_app(monkeypatch, tmp_path):
         app.add_middleware(auth.AuthMiddleware)
         app.add_middleware(CORSMiddleware, allow_origins=["https://app.test"], allow_methods=["*"], allow_headers=["*"])
         instances.append(app)
-        return SimpleNamespace(app=app, client=TestClient(app), seen=seen, watchlists=watchlists, llm=llm)
+        return SimpleNamespace(app=app, client=TestClient(app), seen=seen, watchlists=watchlists,
+                               watchlist_apply=watchlist_apply, llm=llm)
 
     return factory
 

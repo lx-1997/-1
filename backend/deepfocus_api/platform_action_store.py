@@ -54,6 +54,28 @@ class PlatformActionStore:
         with closing(self._open()) as conn, conn:
             conn.execute("UPDATE platform_assistant_runs SET status='completed',result=? WHERE owner=? AND request_id=?", (json.dumps(result, ensure_ascii=False), owner, request_id))
 
+    def checkpoint_run(self, owner: str, request_id: str, result: dict[str, Any]) -> None:
+        with closing(self._open()) as conn, conn:
+            conn.execute("UPDATE platform_assistant_runs SET result=? WHERE owner=? AND request_id=? AND status='executing'",
+                         (json.dumps(result, ensure_ascii=False), owner, request_id))
+
+    def interrupt_run(self, owner: str, request_id: str) -> dict[str, Any] | None:
+        """Recover known/uncertain receipts without restarting any operation."""
+        with closing(self._open()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT result FROM platform_assistant_runs WHERE owner=? AND request_id=? AND status='executing'",
+                               (owner, request_id)).fetchone()
+            if not row or not row["result"]:
+                return None
+            result = json.loads(row["result"])
+            result.update(interrupted=True, answer="助手回复中断。已取得的操作回执保留如下；结果未确认的操作请到对应页面核对，不会自动重试。")
+            result["content"] = result["answer"]
+            result["ok"] = any(action.get("status") in {"completed", "needs_confirmation"}
+                               for action in result.get("platform_actions", []))
+            conn.execute("UPDATE platform_assistant_runs SET status='completed',result=? WHERE owner=? AND request_id=?",
+                         (json.dumps(result, ensure_ascii=False), owner, request_id))
+            return result
+
     def abort_unstarted_run(self, owner: str, request_id: str) -> None:
         with closing(self._open()) as conn, conn:
             conn.execute("DELETE FROM platform_assistant_runs WHERE owner=? AND request_id=? AND status='executing'", (owner, request_id))
