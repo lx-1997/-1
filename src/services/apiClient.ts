@@ -150,23 +150,18 @@ async function requestWithFallback<T>(
     return requestReadWithFallback<T>(path, config);
   }
 
-  let lastError: unknown;
-
-  for (const apiBaseUrl of getPrioritizedApiBaseUrls()) {
-    try {
-      const response = await requestFromApiBase<T>(apiBaseUrl, method, path, data, config);
-      preferredApiBaseUrl = apiBaseUrl;
-      if (/^\/api\/auth\/(login|register)$/.test(path)) authenticatedApiBaseUrl = apiBaseUrl;
-      return response;
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableConnectionError(error)) {
-        throw error;
-      }
-    }
+  // A lost response does not prove a write failed: the server may have already
+  // committed it. Never replay account writes on another source, and keep them
+  // on the authenticated origin even when an anonymous source won a public GET.
+  const apiBaseUrl = getActiveApiBaseUrl();
+  if (!apiBaseUrl) throw new Error('No API base URLs configured');
+  if (getAuthSnapshot().token && !sessionOwnsRequest(apiBaseUrl)) {
+    throw new Error('当前登录服务不可用，请恢复连接后重试');
   }
-
-  throw lastError;
+  const response = await requestFromApiBase<T>(apiBaseUrl, method, path, data, config);
+  preferredApiBaseUrl = apiBaseUrl;
+  if (/^\/api\/auth\/(login|register)$/.test(path)) authenticatedApiBaseUrl = apiBaseUrl;
+  return response;
 }
 
 async function requestFromApiBase<T>(

@@ -6,11 +6,11 @@ import { PLATFORM_RESULT_EVENT } from '../../utils/platformAssistant';
 
 jest.mock('../../services/apiClient', () => ({
   apiPost: jest.fn(), apiGet: jest.fn(), DF_WEB_TOKEN: 'web-token',
-  getApiBaseUrls: () => ['https://example.test'], sessionOwnsRequest: () => true,
+  getApiBaseUrls: () => ['https://example.test'], getActiveApiBaseUrl: () => 'https://example.test', sessionOwnsRequest: () => true,
 }));
 const action = { id: 'operation', title: '读取自选', capability_id: 'watchlist.list', method: 'GET', path: '/api/me/watchlist', arguments: {}, status: 'completed', result: { symbols: [] } };
 const result = { ok: true, answer: '操作已完成', tool_trace: [], platform_actions: [action] };
-const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 const listener = jest.fn();
 const originalFetch = global.fetch;
 beforeEach(() => {
@@ -84,7 +84,7 @@ it('does not fall back and replay a request after the server reports execution s
   } finally { jest.useRealTimers(); }
 });
 
-it('preserves ordinary research fallback after a stalled status stream', async () => {
+it('reports an uncertain ordinary research timeout without replaying it', async () => {
   jest.useFakeTimers();
   try {
     const read = jest.fn().mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('event: status\ndata: {"message":"正在检索证据"}\n\n') })
@@ -93,7 +93,7 @@ it('preserves ordinary research fallback after a stalled status stream', async (
     const fallback = jest.fn(); const error = jest.fn();
     const cancel = runToolResearchStream({ message: '分析 NVDA' }, { onFallback: fallback, onError: error });
     await settle(); jest.advanceTimersByTime(30001);
-    expect(fallback).toHaveBeenCalledTimes(1); expect(error).not.toHaveBeenCalled();
+    expect(fallback).not.toHaveBeenCalled(); expect(error).toHaveBeenCalledTimes(1);
     cancel();
   } finally { jest.useRealTimers(); }
 });

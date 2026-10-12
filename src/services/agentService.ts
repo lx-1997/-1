@@ -1,8 +1,20 @@
 import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, invalidateAuthSession } from '../state/authSession';
 import { Stock } from '../types';
-import { apiGet, apiPost, DF_WEB_TOKEN, getApiBaseUrls, sessionOwnsRequest } from './apiClient';
+import { apiGet, apiPost, DF_WEB_TOKEN, getActiveApiBaseUrl, getApiBaseUrls, sessionOwnsRequest } from './apiClient';
 import { createAssistantRequestId, publishPlatformResult } from '../utils/platformAssistant';
 import type { PlatformAssistantResult } from '../utils/platformAssistant';
+import { readServerSentEvents } from './serverSentEvents';
+
+/** Public read winners must not route account-scoped streams to an anonymous API. */
+function getAssistantApiBaseUrl(): string {
+  const active = getActiveApiBaseUrl();
+  const candidates = getApiBaseUrls();
+  if (getAuthSnapshot().token) {
+    if (candidates.includes(active) && sessionOwnsRequest(active)) return active;
+    return candidates.find(sessionOwnsRequest) || '';
+  }
+  return active || candidates[0] || '';
+}
 
 // === agentTaskService types ===
 
@@ -428,17 +440,31 @@ export function runGeneralChatStream(
     onError?: (error: string) => void;
   }
 ): () => void {
-  const apiBaseUrl = getApiBaseUrls()[0];
+  const apiBaseUrl = getAssistantApiBaseUrl();
   const session = getAuthSnapshot();
   const controller = new AbortController();
   const requestId = payload.request_id || createAssistantRequestId();
   let aborted = false;
   let terminal = false;
-  const stop = () => { aborted = true; controller.abort(); };
+  let timeout: number | undefined;
+  const clearIdleGuard = () => { if (timeout !== undefined) window.clearTimeout(timeout); timeout = undefined; };
+  const stop = () => { aborted = true; clearIdleGuard(); controller.abort(); };
   const unregister = registerSessionCleanup(stop);
+  const armIdleGuard = () => {
+    clearIdleGuard();
+    if (aborted || terminal) return;
+    timeout = window.setTimeout(() => {
+      if (aborted || terminal || !isAuthRevisionCurrent(session.revision)) return;
+      terminal = true;
+      handlers.onError?.('响应超时，已返回内容已保留，请稍后重试');
+      controller.abort();
+    }, 60000);
+  };
+  armIdleGuard();
 
   const run = async () => {
     try {
+      if (!apiBaseUrl) throw new Error('当前登录服务不可用，请重新登录后重试');
       const response = await fetch(`${apiBaseUrl}/api/agents/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-DF-Web': DF_WEB_TOKEN,
@@ -446,59 +472,45 @@ export function runGeneralChatStream(
         body: JSON.stringify({ ...payload, request_id: requestId }),
         signal: controller.signal,
       });
-      if (aborted || !isAuthRevisionCurrent(session.revision)) return;
+      if (aborted || terminal || !isAuthRevisionCurrent(session.revision)) return;
 
       if (!response.ok || !response.body) {
+        terminal = true;
         handlers.onError?.(`请求失败 (${response.status})`);
         return;
       }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (!aborted && !terminal) {
-        const { done, value } = await reader.read();
-        if (aborted || !isAuthRevisionCurrent(session.revision)) break;
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) {
-            continue;
-          }
-          try {
-            const parsed = JSON.parse(line.slice(6)) as PlatformAssistantResult & { delta?: string; done?: boolean; error?: string; status?: string; sources?: ChatCitationSource[] };
-            if (parsed.error) {
-              terminal = true;
-              handlers.onError?.(parsed.error);
-            } else if (parsed.done) {
-              terminal = true;
-              publishPlatformResult(parsed, session.revision, requestId);
-              handlers.onDone?.();
-            } else if (typeof parsed.status === 'string') {
-              handlers.onStatus?.(parsed.status);
-            } else if (Array.isArray(parsed.sources)) {
-              handlers.onSources?.(parsed.sources);
-            } else if (typeof parsed.delta === 'string') {
-              handlers.onDelta(parsed.delta);
-            }
-            if (terminal) break;
-          } catch {
-            // skip malformed SSE chunk
-          }
+      armIdleGuard();
+      for await (const frame of readServerSentEvents(response.body, controller.signal, armIdleGuard)) {
+        // A callback may cancel or switch accounts while more frames remain in this chunk.
+        if (aborted || terminal || !isAuthRevisionCurrent(session.revision)) break;
+        let parsed: PlatformAssistantResult & { delta?: string; done?: boolean; error?: string; status?: string; sources?: ChatCitationSource[] };
+        try { parsed = JSON.parse(frame.data); } catch { continue; }
+        if (parsed.error) {
+          terminal = true;
+          handlers.onError?.(parsed.error);
+        } else if (parsed.done) {
+          terminal = true;
+          publishPlatformResult(parsed, session.revision, requestId);
+          handlers.onDone?.();
+        } else if (typeof parsed.status === 'string') {
+          handlers.onStatus?.(parsed.status);
+        } else if (Array.isArray(parsed.sources)) {
+          handlers.onSources?.(parsed.sources);
+        } else if (typeof parsed.delta === 'string') {
+          handlers.onDelta(parsed.delta);
         }
+        if (terminal) break;
       }
-
-      reader.releaseLock();
-      if (!aborted && !terminal && isAuthRevisionCurrent(session.revision)) handlers.onDone?.();
+      if (!aborted && !terminal && isAuthRevisionCurrent(session.revision)) {
+        terminal = true;
+        handlers.onError?.('响应中断，已返回内容已保留，请重试');
+      }
     } catch (err) {
-      if (!aborted && isAuthRevisionCurrent(session.revision)) {
-        handlers.onError?.(err instanceof Error ? err.message : 'AI 服务连接失败');
+      if (!aborted && !terminal && isAuthRevisionCurrent(session.revision)) {
+        terminal = true;
+        handlers.onError?.(friendlyStreamError(err instanceof Error ? err.message : undefined));
       }
-    } finally { unregister(); }
+    } finally { clearIdleGuard(); unregister(); }
   };
 
   void run();
@@ -646,27 +658,24 @@ export function runToolResearchStream(
     onTool?: (e: ToolEvent, phase: 'start' | 'result') => void;
     onStatus?: (status: string) => void;
     onFinal?: (result: ToolResearchResult) => void;
+    /** Only an HTTP response that explicitly identifies a missing stream route permits replay. */
     onFallback?: (reason: string) => void;
+    /** EOF, timeout and business errors may have executed: callers must not automatically replay. */
     onError?: (error: string, status?: number) => void;
     onDone?: () => void;
   }
 ): () => void {
   const session = getAuthSnapshot();
+  const apiBaseUrl = getAssistantApiBaseUrl();
   const requestId = payload.request_id || createAssistantRequestId();
   const token = session.token || '';
   const ctrl = new AbortController();
   let stopped = false;
   let terminal = false;
   let platformStream = false;
-  // 只负责通知调用方切换通道，不在 service 内部偷偷再发一次请求。
-  // 旧实现这里和 FinancialTerminal 的 onFallback 各发一遍兜底请求，竞态时会
-  // 重复扣额度、互相覆盖答案，并把一次正常降级放大成 500/403。
-  // This is an *idle* guard, not a total request deadline.  Harness can take
-  // 15–45s on a cold start; the backend emits heartbeat status frames, so a
-  // 30s quiet window catches a genuinely dead stream without racing a healthy
-  // run and issuing a duplicate, quota-consuming fallback request.
-  // Quick问答要尽快切换兜底；深度圆桌允许更长的安静窗口，后端会持续发送
-  // 阶段状态，避免真实取数尚未结束时被前端误判为“卡死”并重复扣额度。
+  // A lost response does not prove that a POST did not execute. Only a missing
+  // HTTP route may switch channels; timeout/EOF must never replay a paid turn.
+  // Heartbeats reset the idle budget so healthy, long research is not cancelled.
   const STREAM_IDLE_TIMEOUT_MS = payload.roundtable ? 90000 : 30000;
   let timeout: number | undefined;
   const clearTimeoutGuard = () => {
@@ -675,13 +684,12 @@ export function runToolResearchStream(
   };
   const armTimeoutGuard = () => {
     clearTimeoutGuard();
+    if (stopped || terminal) return;
     timeout = window.setTimeout(() => {
-      if (stopped || terminal) return;
+      if (stopped || terminal || !isAuthRevisionCurrent(session.revision)) return;
       terminal = true;
-      // Once execution has started, replaying through a fallback could repeat a platform mutation.
       if (platformStream) handlers.onError?.('响应中断，请向助手查询操作状态。');
-      else handlers.onFallback?.('实时研究响应超时，正在切换快速通道');
-      // 取消当前流；兜底请求由调用方统一发起，保证最多只有一个。
+      else handlers.onError?.('实时研究响应超时，请稍后重试');
       ctrl.abort();
     }, STREAM_IDLE_TIMEOUT_MS);
   };
@@ -690,7 +698,6 @@ export function runToolResearchStream(
     clearTimeoutGuard();
     terminal = true;
     handlers.onError?.('请输入问题后再发送', 400);
-    handlers.onDone?.();
     return () => { stopped = true; ctrl.abort(); };
   }
   const unregister = registerSessionCleanup(() => { stopped = true; clearTimeoutGuard(); ctrl.abort(); });
@@ -698,8 +705,10 @@ export function runToolResearchStream(
   (async () => {
     let lastError = 'AI 服务连接失败';
     try {
-      for (const base of getApiBaseUrls()) {
-        let receivedEvent = false;
+      if (!apiBaseUrl) throw new Error('当前登录服务不可用，请重新登录后重试');
+      // Streaming POSTs use one origin; a failed response is not replay-safe.
+      for (const base of [apiBaseUrl]) {
+        let completed = false;
         try {
           // 同时保留 message query，兼容尚未部署 JSON body 解析的旧线上后端。
           const legacyQuery = new URLSearchParams({
@@ -726,7 +735,7 @@ export function runToolResearchStream(
             }),
             signal: ctrl.signal,
           });
-          if (stopped || !isAuthRevisionCurrent(session.revision)) return;
+          if (stopped || terminal || !isAuthRevisionCurrent(session.revision)) return;
           armTimeoutGuard();
           if (!resp.ok) {
             let detail = `请求失败 (${resp.status})`;
@@ -734,50 +743,43 @@ export function runToolResearchStream(
               const data = await resp.json();
               detail = typeof data?.detail === 'string' ? data.detail : detail;
             } catch { /* 保留 HTTP 状态提示 */ }
+            if (stopped || terminal || !isAuthRevisionCurrent(session.revision)) return;
             clearTimeoutGuard();
             terminal = true;
-            if (resp.status === 401 && token && sessionOwnsRequest(base)) {
+            const missingRoute = (resp.status === 404 && /^(Not Found)?$/i.test(detail.trim()))
+              || (resp.status === 405 && /^(Method Not Allowed)?$/i.test(detail.trim()))
+              || (resp.status === 501 && /^(Not Implemented|Method Not Allowed)?$/i.test(detail.trim()));
+            if (missingRoute) handlers.onFallback?.('当前服务暂不支持实时研究');
+            else if (resp.status === 401 && token && sessionOwnsRequest(base)) {
               invalidateAuthSession(token);
               window.dispatchEvent(new CustomEvent('df:auth-kicked', { detail }));
             } else handlers.onError?.(detail, resp.status);
             return;
           }
           if (!resp.body) throw new Error('无法读取实时响应');
-          const reader = resp.body.getReader();
-          const dec = new TextDecoder();
-          let buffer = '';
-          while (!stopped) {
-            const { done, value } = await reader.read();
-            if (done || stopped || !isAuthRevisionCurrent(session.revision)) break;
-            // 服务器会定期发 status/keep-alive；按“无活动”而非总耗时计时，
-            // 真实圆桌持续有进度时不会被误切到快速通道。
-            armTimeoutGuard();
-            buffer += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
-            const frames = buffer.split('\n\n');
-            buffer = frames.pop() || '';
-            for (const frame of frames) {
-              if (!frame.trim() || frame.trimStart().startsWith(':')) continue;
-              const eventType = frame.split('\n').find(line => line.startsWith('event: '))?.slice(7).trim() || '';
-              const dataText = frame.split('\n').filter(line => line.startsWith('data: ')).map(line => line.slice(6)).join('\n');
-              if (!dataText) continue;
-              let data: any; try { data = JSON.parse(dataText); } catch { continue; }
-              armTimeoutGuard();
-              receivedEvent = true;
-              if (data.platform === true) platformStream = true;
-              if (eventType === 'status') handlers.onStatus?.(String(data.message || ''));
-              else if (eventType === 'tool_start') handlers.onTool?.({ tool: data.tool }, 'start');
-              else if (eventType === 'tool_result') handlers.onTool?.({
-                tool: data.tool,
-                ok: data.ok,
-                summary: data.summary,
-                references: Array.isArray(data.references) ? data.references : [],
-              }, 'result');
-              else if (eventType === 'final') {
-                terminal = true;
-                clearTimeoutGuard();
-                const result: ToolResearchResult = {
+          for await (const frame of readServerSentEvents(resp.body, ctrl.signal, armTimeoutGuard)) {
+            if (stopped || terminal || !isAuthRevisionCurrent(session.revision)) break;
+            const eventType = frame.event;
+            let data: any; try { data = JSON.parse(frame.data); } catch { continue; }
+            if (data.platform === true) platformStream = true;
+            if (eventType === 'status') handlers.onStatus?.(String(data.message || ''));
+            else if (eventType === 'tool_start') handlers.onTool?.({ tool: data.tool }, 'start');
+            else if (eventType === 'tool_result') handlers.onTool?.({
+              tool: data.tool,
+              ok: data.ok,
+              summary: data.summary,
+              references: Array.isArray(data.references) ? data.references : [],
+            }, 'result');
+            else if (eventType === 'final') {
+              terminal = true;
+              completed = true;
+              clearTimeoutGuard();
+              const result: ToolResearchResult = {
                 ok: data.ok !== false,
                 answer: data.answer || '',
+                error: typeof data.error === 'string' ? data.error : undefined,
+                reason: typeof data.reason === 'string' ? data.reason : undefined,
+                status: typeof data.status === 'number' ? data.status : undefined,
                 tool_trace: data.tool_trace || [],
                 rounds: data.rounds || 0,
                 suggestions: data.suggestions || [],
@@ -793,40 +795,51 @@ export function runToolResearchStream(
                 core_agent_route: data.core_agent_route,
                 platform_actions: data.platform_actions,
                 navigation: data.navigation,
-                };
-                publishPlatformResult(result, session.revision, requestId);
-                handlers.onFinal?.(result);
-              }
-              else if (eventType === 'fallback') {
-                terminal = true;
-                clearTimeoutGuard();
-                handlers.onFallback?.(data.reason || '');
-              }
-              else if (eventType === 'error') {
-                clearTimeoutGuard();
-                terminal = true;
-                handlers.onError?.(data.message || '出错了');
-              }
-              if (terminal) break;
+              };
+              publishPlatformResult(result, session.revision, requestId);
+              handlers.onFinal?.(result);
+            }
+            else if (eventType === 'fallback') {
+              terminal = true;
+              clearTimeoutGuard();
+              // A business fallback happens after execution and can already
+              // have consumed quota; it is not proof that replay is safe.
+              handlers.onError?.(platformStream ? '响应中断，请向助手查询操作状态。' : (data.reason || '实时研究未返回结果，请稍后重试'));
+            }
+            else if (eventType === 'error') {
+              clearTimeoutGuard();
+              terminal = true;
+              handlers.onError?.(data.message || '出错了', typeof data.status === 'number' ? data.status : undefined);
             }
             if (terminal) break;
           }
-          reader.releaseLock();
           clearTimeoutGuard();
-          if (!stopped && isAuthRevisionCurrent(session.revision)) handlers.onDone?.();
+          if (!stopped && isAuthRevisionCurrent(session.revision)) {
+            if (completed) handlers.onDone?.();
+            else if (!terminal) {
+              terminal = true;
+              handlers.onError?.(platformStream ? '响应中断，请向助手查询操作状态。' : '实时研究响应中断，请重试');
+            }
+          }
           return;
         } catch (error: any) {
-          if (error?.name === 'AbortError' || stopped) return;
+          if (stopped || terminal || !isAuthRevisionCurrent(session.revision)) return;
           lastError = error?.message || lastError;
-          // 一旦收到过实时事件，就不换源重放整次请求，避免重复扣额度。
-          if (receivedEvent) break;
+          // Before the first frame, the server can still have received this POST.
+          break;
         }
       }
       clearTimeoutGuard();
-      if (!stopped && !terminal) { terminal = true; handlers.onError?.(friendlyStreamError(lastError)); }
+      if (!stopped && !terminal && isAuthRevisionCurrent(session.revision)) {
+        terminal = true;
+        handlers.onError?.(platformStream ? '响应中断，请向助手查询操作状态。' : friendlyStreamError(lastError));
+      }
     } catch (error: any) {
-      if (error?.name !== 'AbortError' && !stopped) handlers.onError?.(friendlyStreamError(error?.message || lastError));
-    } finally { unregister(); }
+      if (!stopped && !terminal && isAuthRevisionCurrent(session.revision)) {
+        terminal = true;
+        handlers.onError?.(friendlyStreamError(error?.message || lastError));
+      }
+    } finally { clearTimeoutGuard(); unregister(); }
   })();
   return () => { stopped = true; clearTimeoutGuard(); ctrl.abort(); unregister(); };
 }
@@ -1060,7 +1073,7 @@ export interface ToolStep {
 
 /**
  * 流式 AI 原生 tool-use：边调工具边把进度推给前端。返回取消函数。
- * onFallback 表示 tool-agent 未返回结果（未启用/不支持），调用方应回退非流式 orchestrator-chat。
+ * onFallback 仅表示 HTTP 明确报告实时路由缺失；已执行的断流/业务错误不得重放。
  */
 export function streamToolResearch(
   params: { message: string; symbol?: string; name?: string; context_hint?: string },
@@ -1094,71 +1107,67 @@ export function subscribeResearchLoop(
     onError?: (error: string) => void;
   }
 ): () => void {
-  const apiBaseUrl = getApiBaseUrls()[0];
+  const apiBaseUrl = getAssistantApiBaseUrl();
+  const session = getAuthSnapshot();
+  const controller = new AbortController();
   let aborted = false;
+  let terminal = false;
+  let timeout: number | undefined;
+  const clearIdleGuard = () => { if (timeout !== undefined) window.clearTimeout(timeout); timeout = undefined; };
+  const stop = () => { aborted = true; clearIdleGuard(); controller.abort(); };
+  const unregister = registerSessionCleanup(stop);
+  const armIdleGuard = () => {
+    clearIdleGuard();
+    if (aborted || terminal) return;
+    timeout = window.setTimeout(() => {
+      if (aborted || terminal || !isAuthRevisionCurrent(session.revision)) return;
+      terminal = true;
+      handlers.onError?.('研究响应超时，请稍后重试');
+      controller.abort();
+    }, 90000);
+  };
+  armIdleGuard();
 
   const run = async () => {
     try {
+      if (!apiBaseUrl) throw new Error('当前登录服务不可用，请重新登录后重试');
       const url = `${apiBaseUrl}/api/agents/research-loop/stream?symbol=${encodeURIComponent(symbol)}&question=${encodeURIComponent(question)}`;
-      const response = await fetch(url, { method: 'POST' });
-
-      if (!response.ok) {
-        handlers.onError?.(`HTTP ${response.status}`);
+      const response = await fetch(url, {
+        method: 'POST', signal: controller.signal,
+        headers: { 'X-DF-Web': DF_WEB_TOKEN,
+          ...(session.token && sessionOwnsRequest(apiBaseUrl) ? { Authorization: `Bearer ${session.token}` } : {}) },
+      });
+      if (aborted || terminal || !isAuthRevisionCurrent(session.revision)) return;
+      if (!response.ok || !response.body) {
+        terminal = true;
+        handlers.onError?.(response.ok ? '无法读取流' : `HTTP ${response.status}`);
         return;
       }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        handlers.onError?.('无法读取流');
-        return;
+      armIdleGuard();
+      for await (const frame of readServerSentEvents(response.body, controller.signal, armIdleGuard)) {
+        if (aborted || terminal || !isAuthRevisionCurrent(session.revision)) break;
+        let parsed: LoopResearchEvent;
+        try { parsed = JSON.parse(frame.data); } catch { continue; }
+        if (frame.event === 'loop_done' || frame.event === 'research_done') {
+          terminal = true;
+          handlers.onDone?.(parsed);
+        } else if (frame.event === 'error') {
+          terminal = true;
+          handlers.onError?.(parsed.error || parsed.detail || '研究响应失败');
+        } else handlers.onEvent(parsed);
+        if (terminal) break;
       }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (!aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        let currentEventType = '';
-        let currentData = '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6).trim();
-          } else if (line.trim() === '' && currentData) {
-            try {
-              const parsed = JSON.parse(currentData) as LoopResearchEvent;
-              if (currentEventType === 'loop_done' || currentEventType === 'research_done') {
-                handlers.onDone?.(parsed);
-              } else {
-                handlers.onEvent(parsed);
-              }
-            } catch {
-              // skip malformed
-            }
-            currentEventType = '';
-            currentData = '';
-          }
-        }
+      if (!aborted && !terminal && isAuthRevisionCurrent(session.revision)) {
+        terminal = true;
+        handlers.onError?.('研究响应中断，请重试');
       }
-
-      reader.releaseLock();
-    } catch (err: any) {
-      if (!aborted) {
-        handlers.onError?.(err.message || 'SSE 连接失败');
+    } catch (err) {
+      if (!aborted && !terminal && isAuthRevisionCurrent(session.revision)) {
+        terminal = true;
+        handlers.onError?.(friendlyStreamError(err instanceof Error ? err.message : undefined));
       }
-    }
+    } finally { clearIdleGuard(); unregister(); }
   };
-
-  run();
-
-  return () => {
-    aborted = true;
-  };
+  void run();
+  return () => { stop(); unregister(); };
 }

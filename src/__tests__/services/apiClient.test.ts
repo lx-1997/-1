@@ -30,15 +30,15 @@ it('does not attach a production token to local fallback APIs or log out on thei
   expect(getAuthSnapshot().token).toBe('test-token');
 });
 
-it('preserves network error identity so a write reaches a second API source', async () => {
+it('preserves network error identity without replaying an uncertain write', async () => {
   const attempted: string[] = [];
   apiTransport.defaults.adapter = async config => {
     attempted.push(config.url || '');
     if (attempted.length === 1) throw new AxiosError('Network Error', 'ERR_NETWORK', config);
     return ok(config);
   };
-  await expect(apiPost('/api/save', { value: 1 })).resolves.toEqual({ ok: true });
-  expect(attempted).toHaveLength(2); expect(new Set(attempted).size).toBe(2);
+  await expect(apiPost('/api/save', { value: 1 })).rejects.toMatchObject({ code: 'ERR_NETWORK' });
+  expect(attempted).toHaveLength(1);
 });
 
 it.each(['ECONNABORTED', 'ETIMEDOUT'])('does not replay a write whose result is uncertain after %s', async code => {
