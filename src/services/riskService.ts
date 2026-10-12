@@ -284,3 +284,61 @@ export async function getPnlRecords(positionId?: string, limit?: number): Promis
 export async function runRiskBacktest(request: RiskBacktestRequest): Promise<RiskBacktestResponse> {
   return apiPost('/api/risk/backtest', request);
 }
+
+export type StatementSettlementCurrency = 'CNY' | 'HKD' | 'USD';
+
+export interface StatementTrade {
+  row: number;
+  date: string;
+  time: string;
+  symbol: string;
+  market?: string;
+  name: string;
+  side: 'buy' | 'sell';
+  quantity: number;
+  price: number;
+  gross_amount: number;
+  fees: number;
+  net_amount: number;
+  currency: string;
+}
+
+export interface StatementCurrencyReview {
+  currency: string;
+  buy_amount: number;
+  sell_amount: number;
+  fees: number;
+  realized_pnl: number;
+  closed_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  /** Percentage in the range 0–100; null when no known-cost sell was matched. */
+  win_rate: number | null;
+  unknown_cost_quantity: number;
+  open_quantity: number;
+  monthly: Array<{ month: string; realized_pnl: number; fees: number }>;
+  symbols: Array<{ symbol: string; market?: string; name: string; realized_pnl: number; fees: number; open_quantity: number }>;
+}
+
+export interface TradeStatementAnalysis {
+  file_name: string;
+  total_rows: number;
+  trade_count: number;
+  skipped_rows: number;
+  currencies: StatementCurrencyReview[];
+  trades: StatementTrade[];
+  issues: Array<{ row: number | null; code: string; message: string }>;
+  warnings: string[];
+}
+
+export async function analyzeTradeStatement(request: {
+  file_name: string;
+  content_base64: string;
+  settlement_currency?: StatementSettlementCurrency;
+}, signal?: AbortSignal): Promise<TradeStatementAnalysis> {
+  return apiPost('/api/portfolio/statement/analyze', request, { signal, timeout: 120000 });
+}
+
+export async function getTradeStatementTemplate(signal?: AbortSignal): Promise<Blob> {
+  return apiGet('/api/portfolio/statement/template', { responseType: 'blob', signal });
+}

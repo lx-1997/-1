@@ -1,0 +1,48 @@
+.statement-review { max-width: 1040px; margin: 0 auto; }
+.statement-review-intro { display: flex; gap: 14px; align-items: center; }
+.statement-review-intro h2 { margin: 0 0 6px; font-size: 22px; }
+.statement-review-intro p { margin: 0; opacity: .75; line-height: 1.6; }
+.statement-review-mark { display: grid; place-items: center; flex: 0 0 48px; height: 48px; border-radius: 12px; background: rgba(74, 119, 214, .12); color: #628fe5; font-size: 24px; }
+.statement-privacy { margin: 18px 0; line-height: 1.65; opacity: .75; }
+.statement-import-card { padding: 20px; border: 1px solid rgba(128, 128, 128, .24); border-radius: 12px; margin-bottom: 18px; background: rgba(128, 128, 128, .025); }
+.statement-file-label { display: block; font-weight: 600; margin-bottom: 9px; }
+.statement-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.statement-file-choice { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.statement-file-choice > span { word-break: break-all; opacity: .75; }
+.statement-currency-field { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
+.statement-currency-field > label { font-weight: 600; }
+.statement-currency-field .ant-select { width: 200px; }
+.statement-settlement-hint { margin: 10px 0 18px; font-size: 12px; line-height: 1.7; opacity: .75; }
+.statement-import-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.statement-template-note { display: block; margin-top: 12px; opacity: .65; line-height: 1.6; }
+.statement-review > .ant-alert { margin-bottom: 16px; }
+.statement-loading { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 36px 0; }
+.statement-result-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 25px 0 16px; }
+.statement-result-head h3 { margin: 0 0 4px; font-size: 18px; }
+.statement-result-head > span, .statement-result-head div > span { font-size: 12px; opacity: .75; word-break: break-all; }
+.statement-currency-note { margin: 14px 0 4px; line-height: 1.7; font-size: 12px; opacity: .75; }
+.statement-warnings { margin: 5px 0 0; padding-left: 19px; }
+.statement-warnings li + li { margin-top: 4px; }
+.statement-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.statement-stat { display: flex; flex-direction: column; gap: 6px; padding: 18px; border: 1px solid rgba(128, 128, 128, .22); border-radius: 10px; }
+.statement-stat > span { opacity: .75; font-size: 12px; }
+.statement-stat > strong { font-size: 24px; line-height: 1.3; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.statement-stat > small { opacity: .65; line-height: 1.55; }
+.statement-stat-primary { background: rgba(74, 119, 214, .06); }
+.statement-cash-flow { display: flex; gap: 10px 28px; flex-wrap: wrap; font-size: 12px; opacity: .8; margin-bottom: 22px; }
+.statement-cash-flow b { font-variant-numeric: tabular-nums; }
+.statement-currency-review h3 { margin: 22px 0 12px; font-size: 15px; }
+.statement-symbol { display: block; opacity: .65; font-size: 11px; }
+.statement-result > .ant-collapse { margin-top: 22px; }
+.statement-review-entry { font-weight: 600; border-color: #628fe5; }
+@media (max-width: 560px) {
+  .statement-review-drawer .ant-drawer-body { padding: 18px 12px; }
+  .statement-review-intro h2 { font-size: 19px; }
+  .statement-review-mark { flex-basis: 40px; height: 40px; font-size: 21px; }
+  .statement-import-card { padding: 16px; }
+  .statement-stats { grid-template-columns: 1fr; }
+  .statement-stat { padding: 15px; }
+  .statement-stat > strong { font-size: 22px; }
+  .statement-currency-field { flex-direction: column; align-items: stretch; gap: 8px; }
+  .statement-currency-field .ant-select { width: 100%; }
+}

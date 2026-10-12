@@ -27,6 +27,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import DataCenter from './DataCenter';
+import { TradeStatementReviewButton } from './TradeStatementReview';
 import './PositionMonitor.css';
 import {
   getPositions,
@@ -357,6 +358,7 @@ function PositionMonitor() {
 
   const extra = (
     <>
+      <TradeStatementReviewButton />
       <Button icon={<ReloadOutlined />} onClick={handleRefreshPrices}>
         刷新价格
       </Button>

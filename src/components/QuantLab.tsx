@@ -42,6 +42,7 @@ import {
   YAxis,
 } from 'recharts';
 import CenterShell from './common/CenterShell';
+import { TradeStatementReviewButton } from './TradeStatementReview';
 import { AppState } from '../types';
 import {
   cancelQuantLabJob,
@@ -329,11 +330,11 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
       icon={<BarChartOutlined />}
       title="QuantLab 量化系统"
       subtitle={<><SafetyCertificateOutlined /> 真实行情 · 滚动回测 · 成本与风控</>}
-      actions={loading ? (
+      actions={<Space wrap><TradeStatementReviewButton />{loading ? (
         <Button danger icon={<CloseCircleOutlined />} loading={cancelling} onClick={handleCancel}>取消任务</Button>
       ) : (
         <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun}>运行量化</Button>
-      )}
+      )}</Space>}
     >
       <Alert
         type="info"
