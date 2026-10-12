@@ -272,6 +272,7 @@ from .backtest_engine import (
 from .backtest_executor import run_backtest, list_backtest_results
 from .quant_lab import run_quant_lab
 from .portfolio_api import router as portfolio_router
+from .research_tools_api import attach_research_lifespan
 from .quant_jobs import cancel_quant_job, create_quant_job, get_quant_job, init_quant_jobs, shutdown_quant_jobs
 from .cost_quotas import QuotaExceeded, QuotaLease, reserve as reserve_quota, complete as complete_quota, release as release_quota, used as quota_used, quota_scope
 from .agent_loop import run_agent_research_loop
@@ -14243,6 +14244,7 @@ async def orchestrator_chat(request: OrchestratorChatRequest, http_request: Requ
 
 
 app.include_router(portfolio_router)
+attach_research_lifespan(app)
 
 
 @app.get("/api/market-dashboard", response_model=MarketDashboardResponse)

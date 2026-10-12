@@ -1,0 +1,10 @@
+# Independent research worker environment; never install in the API venv.
+QuantStats==0.0.86
+Riskfolio-Lib==7.4.0
+FinanceToolkit==2.2.3
+EdgarTools==5.62.0
+pyqlib==0.9.7
+lightgbm==4.7.0
+# Production Python links SQLite 3.26; recent MLflow requires >=3.31.
+# Install the accompanying sitecustomize only in the Linux analysis environment.
+pysqlite3-binary==0.5.4.post2; sys_platform == "linux" and platform_machine == "x86_64"

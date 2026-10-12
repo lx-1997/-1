@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, invalidateAuthSession } from '../state/authSession';
 import { DataQuality, Post, Stock } from '../types';
-import { apiGet, apiPost, DF_WEB_TOKEN, getActiveApiBaseUrl, sessionOwnsRequest } from './apiClient';
+import { apiDelete, apiGet, apiPost, DF_WEB_TOKEN, getActiveApiBaseUrl, sessionOwnsRequest } from './apiClient';
 
 // === aiResearchService types ===
 
@@ -1066,4 +1066,84 @@ export async function visionAnalyzeReport(payload: {
   max_pages?: number;
 }): Promise<ResearchVisionAnalysis> {
   return apiPost<ResearchVisionAnalysis>('/api/research/vision-analyze', payload, { timeout: 240000 });
+}
+
+export type InvestmentResearchTool = 'performance' | 'portfolio' | 'factors' | 'financials' | 'institutions' | 'funds' | 'bonds';
+export type InvestmentResearchCategory = 'strategy' | 'company' | 'assets';
+export interface InvestmentResearchCatalog {
+  tools: Array<{
+    tool: InvestmentResearchTool;
+    title: string;
+    description?: string;
+    available: boolean;
+    reason?: string;
+    category?: InvestmentResearchCategory;
+    engine?: string;
+    input_help?: string;
+    methodology?: string[];
+  }>;
+  expires_in_minutes: number;
+}
+export interface InvestmentResearchTable {
+  key: string;
+  title: string;
+  columns: Array<{ key: string; label: string; type?: 'text' | 'number' | 'percent' | 'date' }>;
+  rows: Array<Record<string, unknown>>;
+  collapsible?: boolean;
+  default_collapsed?: boolean;
+}
+export interface InvestmentResearchChart {
+  key: string;
+  title: string;
+  type: 'line' | 'bar' | 'heatmap';
+  data?: Array<Record<string, unknown>>;
+  x_key?: string;
+  series?: Array<{ key: string; label: string }>;
+  matrix?: Array<Array<number | null>>;
+  labels?: string[];
+  row_labels?: string[];
+  value_type?: 'percent' | 'number';
+  unit?: string;
+}
+export interface InvestmentResearchReport {
+  tool: InvestmentResearchTool;
+  title: string;
+  engine: string;
+  summary: Array<{ label: string; value: string | number | null; unit?: string; tone?: string }>;
+  tables: InvestmentResearchTable[];
+  charts: InvestmentResearchChart[];
+  warnings: string[];
+  methodology: string[];
+  sources: Array<{ name: string; url?: string; as_of?: string; coverage?: string; currency?: string }>;
+  report_html?: string;
+}
+export interface InvestmentResearchJob {
+  id: string;
+  tool: InvestmentResearchTool;
+  state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  created_at: string;
+  updated_at: string;
+  result?: InvestmentResearchReport;
+  error?: string;
+  stage?: string;
+  progress?: number;
+}
+export function getInvestmentResearchCatalog(signal?: AbortSignal): Promise<InvestmentResearchCatalog> {
+  return apiGet('/api/research-tools/catalog', { signal });
+}
+export function createInvestmentResearchJob(payload: {
+  tool: InvestmentResearchTool;
+  input: Record<string, unknown>;
+  request_id: string;
+}, signal?: AbortSignal): Promise<InvestmentResearchJob> {
+  return apiPost('/api/research-tools/jobs', payload, { signal, timeout: 30000 });
+}
+export function getInvestmentResearchJob(id: string, signal?: AbortSignal): Promise<InvestmentResearchJob> {
+  return apiGet(`/api/research-tools/jobs/${encodeURIComponent(id)}`, { signal, timeout: 30000 });
+}
+export function cancelInvestmentResearchJob(id: string, signal?: AbortSignal): Promise<unknown> {
+  return apiDelete(`/api/research-tools/jobs/${encodeURIComponent(id)}`, { signal });
+}
+export function getInvestmentResearchTemplate(tool: InvestmentResearchTool, signal?: AbortSignal): Promise<Blob> {
+  return apiGet(`/api/research-tools/templates/${tool}`, { signal, responseType: 'blob' });
 }

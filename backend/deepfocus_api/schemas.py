@@ -2967,16 +2967,18 @@ class PortfolioMetrics(BaseModel):
 
 
 class VaRResult(BaseModel):
-    historical_var: float
-    parametric_var: float
-    var_amount: float = 0
-    var_pct: float
+    historical_var: Optional[float] = None
+    parametric_var: Optional[float] = None
+    var_amount: Optional[float] = None
+    var_pct: Optional[float] = None
     confidence: float
     observations: int
-    mean_return: float = 0
-    std_dev: float = 0
-    sharpe_ratio: float = 0
+    mean_return: Optional[float] = None
+    std_dev: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
     method: str
+    data_available: bool = True
+    reason: Optional[str] = None
 
 
 class RiskAlert(BaseModel):

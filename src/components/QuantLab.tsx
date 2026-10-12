@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import dayjs from 'dayjs';
 import {
   Alert,
@@ -43,6 +43,8 @@ import {
 } from 'recharts';
 import CenterShell from './common/CenterShell';
 import { TradeStatementReviewButton } from './TradeStatementReview';
+import { buildBacktestResearchSeed, InvestmentResearchCenterButton } from './InvestmentResearchCenter';
+import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, subscribeAuth } from '../state/authSession';
 import { AppState } from '../types';
 import {
   cancelQuantLabJob,
@@ -136,6 +138,7 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
   const [strategyKey, setStrategyKey] = useState<QuantStrategyKey>('momentum');
   const activeJobRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
+  const authRevision = useSyncExternalStore(subscribeAuth, () => getAuthSnapshot().revision);
   const allowShort = Form.useWatch('allow_short', form);
 
   const defaultSymbols = useMemo(() => {
@@ -155,11 +158,19 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
     };
   }, []);
 
+  useEffect(() => registerSessionCleanup(() => {
+    const jobId = activeJobRef.current;
+    activeJobRef.current = null;
+    if (jobId) void cancelQuantLabJob(jobId).catch(() => undefined);
+    setResult(null); setJob(null); setLoading(false); setCancelling(false); setError('');
+  }), [authRevision]);
+
   useEffect(() => {
     if (!form.isFieldTouched('symbols')) form.setFieldValue('symbols', defaultSymbols);
   }, [defaultSymbols, form]);
 
   const chartData = useMemo(() => buildChartData(result), [result]);
+  const researchSeed = useMemo(() => buildBacktestResearchSeed(result), [result]);
   const backtest = result?.backtest;
   const signals = result?.signals || [];
   const orders = result?.orders || [];
@@ -211,23 +222,29 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
   };
 
   const handleRun = async () => {
+    const revision = getAuthSnapshot().revision;
     try {
       const request = await buildRequest();
-      if (!request) return;
+      if (!request || !isAuthRevisionCurrent(revision)) return;
       setLoading(true);
       setError('');
       setResult(null);
       const created = await startQuantLabJob(request);
+      if (!mountedRef.current || !isAuthRevisionCurrent(revision)) {
+        if (isAuthRevisionCurrent(revision)) void cancelQuantLabJob(created.job_id).catch(() => undefined);
+        return;
+      }
       activeJobRef.current = created.job_id;
       if (mountedRef.current) setJob(created);
       let current = created;
       while (activeJobRef.current === created.job_id && ['pending', 'running'].includes(current.status)) {
         await sleep(800);
-        if (activeJobRef.current !== created.job_id) return;
+        if (activeJobRef.current !== created.job_id || !isAuthRevisionCurrent(revision)) return;
         current = await getQuantLabJob(created.job_id);
+        if (!mountedRef.current || !isAuthRevisionCurrent(revision)) return;
         if (mountedRef.current) setJob(current);
       }
-      if (activeJobRef.current !== created.job_id) return;
+      if (activeJobRef.current !== created.job_id || !isAuthRevisionCurrent(revision)) return;
       if (current.status === 'completed' && current.result) {
         setResult(current.result);
         message.success('量化研究与回测已完成');
@@ -237,29 +254,32 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
         throw new Error(current.error || '量化任务执行失败');
       }
     } catch (err: any) {
+      if (!mountedRef.current || !isAuthRevisionCurrent(revision)) return;
       if (err?.errorFields) return;
       const detail = err?.message || '量化系统运行失败';
       if (mountedRef.current) setError(detail);
       message.error(detail);
     } finally {
-      activeJobRef.current = null;
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && isAuthRevisionCurrent(revision)) { activeJobRef.current = null; setLoading(false); }
     }
   };
 
   const handleCancel = async () => {
+    const revision = getAuthSnapshot().revision;
     const jobId = activeJobRef.current;
     if (!jobId) return;
     activeJobRef.current = null;
     setCancelling(true);
     try {
       const cancelled = await cancelQuantLabJob(jobId);
-      if (mountedRef.current) setJob(cancelled);
+      if (!mountedRef.current || !isAuthRevisionCurrent(revision)) return;
+      setJob(cancelled);
       message.info('量化任务已取消');
     } catch (err: any) {
+      if (!mountedRef.current || !isAuthRevisionCurrent(revision)) return;
       message.error(err?.message || '取消失败');
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && isAuthRevisionCurrent(revision)) {
         setCancelling(false);
         setLoading(false);
       }
@@ -330,7 +350,7 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
       icon={<BarChartOutlined />}
       title="QuantLab 量化系统"
       subtitle={<><SafetyCertificateOutlined /> 真实行情 · 滚动回测 · 成本与风控</>}
-      actions={<Space wrap><TradeStatementReviewButton />{loading ? (
+      actions={<Space wrap><InvestmentResearchCenterButton />{researchSeed && <InvestmentResearchCenterButton seed={researchSeed} />}<TradeStatementReviewButton />{loading ? (
         <Button danger icon={<CloseCircleOutlined />} loading={cancelling} onClick={handleCancel}>取消任务</Button>
       ) : (
         <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun}>运行量化</Button>
@@ -449,6 +469,7 @@ const QuantLabContent: React.FC<QuantLabProps> = ({ appState, defaultSymbols: pr
 
       {result && backtest && (
         <>
+          {!researchSeed && <Alert type="warning" showIcon message="当前回测净值暂不能生成收益报告" description="需要至少 30 个有效日期且每个日期都有正净值。发现缺失或无效点时，不会跳过日期拼接日收益；请先核对当前回测的数据，再生成报告。" style={{ marginBottom: 16 }} />}
           <Card size="small" style={{ marginBottom: 16 }}>
             <Alert type="success" showIcon message={backtest.metrics.summary} style={{ marginBottom: 16 }} />
             <Row gutter={[12, 12]}>

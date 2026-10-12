@@ -68,16 +68,18 @@ export interface PortfolioMetrics {
 }
 
 export interface VaRResult {
-  historical_var: number;
-  parametric_var: number;
-  var_amount: number;
-  var_pct: number;
+  historical_var: number | null;
+  parametric_var: number | null;
+  var_amount: number | null;
+  var_pct: number | null;
   confidence: number;
   observations: number;
-  mean_return: number;
-  std_dev: number;
-  sharpe_ratio: number;
+  mean_return: number | null;
+  std_dev: number | null;
+  sharpe_ratio: number | null;
   method: string;
+  data_available?: boolean;
+  reason?: string;
 }
 
 export interface RiskAlert {

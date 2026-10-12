@@ -697,13 +697,22 @@ def get_risk_summary(*, owner_user_id: Optional[str] = None, is_admin: bool = Fa
 
     portfolio = calculate_portfolio_metrics(open_positions)
 
-    pnl_records = list_pnl_records(owner_user_id=owner_user_id, is_admin=is_admin)
-    daily_returns = [r.get("return_pct", 0) / 100 for r in pnl_records if r.get("return_pct")]
-    var_result = calculate_var(
-        daily_returns,
-        confidence=0.95,
-        position_value=portfolio["total_value"],
-    )
+    # A trade's holding-period return is neither an account daily return nor a
+    # cash-flow-adjusted NAV observation. There is no daily account series here.
+    var_result = {
+        "historical_var": None,
+        "parametric_var": None,
+        "var_amount": None,
+        "var_pct": None,
+        "confidence": 0.95,
+        "observations": 0,
+        "mean_return": None,
+        "std_dev": None,
+        "sharpe_ratio": None,
+        "method": "daily_series_unavailable",
+        "data_available": False,
+        "reason": "当前仅有持仓与逐笔平仓记录，缺少经出入金调整的账户每日收益/净值序列；无法估计日度风险。",
+    }
 
     limits = {r["key"]: r for r in get_risk_limits()}
 

@@ -12,9 +12,11 @@ from .quant_lab import run_quant_lab
 from .quant_jobs import cancel_quant_job, create_quant_job, get_quant_job
 from .schemas import GreeksRequest, GreeksResponse, PnlRecord, PnlSummaryResponse, PositionCloseRequest, PositionCreateRequest, PositionListResponse, PositionRecord, PositionUpdateRequest, RiskLimitRecord, RiskLimitUpdateRequest, RiskSummaryResponse, BacktestCreateRequest, BacktestListResponse, BacktestMetricsRequest, BacktestMetricsResponse, BacktestRecord, RiskBacktestRequest, RiskBacktestResponse, QuantLabRequest, QuantLabResponse
 from .trade_statement_api import router as trade_statement_router
+from .research_tools_api import router as research_tools_router
 
 router = APIRouter()
 router.include_router(trade_statement_router)
+router.include_router(research_tools_router)
 
 def _owner_args(user: dict) -> dict[str, Any]:
     owner = str(user.get("sub") or "").strip()

@@ -20,6 +20,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import DataCenter from './DataCenter';
+import { InvestmentResearchCenterButton } from './InvestmentResearchCenter';
 import { getRiskSummary, RiskSummaryResponse, RiskAlert, PositionRecord } from '../services/riskService';
 
 const { Title, Text } = Typography;
@@ -30,6 +31,7 @@ const usdFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 
 const fmtUsd = (v: number): string => usdFormat.format(v);
 const fmtNum = (v: number): string => numberFormat.format(v);
 const fmtPct = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+const finite = (value: number | null | undefined): value is number => typeof value === 'number' && Number.isFinite(value);
 
 const riskLevelColor: Record<string, string> = {
   low: 'green',
@@ -138,6 +140,9 @@ function RiskDashboard() {
   const renderContent = useCallback((data: RiskSummaryResponse, refresh: () => void) => {
     const { portfolio, var: varResult, alerts, risk_limits } = data;
     const positions = data.open_positions || [];
+    const dailyAvailable = varResult.data_available !== false && !['daily_series_unavailable', 'insufficient_data'].includes(varResult.method);
+    const varAvailable = dailyAvailable && finite(varResult.var_pct) && finite(varResult.var_amount);
+    const dailyMetric = (value: number | null, percent = false) => dailyAvailable && finite(value) ? `${value.toFixed(2)}${percent ? '%' : ''}` : '待补日收益';
 
     // 无持仓时给出有价值的空状态（而非一整屏 0），说明仪表盘能力 + 引导添加头寸。
     if (positions.length === 0) {
@@ -146,8 +151,8 @@ function RiskDashboard() {
           <SafetyCertificateOutlined style={{ fontSize: 44, color: 'var(--accent, #1677ff)', marginBottom: 16 }} />
           <Title level={4} style={{ marginBottom: 8 }}>暂无持仓</Title>
           <Text type="secondary" style={{ display: 'block', lineHeight: 1.8 }}>
-            添加头寸后，这里会实时呈现 <b>组合市值 / 盈亏</b>、<b>VaR(95% 单日)</b>、<b>多空与净敞口</b>、
-            <b>行业集中度</b> 与 <b>风险预警</b>，并对照你设定的风险限额给出越界提示。
+            添加头寸后，这里会呈现 <b>组合市值 / 盈亏</b>、<b>多空与净敞口</b>、
+            <b>行业集中度</b> 与 <b>风险预警</b>。VaR 与夏普比率需要真实组合日收益，平仓交易收益不能代替。
           </Text>
           <div style={{
             marginTop: 20, display: 'inline-flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
@@ -159,7 +164,7 @@ function RiskDashboard() {
             <Tag>Sharpe / 胜率</Tag>
           </div>
           <Text type="secondary" style={{ display: 'block', marginTop: 20, fontSize: 13 }}>
-            在「持仓监控」中添加头寸即可启用本仪表盘。
+            在「持仓监控」中添加头寸；日收益风险可通过「组合日价格分析」另行核对。
           </Text>
         </div>
       );
@@ -167,6 +172,7 @@ function RiskDashboard() {
 
     return (
       <div>
+        {!varAvailable && <Alert type="info" showIcon message="待补组合日收益" description={`${varResult.reason || '尚未提供可用的组合日收益序列。'} 请通过「组合日价格分析」提供真实每日复权价格与资产权重；这些指标不会按平仓交易收益估算。`} style={{ marginBottom: 16 }} />}
         {alerts.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             {alerts.map((alert, idx) => (
@@ -207,16 +213,16 @@ function RiskDashboard() {
             </Card>
           </Col>
           <Col span={6}>
-            <Card size="small">
+            <Card size="small" aria-label="VaR风险估计">
               <Statistic
                 title="VaR (95% 单日)"
-                value={varResult.var_pct}
-                precision={2}
-                suffix="%"
+                value={varAvailable ? varResult.var_pct! : '待补日收益'}
+                precision={varAvailable ? 2 : undefined}
+                suffix={varAvailable ? '%' : undefined}
                 valueStyle={{ color: '#faad14' }}
               />
               <Text type="secondary" style={{ fontSize: 12 }}>
-                金额: {fmtUsd(varResult.var_amount)}
+                金额: {varAvailable ? fmtUsd(varResult.var_amount!) : '待补日收益'}
               </Text>
             </Card>
           </Col>
@@ -269,13 +275,13 @@ function RiskDashboard() {
             </Card>
           </Col>
           <Col span={12}>
-            <Card title="风险指标" size="small">
+            <Card title="风险指标" size="small" aria-label="日收益风险指标">
               <Descriptions column={2} size="small">
                 <Descriptions.Item label="Sharpe Ratio">
-                  {varResult.sharpe_ratio.toFixed(2)}
+                  {dailyMetric(varResult.sharpe_ratio)}
                 </Descriptions.Item>
-                <Descriptions.Item label="年化波动">
-                  {varResult.std_dev.toFixed(2)}%
+                <Descriptions.Item label="日收益波动">
+                  {dailyMetric(varResult.std_dev, true)}
                 </Descriptions.Item>
                 <Descriptions.Item label="集中度风险">
                   <Tag color={riskLevelColor[portfolio.concentration_risk] || 'default'}>
@@ -283,7 +289,7 @@ function RiskDashboard() {
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="VaR方法">
-                  {varResult.method === 'parametric' ? '参数法' : varResult.method}
+                  {!dailyAvailable ? '待补日收益' : varResult.method === 'parametric' ? '参数法' : varResult.method}
                 </Descriptions.Item>
               </Descriptions>
             </Card>
@@ -339,6 +345,7 @@ function RiskDashboard() {
       renderContent={renderContent}
       emptyText="暂无持仓数据，请先在持仓监控中添加头寸"
       refreshLabel="刷新风险数据"
+      extra={<InvestmentResearchCenterButton initialTool="portfolio" label="组合日价格分析" />}
     />
   );
 }

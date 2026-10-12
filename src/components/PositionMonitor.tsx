@@ -28,6 +28,7 @@ import {
 } from '@ant-design/icons';
 import DataCenter from './DataCenter';
 import { TradeStatementReviewButton } from './TradeStatementReview';
+import { InvestmentResearchCenterButton } from './InvestmentResearchCenter';
 import './PositionMonitor.css';
 import {
   getPositions,
@@ -358,6 +359,7 @@ function PositionMonitor() {
 
   const extra = (
     <>
+      <InvestmentResearchCenterButton />
       <TradeStatementReviewButton />
       <Button icon={<ReloadOutlined />} onClick={handleRefreshPrices}>
         刷新价格
