@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSy
 import { fetchAccount } from '../services/authService';
 import { getAuthSnapshot, subscribeAuth, updateAuthAccount, patchAuthAccount, restoreAuthSession, isAuthRevisionCurrent } from '../state/authSession';
 import type { AuthUser } from '../services/authService';
+import PlatformAssistantActions from '../components/PlatformAssistantActions';
 
 const AuthContext = createContext<{ refresh: () => Promise<AuthUser | null> } | null>(null);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -26,7 +27,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.addEventListener('storage', sync);
     return () => window.removeEventListener('storage', sync);
   }, []);
-  return <AuthContext.Provider value={{ refresh }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ refresh }}>{children}<PlatformAssistantActions /></AuthContext.Provider>;
 };
 
 export function useAuth() {

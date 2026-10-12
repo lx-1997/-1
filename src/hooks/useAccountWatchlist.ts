@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fetchWatchlist, saveWatchlist } from '../services/watchlistService';
 import { getAuthSnapshot, isAuthRevisionCurrent } from '../state/authSession';
+import { WATCHLIST_UPDATED_EVENT } from '../utils/platformAssistant';
 
 interface WatchlistState { owner: string | null; symbols: string[]; names: Record<string, string>; ready: boolean; dirty: boolean }
 const EMPTY_SYMBOLS: string[] = [];
@@ -20,6 +21,7 @@ export function useAccountWatchlist(accountId: string | null, defaults: string[]
   const sessionRevision = getAuthSnapshot().revision;
   const [state, setState] = useState<WatchlistState>(() => ({ owner: accountId, ...readGuest(defaults, defaultNames), ready: !accountId, dirty: false }));
   const savedCallback = useRef(onSaved); savedCallback.current = onSaved;
+  const hydrationGeneration = useRef(0);
   const pending = useMemo(() => ({ symbols: EMPTY_SYMBOLS, names: defaultNames }), [defaultNames]);
   const visible = state.owner === accountId && state.ready ? state : pending;
   const watchlistRef = useRef(visible.symbols); watchlistRef.current = visible.symbols;
@@ -27,12 +29,13 @@ export function useAccountWatchlist(accountId: string | null, defaults: string[]
 
   useLayoutEffect(() => {
     const controller = new AbortController();
+    const generation = ++hydrationGeneration.current;
     const revision = getAuthSnapshot().revision;
     const guest = readGuest(defaults, defaultNames);
     setState({ owner: accountId, ...(accountId ? pending : guest), ready: !accountId, dirty: false });
     if (accountId) {
       void fetchWatchlist(controller.signal).then(data => {
-        if (controller.signal.aborted || !isAuthRevisionCurrent(revision)) return;
+        if (controller.signal.aborted || generation !== hydrationGeneration.current || !isAuthRevisionCurrent(revision)) return;
         // empty=false and symbols=[] is an intentional clear, not a first login.
         const firstLogin = data.empty === true;
         setState({ owner: accountId,
@@ -43,6 +46,26 @@ export function useAccountWatchlist(accountId: string | null, defaults: string[]
     }
     return () => controller.abort();
   }, [accountId, sessionRevision, defaults, defaultNames, pending]);
+
+  useEffect(() => {
+    let controller: AbortController | null = null;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ revision: number; accountId: string }>).detail;
+      if (!accountId || detail?.accountId !== accountId || !isAuthRevisionCurrent(detail.revision)) return;
+      controller?.abort();
+      controller = new AbortController();
+      const generation = ++hydrationGeneration.current;
+      const request = controller;
+      // Cancel any pending local save before reloading the assistant's server mutation.
+      setState(previous => previous.owner === accountId ? { ...previous, dirty: false } : previous);
+      void fetchWatchlist(request.signal).then(data => {
+        if (request.signal.aborted || generation !== hydrationGeneration.current || !isAuthRevisionCurrent(detail.revision)) return;
+        setState({ owner: accountId, symbols: data.symbols, names: { ...defaultNames, ...data.names }, ready: true, dirty: false });
+      }).catch(() => { /* Leave the current list visible if refresh fails. */ });
+    };
+    window.addEventListener(WATCHLIST_UPDATED_EVENT, refresh);
+    return () => { controller?.abort(); window.removeEventListener(WATCHLIST_UPDATED_EVENT, refresh); };
+  }, [accountId, defaultNames]);
 
   const change = useCallback((field: 'symbols' | 'names', value: React.SetStateAction<any>) => {
     if ((getAuthSnapshot().account?.id ?? null) !== accountId) return;

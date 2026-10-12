@@ -1,6 +1,8 @@
 import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, invalidateAuthSession } from '../state/authSession';
 import { Stock } from '../types';
 import { apiGet, apiPost, DF_WEB_TOKEN, getApiBaseUrls, sessionOwnsRequest } from './apiClient';
+import { createAssistantRequestId, publishPlatformResult } from '../utils/platformAssistant';
+import type { PlatformAssistantResult } from '../utils/platformAssistant';
 
 // === agentTaskService types ===
 
@@ -137,6 +139,7 @@ export interface InvestmentTaskResult {
 }
 
 export interface OrchestratorChatRequest {
+  request_id?: string;
   message: string;
   /** Context sent separately so backend intent detectors only see the live question. */
   context_hint?: string;
@@ -161,6 +164,7 @@ export interface OrchestratorChatRequest {
 }
 
 export interface GeneralChatRequest {
+  request_id?: string;
   message: string;
   history?: Array<{
     role: 'user' | 'assistant';
@@ -170,7 +174,7 @@ export interface GeneralChatRequest {
   locale?: string;
 }
 
-export interface GeneralChatResponse {
+export interface GeneralChatResponse extends PlatformAssistantResult {
   provider: string;
   model: string;
   generated_at: string;
@@ -185,7 +189,7 @@ export interface OrchestratorReasoningStep {
   status?: 'done' | 'working' | 'wait' | 'error';
 }
 
-export interface OrchestratorChatResponse {
+export interface OrchestratorChatResponse extends PlatformAssistantResult {
   provider: string;
   model: string;
   generated_at: string;
@@ -386,11 +390,19 @@ export async function createAgentTask(payload: InvestmentTaskCreate): Promise<In
 }
 
 export async function runOrchestratorChat(payload: OrchestratorChatRequest): Promise<OrchestratorChatResponse> {
-  return apiPost<OrchestratorChatResponse>('/api/agents/orchestrator-chat', payload);
+  const revision = getAuthSnapshot().revision;
+  const requestId = payload.request_id || createAssistantRequestId();
+  const response = await apiPost<OrchestratorChatResponse>('/api/agents/orchestrator-chat', { ...payload, request_id: requestId });
+  publishPlatformResult(response, revision, requestId);
+  return response;
 }
 
 export async function runGeneralChat(payload: GeneralChatRequest): Promise<GeneralChatResponse> {
-  return apiPost<GeneralChatResponse>('/api/agents/chat', payload);
+  const revision = getAuthSnapshot().revision;
+  const requestId = payload.request_id || createAssistantRequestId();
+  const response = await apiPost<GeneralChatResponse>('/api/agents/chat', { ...payload, request_id: requestId });
+  publishPlatformResult(response, revision, requestId);
+  return response;
 }
 
 /**
@@ -417,15 +429,24 @@ export function runGeneralChatStream(
   }
 ): () => void {
   const apiBaseUrl = getApiBaseUrls()[0];
+  const session = getAuthSnapshot();
+  const controller = new AbortController();
+  const requestId = payload.request_id || createAssistantRequestId();
   let aborted = false;
+  let terminal = false;
+  const stop = () => { aborted = true; controller.abort(); };
+  const unregister = registerSessionCleanup(stop);
 
   const run = async () => {
     try {
       const response = await fetch(`${apiBaseUrl}/api/agents/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json', 'X-DF-Web': DF_WEB_TOKEN,
+          ...(session.token && sessionOwnsRequest(apiBaseUrl) ? { Authorization: `Bearer ${session.token}` } : {}) },
+        body: JSON.stringify({ ...payload, request_id: requestId }),
+        signal: controller.signal,
       });
+      if (aborted || !isAuthRevisionCurrent(session.revision)) return;
 
       if (!response.ok || !response.body) {
         handlers.onError?.(`请求失败 (${response.status})`);
@@ -436,8 +457,9 @@ export function runGeneralChatStream(
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (!aborted) {
+      while (!aborted && !terminal) {
         const { done, value } = await reader.read();
+        if (aborted || !isAuthRevisionCurrent(session.revision)) break;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -448,10 +470,13 @@ export function runGeneralChatStream(
             continue;
           }
           try {
-            const parsed = JSON.parse(line.slice(6)) as { delta?: string; done?: boolean; error?: string; status?: string; sources?: ChatCitationSource[] };
+            const parsed = JSON.parse(line.slice(6)) as PlatformAssistantResult & { delta?: string; done?: boolean; error?: string; status?: string; sources?: ChatCitationSource[] };
             if (parsed.error) {
+              terminal = true;
               handlers.onError?.(parsed.error);
             } else if (parsed.done) {
+              terminal = true;
+              publishPlatformResult(parsed, session.revision, requestId);
               handlers.onDone?.();
             } else if (typeof parsed.status === 'string') {
               handlers.onStatus?.(parsed.status);
@@ -460,6 +485,7 @@ export function runGeneralChatStream(
             } else if (typeof parsed.delta === 'string') {
               handlers.onDelta(parsed.delta);
             }
+            if (terminal) break;
           } catch {
             // skip malformed SSE chunk
           }
@@ -467,18 +493,17 @@ export function runGeneralChatStream(
       }
 
       reader.releaseLock();
+      if (!aborted && !terminal && isAuthRevisionCurrent(session.revision)) handlers.onDone?.();
     } catch (err) {
-      if (!aborted) {
+      if (!aborted && isAuthRevisionCurrent(session.revision)) {
         handlers.onError?.(err instanceof Error ? err.message : 'AI 服务连接失败');
       }
-    }
+    } finally { unregister(); }
   };
 
   void run();
 
-  return () => {
-    aborted = true;
-  };
+  return () => { stop(); unregister(); };
 }
 
 // AI 原生 tool-use（非流式 JSON）：一次返回答案 + 用了哪些工具。走 apiClient(axios)——自动带 Authorization
@@ -493,7 +518,7 @@ export interface ToolReference {
   published_at?: string;
 }
 export interface ToolTraceItem { tool: string; ok?: boolean; summary?: string; args?: any; references?: ToolReference[]; }
-export interface ToolResearchResult {
+export interface ToolResearchResult extends PlatformAssistantResult {
   ok: boolean; answer: string; tool_trace: ToolTraceItem[]; rounds?: number; reason?: string; error?: string; status?: number;
   suggestions?: string[];       // 基于本次工具轨迹的确定性追问建议（零 token）
   quota_left?: number | null;   // 本次回答后剩余免费次数；null=会员不限
@@ -512,17 +537,20 @@ export async function runToolResearch(
   message: string, symbol = '', name = '',
   history: Array<[string, string]> = [],   // 最近几轮 [问,答]——web 端多轮记忆（后端只喂 LLM，不进确定性路由）
   attachment?: { filename: string; text: string },
-  options?: { roundtable?: boolean; context_hint?: string; timeoutMs?: number; signal?: AbortSignal },
+  options?: { roundtable?: boolean; context_hint?: string; timeoutMs?: number; signal?: AbortSignal; request_id?: string },
 ): Promise<ToolResearchResult> {
   const normalizedMessage = message.trim();
   if (!normalizedMessage) {
     return { ok: false, answer: '', tool_trace: [], error: '请输入问题后再发送', status: 400 };
   }
+  const revision = getAuthSnapshot().revision;
+  const requestId = options?.request_id || createAssistantRequestId();
   try {
     // 正文/附件进 JSON body；message 同时放入短 query 参数，兼容尚未切换到 JSON 解析的旧线上后端。
     // 只带问题/标的元数据，不把 history/附件放进 URL，避免 CDN/nginx 长度限制。
     const legacyQuery = new URLSearchParams({ message: normalizedMessage, symbol, name }).toString();
-    return await apiPost<ToolResearchResult>(`/api/agents/tool-research?${legacyQuery}`, {
+    const result = await apiPost<ToolResearchResult>(`/api/agents/tool-research?${legacyQuery}`, {
+      request_id: requestId,
       message: normalizedMessage,
       symbol,
       name,
@@ -531,6 +559,8 @@ export async function runToolResearch(
       history: history.slice(-3),
       ...(attachment?.text ? { attachment: { filename: attachment.filename, text: attachment.text } } : {}),
     }, { timeout: Math.max(5000, Math.min(90000, options?.timeoutMs ?? 90000)), signal: options?.signal });
+    publishPlatformResult(result, revision, requestId);
+    return result;
   } catch (e: any) {
     // 带上 HTTP 状态码：402(非会员额度用完→升级)/403(匿名→登录)，前端据此分流
     return { ok: false, answer: '', tool_trace: [], error: e?.response?.data?.detail || e?.message || '请求失败', status: e?.response?.status };
@@ -601,6 +631,7 @@ export function friendlyStreamError(message?: string): string {
 
 export function runToolResearchStream(
   payload: {
+    request_id?: string;
     message: string;
     /** Optional context kept out of deterministic skill routing. */
     context_hint?: string;
@@ -621,10 +652,12 @@ export function runToolResearchStream(
   }
 ): () => void {
   const session = getAuthSnapshot();
+  const requestId = payload.request_id || createAssistantRequestId();
   const token = session.token || '';
   const ctrl = new AbortController();
   let stopped = false;
   let terminal = false;
+  let platformStream = false;
   // 只负责通知调用方切换通道，不在 service 内部偷偷再发一次请求。
   // 旧实现这里和 FinancialTerminal 的 onFallback 各发一遍兜底请求，竞态时会
   // 重复扣额度、互相覆盖答案，并把一次正常降级放大成 500/403。
@@ -645,7 +678,9 @@ export function runToolResearchStream(
     timeout = window.setTimeout(() => {
       if (stopped || terminal) return;
       terminal = true;
-      handlers.onFallback?.('实时研究响应超时，正在切换快速通道');
+      // Once execution has started, replaying through a fallback could repeat a platform mutation.
+      if (platformStream) handlers.onError?.('响应中断，请向助手查询操作状态。');
+      else handlers.onFallback?.('实时研究响应超时，正在切换快速通道');
       // 取消当前流；兜底请求由调用方统一发起，保证最多只有一个。
       ctrl.abort();
     }, STREAM_IDLE_TIMEOUT_MS);
@@ -680,6 +715,7 @@ export function runToolResearchStream(
               ...(token && sessionOwnsRequest(base) ? { Authorization: `Bearer ${token}` } : {}),
             },
             body: JSON.stringify({
+              request_id: requestId,
               message: normalizedMessage,
               ...(payload.context_hint ? { context_hint: payload.context_hint.slice(0, 16000) } : {}),
               symbol: payload.symbol || '',
@@ -727,6 +763,7 @@ export function runToolResearchStream(
               let data: any; try { data = JSON.parse(dataText); } catch { continue; }
               armTimeoutGuard();
               receivedEvent = true;
+              if (data.platform === true) platformStream = true;
               if (eventType === 'status') handlers.onStatus?.(String(data.message || ''));
               else if (eventType === 'tool_start') handlers.onTool?.({ tool: data.tool }, 'start');
               else if (eventType === 'tool_result') handlers.onTool?.({
@@ -738,8 +775,8 @@ export function runToolResearchStream(
               else if (eventType === 'final') {
                 terminal = true;
                 clearTimeoutGuard();
-                handlers.onFinal?.({
-                ok: true,
+                const result: ToolResearchResult = {
+                ok: data.ok !== false,
                 answer: data.answer || '',
                 tool_trace: data.tool_trace || [],
                 rounds: data.rounds || 0,
@@ -754,7 +791,11 @@ export function runToolResearchStream(
                 core_agent_run_id: data.core_agent_run_id,
                 core_agent_protocol_version: data.core_agent_protocol_version,
                 core_agent_route: data.core_agent_route,
-                });
+                platform_actions: data.platform_actions,
+                navigation: data.navigation,
+                };
+                publishPlatformResult(result, session.revision, requestId);
+                handlers.onFinal?.(result);
               }
               else if (eventType === 'fallback') {
                 terminal = true;
@@ -766,7 +807,9 @@ export function runToolResearchStream(
                 terminal = true;
                 handlers.onError?.(data.message || '出错了');
               }
+              if (terminal) break;
             }
+            if (terminal) break;
           }
           reader.releaseLock();
           clearTimeoutGuard();

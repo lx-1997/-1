@@ -22,6 +22,8 @@ import { getAuthSnapshot, isAuthRevisionCurrent } from './state/authSession';
 import { writeAccountStorage } from './utils/accountStorage';
 import { saveCommunity } from './utils/communityPersistence';
 import { track, trackPageview } from './utils/analytics';
+import { registerPlatformNavigator, WATCHLIST_UPDATED_EVENT, isPlatformView } from './utils/platformAssistant';
+import { fetchWatchlist } from './services/watchlistService';
 
 const { Content } = Layout;
 // 鉴权旁路仅在显式 REACT_APP_AUTH_BYPASS=true 时开启——移除"dev 环境默认免登录"，杜绝任何非显式绕过登录。
@@ -609,6 +611,40 @@ const App: React.FC = () => {
   const handleViewChange = useCallback((view: ViewType) => {
     dispatch({ type: 'SET_VIEW', payload: view });
   }, []);
+
+  useEffect(() => registerPlatformNavigator(detail => {
+    if (!isAuthRevisionCurrent(detail.revision) || !detail.navigation || !isPlatformView(detail.navigation.view)) return;
+    const { view, symbol } = detail.navigation;
+    if (symbol) {
+      const selected = stocksRef.current.find(stock => stock.symbol.toUpperCase() === symbol.toUpperCase());
+      const market = /(?:\.SH|\.SZ)$|^\d{6}$/.test(symbol) ? 'CN' : /^\d{5}(?:\.HK)?$/.test(symbol) ? 'HK' : 'US';
+      dispatch({ type: 'SELECT_STOCK', view, payload: selected || candidateToStock({
+        symbol, code: symbol, name: symbol, market, exchange: '', security_type: 'stock', provider: 'platform', provider_name: '平台',
+      }) });
+    } else dispatch({ type: 'SET_VIEW', payload: view });
+  }), []);
+
+  useEffect(() => {
+    let controller: AbortController | null = null;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ revision: number; accountId: string }>).detail;
+      if (!detail || !session.account || detail.accountId !== session.account.id || !isAuthRevisionCurrent(detail.revision)) return;
+      controller?.abort(); controller = new AbortController();
+      const request = controller;
+      void fetchWatchlist(request.signal).then(data => {
+        if (request.signal.aborted || !isAuthRevisionCurrent(detail.revision)) return;
+        const existing = new Map(stocksRef.current.map(stock => [stock.symbol, stock]));
+        const stocks = data.symbols.map(symbol => existing.get(symbol) || candidateToStock({
+          symbol, code: symbol, name: data.names[symbol] || symbol,
+          market: /(?:\.SH|\.SZ)$|^\d{6}$/.test(symbol) ? 'CN' : /^\d{5}(?:\.HK)?$/.test(symbol) ? 'HK' : 'US',
+          exchange: '', security_type: 'stock', provider: 'platform', provider_name: '平台',
+        }));
+        dispatch({ type: 'SET_APP_STATE', payload: { stocks } });
+      }).catch(() => { /* A later assistant request can retry the read. */ });
+    };
+    window.addEventListener(WATCHLIST_UPDATED_EVENT, refresh);
+    return () => { controller?.abort(); window.removeEventListener(WATCHLIST_UPDATED_EVENT, refresh); };
+  }, [session.account]);
 
   return (
     <ModuleContextProvider>

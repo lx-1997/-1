@@ -1672,6 +1672,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+llm = CloudResearchLLM()
+from .platform_assistant import install_platform_assistant
+install_platform_assistant(
+    app, llm,
+    check_quota=lambda claims, request: _check_agent_quota(claims, request),
+    complete_quota=lambda lease: _complete_cost_quota(lease),
+)
+
 # 先加鉴权中间件、后加 CORS，使 CORS 处于最外层——
 # 这样鉴权返回的 401/403 也会带上 CORS 头，浏览器能正确读到状态码而非报跨域。
 app.add_middleware(AuthMiddleware)
@@ -1683,7 +1691,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-llm = CloudResearchLLM()
 # All user-facing AI paths share this policy/lifecycle boundary.  Specialist
 # analyzers remain adapters behind it so existing response schemas and caches
 # stay compatible during the migration.
