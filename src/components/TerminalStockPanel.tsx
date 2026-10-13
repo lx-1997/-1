@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet } from '../services/apiClient';
 import { createCall, cancelCall, fetchMyCalls, StockCall, CallDirection } from '../services/authService';
+import StockIntelligencePanel from './StockIntelligencePanel';
+import TerminalKline from './TerminalKline';
 
 // 战绩闭环白名单（单一真源，FinancialTerminal 的「我的战绩」菜单行/弹层同套引用——捕获与镜像同进退）：
 // 前端只控可见性，后端 DEEPFOCUS_CALLS_ALLOWED_USERS 硬门 403。内测过线（表态率达标）再放量。
@@ -267,11 +269,15 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
 
   return (
     <div style={{ ...box, margin: '6px 0 10px' }}>
+      <StockIntelligencePanel key={symbol} symbol={symbol} name={name} loggedIn={loggedIn} username={username} onRequireLogin={onRequireLogin} />
+      <details className="si-legacy" open={!loggedIn}>
+        <summary>更多个股数据 <span>分时与 K 线 · 速判卡 · 龙虎榜 · 一致预期 · 分红 · 题材</span></summary>
+        {loggedIn && <TerminalKline symbol={symbol} name={name} />}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         {(showCalls ? [...TABS, ['calls', '🎯 我的判断'] as [TabKey, string]] : TABS).map(([k, label]) => (
           <button key={k} className={'bbt-chip' + (tab === k ? ' on' : '')} onClick={() => switchTab(k)}>{label}</button>
         ))}
-        <button className="bbt-clear" style={{ marginLeft: 'auto' }} onClick={() => setOpen(false)}>收起 ▴</button>
+        <button className="bbt-clear" style={{ marginLeft: 'auto' }} onClick={event => event.currentTarget.closest('details')?.removeAttribute('open')}>收起数据 ▴</button>
       </div>
 
       {!loggedIn && (
@@ -519,6 +525,7 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
           })()}
         </div>
       )}
+      </details>
     </div>
   );
 }

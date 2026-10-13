@@ -4328,6 +4328,44 @@ async def _stock_panel_safe(coro) -> Any:
         return None
 
 
+@app.get("/api/stock/intelligence")
+async def stock_panel_intelligence(
+    request: Request, symbol: str, name: str = "", market: str = "", refresh: bool = False,
+) -> dict:
+    """个股证据工作区：登录可见，平台资料沿用账号来源隔离与文章会员视图。"""
+    user = require_current_user(request)
+    from .stock_intelligence import gather_stock_intelligence, normalize_instrument
+    from .stock_platform_sources import make_platform_loader
+
+    try:
+        sym, mk = normalize_instrument(symbol, market)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    wire_ai_allowed = False
+    try:
+        _check_ai_quota(user, "yb", request, cached=True)
+        wire_ai_allowed = True
+    except HTTPException:
+        pass
+    celebrity_allowed = False
+    try:
+        _require_celebrity_user(request)
+        celebrity_allowed = True
+    except HTTPException:
+        pass
+    visible_message = lambda message: _realtime_message_view(message, request)
+    platform_loader = make_platform_loader(
+        owner_id=str(user.get("sub") or ""), username=str(user.get("username") or ""),
+        is_member=_claims_is_member(user), wire_ai_allowed=wire_ai_allowed,
+        celebrity_allowed=celebrity_allowed, professional_allowed=True,
+        message_view=visible_message,
+    )
+    return {"data": await gather_stock_intelligence(
+        sym, name=name[:80], market=mk, refresh=refresh,
+        message_view=visible_message, platform_source_loader=platform_loader,
+    )}
+
+
 @app.get("/api/stock/dragon-tiger")
 async def stock_panel_dragon_tiger(request: Request, symbol: str) -> dict:
     """个股龙虎榜（东财确定性数据：上榜日期/席位买卖，非荐股）。登录可见。"""
