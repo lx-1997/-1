@@ -1,4 +1,5 @@
 import React, { useId, useMemo, useState } from 'react';
+import ResearchIcon from './ResearchIcon';
 import type { StockIntelligence } from './types';
 
 type FlowKey = 'main_net' | 'super_large_net' | 'large_net' | 'medium_net' | 'small_net';
@@ -45,7 +46,7 @@ function CapitalFlowChart({ data, onSource }: { data: StockIntelligence; onSourc
   const hasData = points.length > 0 && capital?.amount_unit === '元';
 
   return <section className="si-flow-panel" aria-label="资金与股价联动">
-    <div className="si-panel-head"><h4>资金与股价联动</h4><span>{capital?.status === 'stale' ? '历史快照 · 数据滞后' : '日资金分类统计'}</span></div>
+    <div className="si-panel-head"><h4><ResearchIcon name="flow" className="si-section-icon" />资金与股价联动</h4><span>{capital?.status === 'stale' ? '历史快照 · 数据滞后' : '日资金分类统计'}</span></div>
     {hasData && selected ? <>
       <div className="si-flow-summary"><div><span>所选区间 · {FLOWS.find(item => item.key === category)?.label}净额</span><b className={total < 0 ? 'si-negative' : total > 0 ? 'si-positive' : 'si-flat'}>{shownValues.length ? amountText(total) : '未提供'} <small>{shownValues.length > 0 && `亿元 · ${capital.currency || '币种未核验'}`}</small></b></div><div className="si-chart-periods" role="group" aria-label="资金图交易日区间">{[5, 20, 60].map(days => <button type="button" key={days} aria-pressed={!selection && period === days} onClick={() => { setPeriod(days); setSelection(null); setCursor(null); }}>{days}日</button>)}</div></div>
       <div className="si-flow-categories" role="group" aria-label="资金分类">{categories.map(item => <button type="button" key={item.key} aria-pressed={category === item.key} onClick={() => { setCategory(item.key); setCursor(null); }}>{item.label}</button>)}</div>
@@ -66,7 +67,7 @@ function CapitalFlowChart({ data, onSource }: { data: StockIntelligence; onSourc
       {series.length > 1 && <div className="si-flow-brush"><div className="si-flow-brush-title"><span>拖动选择交易区间</span><button type="button" onClick={() => { setSelection({ start: 0, end: series.length - 1 }); setCursor(null); }}>全部 {series.length} 日</button></div><div className="si-flow-sliders"><label>开始 <input type="range" aria-label="资金图开始交易日" aria-valuetext={series[start]?.date} min={0} max={series.length - 1} value={start} onChange={event => { setSelection({ start: Math.min(Number(event.target.value), end), end }); setCursor(null); }} /><time>{series[start]?.date}</time></label><label>结束 <input type="range" aria-label="资金图结束交易日" aria-valuetext={series[end]?.date} min={0} max={series.length - 1} value={end} onChange={event => { setSelection({ start, end: Math.max(start, Number(event.target.value)) }); setCursor(null); }} /><time>{series[end]?.date}</time></label></div></div>}
       <p id={`${id}-flow-description`} className="si-chart-source">成交分类净额，不能证明特定机构买卖。{prices.length > 1 && ` 价格：${capital.price_adjustment}，右轴 ${capital.price_currency}。`}{!canPrice && ' 价格币种未核验或不一致，未叠加价格线。'}<button type="button" onClick={() => onSource(capital.source_ids[0] || 'flow')}>查看资金依据 ↗</button></p>
       {capital.note && <details className="si-market-method"><summary>统计口径与数据覆盖</summary><p>{capital.note}</p></details>}
-    </> : <div className="si-market-empty"><span aria-hidden="true">↕</span><b>暂无可核验的日资金序列</b><p>{data.market === 'CN' ? '交易日期或金额缺失，暂不绘制资金走势。' : '当前市场暂无可核验的日资金分类数据。'}</p><button type="button" className="si-text-button" onClick={() => onSource(capital?.source_ids?.[0] || 'flow')}>查看数据覆盖 ↗</button></div>}
+    </> : <div className="si-market-empty"><span aria-hidden="true"><ResearchIcon name="flow" size={28} /></span><b>暂无可核验的日资金序列</b><p>{data.market === 'CN' ? '交易日期或金额缺失，暂不绘制资金走势。' : '当前市场暂无可核验的日资金分类数据。'}</p><button type="button" className="si-text-button" onClick={() => onSource(capital?.source_ids?.[0] || 'flow')}>查看数据覆盖 ↗</button></div>}
   </section>;
 }
 
@@ -85,7 +86,7 @@ function BrokerRatingChart({ data, onSource, onRatings }: { data: StockIntellige
   const radius = 53, circumference = Math.PI * 2 * radius;
   let offset = 0;
   return <section className="si-ratings-panel" aria-label="券商评级分布">
-    <div className="si-panel-head"><h4>券商评级分布</h4><span>{ratings?.status === 'stale' ? '历史样本 · 数据滞后' : '公开卖方研究'}</span></div>
+    <div className="si-panel-head"><h4><ResearchIcon name="ratings" className="si-section-icon" />券商评级分布</h4><span>{ratings?.status === 'stale' ? '历史样本 · 数据滞后' : '公开卖方研究'}</span></div>
     {valid ? <>
       <div className="si-rating-overview"><div className="si-rating-ring"><svg viewBox="0 0 144 144" role="img" aria-label={`券商评级分布，共 ${total} 条最新评级样本`}><circle cx="72" cy="72" r={radius} className="si-rating-track" />{groups.map(group => {
         const length = group.count / total * circumference;
@@ -96,7 +97,7 @@ function BrokerRatingChart({ data, onSource, onRatings }: { data: StockIntellige
       <div className="si-rating-sample-list">{[...samples].sort((a, b) => b.published_at.localeCompare(a.published_at)).slice(0, 3).map(sample => <button type="button" key={sample.broker_id} onClick={() => onRatings(sample.rating_key)}><span>{sample.broker}</span><b className={`si-rating-text--${sample.rating_key}`}>{sample.rating}</b><time>{sample.published_at.slice(0, 10)}</time></button>)}</div>
       <button type="button" className="si-text-button si-rating-all" onClick={() => onRatings()}>查看全部 {total} 条评级样本 ↗</button>
       <p className="si-chart-source">每家机构最新观点 · 非全市场覆盖，非上涨概率。<br />样本日期 {ratings!.period.from || '未提供'} — {ratings!.period.to || '未提供'}。<button type="button" onClick={() => onSource(ratings!.source_ids[0] || 'broker-ratings')}>查看评级来源 ↗</button></p>
-    </> : <div className="si-market-empty"><span aria-hidden="true">◌</span><b>暂无可核验的评级分布</b><p>需要机构、发布日期与明确评级记录，才能统计分布。</p><button type="button" className="si-text-button" onClick={() => onSource(ratings?.source_ids?.[0] || 'broker-ratings')}>查看数据覆盖 ↗</button></div>}
+    </> : <div className="si-market-empty"><span aria-hidden="true"><ResearchIcon name="ratings" size={28} /></span><b>暂无可核验的评级分布</b><p>需要机构、发布日期与明确评级记录，才能统计分布。</p><button type="button" className="si-text-button" onClick={() => onSource(ratings?.source_ids?.[0] || 'broker-ratings')}>查看数据覆盖 ↗</button></div>}
   </section>;
 }
 

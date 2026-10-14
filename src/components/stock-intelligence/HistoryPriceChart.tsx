@@ -1,4 +1,5 @@
 import React, { useId, useMemo, useState } from 'react';
+import ResearchIcon from './ResearchIcon';
 import type { IntelligenceSource, StockIntelligence } from './types';
 
 const WINDOWS = [{ label: '1月', days: 31 }, { label: '3月', days: 93 }, { label: '1年', days: 366 }];
@@ -35,7 +36,7 @@ export default function HistoryPriceChart({ technical, currency, source, onSourc
   const move = (index: number) => setCursor(Math.max(0, Math.min(points.length - 1, index)));
 
   return <section className="si-history-panel" aria-label="历史价格走势">
-    <div className="si-panel-head"><h4>价格走势</h4><span>{source?.status === 'stale' && '历史快照 · 数据滞后 · '}{technical?.adjustment || '复权口径待核验'}</span></div>
+    <div className="si-panel-head"><h4><ResearchIcon name="chart" className="si-section-icon" />价格走势</h4><span>{source?.status === 'stale' && '历史快照 · 数据滞后 · '}{technical?.adjustment || '复权口径待核验'}</span></div>
     {points.length > 1 && selected ? <>
       <div className="si-history-toolbar"><div className="si-chart-readout" aria-live="polite"><b>{number(selected.close)} <small>{seriesCurrency}</small></b><span>{selected.date} 收盘</span></div>
         <div className="si-chart-periods" role="group" aria-label="历史图周期">{WINDOWS.map((item, index) => <button key={item.label} type="button" aria-pressed={windowIndex === index} onClick={() => { setWindowIndex(index); setCursor(null); }}>{item.label}</button>)}</div>
@@ -55,6 +56,6 @@ export default function HistoryPriceChart({ technical, currency, source, onSourc
       <div className="si-chart-bottom"><span>区间收盘涨幅 <b className={returnPct != null && returnPct < 0 ? 'si-negative' : 'si-positive'}>{returnPct == null ? '—' : `${returnPct > 0 ? '+' : ''}${returnPct.toFixed(2)}%`}</b></span><span>{points.length} 个交易日</span></div>
       <p id={`${id}-chart-description`} className="si-chart-source">真实日线收盘 · 截至 {end?.date} · 历史走势不代表未来。<button type="button" onClick={() => onSource(technical?.source_ids?.[0] || 'history')}>查看行情依据 ↗</button></p>
       {technical?.series_currency && technical.series_currency !== currency && <p className="si-chart-source">历史价格以 {technical.series_currency} 计价，与页头报价币种不同，不作同轴比较。</p>}
-    </> : <div className="si-chart-unavailable"><span aria-hidden="true">⌁</span><b>暂无可用日线</b><p>历史数据不足，不绘制示意价格走势。</p></div>}
+    </> : <div className="si-chart-unavailable"><span aria-hidden="true"><ResearchIcon name="chart" size={28} /></span><b>暂无可用日线</b><p>历史数据不足，不绘制示意价格走势。</p></div>}
   </section>;
 }

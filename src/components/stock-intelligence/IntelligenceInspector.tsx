@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import ResearchIcon from './ResearchIcon';
 
 export default function IntelligenceInspector({ title, category, previousTitle, viewKey, onClose, onBack, children, bodyRef, returnFocus }: {
   title: string; category: string; previousTitle?: string; viewKey: string; onClose: () => void; onBack: () => void;
@@ -35,7 +36,7 @@ export default function IntelligenceInspector({ title, category, previousTitle, 
       if (event.shiftKey && (document.activeElement === first || document.activeElement === heading.current)) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }}>
-    <header className="si-inspector-header"><div>{previousTitle && <button type="button" className="si-inspector-back" onClick={onBack}>← 返回{previousTitle}</button>}<span className="si-inspector-category">{category}</span><h3 id={`${id}-title`} ref={heading} tabIndex={-1}>{title}</h3></div><button type="button" className="si-inspector-close" aria-label="关闭详情" onClick={onClose}>×</button></header>
+    <header className="si-inspector-header"><div>{previousTitle && <button type="button" className="si-inspector-back" aria-label={`← 返回${previousTitle}`} onClick={onBack}><ResearchIcon name="arrow-left" className="si-action-icon" size={18} />返回{previousTitle}</button>}<span className="si-inspector-category">{category}</span><h3 id={`${id}-title`} ref={heading} tabIndex={-1}>{title}</h3></div><button type="button" className="si-inspector-close" aria-label="关闭详情" onClick={onClose}><ResearchIcon name="close" size={20} /></button></header>
     <div ref={bodyRef} className="si-inspector-body">{children}</div>
   </dialog>, document.body);
 }
