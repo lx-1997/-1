@@ -49,20 +49,25 @@ _OTHER_SUBJECTS = ("行业", "同行", "同业", "竞争对手", "竞品", "供�
 _RECOMMENDATION = re.compile(r"推荐(?:标的|名单|组合|关注)|(?:重点|建议)关注|建议配置|推荐名单|关注名单")
 
 
-def _own_company_clause(text: str) -> bool:
-    """Recognize a narrow company statement, not a mentioned related party."""
+def _normalized_subject_clause(text: str) -> str:
     value = text.strip()
     # Qualifiers may alternate ('预计其供应商...', '2026年该公司...').
     # Strip them repeatedly, then re-check the actual subject; a date alone
     # cannot establish whose financial or operating metric follows it.
     while value:
         stripped = re.sub(r"^(?:本公司|该公司|公司|其)(?:的)?", "", value)
-        stripped = re.sub(r"^(?:预计|预测|预期|有望|可能|估计|将于|将|未来|本期|本季|今年|当前|近期|最新|同比|环比|并未|已|未|继续)", "", stripped)
+        stripped = re.sub(r"^(?:预计|预测|预期|有望|可能|估计|将于|将|未来|本期|本季|今年|上期|下期|上季|下季|去年|明年|上半年|下半年|当前|近期|最新|同比|环比|并未|已|未|继续)", "", stripped)
         stripped = re.sub(r"^(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月(?:\d{1,2}日)?|(?:\d{4}年)?[一二三四1-4]季度)", "", stripped)
         stripped = stripped.lstrip()
         if stripped == value:
             break
         value = stripped
+    return value
+
+
+def _own_company_clause(text: str) -> bool:
+    """Recognize a narrow company statement, not a mentioned related party."""
+    value = _normalized_subject_clause(text)
     if not value or value.startswith(_OTHER_SUBJECTS) or _RECOMMENDATION.search(value):
         return False
     # E.g. '五粮液净利增长' must not inherit a preceding company's heading.
@@ -158,17 +163,53 @@ def _paragraphs(text: str):
             yield index + 1, start, end, text[start:end]
 
 
+def _clause_background(text: str, symbol: str, name: str, background: bool) -> bool:
+    value = text.strip().lstrip("#*•●▪◆▶★☆")
+    for subject in (name, symbol):
+        if subject and value.casefold().startswith(subject.casefold()):
+            rest = value[len(subject):]
+            if subject == symbol and re.match(r"[A-Za-z0-9]", rest):
+                continue
+            rest = re.sub(rf"^\s*[（(]{re.escape(symbol)}(?:\.(?:SH|SZ|BJ|HK|SS))?[）)]", "", rest, flags=re.I)
+            value = _normalized_subject_clause(rest.lstrip(" :：的"))
+            return value.startswith(_OTHER_SUBJECTS) or bool(_RECOMMENDATION.search(value))
+    value = _normalized_subject_clause(value)
+    if value.startswith(_OTHER_SUBJECTS):
+        return True
+    if not value.startswith(_COMPANY_CUES) and re.match(
+            r"^[\u4e00-\u9fffA-Za-z]{2,20}(?:净利|利润|营收|收入|毛利|现金流|回款|库存|订单|EPS|股价)", value):
+        return True
+    return background
+
+
 def _scoped_paragraphs(text: str, *, subject_required: bool, symbol: str, name: str):
     """A body-only stock mention does not assign the rest of an industry list."""
+    background = False
     for paragraph, start, end, body in _paragraphs(text):
         if not subject_required:
-            yield paragraph, start, end, body
+            # A company title identifies the document, not every peer metric
+            # inside it. Keep omitted company subjects until an explicit
+            # related-party switch; only an explicit target resets that scope.
+            for sentence in re.finditer(r"[^。！？；;]+[。！？；;]?", body):
+                run_start, run_end, run_background = None, None, background
+                for clause in re.finditer(r"[^，,]+[，,]?", sentence.group()):
+                    current = _clause_background(clause.group(), symbol, name, background)
+                    absolute = start + sentence.start() + clause.start()
+                    if run_start is not None and current != run_background:
+                        yield paragraph, run_start, absolute, text[run_start:absolute], run_background
+                        run_start = None
+                    if run_start is None:
+                        run_start, run_background = absolute, current
+                    run_end = start + sentence.start() + clause.end()
+                    background = current
+                if run_start is not None:
+                    yield paragraph, run_start, run_end, text[run_start:run_end], run_background
             continue
         for sentence in re.finditer(r"[^。！？；;]+[。！？；;]?", body):
             value = sentence.group()
             symbol_hit = bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(symbol)}(?![A-Za-z0-9])", value, re.I))
             if symbol_hit or len(name) >= 2 and name.casefold() in value.casefold():
-                yield paragraph, start + sentence.start(), start + sentence.end(), value
+                yield paragraph, start + sentence.start(), start + sentence.end(), value, False
 
 
 def _quoted_span(paragraph: str, start: int, terms) -> tuple[int, int]:
@@ -339,7 +380,7 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
             if state == "title_only" or not visible.strip():
                 continue
             doc_candidates = []
-            for paragraph, start, end, body in _scoped_paragraphs(visible, subject_required=body_only, symbol=symbol, name=name):
+            for paragraph, start, end, body, background_subject in _scoped_paragraphs(visible, subject_required=body_only, symbol=symbol, name=name):
                 for dimension, (_, terms, rule_transmission, rule_watch) in DIMENSIONS.items():
                     if not _has(body, terms):
                         continue
@@ -351,8 +392,13 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
                     quote_start, quote_end = span
                     quote = visible[quote_start:quote_end]
                     direct_span = (_direct_company_span(quote, symbol, name)
-                                   if body_only and state in {"full", "excerpt"} else None)
+                                   if not background_subject and state in {"full", "excerpt"} else None)
                     claim_relations = list(doc_relations)
+                    if background_subject:
+                        target_relations = {relation["id"] for relation in relations
+                                            if relation["kind"] == "company" and relation.get("symbol") == symbol
+                                            and relation["verification"] == "verified"}
+                        claim_relations = [value for value in claim_relations if value not in target_relations]
                     if direct_span:
                         original_start = quote_start
                         quote_start, quote_end = original_start + direct_span[0], original_start + direct_span[1]
@@ -379,7 +425,7 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
                         claim_relations = [value for value in claim_relations if value not in context_company_ids] + [rid]
                     explicit_chain = bool(re.search(r"导致|带动|从而|因此|传导|推动|受益|压缩|侵蚀", quote))
                     explicit_watch = bool(re.search(r"关注|核验|验证|需观察|如果|若|风险提示|风险因素", quote))
-                    claim_role = "analysis" if state == "summary_only" else source_role if direct_span else role
+                    claim_role = "context" if background_subject else "analysis" if state == "summary_only" else source_role if direct_span else role
                     forecast_language = bool(re.search(r"预计|预测|预期|有望|可能|估计|未来|将(?:于|在)|将[^。！？；;，,]{0,16}(?:增长|下降|下滑|提升|改善|实现|达到|扩大|减少|回购|增持|减持|投产|发货)|目标(?:股)?价|forecast|expect|may\b", quote, re.I))
                     if forecast_language and state != "summary_only" and claim_role != "context":
                         claim_role = "opinion"

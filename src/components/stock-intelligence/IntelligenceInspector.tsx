@@ -30,7 +30,13 @@ export default function IntelligenceInspector({ title, category, previousTitle, 
       event.stopPropagation();
       if (event.key === 'Escape') { event.preventDefault(); close.current(); }
       if (event.key !== 'Tab') return;
-      const buttons = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input, [tabindex="0"]') || []).filter(element => !element.closest('[hidden]'));
+      const buttons = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input, summary, [tabindex="0"]') || []).filter(element => {
+        if (element.closest('[hidden]')) return false;
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+          if (parent instanceof HTMLDetailsElement && !parent.open && !parent.querySelector(':scope > summary')?.contains(element)) return false;
+        }
+        return true;
+      });
       const first = buttons[0], last = buttons[buttons.length - 1];
       if (!first) return;
       if (event.shiftKey && (document.activeElement === first || document.activeElement === heading.current)) { event.preventDefault(); last.focus(); }

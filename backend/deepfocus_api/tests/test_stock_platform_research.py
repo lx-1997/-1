@@ -28,6 +28,36 @@ def build(*channels):
     return build_platform_research(list(channels), symbol="600519", name="测试公司", market="CN", now=NOW)
 
 
+@pytest.mark.parametrize("subject", ["五粮液", "同行公司", "供应商", "公司供应商", "其供应商", "上游"])
+def test_company_title_does_not_assign_related_party_operating_metrics(subject):
+    result = build(channel(item(f"{subject}净利润增长20%，收入增长10%。因此预计EPS上调。")))
+    assert result["claims"]
+    assert all(claim["role"] == "context" for claim in result["claims"])
+    assert all(not link["support_claim_ids"] and not link["counter_claim_ids"] for link in result["scenario_links"])
+    assert result["documents"][0]["role"] == "opinion"
+
+
+def test_title_confirmed_company_keeps_omitted_subject_and_resets_after_explicit_company():
+    result = build(channel(item("净利增长，营收改善。五粮液净利增长。因此预计EPS上调。\n测试公司：净利下滑。")))
+    omitted = [claim for claim in result["claims"] if claim["claim"].startswith("净利增长")]
+    assert omitted and all(claim["role"] != "context" for claim in omitted)
+    peers = [claim for claim in result["claims"] if "五粮液" in claim["claim"] or "因此预计" in claim["claim"]]
+    assert peers and all(claim["role"] == "context" for claim in peers)
+    target = [claim for claim in result["claims"] if "测试公司" in claim["claim"]]
+    assert target and all(claim["role"] != "context" for claim in target)
+
+
+def test_verified_company_document_clips_peer_clause_and_preserves_exact_citation():
+    text = "测试公司净利增长，五粮液股价突破20日均线。"
+    result = build(channel(item(text)))
+    target = [claim for claim in result["claims"] if claim["role"] != "context"]
+    assert target and all("五粮液" not in claim["claim"] and claim["dimension"] != "technical" for claim in target)
+    peer = [claim for claim in result["claims"] if "五粮液" in claim["claim"]]
+    assert peer and all(claim["role"] == "context" for claim in peer)
+    for citation in result["citations"]:
+        assert text[citation["start"]:citation["end"]] == citation["quote"]
+
+
 def test_late_paragraphs_are_read_and_exact_quotes_resolve_to_document_revision():
     visible = "开场背景材料。\n" * 160 + "  渠道库存上升，需关注终端需求是否恢复。  \n净利下滑导致盈利预测下调。"
     result = build(channel(item(visible)))

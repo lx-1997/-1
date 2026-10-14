@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -73,3 +74,114 @@ def test_fetch_stream_rejects_unknown_group():
 def test_fetch_comments_requires_topic_id():
     res = asyncio.run(zs.fetch_comments(""))
     assert res["error"] and res["comments"] == []
+
+
+def _mock_stream_dependencies(monkeypatch, fetch):
+    """Exercise the retrieval boundary without network or ontology/share writes."""
+    from deepfocus_api import research_wire
+
+    calls = []
+    persisted = []
+
+    class Response:
+        def __init__(self, data):
+            self.data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.data
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs == {"trust_env": False}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, url, **kwargs):
+            assert url.endswith("/api/search-topics")
+            calls.append(dict(kwargs["json"]))
+            return Response(fetch(kwargs["json"]))
+
+    monkeypatch.setattr(zs, "stream_groups", lambda: [{"id": "allowed", "name": "机构纪要"}])
+    monkeypatch.setattr(zs, "_CACHE", {})
+    monkeypatch.setattr(zs, "time", SimpleNamespace(monotonic=lambda: 10.0))
+    monkeypatch.setattr(zs, "_norm_topic", lambda row: dict(row))
+    monkeypatch.setattr(zs, "_persist_share_topics", lambda rows: persisted.append(list(rows)))
+    monkeypatch.setattr(research_wire, "auth_payload", lambda: {})
+    monkeypatch.setattr(zs.httpx, "AsyncClient", Client)
+    return calls, persisted
+
+
+def test_fetch_stream_default_retains_four_page_contract_and_cache_key(monkeypatch):
+    rows = [{"id": str(index), "text": "纪要正文"} for index in range(40)]
+    calls, persisted = _mock_stream_dependencies(
+        monkeypatch, lambda payload: {"items": rows, "nextEndTime": "older", "hasMore": True},
+    )
+
+    first = asyncio.run(zs.fetch_stream(keyword="  茅台  ", limit=99))
+    cached = asyncio.run(zs.fetch_stream(keyword="茅台", limit=99))
+
+    assert calls == [{"group": "allowed", "resultLimit": 40, "searchPages": 4, "keyword": "茅台"}]
+    assert first == cached
+    assert first["items"] == rows and first["total"] == 40
+    assert first["next_before"] == "older" and first["has_more"] is True
+    assert list(zs._CACHE) == [("allowed", "茅台")]
+    assert persisted == [rows]
+
+
+@pytest.mark.parametrize(("limit", "expected_count"), [(99, 20), (3, 3)])
+def test_fetch_stream_stock_scope_caps_provider_request_and_response(monkeypatch, limit, expected_count):
+    rows = [{"id": str(index), "text": "纪要正文"} for index in range(35)]
+    calls, persisted = _mock_stream_dependencies(monkeypatch, lambda payload: {"items": rows})
+
+    result = asyncio.run(zs.fetch_stream(keyword="茅台", limit=limit, stock_scope=True))
+
+    assert calls == [{"group": "allowed", "resultLimit": expected_count, "searchPages": 1, "keyword": "茅台"}]
+    assert result["items"] == rows[:expected_count] and result["total"] == expected_count
+    assert list(zs._CACHE) == [("allowed", "茅台", "stock")]
+    assert persisted == [rows[:expected_count]]
+
+
+def test_fetch_stream_stock_and_default_caches_do_not_cross_on_hit_or_failure(monkeypatch):
+    offline = False
+
+    def fetch(payload):
+        if offline:
+            raise RuntimeError("upstream unavailable")
+        mode = "stock" if payload["searchPages"] == 1 else "default"
+        return {"items": [{"id": mode, "text": f"{mode} result"}]}
+
+    calls, _ = _mock_stream_dependencies(monkeypatch, fetch)
+    default = asyncio.run(zs.fetch_stream(keyword="茅台"))
+    stock = asyncio.run(zs.fetch_stream(keyword="茅台", stock_scope=True))
+    assert default["items"][0]["id"] == "default"
+    assert stock["items"][0]["id"] == "stock"
+    assert len(calls) == 2
+
+    assert asyncio.run(zs.fetch_stream(keyword=" 茅台 ")) == default
+    assert asyncio.run(zs.fetch_stream(keyword=" 茅台 ", stock_scope=True)) == stock
+    assert len(calls) == 2
+
+    offline = True
+    assert asyncio.run(zs.fetch_stream(keyword="茅台", use_cache=False)) == default
+    assert asyncio.run(zs.fetch_stream(keyword="茅台", stock_scope=True, use_cache=False)) == stock
+    assert len(calls) == 4
+    assert set(zs._CACHE) == {("allowed", "茅台"), ("allowed", "茅台", "stock")}
+
+
+@pytest.mark.parametrize("stock_scope", [False, True])
+def test_fetch_stream_unknown_group_cannot_use_cached_results_or_network(monkeypatch, stock_scope):
+    calls, persisted = _mock_stream_dependencies(monkeypatch, lambda payload: {"items": []})
+    key = ("forbidden", "茅台", "stock") if stock_scope else ("forbidden", "茅台")
+    zs._CACHE[key] = (10.0, {"items": [{"id": "private", "text": "不可见纪要"}]})
+
+    with pytest.raises(ValueError, match="未知星球"):
+        asyncio.run(zs.fetch_stream(group="forbidden", keyword="茅台", stock_scope=stock_scope))
+
+    assert calls == [] and persisted == []

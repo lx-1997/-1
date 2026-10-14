@@ -411,7 +411,8 @@ def test_remote_notes_fetch_is_bounded_read_only_metadata_path_and_retains_full_
     module = SimpleNamespace(_CACHE={}, stream_groups=lambda: [{"id": "allowed"}], fetch_stream=fetch_stream)
     monkeypatch.setitem(sys.modules, "deepfocus_api.zsxq_stream", module)
     result = load(stores, allow_remote=True)["institution_notes"]
-    assert calls and all(call["limit"] == 40 and call["use_cache"] is True for call in calls)
+    assert len(calls) == 1
+    assert calls[0] == {"keyword": "测试公司", "limit": 20, "use_cache": True, "stock_scope": True}
     assert result["items"][0]["body_state"] == "full"
     assert len(result["items"][0]["visible_text"]) > 420
 
@@ -539,3 +540,83 @@ def test_total_remote_deadline_returns_completed_local_evidence_without_exposing
     assert "总时限" in result["institution_notes"]["coverage"]["reason"]
     assert result["recent_research"]["status"] == "access_required"
     assert result["celebrity_views"]["coverage"]["scanned"] == 0
+
+
+def test_stock_remote_empty_name_search_falls_back_to_code_once(stores, monkeypatch):
+    calls = []
+    async def fetch_stream(**kwargs):
+        calls.append(kwargs)
+        return {"items": [] if kwargs["keyword"] == "测试公司" else [
+            {"id": "ticker", "title": "600519 经营纪要", "text": "净利增长", "date": date()[:10]}]}
+    monkeypatch.setitem(sys.modules, "deepfocus_api.zsxq_stream", SimpleNamespace(
+        _CACHE={}, stream_groups=lambda: [], fetch_stream=fetch_stream))
+    channel = load(stores, allow_remote=True)["institution_notes"]
+    assert [call["keyword"] for call in calls] == ["测试公司", "600519"]
+    assert all(call["stock_scope"] and call["limit"] == 20 for call in calls)
+    assert channel["items"][0]["body_state"] == "full"
+    assert channel["coverage"]["complete"] is False
+    assert "首 1 页" in channel["coverage"]["reason"]
+
+
+def test_stock_remote_wire_is_bounded_and_stays_behind_existing_paid_gate(stores, monkeypatch):
+    from deepfocus_api import research_wire
+    calls = []
+    async def reader(**kwargs):
+        calls.append(kwargs)
+        return {"items": [{"id": str(i), "file_id": str(i), "title": f"测试公司：报告{i}", "date": date()[:10]}
+                          for i in range(50)]}
+    monkeypatch.setattr(research_wire, "fetch_research_wire_online", reader)
+    monkeypatch.setattr(sources._Collector, "cache", lambda *args: None)
+    denied = load(stores, allow_remote=True, wire_ai_allowed=False)["recent_research"]
+    assert denied["status"] == "access_required"
+    assert calls == []
+    channel = load(stores, allow_remote=True, wire_ai_allowed=True)["recent_research"]
+    assert calls == [{"query": "测试公司", "limit": 20, "use_cache": True, "stock_scope": True}]
+    assert len(channel["items"]) == channel["coverage"]["scanned"] == 20
+    assert all(row["body_state"] == "title_only" for row in channel["items"])
+    assert channel["coverage"]["complete"] is False
+
+
+def test_stock_remote_name_and_ticker_share_one_source_deadline(stores, monkeypatch):
+    calls, cancelled = [], []
+    async def reader(**kwargs):
+        calls.append(kwargs["keyword"])
+        try:
+            await asyncio.sleep(.025)
+        except asyncio.CancelledError:
+            cancelled.append(kwargs["keyword"])
+            raise
+        return {"items": []}
+    monkeypatch.setattr(sources, "REMOTE_TIMEOUT", .04)
+    monkeypatch.setattr(sources, "REMOTE_BUDGET", .5)
+    monkeypatch.setitem(sys.modules, "deepfocus_api.zsxq_stream", SimpleNamespace(
+        _CACHE={}, stream_groups=lambda: [], fetch_stream=reader))
+    result = load(stores, allow_remote=True)["institution_notes"]
+    assert calls == ["测试公司", "600519"]
+    assert cancelled == ["600519"]
+    assert "有界在线检索暂不可用" in result["coverage"]["reason"]
+
+
+def test_stock_scope_incompatible_reader_cannot_fall_back_to_unbounded_call(stores, monkeypatch):
+    calls = []
+    async def legacy_reader(*, keyword, limit, use_cache):
+        calls.append(keyword)
+        raise AssertionError("legacy unbounded reader must not be invoked")
+    monkeypatch.setitem(sys.modules, "deepfocus_api.zsxq_stream", SimpleNamespace(
+        _CACHE={}, stream_groups=lambda: [], fetch_stream=legacy_reader))
+    result = load(stores, allow_remote=True)["institution_notes"]
+    assert calls == []
+    assert result["status"] == "partial"
+    assert "有界在线检索暂不可用" in result["coverage"]["reason"]
+
+
+def test_remote_failure_diagnostics_never_include_upstream_secret_text(stores, monkeypatch, caplog):
+    async def reader(**kwargs):
+        raise RuntimeError("private-provider-response-and-cookie")
+    monkeypatch.setitem(sys.modules, "deepfocus_api.zsxq_stream", SimpleNamespace(
+        _CACHE={}, stream_groups=lambda: [], fetch_stream=reader))
+    result = load(stores, allow_remote=True)["institution_notes"]
+    assert "来源服务未成功响应" in result["coverage"]["reason"]
+    assert "private-provider" not in json.dumps(result, ensure_ascii=False)
+    assert "private-provider" not in caplog.text
+    assert "source=institution_notes error=RuntimeError http_status=None" in caplog.text

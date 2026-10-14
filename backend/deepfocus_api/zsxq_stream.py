@@ -27,7 +27,7 @@ _WORKBENCH_PORT = os.getenv("RESEARCH_WORKBENCH_INTERNAL_PORT", "3927").strip()
 _WORKBENCH_BASE = f"http://127.0.0.1:{_WORKBENCH_PORT}"
 
 # 首页（无游标）TTL 缓存：星球接口一次 2-6s，缓存后重复打开秒回；翻页请求不缓存。
-_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_CACHE: dict[tuple[str, ...], tuple[float, dict[str, Any]]] = {}
 _TTL = float(os.getenv("DEEPFOCUS_ZSXQ_STREAM_TTL", "180"))
 _CACHE_MAX = 24
 
@@ -147,6 +147,7 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
 
 async def fetch_stream(
     *, group: str = "", keyword: str = "", limit: int = 20, end_time: str = "", use_cache: bool = True,
+    stock_scope: bool = False,
 ) -> dict[str, Any]:
     """拉某星球的帖子流。end_time 为「加载更早」游标（上一页 next_before），空 = 最新首页。
 
@@ -159,8 +160,10 @@ async def fetch_stream(
         raise ValueError("未知星球")
     kw = (keyword or "").strip()[:40]
     n = max(1, min(int(limit or 20), 40))
+    if stock_scope:
+        n = min(n, 20)
     first_page = not (end_time or "").strip()
-    ckey = (g, kw)
+    ckey = (g, kw, "stock") if stock_scope else (g, kw)
     now = time.monotonic()
 
     if use_cache and first_page:
@@ -168,7 +171,7 @@ async def fetch_stream(
         if hit and (now - hit[0]) < _TTL:
             return hit[1]
 
-    payload: dict[str, Any] = {"group": g, "resultLimit": n, "searchPages": 4}
+    payload: dict[str, Any] = {"group": g, "resultLimit": n, "searchPages": 1 if stock_scope else 4}
     if kw:
         payload["keyword"] = kw
     if not first_page:
@@ -190,6 +193,8 @@ async def fetch_stream(
         raise
 
     items = [it for it in (_norm_topic(t) for t in (data.get("items") or [])) if it]
+    if stock_scope:
+        items = items[:n]
     out: dict[str, Any] = {
         "items": items,
         "group": g,

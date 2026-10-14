@@ -101,6 +101,16 @@ def test_cashflow_period_mismatch_not_compared_and_all_refs_resolve():
         assert set(item["source_ids"]) <= ids
 
 
+@pytest.mark.parametrize("period", [None, "", "2026-02-30", "2027-06-30"])
+def test_equal_unverified_periods_do_not_establish_cash_conversion_or_balance_ratios(period):
+    result = snapshot(financials={"report_date": period, "net_income": 100, "revenue": 1000},
+                      cashflow={"report_date": period, "ocf": 159},
+                      balance={"report_date": period, "inventory": 300, "accounts_receivable": 100})
+    fundamentals = next(d for d in result["dimensions"] if d["key"] == "fundamentals")
+    assert not any("现金流/归母" in m["label"] or "报告期营收" in m["label"] for m in fundamentals["metrics"])
+    assert "cashflow" not in fundamentals["source_ids"] and "balance" not in fundamentals["source_ids"]
+
+
 def test_technical_range_is_historical_and_flat_rsi_is_fifty():
     hist = [(f"2026-09-{i:02d}", 100) for i in range(1, 31)] + [("2026-10-13", 100)]
     result = snapshot(history=hist)

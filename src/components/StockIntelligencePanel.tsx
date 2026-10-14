@@ -6,6 +6,7 @@ import HistoryPriceChart from './stock-intelligence/HistoryPriceChart';
 import IntelligenceInspector from './stock-intelligence/IntelligenceInspector';
 import MarketEvidenceCharts from './stock-intelligence/MarketEvidenceCharts';
 import ResearchIcon, { type ResearchIconName } from './stock-intelligence/ResearchIcon';
+import ScenarioReasoning from './stock-intelligence/ScenarioReasoning';
 import PlatformResearchPanel, { PLATFORM_BODY_LABELS, PLATFORM_ROLE_LABELS, isPlatformDirectional, platformCoverageLabel } from './stock-intelligence/PlatformResearchPanel';
 import './stock-intelligence/stock-intelligence.css';
 
@@ -87,6 +88,8 @@ function ScenarioCard({ scenario, meta, currency, onOpen }: { scenario?: Intelli
   return <article className={`si-scenario si-scenario--${meta.key}${displayedPrice.length >= 9 ? ' si-scenario--long-price' : ''}`} aria-label={`${meta.label}股价情景`}><button type="button" className="si-scenario-action" aria-label={`查看${meta.label}情景依据`} onClick={onOpen}>
     <span className="si-scenario-label"><b><ResearchIcon name={meta.icon} className="si-step-icon" />{meta.label}</b><small>{meta.mark}</small></span><span className="si-scenario-number"><strong>{displayedPrice}</strong><small>{valid && currency}</small></span><span className={`si-scenario-return ${directionClass(scenario?.upside_pct)}`}>{valid ? percentText(scenario?.upside_pct) : '输入不足'}<ResearchIcon name="arrow-up-right" className="si-action-icon" size={18} /></span>
     <span className="si-scenario-mini">{scenarioInput(scenario) || '缺少可核验的估值输入'}</span>
+    {scenario?.reasoning?.headline && <span className="si-scenario-reason">{scenario.reasoning.card_summary || scenario.reasoning.headline}</span>}
+    {scenario?.reasoning && <span className="si-scenario-why">原因与具体依据<ResearchIcon name="arrow-up-right" className="si-action-icon" size={18} /></span>}
   </button></article>;
 }
 function Metrics({ metrics }: { metrics: IntelligenceDimension['metrics'] }) {
@@ -179,6 +182,7 @@ export default function StockIntelligencePanel({ symbol, name, loggedIn, usernam
   const [evidenceFilter, setEvidenceFilter] = useState<'all' | 'platform' | 'public'>('all');
   const [detail, setDetail] = useState<DetailView | null>(null);
   const [detailHistory, setDetailHistory] = useState<DetailView[]>([]);
+  const [scenarioDriverOpen, setScenarioDriverOpen] = useState<Record<string, string[]>>({});
   const inspectorBody = useRef<HTMLDivElement>(null);
   const platformSection = useRef<HTMLDivElement>(null);
   const intentTrigger = useRef<HTMLElement | null>(null);
@@ -206,7 +210,7 @@ export default function StockIntelligencePanel({ symbol, name, loggedIn, usernam
     } finally { if (!aborter.signal.aborted && currentSequence === sequence.current) setLoadingScope(null); }
   }, [canRead, name, scope, session.revision, symbol]);
   useEffect(() => {
-    setResult(null); setFailure(null); setSection('overview'); setEvidenceFilter('all'); setDetail(null); setDetailHistory([]); detailScroll.current.clear();
+    setResult(null); setFailure(null); setSection('overview'); setEvidenceFilter('all'); setDetail(null); setDetailHistory([]); setScenarioDriverOpen({}); detailScroll.current.clear();
     void load();
     return () => { controller.current?.abort(); sequence.current += 1; };
   }, [load]);
@@ -221,7 +225,7 @@ export default function StockIntelligencePanel({ symbol, name, loggedIn, usernam
     if (detail) detailScroll.current.set(detailKey(detail), inspectorBody.current?.scrollTop || 0);
     setDetailHistory(history => history.slice(0, -1)); setDetail(previous);
   };
-  const closeDetail = () => { setDetail(null); setDetailHistory([]); detailScroll.current.clear(); };
+  const closeDetail = () => { setDetail(null); setDetailHistory([]); setScenarioDriverOpen({}); detailScroll.current.clear(); };
   const openSource = (id: string) => openDetail({ kind: 'source', id });
   const openDimension = (key: string) => openDetail({ kind: 'dimension', key });
   const keyboardTab = (event: React.KeyboardEvent, index: number) => {
@@ -282,7 +286,11 @@ export default function StockIntelligencePanel({ symbol, name, loggedIn, usernam
       </>}
     </>}
     {data && detail && <IntelligenceInspector title={titleOf(detail)} category={detail.kind === 'source' ? 'DATA SOURCE' : detail.kind === 'evidence' ? 'RESEARCH EVIDENCE' : 'RESEARCH DETAIL'} previousTitle={previousTitle} viewKey={detailKey(detail)} onClose={closeDetail} onBack={backDetail} bodyRef={inspectorBody} returnFocus={intentTrigger.current}>
-      {detail.kind === 'scenario' && scenario && <><div className="si-detail-price"><b>{priceText(scenario.price)} <small>{data.currency}</small></b><span className={directionClass(scenario.upside_pct)}>较参考价 {percentText(scenario.upside_pct)}</span></div><p className="si-detail-caption">{mode} · {valuation?.horizon}</p><section className="si-detail-block"><h4><ResearchIcon name="target" className="si-section-icon" />需要发生什么</h4><ul className="si-detail-list">{scenario.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></section><section className="si-detail-block"><h4><ResearchIcon name="research" className="si-section-icon" />原因与交叉验证</h4><ul className="si-detail-list">{scenario.reasons.map((item, index) => <li key={index}>{item}</li>)}</ul></section><section className="si-detail-block"><h4><ResearchIcon name="warning" className="si-section-icon" />哪些事实会推翻假设</h4><ul className="si-detail-list">{scenario.invalidation.map((item, index) => <li key={index}>{item}</li>)}</ul></section><PlatformScenarioArguments data={data} scenarioKey={scenario.key} onClaim={id => openDetail({ kind: 'platform-claim', id })} /><p className="si-detail-caption">{valuation?.note}</p><References ids={scenario.source_ids} sources={sources} onSelect={openSource} /></>}
+      {detail.kind === 'scenario' && scenario && <><div className="si-detail-price"><b>{priceText(scenario.price)} <small>{data.currency}</small></b><span className={directionClass(scenario.upside_pct)}>较参考价 {percentText(scenario.upside_pct)}</span></div><p className="si-detail-caption">{mode} · {valuation?.horizon} · 固定压力假设</p>{scenario.reasoning ? <ScenarioReasoning reasoning={scenario.reasoning} data={data} onSource={openSource} onClaim={id => openDetail({ kind: 'platform-claim', id })} expandedDriverKeys={scenarioDriverOpen[scenario.key] || []} onToggleDriver={(key, open) => setScenarioDriverOpen(previous => {
+        const selected = previous[scenario.key] || [];
+        if (selected.includes(key) === open) return previous;
+        return { ...previous, [scenario.key]: open ? [...selected, key] : selected.filter(item => item !== key) };
+      })} /> : <><section className="si-detail-block"><h4><ResearchIcon name="target" className="si-section-icon" />需要发生什么</h4><ul className="si-detail-list">{scenario.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></section><section className="si-detail-block"><h4><ResearchIcon name="research" className="si-section-icon" />原因与交叉验证</h4><ul className="si-detail-list">{scenario.reasons.map((item, index) => <li key={index}>{item}</li>)}</ul></section><section className="si-detail-block"><h4><ResearchIcon name="warning" className="si-section-icon" />哪些事实会推翻假设</h4><ul className="si-detail-list">{scenario.invalidation.map((item, index) => <li key={index}>{item}</li>)}</ul></section><PlatformScenarioArguments data={data} scenarioKey={scenario.key} onClaim={id => openDetail({ kind: 'platform-claim', id })} /></>}<p className="si-detail-caption">{valuation?.note}</p><References ids={scenario.source_ids} sources={sources} onSelect={openSource} /></>}
       {detail.kind === 'dimension' && dimension && <><p className="si-detail-lead">{dimension.headline}</p><SourceStatus ids={dimension.source_ids} sources={sources} /><Metrics metrics={dimension.metrics || []} /><section className="si-detail-block"><h4><ResearchIcon name="document" className="si-section-icon" />研究依据</h4><ul className="si-detail-list">{dimension.evidence.map((item, index) => <li key={index}>{item}</li>)}</ul></section><PlatformDimensionArguments data={data} dimension={dimension} onClaim={id => openDetail({ kind: 'platform-claim', id })} /><References ids={dimension.source_ids} sources={sources} onSelect={openSource} /></>}
       {detail.kind === 'method' && <><p className="si-detail-lead">{valuation?.method}</p>{valuation?.formula && <div className="si-formula">{valuation.formula}</div>}{anchor != null && (typeof anchor === 'object' ? <Metrics metrics={[{ label: '参考价', value: anchor.price ?? null, unit: data.currency }, { label: '当前 TTM PE', value: anchor.pe_ttm ?? null, unit: '倍' }, { label: `${anchor.forecast_year || ''} 年度预测 EPS`, value: anchor.forecast_eps ?? null, unit: data.currency }]} /> : <p>估值锚：{anchor}</p>)}<p className="si-detail-caption">{valuation?.note}</p><References ids={valuation?.source_ids} sources={sources} onSelect={openSource} /></>}
       {detail.kind === 'source' && <div className="si-source-context">{source ? <><span className="si-model-tag"><ResearchIcon name={sourceStatusIcon(source.status)} className="si-source-icon" size={18} />{source.status === 'stale' ? '数据滞后' : ['ok', 'available'].includes(source.status) ? '可用' : '待补数据'}</span><dl><div><dt>资料时点</dt><dd>{dateText(source.as_of)}</dd></div><div><dt>本次汇集时间</dt><dd>{dateText(source.fetched_at)}</dd></div></dl>{source.freshness && <p>{source.freshness}</p>}<PlatformSourceContext data={data} sourceId={source.id} />{intelligenceLink(source.url) ? <a href={intelligenceLink(source.url)} target="_blank" rel="noopener noreferrer" aria-label="打开原始来源 ↗">打开原始来源 <ResearchIcon name="arrow-up-right" className="si-action-icon" size={18} /></a> : <p>该记录未提供可访问的原文链接。</p>}</> : <p>该条来源记录暂不可用，不能核验其原文。</p>}</div>}

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import re
 import sqlite3
 import sys
@@ -29,6 +30,8 @@ TOTAL_TEXT_LIMIT = 256_000
 CHANNEL_TEXT_LIMIT = 64_000
 REMOTE_TIMEOUT = 6.0
 REMOTE_BUDGET = 12.0
+REMOTE_ITEM_LIMIT = 20
+_LOG = logging.getLogger(__name__)
 
 _STORES = {
     "messages": (".realtime_messages.sqlite3", "DEEPFOCUS_REALTIME_MESSAGE_DB_PATH"),
@@ -562,21 +565,42 @@ class _Collector:
         # Separate ordinary stream (currently public) from whitelisted views.
         # Calls use existing metadata/text readers only; do not call main's
         # wire list handler, which can schedule PDF prewarming as a side effect.
-        terms = [term for term in (self.name, self.symbol) if term][:2]
+        terms = list(dict.fromkeys(term for term in (self.name, self.symbol) if term))[:2]
+        async def scoped_search(key: str, reader: Callable, consume: Callable) -> None:
+            # One stock search must not warm the provider's 500-item pool or
+            # traverse unlimited pages. The provider's opt-in stock scope uses
+            # one page and a separate cache; legacy callers keep their scope.
+            deadline = time.monotonic() + REMOTE_TIMEOUT
+            self.partial(key, "在线仅检索当前公司名称或代码的首 1 页、最多 20 条；不表示全库已读，保留当前账号可见的本地资料")
+            for term in terms:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                before = self.channels[key]["coverage"]["matched"]
+                result = await asyncio.wait_for(reader(term), remaining)
+                rows = result.get("items") if isinstance(result, dict) else []
+                await consume((rows if isinstance(rows, list) else [])[:REMOTE_ITEM_LIMIT])
+                # A successful company-name match already yields the requested
+                # scope. Fall back to the ticker only after a fast empty match;
+                # both attempts share the original six-second source deadline.
+                if self.channels[key]["coverage"]["matched"] > before:
+                    break
         async def notes() -> None:
             if any(item["body_state"] == "full" for item in self.channels["institution_notes"]["items"]) and not self.query.get("refresh"):
                 return
             from .zsxq_stream import fetch_stream
-            for term in terms:
-                result = await asyncio.wait_for(fetch_stream(keyword=term, limit=40, use_cache=True), REMOTE_TIMEOUT)
-                self.notes_rows(result.get("items") or [], "full")
+            async def consume(rows):
+                self.notes_rows(rows, "full")
+            await scoped_search("institution_notes", lambda term: fetch_stream(
+                keyword=term, limit=REMOTE_ITEM_LIMIT, use_cache=True, stock_scope=True), consume)
         async def wire() -> None:
             if not self.access.wire_ai_allowed or self.channels["recent_research"]["items"] and not self.query.get("refresh"):
                 return
             from .research_wire import fetch_research_wire_online
-            for term in terms:
-                result = await asyncio.wait_for(fetch_research_wire_online(limit=40, query=term), REMOTE_TIMEOUT)
-                await asyncio.to_thread(self.wire_rows, result.get("items") or [])
+            async def consume(rows):
+                await asyncio.to_thread(self.wire_rows, rows)
+            await scoped_search("recent_research", lambda term: fetch_research_wire_online(
+                limit=REMOTE_ITEM_LIMIT, query=term, use_cache=True, stock_scope=True), consume)
         async def celebrity() -> None:
             if not self.access.celebrity_allowed or self.channels["celebrity_views"]["status"] == "not_enabled" or self.channels["celebrity_views"]["items"] and not self.query.get("refresh"):
                 return
@@ -587,9 +611,15 @@ class _Collector:
         # All remote work has one bounded deadline, preserving usable local data.
         for key, operation in (("institution_notes", notes), ("recent_research", wire), ("celebrity_views", celebrity)):
             try:
-                await asyncio.wait_for(operation(), REMOTE_TIMEOUT + 1)
-            except (Exception, asyncio.TimeoutError):
-                self.partial(key, "有界在线检索暂不可用，保留当前账号可见的本地资料；未读取PDF或调用AI")
+                await asyncio.wait_for(operation(), REMOTE_TIMEOUT)
+            except (Exception, asyncio.TimeoutError) as exc:
+                # Log classification only, never exception text, request
+                # headers, credentials or provider response bodies.
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                status = status if isinstance(status, int) and 100 <= status <= 599 else None
+                _LOG.warning("[stock-sources] remote source=%s error=%s http_status=%s", key, type(exc).__name__, status)
+                reason = "本次查询超时" if isinstance(exc, (TimeoutError, asyncio.TimeoutError)) else "来源服务未成功响应"
+                self.partial(key, f"有界在线检索暂不可用（{reason}），保留当前账号可见的本地资料；未读取PDF或调用AI")
 
 
 def make_platform_loader(*, owner_id: str, username: str, is_member: bool = False,

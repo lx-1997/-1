@@ -19,6 +19,101 @@ export interface IntelligenceScenario {
   source_ids: string[];
   platform_claim_ids?: string[];
   platform_context_claim_ids?: string[];
+  reasoning?: ScenarioReasoning;
+}
+
+export type ScenarioAssessment = 'support' | 'counter' | 'mixed' | 'unknown';
+export type ScenarioDriverKey = 'business' | 'fundamentals' | 'earnings' | 'technical' | 'capital' | 'news';
+
+export interface ScenarioObservation {
+  id: string;
+  label: string;
+  statement: string;
+  value: number | string | null;
+  unit: string;
+  as_of: string | null;
+  status: 'available' | 'stale' | 'unknown' | 'missing';
+  origin: 'public' | 'platform';
+  role: PlatformResearchRole;
+  direction: 'support' | 'counter' | 'neutral' | 'unknown';
+  source_ids: string[];
+  platform_claim_ids: string[];
+}
+
+export interface ScenarioDriver {
+  key: ScenarioDriverKey;
+  label: string;
+  assessment: ScenarioAssessment;
+  observed: ScenarioObservation[];
+  condition: string;
+  transmission: string;
+  source_ids: string[];
+  platform_claim_ids: string[];
+  counter_claim_ids: string[];
+  context_claim_ids: string[];
+  watch: string[];
+  invalidation: string[];
+  limitations: string[];
+}
+
+export interface ScenarioNumericBridge {
+  mode: 'ready' | 'sensitivity' | 'insufficient';
+  price: number | null;
+  currency: string;
+  reference_price: number | null;
+  reference_as_of: string | null;
+  forecast_year: number | null;
+  base_eps: number | null;
+  base_pe_ttm: number | null;
+  eps_factor: number;
+  pe_factor: number;
+  scenario_eps: number | null;
+  scenario_pe_ttm: number | null;
+  base_price: number | null;
+  eps_effect: number | null;
+  pe_effect: number | null;
+  combined_effect: number | null;
+  upside_pct: number | null;
+  source_ids: string[];
+  formula: string;
+  note: string;
+  gaps: string[];
+  forecast_sample?: {
+    year: number | null;
+    currency: string;
+    eps_low: number | null;
+    eps_median: number | null;
+    eps_high: number | null;
+    broker_count: number | null;
+    as_of: string | null;
+    source_ids: string[];
+    scenario_vs_sample: 'within' | 'above' | 'below' | 'unknown';
+    note: string;
+  };
+}
+
+export interface ScenarioReasoning {
+  version: 1;
+  headline: string;
+  card_summary?: string;
+  assessment: ScenarioAssessment;
+  numeric_bridge: ScenarioNumericBridge;
+  drivers: ScenarioDriver[];
+  source_ids: string[];
+  platform_claim_ids: string[];
+  counter_claim_ids: string[];
+  context_claim_ids: string[];
+  watch: string[];
+  invalidation: string[];
+  limitations: string[];
+}
+
+export interface ScenarioReasoningMethod {
+  version: 1;
+  method: string;
+  coverage: { dimensions: number; observed_dimensions: number; current_company_claims: number; background_claims: number };
+  source_ids: string[];
+  limitations: string[];
 }
 
 export interface IntelligenceDimension {
@@ -227,6 +322,7 @@ export interface StockIntelligence {
     note: string;
   };
   platform_research?: PlatformResearch;
+  scenario_reasoning?: ScenarioReasoningMethod;
   evidence: IntelligenceEvidence[];
   catalysts: Array<{ event: string; watch: string; source_ids: string[] }>;
   risks: string[];

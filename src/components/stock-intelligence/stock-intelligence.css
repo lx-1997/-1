@@ -73,7 +73,7 @@
 .stock-intelligence a, .si-inspector a { color: var(--si-accent); text-decoration: none; overflow-wrap: anywhere; }
 .stock-intelligence a:hover, .si-inspector a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .stock-intelligence :is(button, a, summary, [role='tabpanel']):focus-visible,
-.si-inspector :is(button, a):focus-visible { outline: 2px solid var(--si-accent); outline-offset: 3px; }
+.si-inspector :is(button, a, summary):focus-visible { outline: 2px solid var(--si-accent); outline-offset: 3px; }
 .si-positive { color: var(--si-positive); }
 .si-negative { color: var(--si-negative); }
 .si-flat, .si-muted { color: var(--si-muted); }
@@ -180,6 +180,8 @@
 .si-scenario-mini { color: var(--si-muted); font-size: 11px; line-height: 1.6; }
 .si-scenario-mini > span + span::before { content: ' · '; }
 .si-scenario-action > .si-scenario-mini { grid-column: 1 / -1; }
+.si-scenario-reason { grid-column: 1 / -1; padding-top: 4px; color: var(--si-text); font-size: 12px; font-weight: 450; line-height: 1.75; overflow-wrap: anywhere; }
+.si-scenario-why { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 5px; padding-top: 5px; border-top: 1px solid color-mix(in srgb, var(--si-scenario-color) 18%, var(--si-border)); color: var(--si-scenario-color); font-size: 11px; font-weight: 550; }
 .si-assumption-footnote { color: var(--si-muted); font-size: 11px; line-height: 1.7; margin-top: 11px !important; }
 .si-method-link { font-size: 11px; min-height: 40px; }
 .si-range-chart, .si-position-chart { margin: 5px 0 0; min-width: 0; }
@@ -356,6 +358,79 @@
 .si-detail-price > span { font-size: 12px; letter-spacing: 0; font-weight: 500; }
 .si-detail-caption { color: var(--si-muted); font-size: 12px !important; line-height: 1.8; margin: 10px 0 0 !important; }
 .si-detail-lead { color: var(--si-strong); font-size: 15px !important; font-weight: 500; line-height: 1.85; margin-bottom: 17px !important; }
+
+/* A scenario keeps its numeric assumptions separate from the evidence that must validate them. */
+.si-scenario-reasoning { min-width: 0; }
+.si-reasoning-headline { margin-top: 14px !important; color: var(--si-strong); font-size: 14px; font-weight: 550; line-height: 1.85; overflow-wrap: anywhere; }
+.si-reasoning-bridge h4 { flex-wrap: wrap; }
+.si-reasoning-bridge h4 .si-model-tag { margin-left: auto; }
+.si-reasoning-bridge .si-formula { margin-top: 12px; overflow-wrap: anywhere; }
+.si-reasoning-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; margin: 14px 0 0; }
+.si-reasoning-inputs > div { min-width: 0; }
+.si-reasoning-inputs dt { color: var(--si-muted); font-size: 11px; line-height: 1.8; }
+.si-reasoning-inputs dd { margin: 3px 0 0; color: var(--si-strong); font-size: 19px; font-weight: 600; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.si-reasoning-inputs dd small, .si-price-bridge dd small { font-size: 10px; font-weight: 400; color: var(--si-muted); }
+.si-reasoning-factors { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 12px; padding: 8px 11px; border: 1px solid var(--si-border); border-radius: 5px; background: var(--si-surface); color: var(--si-muted); font-size: 11px; }
+.si-reasoning-factors b { color: var(--si-text); font-weight: 550; font-variant-numeric: tabular-nums; margin-left: 5px; }
+.si-forecast-sample { margin-top: 14px; padding: 11px 12px; border: 1px dashed var(--si-border); border-radius: 6px; background: var(--si-surface); }
+.si-forecast-sample h5 { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--si-strong); font-size: 12px; font-weight: 550; }
+.si-forecast-sample p { font-size: 12px; line-height: 1.85; }
+.si-price-bridge { margin: 12px 0 0; padding: 4px 12px; border: 1px solid var(--si-border); border-radius: 7px; background: var(--si-card); }
+.si-price-bridge > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, auto); gap: 8px 15px; align-items: baseline; padding: 6px 0; }
+.si-price-bridge dt { color: var(--si-muted); font-size: 12px; overflow-wrap: anywhere; }
+.si-price-bridge dd { min-width: 0; margin: 0; color: var(--si-strong); font-size: 13px; font-weight: 550; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.si-price-bridge .si-price-bridge-total { margin-top: 5px; padding-top: 10px; border-top: 1px solid var(--si-border); }
+.si-price-bridge-total dt { color: var(--si-strong); font-weight: 600; }
+.si-price-bridge-total dd { font-size: 20px; color: var(--si-accent); }
+.si-reasoning-sources { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 6px; }
+.si-reasoning-sources > button { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 40px; padding: 2px 0; border: 0; background: transparent; color: var(--si-accent); font-size: 11px; line-height: 1.75; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.si-reasoning-sources > button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.si-reasoning-driver { margin-top: 9px; min-width: 0; border: 1px solid var(--si-border); border-radius: 8px; background: var(--si-card); }
+.si-reasoning-driver > summary { display: block; padding: 12px; min-height: 44px; list-style: none; cursor: pointer; }
+.si-reasoning-driver > summary::-webkit-details-marker { display: none; }
+.si-reasoning-driver-title { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; }
+.si-reasoning-driver-title b { color: var(--si-strong); font-size: 13px; font-weight: 600; }
+.si-reasoning-driver-title > span { margin-left: auto; color: var(--si-muted); font-size: 10px; line-height: 1.7; }
+.si-reasoning-driver-title > span[data-assessment='support'] { color: var(--si-positive); }
+.si-reasoning-driver-title > span[data-assessment='counter'] { color: var(--si-negative); }
+.si-reasoning-driver-title > .si-action-icon { color: var(--si-muted); }
+.si-reasoning-driver[open] .si-reasoning-driver-title > .si-action-icon { transform: rotate(180deg); }
+.si-reasoning-driver-preview { display: block; margin-top: 7px; color: var(--si-text); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.si-reasoning-preview-note { display: block; margin-top: 4px; color: var(--si-muted); font-size: 10px; line-height: 1.8; }
+.si-reasoning-driver-body { min-width: 0; padding: 12px; border-top: 1px solid var(--si-border); }
+.si-reasoning-driver-body h5 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: var(--si-strong); font-size: 12px; font-weight: 600; line-height: 1.8; }
+.si-reasoning-driver-body h6, .si-reasoning-checks h6 { margin: 0 0 5px; color: var(--si-strong); font-size: 12px; font-weight: 550; line-height: 1.8; }
+.si-reasoning-driver-body p { margin: 3px 0 0; font-size: 12px; line-height: 1.85; }
+.si-reasoning-observation { min-width: 0; padding: 8px 0; }
+.si-reasoning-observation + .si-reasoning-observation { border-top: 1px dashed var(--si-border); }
+.si-reasoning-observation > div:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; }
+.si-reasoning-observation b { color: var(--si-strong); font-size: 12px; font-weight: 550; }
+.si-reasoning-observation > div > span { color: var(--si-muted); font-size: 10px; }
+.si-reasoning-observation[data-status='missing'] { border-left: 2px solid var(--si-border); padding-left: 10px; }
+.si-reasoning-meta { color: var(--si-muted) !important; font-size: 10px !important; line-height: 1.8 !important; margin-top: 6px !important; overflow-wrap: anywhere; }
+.si-reasoning-chain { display: grid; gap: 12px; margin-top: 12px; padding: 12px; border: 1px solid color-mix(in srgb, var(--si-accent) 15%, var(--si-border)); border-radius: 6px; background: var(--si-base-bg); }
+.si-reasoning-chain small { display: block; margin-top: 6px; color: var(--si-muted); font-size: 10px; line-height: 1.8; }
+.si-reasoning-claims { margin-top: 14px; }
+.si-reasoning-claims > section { margin-top: 12px; padding-left: 10px; border-left: 2px solid var(--si-border); }
+.si-reasoning-claims > section[data-evidence-role='support'] { border-left-color: var(--si-positive); }
+.si-reasoning-claims > section[data-evidence-role='counter'] { border-left-color: var(--si-negative); }
+.si-reasoning-claims .si-platform-claim-link { display: flex; align-items: baseline; gap: 7px; font-size: 12px; padding-block: 2px; }
+.si-reasoning-claims article + article { margin-top: 8px; }
+.si-reasoning-empty { margin-top: 6px !important; color: var(--si-muted) !important; font-size: 12px !important; line-height: 1.8; }
+.si-reasoning-checks { margin-top: 14px; }
+.si-reasoning-checks .si-detail-list { font-size: 12px; margin-top: 5px; }
+.si-reasoning-checks li { margin-block: 5px; }
+.si-reasoning-method { margin-top: 14px; padding-top: 7px; border-top: 1px solid var(--si-border); }
+.si-reasoning-method > summary { color: var(--si-accent); min-height: 40px; padding-block: 8px; font-size: 12px; cursor: pointer; }
+@media (max-width: 360px) {
+  .si-reasoning-driver > summary, .si-reasoning-driver-body { padding: 10px; }
+  .si-reasoning-driver-title { gap: 4px 6px; }
+  .si-reasoning-driver-title > span { font-size: 10px; }
+  .si-reasoning-inputs { gap: 10px; }
+  .si-price-bridge > div { grid-template-columns: minmax(0, 1fr) minmax(75px, auto); gap: 6px; }
+  .si-price-bridge { padding-inline: 10px; }
+  .si-reasoning-chain { padding: 10px; }
+}
 .si-evidence-detail-title { color: var(--si-strong); font-size: 18px; font-weight: 600; line-height: 1.65; margin-top: 12px !important; }
 .si-original-link { display: inline-flex; align-items: center; min-height: 40px; padding: 7px 10px; margin-top: 18px; border: 1px solid var(--si-border); border-radius: 5px; font-size: 12px; }
 .si-gate, .si-loading { padding: 20px 0; }

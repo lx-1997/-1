@@ -162,6 +162,7 @@ def _valid_published_date(value: str, fallback: str = "") -> str:
 
 async def fetch_research_wire_online(
     *, limit: int = 60, query: str = "", use_cache: bool = True,
+    stock_scope: bool = False,
 ) -> dict[str, Any]:
     """在线从同机 Node 工作台拉海外投行研报：空关键词=最新，带关键词=搜索。
 
@@ -169,8 +170,12 @@ async def fetch_research_wire_online(
     返回与 list_research_wire 同构的 dict（online=True）；调用方失败时回退本地磁盘。
     """
     want = max(1, min(int(limit or 60), 500))
+    if stock_scope:
+        want = min(want, 20)
     kw = (query or "").strip()
-    cache_key = kw  # 只按关键词缓存「整池」，请求条数仅决定返回多少（切片），不影响命中
+    # Stock research has a one-page budget; never cache that partial result as
+    # the full feed pool, even for the exact same search keyword.
+    cache_key = ("stock", kw) if stock_scope else kw
     now = time.monotonic()
     _WIRE_CACHE.prune_expired()
 
@@ -184,7 +189,8 @@ async def fetch_research_wire_online(
     if use_cache and hit and (now - hit[0]) < _WIRE_TTL:
         return _slice(hit[1])
     # 回源抓「整池」：resultLimit 拉满、searchPages=0 不限页（工作台内部 20/页翻到 resultLimit）
-    payload: dict[str, Any] = {"group": ZSXQ_GROUP, "resultLimit": _WIRE_POOL, "searchPages": 0}
+    payload: dict[str, Any] = {"group": ZSXQ_GROUP, "resultLimit": want if stock_scope else _WIRE_POOL,
+                               "searchPages": 1 if stock_scope else 0}
     payload.update(_auth_payload())  # 有热更新 cookie 则用它（优先级高于工作台 env）
     if kw:
         payload["keyword"] = kw

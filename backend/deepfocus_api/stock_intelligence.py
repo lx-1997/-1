@@ -508,21 +508,24 @@ def build_stock_intelligence(symbol: str, market: str, *, name: str = "", quote:
     py = _number(fin.get("profit_yoy"))
     fundamental_points = [f"财报期间 {fin.get('report_date')}；EPS 为本报告期累计数，未简单乘 4 年化。"] if fin.get("report_date") else []
     cf = cashflow or {}
-    if cf and cf.get("report_date") == fin.get("report_date"):
+    report_period = _dated_day(fin.get("report_date"), now)
+    cashflow_same_period = bool(report_period and _dated_day(cf.get("report_date"), now) == report_period)
+    if cf and cashflow_same_period:
         add_source("cashflow", "东方财富 · 公司现金流表", cf, code_url, cf.get("report_date"), stale_days=200)
     if market == "HK" and fin.get("eps") is not None:
         fundamental_points.append("港股财报 EPS 币种尚未由公司公告核验；未采用数据商 CURRENCY 字段参与绝对估值。")
         gaps.append("港股财报金额/EPS 币种与港元报价可能不同，待官方财报与汇率交叉核验")
     ocf, net = _number(cf.get("ocf")), _number(fin.get("net_income"))
-    if ocf is not None and net is not None and net > 0 and cf.get("report_date") == fin.get("report_date"):
+    if ocf is not None and net is not None and net > 0 and cashflow_same_period:
         fin_metrics.append(metric("经营现金流/归母净利", ocf / net, "倍"))
         fundamental_points.append("经营现金流与归母净利来自同一报告期间，合并现金流与归母口径仍有差异。")
         if ocf < net * 0.7:
             risks.append("同报告期经营现金流低于归母净利，需检查回款与利润现金转化")
     elif cf:
-        gaps.append("现金流与盈利报告期不一致，未计算现金含金量")
+        gaps.append("现金流与盈利报告期缺失、无效或不一致，未计算现金含金量")
     bal = balance or {}
-    if bal and bal.get("report_date") == fin.get("report_date"):
+    balance_same_period = bool(report_period and _dated_day(bal.get("report_date"), now) == report_period)
+    if bal and balance_same_period:
         add_source("balance", "东方财富 · 公司资产负债表", bal, code_url, bal.get("report_date"), stale_days=200)
         ar, inv, rev = _number(bal.get("accounts_receivable")), _number(bal.get("inventory")), _number(fin.get("revenue"))
         if ar is not None and rev is not None and rev > 0:
@@ -532,7 +535,7 @@ def build_stock_intelligence(symbol: str, market: str, *, name: str = "", quote:
         fundamental_points.append("应收/存货指标为期末余额对累计收入，不能直接当作周转天数。")
     dimension("fundamentals", "财务与盈利质量", f"归母净利同比 {py:+.1f}%" if py is not None else "财务增长与现金质量待补齐",
               signal="insufficient" if financial_status == "stale" else "bullish" if py is not None and py >= 15 else "bearish" if py is not None and py <= -5 else "neutral" if fin_metrics else "insufficient",
-              metrics=fin_metrics, points=fundamental_points, refs=[k for k, d in [("financials", fin), ("valuation", val), ("cashflow", cf if cf.get("report_date") == fin.get("report_date") else None), ("balance", bal if bal.get("report_date") == fin.get("report_date") else None)] if d])
+              metrics=fin_metrics, points=fundamental_points, refs=[k for k, d in [("financials", fin), ("valuation", val), ("cashflow", cf if cashflow_same_period else None), ("balance", bal if balance_same_period else None)] if d])
     if py is not None and py < 0:
         risks.append(f"最近财报归母净利同比下降 {abs(py):.1f}%，盈利假设须持续验证")
     if financial_status == "stale":
@@ -765,11 +768,14 @@ def build_stock_intelligence(symbol: str, market: str, *, name: str = "", quote:
             "quote": {"price": price, "change_percent": _number(q.get("change_percent")), "as_of": q.get("market_time") or q.get("as_of"), "source": q.get("provider_name") or q.get("provider") or "无行情"},
             "summary": {"headline": f"{stance}{'：' + crosscheck if crosscheck else ''} · {available}/6 个维度可用 · 平台 {platform_count} 条证据", "stance": stance, "coverage": {"available": available, "total": 6}},
             "valuation": valuation_result, "dimensions": dimensions, "technical": technical, "capital": capital_result,
+            "company_profile": {"description": _text(prof.get("description"), 1600), "business_scope": _text(prof.get("business_scope"), 1600),
+                                "industry": _text(prof.get("industry"), 180), "as_of": prof.get("as_of"), "source_ids": ["profile"] if prof else []},
             "broker_ratings": ratings_result, "evidence": evidence,
             "catalysts": catalysts[:5], "risks": list(dict.fromkeys(risks))[:8], "data_gaps": list(dict.fromkeys(gaps)), "sources": sources}
     if platform_channels is not None:
-        return _attach_platform_research(result, platform_channels, now=now)
-    return result
+        result = _attach_platform_research(result, platform_channels, now=now)
+    from .stock_scenario_reasoning import enrich_stock_scenario_reasoning
+    return enrich_stock_scenario_reasoning(result)
 
 
 async def gather_stock_intelligence(symbol: str, *, name: str = "", market: str = "", refresh: bool = False,

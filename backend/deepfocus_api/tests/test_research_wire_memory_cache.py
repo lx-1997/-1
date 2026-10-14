@@ -190,3 +190,38 @@ async def test_old_unrelated_queries_are_physically_pruned_when_fetch_starts(mon
     await wire.fetch_research_wire_online(query="new")
     assert "old" not in cache and "new" in cache
     assert cache.stats()["expired"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stock_search_is_one_page_and_cannot_contaminate_full_pool_cache(monkeypatch):
+    cache, _ = _cache(monkeypatch)
+    calls = []
+    def fetch(payload):
+        calls.append(payload)
+        return _rows(count=25, prefix="个股" if payload["searchPages"] == 1 else "全池")
+    _client(monkeypatch, fetch)
+    stock = await wire.fetch_research_wire_online(query="测试公司", limit=60, stock_scope=True)
+    feed = await wire.fetch_research_wire_online(query="测试公司", limit=25)
+    assert len(stock["items"]) == 20 and feed["items"][0]["title"] == "全池0"
+    assert calls[0]["resultLimit"] == 20 and calls[0]["searchPages"] == 1
+    assert calls[1]["resultLimit"] == wire._WIRE_POOL and calls[1]["searchPages"] == 0
+    assert ("stock", "测试公司") in cache and "测试公司" in cache
+    assert (await wire.fetch_research_wire_online(query="测试公司", limit=3, stock_scope=True))["items"][0]["title"] == "个股0"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_stock_failure_does_not_borrow_unbounded_query_cache(monkeypatch):
+    _cache(monkeypatch)
+    def fetch(payload):
+        if payload["searchPages"] == 1:
+            raise RuntimeError("stock query unavailable")
+        return _rows()
+    _client(monkeypatch, fetch)
+    await wire.fetch_research_wire_online(query="测试公司")
+    with pytest.raises(RuntimeError, match="stock query unavailable"):
+        await wire.fetch_research_wire_online(query="测试公司", stock_scope=True)
+    # A normal keyword containing the namespace string is still independent.
+    await wire.fetch_research_wire_online(query="stock:测试公司")
+    with pytest.raises(RuntimeError, match="stock query unavailable"):
+        await wire.fetch_research_wire_online(query="测试公司", stock_scope=True)
