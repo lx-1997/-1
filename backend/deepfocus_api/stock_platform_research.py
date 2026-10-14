@@ -30,8 +30,92 @@ _STALE_DAYS = {"site_fast_news": 30, "fast_news": 30, "site_articles": 90, "arti
                "site_research": 180, "stock_research": 180, "recent_research": 180,
                "institution_notes": 90, "celebrity_views": 30, "professional_reports": 365,
                "professional_sources": 365, "owned_research": 180, "shared_sources": 180}
-_TECHNICAL_STRONG = ("均线", "支撑", "阻力", "RSI", "技术面")
+_CHANNEL_LABELS = {
+    "site_fast_news": "平台快讯", "site_articles": "平台文章",
+    "site_research": "平台本地研报", "recent_research": "投行研报已有解读",
+    "institution_notes": "机构纪要", "celebrity_views": "名人观点",
+    "professional_reports": "专业财报共享库", "owned_research": "我的已完成研究",
+    "shared_sources": "已明确公开的资料库",
+}
+_TECHNICAL_STRONG = ("均线", "RSI", "技术面")
 _TECHNICAL_CONTEXT = ("股价", "收盘", "开盘", "日线", "K线", "K 线", "成交量", "交易量", "技术面")
+_TECHNICAL_PRICE_CONTEXT = ("股价", "股票", "收盘", "开盘", "日线", "K线", "K 线")
+_COMPANY_CUES = ("营收", "营业收入", "归母", "净利", "净利润", "利润", "毛利", "扣非", "现金流", "经营现金",
+                 "回款", "收入", "应收", "存货", "库存", "主营", "业务", "渠道", "产品", "出厂价", "批价",
+                 "零售价", "销量", "产能", "订单", "股价", "股票", "股份", "回购", "增持", "减持", "市值",
+                 "股东", "持股", "资产", "负债", "ROE", "EPS", "PE", "估值", "评级", "目标价", "目标股价")
+_OTHER_SUBJECTS = ("行业", "同行", "同业", "竞争对手", "竞品", "供应商", "上游", "下游", "经销商", "客户",
+                   "业务伙伴", "合作伙伴", "主营产品供应商", "产品供应商", "子公司", "参股公司", "集团")
+_RECOMMENDATION = re.compile(r"推荐(?:标的|名单|组合|关注)|(?:重点|建议)关注|建议配置|推荐名单|关注名单")
+
+
+def _own_company_clause(text: str) -> bool:
+    """Recognize a narrow company statement, not a mentioned related party."""
+    value = text.strip()
+    # Qualifiers may alternate ('预计其供应商...', '2026年该公司...').
+    # Strip them repeatedly, then re-check the actual subject; a date alone
+    # cannot establish whose financial or operating metric follows it.
+    while value:
+        stripped = re.sub(r"^(?:本公司|该公司|公司|其)(?:的)?", "", value)
+        stripped = re.sub(r"^(?:预计|预测|预期|有望|可能|估计|将于|将|未来|本期|本季|今年|当前|近期|最新|同比|环比|并未|已|未|继续)", "", stripped)
+        stripped = re.sub(r"^(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月(?:\d{1,2}日)?|(?:\d{4}年)?[一二三四1-4]季度)", "", stripped)
+        stripped = stripped.lstrip()
+        if stripped == value:
+            break
+        value = stripped
+    if not value or value.startswith(_OTHER_SUBJECTS) or _RECOMMENDATION.search(value):
+        return False
+    # E.g. '五粮液净利增长' must not inherit a preceding company's heading.
+    if not value.startswith(_COMPANY_CUES) and re.match(r"^[\u4e00-\u9fffA-Za-z]{2,20}(?:净利|利润|营收|股价|现金流)", value):
+        return False
+    if value.startswith(_COMPANY_CUES):
+        return not re.match(r"^(?:业务|主营(?:产品)?|产品)(?:伙伴|供应商|客户|经销商|的供应商)", value)
+    if re.match(r"^(?:支持|停止|开展|完成)(?:对)?(?:其|该公司|公司)?(?:的)?(?:供应商|上游|下游|经销商|客户|同行|行业)", value):
+        return False
+    if re.match(r"^(?:公告|宣布|表示|发布|开展|停止|支持|完成)", value) and _has(value, _OTHER_SUBJECTS):
+        # Naming the announcer does not identify the subject of a supplier's
+        # or peer's operating metric reported inside the announcement.
+        return False
+    # A dated delivery update can be the company's own channel statement.
+    # Bare dates and forecasts with a named related party do not qualify.
+    return bool(re.match(r"^(?:货已至|货已到|发货|到货|按照|公告|宣布|表示|发布|开展|停止|支持|完成)", value))
+
+
+def _direct_company_span(text: str, symbol: str, name: str) -> Optional[tuple[int, int]]:
+    """Verify only an explicit subject in the final, contiguous quote span.
+
+    Company headings are scoped to their own comma clauses. A peer, sector or
+    supplier clause cannot acquire the target company's relation. No following
+    unanchored sentence or paragraph inherits this subject.
+    """
+    prefix = re.match(r"^\s*(?:(?:\[[^\]\n]{1,12}\]|【[^】\n]{1,12}】|[①-⑳•●▪◆▶★☆#*]+|\d{1,2}[.、)）]|[-–—])\s*)*", text)
+    start = prefix.end() if prefix else 0
+    candidates = [value for value in (name, symbol) if value and (value == symbol or len(value) >= 2)]
+    for subject in candidates:
+        if not text[start:].casefold().startswith(subject.casefold()):
+            continue
+        end = start + len(subject)
+        rest = text[end:]
+        if re.fullmatch(r"[A-Za-z0-9.-]+", subject) and re.match(r"[A-Za-z0-9]", rest):
+            continue
+        rest = re.sub(rf"^\s*[（(]{re.escape(symbol)}(?:\.(?:SH|SZ|BJ|HK|SS))?[）)]", "", rest, flags=re.I)
+        offset = len(text) - len(rest)
+        heading = re.match(r"^\s*[:：]\s*", rest)
+        if heading:
+            offset += heading.end()
+            rest = rest[heading.end():]
+        elif rest.startswith("的"):
+            offset += 1
+            rest = rest[1:]
+        if not _own_company_clause(rest.split("，", 1)[0].split(",", 1)[0]):
+            continue
+        span_end = len(text)
+        for match in re.finditer(r"[，,]([^，,]*)", rest):
+            if not _own_company_clause(match.group(1)):
+                span_end = offset + match.start()
+                break
+        return start, span_end
+    return None
 
 
 def _id(prefix: str, value: str) -> str:
@@ -108,6 +192,11 @@ def _technical_span(paragraph: str, start: int) -> Optional[tuple[int, int]]:
     terms = DIMENSIONS["technical"][1]
     for sentence in re.finditer(r"[^。！？；;]+[。！？；;]?", paragraph):
         body = sentence.group()
+        operating_volume = bool(re.search(
+            r"(?:产品|货物|商品|销量|销售|产能|渠道)[^。！？；;]*(?:成交量|交易量)"
+            r"|(?:成交量|交易量)[^。！？；;]*\d+(?:\.\d+)?\s*(?:万|亿)?(?:瓶|吨|件|台|辆)", body))
+        if operating_volume and not (_has(body, _TECHNICAL_STRONG) or _has(body, _TECHNICAL_PRICE_CONTEXT)):
+            continue
         if _has(body, terms) and (_has(body, _TECHNICAL_STRONG) or _has(body, _TECHNICAL_CONTEXT)):
             return _quoted_span(body, start + sentence.start(), terms)
     return None
@@ -233,13 +322,16 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
                         relation["source_ids"].append(source_id)
             company_refs = [ref for ref in refs if isinstance(ref, dict) and ref.get("kind") == "company"]
             body_only = bool(company_refs) and not any(ref.get("verification") == "verified" for ref in company_refs)
+            source_role = str(safe_metadata.get("source_role") or role)
+            source_role = source_role if source_role in _ROLES else "context"
             if body_only:
                 role = "context"
             body_counts[state] += 1
             read_count += 1
             read_chars += len(visible)
             document = {"id": doc_id, "original_id": original_id, "record_namespace": namespace,
-                        "revision": revision, "channel": key, "relation_ids": doc_relations, "role": role, "title": title,
+                        "revision": revision, "channel": key, "channel_label": _CHANNEL_LABELS.get(key, label),
+                        "relation_ids": doc_relations, "role": role, "title": title,
                         "published_at": published, "body_state": state, "visible_chars": len(visible), "read_chars": len(visible),
                         "source_id": source_id, "source_name": source_name, "excerpt": _text(visible, 220),
                         "url": item.get("url"), "relevant_paragraphs": 0, "selected_claims": 0}
@@ -258,13 +350,37 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
                     document["relevant_paragraphs"] += 1
                     quote_start, quote_end = span
                     quote = visible[quote_start:quote_end]
+                    direct_span = (_direct_company_span(quote, symbol, name)
+                                   if body_only and state in {"full", "excerpt"} else None)
+                    claim_relations = list(doc_relations)
+                    if direct_span:
+                        original_start = quote_start
+                        quote_start, quote_end = original_start + direct_span[0], original_start + direct_span[1]
+                        quote = visible[quote_start:quote_end]
+                        # A later peer's metric must not survive truncating the
+                        # contiguous quote to the target company's own clauses.
+                        if not _has(quote, terms) or dimension == "technical" and _technical_span(quote, quote_start) is None:
+                            continue
                     citation_id = _id("platform-citation", f"{doc_id}:{revision}:{paragraph}:{quote_start}:{quote_end}")
                     citation = {"id": citation_id, "source_id": source_id, "document_id": doc_id, "paragraph": paragraph,
                                 "document_revision": revision, "quote": quote, "start": quote_start, "end": quote_end}
+                    if direct_span:
+                        rid = _id("platform-relation", f"paragraph-company:{symbol}:{citation_id}")
+                        if rid not in relation_ids:
+                            relations.append({"id": rid, "kind": "company", "label": name or symbol, "symbol": symbol,
+                                              "basis": "visible_explicit_company_subject: " + _text(quote, 180),
+                                              "verification": "verified", "citation_ids": [], "source_ids": [source_id]})
+                            relation_ids.add(rid)
+                        # Keep the document-wide relation as background, but
+                        # do not present two conflicting identities on a claim.
+                        context_company_ids = {relation["id"] for relation in relations
+                                               if relation["kind"] == "company" and relation.get("symbol") == symbol
+                                               and relation["verification"] == "context"}
+                        claim_relations = [value for value in claim_relations if value not in context_company_ids] + [rid]
                     explicit_chain = bool(re.search(r"导致|带动|从而|因此|传导|推动|受益|压缩|侵蚀", quote))
                     explicit_watch = bool(re.search(r"关注|核验|验证|需观察|如果|若|风险提示|风险因素", quote))
-                    claim_role = "analysis" if state == "summary_only" else role
-                    forecast_language = bool(re.search(r"预计|预测|预期|有望|可能|估计|forecast|expect|may\b", quote, re.I))
+                    claim_role = "analysis" if state == "summary_only" else source_role if direct_span else role
+                    forecast_language = bool(re.search(r"预计|预测|预期|有望|可能|估计|未来|将(?:于|在)|将[^。！？；;，,]{0,16}(?:增长|下降|下滑|提升|改善|实现|达到|扩大|减少|回购|增持|减持|投产|发货)|目标(?:股)?价|forecast|expect|may\b", quote, re.I))
                     if forecast_language and state != "summary_only" and claim_role != "context":
                         claim_role = "opinion"
                     period = safe_metadata.get("period")
@@ -278,7 +394,7 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
                                            "watch": _text(quote, 260) if explicit_watch else rule_watch,
                                            "watch_basis": "source_explicit" if explicit_watch else "rule_hypothesis",
                                            "stance": _stance(quote), "role": claim_role, "body_state": state,
-                                           "relation_ids": doc_relations, "citations": [citation], "source_ids": [source_id],
+                                           "relation_ids": claim_relations, "citations": [citation], "source_ids": [source_id],
                                            "document_ids": [doc_id], "as_of": published, "freshness": freshness,
                                            "period": period, "currency": report_currency,
                                            "needs_review": True, "verification": "derived_summary" if state == "summary_only" else "source_forecast" if forecast_language else "source_reported"})
@@ -294,8 +410,9 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
             document["selected_claims"] = len(picked)
             claims.extend(picked)
             for relation in relations:
-                if relation["id"] in doc_relations:
-                    relation["citation_ids"] = list(dict.fromkeys(relation["citation_ids"] + [row["citations"][0]["id"] for row in picked]))
+                linked = [row["citations"][0]["id"] for row in picked if relation["id"] in row["relation_ids"]]
+                if linked:
+                    relation["citation_ids"] = list(dict.fromkeys(relation["citation_ids"] + linked))
         complete = bool(meta.get("complete")) and not meta.get("limit_hit")
         days = meta.get("window_days")
         try:
@@ -312,9 +429,17 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
                          "reason": "当前账号不可见或该来源未启用" if denied else channel.get("reason") or meta.get("reason") or ""})
         if denied or status in {"partial", "error", "empty"} or not complete:
             gaps.append(f"{label}：{'当前账号不可见或该来源未启用' if denied else '当前无可读资料' if status == 'empty' else '覆盖不完整，不能视为全库扫描完成'}。")
+    # Paragraph relations are returned only with selected, resolvable quotes.
+    # Reading an unselected paragraph must not leave an orphan verified label.
+    relations = [relation for relation in relations
+                 if not relation["basis"].startswith("visible_explicit_company_subject: ") or relation["citation_ids"]]
     # Candidate disagreement is anchored to explicit excerpts and dates; do not
     # claim different reporting periods or related-company facts contradict.
     conflicts = []
+    verified_company_symbols = {relation["id"]: relation.get("symbol") for relation in relations
+                                if relation["kind"] == "company" and relation["verification"] == "verified" and relation.get("symbol")}
+    def company_subjects(claim):
+        return {verified_company_symbols[rid] for rid in claim["relation_ids"] if rid in verified_company_symbols}
     grouped = defaultdict(list)
     for claim in claims:
         if claim["stance"] in {"support", "counter"}:
@@ -323,7 +448,9 @@ def build_platform_research(channels: Any, *, symbol: str, name: str, market: st
         positives = [row for row in rows if row["stance"] == "support"]
         negatives = [row for row in rows if row["stance"] == "counter"]
         for positive in positives:
-            counter = next((row for row in negatives if row["document_ids"] != positive["document_ids"] and set(row["relation_ids"]) & set(positive["relation_ids"])), None)
+            counter = next((row for row in negatives if row["document_ids"] != positive["document_ids"]
+                            and (set(row["relation_ids"]) & set(positive["relation_ids"])
+                                 or company_subjects(row) & company_subjects(positive))), None)
             if counter is None:
                 continue
             periods = [positive.get("period"), counter.get("period")]

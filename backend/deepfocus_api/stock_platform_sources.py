@@ -242,7 +242,11 @@ class _Collector:
                 body_state = "excerpt"
             channel["coverage"]["limit_hit"] = True
             self.partial(key, "可见正文受有界阅读预算限制，保留原文出处")
-        metadata = {"match_basis": match[0], "scope": channel["scope"], "text_truncated": truncated}
+        # Preserve the collector's source classification separately from the
+        # document-wide attribution. A clearly named company clause may later
+        # be attributed without assigning the entire sector document to it.
+        metadata = {"match_basis": match[0], "scope": channel["scope"], "text_truncated": truncated,
+                    "source_role": role if role in {"fact", "opinion", "analysis", "context"} else "context"}
         direct = match[0] in {"symbol_exact", "title_symbol", "title_company_subject"}
         if not direct and role == "fact":
             role = "context"

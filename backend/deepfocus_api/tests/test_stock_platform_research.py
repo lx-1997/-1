@@ -181,7 +181,7 @@ def test_operating_and_market_value_breakthroughs_are_not_technical_price_signal
     assert not any(claim["dimension"] == "technical" for claim in result["claims"])
 
 
-@pytest.mark.parametrize("text", ["公司股价突破前期高点。", "日线放量突破，成交量持续提升。", "收盘缩量回撤，需核验趋势。", "均线走弱，RSI回落。"])
+@pytest.mark.parametrize("text", ["公司股价突破前期高点。", "日线放量突破，成交量持续提升。", "收盘缩量回撤，需核验趋势。", "均线走弱，RSI回落。", "贵州茅台成交量持续放量。"])
 def test_explicit_price_breakouts_and_strong_indicators_remain_technical(text):
     result = build(channel(item(text)))
     technical = [claim for claim in result["claims"] if claim["dimension"] == "technical"]
@@ -196,15 +196,18 @@ def test_later_price_context_does_not_upgrade_earlier_market_value_breakout_sent
     assert technical[0]["citations"][0]["quote"] == "公司股价放量突破前期高点，成交量持续提升。"
 
 
-def test_body_only_stock_mention_only_extracts_anchored_sentence_and_remains_context():
+def test_body_only_direct_company_clause_is_attributed_without_upgrading_sector_document():
     text = "同行公司净利增长带动盈利改善。\n测试公司净利下滑，需核验回款。同行公司主营产品提价带动毛利增长。"
     result = build(channel(item(text, title="行业多股观察", symbol="", role="fact",
                                 relation_refs=[{"kind": "company", "label": "测试公司", "symbol": "600519", "basis": "visible_company_name", "verification": "context"}])))
     assert result["claims"]
     assert all("测试公司" in claim["claim"] and "同行公司" not in claim["claim"] for claim in result["claims"])
-    assert all(claim["role"] == "context" for claim in result["claims"])
-    assert not any(link["support_claim_ids"] or link["counter_claim_ids"] for link in result["scenario_links"])
-    assert all(link["context_claim_ids"] for link in result["scenario_links"])
+    assert all(claim["role"] == "fact" for claim in result["claims"])
+    assert result["scenario_links"][0]["counter_claim_ids"]
+    assert result["documents"][0]["role"] == "context"
+    document_relations = set(result["documents"][0]["relation_ids"])
+    assert all(relation["verification"] == "context" for relation in result["relations"] if relation["id"] in document_relations)
+    assert all(relation["citation_ids"] for relation in result["relations"] if relation["verification"] == "verified")
 
 
 def test_conflicts_are_candidates_and_never_infer_reporting_period_from_publication_date():
@@ -283,6 +286,8 @@ def test_legacy_and_new_platform_paths_do_not_double_count_records_or_keep_title
     platform_evidence = [entry for entry in result["evidence"] if entry["origin"] == "platform"]
     assert len(platform_evidence) == len(result["platform_research"]["documents"]) == 1
     assert platform_evidence[0]["original_id"] == "one"
+    assert platform_evidence[0]["kind"] == "平台文章"
+    assert result["platform_research"]["documents"][0]["channel"] == "site_articles"
     assert "platform:one" not in {source["id"] for source in result["sources"]}
     news = next(dimension for dimension in result["dimensions"] if dimension["key"] == "news")
     assert not any(point == "2026-10-10 · 旧路径标题扫描" for point in news["evidence"])
@@ -297,7 +302,7 @@ def test_gather_request_loader_receives_verified_public_profile_and_skips_legacy
     from deepfocus_api import cn_consensus, eastmoney_data, market_data, stock_news, valuation_source
     async def empty(*args, **kwargs):
         return None
-    for module, funcs in [(eastmoney_data, ["fetch_eastmoney_earnings", "fetch_eastmoney_kline", "fetch_eastmoney_cashflow", "fetch_eastmoney_balance"]),
+    for module, funcs in [(eastmoney_data, ["fetch_eastmoney_earnings", "fetch_eastmoney_kline", "fetch_sina_ohlc", "fetch_eastmoney_cashflow", "fetch_eastmoney_balance"]),
                           (market_data, ["fetch_market_quotes"]), (stock_news, ["fetch_stock_news"]),
                           (valuation_source, ["fetch_valuation"]), (cn_consensus, ["fetch_cn_consensus"]),
                           (intelligence, ["fetch_annual_forecasts", "fetch_verified_fund_flow"])]:
@@ -317,3 +322,135 @@ def test_gather_request_loader_receives_verified_public_profile_and_skips_legacy
     assert queries[0]["name"] == "核验公司" and queries[0]["industry"] == "核验行业"
     assert queries[0]["aliases"] == ["别名"] and queries[0]["window_days"] == 365
     assert result["platform_research"]["documents"] and all(case["price"] is None for case in result["valuation"]["scenarios"])
+
+
+def body_company_item(text, **changes):
+    return item(text, title="行业多公司纪要", symbol="", role="opinion",
+                relation_refs=[{"kind": "company", "label": "测试公司", "symbol": "600519",
+                                "basis": "visible_company_name", "verification": "context"}], **changes)
+
+
+@pytest.mark.parametrize("state", ["full", "excerpt"])
+@pytest.mark.parametrize("text", [
+    "[玫瑰]测试公司：按照组织规范化建设，并未停止对渠道市场活动的支持。",
+    "①测试公司：9月货已至，回款进度82%+，预计主营产品同比双位数增长。",
+    "测试公司净利增长，回款改善。",
+    "600519：净利增长，回款改善。",
+    "600519净利增长，回款改善。",
+])
+def test_explicit_company_heading_or_subject_verifies_only_its_visible_claim(state, text):
+    result = build(channel(body_company_item(text, body_state=state), channel="institution_notes"))
+    assert result["claims"]
+    verified = {relation["id"] for relation in result["relations"] if relation["verification"] == "verified"}
+    assert verified and all(verified.intersection(claim["relation_ids"]) for claim in result["claims"])
+    assert not verified.intersection(result["documents"][0]["relation_ids"])
+    assert result["documents"][0]["role"] == "context"
+    for claim in result["claims"]:
+        assert claim["needs_review"] and claim["role"] == "opinion"
+        for citation in claim["citations"]:
+            assert text[citation["start"]:citation["end"]] == citation["quote"]
+    if "预计" in text:
+        assert result["scenario_links"][0]["support_claim_ids"]
+        assert all(claim["verification"] == "source_forecast" for claim in result["claims"])
+
+
+@pytest.mark.parametrize("text", [
+    "推荐测试公司、同行公司，行业净利增长。",
+    "建议关注测试公司净利增长。",
+    "测试公司供应商净利增长。",
+    "测试公司主营产品供应商净利增长。",
+    "测试公司业务伙伴利润改善。",
+    "测试公司：同行公司净利增长。",
+    "测试公司：其供应商股价突破。",
+    "测试公司：行业毛利改善。",
+    "测试公司：2026年同行公司净利增长20%。",
+    "测试公司：9月其供应商净利增长。",
+    "测试公司支持供应商产品价格提升。",
+    "测试公司公告显示供应商产品价格提升。",
+    "测试公司发布同行产品价格上调公告。",
+    "测试公司电子：净利增长。",
+    "6005190净利增长。",
+])
+def test_mentions_lists_and_related_party_subjects_remain_context(text):
+    result = build(channel(body_company_item(text)))
+    assert not any(relation["verification"] == "verified" for relation in result["relations"])
+    assert all(claim["role"] == "context" for claim in result["claims"])
+    assert all(not link["support_claim_ids"] and not link["counter_claim_ids"] for link in result["scenario_links"])
+
+
+def test_peer_clause_cannot_inherit_named_company_subject_or_technical_direction():
+    text = "测试公司净利增长，同行公司股价放量突破。"
+    result = build(channel(body_company_item(text)))
+    assert result["claims"] and result["scenario_links"][0]["support_claim_ids"]
+    assert all(claim["claim"] == "测试公司净利增长" for claim in result["claims"])
+    assert not any(claim["dimension"] == "technical" for claim in result["claims"])
+
+
+@pytest.mark.parametrize("text", ["测试公司渠道库存改善支撑产品价格提升。", "测试公司产品价格提升，终端经营阻力下降。", "测试公司产品交易量突破100万瓶。", "测试公司产品成交量突破100万吨。"])
+def test_product_pricing_or_business_support_is_not_stock_technical_evidence(text):
+    result = build(channel(body_company_item(text)))
+    assert any(claim["dimension"] == "business" for claim in result["claims"])
+    assert not any(claim["dimension"] == "technical" for claim in result["claims"])
+
+
+@pytest.mark.parametrize("changes", [
+    {"body_state": "teaser"}, {"body_state": "summary_only"}, {"body_state": "title_only"},
+    {"published_at": "2025-01-01"}, {"published_at": None},
+])
+def test_explicit_company_text_does_not_bypass_body_or_date_eligibility(changes):
+    result = build(channel(body_company_item("测试公司：预计净利增长。", **changes)))
+    assert all(not link["support_claim_ids"] and not link["counter_claim_ids"] for link in result["scenario_links"])
+
+
+@pytest.mark.parametrize("text", ["测试公司预计净利增长。", "测试公司净利将增长20%。", "测试公司净利将继续增长20%。", "测试公司净利将持续同比增长20%。", "测试公司净利将于2027年增长。", "测试公司未来净利增长空间大。", "测试公司目标价上调。"])
+def test_explicit_subject_forecasts_remain_source_opinions_when_source_reports_facts(text):
+    result = build(channel(body_company_item(text, metadata_safe={"source_role": "fact"})))
+    assert result["claims"]
+    assert all(claim["role"] == "opinion" and claim["verification"] == "source_forecast" for claim in result["claims"])
+
+
+def test_forecast_qualifier_cannot_hide_related_party_subject_in_following_clause():
+    result = build(channel(body_company_item("测试公司净利增长，预计其供应商产品价格提升。")))
+    assert result["claims"] and all(claim["claim"] == "测试公司净利增长" for claim in result["claims"])
+    assert not any(claim["dimension"] == "business" for claim in result["claims"])
+
+
+def test_separate_direct_company_paragraphs_keep_conflict_candidates_without_document_upgrade():
+    result = build(channel(body_company_item("测试公司净利增长。", identifier="positive"),
+                           body_company_item("测试公司净利下滑。", identifier="negative")))
+    assert result["conflicts"] and all(row["verification"] == "candidate" for row in result["conflicts"])
+    assert all(document["role"] == "context" for document in result["documents"])
+
+
+def test_unselected_company_paragraphs_leave_no_orphan_verified_relation():
+    text = "\n".join(f"测试公司净利增长{index}%，需核验回款。" for index in range(5))
+    result = build(channel(body_company_item(text)))
+    citation_ids = {citation["id"] for citation in result["citations"]}
+    for relation in result["relations"]:
+        if relation["verification"] == "verified":
+            assert relation["citation_ids"] and set(relation["citation_ids"]) <= citation_ids
+
+
+@pytest.mark.parametrize("key,label", [
+    ("site_fast_news", "平台快讯"), ("site_articles", "平台文章"), ("site_research", "平台本地研报"),
+    ("recent_research", "投行研报已有解读"), ("institution_notes", "机构纪要"), ("celebrity_views", "名人观点"),
+    ("professional_reports", "专业财报共享库"), ("owned_research", "我的已完成研究"),
+    ("shared_sources", "已明确公开的资料库"),
+])
+def test_document_channel_has_user_readable_label_without_changing_internal_key(key, label):
+    result = build(channel(item("公司净利增长。"), channel=key))
+    assert result["documents"][0]["channel"] == key
+    assert result["documents"][0]["channel_label"] == label
+
+
+def test_paragraph_attribution_does_not_change_numeric_scenarios_or_inherit_next_sentence():
+    inputs = {"name": "测试公司", "quote": {"price": 100, "currency": "CNY", "market_time": "2026-10-13"},
+              "valuation": {"pe_ratio": 20, "currency": "CNY"},
+              "forecasts": {"year": 2026, "currency": "CNY", "eps_median": 6, "broker_count": 2, "as_of": "2026-10-10"}, "now": NOW}
+    before = intelligence.build_stock_intelligence("600519", "CN", **inputs)
+    after = intelligence.build_stock_intelligence("600519", "CN", platform_channels=[channel(body_company_item(
+        "测试公司：净利增长。\n股价目标99999元，EPS预测999元。\n同行公司股价突破。"))], **inputs)
+    assert [case["price"] for case in before["valuation"]["scenarios"]] == [case["price"] for case in after["valuation"]["scenarios"]]
+    assert before["valuation"]["anchor"] == after["valuation"]["anchor"]
+    assert after["platform_research"]["claims"]
+    assert all("测试公司" in claim["claim"] and "999" not in claim["claim"] for claim in after["platform_research"]["claims"])

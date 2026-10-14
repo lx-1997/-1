@@ -26,6 +26,7 @@ export default function IntelligenceInspector({ title, category, previousTitle, 
   return createPortal(<dialog ref={dialog} className="si-inspector" aria-modal="true" aria-labelledby={`${id}-title`} onCancel={event => { event.preventDefault(); close.current(); }}
     onClick={event => { if (event.target === event.currentTarget) { const box = event.currentTarget.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) close.current(); } }}
     onKeyDown={event => {
+      event.stopPropagation();
       if (event.key === 'Escape') { event.preventDefault(); close.current(); }
       if (event.key !== 'Tab') return;
       const buttons = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input, [tabindex="0"]') || []).filter(element => !element.closest('[hidden]'));

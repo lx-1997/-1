@@ -345,7 +345,7 @@ def test_all_upstreams_fail_without_invented_prices(monkeypatch):
     async def failure(*args, **kwargs):
         raise RuntimeError("test upstream unavailable")
     for module, funcs in [
-        (eastmoney_data, ["fetch_eastmoney_earnings", "fetch_eastmoney_kline", "fetch_eastmoney_cashflow", "fetch_eastmoney_balance", "fetch_fund_flow"]),
+        (eastmoney_data, ["fetch_eastmoney_earnings", "fetch_eastmoney_kline", "fetch_sina_ohlc", "fetch_eastmoney_cashflow", "fetch_eastmoney_balance", "fetch_fund_flow"]),
         (market_data, ["fetch_market_quotes"]), (stock_news, ["fetch_stock_news"]), (valuation_source, ["fetch_valuation"]),
         (cn_consensus, ["fetch_cn_consensus"]), (consensus_source, ["fetch_analyst_consensus"]), (nasdaq_data, ["fetch_nasdaq_earnings"]),
         (intelligence, ["fetch_company_profile", "fetch_annual_forecasts", "fetch_verified_fund_flow"]),
@@ -365,7 +365,7 @@ def test_refresh_history_supports_production_legacy_signature_and_retains_real_d
     async def empty(*args, **kwargs):
         return None
     for module, funcs in [
-        (eastmoney_data, ["fetch_eastmoney_earnings", "fetch_eastmoney_cashflow", "fetch_eastmoney_balance"]),
+        (eastmoney_data, ["fetch_eastmoney_earnings", "fetch_sina_ohlc", "fetch_eastmoney_cashflow", "fetch_eastmoney_balance"]),
         (market_data, ["fetch_market_quotes"]), (stock_news, ["fetch_stock_news"]),
         (valuation_source, ["fetch_valuation"]), (cn_consensus, ["fetch_cn_consensus"]),
         (intelligence, ["fetch_company_profile", "fetch_annual_forecasts", "fetch_verified_fund_flow"]),
@@ -388,6 +388,88 @@ def test_refresh_history_supports_production_legacy_signature_and_retains_real_d
     assert result["technical"]["series"] == [{"date": today, "close": 123.45}]
     assert result["quote"]["price"] == 123.45 and result["quote"]["as_of"] == today
     assert "非实时" in result["quote"]["source"]
+
+
+@pytest.fixture
+def public_history_stubs(monkeypatch):
+    from deepfocus_api import cn_consensus, eastmoney_data, market_data, stock_news, valuation_source
+    async def empty(*args, **kwargs):
+        return None
+    for module, functions in [
+        (eastmoney_data, ["fetch_eastmoney_earnings", "fetch_eastmoney_kline", "fetch_sina_ohlc", "fetch_eastmoney_cashflow", "fetch_eastmoney_balance"]),
+        (market_data, ["fetch_market_quotes"]), (stock_news, ["fetch_stock_news"]),
+        (valuation_source, ["fetch_valuation"]), (cn_consensus, ["fetch_cn_consensus"]),
+        (intelligence, ["fetch_company_profile", "fetch_annual_forecasts", "fetch_verified_fund_flow", "fetch_dated_broker_ratings"]),
+    ]:
+        for function in functions:
+            monkeypatch.setattr(module, function, empty)
+    monkeypatch.setattr(intelligence, "load_visible_platform_messages", lambda *args: [])
+    return eastmoney_data
+
+
+def test_cn_history_prefers_available_sina_with_truthful_source_date_currency_and_no_mixing(public_history_stubs, monkeypatch):
+    provider = public_history_stubs
+    today = datetime.now(intelligence._BJ).date()
+    rows = [{"d": (today - timedelta(days=30 - i)).isoformat(), "c": 100 + i, "o": 100 + i, "h": 102 + i, "l": 99 + i, "v": 500} for i in range(30)]
+    calls = []
+    async def sina(symbol, points=160):
+        calls.append((symbol, points))
+        return rows
+    async def forbidden_eastmoney(*args, **kwargs):
+        pytest.fail("可用新浪主源不应再请求生产断连的东财日线，也不能拼接另一复权序列")
+    monkeypatch.setattr(provider, "fetch_sina_ohlc", sina)
+    monkeypatch.setattr(provider, "fetch_eastmoney_kline", forbidden_eastmoney)
+    result = asyncio.run(intelligence.gather_stock_intelligence("600519", refresh=True, message_view=lambda message: message))
+    assert calls == [("600519", 280)]
+    assert result["technical"]["series"] == [{"date": row["d"], "close": row["c"]} for row in rows]
+    assert result["technical"]["series_currency"] == "CNY"
+    assert result["technical"]["as_of"] == rows[-1]["d"]
+    assert "未声明复权" in result["technical"]["adjustment"] and "前复权" not in result["technical"]["adjustment"]
+    source = next(source for source in result["sources"] if source["id"] == "history")
+    assert "新浪财经" in source["label"] and source["as_of"] == rows[-1]["d"]
+    assert source["url"] == "https://finance.sina.com.cn/realstock/company/sh600519/nc.shtml"
+    assert result["quote"]["price"] == rows[-1]["c"] and "新浪财经" in result["quote"]["source"] and "非实时" in result["quote"]["source"]
+    assert any("日线源未声明复权" in gap for gap in result["data_gaps"])
+    assert result["capital"]["series"] == [] and result["capital"]["status"] == "insufficient"
+
+
+@pytest.mark.parametrize("sina_result", [[], [{"d": "2035-01-01", "c": 999}, {"d": "invalid", "c": 300}], "raises"])
+def test_cn_history_falls_back_to_eastmoney_when_sina_has_no_valid_rows(public_history_stubs, monkeypatch, sina_result):
+    provider = public_history_stubs
+    date = (datetime.now(intelligence._BJ).date() - timedelta(days=1)).isoformat()
+    calls = []
+    async def sina(*args, **kwargs):
+        calls.append("sina")
+        if sina_result == "raises":
+            raise RuntimeError("test public source unavailable")
+        return sina_result
+    async def eastmoney(secid, points=160):
+        calls.append("eastmoney")
+        return [(date, 123.45)]
+    monkeypatch.setattr(provider, "fetch_sina_ohlc", sina)
+    monkeypatch.setattr(provider, "fetch_eastmoney_kline", eastmoney)
+    result = asyncio.run(intelligence.gather_stock_intelligence("600519", message_view=lambda message: message))
+    assert calls == ["sina", "eastmoney"]
+    assert result["technical"]["series"] == [{"date": date, "close": 123.45}]
+    assert result["technical"]["adjustment"] == "前复权" and result["technical"]["series_currency"] == "CNY"
+    assert "东方财富" in next(source for source in result["sources"] if source["id"] == "history")["label"]
+    assert "东方财富" in result["quote"]["source"]
+
+
+def test_hk_history_keeps_eastmoney_currency_and_adjustment_without_sina(public_history_stubs, monkeypatch):
+    provider = public_history_stubs
+    date = (datetime.now(intelligence._BJ).date() - timedelta(days=1)).isoformat()
+    async def forbidden_sina(*args, **kwargs):
+        pytest.fail("港股不能请求A股新浪接口")
+    async def eastmoney(secid, points=160):
+        assert secid == "116.00700"
+        return [(date, 400)]
+    monkeypatch.setattr(provider, "fetch_sina_ohlc", forbidden_sina)
+    monkeypatch.setattr(provider, "fetch_eastmoney_kline", eastmoney)
+    result = asyncio.run(intelligence.gather_stock_intelligence("00700", market="HK", message_view=lambda message: message))
+    assert result["technical"]["series_currency"] == "HKD" and result["technical"]["adjustment"] == "前复权"
+    assert result["technical"]["series"] == [{"date": date, "close": 400}]
+    assert result["currency"] == "HKD" and "东方财富" in result["quote"]["source"]
 
 
 def test_negative_forecasts_are_retained_without_positive_sample_bias():

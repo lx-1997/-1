@@ -340,7 +340,7 @@ def _attach_platform_research(result: dict, channels: list, *, now: datetime) ->
     result["sources"] = [item for item in result["sources"] if item["id"] not in old_platform_ids]
     result["sources"].extend(research["sources"])
     for document in research["documents"]:
-        result["evidence"].append({"id": document["source_id"], "origin": "platform", "kind": document["channel"],
+        result["evidence"].append({"id": document["source_id"], "origin": "platform", "kind": document.get("channel_label") or document["channel"],
                                    "title": document["title"], "summary": document["excerpt"],
                                    "published_at": document["published_at"], "url": document["url"],
                                    "source": document["source_name"], "document_id": document["id"],
@@ -408,6 +408,7 @@ def build_stock_intelligence(symbol: str, market: str, *, name: str = "", quote:
                              forecasts: Optional[dict] = None, profile: Optional[dict] = None,
                              history: Optional[list] = None, history_provider: str = "eastmoney",
                              history_adjustment: str = "前复权", history_currency: Optional[str] = None,
+                             history_url: Optional[str] = None,
                              flow: Optional[dict] = None,
                              news: Optional[list] = None, platform_messages: Optional[list] = None,
                              cashflow: Optional[dict] = None, balance: Optional[dict] = None,
@@ -578,8 +579,10 @@ def build_stock_intelligence(symbol: str, market: str, *, name: str = "", quote:
         gaps.append("历史日线币种尚未核验，不能与当前报价同轴叠加或直接比较绝对价格")
     elif rows and series_currency != currency:
         gaps.append(f"当前报价币种 {currency} 与历史日线币种 {series_currency} 不一致；未换汇，不能叠加现价或直接比较涨跌/绝对价格")
+    if rows and "复权未核验" in history_adjustment:
+        gaps.append("日线源未声明复权，分红/拆股可能影响均线、RSI和历史波动；同一来源的历史价格不等于已核验总回报")
     history_as_of = rows[-1][0] if rows else None
-    history_status = add_source("history", f"{history_provider} · 日线（{history_adjustment}）", rows, code_url, history_as_of, stale_days=10)
+    history_status = add_source("history", f"{history_provider} · 日线（{history_adjustment}）", rows, history_url or code_url, history_as_of, stale_days=10)
     technical = {"range": None, "as_of": history_as_of, "adjustment": history_adjustment,
                  "series": [{"date": date, "close": close} for date, close in rows],
                  "series_currency": series_currency, "source_ids": ["history"] if rows else []}
@@ -774,7 +777,7 @@ async def gather_stock_intelligence(symbol: str, *, name: str = "", market: str 
                                     platform_source_loader: Optional[Callable[[dict], Awaitable[list]]] = None) -> dict:
     """Bounded independent source calls; source outages produce explicit gaps."""
     from .eastmoney_data import (_em_stock_secid, fetch_eastmoney_balance, fetch_eastmoney_cashflow,
-                                 fetch_eastmoney_earnings, fetch_eastmoney_kline, fetch_fund_flow)
+                                 fetch_eastmoney_earnings, fetch_eastmoney_kline, fetch_fund_flow, fetch_sina_ohlc)
     from .market_data import _cn_market_prefix, fetch_market_quotes
     from .stock_news import fetch_stock_news
     from .valuation_source import fetch_valuation
@@ -792,14 +795,30 @@ async def gather_stock_intelligence(symbol: str, *, name: str = "", market: str 
 
     secid = (_cn_market_prefix(sym)[0] + sym) if mk == "CN" else _em_stock_secid(sym, mk) if mk == "HK" else None
     async def history_fetch():
-        # Never mix incompatible adjusted and unadjusted series.
+        # Match the existing native CN chart: Sina first, Eastmoney fallback.
+        # Return exactly one source and retain its declared adjustment/currency.
+        currency = {"CN": "CNY", "HK": "HKD", "US": "USD"}[mk]
+        if mk == "CN":
+            try:
+                rows = await asyncio.wait_for(fetch_sina_ohlc(sym, points=280), timeout=6.0)
+            except Exception:
+                rows = []
+            if _history_rows(rows, datetime.now(_BJ))[0]:
+                exchange = "sh" if sym.startswith(("6", "9")) else "sz"
+                return {"rows": rows, "provider": "新浪财经", "provider_key": "sina",
+                        "adjustment": "复权未核验（新浪源未声明复权）", "currency": currency,
+                        "url": f"https://finance.sina.com.cn/realstock/company/{exchange}{sym}/nc.shtml"}
         if secid:
             parameters = inspect.signature(fetch_eastmoney_kline).parameters
             options = {"points": 280}
             if "force_fresh" in parameters or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
                 options["force_fresh"] = refresh
-            return await fetch_eastmoney_kline(secid, **options)
-        return await fetch_yahoo_history(sym, mk, range_="1y")
+            rows = await fetch_eastmoney_kline(secid, **options)
+            return {"rows": rows, "provider": "东方财富", "provider_key": "eastmoney",
+                    "adjustment": "前复权", "currency": currency}
+        rows = await fetch_yahoo_history(sym, mk, range_="1y")
+        return {"rows": rows, "provider": "Yahoo Finance", "provider_key": "yahoo",
+                "adjustment": "未复权收盘（拆股/分红需另核验）", "currency": currency}
 
     profile_task = asyncio.create_task(safe(fetch_company_profile(sym, mk, refresh=refresh)))
     async def platform_fetch():
@@ -820,7 +839,7 @@ async def gather_stock_intelligence(symbol: str, *, name: str = "", market: str 
         safe(fetch_market_quotes([f"{sym}.HK" if mk == "HK" else sym])),
         safe(fetch_eastmoney_earnings(sym, mk)) if mk != "US" else safe(asyncio.sleep(0)),
         safe(fetch_valuation(sym, mk)), safe(fetch_annual_forecasts(sym, mk, refresh=refresh)),
-        profile_task, safe(history_fetch(), []),
+        profile_task, safe(history_fetch()),
         safe(fetch_verified_fund_flow(sym, mk, refresh=refresh)), safe(fetch_stock_news(sym, mk, limit=8), []),
         platform_fetch(),
         safe(fetch_eastmoney_cashflow(sym, mk)), safe(fetch_eastmoney_balance(sym, mk)),
@@ -828,22 +847,24 @@ async def gather_stock_intelligence(symbol: str, *, name: str = "", market: str 
         safe(fetch_analyst_consensus(sym, mk)) if mk == "US" else safe(fetch_cn_consensus(sym, mk)),
         safe(fetch_dated_broker_ratings(sym, mk)) if mk == "HK" else safe(asyncio.sleep(0)),
     )
-    quotes, fin, val, fc, prof, hist, ff, news, platform, cf, bal, nasdaq, cons, ratings = values
+    quotes, fin, val, fc, prof, history_info, ff, news, platform, cf, bal, nasdaq, cons, ratings = values
+    history_info = history_info or {}
+    hist = history_info.get("rows") or []
     quote = quotes.quotes[0].model_dump(mode="json") if quotes and quotes.quotes else None
     dated_history, _ = _history_rows(hist, datetime.now(_BJ))
     if quote is None and dated_history:
-        # The latest adjusted close is a dated research anchor, never a real-time
+        # The latest source close is a dated research anchor, never a real-time
         # substitute. Do not fill an unavailable quote from an old or mock series.
         date, close = dated_history[-1]
         status, _ = _freshness(date, datetime.now(_BJ), 7)
         if close is not None and close > 0 and status != "stale":
-            quote = {"symbol": sym, "price": close, "currency": {"CN": "CNY", "HK": "HKD", "US": "USD"}[mk],
-                     "market_time": date, "provider": "eastmoney-daily-close" if secid else "yahoo-daily-close",
-                     "provider_name": "东方财富 · 日线收盘参考（非实时）" if secid else "Yahoo Finance · 日线收盘参考（非实时）"}
+            quote = {"symbol": sym, "price": close, "currency": history_info.get("currency"),
+                     "market_time": date, "provider": history_info.get("provider_key", "unknown") + "-daily-close",
+                     "provider_name": history_info.get("provider", "公共日线") + " · 日线收盘参考（非实时）"}
     return build_stock_intelligence(sym, mk, name=name, quote=quote, financials=fin, valuation=val, forecasts=fc,
-                                    profile=prof, history=hist, history_provider="东方财富" if secid else "Yahoo Finance",
-                                    history_adjustment="前复权" if secid else "未复权收盘（拆股/分红需另核验）",
-                                    history_currency={"CN": "CNY", "HK": "HKD", "US": "USD"}[mk], flow=ff, news=news,
+                                    profile=prof, history=hist, history_provider=history_info.get("provider", "公共日线"),
+                                    history_adjustment=history_info.get("adjustment", "来源与复权未取得"),
+                                    history_currency=history_info.get("currency"), history_url=history_info.get("url"), flow=ff, news=news,
                                     platform_messages=platform if platform_source_loader is None else None,
                                     platform_channels=platform if platform_source_loader is not None else None,
                                     cashflow=cf, balance=bal, nasdaq=nasdaq, consensus=cons,

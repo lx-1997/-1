@@ -491,6 +491,7 @@ def test_sector_body_ticker_mention_does_not_verify_company_or_assign_all_paragr
     assert item["entity_refs"] == []
     assert item["symbol"] == ""
     assert item["role"] == "context"
+    assert item["metadata_safe"]["source_role"] == "fact"
 
 
 @pytest.mark.parametrize("row,basis", [

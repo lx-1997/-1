@@ -326,6 +326,33 @@ it('keeps keyboard focus in the inspector and restores the trigger on Escape or 
   expect(method.trigger).toHaveFocus();
 });
 
+it('isolates modal keydowns from native terminal shortcuts while preserving scrolling and shortcuts after close', async () => {
+  const terminalShortcut = jest.fn();
+  window.addEventListener('keydown', terminalShortcut);
+  try {
+    render(<StockIntelligencePanel {...panelProps} />);
+    expect(await screen.findByText('测试研究结论')).toBeInTheDocument();
+    const { trigger, dialog } = openInspector('查看乐观情景依据', '乐观情景');
+    const heading = within(dialog).getByRole('heading', { name: '乐观情景' });
+    const down = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+    fireEvent(heading, down);
+    expect(down.defaultPrevented).toBe(false);
+    expect(terminalShortcut).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: '乐观情景' })).toBeVisible();
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    fireEvent(heading, escape);
+    expect(escape.defaultPrevented).toBe(true);
+    expect(terminalShortcut).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    expect(terminalShortcut).toHaveBeenCalledTimes(1);
+    expect(terminalShortcut).toHaveBeenLastCalledWith(expect.objectContaining({ key: 'ArrowDown' }));
+  } finally {
+    window.removeEventListener('keydown', terminalShortcut);
+  }
+});
+
 it.each([
   { label: 'absent', series: undefined },
   { label: 'empty', series: [] },
