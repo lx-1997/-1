@@ -116,6 +116,7 @@ async def generate_deep_quick(
     request: ResearchDeepDraftRequest,
     *,
     documents: Optional[list[SourceDocument]] = None,
+    allow_vision: bool = True,
 ) -> Optional[dict[str, Any]]:
     """速览版紧凑解读；任何失败返回 None，调用方跳过 quick 事件即可。"""
 
@@ -148,6 +149,11 @@ async def generate_deep_quick(
                     return normalised
         except Exception as exc:
             print(f"[deep-quick] 文本速览失败：{type(exc).__name__}: {str(exc)[:120]}")
+
+    # Parallel stream previews must not take the exclusive vision batch away
+    # from the full report, including after a text-preview provider failure.
+    if not allow_vision:
+        return None
 
     # 扫描版：小页数视觉快读（analyze_pdf_adaptive 产出的即紧凑卡形状）
     vision_bytes = next((doc.pdf_bytes for doc in docs if doc.pdf_bytes), b"")

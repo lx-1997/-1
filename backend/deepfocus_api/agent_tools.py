@@ -1864,16 +1864,53 @@ async def _tool_get_market_data(query: str = "") -> Any:
     """大盘指数/商品(黄金·原油)/比特币/汇率/宏观利率的【实时价格快照】。看板缓存+预热，秒回。
     只回 现价+今日涨跌(不带'历史新高'之类的模板论断)，让模型据实陈述、不臆造记录。"""
     from . import market_dashboard as md
+    async def fetch_dashboard(fetch):
+        try:
+            return await fetch()
+        except Exception:  # noqa: BLE001 - keep healthy sibling sources
+            return {}
+
+    async def fetch_extra_quotes():
+        # Independent supplementary I/O overlaps both dashboards. Keep the
+        # established parser, ordering and partial-result fallback semantics.
+        extra: list[dict[str, Any]] = []
+        try:
+            raw = await md._fetch_sina_quotes(["int_nasdaq", "int_dji", "rt_hkHSI", "hf_SI"])
+            for code, label, kind in (("int_nasdaq", "纳斯达克综合指数", "index"),
+                                       ("int_dji", "道琼斯工业指数", "index"),
+                                       ("hf_SI", "白银(美元/盎司)", "futures")):
+                f = raw.get(code)
+                if not f:
+                    continue
+                q = md._parse_sina_fields(kind, f)
+                if q.get("price"):
+                    extra.append({"name": label, "price": q["price"], "change_pct": q.get("change_pct")})
+            hsi = raw.get("rt_hkHSI")  # 恒生无现成 kind：现价 f[6]、涨跌幅 f[8]
+            if hsi and len(hsi) > 8:
+                try:
+                    p, pct = float(hsi[6]), float(hsi[8])
+                    if p:
+                        extra.append({"name": "恒生指数", "price": p, "change_pct": pct})
+                except (ValueError, IndexError):
+                    pass
+        except Exception:  # noqa: BLE001 - supplementary failures stay local
+            pass
+        return extra
+
+    tasks = [
+        asyncio.create_task(fetch_dashboard(md.fetch_market_dashboard)),
+        asyncio.create_task(fetch_dashboard(md.fetch_ashare_dashboard)),
+        asyncio.create_task(fetch_extra_quotes()),
+    ]
+    try:
+        glob, ash, extra_items = await asyncio.gather(*tasks)
+    finally:
+        # Propagate cancellation only after every owned source task is closed.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     flat: dict[str, dict] = {}
-    glob = ash = {}
-    try:
-        glob = await md.fetch_market_dashboard()
-    except Exception:  # noqa: BLE001
-        glob = {}
-    try:
-        ash = await md.fetch_ashare_dashboard()
-    except Exception:  # noqa: BLE001
-        ash = {}
     for dash in (glob, ash):
         for cat in (dash.get("categories") or []):
             for ind in (cat.get("indicators") or []):
@@ -1885,29 +1922,7 @@ async def _tool_get_market_data(query: str = "") -> Any:
         if not ind or ind.get("value") in (None, 0):
             continue
         items.append({"name": label, "price": ind.get("value"), "change_pct": ind.get("change_pct")})
-    # 补充看板里没有但用户常问的品种：纳指/道指/恒生/白银（sina 直取，复用看板解析）
-    try:
-        from . import market_dashboard as _md
-        raw = await _md._fetch_sina_quotes(["int_nasdaq", "int_dji", "rt_hkHSI", "hf_SI"])
-        for code, label, kind in (("int_nasdaq", "纳斯达克综合指数", "index"),
-                                   ("int_dji", "道琼斯工业指数", "index"),
-                                   ("hf_SI", "白银(美元/盎司)", "futures")):
-            f = raw.get(code)
-            if not f:
-                continue
-            q = _md._parse_sina_fields(kind, f)
-            if q.get("price"):
-                items.append({"name": label, "price": q["price"], "change_pct": q.get("change_pct")})
-        hsi = raw.get("rt_hkHSI")  # 恒生无现成 kind：现价 f[6]、涨跌幅 f[8]
-        if hsi and len(hsi) > 8:
-            try:
-                p, pct = float(hsi[6]), float(hsi[8])
-                if p:
-                    items.append({"name": "恒生指数", "price": p, "change_pct": pct})
-            except (ValueError, IndexError):
-                pass
-    except Exception:  # noqa: BLE001  补充品种失败不影响主看板
-        pass
+    items.extend(extra_items)
     if not items:
         return None
     raw_as_of = glob.get("generated_at") or ash.get("generated_at")

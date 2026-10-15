@@ -887,6 +887,16 @@ def _cache_key(message: RealtimeMessageRecord, source_urls: str) -> str:
     return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
 
 
+def article_original_text_source_version(message: RealtimeMessageRecord) -> str:
+    """Identify the extractor's exact source version without fetching/OCR.
+
+    Includes locally recovered screenshots, so a collector source change also
+    invalidates the short-lived analysis alias. Call in a worker thread because
+    source discovery can read the collector's SQLite database.
+    """
+    return _cache_key(message, "\n".join(_source_urls(message)))
+
+
 def _get_cached(key: str) -> Optional[ArticleOriginalText]:
     hit = _ARTICLE_TEXT_CACHE.get(key)
     if hit is None:

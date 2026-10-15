@@ -92,6 +92,26 @@ _RECENT_WINDOW_NUMBERS = {
     "一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
     "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
 }
+_DIGEST_SUMMARY_GRAMMAR_RE = re.compile(
+    r"总结一下|总结下|总结|汇总|整理|梳理|概览|有哪些|列出|列一下|"
+    r"请|帮我|麻烦|最近|近期|过去|这|近|天|周|日|全部|所有|全量|"
+    r"机构纪要|投行研报|快讯|文章|研报|资讯|内容|资料|的|和|及|与|"
+    r"[一二两三四五六七八九十\d]+|[\s,，。.!！?？:：;；、()（）]",
+)
+
+
+def _is_pure_recent_digest_question(question: str) -> bool:
+    """A windowed content list can use its existing evidence-only renderer."""
+    text = str(question or "").strip()
+    if not text or len(text) > 200 or not re.search(r"总结|汇总|整理|梳理|概览|有哪些|列出|列一下|全部|所有|全量", text):
+        return False
+    position = 0
+    while position < len(text):
+        token = _DIGEST_SUMMARY_GRAMMAR_RE.match(text, position)
+        if token is None:
+            return False
+        position = token.end()
+    return True
 
 
 def _recent_content_bundle_args(question: str) -> dict[str, Any] | None:
@@ -1901,6 +1921,12 @@ class CloudResearchLLM:
         try:
             forcing_tool = False
             bundle_finalized = False
+            # This output is already rendered exclusively from the full-window
+            # evidence below. Do not ask a model to draft text we will discard.
+            if recent_bundle_args and bundle_data and _is_pure_recent_digest_question(question):
+                digest_final = _render_recent_digest_answer(bundle_data)
+                if digest_final:
+                    return result_payload(_respect_explicit_brevity(question, digest_final), 0, False)
             for round_index in range(max_rounds):
                 tool_payload: dict[str, Any] = {
                     "model": self.model,
@@ -2089,6 +2115,16 @@ class CloudResearchLLM:
                 stock_screen_answer = _grounded_stock_screen_answer(stock_screen_result)
                 if stock_screen_answer:
                     return result_payload(stock_screen_answer, round_index + 1, False)
+                # A single-asset spot quote has no prose to synthesize or audit:
+                # the existing renderer uses only this turn's real quote JSON.
+                # Research, comparisons, historical and decision questions stay
+                # on the full evidence and publication-review path.
+                if (_is_pure_market_quote_question(question)
+                        and (not require_site_evidence or site_evidence_seen)
+                        and any(item.get("tool") == "get_market_data" and item.get("ok") for item in trace)):
+                    quote_answer = _grounded_market_quote_answer(question, messages)
+                    if quote_answer:
+                        return result_payload(_respect_explicit_brevity(question, quote_answer), round_index + 1, False)
                 # 聚合包已经并行取齐本题预算内的数据。代码层直接收口，
                 # 不再给模型一轮「顺手再调新闻/研报/历史」的机会，否则单股
                 # 快照仍会从 1 次膨胀回 5~10 次。
@@ -2729,8 +2765,45 @@ def _grounded_stock_screen_answer(result: Optional[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_QUOTE_ASSET_RE = re.compile(
+    r"标普500|沪深300|上证指数|创业板指|纳斯达克|道琼斯|WTI原油|比特币|"
+    r"黄金|原油|白银|恒生|标普|纳指|道指|上证|创业板|VIX", re.I,
+)
+_QUOTE_GRAMMAR_RE = re.compile(
+    r"__ASSET__|帮我|麻烦|查一下|查下|查询|看看|看一下|看下|报一下|报下|"
+    r"给我|告诉我|列出|现在|当前|实时|今天|今日|最新|现货|现价|价格|报价|"
+    r"涨跌幅|涨跌|涨幅|跌幅|涨了|跌了|涨没涨|跌没跌|多少钱|多少|"
+    r"以及|只要|只报|只给|就好|即可|美元|盎司|请|查|报|给|和|及|与|的|是|了|吗|呢|要|点|桶|"
+    r"[\s,，。.!！?？:：;；、()（）/]",
+)
+_QUOTE_OUTPUT_FORMAT_RE = re.compile(
+    r"(?:请)?(?:用|以|控制在|不超过|最多)\s*(?:[一二两三四五六七八九十]{1,3}|\d{1,3})\s*"
+    r"(?:句话|句|个字|字)(?:以内)?(?:回答|回复|说完)?",
+)
+
+
+def _is_pure_market_quote_question(question: str) -> bool:
+    """Allow only one known asset and explicit current-price/change grammar."""
+    text = str(question or "").strip()
+    if not text or len(text) > 160 or not re.search(r"多少|价格|现价|报价|涨跌|涨幅|跌幅|涨没涨|跌没跌", text):
+        return False
+    text = _QUOTE_OUTPUT_FORMAT_RE.sub("", text)
+    residual, asset_count = _QUOTE_ASSET_RE.subn("__ASSET__", text)
+    if asset_count != 1:
+        return False
+    position = 0
+    while position < len(residual):
+        token = _QUOTE_GRAMMAR_RE.match(residual, position)
+        if token is None:
+            return False
+        position = token.end()
+    return True
+
+
 def _grounded_market_quote_answer(question: str, messages: list[dict[str, Any]]) -> str:
     """简单商品/指数报价直接用工具 JSON 渲染，不再让模型猜合约名和时区。"""
+    if not _is_pure_market_quote_question(question):
+        return ""
     q = str(question or "")
     if not re.search(r"多少|价格|现价|报价|涨跌|涨没涨|跌没跌", q):
         return ""

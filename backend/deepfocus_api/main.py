@@ -325,6 +325,7 @@ from .share_snapshots import (
 )
 from .report_url_ingest import extract_report_url
 from .article_original_text import (
+    article_original_text_source_version,
     article_source_file_url,
     download_article_source,
     extract_article_original_text,
@@ -333,6 +334,7 @@ from .article_original_text import (
 )
 from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
 from .async_singleflight import AsyncSingleFlight
+from .news_analysis_cache import NewsAnalysisCoordinator
 from .research_prewarm_policy import research_prewarm_download_cap
 from .research_multi_agent import (
     ResearchMultiAgentBusy,
@@ -8663,6 +8665,9 @@ async def run_news_prewarm() -> None:
                 title = (m.title or "").strip()
                 content = (m.content or "").strip()
                 url = (m.url or "").strip()
+                source_alias_key = await _news_source_alias_key(m, title)
+                if await _get_news_source_cached(source_alias_key, title) is not None:
+                    continue
                 # Prewarm with the same cleaned source that the click path
                 # sends to the model. Otherwise a full Bloomberg/Reuters page
                 # gets cached under a different raw-content key and the user
@@ -8683,15 +8688,14 @@ async def run_news_prewarm() -> None:
                     continue
                 key = "news:v5:" + _hashlib.sha1(f"{title}\n{model_content}".encode("utf-8")).hexdigest()[:20]
                 if not news_result_needs_refresh(await asyncio.to_thread(metrics_get_ai_cache, key), title):
+                    await _set_news_source_alias(source_alias_key, key)
                     continue
                 try:
-                    async with _AI_ANALYZE_SEM.background():
-                        result = await analyze_news(title, model_content, url=model_url)
-                    if news_result_needs_refresh(result, title):
-                        continue
-                    if original_source_note and result.get("source_note", "") in ("", "基于提供的正文"):
-                        result["source_note"] = original_source_note
-                    await asyncio.to_thread(metrics_set_ai_cache, key, result)
+                    await _generate_news_ai_result(
+                        title=title, content=model_content, model_url=model_url, cache_key=key,
+                        original_source_note=original_source_note, background=True,
+                    )
+                    await _set_news_source_alias(source_alias_key, key)
                     done += 1
                 except asyncio.CancelledError:
                     raise
@@ -9260,6 +9264,75 @@ _AI_ANALYZE_SEM = AnalysisLimiter(
     foreground_wait_seconds=float(os.getenv("DEEPFOCUS_AI_QUEUE_TIMEOUT", "20")),
 )
 _RESEARCH_AI_SINGLEFLIGHT: AsyncSingleFlight[dict[str, Any]] = AsyncSingleFlight()
+_NEWS_AI_COORDINATOR: NewsAnalysisCoordinator[tuple[dict[str, Any], Any]] = NewsAnalysisCoordinator()
+_NEWS_SOURCE_ALIAS_SECONDS = 600.0
+
+
+async def _news_source_alias_key(message: Any, title: str) -> str:
+    """Resolve the extractor's source version without downloading its body."""
+    import hashlib as _hashlib
+    try:
+        version = await asyncio.to_thread(article_original_text_source_version, message)
+    except Exception:
+        # Optional acceleration must never prevent the normal source path.
+        return ""
+    return "news-source:v5:" + _hashlib.sha256(f"{title}\x00{version}".encode("utf-8")).hexdigest()
+
+
+async def _get_news_source_cached(alias_key: str, title: str) -> Optional[tuple[str, dict[str, Any]]]:
+    if not alias_key:
+        return None
+    pointer = await asyncio.to_thread(
+        metrics_get_ai_cache, alias_key, max_age_seconds=_NEWS_SOURCE_ALIAS_SECONDS,
+    )
+    canonical_key = str(pointer.get("canonical_key") or "") if isinstance(pointer, dict) else ""
+    if not canonical_key.startswith("news:v5:"):
+        return None
+    # The alias grants no extra lifetime or quality exemption to the result.
+    result = await asyncio.to_thread(metrics_get_ai_cache, canonical_key)
+    if news_result_needs_refresh(result, title):
+        return None
+    return canonical_key, result
+
+
+async def _set_news_source_alias(alias_key: str, canonical_key: str) -> None:
+    if alias_key:
+        await asyncio.to_thread(metrics_set_ai_cache, alias_key, {"canonical_key": canonical_key})
+
+
+async def _generate_news_ai_result(
+    *, title: str, content: str, model_url: Optional[str], cache_key: str,
+    original_source_note: str = "", refresh: bool = False, background: bool = False,
+) -> tuple[dict[str, Any], Any]:
+    """Share a successful generation while keeping each request's own scope."""
+    async def generate() -> tuple[dict[str, Any], Any]:
+        if not refresh:
+            late_cached = await asyncio.to_thread(metrics_get_ai_cache, cache_key)
+            if not news_result_needs_refresh(late_cached, title):
+                return late_cached, None
+        core_result: Any = None
+        async with (_AI_ANALYZE_SEM.background() if background else _AI_ANALYZE_SEM):
+            if background:
+                result = await analyze_news(title, content, url=model_url, refresh=refresh)
+            else:
+                core_result = await core_agent.run_adapter(
+                    CoreAgentRequest(
+                        objective=f"解读新闻：{title or '未命名资讯'}",
+                        mode="document", context=content[:12000], channel="web", timeout_seconds=150.0,
+                    ),
+                    lambda: analyze_news(title, content, url=model_url, refresh=refresh),
+                    route="news-vision",
+                )
+                result = core_result.raw
+        if news_result_needs_refresh(result, title):
+            raise HTTPException(status_code=502, detail="解读未通过内容完整性检查，请重试。")
+        result_note = (result.get("source_note") or "").strip()
+        if original_source_note and result_note in ("", "基于提供的正文"):
+            result["source_note"] = original_source_note
+        await asyncio.to_thread(metrics_set_ai_cache, cache_key, result)
+        return result, core_result
+
+    return await _NEWS_AI_COORDINATOR.run(cache_key, generate, refresh=refresh, timeout_seconds=150.0)
 
 
 async def _generate_research_ai_result(
@@ -9755,24 +9828,32 @@ async def api_news_ai_analyze(
     # 文章入库后已经在后台预热纯文字原文。带 message_id 时优先使用它，避免
     # 图片编码残片或只有导语的 content 被误当成完整正文交给模型。
     original_source_note = ""
+    source_alias_key = ""
+    source_cached = None
     if request.message_id:
-        source_message = get_realtime_message(request.message_id.strip())
+        source_message = await asyncio.to_thread(get_realtime_message, request.message_id.strip())
         if source_message is not None and (source_message.topic or "") == "文章":
-            try:
-                original = await extract_article_original_text(source_message)
-                # The stored-text path is also a cleaning pass. A cleaned
-                # full-page capture is normally shorter than the raw page, so
-                # comparing lengths here accidentally sent Bloomberg/Reuters
-                # navigation and related stories back to the model.
-                if original.content.strip():
-                    content = original.content
-                    model_url = None  # The original extractor already handled HTML/PDF/image content.
-                    original_source_note = original.source_note
-            except Exception:  # noqa: BLE001 - 保留导语作为降级输入
-                original_source_note = "⚠ 原文提取未完成，仅使用已收录正文"
+            source_alias_key = await _news_source_alias_key(source_message, title)
+            if not request.refresh:
+                source_cached = await _get_news_source_cached(source_alias_key, title)
+            if source_cached is None:
+                try:
+                    original = await extract_article_original_text(source_message)
+                    # The stored-text path is also a cleaning pass. A cleaned
+                    # full-page capture is normally shorter than the raw page,
+                    # so use the extracted source regardless of relative size.
+                    if original.content.strip():
+                        content = original.content
+                        model_url = None  # The extractor handled HTML/PDF/image content.
+                        original_source_note = original.source_note
+                except Exception:  # noqa: BLE001 - 保留导语作为降级输入
+                    original_source_note = "⚠ 原文提取未完成，仅使用已收录正文"
     # v5 rejects old zero-confidence/title-repetition cards in both cache layers.
     cache_key = "news:v5:" + _hashlib.sha1(f"{title}\n{content}".encode("utf-8")).hexdigest()[:20]
-    cached_result = None if request.refresh else await asyncio.to_thread(metrics_get_ai_cache, cache_key)
+    if source_cached is not None:
+        cache_key, cached_result = source_cached
+    else:
+        cached_result = None if request.refresh else await asyncio.to_thread(metrics_get_ai_cache, cache_key)
     if news_result_needs_refresh(cached_result, title):
         cached_result = None
     quota_key = _check_ai_quota(_user, "wz", http_req, cached=cached_result is not None)
@@ -9819,24 +9900,17 @@ async def api_news_ai_analyze(
         return _attach_core_agent_metadata(response, core_result)
 
     if cached_result is not None:
+        if source_cached is None:
+            await _set_news_source_alias(source_alias_key, cache_key)
         if quota_key: _complete_cost_quota(quota_key)
         return _resp(cached_result)
     # 走到这里必为会员（非会员未缓存已被 _check_ai_quota 拦下，不会触发生成）
     core_result: Any = None
     try:
-        async with _AI_ANALYZE_SEM:  # 并发闸：与研报解读共用，避免小机器过载
-            core_result = await core_agent.run_adapter(
-                CoreAgentRequest(
-                    objective=f"解读新闻：{title or '未命名资讯'}",
-                    mode="document",
-                    context=content[:12000],
-                    channel="web",
-                    timeout_seconds=150.0,
-                ),
-                lambda: analyze_news(title, content, url=model_url, refresh=request.refresh),
-                route="news-vision",
-            )
-            result = core_result.raw
+        result, core_result = await _generate_news_ai_result(
+            title=title, content=content, model_url=model_url, cache_key=cache_key,
+            original_source_note=original_source_note, refresh=request.refresh,
+        )
     except HTTPException:
         raise
     except AnalysisBusy as exc:
@@ -9845,13 +9919,7 @@ async def api_news_ai_analyze(
         raise HTTPException(status_code=408, detail="文章解读超过本轮等待预算") from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"AI 解读失败：{type(exc).__name__}: {exc}") from exc
-    # Never turn a failed generation into a completed, long-lived interpretation.
-    if news_result_needs_refresh(result, title):
-        raise HTTPException(status_code=502, detail="解读未通过内容完整性检查，请重试。")
-    result_note = (result.get("source_note") or "").strip()
-    if original_source_note and result_note in ("", "基于提供的正文"):
-        result["source_note"] = original_source_note
-    await asyncio.to_thread(metrics_set_ai_cache, cache_key, result)
+    await _set_news_source_alias(source_alias_key, cache_key)
     if quota_key: _complete_cost_quota(quota_key)
     return _resp(result, core_result)
 
