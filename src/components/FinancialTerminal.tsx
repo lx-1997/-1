@@ -62,6 +62,7 @@ import TerminalZsxqStream from './TerminalZsxqStream';
 import TerminalWeixinBind from './TerminalWeixinBind';
 import TerminalKline from './TerminalKline';
 import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
+import StockWorkspaceNav from './StockWorkspaceNav';
 import TerminalInvestorCompass from './TerminalInvestorCompass';
 import AccentThemePicker from './AccentThemePicker';
 import ResearchDeepDraft, { type ResearchDeepDraftInput, type ResearchDeepDraftEvidence, type ResearchDeepDraftSource } from './ResearchDeepDraft';
@@ -1716,7 +1717,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (e.key === 'Escape') { setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); aiViewingTaskRef.current = ''; setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiOriginal(''); setAiModalExpanded(false); return; }
       if (paletteOpen) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key === '/' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) { e.preventDefault(); setPaletteOpen(true); setPq(''); return; }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -2440,6 +2441,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, []);
   const openAi = useCallback(() => {
     // 所有 AI 入口统一落到侧栏里的 AI 对话，不再弹出一套重复的深度研判弹窗。
+    setActive(null);
     setAiOpen(false);
     setShowOnb(false);
     setSideNavKey('ai'); setSideNavOpen(false); setSideToolsOpen(false);
@@ -5534,6 +5536,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 侧边栏是工作区切换，不是页内锚点：先切换视图，再等一帧把对应模块
   // 放到内容区顶部，避免 smooth scroll 停在旧页面底部、露出页脚造成“模块串台”。
   const focusSideModule = (key: string, nextFeed?: string) => {
+    setActive(null);
     setSideNavKey(key);
     setSideNavOpen(false);
     setSideToolsOpen(false);
@@ -5587,8 +5590,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       ? 'is-live'
       : 'is-pending';
 
+  const stockWorkspaceFocused = !!authUser && !!active && sideNavKey === 'stocks';
+
   return (
-    <div className={`bbt bbt-with-sidebar bbt-side-${sideNavKey}${authUser ? '' : ' bbt--anon'}${sideNavOpen ? ' bbt-side-open' : ''}${sideNavCollapsed ? ' bbt-side-collapsed' : ''}`}>
+    <div className={`bbt bbt-with-sidebar bbt-side-${sideNavKey}${authUser ? '' : ' bbt--anon'}${stockWorkspaceFocused ? ' bbt-stock-focused' : ''}${sideNavOpen ? ' bbt-side-open' : ''}${sideNavCollapsed ? ' bbt-side-collapsed' : ''}`}>
       {pdfLoadingUrl && (
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}}>
           <div style={{background:'#141e30',border:'1px solid #263348',borderRadius:12,padding:'28px 40px',textAlign:'center',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>
@@ -6054,6 +6059,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       })()}
 
       {active && !authUser && <TerminalKline symbol={active} name={nameOf(active)} />}
+      {stockWorkspaceFocused && active && <StockWorkspaceNav activeSymbol={active} activeName={nameOf(active)}
+        stocks={watchlist.map(symbol => ({ symbol, name: nameOf(symbol) }))}
+        onBack={() => focusSideModule('stocks', '自选')}
+        onSelect={symbol => { if (symbol !== active) { logAct('select_stock', symbol); setActive(symbol); } }} />}
       {/* 个股面板：速判卡9维+龙虎榜/一致预期/分红/新闻——把只有 AI 能调的数据能力接到用户主路径 */}
       {active && <TerminalStockPanel symbol={active} name={nameOf(active)} loggedIn={!!authUser} username={authUser} onLog={logAct}
         onRequireLogin={why => requireLogin(() => { /* 登录后用户再点一次展开 */ }, why)} />}

@@ -178,6 +178,33 @@ it('starts with a compact overview containing all three prices, model inputs and
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
+it('keeps the reference quote and dated fact context complete in the compact presentation', async () => {
+  const result = intelligence();
+  result.data.dimensions.find(item => item.key === 'fundamentals')!.metrics = [
+    { label: '经营现金流/归母净利', value: 3.03, unit: '倍' },
+    { label: '归母净利同比', value: -20.54, unit: '%' },
+  ];
+  result.data.sources.push({ id: 'cashflow', label: '测试现金流来源', status: 'ok', as_of: '2026-06-30' });
+  get.mockResolvedValue(result);
+  render(<StockIntelligencePanel {...panelProps} />);
+  await screen.findByText('测试研究结论');
+  const header = document.querySelector('.si-company-header')!;
+  expect(within(header as HTMLElement).getByText('100.00')).toBeVisible();
+  expect(within(header as HTMLElement).getByText('CNY')).toBeVisible();
+  expect(within(header as HTMLElement).getByText('分析参考价 · 测试行情来源')).toBeVisible();
+  expect(header.querySelector('time')).toHaveAttribute('datetime', result.data.quote.as_of);
+  const support = within(screen.getByRole('heading', { name: '支持判断的事实' }).closest('section')!);
+  expect(support.getByText('经营现金流 / 归母净利')).toBeVisible();
+  expect(support.getByText('3.03')).toHaveTextContent('3.03倍');
+  expect(support.getByText('同报告期现金转化比较，合并与归母口径仍有差异。')).toBeVisible();
+  expect(support.getByText('2026-06-30')).toHaveAttribute('datetime', '2026-06-30');
+  const challenge = within(screen.getByRole('heading', { name: '需要验证的反证' }).closest('section')!);
+  expect(challenge.getByText('-20.54')).toHaveTextContent('-20.54%');
+  expect(challenge.getByText('已披露盈利回落，未来盈利假设需要验证。')).toBeVisible();
+  fireEvent.click(support.getByRole('button', { name: '查看依据 ↗' }));
+  expect(screen.getByRole('dialog', { name: '测试公开财报' })).toBeVisible();
+});
+
 it('keeps positive fund-flow numbers in the matrix without promoting unverified dates or neutral observations to directional facts', async () => {
   const conditions = [
     { signal: 'neutral', as_of: null },
