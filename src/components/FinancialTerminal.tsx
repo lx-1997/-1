@@ -6059,10 +6059,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       })()}
 
       {active && !authUser && <TerminalKline symbol={active} name={nameOf(active)} />}
-      {stockWorkspaceFocused && active && <StockWorkspaceNav activeSymbol={active} activeName={nameOf(active)}
-        stocks={watchlist.map(symbol => ({ symbol, name: nameOf(symbol) }))}
-        onBack={() => focusSideModule('stocks', '自选')}
-        onSelect={symbol => { if (symbol !== active) { logAct('select_stock', symbol); setActive(symbol); } }} />}
+      {stockWorkspaceFocused && <StockWorkspaceNav onBack={() => focusSideModule('stocks', '自选')} />}
       {/* 个股面板：速判卡9维+龙虎榜/一致预期/分红/新闻——把只有 AI 能调的数据能力接到用户主路径 */}
       {active && <TerminalStockPanel symbol={active} name={nameOf(active)} loggedIn={!!authUser} username={authUser} onLog={logAct}
         onRequireLogin={why => requireLogin(() => { /* 登录后用户再点一次展开 */ }, why)} />}

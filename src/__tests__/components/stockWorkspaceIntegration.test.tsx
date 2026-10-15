@@ -107,11 +107,11 @@ it.each([
   expect(document.querySelector('.bbt-stock-workspace')).not.toBeInTheDocument();
 });
 
-it('switches research without saving or reordering the account watchlist', async () => {
+it('returns to the existing watchlist to research another stock without changing it', async () => {
   await openStock();
-  const select = screen.getByRole('combobox', { name: '切换研究股票' });
-  await act(async () => { fireEvent.change(select, { target: { value: '600519' } }); });
-  expect(select).toHaveValue('600519');
+  expect(screen.queryByRole('combobox', { name: '切换研究股票' })).not.toBeInTheDocument();
+  await click(screen.getByRole('button', { name: /返回自选/ }));
+  await click(screen.getByRole('button', { name: '查看 贵州茅台（600519）行情' }));
   expect(screen.getByRole('region', { name: '贵州茅台个股研究台' })).toBeInTheDocument();
   expect(screen.queryByRole('region', { name: '比亚迪个股研究台' })).not.toBeInTheDocument();
   await act(async () => { jest.advanceTimersByTime(1000); });

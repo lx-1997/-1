@@ -104,6 +104,8 @@ async function integrated(value = snapshot()) {
   get.mockResolvedValue(value);
   render(<StockIntelligencePanel {...props} />);
   await screen.findByText(value.data.summary.headline);
+  expect(screen.queryByRole('region', { name: '平台研究主线' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: '资讯与来源' }));
   return screen.getByRole('region', { name: '平台研究主线' });
 }
 function open(trigger: HTMLElement, title: string) {
@@ -199,6 +201,7 @@ it('keeps full sector text with only a company context relation out of direction
   expect(within(panel).getByText('公司关联')).toBeVisible();
   expect(within(panel).getByText('仅供研究背景，未作为当前情景的方向依据。')).toBeVisible();
   expect(within(panel).queryByText(/乐观 · 条件支持/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: '研究概览' }));
   const scenario = open(screen.getByRole('button', { name: '查看乐观情景依据' }), '乐观情景');
   const support = within(scenario).getByRole('heading', { name: '支持该情景的条件' }).parentElement!;
   expect(within(support).queryByRole('button', { name: `${related.claim} ↗` })).not.toBeInTheDocument();
@@ -235,7 +238,7 @@ it('passes the selected claim, source, coverage and conflict identities to the p
   expect(callbacks.onConflict).toHaveBeenCalledWith('conflict');
 });
 
-it('returns from a claim source to its original scroll and restores the overview trigger focus on close', async () => {
+it('returns from a claim source to its original scroll and restores the source-tab trigger focus on close', async () => {
   const panel = await integrated();
   const trigger = within(panel).getAllByRole('button', { name: '完整论据 ↗' })[0];
   const detail = open(trigger, '平台完整论据');
@@ -252,20 +255,27 @@ it('returns from a claim source to its original scroll and restores the overview
   expect(document.body.style.overflow).toBe('');
 });
 
-it('jumps from the first-screen platform count to a focused evidence section after scenarios and history', async () => {
-  const panel = await integrated();
-  const anchor = panel.closest<HTMLElement>('.si-platform-anchor')!;
-  const scroll = jest.fn(); anchor.scrollIntoView = scroll;
-  const entry = screen.getByRole('button', { name: '查看平台研究主线' });
-  expect(entry).toHaveTextContent('平台 3 份资料');
-  const scenario = screen.getByRole('article', { name: '乐观股价情景' });
-  const history = screen.getByRole('region', { name: '历史价格走势' });
-  expect(scenario.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(history.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  fireEvent.click(entry);
-  expect(anchor).toHaveFocus();
-  expect(scroll).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' });
-  expect(screen.getByRole('tab', { name: '研究概览' })).toHaveAttribute('aria-selected', 'true');
+it('keeps the overview focused and makes all platform tracks reachable through the sources tab', async () => {
+  get.mockResolvedValue(snapshot());
+  render(<StockIntelligencePanel {...props} />);
+  await screen.findByText('测试平台合成研究快照');
+  expect(screen.getByRole('article', { name: '乐观股价情景' })).toBeVisible();
+  expect(screen.getByRole('region', { name: '历史价格走势' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: '查看平台研究主线' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: '平台研究主线' })).not.toBeInTheDocument();
+  expect(screen.queryByText('EQUITY RESEARCH')).not.toBeInTheDocument();
+  const sourcesTab = screen.getByRole('tab', { name: '资讯与来源' });
+  fireEvent.click(sourcesTab);
+  expect(sourcesTab).toHaveAttribute('aria-selected', 'true');
+  const panel = screen.getByRole('region', { name: '平台研究主线' });
+  expect(panel.closest('[role="tabpanel"]')).toHaveAccessibleName('资讯与来源');
+  expect(within(panel).getAllByRole('button', { name: '完整论据 ↗' })).toHaveLength(3);
+  const detail = open(within(panel).getAllByRole('button', { name: '完整论据 ↗' })[0], '平台完整论据');
+  expect(within(detail).getByText(claim('甲').citations[0].quote)).toBeVisible();
+  fireEvent.keyDown(detail, { key: 'Escape' });
+  fireEvent.click(screen.getByRole('tab', { name: '研究概览' }));
+  expect(screen.getByRole('article', { name: '乐观股价情景' })).toBeVisible();
+  expect(screen.queryByRole('region', { name: '平台研究主线' })).not.toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(get).toHaveBeenCalledTimes(1);
 });
@@ -276,6 +286,7 @@ it('traces only the dimension-linked platform claim and returns through the sour
     metrics: [{ label: '主营业务', value: '合成测试业务' }], evidence: ['测试经营结构需核对'],
     source_ids: ['甲-source'], platform_claim_ids: ['甲'] }];
   await integrated(result);
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const trigger = screen.getByRole('button', { name: '查看商业模式研究依据' });
   const dimension = open(trigger, '商业模式'); body(dimension).scrollTop = 68;
   const argumentsSection = within(dimension).getByRole('heading', { name: '平台段落论据' }).closest('section')!;
@@ -316,6 +327,7 @@ it('shows only this source document current revision quotes and deduplicates ide
 
 it('supports scenario → claim → source → claim → scenario without losing either scroll position', async () => {
   await integrated();
+  fireEvent.click(screen.getByRole('tab', { name: '研究概览' }));
   const trigger = screen.getByRole('button', { name: '查看乐观情景依据' });
   const scenario = open(trigger, '乐观情景'); body(scenario).scrollTop = 111;
   fireEvent.click(within(scenario).getByRole('button', { name: `${claim('甲').claim} ↗` }));
@@ -352,6 +364,7 @@ it('keeps historical and summary claims in the scenario background even if their
   result.scenario_links[0].support_claim_ids = ['甲', '历史', '摘要'];
   result.scenario_links[0].context_claim_ids = ['历史', '摘要'];
   await integrated(snapshot(result));
+  fireEvent.click(screen.getByRole('tab', { name: '研究概览' }));
   const scenario = open(screen.getByRole('button', { name: '查看乐观情景依据' }), '乐观情景');
   const support = within(scenario).getByRole('heading', { name: '支持该情景的条件' }).parentElement!;
   expect(within(support).getByRole('button', { name: `${claim('甲').claim} ↗` })).toBeVisible();
@@ -404,8 +417,9 @@ it('clears the previous account platform dialog and ignores its late refresh whe
     .mockImplementationOnce(() => oldRefresh.promise).mockImplementationOnce(() => newAccount.promise);
   render(<StockIntelligencePanel {...props} />);
   await screen.findByText('账号甲合成研究');
-  fireEvent.click(screen.getByRole('button', { name: '刷新分析' }));
+  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
   const oldSignal = get.mock.calls[1][1].signal as AbortSignal;
+  fireEvent.click(screen.getByRole('tab', { name: '资讯与来源' }));
   open(screen.getByRole('button', { name: '完整论据 ↗' }), '平台完整论据');
   act(() => login('research-b'));
   expect(oldSignal.aborted).toBe(true);
@@ -415,6 +429,7 @@ it('clears the previous account platform dialog and ignores its late refresh whe
   expect(screen.queryByText('禁止晚到旧账号')).not.toBeInTheDocument();
   await act(async () => { newAccount.resolve(snapshot(research([claim('账号乙')]), '账号乙合成研究')); await newAccount.promise; });
   expect(await screen.findByText('账号乙合成研究')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '资讯与来源' }));
   expect(screen.queryByText(/泄漏账号甲/)).not.toBeInTheDocument();
 });
 
@@ -424,13 +439,16 @@ it('removes member platform full-text claims immediately on an account entitleme
   get.mockResolvedValueOnce(snapshot(research([claim('会员全文')]))).mockImplementationOnce(() => restricted.promise);
   render(<StockIntelligencePanel {...props} />);
   await screen.findByText('测试平台合成研究快照');
+  fireEvent.click(screen.getByRole('tab', { name: '资讯与来源' }));
   open(screen.getByRole('button', { name: '完整论据 ↗' }), '平台完整论据');
   act(() => updateAuthAccount(account('research-a'), 'synthetic-paid-token'));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByText(/测试公司会员全文/)).not.toBeInTheDocument();
   const empty = research([]); empty.coverage = [coverage({ status: 'access_required', read: 0, scanned: 0, matched: 0, body_states: {}, source_ids: [], reason: '测试账号权限已变更' })];
   await act(async () => { restricted.resolve(snapshot(empty)); await restricted.promise; });
-  expect(await screen.findByText('当前账号未找到可读的匹配证据')).toBeVisible();
+  await screen.findByText('测试平台合成研究快照');
+  fireEvent.click(screen.getByRole('tab', { name: '资讯与来源' }));
+  expect(screen.getByText('当前账号未找到可读的匹配证据')).toBeVisible();
   expect(screen.queryByText(/会员全文订单/)).not.toBeInTheDocument();
 });
 

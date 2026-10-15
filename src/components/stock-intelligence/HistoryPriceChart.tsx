@@ -39,7 +39,7 @@ export default function HistoryPriceChart({ technical, currency, source, onSourc
     <div className="si-panel-head"><h4><ResearchIcon name="chart" className="si-section-icon" />价格走势</h4><span>{source?.status === 'stale' && '历史快照 · 数据滞后 · '}{technical?.adjustment || '复权口径待核验'}</span></div>
     {points.length > 1 && selected ? <>
       <div className="si-history-toolbar"><div className="si-chart-readout" aria-live="polite"><b>{number(selected.close)} <small>{seriesCurrency}</small></b><span>{selected.date} 收盘</span></div>
-        <div className="si-chart-periods" role="group" aria-label="历史图周期">{WINDOWS.map((item, index) => <button key={item.label} type="button" aria-pressed={windowIndex === index} onClick={() => { setWindowIndex(index); setCursor(null); }}>{item.label}</button>)}</div>
+        <div className="si-chart-periods"><select className="si-chart-range" aria-label="价格走势范围" value={windowIndex} onChange={event => { setWindowIndex(Number(event.currentTarget.value)); setCursor(null); }}>{WINDOWS.map((item, index) => <option key={item.label} value={index}>{item.label}</option>)}</select></div>
       </div>
       <svg className="si-history-svg" viewBox="0 0 640 230" role="img" tabIndex={0} aria-label="历史收盘图，使用左右方向键查看交易日" aria-describedby={`${id}-chart-description`}
         onPointerMove={event => { const box = event.currentTarget.getBoundingClientRect(); const position = (event.clientX - box.left) / box.width * 640; move(Math.round((position - 8) / 566 * (points.length - 1))); }}

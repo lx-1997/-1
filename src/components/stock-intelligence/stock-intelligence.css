@@ -88,7 +88,9 @@
 .si-badge, .si-model-tag { display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid var(--si-border); border-radius: 4px; color: var(--si-muted); font-size: 11px; line-height: 1.6; font-weight: 500; white-space: nowrap; background: var(--si-surface); }
 
 /* The market header keeps the company, currency, source time, and quote together. */
-.si-company-header { --si-bg: #16344f; --si-card: #28475f; --si-border: #49647b; --si-surface: #304e67; --si-tint: #2b506d; --si-strong: #f4f8fd; --si-text: #deebf5; --si-muted: #b9cedf; --si-accent: #97d8e9; --si-positive: #99e4bf; --si-negative: #ffb9ca; display: flex; align-items: center; gap: 20px; padding: 13px 16px; margin-bottom: 12px; border: 1px solid #254862; border-radius: 11px; background: linear-gradient(115deg, #102a46, #1a405b); box-shadow: 0 5px 15px #0a243619; }
+.si-company-header { display: flex; align-items: center; gap: 18px; padding: 0 0 16px; margin-bottom: 8px; border-bottom: 1px solid var(--si-border); background: transparent; }
+.si-company-header > .si-button { border: 0; background: transparent; color: var(--si-muted); padding-inline: 3px; }
+
 .si-company { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
 .si-company-mark { display: flex; align-items: center; justify-content: center; flex: none; height: 40px; width: 40px; border: 1px solid #7194ad70; border-radius: 11px; background: #9bc6e51c; color: #e4f4ff; font-size: 23px; font-weight: 600; box-shadow: inset 0 1px 0 #d4edff16; }
 .si-company-identity { min-width: 0; }
@@ -106,11 +108,11 @@
 .si-header-quote small { display: block; color: var(--si-muted); font-size: 10px; margin-top: 3px; line-height: 1.6; }
 .si-header-quote small > span, .si-header-quote time { display: block; overflow-wrap: anywhere; }
 .si-header-quote time { font-variant-numeric: tabular-nums; }
-.si-tabs { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid var(--si-border); border-radius: 8px; background: var(--si-bg); box-shadow: 0 4px 10px var(--si-shadow); margin: 0 0 14px; }
-.si-tabs button[role='tab'] { display: inline-flex; align-items: center; justify-content: center; gap: 7px; position: relative; padding: 7px 14px; min-height: 40px; border: 0; border-radius: 6px; background: transparent; color: var(--si-muted); font-size: 13px; font-weight: 550; cursor: pointer; white-space: nowrap; }
-.si-tabs button[role='tab'][aria-selected='true'] { color: #f3f8ff; background: var(--si-selected-bg); font-weight: 650; box-shadow: 0 2px 5px #18365013; }
-.si-tabs button[role='tab']:hover { color: var(--si-accent); background: var(--si-tint); }
-.si-tabs button[role='tab'][aria-selected='true']:hover { color: #f3f8ff; background: var(--si-selected-bg); }
+.si-tabs { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 24px; padding: 0; border-bottom: 1px solid var(--si-border); background: var(--si-bg); margin: 0 0 16px; }
+.si-tabs button[role='tab'] { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--si-muted); font-size: 13px; font-weight: 450; cursor: pointer; white-space: nowrap; }
+.si-tabs button[role='tab'][aria-selected='true'] { color: var(--si-strong); border-bottom-color: var(--si-accent); background: transparent; font-weight: 600; box-shadow: none; }
+.si-tabs button[role='tab']:hover { color: var(--si-accent); }
+
 .si-tab-panel { min-width: 0; }
 .si-tab-panel[hidden] { display: none; }
 .si-research-brief { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 12px; }
@@ -851,4 +853,25 @@
 .si-platform-citation > .si-text-button { min-height: 40px; padding: 0; font-size: 11px; }
 @media (max-width: 600px) {
   .si-platform-citation > blockquote, .si-platform-conflict-quote { padding: 11px 12px; }
+}
+
+/* Keep the overview to its conclusion, history and three conditional prices. */
+.si-chart-range { min-height: 34px; max-width: 100%; padding: 4px 6px; border: 0; border-bottom: 1px solid var(--si-border); border-radius: 0; color: var(--si-muted); background: var(--si-chart-bg); font: inherit; font-size: 11px; cursor: pointer; }
+.si-history-panel, .si-valuation-panel { background: transparent; border: 0; border-radius: 0; padding: 0; }
+.si-research-layout { gap: 26px; }
+.si-scenario { border: 0; border-bottom: 1px solid var(--si-border); border-radius: 0; background: transparent; }
+.si-scenario-action { padding: 12px 0; border-radius: 0; }
+.si-scenario-action:hover { background: var(--si-tint); }
+.si-scenario-label::before { display: none; }
+.si-key-evidence { margin-top: 20px; border-top: 1px solid var(--si-border); }
+.si-key-evidence > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 16px; min-height: 44px; padding: 12px 0; color: var(--si-text); font-size: 12px; cursor: pointer; }
+.si-key-evidence > summary::before { content: '+'; color: var(--si-muted); }
+.si-key-evidence[open] > summary::before { content: '−'; }
+.si-risk-preview { color: var(--si-muted); font-size: 11px; }
+.si-key-evidence .si-thesis-column { border: 0; border-radius: 0; padding: 10px 0; background: transparent; }
+@container si-research (max-width: 560px) {
+  .si-company-header { padding: 0 0 12px; border-radius: 0; }
+  .si-tabs { gap: 18px; }
+  .si-tabs button[role='tab'] { padding-inline: 0; }
+  .si-research-layout { gap: 20px; }
 }

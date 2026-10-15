@@ -1,5 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import StockIntelligencePanel from '../../components/StockIntelligencePanel';
 import type { StockIntelligence } from '../../components/stock-intelligence/types';
 import { apiGet } from '../../services/apiClient';
@@ -93,6 +94,14 @@ function closeInspector(dialog = screen.getByRole('dialog')) {
   fireEvent.click(within(dialog).getByRole('button', { name: '关闭详情' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 }
+async function expandKeyEvidence() {
+  const disclosure = document.querySelector<HTMLDetailsElement>('details.si-key-evidence')!;
+  expect(disclosure).not.toHaveAttribute('open');
+  const summary = within(disclosure).getByText('关键依据与风险').closest('summary')!;
+  await userEvent.setup().click(summary);
+  expect(disclosure).toHaveAttribute('open');
+  return disclosure;
+}
 function historyIntelligence() {
   const result = intelligence();
   result.data.technical = {
@@ -158,7 +167,7 @@ it('offers login without fetching protected analysis or opening login automatica
   expect(onRequireLogin).toHaveBeenCalledTimes(1);
 });
 
-it('starts with a compact overview containing all three prices, model inputs and the main risk', async () => {
+it('starts with only the quote, conclusion, history and three scenarios while previewing risks in a closed disclosure', async () => {
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeInTheDocument();
   expect(get).toHaveBeenCalledWith('/api/stock/intelligence', expect.objectContaining({
@@ -169,7 +178,22 @@ it('starts with a compact overview containing all three prices, model inputs and
     expect(scenario.getByRole('button', { name: `查看${label}情景依据` })).toBeVisible();
     [label, price, upside, 'CNY'].forEach(value => expect(scenario.getByText(value)).toBeVisible());
   }
-  expect(screen.getByText('测试资金流缺失，无法确认交易力量')).toBeVisible();
+  const disclosure = document.querySelector<HTMLDetailsElement>('details.si-key-evidence')!;
+  const summary = disclosure.querySelector('summary')!;
+  expect(disclosure).not.toHaveAttribute('open');
+  expect(within(summary).getByText('关键依据与风险')).toBeVisible();
+  expect(within(summary).getByText(/测试资金流缺失，无法确认交易力量/)).toBeVisible();
+  expect(within(disclosure).getByText('支持判断的事实')).not.toBeVisible();
+  expect(within(disclosure).getByText('需要验证的反证')).not.toBeVisible();
+  expect(screen.getByRole('region', { name: '历史价格走势' })).toBeVisible();
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: '平台研究主线' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: '资金与股价联动' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: '券商评级分布' })).not.toBeInTheDocument();
+  expect(screen.queryByText('研究指标快照')).not.toBeInTheDocument();
+  expect(screen.queryByText('EQUITY RESEARCH')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '查看平台研究主线' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^验证清单/ })).not.toBeInTheDocument();
   expect(screen.getByRole('tab', { name: '研究概览' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByRole('tabpanel', { name: '研究概览' })).toBeVisible();
   expect(screen.queryByText('第五条测试行业假设')).not.toBeInTheDocument();
@@ -193,6 +217,9 @@ it('keeps the reference quote and dated fact context complete in the compact pre
   expect(within(header as HTMLElement).getByText('CNY')).toBeVisible();
   expect(within(header as HTMLElement).getByText('分析参考价 · 测试行情来源')).toBeVisible();
   expect(header.querySelector('time')).toHaveAttribute('datetime', result.data.quote.as_of);
+  expect(document.querySelector('details.si-key-evidence > summary')).toHaveTextContent('归母净利同比 -20.54%');
+  const disclosure = await expandKeyEvidence();
+  expect(within(disclosure).getByText('支持判断的事实')).toBeVisible();
   const support = within(screen.getByRole('heading', { name: '支持判断的事实' }).closest('section')!);
   expect(support.getByText('经营现金流 / 归母净利')).toBeVisible();
   expect(support.getByText('3.03')).toHaveTextContent('3.03倍');
@@ -222,6 +249,7 @@ it('keeps positive fund-flow numbers in the matrix without promoting unverified 
     get.mockResolvedValue(result);
     const { unmount } = render(<StockIntelligencePanel {...panelProps} />);
     expect(await screen.findByText('测试研究结论')).toBeVisible();
+    await expandKeyEvidence();
     const support = within(screen.getByRole('heading', { name: '支持判断的事实' }).closest('section')!);
     const challenge = within(screen.getByRole('heading', { name: '需要验证的反证' }).closest('section')!);
     expect(support.queryByText(capital.headline)).not.toBeInTheDocument();
@@ -229,6 +257,7 @@ it('keeps positive fund-flow numbers in the matrix without promoting unverified 
     expect(support.queryByText('42万元')).not.toBeInTheDocument();
     expect(challenge.queryByText('42万元')).not.toBeInTheDocument();
     expect(support.getByText(/^暂无可核验的方向性支持信号/)).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
     const matrixRow = within(screen.getByRole('row', { name: /资金面/ }));
     expect(matrixRow.getByText('42')).toBeVisible();
     expect(matrixRow.getByText('主力净流入')).toBeVisible();
@@ -278,12 +307,14 @@ it('shows all six dimension rows and complete metrics and evidence in their insp
   expect(within(capital).getByText('—')).toBeVisible();
 });
 
-it('opens a matching dimension from the overview matrix without losing the current tab', async () => {
+it('opens a matching dimension from the analysis matrix without losing the current tab', async () => {
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '查看商业模式研究依据' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const { trigger, dialog } = openInspector('查看商业模式研究依据', '商业模式');
   expect(within(dialog).getByText('测试业务收入依赖订阅')).toBeVisible();
-  expect(screen.getByRole('tab', { name: '研究概览' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('tab', { name: '多维分析' })).toHaveAttribute('aria-selected', 'true');
   closeInspector(dialog);
   expect(trigger).toHaveFocus();
 });
@@ -394,7 +425,7 @@ it.each([
   const history = within(screen.getByRole('region', { name: '历史价格走势' }));
   expect(history.getByText('暂无可用日线')).toBeVisible();
   expect(history.queryByRole('img')).not.toBeInTheDocument();
-  expect(history.queryByRole('group', { name: '历史图周期' })).not.toBeInTheDocument();
+  expect(history.queryByRole('combobox', { name: '价格走势范围' })).not.toBeInTheDocument();
 });
 
 it('uses only supplied dates and closing prices for history keyboard inspection and period changes', async () => {
@@ -405,21 +436,26 @@ it('uses only supplied dates and closing prices for history keyboard inspection 
   expect(await screen.findByText('测试研究结论')).toBeInTheDocument();
   const history = within(screen.getByRole('region', { name: '历史价格走势' }));
   const chart = history.getByRole('img', { name: /历史收盘图/ });
-  const periods = within(history.getByRole('group', { name: '历史图周期' }));
+  const range = history.getByRole('combobox', { name: '价格走势范围' });
+  const user = userEvent.setup();
   function readout(date: string, close: number) {
     expect(history.getByText(`${date} 收盘`).parentElement).toHaveTextContent(close.toFixed(2));
     expect(history.getByText(`${date} 收盘`).parentElement).toHaveTextContent('CNY');
   }
   readout('2026-10-13', 100);
-  expect(periods.getByRole('button', { name: '3月' })).toHaveAttribute('aria-pressed', 'true');
+  expect(range.tagName).toBe('SELECT');
+  expect(range).toHaveValue('1');
+  expect(within(range).getByRole('option', { name: '3月', selected: true })).toBeInTheDocument();
   fireEvent.keyDown(chart, { key: 'ArrowLeft' }); readout('2026-10-12', 99);
   fireEvent.keyDown(chart, { key: 'ArrowRight' }); readout('2026-10-13', 100);
   fireEvent.keyDown(chart, { key: 'Home' }); readout('2026-08-03', 100);
-  fireEvent.click(periods.getByRole('button', { name: '1月' }));
-  expect(periods.getByRole('button', { name: '1月' })).toHaveAttribute('aria-pressed', 'true');
+  await user.selectOptions(range, within(range).getByRole('option', { name: '1月' }));
+  expect(range).toHaveValue('0');
+  readout('2026-10-13', 100);
   fireEvent.keyDown(chart, { key: 'Home' }); readout('2026-10-12', 99);
   fireEvent.keyDown(chart, { key: 'End' }); readout('2026-10-13', 100);
-  fireEvent.click(periods.getByRole('button', { name: '1年' }));
+  await user.selectOptions(range, within(range).getByRole('option', { name: '1年' }));
+  expect(range).toHaveValue('2');
   fireEvent.keyDown(chart, { key: 'Home' }); readout('2026-05-05', 80);
   fireEvent.keyDown(chart, { key: 'ArrowLeft' }); readout('2026-05-05', 80);
   fireEvent.keyDown(chart, { key: 'End' }); readout('2026-10-13', 100);
@@ -492,9 +528,12 @@ it('keeps the complete risk gaps and catalyst checklist reachable without extend
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeInTheDocument();
   expect(screen.queryByText('第四条测试风险')).not.toBeInTheDocument();
+  await expandKeyEvidence();
   const risks = openInspector(/^全部风险/, '风险反证与数据缺口').dialog;
   [...result.data.risks, ...result.data.data_gaps].forEach(value => expect(within(risks).getByText(value)).toBeVisible());
   closeInspector(risks);
+  expect(screen.queryByRole('button', { name: /^验证清单/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const catalysts = openInspector(/^验证清单/, '催化与验证清单').dialog;
   result.data.catalysts.forEach(item => {
     expect(within(catalysts).getByText(item.event)).toBeVisible();
@@ -645,7 +684,7 @@ it('clears old-account results immediately and rejects its late refresh after an
   });
   const { rerender } = render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('A 账号测试私有结论')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '刷新分析' }));
+  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   const oldSignal = get.mock.calls[1][1].signal as AbortSignal;
   act(() => {
@@ -703,7 +742,7 @@ it('invalidates visible analysis and in-flight refreshes when the same account l
     .mockImplementationOnce(() => pendingRefresh.promise).mockImplementationOnce(() => afterDowngrade.promise);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('会员账号测试结论')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '刷新分析' }));
+  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   const oldSignal = get.mock.calls[1][1].signal as AbortSignal;
   act(() => { updateAuthAccount({ ...member, membership: null }, 'test-member'); });
@@ -737,6 +776,7 @@ it('keeps unsafe evidence URLs out of actionable original links', async () => {
 it('keeps missing daily fund flow and broker ratings empty instead of constructing example charts or counts', async () => {
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const flow = within(screen.getByRole('region', { name: '资金与股价联动' }));
   const ratings = within(screen.getByRole('region', { name: '券商评级分布' }));
   expect(flow.getByText('暂无可核验的日资金序列')).toBeVisible();
@@ -753,6 +793,7 @@ it('preserves positive, negative and zero daily amounts and uses only the same f
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const panel = screen.getByRole('region', { name: '资金与股价联动' });
   const flow = within(panel);
   const chart = flow.getByRole('img', { name: /每日资金净额与同日收盘图/ });
@@ -792,6 +833,7 @@ it.each([
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const panel = screen.getByRole('region', { name: '资金与股价联动' });
   const flow = within(panel);
   expect(flow.getByRole('img', { name: /每日资金净额与同日收盘图/ })).toBeVisible();
@@ -811,6 +853,7 @@ it.each(['unverified amount unit', 'invalid dates and amounts'])('does not plot 
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const flow = within(screen.getByRole('region', { name: '资金与股价联动' }));
   expect(flow.getByText('暂无可核验的日资金序列')).toBeVisible();
   expect(flow.queryByRole('img')).not.toBeInTheDocument();
@@ -823,6 +866,7 @@ it('preserves dated rows with only another flow category and identifies partial 
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const panel = screen.getByRole('region', { name: '资金与股价联动' });
   const flow = within(panel);
   const chart = flow.getByRole('img', { name: /每日资金净额与同日收盘图/ });
@@ -844,6 +888,7 @@ it('keeps interval and category controls usable when a selected flow category ha
   get.mockResolvedValue(marketIntelligence());
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const panel = screen.getByRole('region', { name: '资金与股价联动' });
   const flow = within(panel);
   const categories = within(flow.getByRole('group', { name: '资金分类' }));
@@ -873,6 +918,7 @@ it('uses real trading-record periods and brush boundaries without refetching or 
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const panel = screen.getByRole('region', { name: '资金与股价联动' });
   const flow = within(panel);
   const periods = within(flow.getByRole('group', { name: '资金图交易日区间' }));
@@ -909,6 +955,7 @@ it('counts real broker-rating records and supports filtered samples, original li
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const ratings = within(screen.getByRole('region', { name: '券商评级分布' }));
   expect(ratings.getByRole('img', { name: '券商评级分布，共 6 条最新评级样本' })).toBeVisible();
   for (const group of result.data.broker_ratings!.distribution) {
@@ -948,6 +995,7 @@ it.each(['reported total mismatch', 'missing records', 'category mismatch', 'dup
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const distribution = within(screen.getByRole('region', { name: '券商评级分布' }));
   expect(distribution.getByText('暂无可核验的评级分布')).toBeVisible();
   expect(distribution.queryByRole('img')).not.toBeInTheDocument();
@@ -965,6 +1013,7 @@ it('describes tied broker-rating groups without claiming a single majority view'
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const distribution = within(screen.getByRole('region', { name: '券商评级分布' }));
   expect(distribution.getByRole('img', { name: '券商评级分布，共 6 条最新评级样本' })).toBeVisible();
   expect(distribution.getByText('样本中最多（并列）')).toBeVisible();
@@ -987,6 +1036,7 @@ it('retains historical fund and broker evidence with explicit stale labels and o
   get.mockResolvedValue(result);
   render(<StockIntelligencePanel {...panelProps} />);
   expect(await screen.findByText('测试研究结论')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '多维分析' }));
   const flowPanel = screen.getByRole('region', { name: '资金与股价联动' });
   const flow = within(flowPanel);
   expect(flow.getByText('历史快照 · 数据滞后')).toBeVisible();
