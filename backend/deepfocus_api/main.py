@@ -8903,195 +8903,13 @@ async def run_headline_picker() -> None:
 
 
 async def run_research_prewarm() -> None:
-    """后台预解读：把最新研报逐篇 AI 解读并写入缓存，用户点开即秒回。
+    """Warm eligible future arrivals into the interactive deep cache."""
+    from .research_prewarm import run_research_prewarm_loop
 
-    顺序执行 + 间隔，避免压垮模型；每轮只处理若干篇未缓存的，新研报下一轮补上。
-    DEEPFOCUS_RESEARCH_PREWARM=0 可关闭。"""
-    if (os.getenv("DEEPFOCUS_RESEARCH_PREWARM", "0").strip().lower() in {"0", "false", "no"}):
-        print("[prewarm] 研报预解读未启用")
-        return
-    per_cycle = max(1, min(6, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_PER_CYCLE", "6"))))
-    gap = float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_GAP_SECONDS", "3"))
-    cycle = max(600.0, float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_CYCLE_SECONDS", "1800")))
-    jitter_ratio = min(0.45, max(0.0, float(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_JITTER_RATIO", "0"))))
-    non_a_only = os.getenv("DEEPFOCUS_RESEARCH_PREWARM_NON_A_ONLY", "0").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
-    workers = max(1, min(2, int(os.getenv("DEEPFOCUS_BACKGROUND_CONCURRENCY", "1"))))
-    # 每日下载预算：ZSXQ 有「单自然日下载量」限额，超了会整天拒绝下载。务必远低于其阈值。
-    daily_max = int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_DAILY_MAX", "40"))
-    # 为「新报告」预留的额度：回填(补历史)只能用 daily_max - fresh_reserve 以内，绝不挤占新报告。
-    fresh_reserve = int(os.getenv("DEEPFOCUS_RESEARCH_FRESH_RESERVE", "15"))
-    backfill_cap = int(os.getenv("DEEPFOCUS_RESEARCH_BACKFILL_PER_CYCLE", "8"))
-    _DL_KEY = "research_pdf_dl"  # 当日 PDF 下载计数（按自然日滚动）
-    from .pdf_brand import has_cached_file_id  # noqa: PLC0415 - 判定原文 PDF 是否已落盘
-    from .research_prewarm_signal import wait_research_arrival  # noqa: PLC0415 - 入库脉冲提前唤醒
-    await asyncio.sleep(25)  # 启动后稍等，让服务与工作台就绪
-    print(
-        f"[prewarm] 启动：并发 {workers}、每日下载上限 {daily_max}（为新报告预留 {fresh_reserve}）、"
-        f"基准周期 {cycle}s、抖动 ±{jitter_ratio:.0%}、自动范围 {'仅港美/海外' if non_a_only else '全部市场'}"
+    await run_research_prewarm_loop(
+        fetch_wire=fetch_research_wire_online, fetch_pdf=_fetch_research_online_pdf,
+        limiter=_AI_ANALYZE_SEM,
     )
-    done_counter = {"n": 0}
-    banned = {"hit": False}
-    failed_fids: set[str] = set()  # 下载成功但解读失败的，本进程内不再重复下载（避免浪费当日预算；重启后再试）
-    # 24h 防抖：部分研报模型只能产出 <4 条逻辑线，report_depth_needs_refresh 会永远判短，
-    # 不设防抖会让同一篇每轮被重算、占死名额，新报告永远轮不到下载（2026-10-08 实测）。
-    _WARM_THROTTLE_SECONDS = 24 * 3600.0
-    warmed_at: dict[str, float] = {}
-
-    async def _warm_one(item: dict, sem: asyncio.Semaphore, ai: bool = True) -> None:
-        fid = str(item.get("file_id") or "").strip()
-        ai_cache_key = analysis_cache_key(fid)
-        async with sem:
-            already_local = has_cached_file_id(fid)
-            # 下载额度/源站限额只拦网络下载；本地已有 PDF 的 AI 缓存补齐仍可继续。
-            if (banned["hit"] and not already_local) or (
-                not already_local and await asyncio.to_thread(metrics_get_daily, _DL_KEY) >= daily_max
-            ):
-                return
-            try:
-                # _fetch_research_online_pdf 只取原始字节并按 file_id 落盘（AI 解读无需去水印；
-                # 下载本身就完成了 AI 输入 PDF 缓存）。
-                content, _ = await _fetch_research_online_pdf(fid, item.get("filename", ""))
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # 下载失败：可能瞬时(网络)或命中限额；不拉黑，留待重试
-                msg = str(exc)
-                if "下载量异常" in msg or "拒绝下载" in msg or "下个自然日" in msg:
-                    banned["hit"] = True
-                    print("[prewarm] 命中 ZSXQ 下载限额，今日停止下载（明日自动恢复）")
-                else:
-                    print(f"[prewarm] 下载失败 {fid}: {type(exc).__name__}: {msg[:50]}")
-                return
-            if not already_local:
-                await asyncio.to_thread(metrics_incr, _DL_KEY)  # 只有真实下载才占外部源当日配额；磁盘命中不重复计数
-            if not ai:
-                # 仅补原文去水印缓存（已 AI 解读过的存量），让用户点开秒看，不再重复烧模型 token。
-                done_counter["n"] += 1
-                await asyncio.sleep(gap)
-                return
-            try:
-                async with _AI_ANALYZE_SEM.background():  # 预热不排队，并给在线解读保留容量
-                    # 供应链/行业 deck 的关键标的和风险常在第 5–14 页；预热也必须
-                    # 使用交互式解读同一页数，否则用户命中预热缓存时仍会得到标题级摘要。
-                    result = await analyze_pdf_adaptive(
-                        content, title=item.get("title", "研报"), max_pages=14, background=True,
-                    )
-                if result.get("vision_unavailable") or result.get("provider") == "text-only-fallback":
-                    return
-                await asyncio.to_thread(metrics_set_ai_cache, ai_cache_key, result)
-                if ai_cache_key != fid:  # 保留无版本别名给研报博客/头条标的提取
-                    await asyncio.to_thread(metrics_set_ai_cache, fid, result)
-                warmed_at[fid] = time.time()
-                done_counter["n"] += 1
-            except asyncio.CancelledError:
-                raise
-            except ResearchMultiAgentBusy:
-                print(f"[prewarm] 交互式解读优先，本轮跳过 {fid}")
-            except (AnalysisBusy, ResearchMultiAgentBusy):
-                return  # 在线请求优先，下一轮仍可预热此报告
-            except Exception as exc:  # noqa: BLE001 - 解读失败：拉黑，避免反复下载烧预算
-                failed_fids.add(fid)
-                print(f"[prewarm] 解读失败(已拉黑本轮) {fid}: {type(exc).__name__}: {str(exc)[:50]}")
-            await asyncio.sleep(gap)
-
-    while True:
-        done_counter["n"] = 0
-        banned["hit"] = False
-        try:
-            used = await asyncio.to_thread(metrics_get_daily, _DL_KEY)
-            download_cap = research_prewarm_download_cap(
-                daily_max, datetime.now(ai_fund.BJ_TZ).hour,
-            )
-            download_room = max(0, download_cap - used)
-            data = await fetch_research_wire_online(limit=200, use_cache=False)  # 整库覆盖（禁缓存：陈旧清单会让预热吃旧报告，新报告永远进不了队列）
-            fresh: list[dict] = []
-            migrate: list[dict] = []
-            pdf_only: list[dict] = []  # 已 AI 解读但原文未去水印落盘 → 仅补 PDF 成品缓存(列表近新优先)，让用户点开秒看
-            candidate_items = data.get("items") or []
-            candidate_cache = await asyncio.to_thread(
-                metrics_get_ai_cache_many,
-                [analysis_cache_key(str(it.get("file_id") or "").strip()) for it in candidate_items],
-            )
-            for it in candidate_items:
-                fid = str(it.get("file_id") or "").strip()
-                if not fid or fid in failed_fids:
-                    continue
-                cached = candidate_cache.get(analysis_cache_key(fid))
-                # 严格排除 A 股：未知市场也不自动下载，避免误把标题含糊的 A 股研报拉下来。
-                # 用户手动打开原文走独立接口，不受这个后台候选过滤影响。
-                if non_a_only and _market_for(fid, str(it.get("title") or ""), cached) not in {"HK", "US"}:
-                    continue
-                # 旧缓存可能只有一句话和几条 bullet；把它当作待重算，
-                # 否则后台永远不会用新版提示词回填。
-                needs_refresh = report_depth_needs_refresh(cached) and (
-                    time.time() - warmed_at.get(fid, 0.0) > _WARM_THROTTLE_SECONDS
-                )
-                if not cached or needs_refresh:
-                    fresh.append(it)  # 新报告或旧短缓存：下载→用新版提示词重算
-                elif isinstance(cached, dict) and "instruments" not in cached:
-                    migrate.append(it)  # 旧缓存补「提及标的」（市场归类由 _market_for 用 subject 即时算，无需重下载）
-                elif not has_cached_file_id(fid):
-                    pdf_only.append(it)  # AI 已就绪、仅差原文去水印成品 → 补缓存让点开秒看（不重复烧模型）
-            # 优先级：新报告(本地 PDF 优先) > 原文 PDF 缓存 > instruments 回填。
-            # per_cycle 同时限制本轮模型/下载任务数；分时 cap 给白天的新报告保留下载额度。
-            fresh_local = [it for it in fresh if has_cached_file_id(str(it.get("file_id") or ""))]
-            fresh_remote = [it for it in fresh if not has_cached_file_id(str(it.get("file_id") or ""))]
-            migrate_local = [it for it in migrate if has_cached_file_id(str(it.get("file_id") or ""))]
-            migrate_remote = [it for it in migrate if not has_cached_file_id(str(it.get("file_id") or ""))]
-
-            slots = per_cycle
-            fresh_local_pending = fresh_local[:slots]
-            slots -= len(fresh_local_pending)
-            fresh_remote_pending = fresh_remote[:min(slots, download_room)]
-            slots -= len(fresh_remote_pending)
-            download_room -= len(fresh_remote_pending)
-            fresh_pending = fresh_local_pending + fresh_remote_pending
-
-            pdf_pending = pdf_only[:min(slots, download_room)]
-            slots -= len(pdf_pending)
-            download_room -= len(pdf_pending)
-
-            backfill_left = min(backfill_cap, slots)
-            migrate_local_pending = migrate_local[:backfill_left]
-            slots -= len(migrate_local_pending)
-            backfill_left -= len(migrate_local_pending)
-            remote_backfill_room = max(0, min(
-                backfill_left,
-                slots,
-                download_room,
-                (daily_max - fresh_reserve) - used,
-            ))
-            migrate_remote_pending = migrate_remote[:remote_backfill_room]
-            migrate_pending = migrate_local_pending + migrate_remote_pending
-            pending = fresh_pending + pdf_pending + migrate_pending
-            if pending:
-                _dbg = ", ".join(
-                    f"{(str(it.get('file_id') or ''))[-6:]}{'L' if has_cached_file_id(str(it.get('file_id') or '')) else 'R'}"
-                    for it in pending[:6]
-                )
-                print(
-                    f"[prewarm] 本轮处理 {len(pending)} 篇（新{len(fresh_pending)}/原文{len(pdf_pending)}/"
-                    f"回填{len(migrate_pending)}），分时下载额度 {used}/{download_cap}（日上限{daily_max}）；pending: {_dbg}"
-                )
-                sem = asyncio.Semaphore(workers)
-                pdf_ids = {id(x) for x in pdf_pending}  # 仅这批走「只补 PDF、不重解读」
-                await asyncio.gather(*[_warm_one(it, sem, ai=(id(it) not in pdf_ids)) for it in pending], return_exceptions=True)
-                print(f"[prewarm] 本轮完成 {done_counter['n']} 篇，当日累计 {await asyncio.to_thread(metrics_get_daily, _DL_KEY)}/{daily_max}")
-            elif used >= download_cap:
-                print(f"[prewarm] 当前分时下载额度已用尽（{used}/{download_cap}，日上限{daily_max}），等待下一时段")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            print(f"[prewarm] 本轮异常：{type(exc).__name__}: {str(exc)[:80]}")
-        low = max(60.0, cycle * (1.0 - jitter_ratio))
-        high = max(low, cycle * (1.0 + jitter_ratio))
-        next_delay = random.uniform(low, high) if jitter_ratio else max(60.0, cycle)
-        awakened = await wait_research_arrival(next_delay)
-        if awakened:
-            print("[prewarm] 新研报入库脉冲，提前开始本轮预热")
-        else:
-            print(f"[prewarm] 下一轮约 {next_delay / 60:.1f} 分钟后")
 
 
 @app.get("/api/research/search", response_model=ResearchReportSearchResponse)
@@ -9637,33 +9455,9 @@ async def api_research_deep_draft(
     newly generated long-form draft.
     """
     def _valid_cached_draft(value: Any) -> bool:
-        """Reject torn/legacy cache rows before they pass Pydantic defaults.
+        from .research_cache import is_valid_deep_draft_cache
 
-        ``ResearchDeepDraftResponse`` intentionally has permissive defaults so
-        the renderer can handle an empty, source-missing draft.  That means a
-        bare ``{}`` would technically validate, though it is not a completed
-        cache entry and would make a quota-gated request look like a cache hit.
-        Require the fields emitted by this version of the writer as well as a
-        successful model validation.
-        """
-        if not isinstance(value, dict) or not value:
-            return False
-        if value.get("mode") != "deep_draft":
-            return False
-        if not isinstance(value.get("sections"), list):
-            return False
-        if not isinstance(value.get("source_coverage"), dict):
-            return False
-        # 模型失败的确定性兜底不当长期缓存：瞬时 LLM 故障会被缓存成永久降级解读
-        # （provider=local-fallback、置信 ~0.12、章节只是原文摘录"页面线索"）。
-        # 按未命中处理，下次点击重试生成；LLM 仍不可用时现场兜底，UX 相同但缓存不再被毒化。
-        if value.get("provider") in {"local-fallback", "text-only-fallback"} or value.get("vision_unavailable"):
-            return False
-        try:
-            ResearchDeepDraftResponse.model_validate(value)
-        except Exception:
-            return False
-        return True
+        return is_valid_deep_draft_cache(value)
 
     title = (request.title or "研报深度解读").strip()
     # The interpretation belongs to the source report, not to the requesting

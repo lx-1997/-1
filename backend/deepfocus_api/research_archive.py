@@ -119,3 +119,185 @@ def count() -> int:
             return int(conn.execute("SELECT COUNT(*) AS n FROM research_archive").fetchone()["n"])
     except Exception:  # noqa: BLE001
         return 0
+
+
+# This ledger is intentionally separate from archive.upsert. Ordinary API
+# searches can archive historic reports and must never enqueue them as new.
+# Only the scheduler's successful current-feed observations cross this boundary.
+_PREWARM_INITIALIZED_KEY = "incremental_feed_baseline_v1"
+
+
+def _ensure_prewarm_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS research_prewarm_seen (
+            file_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK (status IN ('baseline', 'pending', 'done', 'excluded')),
+            payload TEXT,
+            first_seen_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_prewarm_pending "
+        "ON research_prewarm_seen(status, first_seen_at, file_id)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS research_prewarm_state "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+
+
+def _prewarm_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in items or []:
+        if not isinstance(raw, dict):
+            continue
+        fid = str(raw.get("file_id") or "").strip()
+        if not fid or fid in seen:
+            continue
+        seen.add(fid)
+        out.append({**raw, "file_id": fid})
+    return out
+
+
+def observe_prewarm_feed(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Observe one successful scheduler feed, without enqueueing any backlog.
+
+    The first nonempty valid observation atomically records the current archive and feed as
+    baseline (zero pending). Only a never-seen file_id in a later feed becomes
+    pending. Archive/API upserts do not touch this ledger, so searching historic
+    reports neither schedules them nor hides future arrivals from the scheduler.
+    Seen baseline/done/excluded ids survive archive pruning and process restarts.
+
+    Returns initialized=True only for the call that established the baseline,
+    with baseline/enqueued counts. Exceptions roll the entire observation back.
+    """
+    from contextlib import closing
+
+    current = _prewarm_items(items)
+    if not current:
+        # Source adapters may soft-fail with items=[]; recovery must establish
+        # the baseline instead of treating the old restored feed as arrivals.
+        return {"initialized": False, "baseline": 0, "enqueued": 0}
+    init_archive()
+    now = utc_now_iso()
+    with closing(_connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _ensure_prewarm_schema(conn)
+            initialized = conn.execute(
+                "SELECT value FROM research_prewarm_state WHERE key=?",
+                (_PREWARM_INITIALIZED_KEY,),
+            ).fetchone()
+            if initialized is None:
+                baseline_ids = {item["file_id"] for item in current}
+                for row in conn.execute("SELECT payload FROM research_archive"):
+                    try:
+                        value = json.loads(row["payload"])
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(value, dict):
+                        fid = str(value.get("file_id") or "").strip()
+                        if fid:
+                            baseline_ids.add(fid)
+                conn.executemany(
+                    "INSERT OR IGNORE INTO research_prewarm_seen "
+                    "(file_id,status,payload,first_seen_at,updated_at) VALUES (?,'baseline',NULL,?,?)",
+                    [(fid, now, now) for fid in baseline_ids],
+                )
+                conn.execute(
+                    "INSERT INTO research_prewarm_state (key,value) VALUES (?,?)",
+                    (_PREWARM_INITIALIZED_KEY, now),
+                )
+                result = {"initialized": True, "baseline": len(baseline_ids), "enqueued": 0}
+            else:
+                enqueued = 0
+                for item in current:
+                    fid = item["file_id"]
+                    serialized = json.dumps(item, ensure_ascii=False)
+                    inserted = conn.execute(
+                        "INSERT OR IGNORE INTO research_prewarm_seen "
+                        "(file_id,status,payload,first_seen_at,updated_at) VALUES (?,'pending',?,?,?)",
+                        (fid, serialized, now, now),
+                    )
+                    enqueued += int(inserted.rowcount > 0)
+                    if not inserted.rowcount:
+                        # A pending report can receive a corrected title/name.
+                        # Baseline and terminal rows never become pending again.
+                        conn.execute(
+                            "UPDATE research_prewarm_seen SET payload=?,updated_at=? "
+                            "WHERE file_id=? AND status='pending'",
+                            (serialized, now, fid),
+                        )
+                result = {"initialized": False, "baseline": 0, "enqueued": enqueued}
+            conn.commit()
+            return result
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def list_prewarm_pending(limit: Optional[int] = None) -> list[dict[str, Any]]:
+    """Return durable pending metadata; default includes the complete queue.
+
+    Creating empty queue tables does not initialize the feed baseline. A failed
+    first fetch therefore leaves startup undecided until a successful snapshot.
+    """
+    from contextlib import closing
+
+    init_archive()
+    with closing(_connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _ensure_prewarm_schema(conn)
+            sql = (
+                "SELECT payload FROM research_prewarm_seen WHERE status='pending' "
+                "ORDER BY first_seen_at, file_id"
+            )
+            params: tuple = ()
+            if limit is not None:
+                sql += " LIMIT ?"
+                params = (max(0, int(limit)),)
+            rows = conn.execute(sql, params).fetchall()
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            item = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(item, dict):
+            result.append(item)
+    return result
+
+
+def mark_prewarm_done(file_id: str, status: str = "done") -> bool:
+    """Finish a pending report once; keep its id permanently to prevent replay."""
+    from contextlib import closing
+
+    if status not in {"done", "excluded"}:
+        raise ValueError("prewarm completion status must be done or excluded")
+    fid = str(file_id or "").strip()
+    if not fid:
+        return False
+    init_archive()
+    with closing(_connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _ensure_prewarm_schema(conn)
+            changed = conn.execute(
+                "UPDATE research_prewarm_seen SET status=?,payload=NULL,updated_at=? "
+                "WHERE file_id=? AND status='pending'",
+                (status, utc_now_iso(), fid),
+            ).rowcount
+            conn.commit()
+            return bool(changed)
+        except BaseException:
+            conn.rollback()
+            raise

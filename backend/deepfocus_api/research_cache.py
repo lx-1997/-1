@@ -179,9 +179,45 @@ def legacy_deep_draft_cache_key(request: Any) -> str:
     return "deep-draft:v2:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
+def is_valid_deep_draft_cache(value: Any) -> bool:
+    """Accept only complete deep-draft payloads reusable by every entry point.
+
+    The response schema has permissive defaults so an empty dictionary or a
+    deterministic source-only fallback can be rendered on a live request.
+    Neither represents a completed AI interpretation suitable for prewarming.
+    Keep this check shared by the background worker, POST and SSE routes.
+    """
+    if not isinstance(value, dict) or not value:
+        return False
+    if value.get("mode") != "deep_draft":
+        return False
+    if not isinstance(value.get("sections"), list):
+        return False
+    if not isinstance(value.get("source_coverage"), dict):
+        return False
+    if value.get("provider") in {"local-fallback", "text-only-fallback"} or value.get("vision_unavailable"):
+        return False
+    try:
+        from .schemas import ResearchDeepDraftResponse
+
+        response = ResearchDeepDraftResponse.model_validate(value)
+        if not any(
+            section.summary.strip()
+            or any(text.strip() for text in [*section.paragraphs, *section.bullets])
+            or any(evidence.excerpt.strip() for evidence in section.evidence)
+            or any(table.rows for table in section.tables)
+            for section in response.sections
+        ):
+            return False
+    except Exception:
+        return False
+    return True
+
+
 __all__ = [
     "DEEP_DRAFT_CACHE_VERSION",
     "deep_draft_cache_identity",
     "deep_draft_cache_key",
     "legacy_deep_draft_cache_key",
+    "is_valid_deep_draft_cache",
 ]

@@ -50,23 +50,9 @@ def _sse(payload: dict[str, Any]) -> str:
 
 
 def _valid_cached_draft(value: Any) -> bool:
-    """与 main.deep-draft 端点同源的结构校验 + 兜底拒缓存。"""
-    if not isinstance(value, dict) or not value:
-        return False
-    if value.get("mode") != "deep_draft":
-        return False
-    if not isinstance(value.get("sections"), list):
-        return False
-    if not isinstance(value.get("source_coverage"), dict):
-        return False
-    # 模型失败的确定性兜底不当长期缓存（瞬时故障下次重试生成）
-    if value.get("provider") == "local-fallback":
-        return False
-    try:
-        ResearchDeepDraftResponse.model_validate(value)
-    except Exception:
-        return False
-    return True
+    from .research_cache import is_valid_deep_draft_cache
+
+    return is_valid_deep_draft_cache(value)
 
 
 def _finish(value: Any) -> ResearchDeepDraftResponse:

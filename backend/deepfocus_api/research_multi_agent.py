@@ -623,16 +623,19 @@ async def _analyze_images_per_page(
             )
             for index, image in enumerate(images, 1)
         ]
+        page_batch = asyncio.gather(*tasks, return_exceptions=True)
         try:
             values = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
+                page_batch,
                 timeout=_PAGE_TOTAL_TIMEOUT_SECONDS,
             )
         finally:
             for task in tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Drain the original aggregate too: preemption can complete it with
+            # CancelledError even though return_exceptions=True drains children.
+            await asyncio.gather(page_batch, *tasks, return_exceptions=True)
         unavailable = next((value for value in values if isinstance(value, VisionUnavailableError)), None)
         if unavailable is not None:
             raise unavailable

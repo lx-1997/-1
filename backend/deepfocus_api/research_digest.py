@@ -34,7 +34,7 @@ from fastapi import APIRouter, HTTPException
 
 from .llm import CloudResearchLLM
 from .research_vision import _strip_brand_text, analyze_pdf_vision, extract_pdf_ocr_text
-from .research_multi_agent import analyze_pdf_adaptive
+from .research_multi_agent import ResearchMultiAgentBusy, analyze_pdf_adaptive
 from .research_workbench import WORKBENCH_DIR
 from .schemas import (
     ResearchDeepDraftCoverage,
@@ -1160,6 +1160,7 @@ async def generate_deep_draft(
     documents: Optional[list[SourceDocument]] = None,
     source_error: str = "",
     progress: Optional[Any] = None,
+    background: bool = False,
 ) -> ResearchDeepDraftResponse:
     """Generate a deep draft, falling back to deterministic source extraction.
 
@@ -1232,11 +1233,21 @@ async def generate_deep_draft(
                             _DEEP_VISION_MAX_PAGES,
                             max(1, int(request.max_pages or _DEEP_VISION_MAX_PAGES)),
                         ),
+                        background=background,
                     ),
                     timeout=_DEEP_LLM_TOTAL_TIMEOUT_SECONDS,
                 )
                 if isinstance(compact, dict) and compact:
-                    return _fallback_from_compact(compact, request, docs, disclaimer=_DISCLAIMER)
+                    degraded = compact.get("vision_unavailable") or compact.get("provider") == "text-only-fallback"
+                    # Do not hide a degraded compact result behind the deep
+                    # wrapper's successful provider name during prewarming.
+                    if not (background and degraded):
+                        return _fallback_from_compact(compact, request, docs, disclaimer=_DISCLAIMER)
+            except ResearchMultiAgentBusy:
+                # A displaced prewarm must retry later; never turn contention
+                # into a successful source-only draft or write it as ready.
+                if background:
+                    raise
             except Exception:
                 # Vision is best-effort; the deterministic skeleton below stays
                 # honest about what could and could not be read.

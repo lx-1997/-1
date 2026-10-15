@@ -31,6 +31,9 @@ _MAX_LEN = 8   # 名称扫描窗口上限(A 股名一般 ≤6 字，留点冗余
 
 # A 股 6 位代码：前后都不能再接数字/点，避免把 8 位公告号、日期串、"前20/近10天"误判为代码。
 _SPECIFIC_CODE_RE = re.compile(r"(?<![\d.])\d{6}(?![\d.])")
+# Source is the market-specific all-A endpoint; reject malformed/HK/US codes
+# before adding a name to the strict automatic-prewarm exclusion snapshot.
+_EXACT_A_CODE_RE = re.compile(r"[0-9]{6}\Z")
 
 # 冷启动 / 离线兜底种子必须同时带代码。原实现只存名称集，
 # 在远程全市场列表拉取失败时，has_specific_stock_name 能命中，
@@ -58,16 +61,24 @@ _lock = threading.Lock()
 _names: frozenset = _SEED_NAMES
 _maxlen = _MAX_LEN
 _name_code: dict = dict(_SEED_NAME_CODE)  # 完整 name->code（冷启动也可真解析）
+# Keep the source list intact for exact-title consumers. The chat resolver
+# intentionally removes short and ambiguous names; this snapshot must not.
+_exact_a_names: frozenset[str] = _SEED_NAMES
 _disk_load_attempted = False
 
 
 def _ingest(mapping: dict) -> int:
     """把 name->code 映射并入内存集合(与种子合并、过滤短名/歧义名)。返回最终名称数。"""
-    global _names, _maxlen, _name_code
+    global _names, _maxlen, _name_code, _exact_a_names
     norm = {_nfkc(n): c for n, c in mapping.items() if n}  # 全角→半角归一(京东方Ａ→京东方A)，让半角输入命中
     cleaned = {n for n in norm if n and len(n) >= _MIN_LEN and n not in _DENY}
     merged = frozenset(cleaned | _SEED_NAMES)
+    exact_names = frozenset(
+        n for n, c in norm.items()
+        if n and _EXACT_A_CODE_RE.fullmatch(str(c or "").strip())
+    ) | _SEED_NAMES
     with _lock:
+        _exact_a_names = exact_names
         _names = merged
         _maxlen = min(_MAX_LEN, max((len(n) for n in merged), default=_MAX_LEN))
         _name_code = {
@@ -86,6 +97,18 @@ def all_name_code() -> dict:
         _load_disk()
     with _lock:
         return dict(_name_code)
+
+
+def exact_a_share_names() -> frozenset[str]:
+    """Full exact A-share names, including short names and chat-denied names.
+
+    Uses the same A-only background source and lazy disk fallback as the chat
+    index, with six-digit source-code validation. Never fetches the network or
+    guesses a market/name. The immutable snapshot can be reused for a cycle.
+    """
+    all_name_code()  # Reuse the existing one-time disk-load path.
+    with _lock:
+        return _exact_a_names
 
 
 def name_of_code(code: str) -> str:
