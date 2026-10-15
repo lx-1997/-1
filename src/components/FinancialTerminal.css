@@ -64,6 +64,24 @@
   letter-spacing: 0.2px;
 }
 .bbt b { font-weight: 700; }
+
+/* A selected stock can be taller than the fixed desktop terminal. Let this
+   flex child shrink and scroll instead of clipping the research below it. */
+@media (min-width: 821px) {
+  .bbt:not(.bbt--anon) > .bbt-stock-workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+  }
+  /* The shell's unscaled viewport minimum otherwise overrides its zoom-aware
+     height and pushes the bottom of the scroll area outside the viewport. */
+  .terminal-only-root .bbt-with-sidebar:not(.bbt--anon):has(> .bbt-stock-workspace) {
+    min-height: 0;
+  }
+}
 .bbt-up { color: var(--up); }
 .bbt-down { color: var(--down); }
 .bbt-flat { color: var(--mute); }

@@ -268,7 +268,7 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
   const d = cache.current[`${symbol}:${tab}`];
 
   return (
-    <div style={{ ...box, margin: '6px 0 10px' }}>
+    <div className="bbt-stock-workspace" style={{ ...box, margin: '6px 0 10px' }}>
       <StockIntelligencePanel key={symbol} symbol={symbol} name={name} loggedIn={loggedIn} username={username} onRequireLogin={onRequireLogin} />
       <details className="si-legacy" open={!loggedIn}>
         <summary>更多个股数据 <span>分时与 K 线 · 速判卡 · 龙虎榜 · 一致预期 · 分红 · 题材</span></summary>
