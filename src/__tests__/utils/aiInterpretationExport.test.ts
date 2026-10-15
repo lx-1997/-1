@@ -34,7 +34,8 @@ describe('AI interpretation complete text export', () => {
       glossary: { 术语: '术语解释末尾' },
       source_coverage: { pages_read: 8, total_pages: 10 },
     } } });
-    ['正文兼容尾部', '指标 | 数值', '净值 | 42', '表格注释', '逻辑链', '传导：传导', '验证：验证', '读数：9 %', '指标说明', '术语解释末尾', '证据覆盖 8/10'].forEach(value => expect(output).toContain(value));
+    ['正文兼容尾部', '指标 | 数值', '净值 | 42', '表格注释', '逻辑链', '传导：传导', '验证：验证', '读数：9 %', '指标说明', '术语解释末尾'].forEach(value => expect(output).toContain(value));
+    expect(output).not.toContain('证据覆盖');
   });
 
   test('retains all ordinary analysis fields and collection tails without copying API credentials', () => {
@@ -48,8 +49,8 @@ describe('AI interpretation complete text export', () => {
       logic_lines: [{ title: '逻辑线标题', evidence: '事实内容', chain: '传导内容', impact: '影响内容', watch: '验证内容', api_key: '不要复制的密码' }],
       authorization: '不要复制的令牌', raw_response: { unknown: '不要复制的原始字段' },
     }, date: '2026-10-12' });
-    ['综述末尾', '核心逻辑末尾', '原创点评末尾', '补充启示末尾', '利好末尾', '利空末尾', '风险末尾', '关键点 101', 'XYZ', '市场：A股', '目标价：123', '72%', '材料说明末尾', '模型引擎', '18 页', '验证内容', '2026-10-12'].forEach(value => expect(output).toContain(value));
-    expect(output).not.toMatch(/不要复制/);
+    ['综述末尾', '核心逻辑末尾', '原创点评末尾', '补充启示末尾', '利好末尾', '利空末尾', '风险末尾', '关键点 101', 'XYZ', '评级：关注', '目标价：123', '材料说明末尾', '验证内容', '2026-10-12'].forEach(value => expect(output).toContain(value));
+    expect(output).not.toMatch(/不要复制|证据置信度|模型引擎|分析 18 页/);
   });
 
   test('exports displayed scalars but never dumps private object fields or hidden source URLs', () => {
@@ -89,7 +90,97 @@ describe('AI interpretation complete text export', () => {
       citations: [{ title: '回答来源', report_title: '引用报告', page: 7, citation_id: 'citation-7', text: '回答原文短证据', score: 0.93 }],
       missing: ['缺少未来订单明细', '缺少利润率末尾'], disclaimer: '问答原免责声明',
     } });
-    ['问答末尾', '84%', '营收：0 亿元', '第 7 页', '完整指标短证据', '回答原文短证据', 'citation-7', '相关度 0.93', '缺少利润率末尾', '问答原免责声明'].forEach(value => expect(output).toContain(value));
+    ['问答末尾', '营收：0 亿元', '第 7 页', '完整指标短证据', '回答原文短证据', 'citation-7', '缺少利润率末尾', '问答原免责声明'].forEach(value => expect(output).toContain(value));
+    expect(output).not.toMatch(/证据置信度|相关度/);
+  });
+
+  test('combines opening fields once while preserving real chapter context', () => {
+    const output = buildAiInterpretationText({ deepDraft: {
+      title: 'ASML', core_conclusion: '毛利率上行。需求延伸至2029年。',
+      executive_summary: '毛利率上行。估值采用28x 2028年PE或1x PEG。',
+      one_liner: ' 毛利率 上行。', thesis: '需求延伸至2029年。',
+      plain_language_summary: '价格与产品组合支持盈利。', decision_implication: '关注订单落地。',
+      sections: [
+        { title: '完全重复', summary: '毛利率上行。', paragraphs: ['需求延伸至2029年。'] },
+        { title: '独有事实', summary: '需求延伸至2029年。', paragraphs: ['估值采用28x 2028年PE或1x PEG。现价€1,509.60，目标价€2,200。'] },
+      ],
+    } });
+    expect(output.match(/【核心观点】/g)).toHaveLength(1);
+    expect(output).not.toMatch(/【核心结论】|【核心判断】|【编辑摘要】|【主线】|【白话解释】|【研究启示】/);
+    const intro = output.split('【01 ')[0];
+    ['毛利率上行。', '需求延伸至2029年。', '估值采用28x 2028年PE或1x PEG。'].forEach(value => expect(intro.split(value)).toHaveLength(2));
+    ['价格与产品组合支持盈利。', '关注订单落地。', '现价€1,509.60，目标价€2,200。', '【01 完全重复】', '【02 独有事实】'].forEach(value => expect(output).toContain(value));
+  });
+
+  test('retains equal figures for different companies and periods in real or nested chapters', () => {
+    const sections = [
+      { title: '2025年 A公司', summary: '营业利润率25%。', paragraphs: ['营业利润率25%。'] },
+      { title: '2026年 B公司', paragraphs: ['营业利润率25%。'] },
+    ];
+    const variants = [
+      { title: '经营对比', core_conclusion: '营业利润率25%。', sections },
+      { report: { title: '经营对比', core_conclusion: '营业利润率25%。', sections } },
+      { report: { title: '经营对比', core_conclusion: '营业利润率25%。', chapters: sections } },
+      { report: { title: '经营对比', core_conclusion: '营业利润率25%。', outline: sections } },
+    ];
+    variants.forEach(deepDraft => {
+      const output = buildAiInterpretationText({ deepDraft });
+      expect(output).toContain('【01 2025年 A公司】\n营业利润率25%。');
+      expect(output).toContain('【02 2026年 B公司】\n营业利润率25%。');
+      // One opening statement, plus one statement under each chapter's context.
+      expect(output.split('营业利润率25%。')).toHaveLength(4);
+    });
+  });
+
+  test('preserves financial number, currency, sign, date and opposing-view differences', () => {
+    const distinct = ['收入€11.668bn。', '收入$11.668bn。', '毛利率55%。', '毛利率56%。', '同比+3%。', '同比-3%。', '2027年扩产。', '2028年扩产。', '维持看多。', '转为看空。'];
+    const output = buildAiInterpretationText({ deepDraft: {
+      title: '数字与方向', core_conclusion: distinct.slice(0, 5).join(''), executive_summary: distinct.slice(5).join(''),
+      sections: [{ title: '机构观点', paragraphs: ['J.P. Morgan 覆盖 ASML.AS，EPS €12.9 vs €10.87。'] }],
+    } });
+    [...distinct, 'J.P. Morgan 覆盖 ASML.AS，EPS €12.9 vs €10.87。'].forEach(value => expect(output).toContain(value));
+  });
+
+  test('does not repeat the normalizer-generated compatibility chapter or join newline facts', () => {
+    const output = buildAiInterpretationText({ deepDraft: {
+      title: '兼容稿', core_conclusion: 'Revenue €11.668bn\nEPS €12.9', executive_summary: '独有订单事实。',
+    } });
+    expect(output).toContain('Revenue €11.668bn\nEPS €12.9');
+    expect(output.split('Revenue €11.668bn')).toHaveLength(2);
+    expect(output.split('独有订单事实。')).toHaveLength(2);
+    expect(output).not.toContain('核心分析');
+  });
+
+  test('keeps real subtitles, source attribution and material limits while hiding technical boilerplate', () => {
+    const disclaimer = '本内容由 AI 生成，仅供参考，不构成投资建议。以下为对所列机构/研报观点的结构化整理，观点归属于原作者/机构，不代表 DeepFocus 投资建议；本深度稿仅整理原文可见信息，非逐句法律/事实核验；没有证据的字段会标注‘原文未提供’，请以原始研报为准。仅解析前4页，后6页图表未读取。视觉解析失败，缺少订单明细。';
+    const output = buildAiInterpretationText({ date: '2026-10-14', deepDraft: {
+      title: 'ASML', subtitle: '基于研报页面的结构化深度整理', subject: 'ASML Holding NV', symbol: 'ASML.AS',
+      source_count: 1, pages_analyzed: 4, read_time_minutes: 3, confidence: 0.45,
+      source_coverage: { pages_read: 4, total_pages: 10 }, provider: '内部模型', generated_at: '2026-10-15T10:00:00+08:00',
+      sections: [{ title: '经营变化', paragraphs: ['收入€11.668bn。'] }],
+      sources: [{ title: 'ASML经营观察', provider: 'Citi Research', page: 4, kind: 'pdf' }], disclaimer,
+    } });
+    ['日期：2026-10-14', 'ASML Holding NV · ASML.AS', '【来源】', 'Citi Research', '第 4 页', '仅解析前4页，后6页图表未读取', '视觉解析失败，缺少订单明细'].forEach(value => expect(output).toContain(value));
+    expect(output).not.toMatch(/报告日期|收录日期|AI 生成时间|AI 生成日期|10:00:00/);
+    expect(output).not.toMatch(/结构化深度整理|个来源|分析 4 页|分钟阅读|证据置信度|证据覆盖|内部模型|生成引擎|观点归属于|非逐句法律|没有证据的字段|· pdf/);
+    expect(output.match(/AI 生成，仅供研究参考，不构成投资建议。/g)).toHaveLength(1);
+    expect(output.match(/不构成投资建议/g)).toHaveLength(1);
+    expect(output.match(/https:\/\/daocaijing.com/g)).toHaveLength(1);
+    expect(buildAiInterpretationText({ deepDraft: { title: '主题稿', subtitle: '从需求、价格到存储的完整证据链', sections: [] } })).toContain('从需求、价格到存储的完整证据链');
+  });
+
+  test('uses a short, explicitly AI-generated date only when no input date exists', () => {
+    const output = buildAiInterpretationText({ deepDraft: {
+      title: '日期口径', generated_at: '2026-10-15T10:00:00+08:00', sections: [],
+    } });
+    expect(output).toContain('AI 生成日期：2026-10-15');
+    expect(output).not.toMatch(/报告日期|收录日期|10:00:00|08:00/);
+  });
+
+  test('replaces an existing standard notice in plain prose with one export notice', () => {
+    const output = buildAiInterpretationText({ result: '正文。AI 生成内容仅供研究参考，不构成投资建议。' });
+    expect(output).toContain('正文。');
+    expect(output.match(/不构成投资建议/g)).toHaveLength(1);
   });
 });
 
@@ -141,7 +232,7 @@ describe('AI interpretation paginated PNG export', () => {
   test('wraps long prose without omitting any characters or splitting surrogate pairs', async () => {
     const content = '中😀文'.repeat(200) + '独有尾部';
     await renderAiInterpretationImages(content);
-    const body = rendered.flat().filter(line => line !== '稻草财经 · AI 解读全文' && !/^第 \d+ \/ \d+ 页$/.test(line) && line !== 'AI 生成内容仅供研究参考，不构成投资建议。').join('');
+    const body = rendered.flat().filter(line => line !== '稻草财经 · AI 解读' && !/^第 \d+ \/ \d+ 页$/.test(line)).join('');
     expect(body).toBe(content);
     rendered.flat().forEach(line => expect(line).not.toMatch(/^[\udc00-\udfff]|[\ud800-\udbff]$/));
   });
@@ -152,6 +243,25 @@ describe('AI interpretation paginated PNG export', () => {
     rendered = [[]];
     await renderAiInterpretationImages('AI 解读｜图片标题\n正文末尾', { title: '图片标题' });
     expect(rendered.flat().filter(line => line.includes('图片标题'))).toHaveLength(1);
+  });
+
+  test('omits one-page numbering and never injects notices into arbitrary text', async () => {
+    const pages = await renderAiInterpretationImages('任意正文末尾');
+    expect(pages).toHaveLength(1);
+    expect(rendered.flat()).toContain('稻草财经 · AI 解读');
+    expect(rendered.flat()).toContain('任意正文末尾');
+    expect(rendered.flat().join('')).not.toMatch(/第 1 \/ 1 页|不构成投资建议/);
+  });
+
+  test('renders the one body notice only once across all numbered pages', async () => {
+    const fullText = buildAiInterpretationText({ deepDraft: {
+      title: '完整长文', sections: [{ title: '正文', paragraphs: ['全量正文'.repeat(1500) + '正文最后标记'] }],
+    } });
+    const pages = await renderAiInterpretationImages(fullText);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(rendered.flat().join('')).toContain('正文最后标记');
+    expect(rendered.flat().join('').match(/AI 生成，仅供研究参考，不构成投资建议。/g)).toHaveLength(1);
+    expect(rendered.flat().filter(line => /^第 \d+ \/ \d+ 页$/.test(line))).toHaveLength(pages.length);
   });
 
   test('an unavailable canvas or encoding failure rejects rather than returning empty or partial success', async () => {

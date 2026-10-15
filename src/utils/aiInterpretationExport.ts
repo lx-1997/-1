@@ -33,6 +33,32 @@ const pageLabel = (page: unknown, pages?: unknown): string => {
   return value ? (/^第/.test(value) || !/\d/.test(value) ? value : `第 ${value} 页`) : '';
 };
 
+const EXPORT_NOTICE = 'AI 生成，仅供研究参考，不构成投资建议。';
+// Only exact sentences are duplicates. Keep decimals, currencies, signs,
+// dates and opposing views intact; this is presentation cleanup, not a summary.
+const sentenceKey = (value: string): string => value.replace(/\s+/g, '').replace(/。+$/, '');
+const sentences = (value: unknown): string[] => scalar(value).replace(/\r\n?/g, '\n').match(/[^。\n]+(?:。[ \t]*(?:\n+)?|\n+|$)/g) || [];
+const distinctProse = (value: unknown, seen: Set<string>): string => sentences(value).filter(item => {
+  const key = sentenceKey(item);
+  if (!key || seen.has(key)) return false;
+  seen.add(key);
+  return true;
+}).join('').trim();
+const GENERIC_SUBTITLES = new Set(['基于研报页面的结构化深度整理', '基于原文可见信息的结构化整理']);
+const noticeKey = (value: string): string => sentenceKey(value).replace(/[，,；;。]+$/, '').replace(/[“”‘’]/g, "'");
+const GENERIC_NOTICES = new Set([
+  'AI 生成内容仅供研究参考，不构成投资建议', 'AI 生成，仅供研究参考，不构成投资建议',
+  '本内容由 AI 生成，仅供参考，不构成投资建议', '仅供研究参考', '仅供参考', '不构成投资建议',
+  '请回到原始材料核验关键数字与引用', '请以原始研报为准', '请以原文为准',
+  '以下为对所列机构/研报观点的结构化整理，观点归属于原作者/机构，不代表 DeepFocus 投资建议',
+  '本深度稿仅整理原文可见信息，非逐句法律/事实核验', "没有证据的字段会标注'原文未提供'",
+  "没有证据的字段会标注'原文未提供'，请以原始研报为准",
+].map(noticeKey));
+// Remove known legal boilerplate, while retaining specific missing-material,
+// partial-source and generation-failure warnings from the server.
+const materialLimitations = (value: unknown): string => scalar(value).split(/[。；;\n]+/)
+  .map(item => item.trim()).filter(item => item && !GENERIC_NOTICES.has(noticeKey(item))).join('。');
+
 /** Export the reader's known presentation fields, never the raw API object. */
 export function buildAiInterpretationText(input: AiInterpretationTextInput): string {
   const draft = normalizeResearchDeepDraft(input.deepDraft);
@@ -77,25 +103,19 @@ export function buildAiInterpretationText(input: AiInterpretationTextInput): str
     });
     if (item.note) lines.push(`注：${item.note}`);
   };
-  const confidence = (value: unknown): string => {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return '';
-    return `证据置信度 ${Math.max(0, Math.min(100, Math.round(value <= 1 ? value * 100 : value)))}%`;
-  };
-
   lines.push(`AI 解读｜${scalar(input.title) || draft?.title || scalar(result.title) || scalar(record(result.report).title) || '解读结果'}`);
-  if (input.date || draft?.generated_at || scalar(result.generated_at)) lines.push(`日期：${input.date || draft?.generated_at || scalar(result.generated_at)}`);
+  const generatedAt = draft?.generated_at || scalar(result.generated_at);
+  const generatedDate = generatedAt?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (input.date) lines.push(`日期：${input.date}`);
+  else if (generatedDate) lines.push(`AI 生成日期：${generatedDate}`);
   if (draft) {
-    if (draft.subtitle) lines.push(draft.subtitle);
-    const metadata = [draft.subject, draft.symbol, draft.source_count ? `${draft.source_count} 个来源` : '',
-      draft.pages_analyzed ? `分析 ${draft.pages_analyzed} 页` : '', draft.read_time_minutes ? `约 ${draft.read_time_minutes} 分钟阅读` : '',
-      confidence(draft.confidence), draft.source_coverage].filter(Boolean);
+    if (draft.subtitle && !GENERIC_SUBTITLES.has(sentenceKey(draft.subtitle))) lines.push(draft.subtitle);
+    const metadata = Array.from(new Set([draft.subject, draft.symbol].filter(Boolean)));
     if (metadata.length) lines.push(metadata.join(' · '));
-    add('核心结论', draft.one_liner);
-    if (draft.core_conclusion !== draft.one_liner) add('核心判断', draft.core_conclusion);
-    if (draft.thesis !== draft.core_conclusion && draft.thesis !== draft.one_liner) add('主线', draft.thesis);
-    if (draft.executive_summary !== draft.core_conclusion && draft.executive_summary !== draft.one_liner) add('编辑摘要', draft.executive_summary);
-    add('白话解释', draft.plain_language_summary);
-    add('研究启示', draft.decision_implication);
+    const introSeen = new Set<string>();
+    const intro = [draft.core_conclusion, draft.executive_summary, draft.one_liner, draft.thesis,
+      draft.plain_language_summary, draft.decision_implication].map(value => distinctProse(value, introSeen)).filter(Boolean);
+    if (intro.length) lines.push('', '【核心观点】', ...intro);
     if (draft.metrics?.length) {
       lines.push('', '【关键数字】');
       draft.metrics.forEach(item => {
@@ -105,10 +125,26 @@ export function buildAiInterpretationText(input: AiInterpretationTextInput): str
       });
     }
     logic(draft.logic_lines);
-    draft.sections.forEach((section, index) => {
-      lines.push('', `【${String(index + 1).padStart(2, '0')} ${section.title}】`);
-      if (section.summary) lines.push(section.summary);
-      lines.push(...(section.paragraphs || []), ...(section.bullets || []).map(item => `· ${item}`));
+    const rawDraft = record(input.deepDraft);
+    const hasSourceSections = [rawDraft, record(rawDraft.report)].some(source =>
+      ['sections', 'chapters', 'outline'].some(key => source[key] !== null && source[key] !== undefined
+        && (!Array.isArray(source[key]) || (source[key] as unknown[]).length > 0)));
+    const compatibilitySection = !hasSourceSections && draft.sections.length === 1
+      && draft.sections[0].id === 'section-1' && draft.sections[0].title === '核心分析';
+    let sectionNumber = 0;
+    draft.sections.forEach(section => {
+      // Only a proven synthesized compatibility chapter repeats the opening
+      // fields. Real chapter titles can supply a different company or period
+      // for otherwise identical sentences, so deduplicate those chapters locally.
+      const seen = compatibilitySection ? new Set(introSeen) : new Set<string>();
+      const summary = distinctProse(section.summary, seen);
+      const paragraphs = (section.paragraphs || []).map(item => distinctProse(item, seen)).filter(Boolean);
+      const bullets = (section.bullets || []).map(item => distinctProse(item, seen)).filter(Boolean);
+      if (!summary && !paragraphs.length && !bullets.length && !section.logic_lines?.length && !section.tables?.length && !section.evidence?.length) return;
+      sectionNumber += 1;
+      lines.push('', `【${String(sectionNumber).padStart(2, '0')} ${section.title}】`);
+      if (summary) lines.push(summary);
+      lines.push(...paragraphs, ...bullets.map(item => `· ${item}`));
       logic(section.logic_lines);
       (section.tables || []).forEach(table);
       evidence(section.evidence);
@@ -138,19 +174,17 @@ export function buildAiInterpretationText(input: AiInterpretationTextInput): str
       lines.push('', '【术语解释】'); draft.glossary.forEach(item => lines.push(`${item.term}：${item.meaning}`));
     }
     if (draft.sources?.length) {
-      lines.push('', '【来源与证据范围】');
-      draft.sources.forEach((item, index) => lines.push(`${index + 1}. ${[item.title || item.label, item.provider, pageLabel(item.page, item.pages), item.kind].filter(Boolean).join(' · ')}`));
+      lines.push('', '【来源】');
+      draft.sources.forEach((item, index) => lines.push(`${index + 1}. ${Array.from(new Set([item.title || item.label, item.provider, pageLabel(item.page, item.pages)].filter(Boolean))).join(' · ')}`));
     }
-    lines.push('', draft.disclaimer || 'AI 生成内容仅供研究参考，不构成投资建议。');
-    if (draft.provider) lines.push(`生成引擎：${draft.provider}`);
+    add('材料说明', materialLimitations(draft.disclaimer));
   } else if (typeof input.result === 'string') {
     lines.push('', input.result);
-    lines.push('', 'AI 生成内容仅供研究参考，不构成投资建议。');
   } else {
-    const metadata = [result.subject && `标的：${scalar(result.subject)}`, result.rating && `评级：${scalar(result.rating)}`,
-      result.target_price && `目标价：${scalar(result.target_price)}`, result.market && `市场：${scalar(result.market)}`,
-      typeof result.pages_analyzed === 'number' ? `分析 ${result.pages_analyzed} 页` : '', confidence(result.confidence)].filter(Boolean);
+    const metadata = [result.subject && `标的：${scalar(result.subject)}`, scalar(result.symbol)].filter(Boolean);
     if (metadata.length) lines.push(metadata.join(' · '));
+    const institution = [scalar(result.rating) && `评级：${scalar(result.rating)}`, scalar(result.target_price) && `目标价：${scalar(result.target_price)}`].filter(Boolean);
+    if (institution.length) add('机构观点', institution.join(' · '));
     addList('提及标的', result.instruments);
     add('核心结论', result.one_liner);
     if (scalar(result.summary) !== scalar(result.one_liner)) add('综合综述', result.summary);
@@ -189,7 +223,7 @@ export function buildAiInterpretationText(input: AiInterpretationTextInput): str
       lines.push('', '【引用证据】');
       result.citations.forEach((citation, index) => {
         const item = record(citation);
-        const heading = [scalar(item.title) || scalar(item.report_title) || `来源 ${index + 1}`, scalar(item.report_title), pageLabel(item.page), scalar(item.citation_id), scalar(item.kind), scalar(item.score) ? `相关度 ${scalar(item.score)}` : ''].filter(Boolean);
+        const heading = [scalar(item.title) || scalar(item.report_title) || `来源 ${index + 1}`, scalar(item.report_title), pageLabel(item.page), scalar(item.citation_id)].filter(Boolean);
         lines.push(`${index + 1}. ${Array.from(new Set(heading)).join(' · ')}`);
         const excerpt = scalar(item.text).slice(0, 80);
         if (excerpt) lines.push(`证据：${excerpt}`);
@@ -197,18 +231,17 @@ export function buildAiInterpretationText(input: AiInterpretationTextInput): str
     }
     add('关注重点', result.takeaway);
     add('材料说明', result.source_note);
-    if (scalar(result.provider)) lines.push('', `生成引擎：${scalar(result.provider)}`);
-    lines.push('', scalar(result.disclaimer) || 'AI 生成内容仅供研究参考，不构成投资建议。');
+    add('材料说明', materialLimitations(result.disclaimer));
   }
-  lines.push('', '—— 稻草财经', scalar(input.site) || 'https://daocaijing.com');
-  return lines.join('\n');
+  const content = lines.map(line => sentences(line).filter(item => !GENERIC_NOTICES.has(noticeKey(item))).join('').trim()).join('\n');
+  return [content, '', EXPORT_NOTICE, '—— 稻草财经', scalar(input.site) || 'https://daocaijing.com'].join('\n');
 }
 
 const IMAGE_WIDTH = 900;
 const MAX_IMAGE_HEIGHT = 2400;
 const PADDING = 44;
 const CONTENT_TOP = 82;
-const FOOTER_SPACE = 72;
+const FOOTER_SPACE = 32;
 const FACE = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif';
 type ImageLine = { text: string; height: number; font: string; heading: boolean };
 
@@ -267,18 +300,17 @@ export async function renderAiInterpretationImages(
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, IMAGE_WIDTH, height);
       ctx.fillStyle = '#c48311'; ctx.fillRect(0, 0, IMAGE_WIDTH, 5);
       ctx.textBaseline = 'top';
-      ctx.font = `700 18px ${FACE}`; ctx.fillStyle = '#966514'; ctx.fillText('稻草财经 · AI 解读全文', PADDING, 30);
-      ctx.font = `400 16px ${FACE}`; ctx.fillStyle = '#667085'; ctx.textAlign = 'right';
-      ctx.fillText(`第 ${index + 1} / ${pages.length} 页`, IMAGE_WIDTH - PADDING, 32); ctx.textAlign = 'left';
+      ctx.font = `700 18px ${FACE}`; ctx.fillStyle = '#966514'; ctx.fillText('稻草财经 · AI 解读', PADDING, 30);
+      if (pages.length > 1) {
+        ctx.font = `400 16px ${FACE}`; ctx.fillStyle = '#667085'; ctx.textAlign = 'right';
+        ctx.fillText(`第 ${index + 1} / ${pages.length} 页`, IMAGE_WIDTH - PADDING, 32); ctx.textAlign = 'left';
+      }
       let y = CONTENT_TOP;
       for (const line of lines) {
         ctx.font = line.font; ctx.fillStyle = line.heading ? '#173a64' : '#202630';
         if (line.text) ctx.fillText(line.text, PADDING, y);
         y += line.height;
       }
-      ctx.fillStyle = '#e4e7ec'; ctx.fillRect(PADDING, height - FOOTER_SPACE + 14, IMAGE_WIDTH - PADDING * 2, 1);
-      ctx.font = `400 14px ${FACE}`; ctx.fillStyle = '#667085';
-      ctx.fillText('AI 生成内容仅供研究参考，不构成投资建议。', PADDING, height - 39);
       const blob = await new Promise<Blob>((resolve, reject) => {
         try { canvas.toBlob(value => value ? resolve(value) : reject(new Error('图片生成失败，请复制文字或重试')), 'image/png'); }
         catch { reject(new Error('图片生成失败，请复制文字或重试')); }
