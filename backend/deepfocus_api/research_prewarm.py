@@ -85,6 +85,7 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
     daily_max = max(0, int(os.getenv("DEEPFOCUS_RESEARCH_PREWARM_DAILY_MAX", "40")))
     dl_key = "research_pdf_dl"
     retries: dict[str, RetryState] = {}
+    none_rejects: dict[str, int] = {}
     banned_day = ""
     await asyncio.sleep(25)
     print(f"[prewarm] 增量深度预解读启动：存量不回填，仅跳过A股公司名+日期，每日下载上限{daily_max}")
@@ -148,26 +149,47 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
                     payload = await background_deep_prewarm(request, get_cache=get_ai_cache,
                                                             set_cache=set_ai_cache, limiter=limiter)
                     if payload is None:
+                        rejected = none_rejects.get(fid, 0) + 1
+                        none_rejects[fid] = rejected
                         state.defer(time.monotonic())
+                        if rejected >= 3:
+                            await asyncio.to_thread(
+                                research_archive.mark_prewarm_done, fid, "failed")
+                            none_rejects.pop(fid, None)
+                            retries.pop(fid, None)
+                            print(f"[prewarm] 永久失败(连续{rejected}次未成稿，多为内容风控) fid={fid}")
+                        else:
+                            print(f"[prewarm] 解读未成稿，退避后重试 fid={fid} {rejected}/3")
                         continue
                     compact = deep_to_compact(payload)
                     await asyncio.to_thread(set_ai_cache, analysis_cache_key(fid), compact)
                     await asyncio.to_thread(set_ai_cache, fid, compact)
                     await asyncio.to_thread(research_archive.mark_prewarm_done, fid)
                     retries.pop(fid, None)
+                    none_rejects.pop(fid, None)
                     completed += 1
                     print(f"[prewarm] 深度缓存完成 fid={fid}")
                 except asyncio.CancelledError:
                     raise
                 except (AnalysisBusy, ResearchMultiAgentBusy):
                     state.defer(time.monotonic(), busy=True)
+                    print(f"[prewarm] 解读通道繁忙，稍后重试 fid={fid}")
                 except Exception as exc:
                     state.defer(time.monotonic())
                     message = str(exc)
                     if any(phrase in message for phrase in ("下载量异常", "拒绝下载", "下个自然日")):
                         banned_day = day
                         print("[prewarm] 源站今日下载限额，继续处理本地PDF")
-                    print(f"[prewarm] 稍后重试 fid={fid} error={type(exc).__name__}")
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    if (isinstance(status_code, int) and 400 <= status_code < 500
+                            and status_code != 429 and state.failures >= 2):
+                        await asyncio.to_thread(
+                            research_archive.mark_prewarm_done, fid, "failed")
+                        retries.pop(fid, None)
+                        none_rejects.pop(fid, None)
+                        print(f"[prewarm] 永久失败(下载HTTP {status_code}) fid={fid}")
+                    else:
+                        print(f"[prewarm] 稍后重试 fid={fid} error={type(exc).__name__}")
                 await asyncio.sleep(gap)
         except asyncio.CancelledError:
             raise

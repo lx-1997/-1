@@ -281,8 +281,8 @@ def mark_prewarm_done(file_id: str, status: str = "done") -> bool:
     """Finish a pending report once; keep its id permanently to prevent replay."""
     from contextlib import closing
 
-    if status not in {"done", "excluded"}:
-        raise ValueError("prewarm completion status must be done or excluded")
+    if status not in {"done", "excluded", "failed"}:
+        raise ValueError("prewarm completion status must be done, excluded or failed")
     fid = str(file_id or "").strip()
     if not fid:
         return False
