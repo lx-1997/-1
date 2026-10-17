@@ -21,10 +21,7 @@ ui/
 ## 接入
 
 ```tsx
-// 应用入口引入一次样式
-import './components/ui/ui.css';
-
-// 业务代码按需导入
+// 业务代码按需导入即可；样式（ui.css）由 barrel 自动带入，无需手工引入
 import { Button, Modal, ToastProvider, useToast } from './components/ui';
 ```
 
