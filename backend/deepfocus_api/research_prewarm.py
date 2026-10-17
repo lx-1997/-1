@@ -154,7 +154,7 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
                         state.defer(time.monotonic())
                         if rejected >= 3:
                             await asyncio.to_thread(
-                                research_archive.mark_prewarm_done, fid, "failed")
+                                research_archive.mark_prewarm_done, fid, "excluded")
                             none_rejects.pop(fid, None)
                             retries.pop(fid, None)
                             print(f"[prewarm] 永久失败(连续{rejected}次未成稿，多为内容风控) fid={fid}")
@@ -184,7 +184,7 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
                     if (isinstance(status_code, int) and 400 <= status_code < 500
                             and status_code != 429 and state.failures >= 2):
                         await asyncio.to_thread(
-                            research_archive.mark_prewarm_done, fid, "failed")
+                            research_archive.mark_prewarm_done, fid, "excluded")
                         retries.pop(fid, None)
                         none_rejects.pop(fid, None)
                         print(f"[prewarm] 永久失败(下载HTTP {status_code}) fid={fid}")
