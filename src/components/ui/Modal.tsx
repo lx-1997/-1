@@ -125,8 +125,7 @@ export function Modal({
       restoreFocusRef.current?.focus();
       restoreFocusRef.current = null;
     };
-    // onClose/initialFocusRef 变化不应重建焦点上下文。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // onClose/initialFocusRef 变化不应重建焦点上下文，故依赖数组仅含 open。
   }, [open]);
 
   if (!open || typeof document === 'undefined') return null;
