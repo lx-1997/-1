@@ -1,0 +1,34 @@
+/* 终端帮助弹窗 × UI Kit 桥接。
+ *
+ * Kit Modal 经 portal 挂在 body 下，拿不到 .bbt 作用域里的终端面板变量；
+ * 历史上帮助弹窗靠 var() 回退值维持深色终端视觉，且浅色主题下
+ * 全局 --text 会覆盖回退值，形成"深壳配深字"的对比度缺陷。
+ * 此处把终端色板固定到弹窗作用域：两种全局主题下观感一致、对比度达标，
+ * 并沿用旧版 680px 宽度与正文字号节奏。
+ */
+.dui-modal.dui-help-modal {
+  --panel-2: #14181f;
+  --line: #2a313c;
+  --text: #e6e9ef;
+  --mute: #9aa4b2;
+  --up: #2bd96a;
+  --warn: #ffb000;
+
+  /* 主按钮沿用旧版"知道了"绿色；focus-ring 随之取绿。 */
+  --accent: var(--up);
+  --accent-hover: #4be88a;
+  --theme-accent-rgb: 43, 217, 106;
+  --theme-accent-contrast: #07120a;
+  --focus-ring: 0 0 0 3px rgba(43, 217, 106, 0.28);
+
+  width: min(680px, 94vw);
+}
+
+.dui-modal.dui-help-modal .dui-modal__body {
+  padding: 16px 20px;
+}
+
+@media (max-width: 560px) {
+  .dui-modal.dui-help-modal { width: 96vw; }
+  .bbt-help-list li { flex-direction: column; gap: 2px; }
+}

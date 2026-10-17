@@ -1,7 +1,10 @@
-import React, { useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React from 'react';
+import { Button, Modal } from './ui';
+import './TerminalHelp.css';
 
 // 产品说明书：一篇大白话读懂终端怎么用。匿名可看（不锁登录），头部 📖 入口 + 新手引导末步指引均可打开。
+// 2026-10-17 起壳体改用 src/components/ui 的 Kit Modal：获得焦点圈养、初始聚焦、
+// 焦点还原、滚动锁定与移动端底部抽屉；终端深色视觉由 TerminalHelp.css 桥接保留。
 interface HelpItem { k?: string; v: string; }
 interface HelpSection { icon: string; title: string; items: HelpItem[]; }
 
@@ -59,42 +62,37 @@ const SECTIONS: HelpSection[] = [
   },
 ];
 
-const TerminalHelp: React.FC<{ onClose: () => void; onStartTour?: () => void }> = ({ onClose, onStartTour }) => {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return createPortal(
-    <div className="bbt-help-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bbt-help-modal" role="dialog" aria-modal="true" aria-label="产品说明书">
-        <div className="bbt-help-head">
-          <div className="bbt-help-h1">📖 稻草财经 金融终端 · 产品说明</div>
-          <button className="bbt-help-x" onClick={onClose} aria-label="关闭">✕</button>
-        </div>
-        <div className="bbt-help-scroll">
-          <div className="bbt-help-tagline">一个页面盯全球盘 · 行情 + 实时快讯 + 全球投行研报 + AI 解读</div>
-          {SECTIONS.map(sec => (
-            <section className="bbt-help-sec" key={sec.title}>
-              <h3 className="bbt-help-h2"><span className="bbt-help-ic">{sec.icon}</span>{sec.title}</h3>
-              <ul className="bbt-help-list">
-                {sec.items.map((it, idx) => (
-                  <li key={idx}>{it.k && <b className="bbt-help-k">{it.k}</b>}<span>{it.v}</span></li>
-                ))}
-              </ul>
-            </section>
+const TerminalHelp: React.FC<{ onClose: () => void; onStartTour?: () => void }> = ({ onClose, onStartTour }) => (
+  <Modal
+    open
+    onClose={onClose}
+    title="📖 稻草财经 金融终端 · 产品说明"
+    size="lg"
+    className="dui-help-modal"
+    footer={
+      <>
+        {onStartTour && (
+          <Button variant="secondary" onClick={onStartTour}>
+            ▶ 看 30 秒新手引导
+          </Button>
+        )}
+        <Button onClick={onClose}>知道了</Button>
+      </>
+    }
+  >
+    <div className="bbt-help-tagline">一个页面盯全球盘 · 行情 + 实时快讯 + 全球投行研报 + AI 解读</div>
+    {SECTIONS.map(sec => (
+      <section className="bbt-help-sec" key={sec.title}>
+        <h3 className="bbt-help-h2"><span className="bbt-help-ic">{sec.icon}</span>{sec.title}</h3>
+        <ul className="bbt-help-list">
+          {sec.items.map((it, idx) => (
+            <li key={idx}>{it.k && <b className="bbt-help-k">{it.k}</b>}<span>{it.v}</span></li>
           ))}
-          <div className="bbt-help-disc">⚠ 平台提供行情 / 资讯 / 研报聚合与 AI 辅助解读，所有内容<b>仅供研究与教育用途，不构成投资建议</b>，据此操作风险自负。</div>
-        </div>
-        <div className="bbt-help-foot">
-          {onStartTour ? <button className="bbt-help-tour" onClick={onStartTour}>▶ 看 30 秒新手引导</button> : <span />}
-          <button className="bbt-help-done" onClick={onClose}>知道了</button>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-};
+        </ul>
+      </section>
+    ))}
+    <div className="bbt-help-disc">⚠ 平台提供行情 / 资讯 / 研报聚合与 AI 辅助解读，所有内容<b>仅供研究与教育用途，不构成投资建议</b>，据此操作风险自负。</div>
+  </Modal>
+);
 
 export default TerminalHelp;
