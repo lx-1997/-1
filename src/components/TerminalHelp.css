@@ -1,15 +1,25 @@
 /* 终端帮助弹窗 × UI Kit 桥接。
  *
- * Kit Modal 经 portal 挂在 body 下，拿不到 .bbt 作用域里的终端面板变量；
- * 历史上帮助弹窗靠 var() 回退值维持深色终端视觉，且浅色主题下
- * 全局 --text 会覆盖回退值，形成"深壳配深字"的对比度缺陷。
- * 此处把终端色板固定到弹窗作用域：两种全局主题下观感一致、对比度达标，
- * 并沿用旧版 680px 宽度与正文字号节奏。
+ * Kit Modal 经 portal 挂在 body 下，壳体消费全局令牌（--surface 系），
+ * 内容区沿用终端局部色板变量（--panel-2 系）；两种变量在此一并钉死为
+ * 终端深色面板色：帮助弹窗在浅色/深色全局主题下均保持终端视觉，
+ * 且修复历史遗留的浅色主题"深壳深字"对比度缺陷。
+ * 同时沿用旧版 680px 宽度与移动端 96vw 底部抽屉。
  */
 .dui-modal.dui-help-modal {
+  /* Kit 壳体令牌 → 终端深色 */
+  --surface: #14181f;
+  --surface-raised: #1a2028;
+  --surface-muted: #10141a;
+  --border: #2a313c;
+  --border-soft: #232a34;
+  --text: #e6e9ef;
+  --text-muted: #9aa4b2;
+  --text-soft: #7c8794;
+
+  /* 终端内容区局部变量（.bbt-help-* 使用） */
   --panel-2: #14181f;
   --line: #2a313c;
-  --text: #e6e9ef;
   --mute: #9aa4b2;
   --up: #2bd96a;
   --warn: #ffb000;
