@@ -18,14 +18,9 @@ const MAX_ENTRY_CHARS = 300_000;
 // localStorage 总预算：24 条 × 300KB 可能顶满 5MB 配额，setItem 会「整体原子失败」
 // ——表现为所有新解读都静默丢持久化。按最旧淘汰把总量压回预算内。
 const MAX_STORE_CHARS = 2_000_000;
-const HISTORY_BASE = 'df_ai_task_history_v1';
+// Retire metadata that may have been claimed from an unowned legacy store.
+const HISTORY_BASE = 'df_ai_task_history_owned_v2';
 const SYNCED_BASE = 'df_ai_task_synced_v1';
-// 一次性迁移：分域上线前写入的「无主」数据认领给最先启动的账号域（通常就是同一台设备
-// 的日常账号），认领过一次后其余账号不再继承，保证此后严格按账号隔离。
-const LEGACY_MIGRATED_MARKER = 'df_ai_interpret_legacy_migrated_v1';
-const LEGACY_STORE_KEY = STORE_BASE;
-const LEGACY_HISTORY_KEY = HISTORY_BASE;
-
 const NEWS_CACHE_PREFIX = 'news:v5:';
 const FAILED_NEWS_STATES = new Set([
   'error', 'failed', 'failure', 'degraded', 'fallback', 'title_only',
@@ -110,58 +105,11 @@ function readStore(): Record<string, CachedInterpretation> {
   }
 }
 
-/**
- * 一次性认领分域前的无主数据：缓存 + 历史按 startedAt/key 合并进当前账号域，
- * 幂等（marker 落在无主键上，任何账号域都不会重复认领）。
- */
-function migrateLegacyIfNeeded(): void {
-  try {
-    if (localStorage.getItem(LEGACY_MIGRATED_MARKER)) return;
-    const legacyCacheRaw = localStorage.getItem(LEGACY_STORE_KEY);
-    const legacyHistoryRaw = localStorage.getItem(LEGACY_HISTORY_KEY);
-    if (legacyCacheRaw) {
-      const store = readStore();
-      try {
-        const legacy = JSON.parse(legacyCacheRaw);
-        if (legacy && typeof legacy === 'object') {
-          for (const [key, entry] of Object.entries(legacy as Record<string, CachedInterpretation>)) {
-            const cur = store[key];
-            if (!cur || (cur.savedAt || 0) < ((entry as CachedInterpretation).savedAt || 0)) store[key] = entry as CachedInterpretation;
-          }
-        }
-      } catch { /* 旧数据损坏即放弃该部分 */ }
-      const entries = Object.entries(store);
-      localStorage.setItem(scopedKey(STORE_BASE), JSON.stringify(
-        Object.fromEntries(entries.sort((a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0)).slice(0, MAX_ENTRIES))
-      ));
-    }
-    if (legacyHistoryRaw) {
-      try {
-        const legacy = JSON.parse(legacyHistoryRaw);
-        if (Array.isArray(legacy)) {
-          const list = readHistory();
-          for (const entry of legacy) {
-            if (!entry || typeof entry.key !== 'string') continue;
-            const cur = list.find(e => e.key === entry.key);
-            if (!cur || (cur.startedAt || 0) < (entry.startedAt || 0)) {
-              const idx = list.findIndex(e => e.key === entry.key);
-              if (idx >= 0) list[idx] = entry; else list.push(entry);
-            }
-          }
-          localStorage.setItem(scopedKey(HISTORY_BASE), JSON.stringify(list.sort((a, b) => b.startedAt - a.startedAt).slice(0, HISTORY_MAX)));
-        }
-      } catch { /* 同上 */ }
-    }
-    localStorage.setItem(LEGACY_MIGRATED_MARKER, new Date().toISOString());
-  } catch { /* 迁移失败不阻塞主流程 */ }
-}
-
 /** 启动时把本机缓存灌回内存 Map；过期条目丢弃。 */
 export function hydrateInterpretCache<T>(
   into: Map<string, T>,
   revive: (raw: CachedInterpretation) => T | null,
 ): void {
-  migrateLegacyIfNeeded();
   const store = readStore();
   const now = Date.now();
   for (const [key, entry] of Object.entries(store)) {

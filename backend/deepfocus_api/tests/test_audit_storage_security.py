@@ -366,7 +366,7 @@ def test_memory_migration_only_assigns_exact_existing_owner():
         assert conn.execute("SELECT owner_user_id FROM dulus_memory WHERE id='unknown'").fetchone()[0] is None
 
 
-def test_roundtable_memory_is_private_and_legacy_summary_is_admin_only():
+def test_roundtable_memory_is_private_including_admin_personal_history():
     memory.init_dulus_runtime_db()
     legacy = memory._save_memory(scope="session", hall="events", title="legacy private objective", content="private summary", tags=["roundtable"], source="roundtable")
     with bind_owner("alice"):
@@ -379,7 +379,7 @@ def test_roundtable_memory_is_private_and_legacy_summary_is_admin_only():
     assert memory.list_dulus_memories(scope="user", owner_user_id="bob").memories == []
     assert all(item.source != "roundtable" for item in memory.list_dulus_memories(scope="__shared__").memories)
     admin = memory.list_dulus_memories(scope="user", owner_user_id="admin", is_admin=True).memories
-    assert {item.id for item in admin} == {legacy.id, own[0].id}
+    assert admin == []  # Administrator personal history must not become a global inbox.
 
 
 def test_cursor_drains_large_equal_timestamp_burst_without_loss():
@@ -399,3 +399,12 @@ def test_cursor_drains_large_equal_timestamp_burst_without_loss():
         cursor = {"after_created_at": page[-1].created_at, "after_id": page[-1].id}
     assert seen == [f"m{index:04}" for index in range(450)]
     assert len(set(seen)) == 450
+
+
+@pytest.mark.parametrize("scope", ["user", "user:bob", "user:%"])
+def test_personal_memory_is_strictly_owned_even_for_admin(scope):
+    a = memory.create_dulus_memory(DulusMemoryCreateRequest(scope="user", hall="ai_chat", title="same", content="alice", tags=["owner:bob"]), owner_user_id="alice")
+    memory.create_dulus_memory(DulusMemoryCreateRequest(scope="user", hall="ai_chat", title="same", content="bob"), owner_user_id="bob")
+    assert [m.id for m in memory.list_dulus_memories(scope=scope, owner_user_id="alice", is_admin=True).memories] == [a.id]
+    assert memory.list_dulus_memories(scope=scope, is_admin=True).memories == []
+    assert memory.list_dulus_memories(scope=scope, owner_user_id="", is_admin=True).memories == []

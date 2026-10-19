@@ -1,4 +1,4 @@
-import { dropInterpretCache, hydrateInterpretCache, isReusableNewsInterpretation, newsInterpretationCacheKey, persistInterpretEntry, type CachedInterpretation } from '../../utils/aiInterpretCache';
+import { readAiTaskHistory, upsertAiTaskHistory, dropInterpretCache, hydrateInterpretCache, isReusableNewsInterpretation, newsInterpretationCacheKey, persistInterpretEntry, type CachedInterpretation } from '../../utils/aiInterpretCache';
 import { accountStorageKey } from '../../utils/accountStorage';
 import { authenticateSession, invalidateAuthSession } from '../../state/authSession';
 
@@ -90,7 +90,7 @@ describe('aiInterpretCache', () => {
     for (let i = 0; i < 12; i += 1) {
       bloated[`old-${i}`] = { result: 'z'.repeat(240_000), savedAt: Date.now() - (12 - i) * 1000 };
     }
-    localStorage.setItem('df_ai_interpret_cache_v1', JSON.stringify(bloated));
+    localStorage.setItem(STORE_KEY, JSON.stringify(bloated));
     expect(persistInterpretEntry('fresh', { result: { ok: true } })).toBe(true);
 
     const store = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
@@ -238,7 +238,7 @@ describe('aiInterpretCache', () => {
     expect(into.has(key)).toBe(false);
   });
 
-  it('filters old news during legacy migration while keeping migrated reports', () => {
+  it('leaves unowned legacy data untouched and never claims it for a login', () => {
     localStorage.setItem('df_ai_interpret_cache_v1', JSON.stringify({
       'news:legacy': { result: factualNews, savedAt: Date.now() },
       'report:legacy': { result: { summary: '原有研报' }, savedAt: Date.now() },
@@ -246,7 +246,11 @@ describe('aiInterpretCache', () => {
     const into = new Map<string, unknown>();
     hydrateInterpretCache(into, raw => raw.result);
     expect(into.has('news:legacy')).toBe(false);
-    expect(into.get('report:legacy')).toEqual({ summary: '原有研报' });
+    expect(into.has('report:legacy')).toBe(false);
+    expect(localStorage.getItem('df_ai_interpret_cache_v1')).not.toBeNull();
+    signIn('B');
+    hydrateInterpretCache(into, raw => raw.result);
+    expect(into.size).toBe(0);
   });
 
   it('drops only the requested result in the current account', () => {
@@ -272,4 +276,22 @@ describe('aiInterpretCache', () => {
     expect(remaining.has(key)).toBe(false);
     expect(remaining.has('report:keep')).toBe(true);
   });
+});
+
+it('isolates interpretation history between A, B and guests and leaves old metadata unread', () => {
+  invalidateAuthSession(); localStorage.clear();
+  const entry = { key: 'report:A', kind: 'report' as const, title: 'A private report', report: null, meta: null, startedAt: 1 };
+  localStorage.setItem('df_ai_task_history_v1', JSON.stringify([entry]));
+  signIn('A');
+  expect(readAiTaskHistory()).toEqual([]);
+  upsertAiTaskHistory(entry);
+  signIn('B');
+  expect(readAiTaskHistory()).toEqual([]);
+  upsertAiTaskHistory({ ...entry, key: 'report:B', title: 'B private report' });
+  invalidateAuthSession();
+  expect(readAiTaskHistory()).toEqual([]);
+  signIn('A');
+  expect(readAiTaskHistory()).toEqual([entry]);
+  expect(localStorage.getItem('df_ai_task_history_v1')).not.toBeNull();
+  invalidateAuthSession(); localStorage.clear();
 });

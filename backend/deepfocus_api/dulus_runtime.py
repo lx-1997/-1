@@ -143,14 +143,12 @@ def list_dulus_memories(limit: int = 20, scope: str | None = None, *, owner_user
     query = "SELECT * FROM dulus_memory"
     params: list[Any] = []
     user_scope = str(scope or "").strip()
-    if owner_user_id is not None and (user_scope == "user" or user_scope.startswith("user:")):
-        clause, owners = owner_filter(owner_user_id, is_admin)
-        query += " WHERE scope = 'user'" + (f" AND {clause}" if clause else "")
-        params.extend(owners)
-    elif user_scope.startswith("user:"):
-        owner = user_scope[5:].strip()[:80]
-        query += " WHERE scope = 'user' AND hall = 'ai_chat' AND tags_json LIKE ?"
-        params.append(f'%"owner:{owner}"%')
+    if user_scope == "user" or user_scope.startswith("user:"):
+        # Personal history is always personal, including for administrators.
+        # Missing identity and legacy owner tags cannot grant private reads.
+        owner = str(owner_user_id or "").strip()
+        query += " WHERE scope = 'user' AND owner_user_id = ?"
+        params.append(owner or None)
     elif user_scope == "__shared__":
         query += " WHERE scope != 'user'"
     elif scope:

@@ -82,3 +82,51 @@ it('does not cancel requests for a membership day counter update', () => {
   updateAuthAccount({ ...member, membership: { ...member.membership, days_left: 60 } }, 'test-a');
   expect(cancel).not.toHaveBeenCalled(); expect(getAuthSnapshot().revision).toBe(revision);
 });
+
+
+it('rejects a setter from the previous login after A switches to B and back to A', () => {
+  authenticateSession(user('A'), 'a1', 'https://example.test');
+  const { result, rerender } = renderHook(({ id }) => useAccountAiHistory<AiHistoryRecord>(id), { initialProps: { id: 'A' } });
+  act(() => result.current[1]([answer]));
+  const stale = result.current[1];
+  act(() => authenticateSession(user('B'), 'b', 'https://example.test'));
+  rerender({ id: 'B' });
+  act(() => authenticateSession(user('A'), 'a2', 'https://example.test'));
+  rerender({ id: 'A' });
+  act(() => stale([{ ...answer, id: 'stale', question: 'late' }]));
+  expect(result.current[0]).toMatchObject([answer]);
+});
+
+it('does not reopen local conversations imported before strict server ownership', () => {
+  localStorage.setItem('df.ai.conversations:v2:user:A', JSON.stringify([answer]));
+  authenticateSession(user('A'), 'a1', 'https://example.test');
+  const { result } = renderHook(() => useAccountAiHistory<AiHistoryRecord>('A'));
+  expect(result.current[0]).toEqual([]);
+  expect(localStorage.getItem('df.ai.conversations:v2:user:A')).not.toBeNull();
+});
+
+it('accepts writes from a renewed same-account session and rejects its old setter', () => {
+  authenticateSession(user('A'), 'a1', 'https://example.test');
+  const { result, rerender } = renderHook(() => useAccountAiHistory<AiHistoryRecord>('A'));
+  const old = result.current[1];
+  act(() => authenticateSession(user('A'), 'a2', 'https://example.test'));
+  rerender();
+  act(() => old([answer]));
+  expect(result.current[0]).toEqual([]);
+  act(() => result.current[1]([answer]));
+  expect(result.current[0]).toMatchObject([answer]);
+});
+
+it('hides all account history immediately on logout without transferring it to guests', () => {
+  authenticateSession(user('A'), 'a1', null);
+  const { result, rerender } = renderHook(({ id }) => useAccountAiHistory<AiHistoryRecord>(id), { initialProps: { id: 'A' as string | null } });
+  act(() => result.current[1]([answer]));
+  const old = result.current[1];
+  act(() => invalidateAuthSession());
+  rerender({ id: null });
+  act(() => old([answer]));
+  expect(result.current[0]).toEqual([]);
+  act(() => authenticateSession(user('A'), 'a2', null));
+  rerender({ id: 'A' });
+  expect(result.current[0]).toMatchObject([answer]);
+});

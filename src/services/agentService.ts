@@ -358,6 +358,7 @@ export interface DulusMemoryCreateRequest {
 
 export interface DulusMemoryRecord {
   id: string;
+  owner_user_id?: string | null;
   scope: string;
   hall: string;
   title: string;

@@ -1922,6 +1922,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiRoundtableActive, setAiRoundtableActive] = useState(false);
   const [aiRoundtableMeta, setAiRoundtableMeta] = useState<DulusRoundtableResponse | null>(null);
   const aiStreamCancelRef = useRef<(() => void) | null>(null);
+  const aiConversationEpochRef = useRef(0);
   const aiHistoryRef = useRef<Array<[string, string]>>([]);      // 最近几轮 [问,答]——多轮追问记忆（会话内）
   const [aiAnswerMode, setAiAnswerMode] = useState<'quick' | 'deep'>('quick');
   const [deepAnswer, setDeepAnswer] = useState<DulusRoundtableResponse | null>(null);
@@ -1963,12 +1964,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 登录后把服务端的用户级 AI 历史合并进本地会话：跨设备可见，同时复用同一套
   // question + mode + attachment 去重规则，不会把 quick/deep 或不同附件串成一条。
   useEffect(() => {
-    if (!authUser) return;
+    if (!session.account?.id) return;
+    const revision = session.revision;
     let cancelled = false;
     const loadServerAiHistory = async () => {
       try {
-        const memories = await listDulusMemory(100, `user:${authUser}`);
-        if (cancelled) return;
+        const memories = (await listDulusMemory(100, 'user'))
+          .filter(memory => memory.owner_user_id === session.account?.id);
+        if (cancelled || !isAuthRevisionCurrent(revision)) return;
         const serverRecords: AiConversationRecord[] = memories
           .filter(memory => memory.hall === 'ai_chat' && memory.content?.trim())
           .map(memory => {
@@ -2008,7 +2011,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     };
     void loadServerAiHistory();
     return () => { cancelled = true; };
-  }, [authUser, setAiConversations]);
+  }, [session.account?.id, session.revision, setAiConversations]);
   const rememberAiConversation = useCallback((record: AiConversationRecord) => {
     setAiConversations(previous => {
       const existing = previous.find(item => item.id === record.id);
@@ -2042,6 +2045,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     return id;
   }, [activeAiConversationId]);
   const resetAiConversation = useCallback(() => {
+    aiConversationEpochRef.current += 1;
+    setDeepAnswerBusy(false);
     aiStreamCancelRef.current?.(); aiStreamCancelRef.current = null;
     setActiveAiConversationId(null);
     setAiInput(''); setAiQuestion(''); setAiAnswer(''); setAiErr(''); setAiTools([]); setAiSugg([]); setAiFeedback('');
@@ -2157,6 +2162,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const msg = (q ?? aiInput).trim();
     if (!msg || aiBusy || deepAnswerBusy) return;
     const revision = getAuthSnapshot().revision;
+    const epoch = aiConversationEpochRef.current;
+    const isCurrent = () => isAuthRevisionCurrent(revision) && aiConversationEpochRef.current === epoch;
     const fallbackController = new AbortController();
     // 快速问答必须始终走 quick 路由。此前这里按问题关键词自动打开圆桌，
     // 导致“宁德时代和比亚迪更偏向谁”这类普通提问也进入深研链路，
@@ -2180,7 +2187,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         settled = true; aiStreamCancelRef.current = null; setAiBusy(false); setAiRoundtableActive(false); setAiLiveStatus(''); resolve();
       };
       const applyResult = (r: Awaited<ReturnType<typeof runToolResearch>>) => {
-        if (settled || !isAuthRevisionCurrent(revision)) return;
+        if (settled || !isCurrent()) return;
         if (!r.ok && r.status === 402) {
           setUpgradeReason(r.error || '今日免费 AI 问答已用完，开通会员畅享无限');
           setUpgradeOpen(true); setAiInput(msg); settle(); return;
@@ -2219,7 +2226,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         settle();
       };
       const runFallback = async (reason?: string) => {
-        if (settled || fallbackRunning || !isAuthRevisionCurrent(revision)) return;
+        if (settled || fallbackRunning || !isCurrent()) return;
         fallbackRunning = true;
         setAiLiveStatus(reason ? '实时连接暂时不稳，正在继续完成研究' : '正在继续完成研究');
         const result = await runToolResearch(
@@ -2235,9 +2242,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         history: aiHistoryRef.current,
         attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
       }, {
-        onStatus: status => { if (status && isAuthRevisionCurrent(revision)) setAiLiveStatus(status); },
+        onStatus: status => { if (status && isCurrent()) setAiLiveStatus(status); },
         onTool: (event, phase) => {
-          if (!isAuthRevisionCurrent(revision)) return;
+          if (!isCurrent()) return;
           const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
           setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
           setAiTools(previous => {
@@ -2253,7 +2260,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onFinal: result => applyResult(result),
         onFallback: reason => { void runFallback(reason); },
         onError: (error, status) => {
-          if (!isAuthRevisionCurrent(revision)) return;
+          if (!isCurrent()) return;
           if (status === 402 || status === 403 || (status === 401 && !authUserRef.current)) {
             applyResult({ ok: false, answer: '', tool_trace: [], error, status });
           } else {
@@ -2273,6 +2280,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const msg = (q ?? aiInput).trim();
     if (!msg || deepAnswerBusy || aiBusy) return;
     const revision = getAuthSnapshot().revision;
+    const epoch = aiConversationEpochRef.current;
+    const isCurrent = () => isAuthRevisionCurrent(revision) && aiConversationEpochRef.current === epoch;
     const conversationId = ensureAiConversationId();
     const turnId = `${conversationId}-deep-${Date.now()}`;
     const attachmentForRequest = aiAttachment;
@@ -2309,9 +2318,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           history: aiHistoryRef.current,
           attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
         }, {
-          onStatus: status => { if (status && isAuthRevisionCurrent(revision)) setAiLiveStatus(status); },
+          onStatus: status => { if (status && isCurrent()) setAiLiveStatus(status); },
           onTool: (event, phase) => {
-            if (!isAuthRevisionCurrent(revision)) return;
+            if (!isCurrent()) return;
             const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
             setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
             setAiTools(previous => {
@@ -2347,7 +2356,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           reject(error);
         };
       });
-      if (!isAuthRevisionCurrent(revision)) return;
+      if (!isCurrent()) return;
       if (!result.roundtable) throw new Error('深度研判响应缺少圆桌结论');
       const deepResult = result.roundtable;
       setDeepAnswer(deepResult);
@@ -2363,7 +2372,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setAiAttachment(null); setAiAttachmentErr('');
       logAct('deep_answer_done', msg.slice(0, 60));
     } catch (e: any) {
-      if (!isAuthRevisionCurrent(revision)) return;
+      if (!isCurrent()) return;
       const status = e?.response?.status;
       const detail = e?.response?.data?.detail || e?.message || '深度研判暂时不可用，请稍后重试';
       aiStreamCancelRef.current = null;
@@ -2389,7 +2398,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
             { roundtable: false, timeoutMs: 90000 },
           );
-          if (!isAuthRevisionCurrent(revision)) return;
+          if (!isCurrent()) return;
           if (fallback.ok && fallback.answer) {
             setAiAnswer(fallback.answer);
             setAiTools(fallback.tool_trace || []);
@@ -2414,12 +2423,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             setDeepAnswerErr(`${detail}；快速问答也未返回结果，请稍后重试`);
           }
         } catch (fallbackError: any) {
-          if (!isAuthRevisionCurrent(revision)) return;
+          if (!isCurrent()) return;
           setDeepAnswerErr(`${detail}；快速问答也失败：${fallbackError?.message || '网络异常'}`);
         }
       }
     } finally {
-      if (isAuthRevisionCurrent(revision)) {
+      if (isCurrent()) {
         aiStreamCancelRef.current = null;
         setDeepAnswerBusy(false);
         setAiRoundtableActive(false);
@@ -3409,6 +3418,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     aiRetries.clear();
     aiStreamCancelRef.current?.();
     resetAiConversation();
+    setAiDockOpen(false); setAiDockTab('chat');
+    setAiHistoryQuery(''); setEditingAiConversationId(null); setEditingAiConversationTitle('');
     stopDeepPoll(); deepStartingRef.current = false; setDeepBusy(false); setDeepTask(null); setDeepErr(''); setDeepSymbol('');
     authUserRef.current = null; inviteCodeRef.current = '';
     if (getAuthSnapshot().account) pendingActionRef.current = null;
@@ -6139,24 +6150,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <section ref={aiWorkspaceRef} className="bbt-ai-workspace" aria-label="AI 对话工作区">
           <header className="bbt-ai-workspace-head">
             <div>
-              <div className="bbt-ai-workspace-eyebrow">稻草财经 RESEARCH RUNTIME · 证据驱动研究</div>
-              <h1>AI 投研助手</h1>
-              <p>把问题交给研究引擎：先锁定范围，再查数据、核证据、过风险，最后给结论。</p>
+              <h1>AI 对话</h1>
+              <p>先说结论，再列依据和风险。</p>
             </div>
             <div className="bbt-ai-workspace-head-actions">
-              <span className="bbt-ai-live"><i />证据研究链路在线</span>
               <button type="button" onClick={resetAiConversation}>＋ 新会话</button>
             </div>
           </header>
-          <div className="bbt-ai-harness-guide" aria-label="证据驱动研究流程">
-            <div className="bbt-ai-harness-guide-copy"><b>一条研究链路</b><span>每个结论都能回到数据与来源</span></div>
-            <div className="bbt-ai-harness-steps">
-              <span><i>01</i>理解问题</span><b>→</b><span><i>02</i>统一取数</span><b>→</b><span><i>03</i>证据核验</span><b>→</b><span><i>04</i>风险复核</span><b>→</b><span className="is-final"><i>05</i>综合结论</span>
-            </div>
-          </div>
           <div className={`bbt-ai-workspace-grid ${hasSavedAiHistory ? `bbt-ai-workspace-grid--history${aiHistoryCollapsed ? ' bbt-ai-workspace-grid--history-collapsed' : ''}` : 'bbt-ai-workspace-grid--single'}`}>
             {hasSavedAiHistory && <aside className="bbt-ai-history-panel" aria-label="AI 历史记录">
-              <div className="bbt-ai-history-head"><span className="bbt-ai-history-label">历史记录</span><div className="bbt-ai-history-head-actions"><button type="button" className="bbt-ai-history-new" onClick={resetAiConversation} aria-label="新建会话" title="新建会话">＋</button><button type="button" className="bbt-ai-history-collapse" onClick={() => setAiHistoryCollapsed(value => !value)} aria-label={aiHistoryCollapsed ? '展开历史记录' : '收起历史记录'} title={aiHistoryCollapsed ? '展开历史记录' : '收起历史记录'}>{aiHistoryCollapsed ? '›' : '‹'}</button></div></div>
+              <div className="bbt-ai-history-head"><span className="bbt-ai-history-label">历史记录</span><div className="bbt-ai-history-head-actions"><button type="button" className="bbt-ai-history-collapse" onClick={() => setAiHistoryCollapsed(value => !value)} aria-label={aiHistoryCollapsed ? '展开历史记录' : '收起历史记录'} title={aiHistoryCollapsed ? '展开历史记录' : '收起历史记录'}>{aiHistoryCollapsed ? '›' : '‹'}</button></div></div>
               {!aiHistoryCollapsed && <div className="bbt-ai-history-search"><span>⌕</span><input value={aiHistoryQuery} onChange={event => setAiHistoryQuery(event.target.value)} placeholder="搜索会话" aria-label="搜索 AI 历史会话" />{aiHistoryQuery && <button type="button" onClick={() => setAiHistoryQuery('')} aria-label="清空搜索">×</button>}</div>}
               {aiConversations.length === 0 ? (
                 <div className="bbt-ai-history-empty">完成一次提问后，<br />会话会保存在这里</div>
@@ -6169,7 +6172,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                           if (event.key === 'Enter') renameAiConversation(record.id, editingAiConversationTitle);
                           if (event.key === 'Escape') { setEditingAiConversationId(null); setEditingAiConversationTitle(''); }
                         }} />
-                      ) : <button type="button" className="bbt-ai-history-item-main" onClick={() => openAiConversation(record)}>
+                      ) : <button type="button" className="bbt-ai-history-item-main" disabled={aiWorkspaceBusy} onClick={() => openAiConversation(record)}>
                         <span className="bbt-ai-history-item-title">{record.title}</span>
                         <span className="bbt-ai-history-item-meta">{record.answer || record.turns?.some(turn => turn.answer) ? `${record.turns?.length || 1} 轮对话` : '未完成'} · {new Date(record.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
                         {record.attachmentName && <span className="bbt-ai-history-item-file">📎 {record.attachmentName}</span>}
@@ -6187,9 +6190,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <main className="bbt-ai-chat-panel">
               <div className="bbt-ai-chat-head">
                 <div className="bbt-ai-chat-head-copy"><span>{aiQuestion ? '本轮对话' : '新对话'}</span><span>{aiQuestion ? '会记住最近三轮上下文' : '准备就绪'}</span></div>
-                <div className="bbt-ai-mode-switch" aria-label="智能投研">
-                  <span className="bbt-ai-mode-single">✦ 智能投研</span>
-                </div>
               </div>
               <div ref={aiChatBodyRef} className="bbt-ai-chat-body">
                 {!aiQuestion && !aiAnswer && !deepAnswer && !aiWorkspaceBusy && (
@@ -7166,28 +7166,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 </div>
                 {aiDockTab === 'chat' ? (
                   <div className="bbt-ai-dock-chat">
-                    <div className="bbt-ai-dock-convlist">
-                      {aiConversations.length === 0 && <p className="bbt-ai-dock-empty">还没有对话；在下方输入问题即可开始。</p>}
-                      {aiConversations.slice(0, 6).map(c => (
-                        <button key={c.id} type="button" className="bbt-ai-dock-conv" onClick={() => { setActiveAiConversationId(c.id); focusSideModule('ai'); setAiDockOpen(false); }}>
-                          <b>{clipTitle(c.title, 26)}</b>
-                          <small>{clipTitle(c.answer || c.question, 64)}</small>
+                    <button type="button" className="bbt-ai-dock-new" disabled={aiWorkspaceBusy} onClick={() => { resetAiConversation(); focusSideModule('ai'); setAiDockOpen(false); }}>＋ 新对话</button>
+                    <div className="bbt-ai-dock-convlist" aria-label="最近对话">
+                      {aiConversations.length === 0 && <p className="bbt-ai-dock-empty">暂无历史对话</p>}
+                      {aiConversations.slice(0, 5).map(c => (
+                        <button key={c.id} type="button" className="bbt-ai-dock-conv" disabled={aiWorkspaceBusy} onClick={() => { openAiConversation(c); focusSideModule('ai'); setAiDockOpen(false); }}>
+                          <b>{c.title}</b>
+                          <time dateTime={new Date(c.updatedAt).toISOString()}>{new Date(c.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</time>
                         </button>
                       ))}
                     </div>
-                    <button type="button" className="bbt-ai-dock-expand" onClick={() => { focusSideModule('ai'); setAiDockOpen(false); }}>展开完整对话 →</button>
-                    <div className="bbt-ai-dock-inputrow">
-                      <input
-                        value={aiInput}
-                        onChange={e => setAiInput(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAiQuestion(); setAiInput(''); } }}
-                        placeholder={aiBusy ? 'AI 正在回答…' : '问点研究问题，回车发送'}
-                        disabled={aiBusy}
-                      />
-                      <button type="button" onClick={() => { submitAiQuestion(); setAiInput(''); }} disabled={aiBusy || !aiInput.trim()}>
-                        {aiBusy ? '…' : '发送'}
-                      </button>
-                    </div>
+                    {aiConversations.length > 5 && <button type="button" className="bbt-ai-dock-expand" onClick={() => { focusSideModule('ai'); setAiDockOpen(false); }}>全部对话 →</button>}
                   </div>
                 ) : (
                   <div className="bbt-ai-dock-tasks">

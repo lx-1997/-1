@@ -6048,12 +6048,10 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   line-height: 16px;
 }
 .bbt-ai-dock-panel {
-  width: min(400px, calc(100vw - 16px));
+  width: min(320px, calc(100vw - 16px));
   max-height: min(560px, 72vh);
   overflow: auto;
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  background: var(--panel);
   border: 1px solid var(--line-2);
   border-radius: 16px;
   box-shadow: 0 18px 44px rgba(9, 20, 34, .18);
@@ -6092,21 +6090,24 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 .bbt-ai-dock-tabs .bbt-ai-dock-x { margin-left: auto; background: transparent; border: none; color: var(--mute); font-size: 14px; padding: 4px 8px; }
 .bbt-ai-dock-tabs .bbt-ai-dock-x:hover { color: var(--text-strong); }
 .bbt-ai-dock-empty { color: var(--mute); font-size: 12.5px; margin: 10px 4px; }
-.bbt-ai-dock-convlist { display: flex; flex-direction: column; gap: 6px; }
-.bbt-ai-dock-conv {
-  text-align: left;
-  background: var(--panel-2);
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 8px 10px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.bbt-ai-dock-new {
+  width: 100%; padding: 9px 10px; margin-bottom: 8px; text-align: left;
+  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-line);
+  border-radius: 8px; font-size: 13px; cursor: pointer;
 }
-.bbt-ai-dock-conv b { color: var(--text-strong); font-size: 13px; font-weight: 600; }
-.bbt-ai-dock-conv small { color: var(--mute); font-size: 12px; }
-.bbt-ai-dock-conv:hover { border-color: var(--blue-line); background: var(--blue-bg); }
+.bbt-ai-dock-convlist { display: flex; flex-direction: column; }
+.bbt-ai-dock-conv {
+  width: 100%; min-width: 0; display: flex; align-items: center; gap: 12px;
+  text-align: left; background: transparent; border: 0; border-radius: 6px;
+  padding: 10px 8px; cursor: pointer;
+}
+.bbt-ai-dock-conv b {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-strong); font-size: 13px; font-weight: 500;
+}
+.bbt-ai-dock-conv time { flex: 0 0 auto; color: var(--mute); font-size: 11px; }
+.bbt-ai-dock-conv:hover { background: var(--blue-bg); }
+.bbt-ai-dock-conv:disabled, .bbt-ai-dock-new:disabled { opacity: .5; cursor: default; }
 .bbt-ai-dock-expand {
   background: none;
   border: none;
@@ -6117,29 +6118,14 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   text-align: right;
   width: 100%;
 }
-.bbt-ai-dock-inputrow { display: flex; gap: 6px; margin-top: 8px; }
-.bbt-ai-dock-inputrow input {
-  flex: 1;
-  background: var(--input-bg);
-  border: 1px solid var(--line-2);
-  border-radius: 9px;
-  color: var(--text-strong);
-  padding: 8px 10px;
-  font-size: 13px;
-}
-.bbt-ai-dock-inputrow input::placeholder { color: var(--mute); }
-.bbt-ai-dock-inputrow button {
-  background: var(--amber);
-  border: none;
-  color: var(--panel);
-  font-weight: 700;
-  border-radius: 9px;
-  padding: 0 13px;
-  cursor: pointer;
-  font-size: 13px;
-}
-.bbt-ai-dock-inputrow button:disabled { opacity: .45; cursor: default; }
 .bbt-ai-dock-tasks { display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 640px) {
   .bbt-ai-dock { right: 10px; bottom: calc(74px + env(safe-area-inset-bottom, 0px)); gap: 10px; }
 }
+
+/* Personal chat history uses the same readable theme tokens as the answer. */
+.bbt .bbt-ai-history-item-title { color: var(--text-strong); font-size: 12px; font-weight: 500; }
+.bbt .bbt-ai-history-item-meta { color: var(--mute); font-size: 10px; }
+.bbt .bbt-ai-history-search { background: var(--input-bg); border-color: var(--line-2); color: var(--mute); }
+.bbt .bbt-ai-history-search input { color: var(--text-strong); font-size: 12px; }
+.bbt .bbt-ai-history-search input::placeholder { color: var(--mute); }
