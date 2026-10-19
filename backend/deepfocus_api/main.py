@@ -7959,6 +7959,16 @@ async def api_ai_fund_arena(request: Request) -> dict[str, Any]:
     return await asyncio.to_thread(_arena)
 
 
+@app.get("/api/ai-fund/stock-factors")
+async def api_ai_fund_stock_factors(symbol: str) -> dict[str, Any]:
+    """Public stock-factor facts; no strategy execution, account writes, or AI."""
+    from .ai_fund_factors import get_stock_factors
+    try:
+        return await get_stock_factors(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
 @app.post("/api/ai-fund/tick")
 async def api_ai_fund_tick(request: Request, payload: Optional[dict] = None) -> dict[str, Any]:
     """手动触发一轮模拟盘决策（管理员/运维，需 metrics 令牌）：用于种子/调试。"""

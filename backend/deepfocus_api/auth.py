@@ -1051,6 +1051,7 @@ PUBLIC_EXACT = frozenset(
         "/api/track-record",        # 「我们提前发现的」平台战绩：公开引流（登录附个人战绩）
         "/api/ai-fund/snapshot",    # AI 模拟盘快照：公开展示位（净值/持仓/决策日志），/api/ai-fund/tick 仍受管理员保护
         "/api/ai-fund/arena",       # AI 策略竞技场排行榜：公开展示位（各派收益/排名/观点 + 沪深300）
+        "/api/ai-fund/stock-factors", # 公开行情因子：只读资金统计与筹码模型，无策略执行/AI/账户资料
         "/api/ontology/demo",        # 投资本体驾驶舱 Demo（只读快照）
         "/api/ontology/resolve",     # Canonical Security 别名解析 Demo
         "/api/ontology/content-map", # 四类内容的类型化多标签与语义关系图（只读）
