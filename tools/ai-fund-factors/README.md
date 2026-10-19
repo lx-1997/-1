@@ -54,8 +54,12 @@ protected tick GET 401, readiness and source hashes. No tick POST was made.
 Actual browser verification covered holding-stock selection, historical scores,
 the current-factor dialog, focus restoration and no script errors.
 
-At verification time the production server's two upstream reads were disconnected
-by the provider. Real production scores therefore remained null, with explicit
-missing-data cards. The Mac could retrieve real observations, but its successful
-sample and numeric screenshots were not presented as production results. No
-manually seeded scores or replacement turnover proxy were published.
+Initial production reads were disconnected by the provider, and the browser
+correctly showed missing-data cards. At 13:32:08 Asia/Shanghai the source recovered:
+both the anonymous public API and localhost API returned stock `300760` capital
+26.8 (2026-10-12 through 2026-10-16) and modeled chips 42.7 (600 observations,
+latest 2026-10-19, coverage 96.977%). The actual production browser displayed
+these same scores, dates, source and metrics. Its screenshot was saved separately
+from the earlier Mac-only sample. No manually seeded scores or replacement
+turnover proxy were published. Missing-state protection remains necessary for
+intermittent upstream failures.
