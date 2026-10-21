@@ -195,7 +195,7 @@ def is_valid_deep_draft_cache(value: Any) -> bool:
         return False
     if not isinstance(value.get("source_coverage"), dict):
         return False
-    if value.get("provider") in {"local-fallback", "text-only-fallback"} or value.get("vision_unavailable"):
+    if value.get("provider") in {"local-fallback", "text-only-fallback", "vision-compact-fallback"} or value.get("vision_unavailable"):
         return False
     try:
         from .schemas import ResearchDeepDraftResponse
