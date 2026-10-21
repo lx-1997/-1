@@ -1,10 +1,10 @@
 import React from 'react';
-import { fireEvent, render } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import ArticleOriginalReader from '../../components/ArticleOriginalReader';
 
 describe('ArticleOriginalReader', () => {
   it('renders the article as a readable Chinese-first layout', () => {
-    const { getByText, queryByText, getAllByText } = render(
+    const { getByText, queryByText } = render(
       <ArticleOriginalReader
         title="彭博社：内存短缺冲击持续 华为利润降幅扩大"
         sourceName="Bloomberg"
@@ -30,9 +30,8 @@ describe('ArticleOriginalReader', () => {
     expect(queryByText(/takeaways/i)).not.toBeInTheDocument();
     expect(queryByText('More From Bloomberg 更多来自彭博社的信息')).not.toBeInTheDocument();
     expect(queryByText('Home 首页 News 新闻 Market Data 市场数据')).not.toBeInTheDocument();
-    expect(getAllByText(/查看英文原文/)).toHaveLength(1);
-
-    fireEvent.click(getAllByText(/查看英文原文/)[0]);
-    expect(getByText('Huawei Technologies Co. posted a deep profit decline after the Chinese tech champion grappled with rising memory costs.')).toBeVisible();
+    // 段落下方不再挂「查看英文原文」折叠条：英文原文不渲染，由中英配对逻辑静默吸收。
+    expect(queryByText(/查看英文原文/i)).not.toBeInTheDocument();
+    expect(queryByText('Huawei Technologies Co. posted a deep profit decline after the Chinese tech champion grappled with rising memory costs.')).not.toBeInTheDocument();
   });
 });

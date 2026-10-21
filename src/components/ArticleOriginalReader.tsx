@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { parseArticleOriginal, type ArticleOriginalParagraph } from '../utils/articleOriginal';
+import { parseArticleOriginal } from '../utils/articleOriginal';
 import './ArticleOriginalReader.css';
 
 interface ArticleOriginalReaderProps {
@@ -23,16 +23,6 @@ function formatDate(value?: string): string {
       timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(new Date(value)).replace(/\//g, '-');
   } catch { return ''; }
-}
-
-function OriginalToggle({ paragraph }: { paragraph: ArticleOriginalParagraph }) {
-  if (!paragraph.original) return null;
-  return (
-    <details className="bbt-article-original__source">
-      <summary>查看英文原文 · English original</summary>
-      <p>{paragraph.original}</p>
-    </details>
-  );
 }
 
 const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
@@ -102,7 +92,6 @@ const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
               {section.paragraphs.map((paragraph, index) => (
                 <div key={`paragraph-${sectionIndex}-${index}`} className={`bbt-article-reader__paragraph bbt-article-reader__paragraph--${paragraph.language}`}>
                   <p>{paragraph.text}</p>
-                  <OriginalToggle paragraph={paragraph} />
                 </div>
               ))}
             </section>

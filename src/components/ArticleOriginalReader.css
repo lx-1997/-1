@@ -39,12 +39,6 @@
 .bbt-article-reader__paragraph + .bbt-article-reader__paragraph { margin-top: 18px; }
 .bbt-article-reader__paragraph > p { margin: 0; color: var(--text-body, #e6edf3); font-size: 16px; line-height: 1.95; }
 .bbt-article-reader__paragraph--en > p { color: var(--text-soft, #c5d0dc); font-family: Georgia, 'Times New Roman', serif; }
-.bbt-article-reader__source { margin-top: 7px; border-left: 2px solid var(--line-2, rgba(255,255,255,.12)); }
-.bbt-article-reader__source summary { display: inline-block; padding: 1px 8px; color: var(--mute, #95a3b3); cursor: pointer; font-size: 10px; list-style: none; }
-.bbt-article-reader__source summary::-webkit-details-marker { display: none; }
-.bbt-article-reader__source summary::before { content: '›'; display: inline-block; margin-right: 4px; font-size: 14px; transition: transform .15s ease; }
-.bbt-article-reader__source[open] summary::before { transform: rotate(90deg); }
-.bbt-article-reader__source p { margin: 4px 8px 2px; color: var(--mute, #95a3b3); font-family: Georgia, 'Times New Roman', serif; font-size: 13px; line-height: 1.7; }
 .bbt-article-reader__empty { padding: 48px 0; color: var(--mute, #95a3b3); text-align: center; }
 .bbt-article-reader__footer { margin-top: 32px; padding-top: 13px; border-top: 1px solid var(--line-2, rgba(255,255,255,.12)); color: var(--mute, #95a3b3); font-size: 10px; line-height: 1.6; }
 .bbt-article-reader__copy-note { margin: 0 0 14px; padding-bottom: 9px; border-bottom: 1px dashed var(--line-2, rgba(255,255,255,.12)); color: var(--mute, #95a3b3); font-size: 11px; letter-spacing: .02em; }
