@@ -64,12 +64,13 @@ async def pending_items(items: list[dict], get_many: Callable, retries: dict[str
 
 
 async def _hot_keys() -> tuple[frozenset[str], frozenset[str]]:
-    """热门匹配键：(个股名称集, 题材词集)。任何失败退化为空集，预热保持原到达顺序。
+    """热门与次级匹配键：(热门个股名称集, 美股/港股/A股大市值名称集)。
 
-    个股：站内关注热度榜（data_points 记录数前 40）→ 经「名称→代码」映射转成名称；
-    题材：当日概念板块涨幅榜前 15 个板块名（theme_navigation，内部自带 3 分钟缓存）。"""
+    失败退化为空集，预热保持原到达顺序。
+    - 热门档：站内关注热度榜（data_points 记录数前 40）→ 经「名称→代码」映射转成名称；
+    - 次级档：证券主数据中美股/港股名称（含内置大名单）∪ 东财市值榜 A 股前 120（24h 缓存）。"""
     names: set[str] = set()
-    themes: set[str] = set()
+    tier1: set[str] = set()
     try:
         from . import data_store
         rows = await asyncio.to_thread(data_store.hot_symbols, "verdict", days=7.0, limit=40)
@@ -83,27 +84,68 @@ async def _hot_keys() -> tuple[frozenset[str], frozenset[str]]:
     except Exception:
         names = set()
     try:
-        from .theme_navigation import fetch_concept_boards
-        boards = await asyncio.wait_for(fetch_concept_boards(limit=15), timeout=20)
-        for board in boards or []:
-            name = str((board or {}).get("name") or "").strip()
+        from . import securities_master as sm
+        with sm._connect() as conn:
+            rows = conn.execute(
+                "SELECT name FROM securities WHERE UPPER(market) IN ('US','HK')"
+            ).fetchall()
+        for r in rows:
+            name = str(r["name"] or "").strip()
             if len(name) >= 2:
-                themes.add(name)
+                tier1.add(name)
+        tier1.update(str(v) for v in sm.BUILTIN_HK_US.values() if len(str(v)) >= 2)
     except Exception:
-        themes = set()
-    return frozenset(names), frozenset(themes)
+        pass
+    tier1 |= await _large_cap_a_names()
+    return frozenset(names), frozenset(tier1)
 
 
-def _item_priority(item: dict, hot_names: frozenset[str], hot_topics: frozenset[str]) -> int:
-    """0 = 命中热门股名或题材词，1 = 其余。标题/文件名包含即命中。"""
+_LARGECAP_CACHE: tuple[float, frozenset[str]] = (0.0, frozenset())
+_LARGECAP_TTL = 24 * 3600.0
+
+
+async def _large_cap_a_names() -> frozenset[str]:
+    """A 股总市值 Top120 名称（东财 clist 按总市值降序；24h 缓存；失败→上次/空集）。"""
+    global _LARGECAP_CACHE
+    ts, hit = _LARGECAP_CACHE
+    if hit and time.time() - ts < _LARGECAP_TTL:
+        return hit
+    try:
+        import httpx
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": "https://quote.eastmoney.com/",
+        }
+        url = (
+            "https://push2.eastmoney.com/api/qt/clist/get"
+            "?pn=1&pz=120&po=1&np=1&fltt=2&invt=2&fid=f20"
+            "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f20"
+        )
+        async with httpx.AsyncClient(trust_env=False, timeout=15.0) as client:
+            r = await client.get(url, headers=headers)
+        diff = (((r.json() or {}).get("data") or {}).get("diff")) or []
+        if isinstance(diff, dict):
+            diff = list(diff.values())
+        names = {str(d.get("f14") or "").strip() for d in diff if isinstance(d, dict)}
+        names.discard("")
+        if names:
+            _LARGECAP_CACHE = (time.time(), frozenset(names))
+            return _LARGECAP_CACHE[1]
+    except Exception:  # noqa: BLE001
+        pass
+    return hit
+
+
+def _item_priority(item: dict, hot_names: frozenset[str], tier1_names: frozenset[str]) -> int:
+    """0 = 站内热门股；1 = 美股/港股/A股大市值命中；2 = 其余。标题/文件名包含即命中。"""
     text = f"{item.get('title') or ''}{item.get('filename') or ''}"
     for name in hot_names:
         if len(name) >= 2 and name in text:
             return 0
-    for topic in hot_topics:
-        if topic in text:
-            return 0
-    return 1
+    for name in tier1_names:
+        if len(name) >= 2 and name in text:
+            return 1
+    return 2
 
 
 async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable, limiter: Any) -> None:
@@ -158,10 +200,11 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
             known_ids = {str(item["file_id"]) for item in items}
             retries = {fid: state for fid, state in retries.items() if fid in known_ids}
             pending, ready = await pending_items(items, get_ai_cache_many, retries)
-            # 热门股/热门话题优先：稳定排序，组内保持到达顺序；取键失败则原顺序。
-            hot_names, hot_topics = await _hot_keys()
-            pending.sort(key=lambda it: _item_priority(it, hot_names, hot_topics))
-            hot_n = sum(1 for it in pending if _item_priority(it, hot_names, hot_topics) == 0)
+            # 优先级：站内热门股 > 美股/港股/A股大市值 > 其余；稳定排序，组内保持到达顺序。
+            hot_names, tier1_names = await _hot_keys()
+            pending.sort(key=lambda it: _item_priority(it, hot_names, tier1_names))
+            hot_n = sum(1 for it in pending if _item_priority(it, hot_names, tier1_names) == 0)
+            tier1_n = sum(1 for it in pending if _item_priority(it, hot_names, tier1_names) == 1)
             pending_ids = {str(item["file_id"]) for item in pending}
             for item in items:
                 if str(item["file_id"]) not in pending_ids:
@@ -174,7 +217,7 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
                 choose_jobs, pending, is_local=has_cached_file_id, retries=retries, now=time.monotonic(),
                 limit=per_cycle, download_room=0 if banned_day == day else max(0, cap - used),
             )
-            print(f"[prewarm] 增量队列 eligible={len(items)} excluded={excluded} ready={ready} pending={len(pending)} hot={hot_n} batch={len(jobs)} downloads={used}/{cap}")
+            print(f"[prewarm] 增量队列 eligible={len(items)} excluded={excluded} ready={ready} pending={len(pending)} hot={hot_n} tier1={tier1_n} batch={len(jobs)} downloads={used}/{cap}")
             # One background task: no detached workers and no competing model queue.
             for item in jobs:
                 fid = str(item["file_id"])
