@@ -14,6 +14,10 @@ const TERMINAL_ONLY = process.env.REACT_APP_TERMINAL_ONLY === 'true';
 const AppShell = React.lazy(() => import('./AppShell'));
 const OntologyStandalone = React.lazy(() => import('./components/OntologyStandalone'));
 const ONTOLOGY_PATH = window.location.pathname.replace(/\/+$/, '') === '/ontology';
+// Local component workbench: available in development without loading the application shell.
+const MarketUIShowcase = process.env.NODE_ENV === 'development'
+  ? React.lazy(() => import('./components/market-ui/examples/MarketUIShowcase')) : null;
+const MARKET_UI_PATH = window.location.pathname.replace(/\/+$/, '') === '/dev/ui';
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
@@ -25,7 +29,11 @@ root.render(
       <ThemeProvider>
         <AuthProvider>
           <ErrorBoundary>
-            {TERMINAL_ONLY && ONTOLOGY_PATH ? (
+            {MarketUIShowcase && MARKET_UI_PATH ? (
+              <React.Suspense fallback={<p role="status">组件示例加载中</p>}>
+                <MarketUIShowcase />
+              </React.Suspense>
+            ) : TERMINAL_ONLY && ONTOLOGY_PATH ? (
               <React.Suspense fallback={null}>
                 <OntologyStandalone />
               </React.Suspense>

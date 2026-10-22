@@ -1,0 +1,67 @@
+/* Keep the established dense terminal layout and its green-up/red-down convention. */
+.bbt .bbt-qrow .dc-market-value {
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+.bbt .bbt-qrow .dc-market-value--up { color: var(--up); }
+.bbt .bbt-qrow .dc-market-value--down { color: var(--down); }
+.bbt .bbt-qrow .dc-market-value--percent.dc-market-value--flat,
+.bbt .bbt-qrow .dc-market-value--missing { color: var(--mute); }
+.bbt .bbt-qrow-select {
+  appearance: none;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--r-s);
+  padding: 5px 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bbt .bbt-qrow-select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+.bbt .bbt-qrow-meta {
+  padding: 2px 10px 6px;
+  border-bottom: 1px solid var(--line-row);
+  --text: var(--text-body);
+  --text-muted: var(--mute);
+  --surface-muted: var(--panel-2);
+  --border: var(--line-2);
+  --border-soft: var(--line-row);
+  --positive: var(--up);
+  --negative: var(--down);
+  --warning: var(--warn);
+}
+.bbt .bbt-qrow-meta .dc-market-status { padding-top: 0; border-top: 0; gap: 3px 7px; }
+.bbt .bbt-qrow-meta .dc-market-status__badge { padding: 0 5px; font-size: 10px; }
+.bbt .bbt-qrow-meta .dc-market-status__details { display: contents; }
+.bbt .bbt-qrow-meta .dc-market-status__time { flex-basis: auto; }
+.bbt .bbt-qrow-meta .dc-market-status__note { font-size: 10px; }
+.bbt .bbt-qrow-meta .dc-market-status__source { color: var(--mute2); }
+@media (max-width: 820px) {
+  .bbt .bbt-watchlist-panel.bbt-eq--narrow .bbt-qhead,
+  .bbt .bbt-watchlist-panel.bbt-eq--narrow .bbt-qrow {
+    grid-template-columns: minmax(0, 1fr) 88px 82px;
+    gap: 6px;
+  }
+  .bbt .bbt-qrow-select {
+    min-height: 44px;
+    padding: 4px 0;
+    font-size: 14px;
+    line-height: 1.25;
+    white-space: normal;
+  }
+  .bbt .bbt-qrow-select b {
+    display: block;
+    font-size: 11px;
+    color: var(--mute);
+  }
+}
+@media (forced-colors: active) {
+  .bbt .bbt-qrow-select:focus-visible { outline-color: Highlight; }
+}

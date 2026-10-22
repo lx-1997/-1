@@ -156,23 +156,30 @@ it('keeps the real report entry usable while account watchlist hydration is pend
   expect(research.mock.calls[0][3]!.aborted).toBe(true);
 });
 
-it('keeps an anonymous empty watchlist terminal interactive across rerenders', async () => {
+it('gates anonymous research without model or market requests across empty-watchlist rerenders', async () => {
   invalidateAuthSession();
   localStorage.setItem('bbt.watchlist', '[]');
   localStorage.setItem('bbt.names', '{}');
-  pendingResearch();
   const view = await openReport();
+  const loginGate = 'AI 解读需要登录账号 · 行情与资讯免费';
   expect(getAuthSnapshot().account).toBeNull();
-  expect(research).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(loginGate)).toBeInTheDocument();
+  expect(research).not.toHaveBeenCalled();
+  expectNoCompactRequest();
   await act(async () => { view.rerender(<AuthProvider><FinancialTerminal /></AuthProvider>); });
-  // Clicking the actual report again resumes the existing task instead of
-  // creating another request; empty quote state must not cause render loops.
+  // Anonymous research requires login. After rerenders, closing the gate and
+  // clicking again shows the existing cooldown hint without starting a task.
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '关闭' })); });
+  expect(screen.queryByText(loginGate)).not.toBeInTheDocument();
   await clickReport();
-  expect(research).toHaveBeenCalledTimes(1);
-  expect(screen.getByText('✦ 正在后台解读中，完成后提醒你')).toBeInTheDocument();
+  expect(screen.getByText('登录后可AI 解读')).toBeInTheDocument();
+  await act(async () => { jest.advanceTimersByTime(18_000); });
+  expect(research).not.toHaveBeenCalled();
+  expectNoCompactRequest();
+  expect(screen.queryByText('✦ 正在后台解读中，完成后提醒你')).not.toBeInTheDocument();
   expect(apiGet).not.toHaveBeenCalledWith('/api/market/quotes', expect.anything());
   await act(async () => { view.unmount(); });
-  expect(research.mock.calls[0][3]!.aborted).toBe(true);
+  expect(research).not.toHaveBeenCalled();
 });
 
 function httpFailure(status: number, detail: string) {

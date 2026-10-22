@@ -19,7 +19,7 @@ import ShareModal, { ShareTarget } from './ShareModal';
 import AiInterpretationExportActions from './common/AiInterpretationExportActions';
 import { buildAiInterpretationText } from '../utils/aiInterpretationExport';
 import * as authService from '../services/authService';
-import { runToolResearch, runToolResearchStream, listDulusMemory, sendAgentFeedback, startDeepResearch, pollDeepResearch, type ToolTraceItem, type DeepTask, type DulusRoundtableResponse, type DulusContentScopeItem } from '../services/agentService';
+import { runToolResearch, runToolResearchStream, listDulusMemory, createDulusMemory, sendAgentFeedback, startDeepResearch, pollDeepResearch, type ToolTraceItem, type DeepTask, type DulusRoundtableResponse, type DulusContentScopeItem } from '../services/agentService';
 import {
   extractFileText,
   generateResearchDeepDraft,
@@ -48,12 +48,13 @@ import { copyText } from '../utils/clipboard';
 import { shareImageNative } from '../utils/share';
 import { drawResearchDeepDraftImage, researchDeepDraftToText } from '../utils/researchDeepDraftImage';
 import { normalizeAiConversationHistory } from '../utils/aiConversationHistory';
-import { hydrateInterpretCache, persistInterpretEntry, isReusableNewsInterpretation, newsInterpretationCacheKey, dropInterpretCache } from '../utils/aiInterpretCache';
+import { hydrateInterpretCache, persistInterpretEntry, readAiTaskHistory, removeAiTaskHistory, upsertAiTaskHistory, readSyncedInterpretKeys, markInterpretSynced, isReusableNewsInterpretation, newsInterpretationCacheKey, dropInterpretCache } from '../utils/aiInterpretCache';
+import { planLocalRestores, planCloudRestores, type RestorableTaskSeed } from '../utils/aiTaskRestore';
 import { normalizePublisherName } from '../utils/displayBrand';
 import { visiblePoll } from '../utils/visiblePoll';
 import { getNativeBackgroundStatus, getNativePushToken, nativeBackgroundSupported, openNativeBatterySettings, openNativeNotificationSettings, requestNativeBatteryOptimization, setNativeBackgroundFilters, startNativeBackground, stopNativeBackground } from '../services/nativeBackground';
 import TerminalAuthModal from './TerminalAuthModal';
-import TerminalOnboarding, { ONB_KEY } from './TerminalOnboarding';
+import TerminalOnboarding from './TerminalOnboarding';
 import TerminalHelp from './TerminalHelp';
 import TerminalReferral from './TerminalReferral';
 import TerminalAiFund from './TerminalAiFund';
@@ -72,11 +73,15 @@ import { getAuthSnapshot, getAuthorizationScope, isAuthRevisionCurrent, register
 import { useAccountAiHistory } from '../hooks/useAccountAiHistory';
 import { readAccountStorage, writeAccountStorage } from '../utils/accountStorage';
 import TerminalClock from './terminal/TerminalClock';
+import { QuoteStatus, QuoteValue } from './market-ui';
+import { TerminalQuoteName } from './terminal/TerminalQuoteName';
+import { toTerminalQuoteDisplay } from './terminal/terminalQuoteDisplay';
 import { useTheme } from '../context/ThemeContext';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
 import './TerminalMobile.css';
 import './TerminalMobileChat.css';
+import './terminal/terminal-market-ui.css';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
@@ -154,6 +159,8 @@ interface Quote {
   symbol: string; price: number; change?: number | null; change_percent?: number | null;
   high?: number | null; low?: number | null; volume?: number | null; currency?: string; is_realtime?: boolean;
   open_price?: number | null; previous_close?: number | null;
+  provider?: string; provider_name?: string; market_time?: string | null;
+  fetched_at?: string; delay_note?: string;
   // iFinD 实时基本面（仅白名单 A股 quote 带；其他恒空）
   pe_ttm?: number | null; pb?: number | null; total_capital?: number | null; turnover_ratio?: number | null;
 }
@@ -213,6 +220,8 @@ interface AiBgTask {
   deepDraft: ResearchDeepDraftInput;
   error: string;
   hidden?: boolean;   // 运行中被移除：完成后静默入缓存，不再提醒
+  restored?: boolean; // 从本机历史恢复的已完成任务：不进「待看」角标
+  cloud?: boolean;    // 从服务端同步取回的跨端记录：本机无正文缓存，点击重新拉取（研报类）
 }
 
 export function isResearchNetworkDrop(error: any): boolean {
@@ -978,6 +987,25 @@ const RES_RECENT_LIMIT = 250;  // 研报默认取最近一档(约覆盖最新 3 
 const EQ_MIN = 180, EQ_MAX = 560, EQ_NARROW = 360;   // 行情监视列宽拖拽：最小/最大/窄列阈值(px)
 const PAGE_SIZES = [20, 30, 50];                          // 每页条数可选项
 const isMobileView = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches;
+
+// 解读记录跨端同步：研报类解读完成后把元数据（含完整重跑参数）写入用户级 memory，
+// 登录设备启动时合并进任务列表显示为「云端解读」，点击重跑取回正文（正文走服务端
+// 解读缓存，通常秒级）。快讯类重跑依赖正文（20KB），不进同步负载。
+// 已同步 key 的去重记录在 aiInterpretCache（按账号域），此处不再本地方案。
+const AI_INTERPRET_SYNC_HALL = 'ai_interpret';
+
+/** 恢复/云端种子 → 任务表条目。restart：中断·失败·云端（本机无正文）可续跑；已完成的历史任务不重跑。 */
+function seedToAiTask(seed: RestorableTaskSeed, handlers: { onRerun: () => void }): AiBgTask {
+  return {
+    key: seed.key, kind: seed.kind, title: seed.title, report: seed.report, meta: seed.meta,
+    content: seed.content,
+    restart: seed.cloud || seed.status === 'error' ? handlers.onRerun : () => { /* 历史任务不重跑 */ },
+    startedAt: seed.startedAt, status: seed.status, stage: '',
+    result: (seed.result as AiAnalysis | undefined) ?? null,
+    deepDraft: (seed.deepDraft as ResearchDeepDraftInput | undefined) ?? null,
+    error: seed.error, restored: true, cloud: seed.cloud,
+  };
+}
 const defaultPageSize = () => {
   try { const v = Number(localStorage.getItem('df_pagesize')); if (PAGE_SIZES.includes(v)) return v; } catch { /* */ }
   return isMobileView() ? 15 : 30;   // 移动端默认更少、PC 默认 30
@@ -1199,8 +1227,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try { return loadRecallPrefs().browserEnabled || Number(localStorage.getItem('dfx_activate_seen') || '0') >= 3; } catch { return false; }
   });
   // 加自选后的「开盯盘」上下文提示——高意向时刻顺势捕获推送订阅;每会话至多一次,不打扰。
-  const [pushNudge, setPushNudge] = useState(false);
-  const pushNudgeRef = useRef(false);
   const authNudgeAtRef = useRef<Map<string, number>>(new Map());  // 登录弹窗按 reason 的会话级冷却
   // 连续看复盘签到：打开复盘即签到（登录用户），连续天数到里程碑送会员。
   // 类型放宽为 Partial<CheckinStatus>：页面加载即拉全量状态（头部常驻火焰徽章），签到 POST 只回三个字段。
@@ -1217,9 +1243,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [callsList, setCallsList] = useState<authService.StockCall[]>([]);
   const [callsSummary, setCallsSummary] = useState<authService.CallSummary | null>(null);
   const [callsUnseen, setCallsUnseen] = useState(0);
-  const callsToastRef = useRef(false);   // 进站兑现 toast 每次页面加载至多一次
-  const onbShownRef = useRef(false);
-  const [onbTick, setOnbTick] = useState(0);
   const [messages, setMessages] = useState<RealtimeMessageRecord[]>(loadCachedFeed);
   const [feedBooted, setFeedBooted] = useState(false);  // 快讯首批是否已拉完（之前显示骨架屏而非"暂无"）
   const [feedLoadError, setFeedLoadError] = useState(false);  // 首批拉取失败 → 区分「失败可重试」与「没消息」
@@ -1436,42 +1459,88 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const aiTasksRef = useRef<Map<string, AiBgTask>>(new Map());
   const [aiTasksVersion, setAiTasksVersion] = useState(0);
   const [aiTasksOpen, setAiTasksOpen] = useState(false);
-  // AI 常驻挂件：可拖拽浮标 + 双页签面板（AI 对话 / 解读记录）。位置持久化到 localStorage。
+  // AI 常驻挂件：可拖拽浮标 + 双页签面板（AI 对话 / 解读记录）。
+  // 位置按浮标右下角持久化（r/b = 距窗口右/下边距，缩放前布局像素），面板展开时向上生长，浮标不动。
+  // 终端整体带 zoom（.bbt --z 1.1~1.35）：指针与 getBoundingClientRect 是视觉像素，style px 是
+  // 缩放前布局像素，两者差「有效 zoom」倍；拖拽量必须除以 zoom 再落样式，否则浮标甩离手势且钳制越界。
+  const AI_DOCK_DEFAULT_POS = { r: 18, b: 74 };  // 与 .bbt-ai-dock 的 CSS 默认位保持一致
   const [aiDockOpen, setAiDockOpen] = useState(false);
   const [aiDockTab, setAiDockTab] = useState<'chat' | 'tasks'>('chat');
-  const [aiDockPos, setAiDockPos] = useState<{ x: number; y: number } | null>(() => {
+  const [aiDockPos, setAiDockPos] = useState<{ r: number; b: number } | null>(() => {
     try {
       const v = JSON.parse(localStorage.getItem('bbt_ai_dock_pos') || 'null');
-      if (v && typeof v.x === 'number' && typeof v.y === 'number') return v;
+      if (v && typeof v.r === 'number' && typeof v.b === 'number') return v;
     } catch { /* 损坏即回默认位 */ }
     return null;
   });
   const aiDockRef = useRef<HTMLDivElement>(null);
-  const aiDockDragRef = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
-  const aiDockSavePos = (x: number, y: number) => {
-    const p = { x: Math.max(8, Math.min(x, Math.max(8, window.innerWidth - 72))), y: Math.max(8, Math.min(y, Math.max(8, window.innerHeight - 72))) };
+  const aiDockDragRef = useRef<{ px: number; py: number; r0: number; b0: number; moved: boolean; fromFab: boolean; z: number } | null>(null);
+  const aiDockEffectiveZoom = () => {
+    let z = 1;
+    for (let n: HTMLElement | null = aiDockRef.current; n; n = n.parentElement) {
+      const v = parseFloat((getComputedStyle(n) as CSSStyleDeclaration & { zoom?: string }).zoom || '1');
+      if (Number.isFinite(v) && v > 0) z *= v;
+    }
+    return z;
+  };
+  const clampAiDockPos = (right: number, bottom: number, z: number) => {
+    const fab = aiDockRef.current?.querySelector<HTMLButtonElement>('.bbt-ai-dock-fab');
+    const width = fab?.offsetWidth || 118;
+    const height = fab?.offsetHeight || 44;
+    return {
+      r: Math.max(8, Math.min(right, Math.max(8, window.innerWidth / z - width - 8))),
+      b: Math.max(8, Math.min(bottom, Math.max(8, window.innerHeight / z - height - 8))),
+    };
+  };
+  const persistAiDockPos = (p: { r: number; b: number }) => {
     setAiDockPos(p);
     try { localStorage.setItem('bbt_ai_dock_pos', JSON.stringify(p)); } catch { /* 隐私模式忽略 */ }
   };
-  const onAiDockFabDown = (e: React.PointerEvent) => {
-    const el = aiDockRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    aiDockDragRef.current = { px: e.clientX, py: e.clientY, x: rect.left, y: rect.top, moved: false };
+  const onAiDockHandleDown = (fromFab: boolean) => (e: React.PointerEvent) => {
+    // 面板页签/关闭等按钮仍走点击，不做拖拽起步
+    if (!fromFab && (e.target as HTMLElement).closest('button')) return;
+    aiDockDragRef.current = {
+      px: e.clientX,
+      py: e.clientY,
+      r0: aiDockPos ? aiDockPos.r : AI_DOCK_DEFAULT_POS.r,
+      b0: aiDockPos ? aiDockPos.b : AI_DOCK_DEFAULT_POS.b,
+      moved: false,
+      fromFab,
+      z: aiDockEffectiveZoom(),
+    };
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* 老内核忽略 */ }
   };
-  const onAiDockFabMove = (e: React.PointerEvent) => {
+  const onAiDockHandleMove = (e: React.PointerEvent) => {
     const st = aiDockDragRef.current;
     if (!st) return;
     const dx = e.clientX - st.px;
     const dy = e.clientY - st.py;
     if (!st.moved && Math.abs(dx) + Math.abs(dy) > 5) st.moved = true;
-    if (st.moved) aiDockSavePos(st.x + dx, st.y + dy);
+    if (!st.moved) return;
+    const p = clampAiDockPos(st.r0 - dx / st.z, st.b0 - dy / st.z, st.z);
+    const el = aiDockRef.current;
+    // 拖动过程直写 DOM：每个 pointermove 都 setState 会重渲染整页，拖起来发滞；松手才落 state
+    if (el) { el.style.right = `${p.r}px`; el.style.bottom = `${p.b}px`; }
   };
-  const onAiDockFabUp = () => {
+  const onAiDockHandleUp = (e: React.PointerEvent) => {
     const st = aiDockDragRef.current;
     aiDockDragRef.current = null;
-    if (st && !st.moved) setAiDockOpen(v => !v);
+    if (!st) return;
+    if (st.moved) {
+      persistAiDockPos(clampAiDockPos(st.r0 - (e.clientX - st.px) / st.z, st.b0 - (e.clientY - st.py) / st.z, st.z));
+    } else if (st.fromFab) {
+      setAiDockOpen(v => !v);
+    }
+  };
+  const onAiDockHandleCancel = () => {
+    if (!aiDockDragRef.current) return;
+    aiDockDragRef.current = null;
+    // 被中断的拖拽回弹到已持久化位置，避免直写的样式与 state 脱节
+    const el = aiDockRef.current;
+    if (el) {
+      if (aiDockPos) { el.style.right = `${aiDockPos.r}px`; el.style.bottom = `${aiDockPos.b}px`; }
+      else { el.style.right = ''; el.style.bottom = ''; }
+    }
   };
   const aiViewingTaskRef = useRef('');  // 阅读模态当前跟随的后台任务 key；空串=模态未跟随任务
   const [shareImgUrl, setShareImgUrl] = useState<string>('');  // 出图兜底预览（长按保存）
@@ -1487,12 +1556,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 重复打开同一条资讯/研报时直接复用已完成的解读（内存 + 本机持久，刷新/隔天仍秒开）；
   // 服务端仍负责跨用户持久缓存，这里只影响打开速度，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
-  useEffect(() => {
-    // 本机持久层：上次会话（刷新/隔天）完成的解读直接灌回，点开不再重跑。
-    hydrateInterpretCache(aiInterpretCacheRef.current, raw => (
-      raw && raw.result ? { result: raw.result as AiAnalysis, deepDraft: (raw.deepDraft ?? undefined) as ResearchDeepDraftInput | undefined } : null
-    ));
-  }, []);
+  // 云端解读记录的「点击取回」需要触发最新一次 runAiAnalysis；它定义在组件后段，
+  // 用 latest-ref 解耦（声明在前、赋值在后），避免同步 effect 依赖其身份导致反复重跑。
+  const runAiAnalysisRef = useRef<(r: ResearchWireItem, hidden?: boolean) => Promise<void> | void>(() => {});
+  const runNewsAiRef = useRef<(m: RealtimeMessageRecord) => Promise<void> | void>(() => {});
   const [aiRetries] = useState(() => createResearchRetryQueue());
   const aiMountedRef = useRef(true);
   useEffect(() => {
@@ -1609,12 +1676,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (activate) setActive(sym);  // 命令面板加股=下钻该标的；激活卡加股传 false，只悄悄入自选、不跳转
     logAct('watch_add', name ? `${sym} ${name}` : sym);
     showToast(`已添加自选 ${name || sym}`);
-    // 高意向时刻:刚加自选 → 若还没开盯盘且通知未被拒,弹一次「开盯盘」提示把这份意向变成离线订阅(每会话至多一次)
-    try {
-      if (!pushNudgeRef.current && !loadRecallPrefs().browserEnabled && getNotificationPermission() !== 'denied') {
-        pushNudgeRef.current = true; setPushNudge(true);
-      }
-    } catch { /* */ }
   }, [showToast, logAct]);
   const removeSymbol = useCallback((code: string) => {
     setWatchlist(prev => prev.filter(s => s !== code));
@@ -1668,7 +1729,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (perm === 'granted') { try { void subscribeWebPush({ symbols: watchlist }); } catch { /* */ } }
     // 邮箱兜底订阅:国内 Chrome 推送端点在 Google FCM 送不到,账号留了邮箱就顺手建邮件召回(服务端直取,无邮箱静默)
     try { void subscribeEmailRecall(); } catch { /* */ }
-    setActivateDone(true); setPushNudge(false);
+    setActivateDone(true);
     showToast(perm === 'granted'
       ? '🔔 盯盘已开启 · 自选有快讯/异动第一时间通知你(关掉页面也能收到)'
       : '✅ 盯盘已开启 · 浏览器通知未授权可在系统设置允许，以便离开页面也能收到提醒');
@@ -1740,6 +1801,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const [quotesError, setQuotesError] = useState(false);  // 行情整体拉取失败（仅零报价时提示）
   const quoteAtRef = useRef<Record<string, number>>({});  // 每只股最近一次「真拿到价」的时刻——新鲜度标注用（防静默陈旧）
+  const quoteRetainedRef = useRef<Set<string>>(new Set());
   const loadQuotes = useCallback(async () => {
     // 轮询集合 = 自选 ∪ 当前下钻标的：搜索下钻的新股（未加自选）也要有实时价，匿名试看才成立
     const polled = active && !watchlist.includes(active) ? [...watchlist, active] : watchlist;
@@ -1747,6 +1809,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     try {
       const resp = await apiGet<{ quotes: Quote[] }>('/api/market/quotes', { params: { symbols: polled.join(',') } });
       const map: Record<string, Quote> = {}; const flashes: Record<string, 'up' | 'down'> = {};
+      quoteRetainedRef.current = new Set();
       (resp.quotes || []).forEach(q => {
         map[q.symbol] = q;
         quoteAtRef.current[q.symbol] = Date.now();  // 真拿到价才刷新时间戳；沿用旧值的不刷新 → 可识别陈旧
@@ -1756,7 +1819,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       });
       setQuotes(prev => {
         // 免费行情源偶发漏返某只 → 沿用上一次报价，避免该行瞬间变「—」（仅保留仍在轮询集合里的）
-        polled.forEach(sym => { if (!map[sym] && prev[sym]) map[sym] = prev[sym]; });
+        polled.forEach(sym => {
+          if (!map[sym] && prev[sym]) { map[sym] = prev[sym]; quoteRetainedRef.current.add(sym); }
+        });
         return map;
       });
       if (Object.keys(flashes).length) { setFlash(flashes); window.setTimeout(() => setFlash({}), 900); }
@@ -1872,6 +1937,40 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 用户感知为「刷新刚开始弹到另一个界面」。
   const authUser = session.account?.username ?? null;
   const authUserRef = useRef<string | null>(authUser);
+  useEffect(() => {
+    // 按账号分域重载：登录/登出（authUser 变化）都重新灌当前账号的本机持久层；
+    // 上一账号的本地恢复条目先移除（云端条目由登录合并重新注入），避免同设备跨账号串号。
+    for (const [key, task] of Array.from(aiTasksRef.current.entries())) {
+      if (task.restored && task.status !== 'running') aiTasksRef.current.delete(key);
+    }
+    aiInterpretCacheRef.current = new Map();
+    // 本机持久层：上次会话（刷新/隔天）完成的解读直接灌回，点开不再重跑。
+    hydrateInterpretCache(aiInterpretCacheRef.current, raw => (
+      raw && raw.result ? { result: raw.result as AiAnalysis, deepDraft: (raw.deepDraft ?? undefined) as ResearchDeepDraftInput | undefined } : null
+    ));
+    // 恢复/自愈判定收敛在 aiTaskRestore（纯函数+单测穷举边界）：done+缓存可看、
+    // 中断/失败可续跑、完结无缓存的真幽灵清除。这里只把种子映射成任务（restart
+    // 闭包需要组件能力：移除任务 + 触发最新一次 runAiAnalysis/runNewsAi）。
+    const plan = planLocalRestores(readAiTaskHistory(), aiInterpretCacheRef.current, new Set(aiTasksRef.current.keys()));
+    for (const seed of plan.tasks) {
+      aiTasksRef.current.set(seed.key, seedToAiTask(seed, {
+        onRerun: () => {
+          removeAiTask(seed.key);
+          if (seed.kind === 'news') {
+            void runNewsAiRef.current({
+              id: seed.key.replace(/^news:(?:v5:)?/, ''), title: seed.report?.title || seed.title,
+              content: seed.content || '', url: '',
+              created_at: seed.report?.date ? `${seed.report.date}T00:00:00` : '',
+            } as RealtimeMessageRecord);
+          } else if (seed.report) {
+            void runAiAnalysisRef.current(seed.report as ResearchWireItem);
+          }
+        },
+      }));
+    }
+    for (const key of plan.staleHistoryKeys) removeAiTaskHistory(key);
+    if (aiTasksRef.current.size > 0) setAiTasksVersion(v => v + 1);
+  }, [authUser]);
   const refreshMembershipRef = useRef<(() => void) | null>(null);
   const inviteCodeRef = useRef<string>('');
   const membership = session.account?.membership ?? null;
@@ -1913,9 +2012,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiErr, setAiErr] = useState('');
   const [aiSugg, setAiSugg] = useState<string[]>([]);            // 答案后的确定性追问建议（后端按工具轨迹反推）
   const [aiQuotaLeft, setAiQuotaLeft] = useState<number | null>(null);  // 剩余免费次数；null=不限/未知
-  const [guestAiTrialConsumed, setGuestAiTrialConsumed] = useState(() => {
-    try { return localStorage.getItem('df.ai.guest_trial_date') === beijingParts(new Date()).dateStr; } catch { return false; }
-  });
   const [aiFeedback, setAiFeedback] = useState<'' | 'up' | 'down'>(''); // 本条答案已投的反馈
   const [aiAnswerCopied, setAiAnswerCopied] = useState(false);
   const [aiLiveStatus, setAiLiveStatus] = useState('');
@@ -1969,7 +2065,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     let cancelled = false;
     const loadServerAiHistory = async () => {
       try {
-        const memories = (await listDulusMemory(100, 'user'))
+        const memories = (await listDulusMemory(200, 'user'))
           .filter(memory => memory.owner_user_id === session.account?.id);
         if (cancelled || !isAuthRevisionCurrent(revision)) return;
         const serverRecords: AiConversationRecord[] = memories
@@ -2005,6 +2101,22 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         if (serverRecords.length) {
           setAiConversations(previous => normalizeAiConversationHistory([...serverRecords, ...previous], 30));
         }
+        // 云端解读记录取回（判定在 aiTaskRestore 纯函数）：其他设备完成的研报解读注入
+        // 任务列表显示为「云端解读」，点击重跑取回正文。同 key 以本机优先。
+        const knownTaskKeys = new Set<string>([
+          ...Array.from(aiTasksRef.current.keys()),
+          ...readAiTaskHistory().map(h => h.key),
+        ]);
+        const cloudSeeds = planCloudRestores(memories, knownTaskKeys);
+        for (const seed of cloudSeeds) {
+          aiTasksRef.current.set(seed.key, seedToAiTask(seed, {
+            onRerun: () => {
+              removeAiTask(seed.key);
+              if (seed.report) void runAiAnalysisRef.current(seed.report as ResearchWireItem);
+            },
+          }));
+        }
+        if (cloudSeeds.length > 0) setAiTasksVersion(v => v + 1);
       } catch {
         // Server history is an enhancement; local history remains available offline.
       }
@@ -2195,22 +2307,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         if (!r.ok && r.status === 401 && !authUserRef.current) {
           // 匿名（从未登录）拿到 401 不是「登录过期」——apiClient 会把 401 统一拍成
           // 「登录已过期，请重新登录」，对从未登录的游客是句死错误文案。按「引导登录」重写。
-          setAiErr('游客试问需要登录后继续，登录后每日 10 次还送 3 天尊享会员');
+          setAiErr('AI 投研问答为会员功能——登录后开通会员即可使用');
           setAiInput(msg); settle(); return;
         }
         if (!r.ok && r.status === 403) {
-          if (!authUserRef.current) {
-            setGuestAiTrialConsumed(true);
-            try { localStorage.setItem('df.ai.guest_trial_date', beijingParts(new Date()).dateStr); } catch { /* */ }
-          }
-          setAiErr(r.error || '游客免费试问已用完，登录即可继续，还送 3 天尊享会员');
+          setAiErr(r.error || 'AI 投研问答为会员功能——登录后开通会员即可使用');
           setAiInput(msg); settle(); return;
         }
         if (r.ok && r.answer) {
-          if (!authUserRef.current && !r.needs_clarification) {
-            setGuestAiTrialConsumed(true);
-            try { localStorage.setItem('df.ai.guest_trial_date', beijingParts(new Date()).dateStr); } catch { /* */ }
-          }
           setAiAnswer(r.answer); setAiTools(r.tool_trace || []); setAiRoundtableMeta(r.roundtable || null); setAiSugg(r.suggestions || []);
           setAiQuotaLeft(typeof r.quota_left === 'number' ? r.quota_left : null);
           aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, r.answer.slice(0, 300)]];
@@ -2536,12 +2640,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [supportSending, setSupportSending] = useState(false);
   const [supportUnread, setSupportUnread] = useState(0);
   const [adminUnread, setAdminUnread] = useState(0);   // 管理员侧：用户发来的未读私信总数（仅管理员主页提醒）
-  const supportUnreadRef = useRef(0);  // 未读基准：只有"变多"(新回复到达)才弹提示，避免每轮/每次进页面都弹
-  const applySupportUnread = useCallback((n: number, notify: boolean) => {
-    if (notify && n > supportUnreadRef.current) showToast('💬 管理员回复了你的私信 · 点右上角头像查看');
-    supportUnreadRef.current = n;
+  // 被动更新只更新未读数，避免轮询打断阅读。
+  const applySupportUnread = useCallback((n: number) => {
     setSupportUnread(n);
-  }, [showToast]);
+  }, []);
   // A股复盘：打开弹层（拉今日 + 历史），以及首页置顶卡片的今日复盘
   const openReview = useCallback(async (date?: string) => {
     setReviewOpen(true); setReviewLoading(true); setReviewError(false); reviewRetryRef.current = date;
@@ -2592,7 +2694,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const refreshMembership = useCallback(() => {
     const revision = getAuthSnapshot().revision;
     void session.refresh();
-    authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n, false); }).catch(() => {});
+    authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n); }).catch(() => {});
     if (authService.getStoredToken()) {
       authService.fetchReferral().then(d => { if (isAuthRevisionCurrent(revision)) setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0)); }).catch(() => {});
     }
@@ -2603,7 +2705,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setAcctOpen(false); setSupportOpen(true);
     const msgs = await authService.fetchSupportThread();
     if (!isAuthRevisionCurrent(revision)) return;
-    setSupportMsgs(msgs); supportUnreadRef.current = 0; setSupportUnread(0);
+    setSupportMsgs(msgs); setSupportUnread(0);
   }, []);
   const submitRedeem = useCallback(async () => {
     const revision = getAuthSnapshot().revision;
@@ -2705,7 +2807,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const revision = getAuthSnapshot().revision;
     const msgs = await authService.fetchSupportThread();
     if (!isAuthRevisionCurrent(revision)) return;
-    setSupportMsgs(msgs); supportUnreadRef.current = 0; setSupportUnread(0);
+    setSupportMsgs(msgs); setSupportUnread(0);
     if (text) setSupportText(text);
   }, [payCfg, buyPkg, authUser, logAct, isNewUser]);
   const sendSupportMsg = useCallback(async () => {
@@ -2724,8 +2826,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!authUser) return;
     const revision = getAuthSnapshot().revision;
     const tick = () => {
-      if (supportOpen) authService.fetchSupportThread().then(m => { if (!isAuthRevisionCurrent(revision)) return; setSupportMsgs(m); supportUnreadRef.current = 0; setSupportUnread(0); }).catch(() => {});
-      else authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n, true); }).catch(() => {});  // 新回复到达 → 弹提示
+      if (supportOpen) authService.fetchSupportThread().then(m => { if (!isAuthRevisionCurrent(revision)) return; setSupportMsgs(m); setSupportUnread(0); }).catch(() => {});
+      else authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n); }).catch(() => {});  // 新回复到达 → 更新未读数
     };
     const id = visiblePoll(tick, 45000);
     return () => window.clearInterval(id);
@@ -2795,41 +2897,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (!authService.getStoredToken()) { setAuthReason('邀请注册'); setAuthOpen(true); }
     } catch { /* */ }
   }, []);
-  // 新手引导自动触发：仅在「无任何弹窗/任务进行中 + 页面可见」时弹一次；
-  // 有弹窗（尤其 ?ref 邀请注册框）则等关闭后自动重算，绝不盖住登录/注册/命令面板/AI 浮层。
-  useEffect(() => {
-    if (onbShownRef.current) return;
-    let onboarded = false;
-    try { onboarded = !!localStorage.getItem(ONB_KEY); } catch { /* */ }
-    if (onboarded) return;
-    // 等首屏数据成功就绪再开始计时；弱网/失败页不叠加教学弹窗。
-    if (!feedBooted || feedLoadError) return;
-    // AI 工作区本身已经有完整的空状态引导，再盖一层新手浮窗会打断提问主路径。
-    const busy = sideNavKey === 'ai' || authOpen || inviteOpen || paletteOpen || !!newsPreview || !!aiReport || !!shareImgUrl;
-    if (busy) return;
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-      const onVis = () => { if (document.visibilityState === 'visible') setOnbTick(t => t + 1); };
-      document.addEventListener('visibilitychange', onVis);
-      return () => document.removeEventListener('visibilitychange', onVis);
-    }
-    // 延后到 8s：1.2s 就盖脸打断用户的第一眼探索，先让首屏叙事说话；用户先自己点了什么就更不该打断
-    const t = window.setTimeout(() => {
-      if (onbShownRef.current) return;
-      onbShownRef.current = true;
-      setShowOnb(true);
-    }, 8000);
-    return () => window.clearTimeout(t);
-  }, [feedBooted, feedLoadError, sideNavKey, authOpen, inviteOpen, paletteOpen, newsPreview, aiReport, shareImgUrl, onbTick]);
-  useEffect(() => {
-    if (showOnb || onbShownRef.current) return;
-    const suppressAutomaticTour = () => { onbShownRef.current = true; };
-    window.addEventListener('pointerdown', suppressAutomaticTour, { once: true, capture: true });
-    window.addEventListener('keydown', suppressAutomaticTour, { once: true, capture: true });
-    return () => {
-      window.removeEventListener('pointerdown', suppressAutomaticTour, true);
-      window.removeEventListener('keydown', suppressAutomaticTour, true);
-    };
-  }, [showOnb]);
+  // 新手引导只由用户从帮助菜单主动打开。
   const openInvite = useCallback(async () => {
     const revision = getAuthSnapshot().revision;
     setInviteOpen(true); setInviteData(null);
@@ -2871,7 +2939,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => {
     if (!authUser) return;
     const revision = getAuthSnapshot().revision;
-    authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n, false); }).catch(() => {});
+    authService.fetchSupportUnread().then(n => { if (isAuthRevisionCurrent(revision)) applySupportUnread(n); }).catch(() => {});
     authService.fetchReferral().then(d => { if (isAuthRevisionCurrent(revision)) setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0)); }).catch(() => {});
     authService.fetchInvite().then(o => { if (isAuthRevisionCurrent(revision)) inviteCodeRef.current = o.code || ''; }).catch(() => {});
   }, [authUser, applySupportUnread, session.revision]);
@@ -2976,8 +3044,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (authUser) { authService.fetchBookmarks().then(items => { if (isAuthRevisionCurrent(revision)) setBookmarks(new Set(items.map(i => i.message_id))); }).catch(() => {}); }
     else { setBookmarks(new Set()); }
   }, [authUser, session.revision]);
-  // 登录态变化：拉战绩未读（settled 且未看）→ 菜单行红点 + 进站一次性 toast。
-  // 站内触达是 100% 的地板：微信 token 冷推不到时，兑现时刻在这里等用户自然回访。
+  // 登录态变化：拉战绩未读（settled 且未看），仅更新菜单红点。
   useEffect(() => {
     if (!callsUserAllowed(authUser)) { setCallsUnseen(0); setCallsList([]); setCallsSummary(null); return; }
     let dead = false;
@@ -2987,13 +3054,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setCallsList(list); setCallsSummary(sum);
       const n = list.filter(c => c.unseen).length;
       setCallsUnseen(n);
-      if (n > 0 && !callsToastRef.current) {
-        callsToastRef.current = true;
-        showToast(`🎯 你有 ${n} 笔判断已兑现 · 点头像「我的战绩」查看`);
-      }
     })();
     return () => { dead = true; };
-  }, [authUser, showToast, session.revision]);
+  }, [authUser, session.revision]);
   const onAuthed = useCallback((username: string, isNew?: boolean) => {
     authUserRef.current = username;
     refreshMembership();  // 登录后拉会员状态
@@ -3172,6 +3235,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     return () => window.clearInterval(timer);
   }, [refreshNativeBackgroundStatus]);
   const [newsPopupMode, setNewsPopupMode] = useState<ForegroundPopupMode>(() => {
+    // v1 曾默认全部弹窗；迁移时重新要求用户主动开启站内提醒。
+    const stored = LS.read<ForegroundPopupMode>('bbt.news_popup_mode.v2', 'off');
+    return ['important', 'all', 'off'].includes(stored) ? stored : 'off';
+  });
+  const [nativePopupMode] = useState<ForegroundPopupMode>(() => {
+    // Android 后台提醒保留既有授权配置，不随站内默认静默而停推。
     const stored = LS.read<ForegroundPopupMode>('bbt.news_popup_mode.v1', 'all');
     return ['important', 'all', 'off'].includes(stored) ? stored : 'all';
   });
@@ -3262,7 +3331,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [showNewsPopup]);
   // 机构纪要由独立接口提供：只要用户勾选了该类型，即使当前停留在快讯/文章页也会后台轮询并接入弹窗队列。
   useEffect(() => {
-    if (newsPopupMode === 'off' || !newsPopupTopics.includes('机构纪要')) return;
+    if (!FOREGROUND_NEWS_POPUP_ENABLED || newsPopupMode === 'off' || !newsPopupTopics.includes('机构纪要')) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -3285,7 +3354,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const cycleNewsPopupMode = useCallback(() => {
     const next = nextForegroundPopupMode(newsPopupMode);
     setNewsPopupMode(next);
-    LS.write('bbt.news_popup_mode.v1', next);
+    LS.write('bbt.news_popup_mode.v2', next);
     if (next === 'off') setNewsPopupQueue([]);
     logAct('foreground_news_popup', next);
   }, [newsPopupMode, logAct]);
@@ -3309,15 +3378,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setNewsPopupKeywords(previous => previous.filter(item => item !== keyword));
   }, []);
   const nativeBackgroundFilters = useMemo(() => ({
-    mode: newsPopupMode,
+    mode: nativePopupMode,
     topics: newsPopupTopics,
     keywords: newsPopupKeywords,
     watchlist,
-  }), [newsPopupMode, newsPopupTopics, newsPopupKeywords, watchlist]);
+  }), [nativePopupMode, newsPopupTopics, newsPopupKeywords, watchlist]);
   const [nativeFcmRegistered, setNativeFcmRegistered] = useState(false);
   const nativeFcmSeverities = useMemo<RealtimeMessageSeverity[]>(() => (
-    newsPopupMode === 'all' ? ['info', 'success', 'warning', 'critical'] : ['success', 'warning', 'critical']
-  ), [newsPopupMode]);
+    nativePopupMode === 'all' ? ['info', 'success', 'warning', 'critical'] : ['success', 'warning', 'critical']
+  ), [nativePopupMode]);
   const syncNativeFcmSubscription = useCallback(async () => {
     if (!nativeBackgroundSupported() || !nativeBackgroundEnabled) return false;
     let token = nativeFcmToken;
@@ -3341,7 +3410,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         scope: 'watchlist',
         topics: newsPopupTopics,
         keywords: newsPopupKeywords,
-        mode: newsPopupMode,
+        mode: nativePopupMode,
         label: 'android-fcm-v1',
       });
       setNativeFcmRegistered(true);
@@ -3350,7 +3419,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       setNativeFcmRegistered(false);
       return false;
     }
-  }, [nativeBackgroundEnabled, nativeFcmSeverities, nativeFcmToken, newsPopupKeywords, newsPopupMode, newsPopupTopics, watchlist]);
+  }, [nativeBackgroundEnabled, nativeFcmSeverities, nativeFcmToken, newsPopupKeywords, nativePopupMode, newsPopupTopics, watchlist]);
   useEffect(() => {
     if (!nativeBackgroundEnabled) {
       setNativeFcmRegistered(false);
@@ -3423,11 +3492,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     stopDeepPoll(); deepStartingRef.current = false; setDeepBusy(false); setDeepTask(null); setDeepErr(''); setDeepSymbol('');
     authUserRef.current = null; inviteCodeRef.current = '';
     if (getAuthSnapshot().account) pendingActionRef.current = null;
-    setSupportUnread(0); supportUnreadRef.current = 0; setSupportOpen(false); setSupportMsgs([]); setSupportText(''); setSupportSending(false);
+    setSupportUnread(0); setSupportOpen(false); setSupportMsgs([]); setSupportText(''); setSupportSending(false);
     setRedeemOpen(false); setRedeemBusy(false); redeemBusyRef.current = false; setTrialClaiming(false); setBuyOpen(false); setAcctOpen(false); setUpgradeOpen(false); setInviteOpen(false); setInviteData(null);
     setBookmarks(new Set()); setBookmarksOpen(false); setBookmarkList([]);
     setCallsOpen(false); setCallsList([]); setCallsSummary(null); setCallsUnseen(0);
-    setCheckin(null); checkinDayRef.current = ''; callsToastRef.current = false; setRefAvail(0);
+    setCheckin(null); checkinDayRef.current = ''; setRefAvail(0);
     setNewsPreview(null); setArticleOriginal(null); setArticleTextError('');
     setDeepAnswerBusy(false); setAiAttachmentBusy(false); setAiQuotaLeft(null);
     aiTasksRef.current.clear(); aiInterpretCacheRef.current.clear(); aiViewingTaskRef.current = '';
@@ -3437,8 +3506,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // ---- 研报一键 AI 分析（多模态解读：在线 file_id 或本地文件）----
   // 匿名免费体验额度：每天 1 次（与后端按 IP 每日限额对齐）。本机存"今天用过没"，跨天自动恢复。
-  const aiFreeUsed = useCallback(() => { try { return localStorage.getItem('df_ai_free_day') === new Date().toLocaleDateString('en-CA'); } catch { return false; } }, []);
-  const markAiFreeUsed = useCallback(() => { try { localStorage.setItem('df_ai_free_day', new Date().toLocaleDateString('en-CA')); } catch { /* */ } }, []);
 
   // ===== AI 解读后台任务：立即返回不占界面，完成经 toast/浮标回到阅读模态 =====
   const openAiReading = useCallback((v: { report: { title?: string; date?: string } | null; meta: { org?: string; symbol?: string; preview_url?: string } | null; result: AiAnalysis | null; deepDraft: ResearchDeepDraftInput; loading?: boolean; error?: string; original?: string; quick?: boolean; retry?: () => void }) => {
@@ -3455,6 +3522,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const openAiTaskView = useCallback((key: string) => {
     const t = aiTasksRef.current.get(key);
     if (!t) return;
+    // 本机从未有过正文的条目（云端跨端记录 / 上次会话的中断·失败）：点击直接续跑重取，
+    // 不打开错误弹层（错误弹层的「↻ 重试」留给本会话内失败的任务，那里有原始报错上下文）
+    if (!t.result && t.restart && (t.cloud || t.restored)) {
+      showToast(t.cloud ? '正在取回云端解读…' : '正在继续解读…');
+      t.restart();
+      return;
+    }
     if (t.status === 'running') {
       openAiReading({ report: t.report, meta: t.meta, result: (t.quick as AiAnalysis) || null, deepDraft: null, loading: true, original: t.content, quick: !!t.quick });
       aiViewingTaskRef.current = key;  // 跟随任务：阶段/进度/完成实时同步进模态
@@ -3465,7 +3539,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       content: t.content || '', url: '', created_at: t.report?.date || '',
     } as RealtimeMessageRecord) : undefined });
     if (t.status === 'error') { aiViewingTaskRef.current = key; aiRetryRef.current = t.restart; }
-  }, [openAiReading]);
+  }, [openAiReading, showToast]);
 
   const removeAiTask = useCallback((key: string, preserveRetry = false) => {
     if (!preserveRetry) aiRetries.reset(key);
@@ -3477,11 +3551,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const registerAiTask = useCallback((task: AiBgTask) => {
     aiTasksRef.current.get(task.key)?.cancel?.();
     aiTasksRef.current.set(task.key, task);
-    // 浮标只留轻量历史：已结束任务超过 6 条丢最旧
+    // 启动即写历史（status=running）：刷新后进行中的解读显示为「中断 · 点击继续」而非凭空消失
+    upsertAiTaskHistory({
+      key: task.key, kind: task.kind, title: task.title, report: task.report, meta: task.meta,
+      startedAt: task.startedAt, status: 'running', content: task.content,
+    });
+    // 浮标只留轻量历史：已结束任务超过 24 条丢最旧（与本机历史上限一致，刷新后恢复的记录不缩水）
     const finished = Array.from(aiTasksRef.current.values()).filter(t => t.status !== 'running');
-    if (finished.length > 6) {
+    if (finished.length > 24) {
       finished.sort((a, b) => a.startedAt - b.startedAt);
-      for (const t of finished.slice(0, finished.length - 6)) aiTasksRef.current.delete(t.key);
+      for (const t of finished.slice(0, finished.length - 24)) aiTasksRef.current.delete(t.key);
     }
     setAiTasksVersion(v => v + 1);
   }, []);
@@ -3490,7 +3569,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const t = aiTasksRef.current.get(key);
     if (!t) return;
     if (t.status === 'running') t.hidden = true;  // 运行中移除：完成后静默入缓存不再提醒
-    else aiTasksRef.current.delete(key);
+    else { aiTasksRef.current.delete(key); removeAiTaskHistory(key); }
     setAiTasksVersion(v => v + 1);
   }, []);
 
@@ -3499,12 +3578,28 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!cur) return;
     aiRetries.reset(key);
     aiInterpretCacheRef.current.set(key, { result, deepDraft: deepDraft || undefined });
-    persistInterpretEntry(key, { result, deepDraft: deepDraft || undefined });
-    if (cur) { cur.status = 'done'; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1); }
+    // 落盘成功才入历史：否则刷新后历史找不到配对缓存、记录凭空消失（幽灵条目）。
+    // 落盘失败（超大条目/配额耗尽）时记录只活在本次会话内。
+    const persisted = persistInterpretEntry(key, { result, deepDraft: deepDraft || undefined });
+    if (cur) {
+      cur.status = 'done'; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1);
+      if (persisted) upsertAiTaskHistory({ key, kind: cur.kind, title: cur.title, report: cur.report, meta: cur.meta, startedAt: cur.startedAt, status: 'done', content: cur.kind === 'news' ? cur.content : undefined });
+      // 跨端同步：登录后把研报解读元数据写入用户 memory（元数据含完整重跑参数；
+      // 已同步过的不重复写）。失败静默，下次同 key 完成时自然重试。
+      if (cur.kind === 'report' && authUserRef.current && !readSyncedInterpretKeys().has(key)) {
+        void createDulusMemory({
+          scope: 'user',
+          hall: AI_INTERPRET_SYNC_HALL,
+          title: clipTitle(cur.title, 90),
+          content: JSON.stringify({ key, kind: cur.kind, title: cur.title, report: cur.report, meta: cur.meta, startedAt: cur.startedAt }),
+          tags: ['ai_interpret', key],
+          source: 'ai_chat',
+        }).then(() => markInterpretSynced(key)).catch(() => { /* 下次重试 */ });
+      }
+    }
     if (aiViewingTaskRef.current === key) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); setAiQuickPending(false); }
-    if (!authUserRef.current) markAiFreeUsed();  // 匿名免费体验已消费 → 下次起需登录
     if (!cur || !cur.hidden) showToast(`✅ 解读完成：${clipTitle(title)}，点击查看`, () => openAiTaskView(key));
-  }, [markAiFreeUsed, showToast, openAiTaskView, aiRetries]);
+  }, [showToast, openAiTaskView, aiRetries]);
 
   const failAiTask = useCallback((key: string, msg: string) => {
     const cur = aiTasksRef.current.get(key);
@@ -3513,6 +3608,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     cur.status = 'error'; cur.error = msg;
     if (!cur.result && cur.quick) cur.result = cur.quick as AiAnalysis;
     setAiTasksVersion(v => v + 1);
+    upsertAiTaskHistory({
+      key, kind: cur.kind, title: cur.title, report: cur.report, meta: cur.meta,
+      startedAt: cur.startedAt, status: 'error', error: msg, content: cur.content,
+    });
     if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); setAiQuickPending(false); aiRetryRef.current = cur.restart; }
     else if (!cur.hidden) showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
   }, [showToast, openAiTaskView, aiRetries]);
@@ -3521,6 +3620,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const gateAiTask = useCallback((key: string, status: unknown, detail: unknown) => {
     if (!aiTasksRef.current.has(key)) return;
     removeAiTask(key);
+    removeAiTaskHistory(key);  // 门槛拦截（登录/会员/配额）不留任务，历史里的 running 记录一并清掉
     if (aiViewingTaskRef.current === key) {
       aiViewingTaskRef.current = '';
       setAiReport(null); setAiReportMeta(null); setAiResult(null); setAiDeepDraft(null); setAiLoading(false); setAiError(''); setAiQuickPending(false);
@@ -3543,10 +3643,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const runAiAnalysis = useCallback(async (r: ResearchWireItem, hidden = false) => {
     const revision = getAuthSnapshot().revision;
-    // 匿名用户：免费体验「一次」AI 解读，第二次起 toast 引导登录（不再弹全局登录框打断阅读流）。
-    if (!authUserRef.current && aiFreeUsed()) {
-      showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
-      logAct('ai_report_gate', 'free_used_toast');
+    // AI 解读为会员能力：游客一律登录引导；登录非会员由服务端 402 走升级弹窗。
+    if (!authUserRef.current) {
+      requireLogin(() => void runAiAnalysis(r), 'AI 解读');
       return;
     }
     logAct('ai_report', r.title);
@@ -3560,7 +3659,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const cached = aiInterpretCacheRef.current.get(cacheKey);
     if (cached) {
       openAiReading({ report: r, meta, result: cached.result, deepDraft: cached.deepDraft || null });
-      if (!authUserRef.current) markAiFreeUsed();
       return;
     }
     if (resumeAiTask(cacheKey)) return;
@@ -3594,7 +3692,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         // 快轨速览上屏：深稿完成前先给方向感；深稿 settle 时自动替换
         const cur = aiTasksRef.current.get(cacheKey);
         if (cur) { cur.quick = quick; cur.stage = '速览完成 · 深度解读继续生成中'; setAiTasksVersion(v => v + 1); }
-        if (!authUserRef.current) markAiFreeUsed();
         if (aiViewingTaskRef.current === cacheKey) { setAiResult(quick as AiAnalysis); setAiQuickPending(true); }
       }, controller.signal);
       const compact = deep.compact || compactFromDeepDraft(deep);
@@ -3657,15 +3754,17 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           : (detail || deepDetail || e?.message || deepError?.message || 'AI 解读失败，请稍后重试'));
       }
     }
-  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask, aiRetries]);
+  }, [logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask, requireLogin, aiRetries]);
+  useEffect(() => { runAiAnalysisRef.current = runAiAnalysis; }, [runAiAnalysis]);
 
   // 快讯/文章解读：同研报后台任务化，完成经 toast/浮标回看。
   const runNewsAi = useCallback(async (m: RealtimeMessageRecord, refresh = false) => {
     const revision = getAuthSnapshot().revision;
     // Older task histories strip only "news:" from the new versioned key.
     if (m.id?.startsWith('v5:')) m = { ...m, id: m.id.slice(3) };
-    if (!authUserRef.current && aiFreeUsed()) {
-      showToast('💡 体验不错？登录即可继续解读，还送 3 天尊享会员 🎁（右上角登录）');
+    // AI 解读为会员能力：游客一律登录引导；登录非会员由服务端 402 走升级弹窗。
+    if (!authUserRef.current) {
+      requireLogin(() => void runNewsAi(m), 'AI 解读');
       return;
     }
     logAct('ai_news', m.title);
@@ -3679,7 +3778,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const cached = aiInterpretCacheRef.current.get(cacheKey);
     if (cached && isReusableNewsInterpretation(cached.result)) {
       openAiReading({ report, meta: null, result: cached.result, deepDraft: null, retry: () => void runNewsAi(m, true) });
-      if (!authUserRef.current) markAiFreeUsed();
       return;
     }
     if (cached) { aiInterpretCacheRef.current.delete(cacheKey); dropInterpretCache(cacheKey); }
@@ -3706,8 +3804,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (status === 401 || status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
       failAiTask(cacheKey, (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) ? '解读超时了，请重试。' : (detail || e?.message || 'AI 解读失败，请稍后重试'));
     }
-  }, [aiFreeUsed, markAiFreeUsed, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask]);
+  }, [logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask, requireLogin]);
   useEffect(() => { newsRegenerateRef.current = m => { void runNewsAi(m, true); }; }, [runNewsAi]);
+  useEffect(() => { runNewsAiRef.current = runNewsAi; }, [runNewsAi]);
 
   // 后台任务浮标：有运行中任务才开秒表 tick；进度/已用时长由 aiTaskPulse 按开始时刻推导。
   const [, setAiTick] = useState(0);
@@ -5419,15 +5518,29 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const renderQRow = (sym: string) => {
     const q = quotes[sym];
     const isActive = active === sym;
+    const display = toTerminalQuoteDisplay(q, {
+      lastSuccessAt: quoteAtRef.current[sym], retained: quoteRetainedRef.current.has(sym), failed: quotesError,
+    });
+    const metadata = (
+      <div className="bbt-qrow-meta" title={[display.source, display.updatedAt, display.delayNote].filter(Boolean).join(' · ')}>
+        <QuoteStatus quality={display.quality} source={display.source} updatedAt={display.updatedAt}
+          delayNote={display.delayNote} compact={!isActive} />
+      </div>
+    );
     const xBtn = (
       <button className="bbt-qrow-x" aria-label={`移除自选 ${sym}`} title="从自选删除"
         onClick={e => { e.stopPropagation(); removeSymbol(sym); }}>✕</button>
     );
     if (!q) return (
-      <div key={sym} className={`bbt-qrow bbt-dim ${isActive ? 'active' : ''}`} onClick={() => selectStock(sym)}>
-        <span className="c-name"><span className="c-name-t">{sym} {nameOf(sym)}</span>{xBtn}</span>
-        <span className="c-num">—</span><span className="c-num eq-extra">—</span><span className="c-num">—</span><span className="c-range eq-extra">—</span><span className="c-num eq-extra">—</span>
-      </div>
+      <React.Fragment key={sym}>
+        <div className={`bbt-qrow bbt-dim ${isActive ? 'active' : ''}`} onClick={() => selectStock(sym)}>
+          <span className="c-name"><TerminalQuoteName symbol={sym} name={nameOf(sym)} selected={isActive} onSelect={selectStock} />{xBtn}</span>
+          <span className="c-num"><QuoteValue value={display.price} /></span><span className="c-num eq-extra">—</span>
+          <span className="c-num"><QuoteValue value={null} kind="percent" colorConvention="international" /></span>
+          <span className="c-range eq-extra">—</span><span className="c-num eq-extra">—</span>
+        </div>
+        {metadata}
+      </React.Fragment>
     );
     const pc = Number(q.change_percent || 0); const dir = pc > 0 ? 'up' : pc < 0 ? 'down' : 'flat';
     const heat = Math.min(0.42, Math.abs(pc) / 8);
@@ -5440,15 +5553,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     return (
       <React.Fragment key={sym}>
         <div className={`bbt-qrow ${flash[sym] ? `flash-${flash[sym]}` : ''} ${isActive ? 'active' : ''}`} onClick={() => selectStock(sym)}>
-          <span className="c-name"><span className="c-name-t"><b>{q.symbol}</b> {nameOf(sym)}</span>{xBtn}</span>
-          <span className={`c-num bbt-${dir}`}>{q.price}</span>
+          <span className="c-name"><TerminalQuoteName symbol={sym} name={nameOf(sym)} selected={isActive} onSelect={selectStock} />{xBtn}</span>
+          <span className={`c-num bbt-${dir}`}><QuoteValue value={display.price} /></span>
           <span className={`c-num bbt-${dir} eq-extra`}>{pc > 0 ? '+' : ''}{Number(q.change || 0).toFixed(2)}</span>
-          <span className={`c-num bbt-${dir}`} style={{ background: pc > 0 ? `rgba(43,217,106,${heat})` : pc < 0 ? `rgba(255,69,58,${heat})` : 'transparent' }}>{pc > 0 ? '▲' : pc < 0 ? '▼' : ''}{pc > 0 ? '+' : ''}{pc.toFixed(2)}</span>
+          <span className={`c-num bbt-${dir}`} style={{ background: pc > 0 ? `rgba(43,217,106,${heat})` : pc < 0 ? `rgba(255,69,58,${heat})` : 'transparent' }}><QuoteValue value={display.quality === 'unavailable' ? null : display.changePercent} kind="percent" colorConvention="international" /></span>
           <span className="c-range eq-extra" title={`低 ${lo} · 高 ${hi}`}>
             <span className="bbt-range"><span className={`bbt-range-mark bbt-${dir}-bg`} style={{ left: `${pos * 100}%` }} /></span>
           </span>
           <span className="c-num bbt-mute eq-extra">{fmtVol(q.volume)}</span>
         </div>
+        {metadata}
         {hasFund && (
           <div className="bbt-qrow-fund" title="同花顺 iFinD 实时基本面">
             {q.pe_ttm != null && <span>PE <b>{q.pe_ttm.toFixed(1)}</b></span>}
@@ -5569,7 +5683,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     window.setTimeout(() => toolWorkspaceRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
   };
   const aiWorkspaceBusy = aiBusy || deepAnswerBusy;
-  const guestAiTrialUsed = !authUser && (guestAiTrialConsumed || aiQuotaLeft === 0);
   const mobileNavView = getMobileNavView(sideNavKey, feedFilter);
   const jumpFromMobileNav = (view: MobileNavView) => {
     if (view === 'ai') {
@@ -5745,6 +5858,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     </button>
                     {newsPopupFilterOpen && (
                       <div className="bbt-popup-filter" onClick={event => event.stopPropagation()}>
+                      <div className="bbt-popup-filter-hint">站内弹窗默认关闭，按需主动开启。</div>
                       <div className="bbt-popup-filter-label">提醒级别</div>
                       <div className="bbt-popup-mode-list" role="group" aria-label="弹窗提醒级别">
                         {(['important', 'all', 'off'] as ForegroundPopupMode[]).map(mode => (
@@ -5755,7 +5869,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                             aria-pressed={newsPopupMode === mode}
                             onClick={() => {
                               setNewsPopupMode(mode);
-                              LS.write('bbt.news_popup_mode.v1', mode);
+                              LS.write('bbt.news_popup_mode.v2', mode);
                               if (mode === 'off') setNewsPopupQueue([]);
                               logAct('foreground_news_popup', mode);
                             }}
@@ -6061,7 +6175,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 openAi();
                 const q = `${nameOf(active) || active}(${active}) 现在怎么样？`;
                 setAiInput(q);
-                if (guestAiTrialUsed) requireLogin(() => void askAi(q), 'AI 投研问答');
+                if (!authUser) requireLogin(() => void askAi(q), 'AI 投研问答');
                 else void askAi(q);
               }}>⚡ AI 速判</button>
             {/* 取消选中已有两条路（资讯面板筛选 chip 上的 ✕、再点一次已选中的自选行），这里不再放第三个重复按钮 */}
@@ -6409,7 +6523,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <span className="bbt-ai-followups-label">继续追问</span>
                   {aiSugg.map(s => <button key={s} type="button" onClick={() => {
                     primeAiQuestion(s);
-                    if (guestAiTrialUsed) requireLogin(() => void submitAiQuestion(s), 'AI 投研问答');
+                    if (!authUser) requireLogin(() => void submitAiQuestion(s), 'AI 投研问答');
                     else void submitAiQuestion(s);
                   }}>{s} →</button>)}
                 </div>}
@@ -6423,16 +6537,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
                   e.preventDefault();
                   if (!aiInput.trim()) return;
-                  if (guestAiTrialUsed) requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
-                  else void submitAiQuestion();
+                  if (authUser) void submitAiQuestion();
+                  else requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
                 }} />
-                <button type="button" className="bbt-ai-send" aria-label={authUser ? '发送问题' : guestAiTrialUsed ? '登录后继续' : '免费试问'} onClick={() => {
-                  if (guestAiTrialUsed) requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
-                  else void submitAiQuestion();
-                }} disabled={aiWorkspaceBusy || aiAttachmentBusy || !aiInput.trim()}>{aiWorkspaceBusy ? '投研中…' : authUser ? '发送 ↗' : guestAiTrialUsed ? '登录继续' : '免费试问 ↗'}</button>
+                <button type="button" className="bbt-ai-send" aria-label={authUser ? '发送问题' : '登录后使用'} onClick={() => {
+                  if (authUser) void submitAiQuestion();
+                  else requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
+                }} disabled={aiWorkspaceBusy || aiAttachmentBusy || !aiInput.trim()}>{aiWorkspaceBusy ? '投研中…' : authUser ? '发送 ↗' : '登录使用'}</button>
               </div>
               {!authUser ? (
-                <div className="bbt-ai-composer-note is-login">{guestAiTrialUsed ? '游客试问已用；登录后每日 10 次。' : '游客可免费试问 1 次；登录后每日 10 次，会话保存在本机。'}<button type="button" onClick={() => requireLogin(() => aiPromptInputRef.current?.focus(), 'AI 投研问答')}>登录</button></div>
+                <div className="bbt-ai-composer-note is-login">AI 问答为会员功能 · 登录后开通会员即可畅享<button type="button" onClick={() => requireLogin(() => aiPromptInputRef.current?.focus(), 'AI 投研问答')}>登录</button></div>
               ) : (
                 <div className="bbt-ai-composer-note">Enter 发送 · Shift + Enter 换行{aiQuotaLeft !== null ? ` · 今日剩余 ${aiQuotaLeft} 次` : ''} · 仅供研究参考</div>
               )}
@@ -6456,7 +6570,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   const q = `帮我体检这些自选股，逐只给出看多/看空/中性的判断和一句话关键理由，最后指出最需要重点关注的 1-2 只：${syms.map(s => `${nameOf(s)}(${s})`).join('、')}`;
                   logAct('ai_watchlist_checkup', `自选体检×${syms.length}`);
                   openAi(); setAiInput(q);
-                  if (guestAiTrialUsed) requireLogin(() => void askAi(q), 'AI 投研问答');
+                  if (!authUser) requireLogin(() => void askAi(q), 'AI 投研问答');
                   else void askAi(q);
                 }}>🩺</button>
             )}
@@ -7148,16 +7262,23 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       {/* AI 常驻挂件：AI 完整对话页激活时隐藏——同屏已是完整对话，挂件纯属冗余遮挡 */}
       {sideNavKey !== 'ai' && (() => {
         const running = aiTasks.filter(t => t.status === 'running');
-        const done = aiTasks.filter(t => t.status === 'done').length;
+        // 「待看」只数本次会话完成的；历史存档不常驻角标
+        const done = aiTasks.filter(t => t.status === 'done' && !t.restored).length;
         return (
           <div
             ref={aiDockRef}
-            className={`bbt-ai-dock${aiDockPos ? ' is-placed' : ''}${aiDockOpen ? ' is-open' : ''}`}
-            style={aiDockPos ? { left: aiDockPos.x, top: aiDockPos.y } : undefined}
+            className={`bbt-ai-dock${aiDockOpen ? ' is-open' : ''}`}
+            style={aiDockPos ? { right: aiDockPos.r, bottom: aiDockPos.b } : undefined}
           >
             {aiDockOpen && (
-              <div className="bbt-ai-dock-panel" role="dialog" aria-label="AI 助手">
-                <div className="bbt-ai-dock-tabs">
+              <div id="bbt-ai-dock-panel" className="bbt-ai-dock-panel" role="dialog" aria-label="AI 助手">
+                <div
+                  className="bbt-ai-dock-tabs"
+                  onPointerDown={onAiDockHandleDown(false)}
+                  onPointerMove={onAiDockHandleMove}
+                  onPointerUp={onAiDockHandleUp}
+                  onPointerCancel={onAiDockHandleCancel}
+                >
                   <button type="button" className={aiDockTab === 'chat' ? 'active' : ''} onClick={() => setAiDockTab('chat')}>AI 对话</button>
                   <button type="button" className={aiDockTab === 'tasks' ? 'active' : ''} onClick={() => setAiDockTab('tasks')}>
                     解读记录{running.length > 0 ? ` · ${running.length}进行中` : done > 0 ? ` · ${done}待看` : ''}
@@ -7190,7 +7311,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                             <span className={`bbt-ai-task-dot${isRun ? ' is-run' : ''}`}>{isRun ? '' : t.status === 'done' ? '✓' : '!'}</span>
                             <span className="bbt-ai-task-txt">
                               <b>{clipTitle(t.title, 30)}</b>
-                              <small>{isRun ? `${t.stage || '后台解读中'} · ${p.elapsed}s` : t.status === 'done' ? '解读完成 · 点击查看' : clipTitle(t.error, 40)}</small>
+                              <small>{isRun ? `${t.stage || '后台解读中'} · ${p.elapsed}s` : t.status === 'done' ? (t.cloud ? '云端解读 · 点击取回' : t.restored ? '历史解读 · 点击查看' : '解读完成 · 点击查看') : clipTitle(t.error, 40)}</small>
                             </span>
                           </button>
                           <button type="button" className="bbt-ai-task-x" aria-label="移除" onClick={() => dismissAiTask(t.key)}>✕</button>
@@ -7204,16 +7325,21 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <button
               type="button"
               className={`bbt-ai-dock-fab${aiDockOpen ? ' is-open' : ''}${running.length > 0 ? ' is-busy' : ''}`}
-              onPointerDown={onAiDockFabDown}
-              onPointerMove={onAiDockFabMove}
-              onPointerUp={onAiDockFabUp}
-              title="AI 助手（可拖动）"
+              onPointerDown={onAiDockHandleDown(true)}
+              onPointerMove={onAiDockHandleMove}
+              onPointerUp={onAiDockHandleUp}
+              onPointerCancel={onAiDockHandleCancel}
+              onClick={event => { if (event.detail === 0) setAiDockOpen(open => !open); }}
+              aria-label="AI 助手"
+              aria-expanded={aiDockOpen}
+              aria-controls="bbt-ai-dock-panel"
+              title="AI 助手 · 点击打开，可拖动位置"
             >
+              <span className="bbt-ai-dock-icon" aria-hidden="true">✦</span>
+              <span>AI 助手</span>
               {running.length > 0
-                ? <><i className="bbt-ai-tasks-spin" aria-hidden />{running.length}</>
-                : aiTasks.some(t => t.status === 'done')
-                  ? <>✦<i className="bbt-ai-dock-badge">{aiTasks.filter(t => t.status === 'done').length}</i></>
-                  : <>✦ AI</>}
+                ? <><i className="bbt-ai-tasks-spin" aria-hidden="true" /><span className="bbt-ai-dock-badge" aria-label={`${running.length} 项解读进行中`}>{running.length}</span></>
+                : done > 0 && <span className="bbt-ai-dock-badge" aria-label={`${done} 项解读待查看`}>{done}</span>}
             </button>
           </div>
         );
@@ -7252,15 +7378,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <div className="bbt-news-popup-title">{newsPopup.title}</div>
           {newsPopup.content && <div className="bbt-news-popup-content">{newsPopup.content}</div>}
           <div className="bbt-news-popup-hint">点击查看详情 · 7 秒后自动收起</div>
-        </div>
-      )}
-
-      {pushNudge && (
-        <div className="bbt-pushnudge" role="dialog" aria-label="开启盯盘提醒">
-          <span className="bbt-pushnudge-ico" aria-hidden="true">🔔</span>
-          <span className="bbt-pushnudge-txt">已加自选 · 开启盯盘,有快讯/异动第一时间叫你<b>(关掉页面也能收到)</b></span>
-          <button className="bbt-pushnudge-go" onClick={() => requireLogin(armRecall, '开启盯盘提醒')}>开启</button>
-          <button className="bbt-pushnudge-x" onClick={() => setPushNudge(false)} aria-label="稍后">稍后</button>
         </div>
       )}
 

@@ -75,13 +75,13 @@ interface Props {
 type TabKey = 'verdict' | 'lhb' | 'consensus' | 'dividends' | 'news' | 'themes' | 'msgs' | 'calls';
 
 const TABS: Array<[TabKey, string]> = [
-  ['verdict', '⚡ 速判卡'],
   ['msgs', '站内消息'],
+  ['verdict', '⚡ 速判卡'],
+  ['themes', '题材'],
   ['lhb', '龙虎榜'],
   ['consensus', '一致预期'],
   ['dividends', '分红'],
   ['news', '公司新闻'],
-  ['themes', '题材'],
 ];
 
 // 站内消息聚合（message_symbols 倒排索引）的来源徽标
@@ -155,8 +155,11 @@ function CallTimeline({ items }: { items: StockCall[] }) {
 }
 
 export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLogin, username, onLog }: Props) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<TabKey>('verdict');
+  // 点开个股即见面板，不再要求第二次点击；登录态默认看站内消息（快讯/文章/研报/纪要聚合，平台自有内容），
+  // 匿名默认看速判卡（唯一免登录 tab）。外部口径数据（龙虎榜/一致预期/分红/公司新闻）一律后置。
+  const defaultTab: TabKey = loggedIn ? 'msgs' : 'verdict';
+  const [open, setOpen] = useState(true);
+  const [tab, setTab] = useState<TabKey>(defaultTab);
   const [busy, setBusy] = useState(false);
   const cache = useRef<Record<string, any>>({});   // symbol:tab → data（会话内缓存，防重复拉）
   const [, force] = useState(0);
@@ -173,9 +176,10 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
   const [callNote, setCallNote] = useState('');
   const [callMore, setCallMore] = useState(false);                       // 展开区：改期限 + 一句话理由（收起不增噪）
 
-  useEffect(() => {   // 换股复位（含表态区状态；calls 置 null 触发重拉）
-    setOpen(false); setTab('verdict');
+  useEffect(() => {   // 换股复位（含表态区状态；calls 置 null 触发重拉）并按默认 tab 拉数据（面板默认展开，见上）
+    setOpen(true); setTab(defaultTab);
     setCalls(null); setCallMsg(''); setJustCreated(null); setCallMore(false); setCallNote(''); setCallHorizon(5);
+    void load(defaultTab);
   }, [symbol]);
 
   const load = useCallback(async (t: TabKey) => {
@@ -204,8 +208,8 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
   }, [loggedIn, symbol, name]);
 
   const openPanel = useCallback(() => {
-    setOpen(true); void load('verdict');
-  }, [load]);
+    setOpen(true); void load(defaultTab);
+  }, [load, defaultTab]);
 
   // 我的表态（本 symbol）：不走 cache——表态/撤销后必须立刻反映，会话缓存会给用户看陈旧状态
   const loadCalls = useCallback(async () => {
@@ -260,7 +264,7 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
     return (
       <div style={{ margin: '6px 0' }}>
         <button className="bbt-nai" onClick={openPanel}
-          title="9维证据速判 + 龙虎榜/一致预期/分红/新闻，一页看全这只股">📋 个股面板 · 速判/龙虎榜/分红</button>
+          title="站内消息（快讯/文章/研报/纪要）+ 9维证据速判 + 题材/龙虎榜/一致预期/分红，一页看全这只股">📋 个股面板 · 站内消息/速判/龙虎榜</button>
       </div>
     );
   }
@@ -283,7 +287,7 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
       {!loggedIn && (
         <div style={{ ...box, margin: '8px 0', borderColor: 'rgba(255,176,46,.45)', background: 'rgba(255,176,46,.06)' }}>
           <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-            <b>先看结论，再决定是否注册。</b> 速判卡免费展示；登录后解锁评级演变、风险体检、龙虎榜/分红/公司新闻，并可保存自选。
+            <b>先看结论，再决定是否注册。</b> 速判卡免费展示；登录后解锁站内消息时间线（快讯/文章/研报/纪要）、评级演变、风险体检、龙虎榜/分红/公司新闻，并可保存自选。
           </div>
           <button className="bbt-primary-action" style={{ marginTop: 7 }} onClick={() => onRequireLogin('保存自选并解锁完整数据面板')}>登录 / 注册，解锁完整面板</button>
         </div>
