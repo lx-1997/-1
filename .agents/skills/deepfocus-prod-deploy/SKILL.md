@@ -52,6 +52,8 @@ description: >-
 
 多模块发布或有并发上线时，先读 `references/batch-release-guard.md`，验证完整生产候选和全部哈希。
 
+发布新闻或文章 AI 解读链路时，读 `references/news-analysis-preflight.md`，验证媒体来源、正文覆盖、质量门槛和三层缓存，避免把图片二进制或空壳摘要当成完整解读。
+
 ---
 
 ## 流程 B:前端全量重建发布(FinancialTerminal 等 src/ 改动)
@@ -130,3 +132,14 @@ REACT_APP_TERMINAL_ONLY=true CI=false npm run build
 
 - 发布后把本次改动 commit(只 `git add` 自己改的文件,仓库里常有并发会话的无关改动别一起提交);当前多在 `feat/*` 分支,commit 末尾带 `Co-Authored-By: Codex Opus 4.8 <noreply@anthropic.com>`。是否 push 由用户定。
 - 把"这次改了什么、生效在哪、踩没踩新坑"回写进 memory `deepfocus-prod-deploy` / 对应功能 memory。
+
+
+## AI 性能诊断
+
+诊断或优化 AI 响应时间时，读 `references/ai-performance.md`，按静态资源、API、模型、业务链和主机资源逐层取证，并验证生产候选。
+
+
+快讯/文章停更、显示昨天内容或怀疑采集 token/通知重试阻塞时，读 [references/news-ingestion-recovery.md](references/news-ingestion-recovery.md)，按上游原始时间、DAO、bridge、页面 API 四层只读定位，并区分事故证据与尚未上线的修复候选。
+
+
+研报文章式阅读、预先生成与点击即读的缓存衔接，读 [references/research-precomputed-reader.md](references/research-precomputed-reader.md)，核对增量范围、真实模型样本、最终宿主样式及会员浏览器验收。
