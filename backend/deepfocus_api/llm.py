@@ -847,11 +847,20 @@ class CloudResearchLLM:
         # 与文本 JSON 通道保持一致：视觉研报只需要结构化结论，不让思考型模型
         # 把整段预算耗在不可见的 reasoning_content 上。线上当前是 MiniMax-M3，
         # 该参数可避免三路 Agent 同时等待隐藏推理；Kimi K2.5/K2.6 也同样处理。
+        model_l = self.model.lower()
         if _is_kimi_switchable_thinking_model(self.model):
             payload["extra_body"] = {"thinking": {"type": "disabled"}}
+        elif model_l.startswith("glm-") or model_l.startswith("qwen3"):
+            # glm-5.x / qwen3.x 视觉槽位默认开思考：多页整批时 token 预算被
+            # thinking 耗尽会 HTTP 200 但正文为空 {}。显式关闭并抬高预算下限。
+            if model_l.startswith("glm-"):
+                payload["extra_body"] = {"thinking": {"type": "disabled"}}
+            else:
+                payload["extra_body"] = {"enable_thinking": False}
+            payload["max_tokens"] = max(int(max_tokens), 3000)
         else:
             payload["temperature"] = max(0.01, min(self.config["temperature"], 1.0))
-        if self.provider == "minimax" and self.model.lower().startswith("minimax-m3"):
+        if self.provider == "minimax" and model_l.startswith("minimax-m3"):
             payload["extra_body"] = {"reasoning_split": True, "thinking": {"type": "disabled"}}
         if force_json:
             payload["response_format"] = {"type": "json_object"}
@@ -875,7 +884,12 @@ class CloudResearchLLM:
             else:
                 raise RuntimeError(f"视觉模型调用失败：{_clean_error(exc)}") from exc
 
-        return _strip_thinking_blocks(response.choices[0].message.content or "") or ""
+        text = _strip_thinking_blocks(response.choices[0].message.content or "") or ""
+        if text.strip() in {"", "{}"}:
+            # HTTP 200 但正文为空：thinking 预算耗尽或内容策略拦截的典型形态。
+            # 抛错交给上层减页重试/退避，而不是把空结果当成功解析成兜底壳。
+            raise RuntimeError("视觉模型返回空结果（thinking 预算耗尽或内容策略拦截）")
+        return text
 
     def capabilities(self) -> CapabilityListResponse:
         mode = "mock" if self.provider == "mock" else "cloud"

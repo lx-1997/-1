@@ -189,7 +189,7 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
                         none_rejects.pop(fid, None)
                         print(f"[prewarm] 永久失败(下载HTTP {status_code}) fid={fid}")
                     else:
-                        print(f"[prewarm] 稍后重试 fid={fid} error={type(exc).__name__}")
+                        print(f"[prewarm] 稍后重试 fid={fid} error={type(exc).__name__}: {str(exc)[:240]}")
                 await asyncio.sleep(gap)
         except asyncio.CancelledError:
             raise
