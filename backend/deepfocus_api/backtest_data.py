@@ -225,9 +225,20 @@ async def fetch_historical_ohlcv(
         return _error_payload(meta, interval, ["回测日期无效，开始日期必须早于结束日期"])
     providers = {"CN": (_fetch_tencent, _fetch_sina_cn), "HK": (_fetch_tencent,), "US": (_fetch_nasdaq_us,)}.get(meta["market"], ())
     errors: list[str] = []
-    for provider in providers:
+    from . import data_health
+    import time as _time
+    for idx, provider in enumerate(providers):
+        is_last = idx == len(providers) - 1
+        if not is_last and data_health.provider_in_cooldown(provider.__name__, "kline"):
+            continue  # 连续失败冷却中的历史源暂时绕开（末位除外，链路留出口）
+        _t0 = _time.monotonic()
         try:
             payload = await asyncio.wait_for(provider(meta, start_date, end_date), timeout=PROVIDER_TIMEOUT_SECONDS + 1)
+            data_health.record_source_call(
+                provider.__name__, "kline", True, symbol=meta.get("requested", ""),
+                latency_ms=(_time.monotonic() - _t0) * 1000,
+                detail=f"{len(payload.get('bars') or [])} bars",
+            )
             provider_warnings = list(payload.pop("warnings", []) or [])
             result = {
                 "symbol": meta["requested"], "normalized_symbol": meta["symbol"], "market": meta["market"],
@@ -238,6 +249,11 @@ async def fetch_historical_ohlcv(
             _cache[key] = (now_ts, result)
             return dict(result)
         except Exception as exc:  # noqa: BLE001
+            data_health.record_source_call(
+                provider.__name__, "kline", False, symbol=meta.get("requested", ""),
+                latency_ms=(_time.monotonic() - _t0) * 1000,
+                detail=f"{type(exc).__name__}: {exc}"[:200],
+            )
             errors.append(f"{provider.__name__.replace('_fetch_', '')}: {type(exc).__name__}: {exc}")
     return _error_payload(meta, interval, errors or ["没有可用的真实历史行情源"])
 

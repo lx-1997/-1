@@ -4,6 +4,7 @@ import asyncio
 import csv
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -317,7 +318,19 @@ async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) 
                     if code:
                         cn_map[code] = s
                 if cn_map:
-                    res = await asyncio.wait_for(asyncio.to_thread(ifind_api.real_time_quote, list(cn_map.keys())), timeout=6.0)
+                    from . import data_health as _dh
+                    _t0 = time.monotonic()
+                    try:
+                        res = await asyncio.wait_for(asyncio.to_thread(ifind_api.real_time_quote, list(cn_map.keys())), timeout=6.0)
+                        _dh.record_source_call("ifind", "quotes", bool(res and res.get("ok")),
+                                               symbol=",".join(list(cn_map)[:3]),
+                                               latency_ms=(time.monotonic() - _t0) * 1000,
+                                               detail=f"rows={len((res or {}).get('rows') or [])}")
+                    except Exception as _exc:  # noqa: BLE001 —— 失败也要记进健康台账
+                        _dh.record_source_call("ifind", "quotes", False,
+                                               symbol=",".join(list(cn_map)[:3]),
+                                               latency_ms=(time.monotonic() - _t0) * 1000,
+                                               detail=type(_exc).__name__)
                     if res and res.get("ok"):
                         for row in res.get("rows") or []:
                             orig = cn_map.get(row.get("code"))
@@ -330,6 +343,7 @@ async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) 
     headers = {"User-Agent": "DeepFocus/0.1 market-data"}
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=headers) as client:
         missing = [s for s in requested_symbols if s not in quote_by_symbol]  # iFinD 已命中的跳过原链
+        from . import data_health  # 行情源健康台账（调用成败/延迟/冷却降级），失败静默不拖累主链
         for provider in QUOTE_PROVIDERS:
             if not missing:
                 break
@@ -339,11 +353,15 @@ async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) 
             api_key = provider.api_key()
             if provider.requires_key and not api_key:
                 continue
+            # 数据可靠性：连续失败 ≥3 次的源处于 10 分钟冷却期，暂时绕开——末位兜底除外，链路永远留出口
+            if provider is not QUOTE_PROVIDERS[-1] and data_health.provider_in_cooldown(provider.key, "quotes"):
+                continue
             # Provider implementations normally swallow their own network/parser
             # errors, but the registry is intentionally extensible (and the
             # Google fallback imports its adapter lazily).  Keep one broken or
             # newly-added provider from aborting the whole fallback chain: the
             # remaining providers can still fill the symbols they cover.
+            _t0 = time.monotonic()
             try:
                 result = await provider.fetch(client, targets, api_key)
                 if not isinstance(result, tuple) or len(result) != 2:
@@ -358,7 +376,19 @@ async def fetch_market_quotes(symbols: Iterable[str], ifind_user: bool = False) 
                     raise TypeError("provider returned a malformed quote")
                 _merge_quotes(quote_by_symbol, quotes)
                 warnings.extend(provider_warnings)
+                data_health.record_source_call(
+                    provider.key, "quotes", len(quotes) > 0,
+                    symbol=",".join(targets[:3]),
+                    latency_ms=(time.monotonic() - _t0) * 1000,
+                    detail=f"{len(quotes)}/{len(targets)} 命中",
+                )
             except Exception as exc:  # noqa: BLE001 - isolate provider failures
+                data_health.record_source_call(
+                    provider.key, "quotes", False,
+                    symbol=",".join(targets[:3]),
+                    latency_ms=(time.monotonic() - _t0) * 1000,
+                    detail=type(exc).__name__,
+                )
                 warnings.append(f"{provider.name} failed: {safe_error(exc)}.")
                 continue
             missing = [symbol for symbol in requested_symbols if symbol not in quote_by_symbol]
