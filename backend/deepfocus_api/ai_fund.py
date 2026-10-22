@@ -328,6 +328,26 @@ def _price_limit_pct(code: str, name: str = "") -> float:
 _LIMIT_EPS = 0.3   # 距离限板 ≤0.3% 视为封板(一字/封死)，成交不了
 
 
+# ── 成交假设真实化：平方根市场冲击模型(订单额/当日成交额 → 滑点bp) ────────────────
+# 模拟盘此前按实时价零成本成交，收益归因系统性偏乐观。引入 K·√participation 冲击：
+# 参与率1%≈10bp、10%≈32bp；无当日成交额数据时保守取保底 5bp，绝不按零滑点记账。
+_IMPACT_K_BPS = 100.0
+_IMPACT_FLOOR_BPS = 5.0
+_IMPACT_CAP_BPS = 300.0
+
+
+def _impact_cost_bps(ohlc_last: Optional[dict], order_amount: float) -> float:
+    """按最近一根日K的收盘×成交量估计当日成交额，返回该笔订单的冲击滑点(bp)。"""
+    if ohlc_last and order_amount > 0:
+        c = safe_float(ohlc_last.get("c"), 0.0)
+        v = safe_float(ohlc_last.get("v"), 0.0)
+        day_amount = c * v
+        if day_amount > 0:
+            part = min(1.0, order_amount / day_amount)
+            return max(_IMPACT_FLOOR_BPS, min(_IMPACT_CAP_BPS, _IMPACT_K_BPS * math.sqrt(part)))
+    return _IMPACT_FLOOR_BPS
+
+
 def _at_upper_limit(code: str, name: str, chg: Optional[float]) -> bool:
     """涨停封板：买不进(无人卖出)。"""
     return chg is not None and chg >= _price_limit_pct(code, name) - _LIMIT_EPS
@@ -1728,25 +1748,33 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             elif an["score"] <= cfg.sell_threshold:
                 reason = f"信号转弱（综合 {an['score']:+.2f}）{pnl*100:+.1f}%"
             if reason:
-                qty = float(pos["qty"]); amount = qty * price; cash += amount
+                # 冲击成本：按当日成交额估算滑点，卖出按劣化价落袋（盯市仍用实时价，成交记账用有效价）
+                _ohlc = (md.get(code) or {}).get("ohlc") or []
+                _impact = _impact_cost_bps(_ohlc[-1] if _ohlc else None, float(pos["qty"]) * price)
+                price_eff = price * (1 - _impact / 10000.0)
+                qty = float(pos["qty"]); amount = qty * price_eff; cash += amount
+                pnl = (price_eff - avg) / avg if avg else 0.0
                 conn.execute("DELETE FROM aif_position WHERE fund_id=? AND symbol=?", (fund_id, code))
                 tid = uuid.uuid4().hex
                 think = an["thinking"] + [{"icon": "🧠", "label": "卖点", "text": reason + "。"}]
+                if _impact >= 10:
+                    think.append({"icon": "💧", "label": "成交",
+                                  "text": f"按当日成交额估算冲击成本 {_impact:.0f}bp，实际落袋价 {price_eff:.2f}。"})
                 conn.execute("INSERT INTO aif_trade (id,fund_id,ts,symbol,name,side,qty,price,amount,pnl_pct,confidence,catalyst,thinking,narrative,scores,buy_point,catalyst_ref,composite,reason)"
                              " VALUES (?,?,?,?,?,'sell',?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (tid, fund_id, now, code, pos["name"], qty, price, amount, pnl*100, an.get("confidence"),
+                             (tid, fund_id, now, code, pos["name"], qty, round(price_eff, 3), amount, pnl*100, an.get("confidence"),
                               an.get("catalyst"), json.dumps(think, ensure_ascii=False), "",
                               json.dumps(an.get("scores", {}), ensure_ascii=False), "",
                               json.dumps(an.get("catalyst_ref"), ensure_ascii=False) if an.get("catalyst_ref") else None,
                               an.get("score"), reason))
                 # 卖出也写穿公共数据层(与买入侧对称)：卖因(硬止损/移动止盈/破位…)+落袋盈亏，供跨模块历史复用
-                data_store.record("simulation_trade", code, {"side": "sell", "price": price,
+                data_store.record("simulation_trade", code, {"side": "sell", "price": round(price_eff, 3),
                                   "pnl_pct": round(pnl * 100, 2) if isinstance(pnl, (int, float)) else None,
                                   "reason": reason or "", "agent": fund_id}, market="A")
                 held.pop(code, None); sold_now.add(code)
                 decisions.append({"tid": tid, "side": "sell", "symbol": code, "name": pos["name"], "qty": qty,
-                                  "price": price, "pnl": pnl*100, "an": {**an, "thinking": think}})
-                traded.append({"side": "sell", "symbol": code, "name": pos["name"], "qty": qty, "price": price, "reason": reason})
+                                  "price": price_eff, "pnl": pnl*100, "an": {**an, "thinking": think}})
+                traded.append({"side": "sell", "symbol": code, "name": pos["name"], "qty": qty, "price": price_eff, "reason": reason})
 
         # 2) 买入：先过研判分，再过买点确认闸门；大盘转空时只做最强的(高分 + 书法买点/上升段)，宁踏空不接飞刀
         def _buy_allowed(an):
@@ -1782,10 +1810,14 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             target = nav_now * (0.18 + 0.14 * an["confidence"]) * size_mult
             cap = nav_now * min(0.5, 0.33 * size_mult)
             budget = min(cash, target, cap)
-            qty = math.floor(budget / (price * BOARD_LOT)) * BOARD_LOT
-            if qty <= 0 or qty * price > cash:
+            # 冲击成本：按当日成交额估算滑点，买入按劣化价成交（预算/手数都以有效价计算，保证现金不吃负）
+            _ohlc = (md.get(code) or {}).get("ohlc") or []
+            _impact = _impact_cost_bps(_ohlc[-1] if _ohlc else None, budget)
+            price_eff = price * (1 + _impact / 10000.0)
+            qty = math.floor(budget / (price_eff * BOARD_LOT)) * BOARD_LOT
+            if qty <= 0 or qty * price_eff > cash:
                 return False
-            amount = qty * price; cash -= amount; name = universe.get(code, code); now2 = utc_now_iso()
+            amount = qty * price_eff; cash -= amount; name = universe.get(code, code); now2 = utc_now_iso()
             think = list(an["thinking"])
             cmp = _compare_step(code, an, analyses, set(held) | {code}, universe)  # 为什么买它不买别的(横向对比)
             if cmp:
@@ -1795,20 +1827,23 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                               "text": f"近期战绩触发自动降档：门槛 +{performance_brake['thr_delta']:.2f}、"
                                       f"仓位缩至 {performance_brake['size_mult']*100:.0f}%。"})
             think.append({"icon": "🧠", "label": "买点", "text": f"{an['buy_point']}；综合 {an['score']:+.2f}、信心 {an['confidence']*100:.0f}%，出手。"})
+            if _impact >= 10:
+                think.append({"icon": "💧", "label": "成交",
+                              "text": f"按当日成交额估算冲击成本 {_impact:.0f}bp，成交价 {price_eff:.2f}。"})
             conn.execute("INSERT INTO aif_position (fund_id,symbol,name,qty,avg_cost,opened_at,updated_at,high_water) VALUES (?,?,?,?,?,?,?,?)",
-                         (fund_id, code, name, qty, price, now2, now2, price))
-            held[code] = {"symbol": code, "name": name, "qty": qty, "avg_cost": price, "high_water": price, "opened_at": now2}
+                         (fund_id, code, name, qty, price_eff, now2, now2, price_eff))
+            held[code] = {"symbol": code, "name": name, "qty": qty, "avg_cost": price_eff, "high_water": price_eff, "opened_at": now2}
             tid = uuid.uuid4().hex
             conn.execute("INSERT INTO aif_trade (id,fund_id,ts,symbol,name,side,qty,price,amount,pnl_pct,confidence,catalyst,thinking,narrative,scores,buy_point,catalyst_ref,composite,reason)"
                          " VALUES (?,?,?,?,?,'buy',?,?,?,NULL,?,?,?,?,?,?,?,?,?)",
-                         (tid, fund_id, now2, code, name, qty, price, amount, an.get("confidence"), an.get("catalyst"),
+                         (tid, fund_id, now2, code, name, qty, round(price_eff, 3), amount, an.get("confidence"), an.get("catalyst"),
                           json.dumps(think, ensure_ascii=False), "", json.dumps(an.get("scores", {}), ensure_ascii=False),
                           an.get("buy_point"),
                           json.dumps(an.get("catalyst_ref"), ensure_ascii=False) if an.get("catalyst_ref") else None,
                           an.get("score"), (an.get("catalyst") or an.get("buy_point") or "")[:120]))
-            data_store.record("simulation_trade", code, {"side": "buy", "price": price, "agent": fund_id}, market="A")
-            decisions.append({"tid": tid, "side": "buy", "symbol": code, "name": name, "qty": qty, "price": price, "pnl": None, "an": {**an, "thinking": think}})
-            traded.append({"side": "buy", "symbol": code, "name": name, "qty": qty, "price": price, "reason": an.get("buy_point") or ""})
+            data_store.record("simulation_trade", code, {"side": "buy", "price": round(price_eff, 3), "agent": fund_id}, market="A")
+            decisions.append({"tid": tid, "side": "buy", "symbol": code, "name": name, "qty": qty, "price": price_eff, "pnl": None, "an": {**an, "thinking": think}})
+            traded.append({"side": "buy", "symbol": code, "name": name, "qty": qty, "price": price_eff, "reason": an.get("buy_point") or ""})
             daily_buys += 1
             return True
 
@@ -1833,25 +1868,29 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                     q = quotes.get(weakest)
                     if q and safe_float(q.get("latest")):
                         wp = safe_float(q.get("latest")); wpos = held[weakest]
-                        wpnl = (wp - float(wpos["avg_cost"])) / float(wpos["avg_cost"]) if wpos["avg_cost"] else 0.0
-                        cash += float(wpos["qty"]) * wp
+                        # 换仓卖出同样计冲击成本：按当日成交额估算滑点后落袋
+                        _wohlc = (md.get(weakest) or {}).get("ohlc") or []
+                        _wimpact = _impact_cost_bps(_wohlc[-1] if _wohlc else None, float(wpos["qty"]) * wp)
+                        wpe = wp * (1 - _wimpact / 10000.0)
+                        wpnl = (wpe - float(wpos["avg_cost"])) / float(wpos["avg_cost"]) if wpos["avg_cost"] else 0.0
+                        cash += float(wpos["qty"]) * wpe
                         conn.execute("DELETE FROM aif_position WHERE fund_id=? AND symbol=?", (fund_id, weakest))
                         tid = uuid.uuid4().hex; wan = analyses.get(weakest, {"thinking": [], "scores": {}})
                         rtxt = f"换仓：{wpos['name']}（{ws:+.2f}）让位给更强的 {universe.get(code,code)}（{an['score']:+.2f}）"
                         think = wan.get("thinking", []) + [{"icon": "🔄", "label": "换仓", "text": rtxt + "。"}]
                         conn.execute("INSERT INTO aif_trade (id,fund_id,ts,symbol,name,side,qty,price,amount,pnl_pct,confidence,catalyst,thinking,narrative,scores,buy_point,catalyst_ref,composite,reason)"
                                      " VALUES (?,?,?,?,?,'sell',?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                     (tid, fund_id, utc_now_iso(), weakest, wpos["name"], float(wpos["qty"]), wp, float(wpos["qty"])*wp, wpnl*100,
+                                     (tid, fund_id, utc_now_iso(), weakest, wpos["name"], float(wpos["qty"]), round(wpe, 3), float(wpos["qty"])*wpe, wpnl*100,
                                       wan.get("confidence"), wan.get("catalyst"), json.dumps(think, ensure_ascii=False), "",
                                       json.dumps(wan.get("scores", {}), ensure_ascii=False), "",
                                       json.dumps(wan.get("catalyst_ref"), ensure_ascii=False) if wan.get("catalyst_ref") else None,
                                       wan.get("score"), rtxt))
                         # 换仓卖出同样写穿公共数据层(与买入/止损卖出侧字段一致)
-                        data_store.record("simulation_trade", weakest, {"side": "sell", "price": wp,
+                        data_store.record("simulation_trade", weakest, {"side": "sell", "price": round(wpe, 3),
                                           "pnl_pct": round(wpnl * 100, 2) if isinstance(wpnl, (int, float)) else None,
                                           "reason": rtxt or "", "agent": fund_id}, market="A")
-                        decisions.append({"tid": tid, "side": "sell", "symbol": weakest, "name": wpos["name"], "qty": float(wpos["qty"]), "price": wp, "pnl": wpnl*100, "an": {**wan, "thinking": think}})
-                        traded.append({"side": "sell", "symbol": weakest, "name": wpos["name"], "qty": float(wpos["qty"]), "price": wp, "reason": rtxt})
+                        decisions.append({"tid": tid, "side": "sell", "symbol": weakest, "name": wpos["name"], "qty": float(wpos["qty"]), "price": wpe, "pnl": wpnl*100, "an": {**wan, "thinking": think}})
+                        traded.append({"side": "sell", "symbol": weakest, "name": wpos["name"], "qty": float(wpos["qty"]), "price": wpe, "reason": rtxt})
                         held.pop(weakest, None); _do_buy(code, an)
 
         # 3) 观察流（有催化剂没动手）
@@ -2000,7 +2039,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     _deposit_musing(nav, cfg)
 
     return {"ok": True, "traded": traded, "watch": watch, "nav": nav, "regime": regime.get("regime"),
-            "data_quality": {"level": "live", "label": "实时撮合", "detail": "iFinD/新浪免费行情 + 东财日线/资金流撮合", "reasons": []}}
+            "data_quality": {"level": "live", "label": "实时撮合", "detail": "iFinD/新浪免费行情 + 东财日线/资金流撮合；成交含涨跌停闸门与冲击成本"}}
 
 
 # --------------------------------------------------------------------------- #

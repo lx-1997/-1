@@ -7,7 +7,14 @@ from statistics import mean
 from typing import Any
 
 from .backtest_engine import calculate_backtest_metrics
-from .shared_utils import clamp, safe_float, utc_now_iso
+from .shared_utils import (
+    LIMIT_SEAL_EPS_PCT,
+    MAX_VOLUME_PARTICIPATION,
+    clamp,
+    cn_price_limit_pct,
+    safe_float,
+    utc_now_iso,
+)
 
 
 STRATEGY_LABELS = {
@@ -232,6 +239,33 @@ def run_strategy_backtest(
         delta_notional = target_notional - current_notional
         if abs(delta_notional) < max(0.0, min_trade_notional):
             return
+        # ── 成交假设真实化（与 AI 模拟盘/单标回测同口径）────────────────────────
+        # A股涨跌停封板不可成交；单日成交量参与率上限——超出部分按当日无法成交缩量。
+        limit_pct = cn_price_limit_pct(symbol)
+        day_bar = bar_maps.get(symbol, {}).get(date) or {}
+        day_volume = safe_float(day_bar.get("volume"), 0.0)
+        hist_closes = histories[symbol]["closes"]
+        prev_close = hist_closes[-1] if hist_closes else 0.0
+        if limit_pct is not None and prev_close > 0:
+            day_gain = (price / prev_close - 1) * 100.0
+            if delta_notional > 0 and day_gain >= limit_pct - LIMIT_SEAL_EPS_PCT:
+                rule_hits["limit_up_blocked"] += 1
+                return
+            if delta_notional < 0 and day_gain <= -(limit_pct - LIMIT_SEAL_EPS_PCT):
+                rule_hits["limit_down_blocked"] += 1
+                return
+        if day_volume > 0:
+            cap_shares = MAX_VOLUME_PARTICIPATION * day_volume
+            delta_shares_raw = target_notional / price - shares[symbol]
+            if delta_shares_raw > cap_shares:
+                target_notional = (shares[symbol] + cap_shares) * price
+                rule_hits["liquidity_capped"] += 1
+            elif shares[symbol] > 0 and -delta_shares_raw > cap_shares:
+                target_notional = max(0.0, (shares[symbol] - cap_shares) * price)
+                rule_hits["liquidity_capped"] += 1
+            delta_notional = target_notional - current_notional
+            if abs(delta_notional) < max(0.0, min_trade_notional):
+                return
         is_buy = delta_notional > 0
         execution_price = price * (1 + slippage_bps / 10000.0 if is_buy else 1 - slippage_bps / 10000.0)
         target_shares = target_notional / price

@@ -17,7 +17,7 @@ from .backtest_engine import (
     get_backtest,
     update_backtest,
 )
-from .shared_utils import safe_float, utc_now_iso, profit_factor
+from .shared_utils import MAX_VOLUME_PARTICIPATION, safe_float, sealed_limit, utc_now_iso, profit_factor
 
 
 def _sse(event_type: str, payload: dict[str, Any], event_id: str | None = None) -> str:
@@ -38,8 +38,16 @@ def _apply_slippage(price: float, direction: int, slippage: float) -> float:
 async def _execute_strategy(
     kind: str, bars: list[dict[str, Any]], params: dict[str, Any],
     initial_capital: float, commission: float, slippage: float,
+    symbol: str = "",
 ) -> dict[str, Any]:
-    """One cash ledger for every strategy; equity is marked on each bar date."""
+    """One cash ledger for every strategy; equity is marked on each bar date.
+
+    成交假设真实化（与 AI 模拟盘同口径）：
+    - A股涨跌停封板不可成交：涨停买不进、跌停卖不出（含止损日）；
+    - 流动性参与率约束：单日单标的成交不超过当日成交量的 MAX_VOLUME_PARTICIPATION，
+      超出部分按「当日无法成交」处理（买入缩量、卖出分日退出）；
+    - 数据源未提供成交量时诚实降级：不做参与率约束，绝不臆造数据。
+    """
     if initial_capital <= 0 or not 0 <= commission < 1 or not 0 <= slippage < 1:
         raise ValueError("capital must be positive; commission and slippage must be in [0, 1)")
     bars = sorted(bars, key=lambda bar: str(bar["date"]))
@@ -59,38 +67,56 @@ async def _execute_strategy(
     slow_ma = max(fast_ma + 1, int(params.get("slow_ma", 60)))
     signal_ma = max(1, int(params.get("signal_ma", 9)))
     signal_line = None
+    prev_close = 0.0
+    skipped = {"limit_up": 0, "limit_down": 0, "liquidity": 0}
 
-    def buy(bar, reason):
+    def buy(bar, reason, max_shares=None):
         nonlocal cash, shares, entry_cost, entry_index, entry_date
         price = _apply_slippage(float(bar["close"]), 1, slippage)
-        entry_cost = cash
-        shares = cash / (price * (1 + commission))
-        value = shares * price
+        affordable = cash / (price * (1 + commission))
+        qty = affordable if max_shares is None else min(affordable, max_shares)
+        if qty <= 0:
+            skipped["liquidity"] += 1
+            return
+        value = qty * price
         fee = value * commission
-        cash = max(0.0, cash - value - fee)
+        entry_cost = value + fee
+        cash -= entry_cost
+        shares = qty
         entry_index = i
         entry_date = str(bar["date"])
         trades.append({"date": entry_date, "action": "buy", "price": round(price, 2),
                        "shares": round(shares, 6), "value": round(value, 2),
                        "commission": round(fee, 2), "reason": reason})
 
-    def sell(bar, reason, action="sell"):
+    def sell(bar, reason, action="sell", max_shares=None):
         nonlocal cash, shares, entry_cost
         price = _apply_slippage(float(bar["close"]), -1, slippage)
-        value = shares * price
+        qty = shares if max_shares is None else min(shares, max_shares)
+        if qty <= 0:
+            skipped["liquidity"] += 1
+            return
+        cost_portion = entry_cost * (qty / shares) if shares else 0.0
+        value = qty * price
         fee = value * commission
         proceeds = value - fee
         trades.append({"date": str(bar["date"]), "action": action, "price": round(price, 2),
-                       "shares": round(shares, 6), "value": round(value, 2),
-                       "commission": round(fee, 2), "pnl": round(proceeds - entry_cost, 2),
-                       "reason": reason, "return_pct": round((proceeds / entry_cost - 1) * 100, 4)})
+                       "shares": round(qty, 6), "value": round(value, 2),
+                       "commission": round(fee, 2), "pnl": round(proceeds - cost_portion, 2),
+                       "reason": reason, "return_pct": round((proceeds / cost_portion - 1) * 100, 4) if cost_portion else 0.0})
         cash += proceeds
-        shares = entry_cost = 0.0
+        shares -= qty
+        if shares <= 1e-8:
+            shares = entry_cost = 0.0
 
     for i, bar in enumerate(bars):
         price = float(bar["close"])
         if price <= 0 or not math.isfinite(price):
             raise ValueError("historical closes must be finite and positive")
+        day_volume = safe_float(bar.get("volume"), 0.0)
+        day_gain_pct = ((price / prev_close) - 1) * 100 if prev_close > 0 else None
+        sealed_up, sealed_down = sealed_limit(symbol, day_gain_pct)
+        part_cap = (MAX_VOLUME_PARTICIPATION * day_volume) if day_volume > 0 else None
         should_buy = should_sell = False
         buy_reason = sell_reason = ""
         if kind == "momentum" and i >= lookback and (i - lookback) % holding == 0:
@@ -122,32 +148,39 @@ async def _execute_strategy(
             buy_reason = f"突破{window}日高点"
             sell_reason = "跌破支撑" if price < low else f"持仓{holding}日退出"
         if shares and should_sell:
-            sell(bar, sell_reason)
+            if sealed_down:
+                skipped["limit_down"] += 1  # 跌停封板卖不出（无人接盘），只能等下一交易日
+            else:
+                sell(bar, sell_reason, max_shares=part_cap)
         elif not shares and should_buy and cash > 0:
-            buy(bar, buy_reason)
+            if sealed_up:
+                skipped["limit_up"] += 1    # 涨停封板买不进（无人卖出），不模拟成交
+            else:
+                buy(bar, buy_reason, max_shares=part_cap)
         equity_curve.append(round(cash + shares * price, 2))
         equity_dates.append(str(bar["date"]))
+        prev_close = price
     if shares:
         sell(bars[-1], "回测结束平仓", "sell_exit")
-        equity_curve[-1] = round(cash, 2)
+        equity_curve[-1] = round(cash + shares * float(bars[-1]["close"]), 2)  # 末日本能平掉的部分按收盘价入账
     return {"trades": trades, "equity_curve": equity_curve, "equity_dates": equity_dates,
-            "final_equity": round(cash, 2)}
+            "final_equity": round(cash + shares * float(bars[-1]["close"]), 2), "skipped": skipped}
 
 
-async def _execute_momentum_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
-    return await _execute_strategy("momentum", bars, params, initial_capital, commission, slippage)
+async def _execute_momentum_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE, symbol=""):
+    return await _execute_strategy("momentum", bars, params, initial_capital, commission, slippage, symbol)
 
 
-async def _execute_mean_reversion_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
-    return await _execute_strategy("mean_reversion", bars, params, initial_capital, commission, slippage)
+async def _execute_mean_reversion_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE, symbol=""):
+    return await _execute_strategy("mean_reversion", bars, params, initial_capital, commission, slippage, symbol)
 
 
-async def _execute_trend_following_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
-    return await _execute_strategy("trend_following", bars, params, initial_capital, commission, slippage)
+async def _execute_trend_following_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE, symbol=""):
+    return await _execute_strategy("trend_following", bars, params, initial_capital, commission, slippage, symbol)
 
 
-async def _execute_breakout_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE):
-    return await _execute_strategy("breakout", bars, params, initial_capital, commission, slippage)
+async def _execute_breakout_strategy(bars, params, initial_capital=100000, commission=DEFAULT_COMMISSION, slippage=DEFAULT_SLIPPAGE, symbol=""):
+    return await _execute_strategy("breakout", bars, params, initial_capital, commission, slippage, symbol)
 
 
 def _combine_equity_curves(results: dict[str, dict[str, Any]], initial_capital: float, allocations: int) -> tuple[list[str], list[float]]:
@@ -283,7 +316,7 @@ async def _run_backtest_impl(
             result = await runner(
                 bars, params,
                 initial_capital=bt["initial_capital"] / max(len(all_bars), 1),
-                commission=commission, slippage=slippage_val,
+                commission=commission, slippage=slippage_val, symbol=sym,
             )
         except Exception as e:
             yield _sse("bt_execute", {
@@ -303,6 +336,7 @@ async def _run_backtest_impl(
             "equity_curve": eq_curve,
             "equity_dates": result.get("equity_dates", []),
             "final_equity": result.get("final_equity", 0),
+            "skipped": result.get("skipped", {}),
         }
         all_trades_log.extend({**trade, "symbol": sym} for trade in trades_log)
 
@@ -340,6 +374,13 @@ async def _run_backtest_impl(
         "commission": commission,
         "slippage": slippage_val,
         "data_sources": "yfinance" if "yfinance" in _sources else ("synthetic" if _sources else "unknown"),
+        "execution_realism": {
+            "rules": "A股涨跌停封板不可成交；单日成交量参与率上限10%",
+            "skipped_totals": {
+                key: sum(int((r.get("skipped") or {}).get(key, 0)) for r in symbol_results.values())
+                for key in ("limit_up", "limit_down", "liquidity")
+            },
+        },
     }
 
     update_backtest(backtest_id, status="completed", progress=100, result=result_payload)

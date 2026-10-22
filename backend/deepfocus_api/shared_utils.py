@@ -186,3 +186,33 @@ def profit_factor(total_wins: float, total_losses: float, *, cap: float = 999.99
     if losses > 0:
         return round(min(total_wins / losses, cap), 2)
     return cap if total_wins > 0 else 0.0
+
+
+# ── 成交假设真实化：A股涨跌停限幅与成交量参与率（回测/模拟共用口径） ──────────────
+MAX_VOLUME_PARTICIPATION = 0.10   # 单日成交量参与率上限：单日单标的买卖不超过当日成交量的 10%
+LIMIT_SEAL_EPS_PCT = 0.3          # 距限板 ≤0.3 个百分点视为封板（一字/封死），不可成交
+
+
+def cn_price_limit_pct(symbol: str) -> Optional[float]:
+    """A股当日涨跌停幅度%（仅 CN 代码启用）：ST 无法识别按主板处理；科创688/689·创业300/301→20；
+    北交所 8/4/920 开头→30；其余主板→10。非 A 股代码返回 None（不启用限板约束）。"""
+    code = str(symbol or "").upper().strip()
+    raw = code.split(".")[0]
+    is_cn = bool(re.fullmatch(r"\d{6}", raw)) or code.endswith((".SH", ".SZ", ".BJ"))
+    if not is_cn:
+        return None
+    if raw.startswith(("688", "689", "300", "301")):
+        return 20.0
+    if raw.startswith(("8", "4", "920")):
+        return 30.0
+    return 10.0
+
+
+def sealed_limit(symbol: str, day_gain_pct: Optional[float]) -> tuple[bool, bool]:
+    """按当日涨跌幅判断是否封板。返回 (涨停封板, 跌停封板)；非A股或涨跌幅未知 → (False, False)。"""
+    if day_gain_pct is None:
+        return False, False
+    limit = cn_price_limit_pct(symbol)
+    if limit is None:
+        return False, False
+    return (day_gain_pct >= limit - LIMIT_SEAL_EPS_PCT, day_gain_pct <= -(limit - LIMIT_SEAL_EPS_PCT))
