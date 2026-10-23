@@ -601,6 +601,8 @@ async def market_gauge() -> dict[str, Any]:
         "position_band": _position_band(int(round(temperature_v2 / 5.0) * 5)),
         "temperature_trend": trend,
         "temp_delta_1d": temp_delta,
+        "position_trend": position_trend,
+        "position_delta_1d": position_delta,
         "disclaimer": "基于公开指数数据的规则化推导（量能热度为成交量比值），仅供参考，不构成投资建议",
     }
     _gauge_cache = (now, out)
