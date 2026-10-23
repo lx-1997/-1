@@ -78,6 +78,15 @@ const TECH_NEGATIVE = new Set(['下跌右侧', '下跌左侧']);
 const HEAT_POSITIVE = new Set(['沸点', '偏热']);
 const HEAT_NEGATIVE = new Set(['冰点', '偏冷']);
 
+/** 仓位指引五档：名称 / 区间 / 阶段含义 */
+const POSITION_BANDS: { name: string; max: number; desc: string }[] = [
+  { name: '空仓观望', max: 20, desc: '市场冰点：以防守为主，等待企稳信号' },
+  { name: '轻仓', max: 40, desc: '边际改善：试探性参与，严格控制回撤' },
+  { name: '半仓', max: 60, desc: '多空均衡：均衡配置，进可攻退可守' },
+  { name: '偏重', max: 80, desc: '趋势向好：积极配置，跟随量能确认' },
+  { name: '重仓', max: 100, desc: '情绪沸点：全面进攻，注意过热兑现' },
+];
+
 const fallbackColor = (v: string, fb: string) => `var(${v}, ${fb})`;
 
 function Meter({ value, leftLabel, rightLabel }: { value: number; leftLabel: string; rightLabel: string }) {
@@ -172,12 +181,25 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
               </div>
             )}
             <Meter value={gauge.temperature} leftLabel="冰点" rightLabel="沸点" />
-            <div className="mp-pos">
+            <div className="mp-row">
               <span className="mp-k">仓位指引</span>
-              <span className="mp-pos-num">{gauge.position_pct ?? '—'}%</span>
-              <span className="mp-pos-band">{gauge.position_band || ''}</span>
+              <span className="mp-pos-row">
+                <span className="mp-pos-num">{gauge.position_pct ?? '—'}%</span>
+                <span className="mp-pos-band">{gauge.position_band || '—'}</span>
+              </span>
             </div>
             <Meter value={gauge.position_pct ?? gauge.temperature} leftLabel="空仓" rightLabel="满仓" />
+            <div className="mp-bands">
+              {POSITION_BANDS.map(b => (
+                <span
+                  key={b.name}
+                  className={`mp-band ${gauge.position_band === b.name ? 'on' : ''}`}
+                  title={`${b.name}（≤${b.max}%）：${b.desc}`}
+                >
+                  {b.name}
+                </span>
+              ))}
+            </div>
             <div className="mp-row">
               <span className="mp-k">技术形态</span>
               {(gauge.temperature_trend?.length || 0) >= 2 && (

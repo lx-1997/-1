@@ -66,8 +66,28 @@
 .mp-disc { font-size: 10px; color: var(--mute, #7c8794); opacity: 0.8; }
 
 .mp-pos { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; }
-.mp-pos-num { font-size: 15px; font-weight: 700; color: var(--text, #e6e9ef); }
+.mp-pos-row { display: inline-flex; align-items: baseline; gap: 6px; }
+.mp-pos-num { font-size: 14px; font-weight: 700; color: var(--text, #e6e9ef); }
 .mp-pos-band { font-size: 12px; font-weight: 600; color: var(--amber, #ffb000); }
+
+.mp-bands { display: flex; gap: 2px; }
+.mp-band {
+  flex: 1;
+  text-align: center;
+  font-size: 9.5px;
+  line-height: 1.4;
+  padding: 2px 0;
+  border-radius: 4px;
+  color: var(--mute, #7c8794);
+  background: var(--surface-muted, rgba(255, 255, 255, 0.05));
+  cursor: default;
+  white-space: nowrap;
+}
+.mp-band.on {
+  color: var(--amber, #ffb000);
+  background: var(--amber-soft, rgba(255, 176, 0, 0.16));
+  font-weight: 600;
+}
 
 .mp-trend { display: flex; align-items: center; gap: 6px; }
 .mp-spark { flex: 0 0 auto; opacity: 0.9; }
