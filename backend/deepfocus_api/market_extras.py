@@ -213,7 +213,16 @@ async def market_gauge() -> dict[str, Any]:
         amt_ma_i = _sma(amt_i, 20)
         ratio_i = (amt_i[-1] / amt_ma_i) if (amt_ma_i and amt_ma_i > 0) else None
         temp_i = max(0, min(100, round(_TECH_SCORE.get(t_i, 50) * 0.6 + _heat_score(ratio_i) * 0.4)))
-        trend.append({"date": bars[i][0], "temperature": temp_i, "close": c})
+        trend.append({
+            "date": bars[i][0],
+            "temperature": temp_i,
+            "close": c,
+            "tech_state": t_i,
+            "tech_score": _TECH_SCORE.get(t_i, 50),
+            "heat_state": _heat_state(ratio_i),
+            "heat_ratio": ratio_i,
+            "heat_score": _heat_score(ratio_i),
+        })
     temp_delta = (
         trend[-1]["temperature"] - trend[-2]["temperature"]
         if len(trend) >= 2 else None

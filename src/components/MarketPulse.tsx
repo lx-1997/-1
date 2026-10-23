@@ -15,14 +15,23 @@ interface GaugeData {
   temperature?: number;
   position_pct?: number;
   position_band?: string;
-  temperature_trend?: { date: string; temperature: number; close?: number }[];
+  temperature_trend?: {
+    date: string;
+    temperature: number;
+    close?: number;
+    tech_state?: string;
+    tech_score?: number;
+    heat_state?: string;
+    heat_ratio?: number | null;
+    heat_score?: number;
+  }[];
   temp_delta_1d?: number | null;
 }
 
-function Sparkline({ values }: { values: number[] }) {
+function Sparkline({ values, width = 96, height = 26 }: { values: number[]; width?: number; height?: number }) {
   if (values.length < 2) return null;
-  const w = 96;
-  const h = 26;
+  const w = width;
+  const h = height;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;
@@ -32,10 +41,11 @@ function Sparkline({ values }: { values: number[] }) {
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
   const rising = values[values.length - 1] >= values[0];
+  const stroke = rising ? 'var(--up, #2bd96a)' : 'var(--down, #ff5d5d)';
   return (
     <svg className="mp-spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
-      <polyline points={pts.join(' ')} fill="none" stroke={rising ? 'var(--up, #2bd96a)' : 'var(--down, #ff5d5d)'} strokeWidth="1.6" />
-      <circle cx={pts[pts.length - 1].split(',')[0]} cy={pts[pts.length - 1].split(',')[1]} r="2.2" fill={rising ? 'var(--up, #2bd96a)' : 'var(--down, #ff5d5d)'} />
+      <polyline points={pts.join(' ')} fill="none" stroke={stroke} strokeWidth="1.6" />
+      <circle cx={pts[pts.length - 1].split(',')[0]} cy={pts[pts.length - 1].split(',')[1]} r="2.2" fill={stroke} />
     </svg>
   );
 }
@@ -170,12 +180,18 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
             <Meter value={gauge.position_pct ?? gauge.temperature} leftLabel="空仓" rightLabel="满仓" />
             <div className="mp-row">
               <span className="mp-k">技术形态</span>
+              {(gauge.temperature_trend?.length || 0) >= 2 && (
+                <Sparkline values={(gauge.temperature_trend || []).map(t => t.tech_score ?? 50)} width={64} height={16} />
+              )}
               <span className={`mp-state ${TECH_POSITIVE.has(gauge.tech_state || '') ? 'up' : TECH_NEGATIVE.has(gauge.tech_state || '') ? 'down' : ''}`}>
                 {gauge.tech_state || '未知'}
               </span>
             </div>
             <div className="mp-row">
               <span className="mp-k">资金热度</span>
+              {(gauge.temperature_trend?.length || 0) >= 2 && (
+                <Sparkline values={(gauge.temperature_trend || []).map(t => t.heat_score ?? 50)} width={64} height={16} />
+              )}
               <span className={`mp-state ${HEAT_POSITIVE.has(gauge.heat_state || '') ? 'up' : HEAT_NEGATIVE.has(gauge.heat_state || '') ? 'down' : ''}`}>
                 {gauge.heat_state || '未知'}
               </span>
