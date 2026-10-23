@@ -62,10 +62,12 @@ _HEAT_STATES = ["冰点", "偏冷", "中性", "偏热", "沸点"]
 
 
 async def _index_close_amount(points: int) -> list[tuple[str, float, float]]:
-    """沪深300 日线 [(date, close, amount亿)]，取数失败 → []。"""
+    """沪深300 日线 [(date, close, volume)]：东财优先（生产 IP 间歇封锁），新浪 sh000300 兜底。
+
+    volume 为成交量（东财手 / 新浪股），仅用于量能比值的分子分母同源相除。失败 → []。"""
     url = (
         f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={_GAUGE_SECID}"
-        f"&fields1=f1&fields2=f51,f53,f57&klt=101&fqt=1&end=20500101&lmt={points}"
+        f"&fields1=f1&fields2=f51,f53,f56&klt=101&fqt=1&end=20500101&lmt={points}"
     )
     for attempt in range(3):
         try:
@@ -87,7 +89,30 @@ async def _index_close_amount(points: int) -> list[tuple[str, float, float]]:
             pass
         if attempt < 2:
             await asyncio.sleep(0.5 * (attempt + 1))
-    return []
+    # 新浪兜底：指数必须显式 sh 前缀（000300 按 0 开头会被误判深市个股）。
+    try:
+        sina_url = (
+            "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+            f"CN_MarketData.getKLineData?symbol=sh{_GAUGE_SECID.split('.')[-1]}"
+            f"&scale=240&ma=no&datalen={points}"
+        )
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+            r = await client.get(sina_url, headers=_HEADERS)
+        data = r.json()
+        if isinstance(data, str):
+            import json as _json
+            data = _json.loads(data)
+        out = []
+        for row in data or []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                out.append((str(row.get("day") or "")[:10], float(row.get("close")), float(row.get("volume") or 0)))
+            except (TypeError, ValueError):
+                pass
+        return out
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def _sma(values: list[float], n: int) -> Optional[float]:
@@ -163,7 +188,7 @@ async def market_gauge() -> dict[str, Any]:
         "heat_state": heat,
         "heat_ratio": heat_ratio,
         "temperature": temperature,
-        "disclaimer": "基于公开指数数据的规则化推导，仅供参考，不构成投资建议",
+        "disclaimer": "基于公开指数数据的规则化推导（量能热度为成交量比值），仅供参考，不构成投资建议",
     }
     _gauge_cache = (now, out)
     return out
