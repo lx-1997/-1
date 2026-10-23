@@ -311,6 +311,7 @@ export interface ArticleOriginalTextResponse {
   parser: string;
   truncated: boolean;
   source_image_url?: string;
+  extracting?: boolean;
 }
 
 export async function getArticleOriginalText(id: string): Promise<ArticleOriginalTextResponse> {

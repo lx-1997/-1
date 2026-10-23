@@ -13,6 +13,7 @@ interface ArticleOriginalReaderProps {
   parser?: string;
   truncated?: boolean;
   sourceImageUrl?: string;
+  extracting?: boolean;
   onRetry?: () => void;
 }
 
@@ -26,7 +27,7 @@ function formatDate(value?: string): string {
 }
 
 const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
-  title, sourceName, createdAt, paragraphs, content, loading, error, parser, truncated, sourceImageUrl, onRetry,
+  title, sourceName, createdAt, paragraphs, content, loading, error, parser, truncated, sourceImageUrl, extracting, onRetry,
 }) => {
   const source = useMemo(() => parseArticleOriginal({ paragraphs, content, title }), [content, paragraphs, title]);
   const hasBody = source.takeaways.length > 0 || source.sections.some(section => section.paragraphs.length > 0);
@@ -73,6 +74,7 @@ const ArticleOriginalReader: React.FC<ArticleOriginalReaderProps> = ({
           <figure className="bbt-article-reader__source-file" aria-label="文章原始文件">
             <figcaption>
               上游原件 · {isPdf ? 'PDF' : '截图'}按原样呈现
+              {extracting && <span className="bbt-article-reader__extracting"> · 文字对照版提取中…</span>}
             </figcaption>
             {isPdf ? (
               <object className="bbt-article-reader__pdf" data={sourceImageUrl} type="application/pdf" aria-label="文章原始 PDF">

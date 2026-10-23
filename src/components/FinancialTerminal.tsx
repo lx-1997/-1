@@ -2975,9 +2975,24 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setNewsPreview({ ...m, content: '', url: undefined } as RealtimeMessageRecord);
     setArticleTextLoading(true); setArticleTextError('');
     try {
-      const original = await getArticleOriginalText(m.id);
+      let original = await getArticleOriginalText(m.id);
       setArticleOriginal(original);
       setNewsPreview({ ...m, content: original.content, url: undefined } as RealtimeMessageRecord);
+      // 原件直出：后端先返回上游截图/PDF，文字对照版转后台提取——轮询补齐（最多 ~32s）。
+      if (original.extracting && original.source_image_url) {
+        for (let i = 0; i < 8; i += 1) {
+          await new Promise(resolve => setTimeout(resolve, 4000));
+          const again = await getArticleOriginalText(m.id).catch(() => null);
+          if (!again) continue;
+          if (!again.extracting || again.paragraphs.length > 0) {
+            original = again;
+            setArticleOriginal(again);
+            setNewsPreview({ ...m, content: again.content, url: undefined } as RealtimeMessageRecord);
+            break;
+          }
+          setArticleOriginal(again);
+        }
+      }
       if (original.truncated) showToast('原文较长，当前已提取可处理的前段文字');
     } catch (error: any) {
       const detail = error?.response?.data?.detail || error?.detail || '原文文字提取失败，请稍后重试';
@@ -7060,6 +7075,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 parser={articleOriginal?.id === newsPreview.id ? articleOriginal.parser : undefined}
                 truncated={articleOriginal?.id === newsPreview.id ? articleOriginal.truncated : false}
                 sourceImageUrl={articleOriginal?.id === newsPreview.id ? articleOriginal.source_image_url : undefined}
+                extracting={articleOriginal?.id === newsPreview.id ? articleOriginal.extracting : false}
                 onRetry={() => { void loadArticleText(newsPreview); }}
               />
             ) : (
