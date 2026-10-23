@@ -456,7 +456,6 @@ async def market_gauge() -> dict[str, Any]:
     tech_score = _TECH_SCORE.get(tech, 50)
     temperature = max(0, min(100, round(tech_score * 0.6 + _heat_score(heat_ratio) * 0.4)))
     chg_1d = round((last_close / closes[-2] - 1) * 100, 2) if len(closes) >= 2 and closes[-2] else None
-    position_pct = int(round(temperature / 5.0) * 5)  # 仓位指引：温度取整到 5% 一档
 
     # ---- v3 融合：技术价量 / 宽度 / VIX / 解禁 / 情绪 / 风险 / 参与（缺席让渡） ----
     breadth, vix, lift = await asyncio.gather(_breadth_score(), _vix_score(), _lift_score())
@@ -600,7 +599,6 @@ async def market_gauge() -> dict[str, Any]:
         "backtest": backtest,
         "position_pct": int(round(temperature_v2 / 5.0) * 5),
         "position_band": _position_band(int(round(temperature_v2 / 5.0) * 5)),
-        "position_band": _position_band(position_pct),
         "temperature_trend": trend,
         "temp_delta_1d": temp_delta,
         "disclaimer": "基于公开指数数据的规则化推导（量能热度为成交量比值），仅供参考，不构成投资建议",
