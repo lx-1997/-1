@@ -1,0 +1,79 @@
+/* 市场状态仪表 + 数据日历（右栏卡）。颜色全部走终端作用域变量（.bbt 内挂载），fallback 兜底。 */
+
+.mp-wrap { flex: 0 0 auto; }
+
+.mp-sec { padding: 10px 12px; }
+
+.mp-body { display: flex; flex-direction: column; gap: 8px; }
+
+.mp-temp { display: flex; align-items: baseline; gap: 6px; }
+.mp-temp-num { font-size: 26px; font-weight: 700; line-height: 1; }
+.mp-temp-unit { font-size: 11px; color: var(--mute, #8a94a3); }
+.mp-chg { font-size: 12px; font-weight: 600; }
+.mp-chg.up { color: var(--up, #2bd96a); }
+.mp-chg.down { color: var(--down, #ff5d5d); }
+
+.mp-meter { display: flex; align-items: center; gap: 6px; }
+.mp-meter-l,
+.mp-meter-r { font-size: 10px; color: var(--mute, #8a94a3); flex: 0 0 auto; }
+.mp-meter-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--down, #ff5d5d), var(--warn, #ffb000), var(--up, #2bd96a));
+  opacity: 0.85;
+}
+.mp-meter-cursor {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text, #e6e9ef);
+  border: 1px solid var(--panel-2, #14181f);
+  transform: translate(-50%, -50%);
+}
+
+.mp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mp-k { font-size: 12px; color: var(--mute, #9aa4b2); }
+.mp-state { font-size: 12px; font-weight: 600; color: var(--text, #e6e9ef); }
+.mp-state.up { color: var(--up, #2bd96a); }
+.mp-state.down { color: var(--down, #ff5d5d); }
+
+.mp-disc { font-size: 10px; color: var(--mute, #7c8794); opacity: 0.8; }
+
+.mp-empty { font-size: 12px; color: var(--mute, #8a94a3); padding: 4px 0 2px; }
+
+.mp-cal-h { display: flex; align-items: center; justify-content: space-between; }
+.mp-tabs { display: inline-flex; gap: 2px; }
+.mp-tabs button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--mute, #8a94a3);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.mp-tabs button.on {
+  background: var(--amber-soft, rgba(255, 176, 0, 0.14));
+  color: var(--amber, #ffb000);
+}
+
+.mp-cal { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; }
+.mp-ev { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line, #2a313c); }
+.mp-ev:last-child { border-bottom: none; }
+.mp-ev-time { flex: 0 0 auto; font-size: 11px; color: var(--mute, #8a94a3); font-variant-numeric: tabular-nums; padding-top: 1px; }
+.mp-ev-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mp-ev-name {
+  font-size: 12px;
+  color: var(--text, #e6e9ef);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mp-ev-meta { font-size: 10.5px; color: var(--mute, #8a94a3); display: flex; gap: 6px; align-items: center; }
+.mp-ev-stars { color: var(--warn, #ffb000); letter-spacing: 1px; }

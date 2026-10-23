@@ -15,6 +15,7 @@ import {
   StreamConnectionStatus,
 } from '../services/eventService';
 import ShareButton from './common/ShareButton';
+import MarketPulse from './MarketPulse';
 import ShareModal, { ShareTarget } from './ShareModal';
 import AiInterpretationExportActions from './common/AiInterpretationExportActions';
 import { buildAiInterpretationText } from '../utils/aiInterpretationExport';
@@ -6957,6 +6958,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         {railOn && (
           <aside className="bbt-rail" aria-label="市场雷达">
             <div className="bbt-ph">市场雷达</div>
+            <MarketPulse />
             <div className="bbt-rail-body">
               {railHeadItems.length > 0 && (
                 <div className="bbt-rail-sec">
