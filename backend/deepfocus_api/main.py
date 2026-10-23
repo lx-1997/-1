@@ -9252,7 +9252,7 @@ def _owner_args(user: dict) -> dict[str, Any]:
     return {"owner_user_id": owner, "is_admin": str(user.get("role") or "").lower() == "admin"}
 
 
-def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] = None, *, cached: bool = False) -> Optional[str]:
+def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] = None, *, cached: bool = False, report_date: Optional[str] = None) -> Optional[str]:
     """AI 解读额度闸（付费墙 + 省 token）。会员(premium/lifetime)无限；非会员与匿名一律不放行
     （2026-10-11 起会员专属，此前的「缓存结果每日免费读 1 次」一并取消）。
     登录非会员抛 402（→前端升级弹窗）；匿名抛 403（→前端登录弹窗）。kind: yb(研报)/wz(文章)。"""
@@ -9263,8 +9263,66 @@ def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] 
         tier = (u.membership or {}).get("tier") if (u and u.membership) else None
         if tier in ("premium", "lifetime"):
             return None
+        if _legacy_free_read(report_date, cached):
+            return None
         raise HTTPException(status_code=402, detail=f"AI 解读是会员功能——开通会员即可无限解读{label}，{_upgrade_hint()}")
+    if _legacy_free_read(report_date, cached):
+        return None
     raise HTTPException(status_code=403, detail=f"{label} AI 解读为会员专属能力——登录并开通会员后使用")
+
+
+_LEGACY_FREE_HOURS = 48.0  # 研报发布超过该小时数后，已生成的解读（缓存命中）免费开放
+
+
+def _archive_report_date(file_id: str) -> str:
+    """研报发布日期（payload.date）：预热台账 PK 优先、研究档案兜底，10 分钟进程内缓存。
+
+    独立 2s 短超时：档案库被预热高频持锁，此查询绝不能长等（调用方已在线程池）。"""
+    fid = str(file_id or "").strip()
+    if not fid:
+        return ""
+    hit = _ARCHIVE_DATE_CACHE.get(fid)
+    if hit and time.time() - hit[0] < _ARCHIVE_DATE_TTL:
+        return hit[1]
+    value = ""
+    try:
+        from contextlib import closing
+        from . import research_archive as _ra
+        with closing(_ra._connect()) as conn:
+            try:
+                conn.execute("PRAGMA busy_timeout=2000")
+            except Exception:  # noqa: BLE001
+                pass
+            row = conn.execute(
+                "SELECT json_extract(payload,'$.date') FROM research_prewarm_seen "
+                "WHERE file_id=? AND payload IS NOT NULL "
+                "UNION ALL "
+                "SELECT json_extract(payload,'$.date') FROM research_archive "
+                "WHERE json_extract(payload,'$.file_id')=? LIMIT 1",
+                (fid, fid),
+            ).fetchone()
+        value = str((row[0] if row else "") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""  # 锁忙等失败：不缓存、按未知日期处理（不放行）
+    if value:
+        _ARCHIVE_DATE_CACHE[fid] = (time.time(), value)
+    return value
+
+
+def _legacy_free_read(report_date: Optional[str], cached: bool) -> bool:
+    """发布超 48h 的研报：已生成的解读（缓存命中）免费开放给非会员/匿名。
+
+    只放行缓存命中——生成仍会员专属，免费层覆盖面 = 预热覆盖面，成本已付。"""
+    if not cached or not report_date:
+        return False
+    try:
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+        published = _date.fromisoformat(str(report_date).strip()[:10])
+        published_dt = _dt(published.year, published.month, published.day, tzinfo=_tz.utc)
+    except (ValueError, TypeError):
+        return False
+    now = _dt.now(_tz.utc)
+    return (now - published_dt).total_seconds() >= _LEGACY_FREE_HOURS * 3600.0
 
 def _upgrade_hint() -> str:
     """402 升级话术尾巴：只有配了自助发卡店铺（storefront_url）才承诺「自助下单、秒级开通」。
@@ -9364,7 +9422,8 @@ async def api_research_vision_analyze(
     cache_ref = (request.file_id or request.workbench_filename or request.pdf_url or "").strip()
     cache_key = analysis_cache_key(cache_ref)
     cached_result = await asyncio.to_thread(metrics_get_ai_cache, cache_key) if cache_key else None  # 先探缓存，决定非会员能否放行
-    quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None)
+    report_date = await asyncio.to_thread(_archive_report_date, request.file_id or "")
+    quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None, report_date=report_date)
     await asyncio.to_thread(metrics_incr, "ai_research")  # 统计 AI 解读点击次数
     await asyncio.to_thread(metrics_incr_ai_ref, (request.file_id or request.workbench_filename or "").strip(), (request.title or "").strip())  # AI 解读榜
 
@@ -9491,7 +9550,9 @@ async def api_research_deep_draft(
         if _valid_cached_draft(legacy_cached):
             cached_result = legacy_cached
             await asyncio.to_thread(metrics_set_ai_cache, cache_key, legacy_cached)
-    quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None)
+    report_date = await asyncio.to_thread(
+        _archive_report_date, (request.file_id or request.workbench_filename or request.filename or "").strip())
+    quota_key = _check_ai_quota(_user, "yb", http_req, cached=cached_result is not None, report_date=report_date)
     await asyncio.to_thread(metrics_incr, "ai_research")
     await asyncio.to_thread(metrics_incr_ai_ref, (request.file_id or request.workbench_filename or request.filename or "").strip(), title)
 

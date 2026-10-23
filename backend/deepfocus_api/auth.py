@@ -1061,6 +1061,7 @@ PUBLIC_EXACT = frozenset(
         # 会员无限。注意：放行的是 analyze（须带 body 走配额），研报原文 wire-file 仍须登录、不在此列。
         "/api/research/vision-analyze",
         "/api/research/deep-draft",  # 深度研报稿：handler 复用 _check_ai_quota 精细把关
+        "/api/research/deep-draft/cached",  # 深度稿只读缓存端点（无模型调用/PDF解析）：48h 免费层走同款额度闸
         "/api/news/ai-analyze",
         # 终端 AI 投研问答（quick/roundtable + SSE 流）：放行到端点，由 _check_agent_quota 精细把关——
         # 会员/管理员无限，登录非会员每天 10 次(402 引导开通)，匿名每天 1 次、超额 403 引导登录。
