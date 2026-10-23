@@ -6693,6 +6693,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </div>
           )}
 
+          <MarketPulse variant="strip" />
           {isCelebrity ? (
             <TerminalCelebrityViews inline />
           ) : isZsxqStream ? (

@@ -48,7 +48,7 @@ function Meter({ value, leftLabel, rightLabel }: { value: number; leftLabel: str
   );
 }
 
-const MarketPulse: React.FC = () => {
+const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail' }) => {
   const [gauge, setGauge] = useState<GaugeData | null>(null);
   const [cal, setCal] = useState<CalData | null>(null);
   const [day, setDay] = useState<'today' | 'tomorrow'>('today');
@@ -69,6 +69,35 @@ const MarketPulse: React.FC = () => {
     const timer = window.setInterval(load, 30 * 60 * 1000);
     return () => { alive = false; window.clearInterval(timer); };
   }, []);
+
+  if (variant === 'strip') {
+    const avail = gauge?.available && typeof gauge.temperature === 'number';
+    const allEvents = [...((cal?.today?.events) || []), ...((cal?.tomorrow?.events) || [])];
+    const stripEvents = allEvents.slice(0, 5);
+    return (
+      <div className="mp-wrap mp-wrap--strip" role="status">
+        {avail ? (
+          <span className="mp-chip mp-chip-temp">
+            <span className="mp-chip-k">市场温度</span>
+            <b className="mp-chip-v" style={{ color: gauge!.temperature! >= 60 ? fallbackColor('--up', '#2bd96a') : gauge!.temperature! <= 30 ? fallbackColor('--down', '#ff5d5d') : fallbackColor('--warn', '#ffb000') }}>{gauge!.temperature}</b>
+            <span className={`mp-state ${TECH_POSITIVE.has(gauge!.tech_state || '') ? 'up' : TECH_NEGATIVE.has(gauge!.tech_state || '') ? 'down' : ''}`}>{gauge!.tech_state}</span>
+            <span className={`mp-state ${HEAT_POSITIVE.has(gauge!.heat_state || '') ? 'up' : HEAT_NEGATIVE.has(gauge!.heat_state || '') ? 'down' : ''}`}>{gauge!.heat_state}</span>
+          </span>
+        ) : (
+          <span className="mp-chip mp-chip-temp"><span className="mp-chip-k">市场状态</span><span className="mp-empty">暂不可用</span></span>
+        )}
+        <span className="mp-divider" />
+        <span className="mp-chip mp-chip-k mp-cal-k">数据日历</span>
+        {stripEvents.length ? stripEvents.map((e, i) => (
+          <span key={i} className="mp-chip mp-ev-chip" title={`${e.region} ${e.name} · 前值 ${e.prev ?? '—'} · 预期 ${e.forecast ?? '—'}`}>
+            <span className="mp-ev-time">{e.time}</span>
+            <span className="mp-ev-name">{e.name}</span>
+            {typeof e.stars === 'number' && <span className="mp-ev-stars">{'★'.repeat(Math.max(1, Math.min(5, e.stars)))}</span>}
+          </span>
+        )) : <span className="mp-empty">暂无事件</span>}
+      </div>
+    );
+  }
 
   const events = ((day === 'today' ? cal?.today : cal?.tomorrow)?.events) || [];
 
