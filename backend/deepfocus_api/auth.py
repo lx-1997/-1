@@ -1044,6 +1044,8 @@ PUBLIC_EXACT = frozenset(
         "/api/themes/limit-up",    # 涨停天梯/连板梯队（免费引流）
         "/api/dragon-tiger/daily", # 龙虎榜每日全榜（交易所公开事实，/lhb 公开页数据源）
         "/api/calendar/cn",        # A股日历：解禁/新股/财报预约披露（确定性事实，免费回访理由）
+        "/api/econ/calendar",      # 宏观数据日历（今天/明天，前值/预期/星级）——市场仪表条数据源（免费）
+        "/api/market/gauge",       # A股市场状态仪表：技术形态/资金热度/温度（规则化推导，仅供参考）
         "/api/search/universal",   # 统一搜索聚合（股票/资讯/研报/术语/板块，免费层）
         "/api/glossary/index",     # 术语表索引（前端 termLinkify 词典，纯静态科普）
         "/api/headlines",           # AI 今日头条（免费引流位）
