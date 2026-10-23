@@ -286,7 +286,8 @@ async def run_research_prewarm_loop(*, fetch_wire: Callable, fetch_pdf: Callable
         except Exception as exc:
             print(f"[prewarm] 本轮异常：{type(exc).__name__}: {str(exc)[:80]}")
         # Drain useful work without a ten-minute pause; idle/failing queues back off.
-        delay = 30.0 if completed else cycle
+        # 连续成功也强制休 4 分钟：2核/1.8GB 机器上 30s 连跑会把 CPU 打满、API readiness 超时。
+        delay = 240.0 if completed else cycle
         if jitter:
             delay *= random.uniform(1.0 - jitter, 1.0 + jitter)
         await wait_research_arrival(max(10.0, delay))
