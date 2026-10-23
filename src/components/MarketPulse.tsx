@@ -13,6 +13,8 @@ interface GaugeData {
   heat_state?: string;
   heat_ratio?: number | null;
   temperature?: number;
+  position_pct?: number;
+  position_band?: string;
   temperature_trend?: { date: string; temperature: number; close?: number }[];
   temp_delta_1d?: number | null;
 }
@@ -115,6 +117,7 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
             {typeof gauge!.temp_delta_1d === 'number' && gauge!.temp_delta_1d !== 0 && <TrendChip delta={gauge!.temp_delta_1d} />}
             <span className={`mp-state ${TECH_POSITIVE.has(gauge!.tech_state || '') ? 'up' : TECH_NEGATIVE.has(gauge!.tech_state || '') ? 'down' : ''}`}>{gauge!.tech_state}</span>
             <span className={`mp-state ${HEAT_POSITIVE.has(gauge!.heat_state || '') ? 'up' : HEAT_NEGATIVE.has(gauge!.heat_state || '') ? 'down' : ''}`}>{gauge!.heat_state}</span>
+            <span className="mp-pos-band">仓位 {gauge!.position_band || '—'}</span>
           </span>
         ) : (
           <span className="mp-chip mp-chip-temp"><span className="mp-chip-k">市场状态</span><span className="mp-empty">暂不可用</span></span>
@@ -159,6 +162,12 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
               </div>
             )}
             <Meter value={gauge.temperature} leftLabel="冰点" rightLabel="沸点" />
+            <div className="mp-pos">
+              <span className="mp-k">仓位指引</span>
+              <span className="mp-pos-num">{gauge.position_pct ?? '—'}%</span>
+              <span className="mp-pos-band">{gauge.position_band || ''}</span>
+            </div>
+            <Meter value={gauge.position_pct ?? gauge.temperature} leftLabel="空仓" rightLabel="满仓" />
             <div className="mp-row">
               <span className="mp-k">技术形态</span>
               <span className={`mp-state ${TECH_POSITIVE.has(gauge.tech_state || '') ? 'up' : TECH_NEGATIVE.has(gauge.tech_state || '') ? 'down' : ''}`}>

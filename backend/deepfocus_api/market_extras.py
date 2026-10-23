@@ -61,6 +61,19 @@ _TECH_SCORE = {"下跌左侧": 25, "下跌右侧": 10, "震荡": 50, "上涨左�
 _HEAT_STATES = ["冰点", "偏冷", "中性", "偏热", "沸点"]
 
 
+def _position_band(pct: int) -> str:
+    """温度→仓位指引档位（规则映射，仅供参考）。"""
+    if pct <= 20:
+        return "空仓观望"
+    if pct <= 40:
+        return "轻仓"
+    if pct <= 60:
+        return "半仓"
+    if pct <= 80:
+        return "偏重"
+    return "重仓"
+
+
 async def _index_close_amount(points: int) -> list[tuple[str, float, float]]:
     """沪深300 日线 [(date, close, volume)]：东财优先（生产 IP 间歇封锁），新浪 sh000300 兜底。
 
@@ -176,6 +189,7 @@ async def market_gauge() -> dict[str, Any]:
     tech_score = _TECH_SCORE.get(tech, 50)
     temperature = max(0, min(100, round(tech_score * 0.6 + _heat_score(heat_ratio) * 0.4)))
     chg_1d = round((last_close / closes[-2] - 1) * 100, 2) if len(closes) >= 2 and closes[-2] else None
+    position_pct = int(round(temperature / 5.0) * 5)  # 仓位指引：温度取整到 5% 一档
 
     # 近 10 日温度趋势：同一规则逐日回算（均线/量比都用截至当日的数据）。
     trend: list[dict[str, Any]] = []
@@ -216,6 +230,8 @@ async def market_gauge() -> dict[str, Any]:
         "heat_state": heat,
         "heat_ratio": heat_ratio,
         "temperature": temperature,
+        "position_pct": position_pct,
+        "position_band": _position_band(position_pct),
         "temperature_trend": trend,
         "temp_delta_1d": temp_delta,
         "disclaimer": "基于公开指数数据的规则化推导（量能热度为成交量比值），仅供参考，不构成投资建议",

@@ -65,6 +65,10 @@
 
 .mp-disc { font-size: 10px; color: var(--mute, #7c8794); opacity: 0.8; }
 
+.mp-pos { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; }
+.mp-pos-num { font-size: 15px; font-weight: 700; color: var(--text, #e6e9ef); }
+.mp-pos-band { font-size: 12px; font-weight: 600; color: var(--amber, #ffb000); }
+
 .mp-trend { display: flex; align-items: center; gap: 6px; }
 .mp-spark { flex: 0 0 auto; opacity: 0.9; }
 .mp-trend-cap { font-size: 10px; color: var(--mute, #7c8794); }
