@@ -88,6 +88,8 @@
   background: var(--amber-soft, rgba(255, 176, 0, 0.16));
   font-weight: 600;
 }
+.mp-bands--tight { margin-top: -2px; }
+.mp-bands--tight .mp-band { font-size: 8.5px; padding: 1.5px 0; }
 
 .mp-trend { display: flex; align-items: center; gap: 6px; }
 .mp-spark { flex: 0 0 auto; opacity: 0.9; }

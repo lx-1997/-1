@@ -87,6 +87,24 @@ const POSITION_BANDS: { name: string; max: number; desc: string }[] = [
   { name: '重仓', max: 100, desc: '情绪沸点：全面进攻，注意过热兑现' },
 ];
 
+/** 技术形态五段：均线结构的五个阶段 */
+const TECH_BANDS: { name: string; desc: string }[] = [
+  { name: '下跌左侧', desc: '连续下跌后现止跌迹象，趋势尚未反转' },
+  { name: '下跌右侧', desc: '收盘与均线系统同步向下：趋势下行确认' },
+  { name: '震荡', desc: '均线交织：方向不明，以区间思维应对' },
+  { name: '上涨左侧', desc: '趋势仍弱但已站回短期均线：左侧布局区' },
+  { name: '上涨右侧', desc: '收盘与均线系统同步向上：趋势上行确认' },
+];
+
+/** 资金热度五档：当日成交量为 20 日均量的比值区间 */
+const HEAT_BANDS: { name: string; desc: string }[] = [
+  { name: '冰点', desc: '量能不足均量一半：成交极度萎缩' },
+  { name: '偏冷', desc: '量能低于均量：参与意愿偏弱' },
+  { name: '中性', desc: '量能接近均量：交投正常' },
+  { name: '偏热', desc: '量能高于均量：资金参与度抬升' },
+  { name: '沸点', desc: '量能达均量 1.5 倍以上：交投极度活跃，警惕过热' },
+];
+
 const fallbackColor = (v: string, fb: string) => `var(${v}, ${fb})`;
 
 function Meter({ value, leftLabel, rightLabel }: { value: number; leftLabel: string; rightLabel: string }) {
@@ -209,6 +227,17 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
                 {gauge.tech_state || '未知'}
               </span>
             </div>
+            <div className="mp-bands mp-bands--tight">
+              {TECH_BANDS.map(b => (
+                <span
+                  key={b.name}
+                  className={`mp-band ${gauge.tech_state === b.name ? 'on' : ''}`}
+                  title={`${b.name}：${b.desc}`}
+                >
+                  {b.name}
+                </span>
+              ))}
+            </div>
             <div className="mp-row">
               <span className="mp-k">资金热度</span>
               {(gauge.temperature_trend?.length || 0) >= 2 && (
@@ -217,6 +246,17 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
               <span className={`mp-state ${HEAT_POSITIVE.has(gauge.heat_state || '') ? 'up' : HEAT_NEGATIVE.has(gauge.heat_state || '') ? 'down' : ''}`}>
                 {gauge.heat_state || '未知'}
               </span>
+            </div>
+            <div className="mp-bands mp-bands--tight">
+              {HEAT_BANDS.map(b => (
+                <span
+                  key={b.name}
+                  className={`mp-band ${gauge.heat_state === b.name ? 'on' : ''}`}
+                  title={`${b.name}：${b.desc}`}
+                >
+                  {b.name}
+                </span>
+              ))}
             </div>
             <div className="mp-disc">规则化推导 · 仅供参考</div>
           </div>
