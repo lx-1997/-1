@@ -177,6 +177,34 @@ async def market_gauge() -> dict[str, Any]:
     temperature = max(0, min(100, round(tech_score * 0.6 + _heat_score(heat_ratio) * 0.4)))
     chg_1d = round((last_close / closes[-2] - 1) * 100, 2) if len(closes) >= 2 and closes[-2] else None
 
+    # 近 10 日温度趋势：同一规则逐日回算（均线/量比都用截至当日的数据）。
+    trend: list[dict[str, Any]] = []
+    for i in range(max(0, len(bars) - 10), len(bars)):
+        c_i = closes[: i + 1]
+        ma20_i, ma60_i = _sma(c_i, 20), _sma(c_i, 60)
+        c, m20, m60 = c_i[-1], ma20_i, ma60_i
+        if m20 is None or m60 is None:
+            continue
+        if c > m20 > m60:
+            t_i = "上涨右侧"
+        elif c < m20 < m60:
+            t_i = "下跌右侧"
+        elif m20 > m60:
+            t_i = "上涨左侧"
+        elif m20 < m60:
+            t_i = "下跌左侧"
+        else:
+            t_i = "震荡"
+        amt_i = amounts[: i + 1]
+        amt_ma_i = _sma(amt_i, 20)
+        ratio_i = (amt_i[-1] / amt_ma_i) if (amt_ma_i and amt_ma_i > 0) else None
+        temp_i = max(0, min(100, round(_TECH_SCORE.get(t_i, 50) * 0.6 + _heat_score(ratio_i) * 0.4)))
+        trend.append({"date": bars[i][0], "temperature": temp_i, "close": c})
+    temp_delta = (
+        trend[-1]["temperature"] - trend[-2]["temperature"]
+        if len(trend) >= 2 else None
+    )
+
     out = {
         "available": True,
         "as_of": bars[-1][0],
@@ -188,6 +216,8 @@ async def market_gauge() -> dict[str, Any]:
         "heat_state": heat,
         "heat_ratio": heat_ratio,
         "temperature": temperature,
+        "temperature_trend": trend,
+        "temp_delta_1d": temp_delta,
         "disclaimer": "基于公开指数数据的规则化推导（量能热度为成交量比值），仅供参考，不构成投资建议",
     }
     _gauge_cache = (now, out)

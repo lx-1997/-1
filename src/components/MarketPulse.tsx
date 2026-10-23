@@ -13,6 +13,38 @@ interface GaugeData {
   heat_state?: string;
   heat_ratio?: number | null;
   temperature?: number;
+  temperature_trend?: { date: string; temperature: number; close?: number }[];
+  temp_delta_1d?: number | null;
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  if (values.length < 2) return null;
+  const w = 96;
+  const h = 26;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * (w - 4) + 2;
+    const y = h - 3 - ((v - min) / span) * (h - 6);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const rising = values[values.length - 1] >= values[0];
+  return (
+    <svg className="mp-spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      <polyline points={pts.join(' ')} fill="none" stroke={rising ? 'var(--up, #2bd96a)' : 'var(--down, #ff5d5d)'} strokeWidth="1.6" />
+      <circle cx={pts[pts.length - 1].split(',')[0]} cy={pts[pts.length - 1].split(',')[1]} r="2.2" fill={rising ? 'var(--up, #2bd96a)' : 'var(--down, #ff5d5d)'} />
+    </svg>
+  );
+}
+
+function TrendChip({ delta }: { delta: number }) {
+  const up = delta >= 0;
+  return (
+    <span className={`mp-delta ${up ? 'up' : 'down'}`} title="较前一交易日">
+      {up ? '▲' : '▼'} {Math.abs(delta)}
+    </span>
+  );
 }
 
 interface CalEvent {
@@ -80,6 +112,7 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
           <span className="mp-chip mp-chip-temp">
             <span className="mp-chip-k">市场温度</span>
             <b className="mp-chip-v" style={{ color: gauge!.temperature! >= 60 ? fallbackColor('--up', '#2bd96a') : gauge!.temperature! <= 30 ? fallbackColor('--down', '#ff5d5d') : fallbackColor('--warn', '#ffb000') }}>{gauge!.temperature}</b>
+            {typeof gauge!.temp_delta_1d === 'number' && gauge!.temp_delta_1d !== 0 && <TrendChip delta={gauge!.temp_delta_1d} />}
             <span className={`mp-state ${TECH_POSITIVE.has(gauge!.tech_state || '') ? 'up' : TECH_NEGATIVE.has(gauge!.tech_state || '') ? 'down' : ''}`}>{gauge!.tech_state}</span>
             <span className={`mp-state ${HEAT_POSITIVE.has(gauge!.heat_state || '') ? 'up' : HEAT_NEGATIVE.has(gauge!.heat_state || '') ? 'down' : ''}`}>{gauge!.heat_state}</span>
           </span>
@@ -112,12 +145,19 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
                 {gauge.temperature}
               </span>
               <span className="mp-temp-unit">市场温度</span>
+              {typeof gauge.temp_delta_1d === 'number' && gauge.temp_delta_1d !== 0 && <TrendChip delta={gauge.temp_delta_1d} />}
               {typeof gauge.chg_1d_pct === 'number' && (
                 <span className={`mp-chg ${gauge.chg_1d_pct >= 0 ? 'up' : 'down'}`}>
                   {gauge.chg_1d_pct >= 0 ? '+' : ''}{gauge.chg_1d_pct}%
                 </span>
               )}
             </div>
+            {(gauge.temperature_trend?.length || 0) >= 2 && (
+              <div className="mp-trend">
+                <Sparkline values={(gauge.temperature_trend || []).map(t => t.temperature)} />
+                <span className="mp-trend-cap">近 {(gauge.temperature_trend || []).length} 日趋势</span>
+              </div>
+            )}
             <Meter value={gauge.temperature} leftLabel="冰点" rightLabel="沸点" />
             <div className="mp-row">
               <span className="mp-k">技术形态</span>
