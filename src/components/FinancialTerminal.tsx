@@ -2238,7 +2238,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     };
     sync();
     vv.addEventListener('resize', sync);
-    vv.addEventListener('scroll', sync);
+    vv.addEventListener('scroll', sync, { passive: true });
     return () => {
       vv.removeEventListener('resize', sync);
       vv.removeEventListener('scroll', sync);

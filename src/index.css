@@ -1651,3 +1651,14 @@ html {
 @media (max-width: 820px) {
   .terminal-only-root .bbt { width: 100%; height: auto; overflow: visible; }
 }
+
+/* ===== 渲染丝滑度（2026-10-23）：离屏跳过渲染 + 重排局部化 =====================
+   资讯流/右栏是全站最大的 DOM：视口外的行不再参与布局与绘制，
+   滚动、推送更新、主题切换时的级联重排被限制在各自行内。
+   contain-intrinsic-size 用 auto 关键字记住首次实测高度，滚动条不跳。 */
+.bbt-nrow { content-visibility: auto; contain-intrinsic-size: auto 64px; contain: layout style; }
+.bbt-rail-it { content-visibility: auto; contain-intrinsic-size: auto 56px; }
+.bbt-rail, .bbt-rail-body { contain: layout style; }
+
+/* 常驻挂件与浮层：动画/拖拽期间常驻合成层，减少光栅化抖动 */
+.bbt-ai-dock-fab, .bbt-ai-dock-panel { will-change: transform; }
