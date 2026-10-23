@@ -74,6 +74,72 @@ def _position_band(pct: int) -> str:
     return "重仓"
 
 
+# ---- v2 融合维度：站内情绪 / 风险雷达 / 站内参与度 ----
+
+def _sentiment_score() -> Optional[int]:
+    """近 72h 资讯表态情绪：看多占比 0-100；无表态 → None（权重让渡）。"""
+    try:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        from .engagement import NewsReaction
+        from .storage import session_scope
+        from sqlalchemy import select, func
+        since = _dt.now(_tz.utc) - _td(hours=72)
+        with session_scope() as session:
+            rows = session.execute(
+                select(NewsReaction.stance, func.count()).where(
+                    NewsReaction.created_at >= since,
+                    NewsReaction.stance.in_(("bull", "bear")),
+                ).group_by(NewsReaction.stance)
+            ).all()
+        counts = {s: int(c) for s, c in rows}
+        total = counts.get("bull", 0) + counts.get("bear", 0)
+        if total <= 0:
+            return None
+        return round(counts.get("bull", 0) / total * 100)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _participation_score() -> Optional[int]:
+    """站内参与度：近 72h 研判记录覆盖标的数（30 只 → 100 分封顶）。"""
+    try:
+        from contextlib import closing
+        from datetime import datetime as _dt, timezone as _tz
+        from . import data_store
+        since = _dt.now(_tz.utc) - _td(hours=72)
+        since_ts = since.timestamp()
+        with closing(data_store._connect()) as conn:
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT symbol) FROM data_points WHERE recorded_ts >= ?",
+                (since_ts,),
+            ).fetchone()
+        count = int(row[0]) if row and row[0] is not None else 0
+        return max(0, min(100, round(count / 30 * 100)))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _risk_score() -> Optional[int]:
+    """风险雷达反向分：A/H/美股市值前 20 中橙/红灯占比越高分越低。失败 → None。"""
+    try:
+        from .market_risk_radar import build_market_risk_radar
+        data = await asyncio.wait_for(build_market_risk_radar(limit=20), timeout=25)
+        levels: list[str] = []
+        for value in (data or {}).values():
+            if isinstance(value, list):
+                for row in value:
+                    if isinstance(row, dict) and row.get("risk_level"):
+                        levels.append(str(row["risk_level"]).lower())
+        if not levels:
+            return None
+        weight = {"red": 2, "orange": 1}
+        penalty = sum(weight.get(lv, 0) for lv in levels)
+        score = round(max(0.0, 100.0 - penalty / max(1, len(levels)) * 100 * 0.6))
+        return score
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _index_close_amount(points: int) -> list[tuple[str, float, float]]:
     """沪深300 日线 [(date, close, volume)]：东财优先（生产 IP 间歇封锁），新浪 sh000300 兜底。
 
@@ -191,6 +257,76 @@ async def market_gauge() -> dict[str, Any]:
     chg_1d = round((last_close / closes[-2] - 1) * 100, 2) if len(closes) >= 2 and closes[-2] else None
     position_pct = int(round(temperature / 5.0) * 5)  # 仓位指引：温度取整到 5% 一档
 
+    # ---- v2 融合：站内情绪 / 风险雷达 / 站内参与度（缺席维度权重让渡） ----
+    senti, risk, part = await asyncio.gather(
+        asyncio.to_thread(_sentiment_score),
+        _risk_score(),
+        asyncio.to_thread(_participation_score),
+    )
+    dims = [
+        {"key": "technique", "name": "技术价量", "score": temperature, "weight": 40, "used": True},
+        {"key": "sentiment", "name": "资讯情绪", "score": senti, "weight": 20, "used": senti is not None},
+        {"key": "risk", "name": "风险雷达", "score": risk, "weight": 20, "used": risk is not None},
+        {"key": "participation", "name": "站内参与", "score": part, "weight": 20, "used": part is not None},
+    ]
+    used = [d for d in dims if d["used"]]
+    weight_sum = sum(d["weight"] for d in used) or 1
+    temperature_v2 = round(sum(d["score"] * d["weight"] for d in used) / weight_sum)
+
+    # ---- 回测（仅价量模型）：近 120 日逐日温度分桶 vs 前向收益 ----
+    bt_daily: list[tuple[int, float]] = []  # (温度, 当日收盘)
+    for i in range(60, len(bars)):
+        c_i = closes[: i + 1]
+        ma20_i, ma60_i = _sma(c_i, 20), _sma(c_i, 60)
+        if ma20_i is None or ma60_i is None:
+            continue
+        c_b, m20_b, m60_b = c_i[-1], ma20_i, ma60_i
+        if c_b > m20_b > m60_b:
+            t_b = "上涨右侧"
+        elif c_b < m20_b < m60_b:
+            t_b = "下跌右侧"
+        elif m20_b > m60_b:
+            t_b = "上涨左侧"
+        elif m20_b < m60_b:
+            t_b = "下跌左侧"
+        else:
+            t_b = "震荡"
+        amt_i = amounts[: i + 1]
+        amt_ma_i = _sma(amt_i, 20)
+        ratio_b = (amt_i[-1] / amt_ma_i) if (amt_ma_i and amt_ma_i > 0) else None
+        bt_daily.append((
+            max(0, min(100, round(_TECH_SCORE.get(t_b, 50) * 0.6 + _heat_score(ratio_b) * 0.4))),
+            c_b,
+        ))
+    backtest: dict[str, Any] = {"days": len(bt_daily), "model": "price-only", "buckets": [], "corr_temp_fwd5": None}
+    if len(bt_daily) >= 20:
+        for lo, hi, label in ((0, 40, "≤40 谨慎区"), (40, 60, "40-60 中性区"), (60, 101, "≥60 积极区")):
+            pairs = [(t, c) for t, c in bt_daily if lo <= t < hi]
+            f5 = []
+            for idx in range(len(bt_daily) - 5):
+                t0, c0 = bt_daily[idx]
+                if lo <= t0 < hi:
+                    try:
+                        f5.append((bt_daily[idx + 5][1] / c0 - 1) * 100)
+                    except (ZeroDivisionError, IndexError):
+                        pass
+            n_f5 = len(f5)
+            backtest["buckets"].append({
+                "band": label,
+                "n": len(pairs),
+                "fwd5_avg_pct": round(sum(f5) / n_f5, 3) if n_f5 else None,
+                "fwd5_win_rate": round(sum(1 for x in f5 if x > 0) / n_f5 * 100, 1) if n_f5 else None,
+            })
+        n_pair = len(bt_daily) - 5
+        if n_pair > 4:
+            xs = [t for t, _ in bt_daily[:n_pair]]
+            ys = [(bt_daily[i + 5][1] / c - 1) * 100 for i, (_, c) in enumerate(bt_daily[:n_pair])]
+            mx, my = sum(xs) / n_pair, sum(ys) / n_pair
+            cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+            vx = (sum((x - mx) ** 2 for x in xs)) ** 0.5
+            vy = (sum((y - my) ** 2 for y in ys)) ** 0.5
+            backtest["corr_temp_fwd5"] = round(cov / (vx * vy), 3) if vx and vy else None
+
     # 近 10 日温度趋势：同一规则逐日回算（均线/量比都用截至当日的数据）。
     trend: list[dict[str, Any]] = []
     for i in range(max(0, len(bars) - 10), len(bars)):
@@ -238,8 +374,12 @@ async def market_gauge() -> dict[str, Any]:
         "tech_levels": {"ma5": ma5, "ma20": ma20, "ma60": ma60},
         "heat_state": heat,
         "heat_ratio": heat_ratio,
-        "temperature": temperature,
-        "position_pct": position_pct,
+        "temperature": temperature_v2,
+        "temperature_v1_price_only": temperature,
+        "dimensions": dims,
+        "backtest": backtest,
+        "position_pct": int(round(temperature_v2 / 5.0) * 5),
+        "position_band": _position_band(int(round(temperature_v2 / 5.0) * 5)),
         "position_band": _position_band(position_pct),
         "temperature_trend": trend,
         "temp_delta_1d": temp_delta,
