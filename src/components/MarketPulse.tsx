@@ -26,6 +26,13 @@ interface GaugeData {
     heat_score?: number;
   }[];
   temp_delta_1d?: number | null;
+  dimensions?: { key: string; name: string; score: number | null; weight: number; used: boolean }[];
+  backtest?: {
+    days: number;
+    model: string;
+    buckets: { band: string; n: number; fwd5_avg_pct: number | null; fwd5_win_rate: number | null }[];
+    corr_temp_fwd5: number | null;
+  };
 }
 
 function Sparkline({ values, width = 96, height = 26 }: { values: number[]; width?: number; height?: number }) {
@@ -258,7 +265,31 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
                 </span>
               ))}
             </div>
+            {(gauge.dimensions || []).some(d => d.used && d.key !== 'technique') && (
+              <div className="mp-dims">
+                {(gauge.dimensions || []).filter(d => d.used && d.key !== 'technique').map(d => (
+                  <div className="mp-row" key={d.key}>
+                    <span className="mp-k">{d.name}</span>
+                    <span className="mp-dim">{d.score ?? '—'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="mp-disc">规则化推导 · 仅供参考</div>
+            {(gauge.backtest?.buckets?.length) ? (
+              <details className="mp-bt">
+                <summary>近 {gauge.backtest.days} 日价量模型回测</summary>
+                {gauge.backtest.buckets.map(b => (
+                  <div className="mp-bt-row" key={b.band}>
+                    {b.band} · n={b.n} · 5日均收 <b>{b.fwd5_avg_pct ?? '—'}%</b> · 胜率 {b.fwd5_win_rate ?? '—'}%
+                  </div>
+                ))}
+                {typeof gauge.backtest.corr_temp_fwd5 === 'number' && (
+                  <div className="mp-bt-row">温度 ↔ 前向5日收益相关 {gauge.backtest.corr_temp_fwd5}</div>
+                )}
+                <div className="mp-bt-note">仅价量模型回测；情绪/风险维度无历史序列未参与。</div>
+              </details>
+            ) : null}
           </div>
         ) : (
           <div className="mp-empty">市场状态暂不可用</div>

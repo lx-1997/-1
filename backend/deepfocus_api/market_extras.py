@@ -104,7 +104,7 @@ def _participation_score() -> Optional[int]:
     """站内参与度：近 72h 研判记录覆盖标的数（30 只 → 100 分封顶）。"""
     try:
         from contextlib import closing
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         from . import data_store
         since = _dt.now(_tz.utc) - _td(hours=72)
         since_ts = since.timestamp()
