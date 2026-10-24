@@ -11,6 +11,7 @@ import {
 } from '../services/zsxqStreamService';
 import ShareButton from './common/ShareButton';
 import { drawNoteShareImage } from '../utils/noteShareImage';
+import { splitByKeywords } from '../utils/searchHighlight';
 import { apiGet } from '../services/apiClient';
 import './TerminalZsxqStream.css';
 
@@ -59,7 +60,10 @@ const fmtDateTime = (v?: string | null): string => {
 };
 
 // 正文分段渲染：`# xxx` 行作小节标题（星球纪要惯用），「问：/答：」拆问答块，其余普通段落。
-const renderBody = (text: string, links: ZsxqTopic['links'] = []): React.ReactNode => {
+// keyword 非空时（已生效的搜索词）正文命中片段包 <mark> 高亮——搜索过滤由服务端做，前端只管标出。
+const renderBody = (text: string, links: ZsxqTopic['links'] = [], keyword = ''): React.ReactNode => {
+  const hl = (s: string): React.ReactNode =>
+    splitByKeywords(s, keyword).map((seg, i) => (seg.hit ? <mark className="tzs-mark" key={i}>{seg.text}</mark> : seg.text));
   const linkByLabel = new Map(
     (links || [])
       .filter(link => /^https?:\/\//i.test(link.url || ''))
@@ -69,14 +73,14 @@ const renderBody = (text: string, links: ZsxqTopic['links'] = []): React.ReactNo
   const blocks = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
   return blocks.map((b, i) => {
     const h = /^#\s*/.test(b);
-    if (h) return <div className="tzs-h" key={i}>{b.replace(/^#\s*/, '')}</div>;
+    if (h) return <div className="tzs-h" key={i}>{hl(b.replace(/^#\s*/, ''))}</div>;
     const q = /^问\s*[:：]/.test(b);
     const a = /^答\s*[:：]/.test(b);
     if (q || a) {
       return (
         <div className={`tzs-qa ${q ? 'tzs-q' : 'tzs-a'}`} key={i}>
           <span className="tzs-qa-tag">{q ? '问' : '答'}</span>
-          <span className="tzs-qa-text">{b.replace(/^[问答]\s*[:：]\s*/, '')}</span>
+          <span className="tzs-qa-text">{hl(b.replace(/^[问答]\s*[:：]\s*/, ''))}</span>
         </div>
       );
     }
@@ -85,12 +89,12 @@ const renderBody = (text: string, links: ZsxqTopic['links'] = []): React.ReactNo
       return (
         <p className="tzs-para" key={i}>
           <a className="tzs-web-link" href={href} target="_blank" rel="noreferrer nofollow">
-            {cleanSourceBrand(b)} <span aria-hidden="true">↗</span>
+            {hl(cleanSourceBrand(b))} <span aria-hidden="true">↗</span>
           </a>
         </p>
       );
     }
-    return <p className="tzs-para" key={i}>{b}</p>;
+    return <p className="tzs-para" key={i}>{hl(b)}</p>;
   });
 };
 
@@ -167,7 +171,8 @@ const TopicRow: React.FC<{
   item: ZsxqTopic;
   onZoom: (url: string) => void;
   focused?: boolean;
-}> = ({ item, onZoom, focused = false }) => {
+  kw?: string;
+}> = ({ item, onZoom, focused = false, kw = '' }) => {
   const [expanded, setExpanded] = useState(false);
   const cleanText = cleanSourceBrand(item.text || '');
   const long = cleanText.length > COLLAPSE_CHARS;
@@ -208,7 +213,7 @@ const TopicRow: React.FC<{
         )}
       </div>
 
-      {cleanText && <div className="tzs-item-body">{renderBody(bodyText, item.links)}</div>}
+      {cleanText && <div className="tzs-item-body">{renderBody(bodyText, item.links, kw)}</div>}
       {long && (
         <button type="button" className="tzs-expand" onClick={() => setExpanded(v => !v)}>
           {expanded ? '收起 ▴' : '展开全文 ▾'}
@@ -416,7 +421,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
 
         {pool.length > 0 && (
           <div className="tzs-list">
-            {pool.map(it => <TopicRow key={it.id} item={it} focused={it.id === activeFocus} onZoom={u => { setFitWin(false); setZoom(u); }} />)}
+            {pool.map(it => <TopicRow key={it.id} item={it} kw={applied} focused={it.id === activeFocus} onZoom={u => { setFitWin(false); setZoom(u); }} />)}
           </div>
         )}
 

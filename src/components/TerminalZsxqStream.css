@@ -45,6 +45,10 @@
 .tzs-item-body { display: flex; flex-direction: column; gap: 7px; }
 .tzs-h { font-size: 12.5px; font-weight: 700; color: var(--purple, #c4b5fd); margin-top: 2px; }
 .tzs-para { margin: 0; font-size: 12.5px; line-height: 1.62; color: var(--text-body, #e8e6df); white-space: pre-wrap; word-break: break-word; }
+/* 搜索命中高亮（回车检索后正文里的关键词） */
+.tzs-mark { background: color-mix(in srgb, var(--amber-2, #ffb000) 26%, transparent); color: inherit;
+  border-radius: 2px; padding: 0 1px; }
+.tzs-h .tzs-mark, .tzs-qa-text .tzs-mark, .tzs-web-link .tzs-mark { color: inherit; }
 .tzs-web-link { color: var(--blue-2, #8fc7ff); font-weight: 650; text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--blue-2, #8fc7ff) 38%, transparent); }
 .tzs-web-link:hover { color: var(--blue, #b8dcff); border-bottom-color: currentColor; }
 .tzs-qa { display: flex; gap: 7px; align-items: flex-start; }
