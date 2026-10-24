@@ -39,6 +39,20 @@ function fire(payload: Parameters<typeof logStoryEvent>[0]) {
   void logStoryEvent(payload).catch(() => undefined);
 }
 
+// 与 CSS 的 820px 主断点保持一致：移动端收窄每个分区的条数，减少滚动疲劳。
+function useIsMobile(): boolean {
+  const query = '(max-width: 820px)';
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setMobile(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return mobile;
+}
+
 const StoryRow: React.FC<{
   card: StoryRowCard;
   index: number;
@@ -118,6 +132,7 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
   const [mine, setMine] = useState<StoryCard[] | null>(null);
   const [personalized, setPersonalized] = useState(false);
   const [loading, setLoading] = useState(true);
+  const isMobile = useIsMobile();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,7 +157,9 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
   useEffect(() => { void load(); }, [load]);
 
   const sections = useMemo(() => (brief?.sections || []).filter(s => s.items.length > 0), [brief]);
-  const personalStories = useMemo(() => (mine || []).slice(0, 6), [mine]);
+  const personalLimit = isMobile ? 4 : 6;
+  const perSection = isMobile ? 2 : 4;
+  const personalStories = useMemo(() => (mine || []).slice(0, personalLimit), [mine, personalLimit]);
 
   // 点击故事：有标的就选中该标的下钻，否则打开今日复盘。
   const openStory = useCallback((card: StoryRowCard) => {
@@ -204,7 +221,7 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
               <small>{section.note}</small>
             </div>
             <ul className="bbt-story-list">
-              {section.items.slice(0, 4).map((item, index) => {
+              {section.items.slice(0, perSection).map((item, index) => {
                 const card: StoryRowCard = {
                   story_id: item.story_id, kind: item.kind, title: item.subject || item.title,
                   summary: item.summary, symbol: item.symbol, entity_name: item.entity_name,

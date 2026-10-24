@@ -34,10 +34,37 @@
 .bbt-story-why em { padding: 1px 6px; border-radius: 4px; background: var(--accent-soft, rgba(16,163,127,.10)); color: var(--accent); font-size: 9px; font-style: normal; }
 .bbt-story-symbol { align-self: center; flex: 0 0 auto; max-width: 96px; overflow: hidden; border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; padding: 2px 0; }
 .bbt-stories-foot { padding: 7px 14px; border-top: 1px solid var(--border); background: var(--surface-muted); color: var(--text-faint); font-size: 10px; line-height: 1.5; }
-@media (max-width: 760px) {
-  .bbt-stories { margin-right: 8px; margin-left: 8px; }
+/* 移动端：对齐终端 820px 主断点。单列、放大正文与触控目标、标的操作整行可点（拇指友好）。 */
+@media (max-width: 820px) {
+  .bbt-stories { margin: 10px 8px 0; }
+  .bbt-stories-head { padding: 12px 13px; gap: 10px; }
+  .bbt-stories-head > div { min-width: 0; }
+  .bbt-stories-head h2 { font-size: 16px; }
+  .bbt-stories-head p { font-size: 11px; max-width: none; }
+  .bbt-stories-head button { flex: 0 0 auto; padding: 9px 13px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+  .bbt-stories-headline { margin: 0 13px; font-size: 12px; }
   .bbt-stories-grid { grid-template-columns: 1fr; }
   .bbt-stories-grid .bbt-stories-block + .bbt-stories-block { border-top: 1px solid var(--border-soft); border-left: 0; }
-  .bbt-stories-head { flex-direction: column; }
-  .bbt-story-symbol { max-width: 72px; }
+  .bbt-stories-block { padding: 10px 13px; }
+  .bbt-stories-block-head { margin-bottom: 7px; }
+  .bbt-stories-block-head b { font-size: 13px; }
+  .bbt-stories-block-head small { font-size: 10.5px; }
+  .bbt-stories-login { width: calc(100% - 26px); margin: 10px 13px 0; padding: 12px; font-size: 12px; }
+  /* 故事行：正文放大到可读档，触控高度 ≥40px */
+  .bbt-story { flex-direction: column; align-items: stretch; gap: 6px; padding: 11px 0; }
+  .bbt-story-main { gap: 4px; min-height: 40px; }
+  .bbt-story-title { font-size: 13.5px; line-height: 1.45; }
+  .bbt-story-summary { font-size: 11.5px; -webkit-line-clamp: 3; }
+  .bbt-story-kind { font-size: 10px; padding: 2px 7px; }
+  .bbt-story-event { font-size: 11px; }
+  .bbt-story-evidence { font-size: 10px; }
+  .bbt-story-why { gap: 6px; }
+  .bbt-story-why em { font-size: 10px; padding: 2px 7px; }
+  /* 标的操作整行可点，不再与主按钮挤在一行 */
+  .bbt-story-symbol { align-self: stretch; max-width: none; margin-top: 2px; padding: 10px 11px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-muted); font-size: 12px; text-align: left; }
+  .bbt-stories-foot { padding: 9px 13px; font-size: 10.5px; }
+}
+@media (max-width: 480px) {
+  .bbt-stories-head { flex-wrap: wrap; }
+  .bbt-story-summary { -webkit-line-clamp: 2; }
 }
