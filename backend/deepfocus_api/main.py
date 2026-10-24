@@ -99,6 +99,10 @@ from .content_ontology import annotate_content, build_content_map, init_content_
 from . import research_archive
 from . import engagement
 from . import track_record
+from . import story_engine
+from .story_engine import init_story_db, run_story_engine
+from . import story_events
+from . import user_profile
 from .ai_supply_chain import fetch_ai_supply_chain_capacity_trends
 from .data_sources import (
     capture_agent_web_pages,
@@ -1630,6 +1634,8 @@ async def lifespan(app: FastAPI):
     growth_analyst_task = _spawn_bg("growth_analyst", run_growth_analyst)
     from .checkin import init_checkin_db
     init_checkin_db()  # 连续看复盘签到表
+    init_story_db()  # 事件簇（故事）库：今日看板 / 千人千面推荐 / 大众简报的公共资产
+    story_events.init_events_db()  # 故事级埋点库：个人化排序的隐式兴趣信号源
     ai_fund.init_ai_fund_db()  # A股 AI 模拟盘（虚拟基金）账户表
     init_ontology_db()  # 投资本体 MVP：实体/别名/关系/演示动作审计
     # AI 模拟盘交易员：A股交易时段内每 30min 跑一轮多因子决策（自动模拟买卖），展示给大家看
@@ -1660,13 +1666,15 @@ async def lifespan(app: FastAPI):
     except Exception as _mkt_exc:  # noqa: BLE001 - 建表失败不阻断启动
         print(f"[marketing] init 跳过：{type(_mkt_exc).__name__}")
     marketing_task = _spawn_bg("marketing_engine", run_marketing_engine)
+    # 事件簇引擎：每 20min 把站内四类内容聚成「故事」（零 LLM、只读内容库），供今日看板/推荐/简报。
+    story_engine_task = _spawn_bg("story_engine", run_story_engine)
     yield
     # 优雅关停但不无限等：后台任务可能卡在不可取消的 to_thread(渲染)/长 LLM 调用里，
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
     _bg_tasks = (memory_cache_task, dao_bridge_task, recall_ingest_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
                  ashare_review_task, morning_briefing_task, watchlist_scan_task, call_settle_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
-                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task, marketing_task)
+                 ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task, marketing_task, story_engine_task)
     for _task in _bg_tasks:
         _task.cancel()
     try:
@@ -1971,6 +1979,8 @@ async def oauth_token(request: Request) -> Response:
 
 app.include_router(webhook_push.router)  # /api/account/webhooks：Webhook 订阅管理（JWT）
 app.include_router(dev_portal.router)  # /feed/*、/api/v1/openapi.json、/developers：开发者分发通道
+from .stories_api import router as stories_router  # /api/stories/*、/api/profile：事件簇今日看板+千人千面推荐+故事埋点+显式画像
+app.include_router(stories_router)
 from .market_extras import router as market_extras_router  # /api/econ/calendar、/api/market/gauge：宏观日历+市场状态仪表（免费引流）
 app.include_router(market_extras_router)
 from .research_stream import router as research_stream_router  # noqa: E402 - 研报深度解读 SSE 流式端点（懒导入 main，须在 main 定义后挂载）

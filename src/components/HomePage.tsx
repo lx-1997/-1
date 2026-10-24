@@ -37,6 +37,7 @@ import Markdown from './common/Markdown';
 import RoundtableMessage from './RoundtableMessage';
 import ShareModal, { ShareTarget } from './ShareModal';
 import InvestorCompass from './home/InvestorCompass';
+import TodayStories from './home/TodayStories';
 import './HomePage.css';
 import ReasoningTrace from './common/ReasoningTrace';
 
@@ -620,6 +621,11 @@ const HomePage: React.FC<HomePageProps> = ({
               onStockSelect={onStockSelect}
               onViewChange={onViewChange}
               onAddStock={onAddStock}
+            />
+
+            <TodayStories
+              loggedIn={!!appState.user}
+              onOpenSymbol={symbol => goQuickSheet(symbol)}
             />
 
             {composer}

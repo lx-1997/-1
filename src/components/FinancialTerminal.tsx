@@ -66,6 +66,7 @@ import TerminalKline from './TerminalKline';
 import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
 import StockWorkspaceNav from './StockWorkspaceNav';
 import TerminalInvestorCompass from './TerminalInvestorCompass';
+import TerminalTodayStories from './TerminalTodayStories';
 import AccentThemePicker from './AccentThemePicker';
 import ResearchDeepDraft, { type ResearchDeepDraftInput, type ResearchDeepDraftEvidence, type ResearchDeepDraftSource } from './ResearchDeepDraft';
 import ArticleOriginalReader from './ArticleOriginalReader';
@@ -6071,6 +6072,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onAddSymbol={(symbol, name) => requireLogin(() => { void addSymbol(symbol, name, false); }, '添加关注股票')}
         onRequireLogin={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '添加关注股票')}
         onOpenMarket={() => { void openReview(); }}
+      />
+
+      <TerminalTodayStories
+        loggedIn={!!authUser}
+        onSelectSymbol={(symbol) => { setActive(symbol); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+        onOpenMarket={() => { void openReview(); }}
+        onRequireLogin={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '登录后开启千人千面推荐')}
       />
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}

@@ -129,6 +129,7 @@ def init_storage() -> None:
     from . import referral as _referral  # noqa: F401
     from . import membership_codes as _membership_codes  # noqa: F401
     from . import engagement as _engagement  # noqa: F401
+    from . import user_profile as _user_profile  # noqa: F401
 
     Base.metadata.create_all(get_engine())
     # 幂等迁移：补后加的列（如兑换码 kind=体验卡标记）

@@ -1025,6 +1025,7 @@ PUBLIC_PREFIXES = (
     # 写操作走 /api/admin/celebrity/*（已被 /api/admin/ 前缀放行 + handler 自校验令牌）。
     "/api/celebrity/media/",
     "/api/v1",            # 合作方/开发者 API：handler 自校验 X-API-Key（中间件放行，不走用户 JWT）
+    "/api/stories/symbol/",  # 事件簇按标的下钻（只读公开）；精确前缀，不含 /api/stories/{id} 详情
 )
 
 # 免费公开的 /api 端点（终端公开页的免费层：行情 / 快讯 / 研报列表 / 打点）。
@@ -1115,6 +1116,12 @@ PUBLIC_EXACT = frozenset(
         "/api/weixin/console",
         "/api/weixin/push-news",
         "/api/weixin/push-config",
+        # 事件簇今日看板（零 LLM 事实聚合，公开免费层）：today/brief 大众简报、me 匿名回退大众排序、
+        # event 匿名 impression/click/dwell 埋点（handler 限流 + 禁匿名反馈）；symbol/{code} 走 PUBLIC_PREFIXES。
+        "/api/stories/today",
+        "/api/stories/brief",
+        "/api/stories/me",
+        "/api/stories/event",
     }
 )
 
