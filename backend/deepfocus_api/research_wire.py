@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -167,6 +168,8 @@ async def fetch_research_wire_online(
     """在线从同机 Node 工作台拉海外投行研报：空关键词=最新，带关键词=搜索。
 
     新鲜 TTL 默认 600s；有界 stale grace 默认一小时。缓存只影响重算，完整列表不截断。
+    池过期后走 stale-while-revalidate：先回上次成功池（标 stale），后台单飞回源刷新——
+    回源实测 20s+，不应让用户请求硬等。池完全缺失时才同步回源，且并发请求共享同一次抓取。
     返回与 list_research_wire 同构的 dict（online=True）；调用方失败时回退本地磁盘。
     """
     want = max(1, min(int(limit or 60), 500))
@@ -188,21 +191,57 @@ async def fetch_research_wire_online(
     hit = _WIRE_CACHE.get(cache_key)
     if use_cache and hit and (now - hit[0]) < _WIRE_TTL:
         return _slice(hit[1])
-    # 回源抓「整池」：resultLimit 拉满、searchPages=0 不限页（工作台内部 20/页翻到 resultLimit）
+    if use_cache and hit:
+        # 陈旧但可用：立即返回 + 后台刷新（刷新失败静默，下次请求再试，陈旧池仍在）
+        _kick_wire_refresh(cache_key, kw, want, stock_scope)
+        return _slice({**hit[1], "stale": True})
+    task = _WIRE_REFRESH_TASKS.get(cache_key)
+    if task is None or task.done():
+        task = asyncio.get_running_loop().create_task(
+            _refresh_wire_pool(cache_key, kw, want, stock_scope)
+        )
+        _WIRE_REFRESH_TASKS[cache_key] = task
+    try:
+        # shield：首个等待者断开（客户端取消）不应取消共享的回源任务
+        full = await asyncio.shield(task)
+    finally:
+        if _WIRE_REFRESH_TASKS.get(cache_key) is task:
+            _WIRE_REFRESH_TASKS.pop(cache_key, None)
+    return _slice(full)
+
+
+def _kick_wire_refresh(cache_key: Any, kw: str, want: int, stock_scope: bool) -> None:
+    """后台单飞回源刷新研报池：已有进行中的任务则复用，完成后写回 _WIRE_CACHE。"""
+    task = _WIRE_REFRESH_TASKS.get(cache_key)
+    if task is not None and not task.done():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # 无事件循环（不应发生于请求路径）：放弃本次刷新
+        return
+    task = loop.create_task(_refresh_wire_pool(cache_key, kw, want, stock_scope))
+    _WIRE_REFRESH_TASKS[cache_key] = task
+
+    def _done(t: "asyncio.Task", key: Any = cache_key) -> None:
+        if _WIRE_REFRESH_TASKS.get(key) is t:
+            _WIRE_REFRESH_TASKS.pop(key, None)
+        if not t.cancelled() and t.exception() is not None:
+            pass  # 后台刷新失败静默：请求路径已回 stale 池，下次过期请求会再触发
+
+    task.add_done_callback(_done)
+
+
+async def _refresh_wire_pool(cache_key: Any, kw: str, want: int, stock_scope: bool) -> dict[str, Any]:
+    """回源抓「整池」并落缓存（工作台内部 20/页翻到 resultLimit）。失败向上抛。"""
     payload: dict[str, Any] = {"group": ZSXQ_GROUP, "resultLimit": want if stock_scope else _WIRE_POOL,
                                "searchPages": 1 if stock_scope else 0}
     payload.update(_auth_payload())  # 有热更新 cookie 则用它（优先级高于工作台 env）
     if kw:
         payload["keyword"] = kw
-    try:
-        async with httpx.AsyncClient(trust_env=False) as client:
-            resp = await client.post(f"{_WORKBENCH_BASE}/api/search", json=payload, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception:
-        if hit:  # 抓取失败 → 回退上次成功结果（stale-while-revalidate），绝不让用户看空/报错
-            return _slice({**hit[1], "stale": True})
-        raise
+    async with httpx.AsyncClient(trust_env=False) as client:
+        resp = await client.post(f"{_WORKBENCH_BASE}/api/search", json=payload, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
     items: list[dict[str, Any]] = []
     seen_titles: set[str] = set()  # 同一篇研报常被重复发布（file_id 不同、标题同），按标题去重保留最新
     for it in (data.get("items") or []):
@@ -267,9 +306,7 @@ async def fetch_research_wire_online(
             _WIRE_CACHE.set(cache_key, (time.monotonic(), full), ttl_seconds=_WIRE_STALE_TTL)
         except Exception:
             pass  # Oversize/un-cacheable pools still return all requested rows.
-    elif hit:  # 偶发空响应 → 也回退上次成功结果
-        return _slice({**hit[1], "stale": True})
-    return _slice(full)
+    return full
 
 DEFAULT_OUT = "downloads/海外投行报告"
 _SKIP_NAMES = {"manifest.json", "files.csv"}

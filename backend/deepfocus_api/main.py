@@ -6173,6 +6173,24 @@ def _enrich_research_wire_item(item: ResearchWireItem) -> ResearchWireItem:
     return item
 
 
+# 研报条目本体注解按 (id,title) 复用：研报发布后不可变，注解一次生成就够。
+# 逐条 annotate(persist=True) 实测 ~40ms/条（含建表检查与写库），50 条 ≈2s——
+# 这是 wire 响应缓存(45s)过期后每次的主要开销；缓存后热请求近零成本。
+_WIRE_ENRICH_CACHE: dict[str, ResearchWireItem] = {}
+
+
+def _enrich_research_wire_item_cached(item: ResearchWireItem) -> ResearchWireItem:
+    key = f"{item.id}|{item.title}"
+    hit = _WIRE_ENRICH_CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = _enrich_research_wire_item(item)
+    if len(_WIRE_ENRICH_CACHE) >= 600:
+        _WIRE_ENRICH_CACHE.clear()  # 研报池远小于此；兜底防膨胀，简单清空即可
+    _WIRE_ENRICH_CACHE[key] = out
+    return out
+
+
 @app.get("/api/research/wire", response_model=ResearchWireResponse)
 async def api_research_wire(request: Request, limit: int = 60, q: str = "", before: str = "", before_id: str = ""):
     """知识星球「海外投行报告」研报流：终端「研报」面板的数据源。
@@ -6214,7 +6232,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                 )
                 for row in rows
             ]
-            online_items = [_enrich_research_wire_item(item) for item in online_items]
+            online_items = [_enrich_research_wire_item_cached(item) for item in online_items]
             _resp = ResearchWireResponse(
                 items=online_items, total=len(rows),
                 source="海外投行研报 · 在线检索",
@@ -6236,7 +6254,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
         if arch_rows:
             cache_map = await asyncio.to_thread(metrics_get_ai_cache_many, [r["file_id"] for r in arch_rows if r.get("file_id")])
             return _wire_conditional(request, ResearchWireResponse(
-                items=[_enrich_research_wire_item(ResearchWireItem(
+                items=[_enrich_research_wire_item_cached(ResearchWireItem(
                     id=r["id"], title=r["title"], org=r.get("org") or "海外投行", date=r["date"],
                     created_at=r.get("created_at") or "", filename=r.get("filename") or "", out=r.get("out") or "",
                     size=r.get("size") or 0, hashtag=r.get("hashtag") or "#海外投行报告#",
