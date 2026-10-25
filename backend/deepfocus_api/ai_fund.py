@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from . import ai_fund_evolve, bull_playbook, data_store
+from . import ai_fund_evolve, bull_playbook, data_store, emotion_cycle
 from .ifind_api import cached_single_quote, enabled as ifind_enabled, normalize_a_code
 from .shared_utils import safe_float, utc_now_iso
 
@@ -154,6 +154,15 @@ ROSTER: list[AgentConfig] = [
         reentry_cooldown_days=2, max_daily_buys=2,
         weights={"消息面": 0.30, "技术面": 0.10, "趋势": 0.10, "资金面": 0.18,
                  "成长质量": 0.12, "基本面": 0.16, "情绪": 0.04}),
+    AgentConfig(
+        fund_id="tide", name="逐流", emoji="🌊", style="cycle",
+        tag="DeepFocus AI 操盘手 · 情绪周期超短：跟随合力、只做主线龙头",
+        blurb="情绪周期：冰点小仓试错、主升聚焦龙头、良性分歧只低吸真龙、退潮空仓保命",
+        max_positions=3, buy_threshold=0.12, sell_threshold=-0.06, hard_stop=-0.05,
+        trail_min=0.08, rotate_edge=0.20, fresh_hours=24.0, chase_ok=True, pos_size_mult=1.2,
+        reentry_cooldown_days=1, max_daily_buys=2,
+        weights={"消息面": 0.28, "技术面": 0.16, "趋势": 0.16, "资金面": 0.26,
+                 "成长质量": 0.05, "基本面": 0.05, "情绪": 0.04}),
 ]
 ROSTER_BY_ID: dict[str, AgentConfig] = {c.fund_id: c for c in ROSTER}
 
@@ -943,6 +952,8 @@ def _stats(conn, fund_id: str = FUND_ID) -> dict:
             break
     all_rows = conn.execute("SELECT side,symbol,ts FROM aif_trade WHERE fund_id=? ORDER BY ts ASC", (fund_id,)).fetchall()
     recent = pnls[-12:]
+    # 最近一次平仓时间(UTC iso)：连亏停手铁律的计时基准(由 _performance_brake 消费)
+    last_sell_iso = max((row["ts"] for row in all_rows if row["side"] == "sell" and row["ts"]), default=None)
     last_sell_by_symbol: dict[str, str] = {}
     same_day_reentries = 0
     for row in all_rows:
@@ -955,12 +966,27 @@ def _stats(conn, fund_id: str = FUND_ID) -> dict:
             "best": round(max(pnls), 1) if pnls else None, "worst": round(min(pnls), 1) if pnls else None,
             "win_streak": streak, "avg": round(sum(pnls) / closed, 2) if closed else None,
             "recent_avg": round(sum(recent) / len(recent), 2) if recent else None,
-            "same_day_reentries": same_day_reentries}
+            "same_day_reentries": same_day_reentries,
+            "last2": (round(sum(pnls[-2:]) / 2.0, 2) if len(pnls) >= 2 else None),
+            "last_sell_ts": last_sell_iso}
 
 
 def _performance_brake(stats: dict) -> dict:
     """按已平仓战绩自动降档：亏损期提高门槛、缩仓、减少换仓；样本不足时不妄调参数。"""
     closed = int(stats.get("closed") or 0)
+    # 铁律：连续两笔大亏(近两笔均值 ≤ -3.5%)→ 直接停手休息 3 天，绝不连续挨打。
+    # 状态从成交表推导、零新增持久化；3 天过后自动解禁。
+    last2 = stats.get("last2")
+    last_ts = stats.get("last_sell_ts")
+    if closed >= 2 and last2 is not None and last2 <= -3.5 and last_ts:
+        try:
+            lt = datetime.fromisoformat(str(last_ts).replace("Z", "+00:00"))
+            rested_days = (datetime.now(timezone.utc) - lt).total_seconds() / 86400.0
+        except Exception:  # noqa: BLE001
+            rested_days = 0.0
+        if rested_days <= 3.0:
+            return {"key": "stop", "label": "停手", "thr_delta": 0.20, "size_mult": 0.0,
+                    "rotate_mult": 2.0, "blocked": True}
     if closed < 12:
         return {"key": "normal", "label": "正常", "thr_delta": 0.0, "size_mult": 1.0, "rotate_mult": 1.0}
     win_rate = float(stats.get("win_rate") if stats.get("win_rate") is not None else 100.0)
@@ -1675,6 +1701,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     regime = _market_regime_now()           # 大盘多空(沪深300 vs MA60)——第6.3 依据指数止损/收紧买入；驱动策略动态自适应
     regime_str = regime.get("regime")
     bear = regime_str == "bear"
+    cycle = emotion_cycle.current_cycle(holidays=CN_MARKET_HOLIDAYS)   # 情绪周期四阶段(涨停池/梯队/炸板/溢价,进程缓存,失败=neutral 不误杀)
+    cycle_gate = emotion_cycle.gate(cfg.style, cycle.get("stage"))     # 阶段×流派 → 买入闸门(禁买/门槛/仓位)
     quotes, analyses = {}, {}
     scanned: dict[str, dict] = {}  # 本轮检索命中的本站近 24h 内容(按 id 去重)——情报吞吐量看点
     for code, name in universe.items():
@@ -1780,7 +1808,10 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         def _buy_allowed(an):
             if not an.get("entry_ok"):
                 return False
-            if an.get("score", 0) < float(an.get("entry_threshold", cfg.buy_threshold)) + performance_brake["thr_delta"]:
+            # 情绪周期闸门(退潮/恶性分歧直接禁买) + 连亏停手铁律(连续两笔大亏 3 天内停手)
+            if cycle_gate.get("blocked") or performance_brake.get("blocked"):
+                return False
+            if an.get("score", 0) < float(an.get("entry_threshold", cfg.buy_threshold)) + performance_brake["thr_delta"] + cycle_gate.get("thr_delta", 0.0):
                 return False
             if bear:
                 return an.get("score", 0) >= 0.30 and (
@@ -1806,7 +1837,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             nav_now = cash + sum(float(p["qty"]) * (safe_float(quotes.get(p["symbol"], {}).get("latest")) or float(p["avg_cost"])) for p in held.values())
             # 单仓大小按流派系数 × 市场态势系数缩放：激进重仓(系数>1)/价值分散(<1)，再叠牛市加仓/熊市减仓；硬上限不超 50%
             size_mult = (cfg.pos_size_mult * (an.get("regime_adapt", {}).get("size_mult") or 1.0)
-                         * performance_brake["size_mult"])
+                         * performance_brake["size_mult"] * cycle_gate.get("size_mult", 1.0))
             target = nav_now * (0.18 + 0.14 * an["confidence"]) * size_mult
             cap = nav_now * min(0.5, 0.33 * size_mult)
             budget = min(cash, target, cap)
@@ -1826,6 +1857,9 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 think.append({"icon": "🛡", "label": f"{performance_brake['label']}档",
                               "text": f"近期战绩触发自动降档：门槛 +{performance_brake['thr_delta']:.2f}、"
                                       f"仓位缩至 {performance_brake['size_mult']*100:.0f}%。"})
+            if cycle_gate.get("key") != "neutral" and cycle_gate.get("note"):
+                think.append({"icon": "🌊", "label": f"情绪周期·{cycle_gate['label']}",
+                              "text": cycle_gate["note"] + "。"})
             think.append({"icon": "🧠", "label": "买点", "text": f"{an['buy_point']}；综合 {an['score']:+.2f}、信心 {an['confidence']*100:.0f}%，出手。"})
             if _impact >= 10:
                 think.append({"icon": "💧", "label": "成交",
@@ -2409,6 +2443,8 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     else:
         dq = {"level": "live", "label": "实时", "detail": "iFinD/新浪免费行情 + 东财日线/资金流。", "reasons": []}
 
+    _cycle_public = emotion_cycle.current_cycle(holidays=CN_MARKET_HOLIDAYS)   # 快照展示当前情绪周期(进程缓存)
+
     return {
         "fund_id": fund_id, "started_at": st["started_at"], "started_nav": started_nav,
         "persona": {"name": cfg.name, "tag": cfg.tag, "emoji": cfg.emoji, "style": cfg.style, "blurb": cfg.blurb},
@@ -2418,7 +2454,10 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
                      "coach_note": _k("coach_note"),
                      # 当前市场态势下该流派的动态打法(牛市加仓/熊市防守/恐慌捡便宜…)
                      "market_stance": ai_fund_evolve.regime_adapt(cfg.style, _market_regime_now().get("regime"))["stance"],
-                     "regime": _market_regime_now().get("regime")},
+                     "regime": _market_regime_now().get("regime"),
+                     # 情绪周期四阶段(冰点/主升/分歧/退潮)与该流派在当前阶段的打法
+                     "cycle_stage": _cycle_public.get("stage"), "cycle_label": _cycle_public.get("label"),
+                     "cycle_stance": _cycle_public.get("stance"), "cycle_reasons": _cycle_public.get("reasons", [])},
         "mood": mood, "stats": stats,
         "nav": round(nav, 2), "nav_unit": round(nav / started_nav, 4) if started_nav else 1.0, "nav_pct": round(nav_pct, 2),
         "cash": round(cash, 2), "market_value": round(market_value, 2), "position_count": len(pos_out),
@@ -2475,7 +2514,7 @@ def _agent_nav(conn, cfg: AgentConfig):
 
 # 各流派在排行榜上的主题色（前端卡片描边/高亮用 s.color）
 _STYLE_COLOR = {"balanced": "#7c3aed", "aggressive": "#f6465d", "value": "#06b6d4",
-                "event": "#f59e0b", "contrarian": "#16c784"}
+                "event": "#f59e0b", "contrarian": "#16c784", "cycle": "#eab308"}
 
 
 def _arena_consensus(conn) -> dict:
