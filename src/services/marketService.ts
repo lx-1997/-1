@@ -451,8 +451,32 @@ export async function analyzeOptionsTrend(
 
 // === premarketOpportunityService functions ===
 
+// 盘前雷达被多个面板并发拉取（今日看板/投资罗盘/手动刷新），单次构建需要秒级回源。
+// 客户端同样做单飞 + 45s TTL：并发调用共享同一 in-flight 请求，TTL 内直接复用结果，
+// 失败不缓存（下次调用立即重试）。与服务端 90s 缓存叠加，网络层重复轮询彻底归一。
+const PREMARKET_CACHE_TTL_MS = 45_000;
+let premarketCache: { at: number; data: PremarketOpportunityResponse } | null = null;
+let premarketInFlight: Promise<PremarketOpportunityResponse> | null = null;
+
 export async function getPremarketOpportunities(): Promise<PremarketOpportunityResponse> {
-  return apiGet<PremarketOpportunityResponse>('/api/agents/premarket-opportunities', {
-    timeout: 60000
-  });
+  if (premarketCache && Date.now() - premarketCache.at < PREMARKET_CACHE_TTL_MS) {
+    return premarketCache.data;
+  }
+  if (!premarketInFlight) {
+    const request = apiGet<PremarketOpportunityResponse>('/api/agents/premarket-opportunities', {
+      timeout: 60000,
+    }).then(
+      (data) => {
+        premarketCache = { at: Date.now(), data };
+        premarketInFlight = null;
+        return data;
+      },
+      (error: unknown) => {
+        premarketInFlight = null;
+        throw error;
+      },
+    );
+    premarketInFlight = request;
+  }
+  return premarketInFlight;
 }
