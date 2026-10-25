@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import mean
@@ -110,7 +111,38 @@ THEMES: tuple[ThemeDefinition, ...] = (
 )
 
 
+# 单飞 + TTL 缓存状态：进程级。锁按事件循环惰性重建，避免跨 loop 复用。
+_RADAR_CACHE_TTL_SECONDS = 90.0
+_radar_cache: Optional[tuple[float, PremarketOpportunityResponse]] = None
+_radar_lock: Optional[asyncio.Lock] = None
+_radar_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
 async def build_premarket_opportunity_radar() -> PremarketOpportunityResponse:
+    """盘前机会雷达入口：单飞 + 90s TTL 缓存。
+
+    前端同一周期会并发重复轮询本端点；单次构建约数秒（期权链+行情回源），
+    无缓存时后到请求排队等待、超过客户端超时被 abort，形成 499 重试风暴并
+    加倍回源负载。雷达数据（美股隔夜收盘+期权链）分钟级变化，90s TTL 无损。
+    """
+    global _radar_cache, _radar_lock, _radar_lock_loop
+    now = time.monotonic()
+    if _radar_cache is not None and now - _radar_cache[0] < _RADAR_CACHE_TTL_SECONDS:
+        return _radar_cache[1]
+    loop = asyncio.get_running_loop()
+    if _radar_lock is None or _radar_lock_loop is not loop:
+        _radar_lock = asyncio.Lock()
+        _radar_lock_loop = loop
+    async with _radar_lock:
+        now = time.monotonic()
+        if _radar_cache is not None and now - _radar_cache[0] < _RADAR_CACHE_TTL_SECONDS:
+            return _radar_cache[1]
+        response = await _build_premarket_opportunity_radar_uncached()
+        _radar_cache = (time.monotonic(), response)
+        return response
+
+
+async def _build_premarket_opportunity_radar_uncached() -> PremarketOpportunityResponse:
     warnings: list[str] = []
     leader_symbols = _unique(symbol for theme in THEMES for symbol in theme.leaders)
     confirmation_symbols = _unique(symbol for theme in THEMES for symbol in theme.confirmations)
