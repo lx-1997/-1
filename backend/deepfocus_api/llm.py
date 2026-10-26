@@ -16,6 +16,7 @@ from openai import AsyncOpenAI
 
 from .ownership import current_owner_id
 from .agent_tools import TOOL_REGISTRY, execute_tool, openai_tool_specs
+from .stock_guard import guard_symbol_args, resolve_question_stock
 from .compliance import neutralize_text
 from .mcp_tools import discover_mcp_agent_tools
 from .model_config import load_model_config
@@ -1941,6 +1942,9 @@ class CloudResearchLLM:
                 digest_final = _render_recent_digest_answer(bundle_data)
                 if digest_final:
                     return result_payload(_respect_explicit_brevity(question, digest_final), 0, False)
+            # 标的防幻觉护栏：问题含公司名时先做确定性解析（东财 suggest，候选名须原样出现在
+            # 问题里），供下方工具分发时改写模型凭记忆猜错的代码（实测「建滔集团」被猜成 0005/600545）。
+            resolved_stock = await resolve_question_stock(question)
             for round_index in range(max_rounds):
                 tool_payload: dict[str, Any] = {
                     "model": self.model,
@@ -2062,6 +2066,7 @@ class CloudResearchLLM:
                 for tc in tool_calls:
                     try:
                         args = json.loads(tc.function.arguments or "{}")
+                        args = guard_symbol_args(tc.function.name, args, resolved_stock)
                     except (ValueError, TypeError):
                         args = {}
                     await _safe_emit(emit, "tool_start", {"tool": tc.function.name, "args": args})
