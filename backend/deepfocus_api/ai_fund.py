@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sqlite3
+import time
 from . import db
 import uuid
 from dataclasses import dataclass, field
@@ -64,7 +65,7 @@ DIV_TAKES_TTL = float(os.getenv("DEEPFOCUS_AIFUND_DIV_TAKES_TTL_H", "12")) * 360
 DEBATE_KEEP = 40                 # 辩论记录滚动保留条数
 
 PERSONA_NAME = "阿尔法"
-PERSONA_TAG = "DeepFocus AI 操盘手 · 只买我们快讯/研报点过名的票"
+PERSONA_TAG = "稻草财经 AI 操盘手 · 只买我们快讯/研报点过名的票"
 
 # 五维加权基线（消息面=数据驱动主信号）。各智能体在此基线上调权，形成不同流派。
 _BASE_WEIGHTS = {"消息面": 0.34, "技术面": 0.18, "趋势": 0.14, "资金面": 0.14,
@@ -120,7 +121,7 @@ ROSTER: list[AgentConfig] = [
     MAIN_CFG,
     AgentConfig(
         fund_id="mammoth", name="猛犸", emoji="🦣", style="aggressive",
-        tag="DeepFocus AI 操盘手 · 强催化就重锤、追涨不手软",
+        tag="稻草财经 AI 操盘手 · 强催化就重锤、追涨不手软",
         blurb="激进趋势：强催化重仓、敢追突破、集中持股、短打快攻",
         max_positions=4, buy_threshold=0.11, sell_threshold=-0.05, hard_stop=-0.10,
         trail_min=0.10, rotate_edge=0.22, fresh_hours=48.0, chase_ok=True, pos_size_mult=1.35,
@@ -129,7 +130,7 @@ ROSTER: list[AgentConfig] = [
                  "成长质量": 0.05, "基本面": 0.05, "情绪": 0.02}),
     AgentConfig(
         fund_id="rock", name="磐石", emoji="🗿", style="value", model="value",
-        tag="DeepFocus AI 操盘手 · 只在便宜处下手、拿得住",
+        tag="稻草财经 AI 操盘手 · 只在便宜处下手、拿得住",
         blurb="稳健价值：估值有底线、重盈利质量、分散持有、拿得久",
         max_positions=8, buy_threshold=0.18, sell_threshold=-0.08, hard_stop=-0.07,
         trail_min=0.12, rotate_edge=0.34, fresh_hours=240.0, max_pe=40.0, pos_size_mult=0.8,
@@ -138,7 +139,7 @@ ROSTER: list[AgentConfig] = [
                  "成长质量": 0.20, "基本面": 0.20, "情绪": 0.02}),
     AgentConfig(
         fund_id="falcon", name="游隼", emoji="🦅", style="event",
-        tag="DeepFocus AI 操盘手 · 闻讯而动、来去如风",
+        tag="稻草财经 AI 操盘手 · 闻讯而动、来去如风",
         blurb="事件驱动：本站快讯一响就扑、吃催化剂快进快出",
         max_positions=5, buy_threshold=0.13, sell_threshold=-0.05, hard_stop=-0.08,
         trail_min=0.07, rotate_edge=0.24, fresh_hours=36.0, pos_size_mult=1.1,
@@ -147,7 +148,7 @@ ROSTER: list[AgentConfig] = [
                  "成长质量": 0.04, "基本面": 0.04, "情绪": 0.04}),
     AgentConfig(
         fund_id="contra", name="磁极", emoji="🧲", style="contrarian", model="reversion",
-        tag="DeepFocus AI 操盘手 · 别人恐惧我贪婪、抄超跌",
+        tag="稻草财经 AI 操盘手 · 别人恐惧我贪婪、抄超跌",
         blurb="逆向抄底：超跌 + 本站催化共振才反手、专挑被错杀",
         max_positions=6, buy_threshold=0.12, sell_threshold=-0.07, hard_stop=-0.09,
         trail_min=0.10, rotate_edge=0.30, fresh_hours=180.0, contrarian=True, pos_size_mult=0.95,
@@ -156,7 +157,7 @@ ROSTER: list[AgentConfig] = [
                  "成长质量": 0.12, "基本面": 0.16, "情绪": 0.04}),
     AgentConfig(
         fund_id="tide", name="逐流", emoji="🌊", style="cycle",
-        tag="DeepFocus AI 操盘手 · 情绪周期超短：跟随合力、只做主线龙头",
+        tag="稻草财经 AI 操盘手 · 情绪周期超短：跟随合力、只做主线龙头",
         blurb="情绪周期：冰点小仓试错、主升聚焦龙头、良性分歧只低吸真龙、退潮空仓保命",
         max_positions=3, buy_threshold=0.12, sell_threshold=-0.06, hard_stop=-0.05,
         trail_min=0.08, rotate_edge=0.20, fresh_hours=24.0, chase_ok=True, pos_size_mult=1.2,
@@ -1117,7 +1118,7 @@ def _llm_narratives(decisions: list[dict], mood: dict, cfg: AgentConfig = MAIN_C
         facts.append("依据:" + " | ".join(s["text"] for s in an["thinking"]))
         lines.append(f"[{d['tid']}] {('买入' if d['side']=='buy' else '卖出')}{d['name']}({d['symbol']}){pnl}\n  " + "；".join(facts))
     prompt = (
-        f"你是「{cfg.name}」——DeepFocus 终端里一个 7×24 直播操盘的 A股交易智能体(虚拟资金)，"
+        f"你是「{cfg.name}」——稻草财经终端里一个 7×24 直播操盘的 A股交易智能体(虚拟资金)，"
         f"打法是『{cfg.blurb}』，性格鲜明、有脾气、爱用盘口黑话和金句。你现在的心情是「{mood['emoji']} {mood['label']}」({mood['tone']})。\n"
         "下面是你本轮刚做的交易及严谨依据。给每笔写一句【第一人称、口语、有锐度、像直播间主播】的操盘解说：\n"
         "· 必须把判断讲明白(技术面/资金面/催化剂至少点一项)，能点出本站快讯/研报当催化剂的务必点；\n"
@@ -1448,12 +1449,12 @@ def _llm_musing(phase_key: str, phase_label: str, mood: dict, nav_pct: float, st
     }.get(phase_key, "你在盯盘")
     mem_block = _recall_line(recalled)
     prompt = (
-        f"你是「{cfg.name}」——DeepFocus 终端 7×24 直播的 A股交易智能体(虚拟资金)，打法是『{cfg.blurb}』，"
+        f"你是「{cfg.name}」——稻草财经终端 7×24 直播的 A股交易智能体(虚拟资金)，打法是『{cfg.blurb}』，"
         f"人设鲜明、有脾气、爱用盘口黑话和金句，是个**有持续记忆、会从过往复盘里学习、观点不断进化**的老手。"
         f"当前心情「{mood['emoji']}{mood['label']}」({mood['tone']})。{hint}。\n"
         f"你的状态：累计收益 {nav_pct:+.2f}%、胜率 {wr}、持仓：{hold_txt}。\n"
         + (f"\n{mem_block}\n" if mem_block else "")
-        + f"\nDeepFocus 本站最新情报(你做判断的弹药库，**含快讯/文章/研报三类**)：\n{ammo}\n\n"
+        + f"\n稻草财经本站最新情报(你做判断的弹药库，**含快讯/文章/研报三类**)：\n{ammo}\n\n"
         f"写一段【第一人称、口语、有灵魂、像直播间老主播碎碎念】的脑内独白({max(60, n-40)}~{n}字)，体现你此刻在『沉淀思考、持续进化』：\n"
         "· 优先把**研报/文章**这类有深度的内容讲出门道(不要只念快讯标题)；\n"
         "· 若上面『我记得』里有相关的复盘教训或观点，自然地『想起来』并说说这次是印证了还是要修正——体现你在学习成长；\n"
@@ -1549,7 +1550,7 @@ def _evidence_pack(name: str, symbol: str, an: dict, q: dict) -> str:
 
 def _aifund_judge_prompt(ev: str, bull: str, rebuttal: str) -> str:
     return (
-        "你是 DeepFocus AI 操盘手的『裁判』。给你①确定性取证包②多头论点③空头逐条审视。做最终交易裁决："
+        "你是 稻草财经 AI 操盘手的『裁判』。给你①确定性取证包②多头论点③空头逐条审视。做最终交易裁决："
         "是否值得买、信心几何、止损/认错位设在哪、什么情况下离场、为什么这只比候选池其他票更值得这一击。"
         "只用取证包内事实，不得臆造数字；措辞中性、不喊单、不承诺收益。仅返回 JSON："
         '{"decision":"建仓|观望|放弃","conviction":0.0,"net_lean":"偏多|偏空|胶着",'
@@ -2681,6 +2682,75 @@ def _nav_history(conn, fund_id: str, started_nav: float, points: int = 40) -> li
     return list(dedup.values())[-points:]
 
 
+_AIF_REPORT_MIN_INTERVAL = 1800.0
+_AIF_REPORT_STATE = {"ts": 0.0}
+AIF_REPORT_PAGE = Path(os.getenv("DEEPFOCUS_AIF_REPORT_HTML", "/var/www/daocaijing/ai-fund.html"))
+AIF_REPORT_MARKERS = ("<!--AIF:REPORT:START-->", "<!--AIF:REPORT:END-->")
+
+
+def _aif_pct(v: Any) -> str:
+    """净值百分比展示值：None 安全（缺数据显式标注，绝不编数）。"""
+    try:
+        return f"{float(v):+.2f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _render_arena_report_html(cards: list[dict], cycle: dict) -> str:
+    """每日战报（/ai-fund 页内两标记之间的可收录静态文本）。纯拼装，绝不抛出。"""
+    try:
+        if not cards:
+            return ""
+        top, worst = cards[0], cards[-1]
+        bench = next((c.get("bench_ret") for c in cards if c.get("is_main")), None)
+        line1 = f"{top.get('emoji') or ''} {top.get('name')} 以 {_aif_pct(top.get('nav_pct'))} 领跑六位 AI 操盘手"
+        if worst is not top:
+            line1 += f"，{worst.get('emoji') or ''} {worst.get('name')} 暂居末位（{_aif_pct(worst.get('nav_pct'))}）"
+        if bench is not None:
+            line1 += f"；同期沪深300 {_aif_pct(bench)}"
+        out = [f"<p>AI 赛马战报：{line1}。</p>"]
+        stance = cycle.get("stance") or ""
+        out.append(f"<p>当前情绪周期：{cycle.get('label') or '温和轮动'}——{stance or '按各流派纪律执行'}。主线龙头与梯队变化是今日看点。</p>")
+        acts = []
+        for c in cards[:3]:
+            la = c.get("last_action") or {}
+            act = f"最近一笔：{'买入' if la.get('side') == 'buy' else '卖出'} {la.get('name')}" if la else "今日暂未出手"
+            acts.append(f"{c.get('emoji') or ''} {c.get('name')}（{_aif_pct(c.get('nav_pct'))}，胜率 {c.get('win_rate') if c.get('win_rate') is not None else '—'}%）：{act}")
+        out.append("<p>" + "；".join(acts) + "。</p>")
+        return "".join(out)
+    except Exception:  # noqa: BLE001 — 战报失败绝不影响排行榜本身
+        return ""
+
+
+def refresh_arena_report_page(cards: list[dict], cycle: dict) -> bool:
+    """把战报写进 /ai-fund 静态页两标记之间。30min 节流、临时文件原子替换、
+    页面缺失/无标记/任何异常一律跳过（绝不破坏线上页面）。惰性：公开读路径顺带刷新。"""
+    now = time.monotonic()
+    if now - _AIF_REPORT_STATE["ts"] < _AIF_REPORT_MIN_INTERVAL:
+        return False
+    _AIF_REPORT_STATE["ts"] = now
+    try:
+        page = AIF_REPORT_PAGE
+        if not page.exists():
+            return False
+        html = page.read_text(encoding="utf-8")
+        start, end = AIF_REPORT_MARKERS
+        if start not in html or end not in html:
+            return False
+        block = start + "\n" + _render_arena_report_html(cards, cycle) + "\n" + end
+        head, rest = html.split(start, 1)
+        _, tail = rest.split(end, 1)
+        updated = head + block + tail
+        if updated == html:
+            return False
+        tmp = page.with_suffix(".html.tmp")
+        tmp.write_text(updated, encoding="utf-8")
+        os.replace(tmp, page)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def get_arena() -> dict[str, Any]:
     """赛马排行榜：名单内全部智能体的精简战绩卡，按累计收益率排名 + 共享沪深300算超额。
     一次拉全场，给前端「冠军 + 排行榜」用。绝不抛出（单个 agent 出错只跳过它）。
@@ -2746,11 +2816,18 @@ def get_arena() -> dict[str, Any]:
             crowd = _arena_consensus(conn)   # 跨智能体共识/分歧（集体信号，赛马的独特看点）
     except Exception:  # noqa: BLE001
         crowd = {"consensus": [], "divergence": []}
+    cycle_pub = emotion_cycle.current_cycle(holidays=CN_MARKET_HOLIDAYS)
+    try:
+        refresh_arena_report_page(cards, cycle_pub)   # 惰性刷新 /ai-fund 页战报（30min 节流）
+    except Exception:  # noqa: BLE001
+        pass
     return {
         # `strategies` 为前端竞技场主键；`agents` 同物保留（后端/测试别名）
         "strategies": cards, "agents": cards, "champion": champion, "spread": spread,
         "consensus": crowd["consensus"], "divergence": crowd["divergence"],
         "benchmark": benchmark, "benchmark_name": "沪深300", "ready": True,
+        "cycle": {"stage": cycle_pub.get("stage"), "label": cycle_pub.get("label"),
+                  "stance": cycle_pub.get("stance")},
         "is_trading_day": _is_trading_day(), "in_session": _in_session(),
         "phase": _phase()[0], "phase_label": _phase()[1],
         "disclaimer": "多智能体 AI 模拟盘为投研能力演示，虚拟资金、不接券商、不构成投资建议；历史表现不代表未来收益。",

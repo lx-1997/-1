@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>AI 策略实验室 · DeepFocus</title>
-<meta name="description" content="五种 AI 投资策略使用同一组 DeepFocus 公开信息进行模拟交易，实时公开收益、持仓与完整决策依据。虚拟资金，不构成投资建议。" />
-<meta property="og:title" content="DeepFocus AI 策略实验室" />
-<meta property="og:description" content="五种投资纪律，同一组公开信息，实时验证策略表现。虚拟资金·模拟交易·不构成投资建议。" />
+<title>AI 策略实验室 · 稻草财经</title>
+<meta name="description" content="六种 AI 投资策略使用同一组稻草财经公开信息进行模拟交易，实时公开收益、持仓与完整决策依据。虚拟资金，不构成投资建议。" />
+<meta property="og:title" content="稻草财经 AI 策略实验室" />
+<meta property="og:description" content="六种投资纪律，同一组公开信息，实时验证策略表现。虚拟资金·模拟交易·不构成投资建议。" />
 <style>
   :root{--bg:#eef0fb;--card:#fff;--ink:#1b1f33;--ink2:#6b7088;--ink3:#71768d;--line:#edeef6;
     --purple:#7c3aed;--magenta:#ec4899;--cyan:#06b6d4;--amber:#f59e0b;
@@ -843,12 +843,19 @@
 </style>
 </head>
 <body>
+<section class="aif-report" style="max-width:1180px;margin:12px auto 0;padding:10px 18px;border:1px solid rgba(124,58,237,.25);border-radius:14px;background:rgba(124,58,237,.05);font-size:13px;line-height:1.8;color:#c9cdd8">
+  <h1 style="font-size:16px;margin:0 0 4px;color:#e6e8f0">稻草财经 AI 模拟炒股 v2 · 六位 AI 操盘手同场竞技</h1>
+  <p style="margin:0 0 6px">规则升级 v2：情绪周期四阶段闸门（冰点 / 主升 / 分歧 / 退潮）入引擎，六位 AI 各带 ¥100 万虚拟资金重新开赛；只做模拟盘，不接入券商，每笔决策完整公开。</p>
+  <!--AIF:REPORT:START-->
+  <p>AI 赛马战报生成中：交易日内每 30 分钟更新冠军、最大分歧与情绪周期档位。</p>
+  <!--AIF:REPORT:END-->
+</section>
 <div class="arena" id="arenaView"></div>
 <div class="app" id="appView" style="display:none">
   <div class="top" id="top">
     <button class="backbar" id="backArena">← 返回竞技场</button>
     <div class="ava" id="ava">🤖<span class="dot" id="dot"></span></div>
-    <div class="who"><div class="nm" id="pname">阿尔法<span class="lv" id="rank">● 模拟盘</span></div><div class="tg" id="ptag">DeepFocus AI 操盘手</div></div>
+    <div class="who"><div class="nm" id="pname">阿尔法<span class="lv" id="rank">● 模拟盘</span></div><div class="tg" id="ptag">稻草财经 AI 操盘手</div></div>
     <span class="mood" id="mood">—</span>
     <div class="topright"><span class="stswitch" id="stswitch"></span><span id="bdg" class="bdg">…</span><button class="share" id="share">生成战绩海报</button></div>
   </div>
@@ -869,7 +876,7 @@
     <div class="col card c-center" id="colCenter"></div>
     <div class="col card c-right" id="colRight"></div>
   </div>
-  <div class="foot">催化剂来自 DeepFocus 站内快讯 / 文章 / 研报 · 模拟交易不构成投资建议 · <a href="https://daocaijing.com?ch=aifund">登录终端解锁同款快讯/研报/速判卡 →</a></div>
+  <div class="foot">催化剂来自稻草财经站内快讯 / 文章 / 研报 · 模拟交易不构成投资建议 · <a href="https://daocaijing.com?ch=aifund">登录终端解锁同款快讯/研报/速判卡 →</a></div>
 </div>
 <div class="evtpop" id="evtpop"></div>
 <div id="ticker"></div>
@@ -1201,7 +1208,7 @@ function render(d){if(!d)return;const prev=S.data;S.data=d;const up=(d.nav_pct||
   document.getElementById('herostat').innerHTML='总资产 <b class="num">'+fmtMoney(d.nav)+'</b> · 累计盈亏 <b class="num '+(pnl>=0?'up':'down')+'">'+(pnl>=0?'+':'')+fmtMoney(pnl)+'</b>';
   document.getElementById('k_wr').textContent=(s.win_rate!=null?s.win_rate+'%':'持有中')+' / '+(s.win_streak||0)+'连';
   const inf=s.info_driven;
-  if(inf&&inf.count){document.getElementById('k_info').textContent=(inf.trade_pct>=80?'🔥 ':'')+inf.trade_pct+'%';document.getElementById('k_info_x').textContent=inf.count+' 笔由 DeepFocus 快讯/研报点火'+(inf.pnl_pct!=null?(' · 贡献'+inf.pnl_pct+'%收益'):'');}
+  if(inf&&inf.count){document.getElementById('k_info').textContent=(inf.trade_pct>=80?'🔥 ':'')+inf.trade_pct+'%';document.getElementById('k_info_x').textContent=inf.count+' 笔由稻草财经快讯/研报点火'+(inf.pnl_pct!=null?(' · 贡献'+inf.pnl_pct+'%收益'):'');}
   else{document.getElementById('k_info').textContent='待平仓统计';document.getElementById('k_info_x').textContent=(dc.drive_label&&dc.drive_label!=='数据驱动'?('靠'+dc.drive_label+'选股，不依赖催化'):'每笔买入均由本站情报触发');}
   const sc=d.scan||{};document.getElementById('scan').textContent='📡 扫读 快讯'+(sc.news||0)+'·研报'+(sc.report||0)+'·文章'+(sc.article||0);
   document.getElementById('tabs').innerHTML=[['left','组合持仓'],['center','K 线交易'],['right','交割记录']].map(t=>'<button type="button" class="tab'+(S.tab===t[0]?' on':'')+'" data-tab="'+t[0]+'">'+t[1]+'</button>').join('');
@@ -1234,7 +1241,7 @@ async function sharePoster(){
   const g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,'#7c3aed');g.addColorStop(.5,'#a855f7');g.addColorStop(1,'#ec4899');x.fillStyle=g;x.fillRect(0,0,W,H);
   x.fillStyle='rgba(255,255,255,.97)';x.beginPath();x.roundRect(40,150,W-80,H-300,32);x.fill();
   x.textAlign='center';x.fillStyle='#fff';x.font='800 40px sans-serif';x.fillText('🤖 '+(d.persona?.name||'阿尔法'),W/2,98);
-  x.fillStyle='rgba(255,255,255,.9)';x.font='600 20px sans-serif';x.fillText('DeepFocus AI 模拟盘 · 虚拟资金·模拟交易',W/2,128);
+  x.fillStyle='rgba(255,255,255,.9)';x.font='600 20px sans-serif';x.fillText('稻草财经 AI 模拟盘 · 虚拟资金·模拟交易',W/2,128);
   const up=(d.nav_pct||0)>=0;x.fillStyle='#6b7088';x.font='600 24px sans-serif';x.fillText('累计收益率',W/2,250);
   x.fillStyle=up?'#16c784':'#f6465d';x.font='900 110px sans-serif';x.fillText(fmtPct(d.nav_pct),W/2,360);
   if(d.alpha_pct!=null&&d.benchmark&&d.benchmark.length>1){x.fillStyle=d.alpha_pct>=0?'#7c3aed':'#9aa0b8';x.font='800 30px sans-serif';x.fillText('相对沪深300 '+(d.alpha_pct>=0?'+':'')+d.alpha_pct.toFixed(2)+'%',W/2,420);}
@@ -1269,7 +1276,7 @@ async function arenaPoster(){
   x.fillStyle='#555d70';x.font='600 19px sans-serif';const lines=[rev.headline||'公开每一次买卖，让策略自己接受检验。','共识 '+cons+' 只 · 分歧 '+div+' 组 · 脑档 '+(rev.mode_label||'正常')];lines.forEach((ln,i)=>x.fillText(ln.slice(0,34),72,940+i*34));
   x.fillStyle='#8b91a0';x.font='600 17px sans-serif';x.fillText('虚拟资金 · 模拟交易 · 不构成投资建议',72,1230);x.textAlign='right';x.fillText('daocaijing.com/ai-fund',W-72,1230);
   const url=c.toDataURL('image/png');document.getElementById('posterImg').src=url;document.getElementById('poster').style.display='flex';
-  document.getElementById('posterDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download='DeepFocus-今日策略复盘.png';a.click();};
+  document.getElementById('posterDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download='稻草财经-今日策略复盘.png';a.click();};
 }
 document.addEventListener('click',e=>{
   if(e.target.closest('[data-factor-close]')||e.target.id==='factorModal'){closeStockFactorModal();return;}
@@ -1400,22 +1407,22 @@ function lbcard(s,bench,racing){
 function renderArena(d){
   const el=document.getElementById('arenaView');
   const sts=(d&&d.strategies)||[],bench=d&&d.benchmark;
-  if(!sts.length){el.innerHTML='<header class="arena-top"><div class="at-brand"><span class="at-kicker">DeepFocus · AI Lab</span><div class="at-title-row"><h1 class="at-ttl">AI 策略实验室</h1><span class="at-status">数据接入中</span></div><div class="at-sub">五种投资纪律，同一组公开信息，持续验证策略表现。</div></div></header><div class="empty">策略数据正在准备，请稍后再看</div>';return;}
+  if(!sts.length){el.innerHTML='<header class="arena-top"><div class="at-brand"><span class="at-kicker">稻草财经 · AI Lab</span><div class="at-title-row"><h1 class="at-ttl">AI 策略实验室</h1><span class="at-status">数据接入中</span></div><div class="at-sub">六种投资纪律，同一组公开信息，持续验证策略表现。</div></div></header><div class="empty">策略数据正在准备，请稍后再看</div>';return;}
   // 是否已开赛：任一选手有收益/持仓/平仓即视为开赛；否则蓄势态(收益都 0)
   const racing=sts.some(s=>Math.abs(s.nav_pct||0)>0.009||(s.position_count||0)>0||(s.closed||0)>0);
   const status=d.in_session?'实时更新':(d.is_trading_day?(d.phase_label||'盘前 / 盘后'):(d.phase_label||'休市'));
   const champ=sts.find(s=>s.fund_id===d.champion)||sts[0];
   const champValue=racing?fmtPct(champ.nav_pct):'待开赛',benchValue=bench?fmtPct(bench.nav_pct):'—';
-  const head='<header class="arena-top"><div class="at-brand"><span class="at-kicker">DeepFocus · AI Lab</span>'+
+  const head='<header class="arena-top"><div class="at-brand"><span class="at-kicker">稻草财经 · AI Lab</span>'+
     '<div class="at-title-row"><h1 class="at-ttl">AI 策略实验室</h1><span class="at-status">'+esc(status)+'</span></div>'+
-    '<div class="at-sub">'+sts.length+' 种投资纪律使用同一组 DeepFocus 快讯、文章与研报，在完全公开的规则下进行模拟交易。</div></div>'+
+    '<div class="at-sub">'+sts.length+' 种投资纪律使用同一组稻草财经快讯、文章与研报，在完全公开的规则下进行模拟交易。</div></div>'+
     '<div class="at-right"><div class="at-stat"><span>当前领先</span><strong>'+esc(champ.name)+'<i class="'+((champ.nav_pct||0)>=0?'up':'down')+'">'+champValue+'</i></strong></div>'+
     '<div class="at-stat"><span>市场基准</span><strong>'+esc((bench&&bench.name)||'沪深300')+'<i class="'+(((bench&&bench.nav_pct)||0)>=0?'up':'down')+'">'+benchValue+'</i></strong></div></div>'+
     '<div class="at-actions"><button type="button" class="arena-share" id="arenaShare">生成今日复盘卡 ↗</button></div></header>';
   const showcase=arenaShowcase(d,sts,racing);
-  const cards='<section class="arena-portfolios"><div class="arena-section-head"><div><span class="section-kicker">Live portfolios</span><h2>五种风格，同场验证</h2></div>'+
+  const cards='<section class="arena-portfolios"><div class="arena-section-head"><div><span class="section-kicker">Live portfolios</span><h2>六种风格，同场验证</h2></div>'+
     '<p>点击任一策略，查看持仓、净值与完整决策链</p></div><div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div></section>';
-  const foot='<div class="arena-foot">虚拟资金 · 模拟交易 · 不构成投资建议 · 历史表现不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">进入 DeepFocus 终端查看原始信息 →</a> · <button type="button" class="tour-open" id="tourOpen">重新查看新手引导</button></div>';
+  const foot='<div class="arena-foot">虚拟资金 · 模拟交易 · 不构成投资建议 · 历史表现不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">进入稻草财经终端查看原始信息 →</a> · <button type="button" class="tour-open" id="tourOpen">重新查看新手引导</button></div>';
   el.innerHTML=head+showcase+cards+divergenceCard(d)+'<div id="debateBox"></div>'+foot;
   renderDebateBox();
   const fold=document.getElementById('divergenceFold');

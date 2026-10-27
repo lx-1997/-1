@@ -67,6 +67,7 @@ import TerminalStockPanel, { callsUserAllowed } from './TerminalStockPanel';
 import StockWorkspaceNav from './StockWorkspaceNav';
 import TerminalInvestorCompass from './TerminalInvestorCompass';
 import TerminalTodayStories from './TerminalTodayStories';
+import TerminalAiFundCard from './TerminalAiFundCard';
 import AccentThemePicker from './AccentThemePicker';
 import ResearchDeepDraft, { type ResearchDeepDraftInput, type ResearchDeepDraftEvidence, type ResearchDeepDraftSource } from './ResearchDeepDraft';
 import ArticleOriginalReader from './ArticleOriginalReader';
@@ -6080,6 +6081,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onOpenMarket={() => { void openReview(); }}
         onRequireLogin={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '登录后开启千人千面推荐')}
       />
+
+      <TerminalAiFundCard />
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}
       {primaryBanner === 'admin-unread' && (

@@ -1,0 +1,31 @@
+/* AI 赛马直播卡（终端首页） */
+.bbt-aif { flex: 0 0 auto; margin: 10px 16px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.bbt-aif-head { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px 4px; }
+.bbt-aif-head > div { min-width: 0; }
+.bbt-aif-kicker { color: var(--text-faint); font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
+.bbt-aif-head h2 { margin: 2px 0 0; color: var(--text-strong); font-size: 15px; line-height: 1.35; font-weight: 700; }
+.bbt-aif-head p { margin: 3px 0 0; color: var(--text-soft); font-size: 11px; line-height: 1.5; }
+.bbt-aif-phase { flex: 0 0 auto; margin-left: auto; padding: 2px 8px; border: 1px solid var(--border); border-radius: 20px; color: var(--amber); font-size: 10px; white-space: nowrap; }
+.bbt-aif-report { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; font-size: 12px; }
+.bbt-aif-champ { padding: 3px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); color: var(--text-strong); }
+.bbt-aif-report b.up, .bbt-aif-nav.up { color: var(--up); }
+.bbt-aif-report b.down, .bbt-aif-nav.down { color: var(--down); }
+.bbt-aif-worst, .bbt-aif-bench { color: var(--text-soft); }
+.bbt-aif-report b { font-weight: 700; }
+.bbt-aif-cycle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 14px 8px; }
+.bbt-aif-cycle-tag { padding: 2px 8px; border-radius: 6px; background: var(--accent-soft, rgba(16, 163, 127, .10)); color: var(--accent); font-size: 11px; font-weight: 600; }
+.bbt-aif-cycle-note { color: var(--text-faint); font-size: 11px; }
+.bbt-aif-rows { border-top: 1px solid var(--border-soft); }
+.bbt-aif-row { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; }
+.bbt-aif-row + .bbt-aif-row { border-top: 1px solid var(--border-soft); }
+.bbt-aif-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
+.bbt-aif-name { flex: 0 0 auto; min-width: 88px; color: var(--text-strong); font-weight: 600; }
+.bbt-aif-nav { flex: 0 0 auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bbt-aif-act { overflow: hidden; margin-left: auto; color: var(--text-faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.bbt-aif-cta { display: block; padding: 9px 14px; border-top: 1px solid var(--border-soft); background: var(--surface-muted); color: var(--accent); font-size: 12px; font-weight: 600; text-align: left; }
+.bbt-aif-cta:hover { filter: brightness(1.15); }
+@media (max-width: 820px) {
+  .bbt-aif { margin: 10px 8px 0; }
+  .bbt-aif-name { min-width: 76px; }
+  .bbt-aif-act { max-width: 40%; }
+}
