@@ -36,7 +36,7 @@ test('desktop: every current terminal content section renders and accepts naviga
 test('mobile: quick navigation and current content sections render', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await expect(page.getByRole('navigation', { name: '移动端快捷导航' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '移动端内容导航' })).toBeVisible();
   await page.getByRole('button', { name: 'AI', exact: true }).click();
   await expect(page.getByRole('region', { name: 'AI 对话工作区' })).toBeVisible();
   const input = page.getByRole('textbox', { name: '向 AI 投研助手提问' });
