@@ -57,7 +57,7 @@ test.describe('Daocaijing Terminal Core Flow', () => {
   test('mobile quick navigation and more menu remain usable', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
-    await expect(page.getByRole('navigation', { name: '移动端快捷导航' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: '移动端内容导航' })).toBeVisible();
     await page.getByRole('button', { name: '更多', exact: true }).click();
     await expect(page.getByRole('button', { name: /弹窗提醒/ })).toBeVisible();
     const nativeRow = page.getByRole('button', { name: /后台常驻提醒/ });
