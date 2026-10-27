@@ -305,6 +305,33 @@ def _heat_score(ratio: Optional[float]) -> int:
     return max(0, min(100, round((ratio - 0.5) / 1.5 * 100)))
 
 
+def _intraday_elapsed_ratio(now: Optional[Any] = None) -> Optional[float]:
+    """今日已交易分钟占全日(240min)比例；非 A 股交易时段返回 None（今日无盘中半根 bar）。
+    交易时段=交易日 09:30–11:30 / 13:00–15:00（周末即可判定；节假日误差只影响归一精度，可容忍）。"""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    d = now or _dt.now(_tz(_td(hours=8)))
+    if d.weekday() >= 5:
+        return None
+    hm = d.hour * 60 + d.minute
+    if not (570 <= hm <= 900):
+        return None
+    if hm <= 690:        # 上午 09:30–11:30
+        elapsed = hm - 570
+    elif hm < 780:       # 午间休市：上午已交易满 120 分钟（市场暂停，进度不再增加）
+        elapsed = 120
+    else:                # 下午 13:00–15:00
+        elapsed = 120 + (hm - 780)
+    return max(0.05, min(1.0, elapsed / 240.0))
+
+
+def _adj_heat_ratio(raw_ratio: float, elapsed: Optional[float]) -> float:
+    """盘中今日 bar 是半根 K 线：按已交易分钟占比还原全日口径。
+    不修正时早盘量能比必然被腰斩（实测上午 0 分、午后 39 分），用户看到的资金热度随分钟漂移。"""
+    if elapsed is not None and elapsed < 1.0:
+        return raw_ratio / max(elapsed, 0.15)
+    return raw_ratio
+
+
 # ---- v2.5 参数自优化：滚动前推（walk-forward）+ 样本外验收 ----
 # 机制：训练窗 240 个交易日网格寻优（方向准确率）→ 60 日未见样本验收 → 滚动前进。
 # 只有优化参数在未见样本上确实验更准（≥默认参数+2pct）才采纳；否则诚实沿用默认。
@@ -450,8 +477,13 @@ async def market_gauge() -> dict[str, Any]:
         elif ma20 < ma60:
             tech = "下跌左侧"
     heat_ratio: Optional[float] = None
+    heat_adjusted = False
     if amt_ma20 and amt_ma20 > 0:
-        heat_ratio = round(amounts[-1] / amt_ma20, 3)
+        raw_ratio = amounts[-1] / amt_ma20
+        elapsed = _intraday_elapsed_ratio()
+        adj = _adj_heat_ratio(raw_ratio, elapsed)
+        heat_adjusted = adj != raw_ratio
+        heat_ratio = round(adj, 3)
     heat = _heat_state(heat_ratio)
     tech_score = _TECH_SCORE.get(tech, 50)
     temperature = max(0, min(100, round(tech_score * 0.6 + _heat_score(heat_ratio) * 0.4)))
@@ -468,7 +500,7 @@ async def market_gauge() -> dict[str, Any]:
         {"key": "technique", "name": "技术价量", "score": temperature, "weight": 30, "used": True},
         {"key": "breadth", "name": "市场宽度", "score": breadth, "weight": 15, "used": breadth is not None},
         {"key": "vix", "name": "波动率", "score": vix, "weight": 15, "used": vix is not None},
-        {"key": "lift", "name": "解禁压力", "score": lift, "weight": 10, "used": lift is not None},
+        {"key": "lift", "name": "解禁环境", "score": lift, "weight": 10, "used": lift is not None},
         {"key": "sentiment", "name": "资讯情绪", "score": senti, "weight": 10, "used": senti is not None},
         {"key": "risk", "name": "风险雷达", "score": risk, "weight": 10, "used": risk is not None},
         {"key": "participation", "name": "站内参与", "score": part, "weight": 5, "used": part is not None},
@@ -593,6 +625,7 @@ async def market_gauge() -> dict[str, Any]:
         "tech_levels": {"ma5": ma5, "ma20": ma20, "ma60": ma60},
         "heat_state": heat,
         "heat_ratio": heat_ratio,
+        "heat_intraday_adjusted": heat_adjusted,
         "temperature": temperature_v2,
         "temperature_v1_price_only": temperature,
         "dimensions": dims,

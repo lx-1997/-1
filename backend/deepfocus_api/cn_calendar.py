@@ -72,23 +72,37 @@ async def _fetch_rows(
     sort_columns: str,
     sort_types: str = "1",
     page_size: int = 100,
+    max_pages: int = 20,
 ) -> list:
-    """datacenter 单页取数：失败/success!=True → []（绝不抛）。"""
-    url = (
-        f"{_DATACENTER}?reportName={report_name}&columns=ALL&pageSize={int(page_size)}"
-        f"&sortColumns={sort_columns}&sortTypes={sort_types}&filter={filter_str}"
-    )
-    try:
-        r = await client.get(url, headers=_HEADERS)
-        if r.status_code != 200:
-            return []
-        payload = r.json()
-        if not payload.get("success"):
-            return []
-        rows = ((payload.get("result") or {}).get("data")) or []
-        return [row for row in rows if isinstance(row, dict)]
-    except Exception:  # noqa: BLE001
-        return []
+    """datacenter 取数（自动翻页取全量，cap max_pages 防失控）：失败/success!=True → []（绝不抛）。
+
+    此前只取第一页 100 条且不翻页——解禁/披露这类长窗口事件被静默截断，
+    解禁压力分因此长期失真（2026-10-27 实测：past/future 两窗口都恰好 100 行）。"""
+    out: list = []
+    for page in range(1, max_pages + 1):
+        url = (
+            f"{_DATACENTER}?reportName={report_name}&columns=ALL&pageSize={int(page_size)}"
+            f"&page={page}&sortColumns={sort_columns}&sortTypes={sort_types}&filter={filter_str}"
+        )
+        try:
+            r = await client.get(url, headers=_HEADERS)
+            if r.status_code != 200:
+                break
+            payload = r.json()
+            if not payload.get("success"):
+                break
+            result = payload.get("result") or {}
+            rows = [row for row in (result.get("data") or []) if isinstance(row, dict)]
+            out.extend(rows)
+            try:
+                pages_total = int(result.get("pages") or 1)
+            except (TypeError, ValueError):
+                pages_total = 1
+            if page >= max(pages_total, 1) or not rows:
+                break
+        except Exception:  # noqa: BLE001
+            break
+    return out
 
 
 def _window_filter(column: str, start: str, end: str) -> str:
