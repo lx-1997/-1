@@ -850,6 +850,39 @@
   <p>AI 赛马战报生成中：交易日内每 30 分钟更新冠军、最大分歧与情绪周期档位。</p>
   <!--AIF:REPORT:END-->
 </section>
+
+<section class="aif-int" id="aifInteract" style="max-width:1180px;margin:10px auto 0;padding:12px 18px;border:1px solid rgba(124,58,237,.25);border-radius:14px;background:rgba(124,58,237,.04)">
+  <div class="aif-int-grid">
+    <div class="aif-int-b" id="aifGuessBox">
+      <div class="aif-int-h">🎯 今日冠军竞猜 <small id="aifGuessMeta"></small></div>
+      <div class="aif-int-tip" id="aifGuessTip">加载中…</div>
+      <div class="aif-int-chips" id="aifGuessChips"></div>
+      <div class="aif-int-mini" id="aifGuessHist"></div>
+    </div>
+    <div class="aif-int-b" id="aifFollowBox">
+      <div class="aif-int-h">⭐ 我的关注 <small>最多 3 位 · 收盘后看 TA 们的动作</small></div>
+      <div class="aif-int-chips" id="aifFollowChips"></div>
+      <div class="aif-int-feed" id="aifFollowFeed"></div>
+    </div>
+  </div>
+</section>
+<style>
+  .aif-int-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:860px){.aif-int-grid{grid-template-columns:1fr}}
+  .aif-int-h{font-size:14px;font-weight:800;color:#e6e8f0;margin-bottom:8px}
+  .aif-int-h small{font-weight:500;color:#8a90a8;font-size:11px;margin-left:4px}
+  .aif-int-tip{font-size:12px;color:#aeb4c8;margin-bottom:8px;line-height:1.6}
+  .aif-int-chips{display:flex;flex-wrap:wrap;gap:7px}
+  .aif-chip{cursor:pointer;border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:5px 12px;font-size:12px;color:#c9cdd8;background:rgba(255,255,255,.03);user-select:none}
+  .aif-chip:hover{border-color:rgba(124,58,237,.7)}
+  .aif-chip.on{background:rgba(124,58,237,.28);border-color:#a78bfa;color:#fff;font-weight:700}
+  .aif-chip .n{color:#8a90a8;font-size:11px;margin-left:4px}
+  .aif-chip.disabled{opacity:.45;cursor:not-allowed}
+  .aif-int-mini{margin-top:8px;font-size:11px;color:#8a90a8;line-height:1.7}
+  .aif-int-feed{margin-top:8px;font-size:12px;line-height:1.9;color:#c9cdd8}
+  .aif-int-feed .up{color:#2bd96a}.aif-int-feed .down{color:#ff5a52}
+  .aif-int a{color:#a78bfa;text-decoration:none}
+</style>
 <div class="arena" id="arenaView"></div>
 <div class="app" id="appView" style="display:none">
   <div class="top" id="top">
@@ -1548,6 +1581,85 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPoll();
 document.addEventListener('keydown',e=>{if(!Tour.open)return;if(e.key==='Escape')closeTour(true);else if(e.key==='ArrowRight')nextTour();else if(e.key==='ArrowLeft')prevTour();});
 window.addEventListener('resize',()=>{if(Tour.open){clearTimeout(window.__tourResize);window.__tourResize=setTimeout(renderTour,120);}});
 loadArena();startPoll();
+</script>
+
+<script>
+(async function aifInteractInit(){
+  const q=(s)=>document.getElementById(s);
+  const esc=(t)=>String(t==null?'':t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const tok=(()=>{try{return localStorage.getItem('auth_token')||'';}catch(e){return '';}})();
+  const H={'Accept':'application/json'};if(tok){H.Authorization='Bearer '+tok;}
+  const call=async(u,o)=>{try{const r=await fetch(u,Object.assign({headers:H},o||{}));const d=await r.json().catch(()=>({}));return{ok:r.ok,status:r.status,d};}catch(e){return{ok:false,status:0,d:{}};}};
+  let sts=[];
+  try{const r=await fetch('/api/ai-fund/arena?w='+QRW,{headers:{'Accept':'application/json'}});const d=await r.json();sts=d.strategies||[];}catch(e){}
+  const nameOf=(fid)=>{const s=sts.find(x=>x.fund_id===fid);return s?( (s.emoji||'')+' '+s.name ):fid;};
+
+  async function renderGuess(){
+    const g=await call('/api/ai-fund/guess?w='+QRW);
+    const box=q('aifGuessBox');
+    if(!g.ok){box.innerHTML='<div class="aif-int-h">🎯 今日冠军竞猜</div><div class="aif-int-tip"><a href="/?ch=aifund_guess" target="_blank" rel="noopener">登录后可竞猜，猜中攒连胜 →</a></div>';return;}
+    const d=g.d||{};
+    const total=Math.max(1,d.guessers||0);
+    q('aifGuessMeta').textContent=d.streak?('连胜 '+d.streak+' · 历史 '+d.hits+'/'+d.total):'猜中攒连胜';
+    if(!d.window_open){q('aifGuessTip').textContent=d.window_note||'当前不在竞猜窗口';}
+    else{q('aifGuessTip').textContent=d.my_pick?('已押 '+esc(d.my_pick_name)+'（收盘前可改）'):'选出你心中的今日收盘冠军：';}
+    q('aifGuessChips').innerHTML=sts.map(s=>{
+      const n=(d.distribution||{})[s.fund_id]||0;
+      const pctv=Math.round(n*100/total);
+      const on=d.my_pick===s.fund_id?' on':'';
+      const dis=d.window_open?'':' disabled';
+      return '<span class="aif-chip'+on+dis+'" data-f="'+esc(s.fund_id)+'">'+esc(s.emoji||'')+' '+esc(s.name)+'<span class="n">'+pctv+'%</span></span>';
+    }).join('');
+    q('aifGuessChips').querySelectorAll('.aif-chip:not(.disabled)').forEach(el=>{
+      el.onclick=async()=>{
+        el.style.opacity='.5';
+        const r=await call('/api/ai-fund/guess?w='+QRW,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},H),body:JSON.stringify({fund_id:el.getAttribute('data-f')})});
+        el.style.opacity='';
+        if(!r.ok){alert((r.d&&r.d.detail)||'下单失败，稍后再试');return;}
+        renderGuess();
+      };
+    });
+    const hist=(d.recent||[]).slice(0,5);
+    q('aifGuessHist').innerHTML=hist.length
+      ? '近况：'+hist.map(h=>h.day.slice(5)+' '+esc(h.name)+' '+(h.hit==null?'<span>— 无胜负</span>':(h.hit?'<span class="up" style="color:#2bd96a">✅</span>':'<span style="color:#ff5a52">❌</span>'))).join(' · ')
+      : (d.streak||d.total?'':'');
+  }
+
+  async function renderFollow(){
+    const f=await call('/api/ai-fund/follow?w='+QRW);
+    const box=q('aifFollowBox');
+    if(!f.ok){box.innerHTML='<div class="aif-int-h">⭐ 我的关注</div><div class="aif-int-tip"><a href="/?ch=aifund_follow" target="_blank" rel="noopener">登录后关注选手，看 TA 们的实时调仓 →</a></div>';return;}
+    const followed=new Set((f.d.follows||[]).map(x=>x.fund_id));
+    q('aifFollowChips').innerHTML=sts.map(s=>{
+      const on=followed.has(s.fund_id)?' on':'';
+      return '<span class="aif-chip'+on+'" data-f="'+esc(s.fund_id)+'">'+(on?'⭐ ':'☆ ')+esc(s.emoji||'')+' '+esc(s.name)+'</span>';
+    }).join('');
+    q('aifFollowChips').querySelectorAll('.aif-chip').forEach(el=>{
+      el.onclick=async()=>{
+        const fid=el.getAttribute('data-f');
+        const on=!followed.has(fid);
+        el.style.opacity='.5';
+        const r=await call('/api/ai-fund/follow?w='+QRW,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},H),body:JSON.stringify({fund_id:fid,on:on})});
+        el.style.opacity='';
+        if(!r.ok){alert((r.d&&r.d.detail)||'操作失败');return;}
+        renderFollow();
+      };
+    });
+    const fd=await call('/api/ai-fund/follow/feed?limit=6&w='+QRW);
+    const items=(fd.ok&&fd.d.items)||[];
+    q('aifFollowFeed').innerHTML=items.length
+      ? items.map(t=>{
+          const act=t.side==='buy'?'<b style="color:#2bd96a">买入</b>':'<b style="color:#ff5a52">卖出</b>';
+          const pnl=(t.pnl_pct!=null)?(' <span class="'+(t.pnl_pct>=0?'up':'down')+'">'+(t.pnl_pct>=0?'+':'')+(+t.pnl_pct).toFixed(2)+'%</span>'):'';
+          return '<div>'+esc(t.emoji||'')+' '+esc(t.agent)+' · '+act+' '+esc(t.name||t.symbol)+pnl+' <span style="color:#8a90a8;font-size:11px">'+esc((t.ts||'').slice(5,16).replace('T',' '))+'</span></div>';
+        }).join('')
+      : '<span style="color:#8a90a8">关注后，这里会第一时间列出 TA 们的每笔调仓。</span>';
+  }
+
+  await renderGuess();
+  await renderFollow();
+  setInterval(()=>{renderGuess();},120000);
+})();
 </script>
 </body>
 </html>

@@ -1981,6 +1981,8 @@ app.include_router(webhook_push.router)  # /api/account/webhooks：Webhook 订�
 app.include_router(dev_portal.router)  # /feed/*、/api/v1/openapi.json、/developers：开发者分发通道
 from .stories_api import router as stories_router  # /api/stories/*、/api/profile：事件簇今日看板+千人千面推荐+故事埋点+显式画像
 app.include_router(stories_router)
+from .aif_interact_api import router as aif_interact_router  # /api/ai-fund/{guess,follow}：赛马冠军竞猜+关注agent+调仓时间线（全部要求登录态）
+app.include_router(aif_interact_router)
 from .market_extras import router as market_extras_router  # /api/econ/calendar、/api/market/gauge：宏观日历+市场状态仪表（免费引流）
 app.include_router(market_extras_router)
 from .research_stream import router as research_stream_router  # noqa: E402 - 研报深度解读 SSE 流式端点（懒导入 main，须在 main 定义后挂载）
