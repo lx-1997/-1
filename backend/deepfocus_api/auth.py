@@ -16,7 +16,9 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -1134,7 +1136,65 @@ ADMIN_RULES = (
     ("DELETE", "/api/mcp/servers"),
     ("POST", "/api/data-sources/agent-crawl"),
     ("POST", "/api/data-sources/keyword-crawl"),  # 与 agent-crawl 同属管理端爬取，曾漏在规则外→trial 用户可触发出网/耗资源
+    ("DELETE", "/api/data-sources"),  # 删全局共享数据源/条目=管理动作；行级无 owner 校验，且前端无 DELETE 调用面
 )
+
+# 写接口路径级限流（防 LLM 配额/上传/爬取被刷）。单进程内存滑动窗口，与 mcp_tokens 同款；
+# 生产单 worker 部署下有效。规则按 (method, 路径前缀) 命中，匿名主体回退 X-Real-IP。
+_RATE_RULES: tuple = (
+    # 重消耗：LLM 分析/文件抽取/摄入/评测，单人每分钟次数
+    ("POST", "/api/ai/", 12, 60),
+    ("POST", "/api/options/ai-analysis", 12, 60),
+    ("POST", "/api/decision/", 12, 60),
+    ("POST", "/api/customs-trade/", 12, 60),
+    ("POST", "/api/skills/", 12, 60),
+    ("POST", "/api/fingpt/", 12, 60),
+    ("POST", "/api/dulus/webbridge/", 12, 60),
+    ("POST", "/api/pro-research/", 10, 60),
+    ("POST", "/api/data-sources/", 10, 60),
+    # 公开白名单内的匿名可写面（中间件在白名单放行前先查限流）
+    ("POST", "/api/stories/event", 60, 60),
+    ("POST", "/api/agents/feedback", 30, 60),
+    ("POST", "/api/realtime/recall/subscriptions", 10, 60),
+    # 轻量生成/埋点：宽阈值，只挡脚本刷
+    ("POST", "/api/share/snapshots", 30, 60),
+    ("POST", "/api/metrics/", 240, 60),
+    ("POST", "/api/activity", 120, 60),
+)
+_RATE_WINDOWS: dict = {}  # {(prefix, subject): deque[monotonic_ts]}
+_RATE_WINDOWS_MAX_KEYS = 50_000
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-real-ip") or (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    return request.client.host if request.client else "unknown"
+
+
+def rate_limit_hit(request: Request, claims: Optional[dict]) -> Optional[str]:
+    """命中限流规则则返回命中前缀（供 429 响应），未命中返回 None。"""
+    path = request.url.path
+    matched = [r for r in _RATE_RULES if request.method == r[0] and path.startswith(r[1])]
+    if not matched:
+        return None
+    subject = str(claims.get("sub") or "") if claims else _client_ip(request)
+    now = time.monotonic()
+    # 键容量上限保护：超限做一次全量过期清理，防长期运行内存缓慢增长
+    if len(_RATE_WINDOWS) > _RATE_WINDOWS_MAX_KEYS:
+        for key in [k for k, dq in _RATE_WINDOWS.items() if not dq or now - dq[-1] > 600]:
+            _RATE_WINDOWS.pop(key, None)
+    for method, prefix, limit, window in matched:
+        dq = _RATE_WINDOWS.setdefault((prefix, subject), deque())
+        while dq and now - dq[0] > window:
+            dq.popleft()
+        if len(dq) >= limit:
+            logging.getLogger("deepfocus.ratelimit").warning(
+                "rate_limited method=%s path=%s subject=%s prefix=%s", request.method, path, subject, prefix
+            )
+            return prefix
+        dq.append(now)
+    return None
 
 
 def role_satisfies(user_role: str, required_role: str) -> bool:
@@ -1186,6 +1246,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.method == "OPTIONS":  # 放行 CORS 预检
             return await call_next(request)
+
+        # 写接口限流先于白名单判断：公开可写面（stories/event 等）与登录重消耗面统一在此拦截
+        if rate_limit_hit(request, claims):
+            return JSONResponse({"detail": "操作过于频繁，请稍后再试"}, status_code=429)
 
         path = request.url.path
         # 研报原文流由已登录会员先换取 120 秒一次性令牌；浏览器原生 PDF 查看器无法附带

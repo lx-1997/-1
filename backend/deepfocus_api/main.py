@@ -3386,7 +3386,7 @@ async def multi_market_decision(request: MultiMarketDecisionRequest) -> MultiMar
                     updated.append(s)
             request = request.model_copy(update={"stocks": updated})
         except Exception:
-            pass
+            logger.debug("stocks-filter failed", exc_info=True)
 
     response = build_multi_market_decision(request)
     reasons: list[str] = []
@@ -3544,7 +3544,7 @@ async def _enhance_review_narrative(obj, *, view, subject, llm_adapter: Any = No
             obj.narrative_provider = model.provider
         _attach_core_agent_metadata(obj, core_result)
     except Exception:
-        pass
+        logger.warning("narrative-enrich failed", exc_info=True)
     return obj
 
 
@@ -3577,7 +3577,7 @@ async def _enhance_briefing_headline(briefing, *, llm_adapter: Any = None):
             briefing.headline_provider = model.provider
         _attach_core_agent_metadata(briefing, core_result)
     except Exception:
-        pass
+        logger.warning("headline-enrich failed", exc_info=True)
     return briefing
 
 
@@ -4250,7 +4250,7 @@ async def portfolio_review() -> PortfolioReviewResponse:
             price_map = await fetch_live_prices_for_positions(summary["open_positions"])
             summary = apply_live_prices(summary, price_map)
         except Exception:
-            pass
+            logger.warning("apply-live-prices failed", exc_info=True)
     review = build_portfolio_review(summary, sp500_history=sp500, rates_history=rates)
     return await _enhance_review_narrative(review, view="portfolio", subject="组合", llm_adapter=llm)
 
@@ -5337,7 +5337,7 @@ async def api_delete_data_source(source_id: str) -> dict[str, bool]:
 
 
 @app.post("/api/data-sources/{source_id}/sync", response_model=DataSourceSyncResponse)
-async def api_sync_data_source(source_id: str, request: DataSourceSyncRequest) -> DataSourceSyncResponse:
+async def api_sync_data_source(source_id: str, request: DataSourceSyncRequest, _admin: dict = Depends(require_admin)) -> DataSourceSyncResponse:
     source, items = await sync_data_source(source_id, request)
     publish_data_source_items(items, topic="data-source-sync")
     return DataSourceSyncResponse(source=source, imported_count=len(items), items=items)
@@ -6515,14 +6515,14 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
         if raw_cached is not None:
             return raw_cached, "application/pdf"
     except Exception:
-        pass
+        logger.warning("raw-pdf-cache-read failed", exc_info=True)
     try:
         from .pdf_brand import get_cached_by_file_id  # noqa: PLC0415
         cached = await asyncio.to_thread(get_cached_by_file_id, file_id)
         if cached is not None:
             return cached, "application/pdf"
     except Exception:
-        pass
+        logger.warning("pdf-cache-read failed", exc_info=True)
 
     base = f"http://127.0.0.1:{os.getenv('RESEARCH_WORKBENCH_INTERNAL_PORT', '3927')}"
     safe_name = (name or f"{file_id}.pdf").strip()
@@ -9409,7 +9409,7 @@ def _record_agent_chain(*, mode: str, route: str, message: str, trace: list, ela
             "ok": bool(ok), "error": str(error or "")[:120],
         })
     except Exception:
-        pass
+        logger.debug("answer-metrics-log failed", exc_info=True)
 
 
 # AI 对话里的「深度研判」是回答模式，不再单独做成会员专属入口：会员/管理员不限次，
@@ -11874,7 +11874,7 @@ async def list_agent_tools_endpoint() -> AgentToolListResponse:
     try:
         tools = tools + await discover_mcp_agent_tools()  # best-effort：MCP 不可用不影响内部工具列示
     except Exception:
-        pass
+        logger.warning("mcp-tool-discovery failed", exc_info=True)
     return AgentToolListResponse(
         enabled=_tool_agent_enabled(),
         tools=[
@@ -13416,7 +13416,7 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
             else:
                 await asyncio.to_thread(metrics_incr, "ai_tool_succeeded")
     except Exception:
-        pass
+        logger.debug("tool-metrics-incr failed", exc_info=True)
     try:
         if answer and _user:
             _owner = str((_user or {}).get('username') or (_user or {}).get('id') or '').strip()
@@ -13430,7 +13430,7 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
                 tags=_tags, source="ai_chat",
             ), owner_user_id=str(_user["sub"]))
     except Exception:
-        pass
+        logger.warning("hall-persist-ai-chat failed", exc_info=True)
     if answer:
         needs_clarification = str(getattr(routed, "title", "") or "") == "先确定选股范围"
         if quota_key and not needs_clarification:
@@ -13653,7 +13653,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                         if market_structure:
                             run_hint = f"{run_hint}\n\n【本轮预取的A股市场硬数据】{json.dumps(market_structure, ensure_ascii=False)}"
                     except Exception:
-                        pass
+                        logger.warning("market-structure-prefetch failed", exc_info=True)
                 routed = await _web_qa_with_deadline(_route_orchestrator_chat(
                     OrchestratorChatRequest(
                         message=message.strip(),
@@ -13687,7 +13687,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                             tags=_tags, source="ai_chat",
                         ), owner_user_id=str(_user["sub"]))
                 except Exception:
-                    pass
+                    logger.warning("hall-persist-ai-chat failed", exc_info=True)
                 if answer:
                     needs_clarification = str(getattr(routed, "title", "") or "") == "先确定选股范围"
                     if quota_key and not needs_clarification:
@@ -14150,7 +14150,7 @@ async def _route_orchestrator_chat(
                             ))
                     return attach_data_quality(mapped)
         except Exception:
-            pass
+            logger.warning("orchestrator-map failed", exc_info=True)
 
     # 兜底 LLM 路径(无独立 context_hint 形参)补回会话历史：用带前缀的 message 副本喂 LLM，
     # 但技能路由 / research_intent / stock 判定全程只看干净的当前问题(request)，历史不参与路由。
@@ -14191,7 +14191,7 @@ async def _route_orchestrator_chat(
             )
             return attach_data_quality(_attach_core_agent_metadata(core_result.raw, core_result))
         except Exception:
-            pass
+            logger.warning("orchestrator-context failed", exc_info=True)
 
     core_result = await core_agent.run_chat(
         CoreAgentRequest(

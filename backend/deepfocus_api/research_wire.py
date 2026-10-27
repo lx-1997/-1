@@ -34,6 +34,8 @@ _WIRE_CACHE = ByteBoundedTTLCache(
     max_item_bytes=int(os.getenv("DEEPFOCUS_WIRE_CACHE_ITEM_BYTES", str(2 * 1024 * 1024))),
     ttl_seconds=_WIRE_STALE_TTL,
 )
+# 回源单飞登记表：{cache_key: asyncio.Task}，等待者共享同一回源任务（08cda59 遗漏定义）
+_WIRE_REFRESH_TASKS: dict = {}
 # 一次回源抓取的「池」上限（去重前，交给工作台 resultLimit；搜索非下载、不受 ZSXQ 下载限额影响）
 _WIRE_POOL = int(os.getenv("DEEPFOCUS_WIRE_POOL", "500"))
 _ANNOTATED_WIRE_IDS: set[str] = set()
