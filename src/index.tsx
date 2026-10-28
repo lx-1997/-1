@@ -7,6 +7,7 @@ import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import './index.css';
 import './components/PublicTerminalSimplify.css';
+import './components/terminal/workspace-design.css';
 
 // 终端独占模式：构建时 REACT_APP_TERMINAL_ONLY=true，公开免登录，整页仅渲染金融终端。
 const TERMINAL_ONLY = process.env.REACT_APP_TERMINAL_ONLY === 'true';
@@ -17,6 +18,9 @@ const ONTOLOGY_PATH = window.location.pathname.replace(/\/+$/, '') === '/ontolog
 // Local component workbench: available in development without loading the application shell.
 const MarketUIShowcase = process.env.NODE_ENV === 'development'
   ? React.lazy(() => import('./components/market-ui/examples/MarketUIShowcase')) : null;
+const CategoryShowcase = process.env.NODE_ENV === 'development'
+  ? React.lazy(() => import('./components/terminal/CategoryShowcase')) : null;
+const CATEGORY_UI_PATH = window.location.pathname.replace(/\/+$/, '') === '/dev/categories';
 const MARKET_UI_PATH = window.location.pathname.replace(/\/+$/, '') === '/dev/ui';
 
 const root = ReactDOM.createRoot(
@@ -29,7 +33,11 @@ root.render(
       <ThemeProvider>
         <AuthProvider>
           <ErrorBoundary>
-            {MarketUIShowcase && MARKET_UI_PATH ? (
+            {CategoryShowcase && CATEGORY_UI_PATH ? (
+              <React.Suspense fallback={<p role="status">分类示例加载中</p>}>
+                <CategoryShowcase />
+              </React.Suspense>
+            ) : MarketUIShowcase && MARKET_UI_PATH ? (
               <React.Suspense fallback={<p role="status">组件示例加载中</p>}>
                 <MarketUIShowcase />
               </React.Suspense>

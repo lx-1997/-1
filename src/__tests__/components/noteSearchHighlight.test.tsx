@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react';
+import { render, fireEvent, waitFor, screen, within } from '@testing-library/react';
 import TerminalZsxqStream from '../../components/TerminalZsxqStream';
 import { getZsxqStream, type ZsxqStreamResponse } from '../../services/zsxqStreamService';
 
@@ -53,4 +53,56 @@ describe('机构纪要搜索关键词高亮', () => {
     await waitFor(() => expect(mockedStream).toHaveBeenLastCalledWith(expect.objectContaining({ q: undefined })));
     await waitFor(() => expect(container.querySelector('mark.tzs-mark')).toBeNull());
   });
+});
+
+
+it('shows only a heading and introduction until a note is opened, then restores the list position and focus', async () => {
+  const text = '公司调研纪要\n' + '简介与研究背景。'.repeat(90) + '\n全文末尾仅在详情显示';
+  mockedStream.mockResolvedValue(streamResponse(text));
+  const { container } = render(<TerminalZsxqStream />);
+  await screen.findByRole('heading', { name: '公司调研纪要' });
+  expect(container.querySelector('.tzs-item-body')).toBeNull();
+  expect(screen.queryByText('全文末尾仅在详情显示')).not.toBeInTheDocument();
+  const list = container.querySelector('.tzs-scroll') as HTMLDivElement;
+  list.scrollTop = 180;
+  const outer = list.parentElement as HTMLElement;
+  outer.scrollTop = 260;
+  const open = screen.getByRole('button', { name: /查看全文/ });
+  fireEvent.click(open);
+  const reader = screen.getByRole('region', { name: '机构纪要全文' });
+  expect(within(reader).getByText('全文末尾仅在详情显示')).toBeVisible();
+  expect(list.scrollTop).toBe(0);
+  outer.scrollTop = 20;
+  expect(within(reader).queryByRole('button', { name: /展开全文/ })).not.toBeInTheDocument();
+  fireEvent.click(within(reader).getByRole('button', { name: '← 返回纪要列表' }));
+  expect(screen.queryByRole('region', { name: '机构纪要全文' })).not.toBeInTheDocument();
+  expect(list.scrollTop).toBe(180);
+  expect(outer.scrollTop).toBe(260);
+  expect(open).toHaveFocus();
+});
+
+it('uses Escape to leave the full note without propagating to terminal stock shortcuts', async () => {
+  mockedStream.mockResolvedValue(streamResponse('测试纪要标题\n测试正文'));
+  render(<TerminalZsxqStream />);
+  fireEvent.click(await screen.findByRole('button', { name: /查看全文/ }));
+  const globalKey = jest.fn();
+  window.addEventListener('keydown', globalKey);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('region', { name: '机构纪要全文' })).not.toBeInTheDocument();
+  expect(globalKey).not.toHaveBeenCalled();
+  window.removeEventListener('keydown', globalKey);
+});
+
+it('describes an image-only note in the list and loads original images only in the reader', async () => {
+  const response = streamResponse('图片纪要标题');
+  response.items[0].title = '图片纪要标题';
+  response.items[0].images = ['https://images.zsxq.com/verified-original.jpg'];
+  response.items[0].image_fulls = response.items[0].images;
+  mockedStream.mockResolvedValue(response);
+  const { container } = render(<TerminalZsxqStream />);
+  const open = await screen.findByRole('button', { name: /图片纪要标题.*图片纪要，含 1 张原始资料/ });
+  expect(container.querySelector('.tzs-img')).toBeNull();
+  fireEvent.click(open);
+  expect(screen.getByRole('region', { name: '机构纪要全文' })).toBeInTheDocument();
+  expect(container.querySelector('.tzs-img')).toHaveAttribute('src', expect.stringContaining('/api/zsxq/image?u='));
 });

@@ -80,6 +80,9 @@ import { QuoteStatus, QuoteValue } from './market-ui';
 import { TerminalQuoteName } from './terminal/TerminalQuoteName';
 import { toTerminalQuoteDisplay } from './terminal/terminalQuoteDisplay';
 import { useTheme } from '../context/ThemeContext';
+import WorkspaceIntro from './terminal/WorkspaceIntro';
+import ContentCategories, { ALL_CONTENT, NEWS_KINDS, CategoryTabs, matchesContent, hasContentSelection, type ContentSelection, type ContentEntry } from './terminal/ContentCategories';
+import WorkspaceIcon from './terminal/WorkspaceIcon';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
 import './TerminalMobile.css';
@@ -1370,9 +1373,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [personalPrefsOpen, setPersonalPrefsOpen] = useState(false);
   const [personalInterests, setPersonalInterests] = useState<InterestKey[]>(() => LS.read<InterestKey[]>('bbt.personal.interests.v1', []));
   const [interestSignals, setInterestSignals] = useState<Partial<Record<InterestKey, number>>>(() => LS.read('bbt.personal.signals.v1', {}));
+  const [categorySelections, setCategorySelections] = useState<Record<string, ContentSelection>>({});
+  const [watchMarket, setWatchMarket] = useState('all');
+  const [reviewCategory, setReviewCategory] = useState('all');
+  const [aiTaskCategory, setAiTaskCategory] = useState('all');
+  const contentSelection = categorySelections[feedFilter] || ALL_CONTENT;
+  const classificationActive = hasContentSelection(contentSelection);
+  const changeContentSelection = (next: ContentSelection) => setCategorySelections(previous => ({ ...previous, [feedFilter]: next }));
+  useEffect(() => { setCategorySelections({}); setWatchMarket('all'); setReviewCategory('all'); setAiTaskCategory('all'); }, [session.revision]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [flash, setFlash] = useState<Record<string, 'up' | 'down'>>({});
   const [active, setActive] = useState<string | null>(null);
+  const [researchReturn, setResearchReturn] = useState<{ symbol: string; name: string; revision: number } | null>(null);
+  const researchSections = useRef<Record<string, 'overview' | 'research' | 'evidence'>>({});
+  useEffect(() => { setResearchReturn(null); researchSections.current = {}; }, [session.revision]);
   const [maxed, setMaxed] = useState<'eq' | 'news' | 'res' | 'sig' | null>(null);
   // 面板折叠：移动端进入任一模块时默认展示完整内容，用户仍可手动收起单个面板。
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -2637,6 +2651,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (body && !body.querySelector('.bbt-ai-latest-answer')) body.scrollTop = 0;
     }, 80);
   }, [logAct]);
+  // Preparing a question never submits model work. Existing drafts remain intact.
+  const openStockAi = () => {
+    if (!active) { openAi(); return; }
+    setResearchReturn({ symbol: active, name: nameOf(active), revision: session.revision });
+    const question = `请分析${nameOf(active)}（${active}）的核心逻辑、证据与风险，并区分已知事实和待验证假设。`;
+    openAi();
+    primeAiQuestion(aiInput.trim() ? aiInput : question);
+  };
+  const returnToResearch = () => {
+    if (!researchReturn || !isAuthRevisionCurrent(researchReturn.revision)) return;
+    setSideNavKey('stocks'); setFeedFilter('自选'); setActive(researchReturn.symbol);
+    setResearchReturn(null);
+    window.setTimeout(() => document.querySelector<HTMLButtonElement>('.bbt-stock-back')?.focus({ preventScroll: true }), 0);
+  };
   const askAboutArticle = useCallback((message: RealtimeMessageRecord) => {
     resetAiConversation();
     const excerpt = stripUrls(message.content || '').split(/——\s*[🔒🔓]/)[0].trim().slice(0, 1000);
@@ -5287,11 +5315,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     return base;
   }, [dedupedMessages, searchMsgs, useServerFeed, feedFilter, watchlistFeed, articles, newsSearching, personalization.items, articleHistory]);
 
-  // 资讯列表（ALL/快讯/文章 排除已置顶头条；自选 tab 与选股/搜索态显示全部命中）
-  const newsRows = useMemo(
-    () => (feedFilter === '精选' || feedFilter === '自选' || active || newsQuery.trim()) ? feed : feed.filter(m => !pinnedIds.has(m.id)),
-    [feed, feedFilter, active, newsQuery, pinnedIds]
-  );
+  const messageCategoryEntry = (message: RealtimeMessageRecord): ContentEntry => ({ title: message.title, tags: message.tags, source: message.source_name, kind: message.severity, publishedAt: message.created_at, categoryPaths: message.metadata?.category_paths });
+  const newsCategoryEntries = feed.map(messageCategoryEntry);
+  // Filter before pagination, preserving matching headlines in the primary list.
+  const newsRows = useMemo(() => {
+    const base = classificationActive || feedFilter === '精选' || feedFilter === '自选' || active || newsQuery.trim()
+      ? feed : feed.filter(message => !pinnedIds.has(message.id));
+    return base.filter(message => matchesContent(messageCategoryEntry(message), contentSelection));
+  }, [feed, feedFilter, active, newsQuery, pinnedIds, contentSelection, classificationActive]);
   // 翻页实际数据源：实时流(全部/快讯)在第 2 页起按锚点冻结(剔除比锚点更新的新到快讯),分页稳定不前移;
   // 第 1 页或服务端态(文章/自选/搜索,本就不实时插入)不冻结。created_at 为 ISO,字典序==时间序。
   const pagedRows = useMemo(
@@ -5342,6 +5373,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // 切换标签/搜索/选股/改每页 时，资讯回到第 1 页(并解冻锚点)；文章历史批次随之作废重拉
   useEffect(() => { setNewsPage(1); setFeedAnchor(null); setArticleHistory([]); setArticleHistDone(false); }, [feedFilter, newsManual, active, pageSize]);
+  useEffect(() => { setNewsPage(1); setFeedAnchor(null); }, [contentSelection]);
   // 资讯搜索：去抖后记一条流水（≥2 字，避免逐键噪音）
   useEffect(() => {
     const q = newsQuery.trim();
@@ -5361,10 +5393,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const isCelebrity = isCelebUser && feedFilter === '名人观点';  // 非白名单恒 false（防 localStorage 残留越权）
   const isZsxqStream = canViewZsxq && feedFilter === '机构纪要'; // 机构调研纪要帖子流（所有登录用户）
 
-  // ⭐已取消「A股 / 港美股」分市场:研报标题中英混杂、源头无市场字段,classifyMarket 启发式误分多,
-  // 与其分错不如不分——统一一个列表(用户决策)。resFiltered 即全量 reportFeed。
-  const resFiltered = reportFeed;
-  useEffect(() => { setResPage(1); }, [resSearchKw, feedFilter, pageSize]);
+  // 研报按源端机构与标题/标签主题筛选；不从中英文标题推断上市市场。
+  const reportCategoryEntry = (report: ResearchWireItem): ContentEntry => ({ title: report.title, tags: [report.hashtag || ''], source: report.org, publishedAt: report.created_at || report.date });
+  const resFiltered = reportFeed.filter(report => matchesContent(reportCategoryEntry(report), contentSelection));
+  useEffect(() => { setResPage(1); }, [resSearchKw, feedFilter, pageSize, contentSelection]);
   // 研报日期手风琴:某天是否展开 = 用户显式展开 ∨ (它是最新一天 ∧ 没被用户收起)。点头部切换。
   const resDayOpen = useCallback((day: string, isLatest: boolean) =>
     resOpenDays.has(day) || (isLatest && !resClosedDays.has(day)), [resOpenDays, resClosedDays]);
@@ -5617,7 +5649,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   // 行情排序后的显示顺序
   const displayList = useMemo(() => {
-    if (!sortKey) return watchlist;
+    const visible = watchMarket === 'all' ? watchlist : watchlist.filter(symbol => classifyMarket(symbol) === watchMarket);
+    if (!sortKey) return visible;
     const val = (s: string) => {
       const q = quotes[s];
       if (!q) return -Infinity;
@@ -5625,8 +5658,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (sortKey === 'price') return Number(q.price || 0);
       return Number(q.volume || 0);
     };
-    return [...watchlist].sort((a, b) => (val(a) - val(b)) * sortDir);
-  }, [watchlist, quotes, sortKey, sortDir]);
+    return [...visible].sort((a, b) => (val(a) - val(b)) * sortDir);
+  }, [watchlist, quotes, sortKey, sortDir, watchMarket]);
   useEffect(() => { navRef.current = displayList; }, [displayList]);
   // 自选按市场分组(A股/港股/美股)——更清晰、专业；组内沿用当前排序/顺序
   const groupedWatch = useMemo(() => {
@@ -5782,6 +5815,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 侧边栏是工作区切换，不是页内锚点：先切换视图，再等一帧把对应模块
   // 放到内容区顶部，避免 smooth scroll 停在旧页面底部、露出页脚造成“模块串台”。
   const focusSideModule = (key: string, nextFeed?: string) => {
+    if (key === 'ai' && active) { openStockAi(); return; }
+    if (key !== 'ai') setResearchReturn(null);
     setActive(null);
     setSideNavKey(key);
     setHelpMenuOpen(false); setAcctOpen(false);
@@ -5792,7 +5827,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (nextFeed) setFeedFilter(nextFeed);
     if (key === 'market' && nextFeed === '快讯') setFastNewsRefresh(value => value + 1);
     window.setTimeout(() => {
-      const target = key === 'ai' ? aiWorkspaceRef.current : key === 'review' ? reviewWorkspaceRef.current : key === 'risk' || key === 'strategy' ? toolWorkspaceRef.current : gridRef.current;
+      const heading = gridRef.current?.closest('.bbt')?.querySelector('.dc-page-heading, .dc-intro');
+      const target = key === 'ai' ? aiWorkspaceRef.current : key === 'review' ? reviewWorkspaceRef.current : key === 'risk' || key === 'strategy' ? toolWorkspaceRef.current : heading || gridRef.current;
       target?.scrollIntoView({ behavior: 'auto', block: 'start' });
     }, 0);
   };
@@ -5811,7 +5847,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const currentAiRecord = aiConversations.find(record => record.id === activeAiConversationId);
   const aiStarterPrompts: ReadonlyArray<{ tag: string; question: string; label?: string }> = watchlist.length ? [
     { tag: '看自选', label: '我的自选最近有什么变化？', question: `帮我核对这些自选最近有哪些重要变化与风险：${watchlist.slice(0, 5).map(symbol => `${nameOf(symbol)}(${symbol})`).join('、')}` },
-    ...AI_STARTER_PROMPTS.slice(0, 2),
+    ...AI_STARTER_PROMPTS,
   ] : AI_STARTER_PROMPTS;
   const mobileNavView = getMobileNavView(sideNavKey, feedFilter);
   const jumpFromMobileNav = (view: MobileNavView) => {
@@ -5863,38 +5899,38 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <aside className="bbt-side-nav" aria-label="主导航">
         <div className="bbt-side-brand">
           <span className="bbt-side-brand-mark" aria-hidden="true">稻</span>
-          <span className="bbt-side-brand-copy"><strong>稻财经</strong><small>稻草财经 AI</small></span>
+          <span className="bbt-side-brand-copy"><strong>稻草财经</strong><small>DAOCAIJING</small></span>
         </div>
         <button type="button" className="bbt-side-collapse" onClick={() => setSideNavCollapsed(value => !value)} aria-label={sideNavCollapsed ? '展开主导航' : '收起主导航'} title={sideNavCollapsed ? '展开主导航' : '收起主导航'}><span>{sideNavCollapsed ? '›' : '‹'}</span><b>{sideNavCollapsed ? '展开' : '收起'}</b></button>
         <div className="bbt-side-kicker">主菜单</div>
         <nav className="bbt-side-menu">
           <button type="button" title="我的股票" className={`bbt-side-item${sideNavKey === 'stocks' ? ' active' : ''}`} onClick={() => focusSideModule('stocks', '自选')}>
-            <span className="bbt-side-icon">◌</span><span>我的股票</span><em>{watchlist.length}</em>
+            <span className="bbt-side-icon"><WorkspaceIcon name="stocks" /></span><span>我的股票</span><em>{watchlist.length}</em>
           </button>
           <button type="button" title="AI 对话" className={`bbt-side-item${sideNavKey === 'ai' ? ' active' : ''}`} onClick={() => focusSideModule('ai')}>
-            <span className="bbt-side-icon">✦</span><span>AI 对话</span><i>AI</i>
+            <span className="bbt-side-icon"><WorkspaceIcon name="ai" /></span><span>AI 对话</span><i>AI</i>
           </button>
         </nav>
         <div className="bbt-side-divider" />
         <div className="bbt-side-kicker">信息</div>
         <nav className="bbt-side-menu">
           <button type="button" title="市场快讯" className={`bbt-side-item${sideNavKey === 'market' ? ' active' : ''}`} onClick={() => { setActive(null); focusSideModule('market', '快讯'); }}>
-            <span className="bbt-side-icon">◈</span><span>市场快讯</span>
+            <span className="bbt-side-icon"><WorkspaceIcon name="market" /></span><span>市场快讯</span>
           </button>
           <button type="button" title="每日复盘" className={`bbt-side-item${sideNavKey === 'review' ? ' active' : ''}`} onClick={() => focusSideModule('review')}>
-            <span className="bbt-side-icon">◷</span><span>每日复盘</span>
+            <span className="bbt-side-icon"><WorkspaceIcon name="review" /></span><span>每日复盘</span>
           </button>
         </nav>
         <div className="bbt-side-kicker bbt-side-kicker--nested">研究资料</div>
         <nav className="bbt-side-menu bbt-side-research-menu">
           <button type="button" title="深度文章" className={`bbt-side-item${sideNavKey === 'articles' ? ' active' : ''}`} onClick={() => focusSideModule('articles', '文章')}>
-            <span className="bbt-side-icon">▤</span><span>深度文章</span>
+            <span className="bbt-side-icon"><WorkspaceIcon name="articles" /></span><span>深度文章</span>
           </button>
           <button type="button" title="机构纪要" className={`bbt-side-item${sideNavKey === 'notes' ? ' active' : ''}`} onClick={() => focusSideModule('notes', '机构纪要')}>
-            <span className="bbt-side-icon">⌁</span><span>机构纪要</span>
+            <span className="bbt-side-icon"><WorkspaceIcon name="notes" /></span><span>机构纪要</span>
           </button>
           <button type="button" title="投行研报" className={`bbt-side-item${sideNavKey === 'reports' ? ' active' : ''}`} onClick={() => focusSideModule('reports', '研报')}>
-            <span className="bbt-side-icon">▥</span><span>投行研报</span>
+            <span className="bbt-side-icon"><WorkspaceIcon name="reports" /></span><span>投行研报</span>
           </button>
         </nav>
         {SHOW_SIDEBAR_TOOLS && <>
@@ -5931,7 +5967,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-cmd-right">
           <button className="bbt-review-entry bbt-aiqa-entry bbt-primary-action"
             onClick={() => focusSideModule('ai')}
-            title="AI 投研问答：自动调行情、估值、快讯、研报和复盘">✨ 问 AI</button>
+            title="AI 投研问答：自动调行情、估值、快讯、研报和复盘">问 AI</button>
           {membership?.tier !== 'lifetime' && (() => {
             const isMember = membership?.tier === 'premium';   // 已是尊享会员 → 显示「续费」（可能提前续期），永久会员不显示
             const promoActive = false;  // 价格不以本地滚动倒计时为依据
@@ -5942,7 +5978,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       onClick={() => { logAct('open_buy', isMember ? '顶部续费CTA' : '顶部开通会员CTA'); requireLogin(openBuy, isMember ? '续费会员' : '开通会员'); }}
                       aria-label={isMember ? '续费会员' : '开通尊享会员'}
                       title={isNewUser ? '新人专享：当前套餐折扣 + 年卡加赠1个月/半年卡加赠15天' : (isMember ? '提前续费，会员权益连续不断' : '开通尊享会员 · 查看公开套餐价 · 解锁 AI 无限解读/微信快讯推送/文章全文')}>
-                💎 {isMember ? '续费会员' : '开通会员'}<span className="bbt-buy-cta-hot">{hot}</span>
+                {isMember ? '续费会员' : '开通会员'}<span className="bbt-buy-cta-hot">{hot}</span>
               </button>
             );
           })()}
@@ -6124,38 +6160,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </span>
       </div>
 
-      {/* 匿名访客宣传首屏：把实时终端的核心价值先说清楚，再把用户送进真实数据工作台。 */}
-      {!authUser && sideNavKey === 'market' && (
-        <section className="bbt-promo-hero" aria-labelledby="bbt-promo-title">
-          <div className="bbt-promo-glow" aria-hidden="true" />
-          <div className="bbt-promo-copy">
-            <div className="bbt-promo-kicker"><span className="bbt-promo-kicker-dot" />稻草财经 AI</div>
-            <h1 id="bbt-promo-title">把市场的噪音，变成可验证的线索。</h1>
-            <p>实时行情、重要快讯、投行研报和 AI 证据链，集中在一张真正能用的投研工作台。</p>
-            <div className="bbt-promo-actions">
-              <button type="button" className="bbt-promo-cta primary" onClick={() => { setPaletteOpen(true); setPq(''); }}>搜索一只股票 <span>⌘K</span></button>
-              <button type="button" className="bbt-promo-cta ghost" onClick={() => { void openReview(); }}>查看今日复盘 <span>→</span></button>
-            </div>
-            <div className="bbt-promo-trust" aria-label="平台实时状态">
-              <span><b>{watchlist.length}</b> 个自选观察</span>
-              <span><b>{messages.length || 0}</b> 条快讯样本</span>
-              <span className={status === 'live' ? 'is-live' : ''}><i />{status === 'live' ? '实时连接' : '自动同步中'}</span>
-            </div>
-          </div>
-          <div className="bbt-promo-visual" aria-hidden="true">
-            <div className="bbt-promo-orbit orbit-a" />
-            <div className="bbt-promo-orbit orbit-b" />
-            <div className="bbt-promo-console">
-              <div className="bbt-promo-console-head"><span>MARKET SIGNALS</span><TerminalClock /></div>
-              <div className="bbt-promo-console-line line-main"><i /> 自选池正在扫描 <strong>{watchlist.length}</strong> 个标的</div>
-              <div className="bbt-promo-console-line"><i /> 证据流 <strong>{status === 'live' ? 'LIVE' : 'SYNCING'}</strong></div>
-              <div className="bbt-promo-bars"><i /><i /><i /><i /><i /><i /><i /><i /></div>
-            </div>
-            <span className="bbt-promo-float float-a">行情 · 快讯 · 研报</span>
-            <span className="bbt-promo-float float-b">AI 证据链</span>
-          </div>
-        </section>
-      )}
+      {!stockWorkspaceFocused && <WorkspaceIntro section={sideNavKey} anonymous={!authUser}
+        connection={sidebarConnectionLabel}
+        onSearch={() => { setPaletteOpen(true); setPq(''); }}
+        onReview={() => focusSideModule('review')}
+        onResearch={() => focusSideModule('ai')} />}
 
       <section className="bbt-simple-start" aria-label="从这里开始">
         <div className="bbt-simple-start-copy">
@@ -6326,9 +6335,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       })()}
 
       {active && !authUser && <TerminalKline symbol={active} name={nameOf(active)} />}
-      {stockWorkspaceFocused && <StockWorkspaceNav onBack={() => focusSideModule('stocks', '自选')} />}
+      {stockWorkspaceFocused && <StockWorkspaceNav onAsk={openStockAi} onBack={() => {
+        const symbol = active; focusSideModule('stocks', '自选');
+        window.setTimeout(() => {
+          const trigger = Array.from(document.querySelectorAll<HTMLButtonElement>('.bbt-watchlist-panel .bbt-qrow-select')).find(button => button.getAttribute('aria-label')?.includes(`（${symbol}）`));
+          trigger?.scrollIntoView({ block: 'nearest' }); trigger?.focus({ preventScroll: true });
+        }, 0);
+      }} />}
       {/* 个股面板：速判卡9维+龙虎榜/一致预期/分红/新闻——把只有 AI 能调的数据能力接到用户主路径 */}
-      {active && <TerminalStockPanel symbol={active} name={nameOf(active)} loggedIn={!!authUser} username={authUser} onLog={logAct}
+      {active && <TerminalStockPanel initialSection={researchSections.current[`${session.revision}:${active}`]} onSectionChange={section => { researchSections.current[`${session.revision}:${active}`] = section; }} symbol={active} name={nameOf(active)} loggedIn={!!authUser} username={authUser} onLog={logAct}
         onRequireLogin={why => requireLogin(() => { /* 登录后用户再点一次展开 */ }, why)} />}
 
       {sideNavKey === 'risk' && (
@@ -6374,6 +6389,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </div>
             <button type="button" className="bbt-review-workspace-open" onClick={() => openReview()}>打开完整复盘 ↗</button>
           </header>
+          <CategoryTabs label="复盘内容" value={reviewCategory} onChange={setReviewCategory} options={[
+            { key: 'all', label: '综合' },
+            { key: 'market', label: '大盘', disabled: !reviewToday?.narrative?.market },
+            { key: 'sectors', label: '板块', disabled: !reviewToday?.narrative?.sectors },
+            { key: 'funds', label: '资金', disabled: !reviewToday?.narrative?.funds },
+          ]} />
           {reviewToday ? (() => {
             const rIsToday = reviewToday.date === new Date().toLocaleDateString('en-CA');
             const narrative = reviewToday.narrative || {};
@@ -6384,7 +6405,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <div className="bbt-review-workspace-card-main">
                     <div className="bbt-review-workspace-card-meta">{rIsToday ? '今日 ' : ''}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}</div>
                     <h2>{narrative.one_liner || '今日市场复盘已准备好'}</h2>
-                    <p>{narrative.plain || '点击查看大盘、板块、资金与个股的完整复盘。'}</p>
+                    <p>{(reviewCategory === 'all' ? narrative.plain : narrative[reviewCategory]) || '当前复盘暂无这类内容，可查看综合复盘。'}</p>
                   </div>
                   <span className="bbt-review-workspace-card-go">查看完整复盘 ↗</span>
                 </div>
@@ -6404,6 +6425,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
       {sideNavKey === 'ai' && (
         <section ref={aiWorkspaceRef} className="bbt-ai-workspace" aria-label="AI 对话工作区">
+          {researchReturn && isAuthRevisionCurrent(researchReturn.revision) && <nav className="dc-research-context" aria-label="当前研究上下文">
+            <button type="button" onClick={returnToResearch}>← 返回{researchReturn.name}研究</button>
+            <span>{researchReturn.symbol} · 问题可编辑，发送后才开始分析</span>
+          </nav>}
           <header className="bbt-ai-workspace-head">
             <div>
               <h1>AI 对话</h1>
@@ -6453,8 +6478,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     <div className="bbt-ai-welcome-mark">✦</div>
                     <h2>像问分析师一样，直接问</h2>
                     <p>不用挑模式。我会自动核对行情、财报与站内资料，先说结论，再列依据和风险。</p>
+                    <CategoryTabs label="研究任务" value={aiTaskCategory} onChange={setAiTaskCategory} options={[{ key: 'all', label: '全部' }, ...aiStarterPrompts.map(item => ({ key: item.tag, label: item.tag }))]} />
                     <div className="bbt-ai-sugg-grid">
-                      {aiStarterPrompts.map(item => (
+                      {aiStarterPrompts.filter(item => aiTaskCategory === 'all' || item.tag === aiTaskCategory).map(item => (
                         <button key={item.question} type="button" onClick={() => { primeAiQuestion(item.question); logAct('ai_starter', item.tag === '看自选' ? 'watchlist' : 'general'); }}>
                           <small>{item.tag}</small><b>{item.label || item.question}</b><span>↘</span>
                         </button>
@@ -6742,6 +6768,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <button className="bbt-max-btn" title="搜索/添加标的" onClick={() => { setPaletteOpen(true); setPq(''); }}>＋</button>
             <button className="bbt-max-btn" title={maxed === 'eq' ? '还原' : '最大化'} onClick={() => setMaxed(maxed === 'eq' ? null : 'eq')}>{maxed === 'eq' ? '⤡' : '⤢'}</button>
           </div>
+          <CategoryTabs label="市场" value={watchMarket} onChange={setWatchMarket} options={[{ key: 'all', label: '全部' }, { key: 'A', label: 'A股' }, { key: 'HK', label: '港股' }, { key: 'US', label: '美股' }]} />
+          {displayList.length === 0 && watchlist.length > 0 && <div className="bbt-empty">该市场暂未添加自选股票。</div>}
           <div className="bbt-qhead">
             <span className="c-name">代码/名称</span>
             <span className="c-num bbt-th" onClick={() => toggleSort('price')}>最新{sortMark('price')}</span>
@@ -6841,6 +6869,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </div>
           )}
 
+          {(feedFilter === '快讯' || feedFilter === '文章' || isResearch) && <ContentCategories
+            entries={isResearch ? reportFeed.map(reportCategoryEntry) : newsCategoryEntries}
+            value={contentSelection} onChange={changeContentSelection}
+            sourceLabel={isResearch ? '机构' : '来源'} kinds={feedFilter === '快讯' ? NEWS_KINDS : undefined}
+            unit={feedFilter === '快讯' ? '条' : '篇'} />}
           {sideNavKey === 'market' && <MarketPulse variant="strip" />}
           {isCelebrity ? (
             <TerminalCelebrityViews inline />
@@ -6851,6 +6884,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               {resFiltered.length === 0 && (
                 <div className="bbt-empty">{
                   resLoading ? '检索中…'
+                    : classificationActive ? '当前已加载研报中没有匹配此分类的内容，可清除分类或调整搜索。'
                     : resQuery.trim() ? `无「${resQuery.trim()}」相关研报`
                       : active ? `无 ${activeName} 相关研报`
                         : reportDq?.level === 'error'
@@ -6883,7 +6917,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 // 取「日期最大」的有效日期组当「最新一天」(YYYY-MM-DD 字典序==时间序;'其他'桶忽略)。
                 let latestIdx = 0, latestKey = '';
                 groups.forEach((g, k) => { if (/^\d{4}-\d{2}-\d{2}$/.test(g.day) && g.day > latestKey) { latestKey = g.day; latestIdx = k; } });
-                const forceOpen = !!resQuery.trim() || !!active;   // 搜索/选股态:全展开、不可折叠
+                const forceOpen = !!resQuery.trim() || !!active || classificationActive;   // 搜索/选股态:全展开、不可折叠
                 const DAY_CAP = 80;   // 单日初始最多渲染数,超出收到「展开本日剩余」,防最新一天数百篇一次性渲染卡顿
                 return groups.map((g, gi) => {
                   const isLatest = gi === latestIdx;
@@ -6943,6 +6977,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             })()
           ) : (
             <div className="bbt-news">
+              {classificationActive && !searchLoading && feed.length > 0 && newsRows.length === 0 && <div className="bbt-empty">当前已加载内容中没有匹配此分类的资讯。可清除分类或调整搜索。</div>}
               {/* 选股/搜索态：在 ALL 顶部展示相关「研报」段（全量历史在线检索结果），分页浏览，点条目→AI解读 */}
               {!!resSearchKw && feedFilter === 'all' && reportFeed.length > 0 && (() => {
                 const cur = Math.min(resPage, Math.max(1, Math.ceil(reportFeed.length / pageSize)));
@@ -6985,8 +7020,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   宽屏右栏「市场雷达」已承载头条 → 内联头条不再重复渲染（窄屏/最大化时照旧） */}
               {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && feedFilter === 'all' && renderHeads([...heads.kx.map((m: any) => headlineRow('kx', m)), ...heads.wz.map((m: any) => headlineRow('wz', m)), ...heads.yb.map((m: any) => headlineRow('yb', m))])}
               {/* 自选相关已独立成「自选」tab，ALL 里不再内嵌 */}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && feedFilter === '快讯' && renderHeads(heads.kx.map((m: any) => headlineRow('kx', m)))}
-              {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && feedFilter === '文章' && renderHeads(heads.wz.map((m: any) => headlineRow('wz', m)))}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && !classificationActive && feedFilter === '快讯' && renderHeads(heads.kx.map((m: any) => headlineRow('kx', m)))}
+              {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && !classificationActive && feedFilter === '文章' && renderHeads(heads.wz.map((m: any) => headlineRow('wz', m)))}
               {/* 回访首屏「我的」视角：3 秒看到"与我有关"的变化（数据全现成：quotes+watchlistFeed），点击直切自选 tab */}
               {authUser && watchlist.length > 0 && newsPageCur === 1 && !active && !newsQuery.trim() && feedFilter === 'all' && (() => {
                 let up = 0, down = 0;
@@ -7162,27 +7197,27 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <button type="button" className={mobileNavView === 'market' ? 'active' : ''}
           aria-current={mobileNavView === 'market' ? 'page' : undefined}
           onClick={() => jumpFromMobileNav('market')}>
-          <span aria-hidden="true">◈</span><b>快讯</b>
+          <span aria-hidden="true"><WorkspaceIcon name="market" /></span><b>快讯</b>
         </button>
         <button type="button" className={mobileNavView === 'articles' ? 'active' : ''}
           aria-current={mobileNavView === 'articles' ? 'page' : undefined}
           onClick={() => jumpFromMobileNav('articles')}>
-          <span aria-hidden="true">▤</span><b>深度文章</b>
+          <span aria-hidden="true"><WorkspaceIcon name="articles" /></span><b>深度文章</b>
         </button>
         <button type="button" className={mobileNavView === 'notes' ? 'active' : ''}
           aria-current={mobileNavView === 'notes' ? 'page' : undefined}
           onClick={() => jumpFromMobileNav('notes')}>
-          <span aria-hidden="true">⌁</span><b>机构纪要</b>
+          <span aria-hidden="true"><WorkspaceIcon name="notes" /></span><b>机构纪要</b>
         </button>
         <button type="button" className={mobileNavView === 'reports' ? 'active' : ''}
           aria-current={mobileNavView === 'reports' ? 'page' : undefined}
           onClick={() => jumpFromMobileNav('reports')}>
-          <span aria-hidden="true">▥</span><b>投行研报</b>
+          <span aria-hidden="true"><WorkspaceIcon name="reports" /></span><b>投行研报</b>
         </button>
         <button type="button" className={mobileNavView === 'ai' ? 'active' : ''}
           aria-current={mobileNavView === 'ai' ? 'page' : undefined}
           onClick={() => jumpFromMobileNav('ai')}>
-          <span aria-hidden="true">✦</span><b>AI</b>
+          <span aria-hidden="true"><WorkspaceIcon name="ai" /></span><b>AI</b>
         </button>
         <button type="button" onClick={openMobileMore}>
           <span aria-hidden="true">☰</span><b>更多</b>

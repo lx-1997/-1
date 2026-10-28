@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ZsxqComment,
@@ -13,6 +13,7 @@ import ShareButton from './common/ShareButton';
 import { drawNoteShareImage } from '../utils/noteShareImage';
 import { splitByKeywords } from '../utils/searchHighlight';
 import { apiGet } from '../services/apiClient';
+import ContentCategories, { ALL_CONTENT, NOTE_KINDS, matchesContent, noteKind, type ContentSelection, type ContentEntry } from './terminal/ContentCategories';
 import './TerminalZsxqStream.css';
 
 // 知识星球图走后端代理：绕客户端防盗链/token 失效，让长图能高清放大 + 下载成可查看的图片文件。
@@ -164,19 +165,27 @@ const CommentsBlock: React.FC<{ item: ZsxqTopic }> = ({ item }) => {
   );
 };
 
-const COLLAPSE_CHARS = 420; // 长帖默认折叠的字符阈值
+function notePreview(item: ZsxqTopic) {
+  const text = cleanSourceBrand(item.text || '').replace(/^#+\s*/gm, '').trim();
+  const title = cleanSourceBrand(item.title || '').replace(/^#+\s*/, '').trim()
+    || text.split('\n')[0]?.slice(0, 90) || '机构纪要';
+  const rest = (text.startsWith(title) ? text.slice(title.length) : text).replace(/\s+/g, ' ').trim();
+  const imageCount = (item.image_fulls?.length ? item.image_fulls : item.images)?.length || 0;
+  const summary = rest || (imageCount ? `图片纪要，含 ${imageCount} 张原始资料，点击查看完整内容。` : '点击查看这篇纪要的完整内容。');
+  return { title, summary: summary.length > 140 ? summary.slice(0, 140).trimEnd() + '…' : summary };
+}
 
-// 单条帖子卡片：作者/日期/精华 + 正文(长帖折叠) + 图片(可放大) + 评论 + 原文出处。
+// 列表只展示标题与简介；打开单篇后再展示完整正文、图片和评论。
 const TopicRow: React.FC<{
   item: ZsxqTopic;
   onZoom: (url: string) => void;
   focused?: boolean;
   kw?: string;
-}> = ({ item, onZoom, focused = false, kw = '' }) => {
-  const [expanded, setExpanded] = useState(false);
+  detail?: boolean;
+  onOpen?: (item: ZsxqTopic, trigger: HTMLButtonElement) => void;
+}> = ({ item, onZoom, focused = false, kw = '', detail = false, onOpen }) => {
   const cleanText = cleanSourceBrand(item.text || '');
-  const long = cleanText.length > COLLAPSE_CHARS;
-  const bodyText = !long || expanded ? cleanText : cleanText.slice(0, COLLAPSE_CHARS).trimEnd() + '…';
+  const bodyText = cleanText;
   // 分享长图用完整正文（不受卡片折叠限制）；落地页二维码仍指向 /note/{id}
   const drawShareImage = useCallback(async (): Promise<Blob | null> => {
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
@@ -194,8 +203,18 @@ const TopicRow: React.FC<{
       qr,
     });
   }, [item, cleanText]);
+  const preview = notePreview(item);
+  const highlight = (text: string) => splitByKeywords(text, kw).map((part, index) => part.hit ? <mark className="tzs-mark" key={index}>{part.text}</mark> : part.text);
+  if (!detail) return <article className={'tzs-note-card' + (focused ? ' tzs-item--focus' : '')} id={item.id ? `zsxq-${item.id}` : undefined}>
+    <button type="button" className="tzs-note-open" onClick={event => onOpen?.(item, event.currentTarget)}>
+      <span className="tzs-note-meta"><time>{fmtDateTime(item.create_time || item.date)}</time>{item.digested && <span>精华</span>}</span>
+      <h2>{highlight(preview.title)}</h2>
+      {preview.summary && <p>{highlight(preview.summary)}</p>}
+      <span className="tzs-note-read">查看全文 <span aria-hidden="true">↗</span></span>
+    </button>
+  </article>;
   return (
-    <div className={'tzs-item' + (focused ? ' tzs-item--focus' : '')} id={item.id ? `zsxq-${item.id}` : undefined}>
+    <div className={'tzs-item' + (focused ? ' tzs-item--focus' : '')}>
       <div className="tzs-item-head">
         <span className="tzs-item-kind">机构纪要</span>
         {item.digested && <span className="tzs-item-badge">精华</span>}
@@ -214,11 +233,7 @@ const TopicRow: React.FC<{
       </div>
 
       {cleanText && <div className="tzs-item-body">{renderBody(bodyText, item.links, kw)}</div>}
-      {long && (
-        <button type="button" className="tzs-expand" onClick={() => setExpanded(v => !v)}>
-          {expanded ? '收起 ▴' : '展开全文 ▾'}
-        </button>
-      )}
+
 
       {item.images.length > 0 && (
         <div className="tzs-imgs">
@@ -240,6 +255,9 @@ const TopicRow: React.FC<{
 const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onRequireLogin?: () => void; focusId?: string; onItems?: (items: ZsxqTopic[]) => void }> = ({ inline = false, loggedIn = false, onRequireLogin, focusId, onItems }) => {
   const [data, setData] = useState<ZsxqStreamResponse | null>(null);
   const [pool, setPool] = useState<ZsxqTopic[]>([]);
+  const [category, setCategory] = useState<ContentSelection>(ALL_CONTENT);
+  const categoryEntry = (item: ZsxqTopic): ContentEntry => ({ title: notePreview(item).title, tags: item.tags, kind: noteKind(item.title || notePreview(item).title, item.tags), publishedAt: item.create_time || item.date });
+  const visiblePool = pool.filter(item => matchesContent(categoryEntry(item), category));
   const [group, setGroup] = useState('');
   const [query, setQuery] = useState('');       // 输入框即时值
   const [applied, setApplied] = useState('');   // 已生效的搜索词（回车/按钮触发）
@@ -252,6 +270,41 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
   const cursorRef = useRef('');
   const hasMoreRef = useRef(false);
   const [sentiment, setSentiment] = useState<NoteSentiment | null>(null);
+  const [selected, setSelected] = useState<ZsxqTopic | null>(null);
+  const scrollHost = useRef<HTMLDivElement>(null);
+  const readerTitle = useRef<HTMLHeadingElement>(null);
+  const listPosition = useRef(0);
+  const outerPositions = useRef<Array<{ element: HTMLElement; top: number }>>([]);
+  const listTrigger = useRef<HTMLButtonElement | null>(null);
+  const openTopic = (item: ZsxqTopic, trigger: HTMLButtonElement) => {
+    listPosition.current = scrollHost.current?.scrollTop || 0;
+    outerPositions.current = [];
+    for (let element = scrollHost.current?.parentElement; element; element = element.parentElement) {
+      outerPositions.current.push({ element, top: element.scrollTop });
+    }
+    listTrigger.current = trigger; setSelected(item);
+  };
+  useLayoutEffect(() => {
+    if (scrollHost.current) scrollHost.current.scrollTop = selected ? 0 : listPosition.current;
+    if (selected) {
+      readerTitle.current?.focus({ preventScroll: true });
+      readerTitle.current?.closest<HTMLElement>('.tzs-reader')?.scrollIntoView?.({ block: 'start', behavior: 'instant' as ScrollBehavior });
+    } else {
+      outerPositions.current.forEach(({ element, top }) => { element.scrollTop = top; });
+      if (listTrigger.current?.isConnected) listTrigger.current.focus({ preventScroll: true });
+    }
+  }, [selected]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((!selected && !zoom) || event.key !== 'Escape') return;
+      if (!zoom && document.querySelector('dialog[open], [role="dialog"]')) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (zoom) setZoom(null); else setSelected(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selected, zoom]);
+
 
   const loadSentiment = useCallback(async (force = false) => {
     // 服务端 20min 缓存；刷新按钮时 force 绕过缓存重算
@@ -296,12 +349,14 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
 
   const applySearch = useCallback((q: string) => {
     const kw = q.trim();
+    setSelected(null); setZoom(null);
     setApplied(kw);
     void load({ group, q: kw || undefined });
   }, [group, load]);
 
   const switchGroup = useCallback((gid: string) => {
     if (gid === group) return;
+    setSelected(null); setZoom(null);
     setGroup(gid);
     setQuery('');
     setApplied('');
@@ -383,7 +438,15 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
         </button>
       </div>
 
-      <div className="tzs-scroll">
+      <div className="tzs-scroll" ref={scrollHost}>
+        {selected && <section className="tzs-reader" aria-label="机构纪要全文">
+          <button type="button" className="tzs-reader-back" onClick={() => setSelected(null)}>← 返回纪要列表</button>
+          <h1 className="tzs-reader-title" ref={readerTitle} tabIndex={-1}>{notePreview(selected).title}</h1>
+          <TopicRow item={selected} detail kw={applied} onZoom={url => { setFitWin(false); setZoom(url); }} />
+        </section>}
+        <div className="tzs-list-view" hidden={!!selected}>
+        <ContentCategories entries={pool.map(categoryEntry)} value={category} onChange={next => { setCategory(next); if (scrollHost.current) scrollHost.current.scrollTop = 0; }} kinds={NOTE_KINDS} />
+        {pool.length > 0 && visiblePool.length === 0 && <div className="tzs-empty">当前已加载纪要中没有匹配此分类的内容，可清除分类或继续加载更早纪要。</div>}
         {sentiment?.ok && (sentiment.sample || 0) > 0 && (
           <div className="tzs-sentiment" aria-label="今日机构纪要多空统计（AI 判定）">
             <div className="tzs-sentiment-head">
@@ -421,7 +484,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
 
         {pool.length > 0 && (
           <div className="tzs-list">
-            {pool.map(it => <TopicRow key={it.id} item={it} kw={applied} focused={it.id === activeFocus} onZoom={u => { setFitWin(false); setZoom(u); }} />)}
+            {visiblePool.map(it => <TopicRow key={it.id} item={it} kw={applied} focused={it.id === activeFocus} onOpen={openTopic} onZoom={u => { setFitWin(false); setZoom(u); }} />)}
           </div>
         )}
 
@@ -442,6 +505,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
         {pool.length > 0 && (
           <div className="tzs-disclaimer">⚠ 机构调研纪要聚合，仅供研究参考，不构成投资建议。</div>
         )}
+        </div>
       </div>
 
       {lightbox ? createPortal(lightbox, document.body) : null}

@@ -68,6 +68,8 @@ interface Props {
   name: string;
   loggedIn: boolean;
   onRequireLogin: (why: string) => void;
+  initialSection?: 'overview' | 'research' | 'evidence';
+  onSectionChange?: (section: 'overview' | 'research' | 'evidence') => void;
   username?: string | null;                            // 战绩闭环白名单判定用（未传/非白名单 → 「我的判断」tab 整体不渲染）
   onLog?: (action: string, target?: string) => void;   // 埋点（call_create / call_cancel），复用 FinancialTerminal.logAct
 }
@@ -154,7 +156,7 @@ function CallTimeline({ items }: { items: StockCall[] }) {
   );
 }
 
-export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLogin, username, onLog }: Props) {
+export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLogin, username, onLog, initialSection, onSectionChange }: Props) {
   // 点开个股即见面板，不再要求第二次点击；登录态默认看站内消息（快讯/文章/研报/纪要聚合，平台自有内容），
   // 匿名默认看速判卡（唯一免登录 tab）。外部口径数据（龙虎榜/一致预期/分红/公司新闻）一律后置。
   const defaultTab: TabKey = loggedIn ? 'msgs' : 'verdict';
@@ -273,7 +275,7 @@ export default function TerminalStockPanel({ symbol, name, loggedIn, onRequireLo
 
   return (
     <div className="bbt-stock-workspace" style={{ ...box, margin: '6px 0 10px' }}>
-      <StockIntelligencePanel key={symbol} symbol={symbol} name={name} loggedIn={loggedIn} username={username} onRequireLogin={onRequireLogin} />
+      <StockIntelligencePanel initialSection={initialSection} onSectionChange={onSectionChange} key={symbol} symbol={symbol} name={name} loggedIn={loggedIn} username={username} onRequireLogin={onRequireLogin} />
       <details className="si-legacy" open={!loggedIn}>
         <summary>更多个股数据 <span>分时与 K 线 · 速判卡 · 龙虎榜 · 一致预期 · 分红 · 题材</span></summary>
         {loggedIn && <TerminalKline symbol={symbol} name={name} />}

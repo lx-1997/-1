@@ -121,7 +121,7 @@ it('returns to the existing watchlist to research another stock without changing
 
 it('opens a usable AI workspace from the command bar without leaving stock research mounted', async () => {
   await openStock();
-  await click(screen.getByRole('button', { name: '✨ 问 AI' }));
+  await click(screen.getByRole('button', { name: '问 AI' }));
   expect(root()).toHaveClass('bbt-side-ai');
   expect(root()).not.toHaveClass('bbt-stock-focused');
   expect(screen.queryByRole('navigation', { name: '个股研究导航' })).not.toBeInTheDocument();
@@ -133,4 +133,32 @@ it('opens a usable AI workspace from the command bar without leaving stock resea
   expect(input).toHaveValue('比较这两家公司的盈利质量');
   expect(workspace.getByRole('button', { name: '发送问题' })).toBeEnabled();
   expect(saves()).toEqual([]);
+});
+
+it('carries a stock into an editable AI draft and returns without submitting or changing the watchlist', async () => {
+  await openStock();
+  const writes = () => (apiPost as jest.Mock).mock.calls.filter(([path]) => !/^\/api\/(activity|metrics\/)/.test(path));
+  const before = writes().length;
+  await click(screen.getByRole('button', { name: /带着这只股票问 AI/ }));
+  const input = screen.getByRole('textbox', { name: '向 AI 投研助手提问' });
+  expect((input as HTMLTextAreaElement).value).toContain('比亚迪（002594）');
+  expect(screen.getByRole('navigation', { name: '当前研究上下文' })).toBeInTheDocument();
+  expect(writes().length).toBe(before);
+  await click(screen.getByRole('button', { name: '← 返回比亚迪研究' }));
+  expect(screen.getByRole('region', { name: '比亚迪个股研究台' })).toBeInTheDocument();
+  await act(async () => { jest.advanceTimersByTime(0); });
+  expect(screen.getByRole('button', { name: /返回自选/ })).toHaveFocus();
+  expect(saves()).toEqual([]);
+});
+
+it('preserves an existing AI draft when entering from stock research and clears the return context on logout', async () => {
+  await openStock();
+  await click(screen.getByRole('button', { name: '问 AI' }));
+  const input = screen.getByRole('textbox', { name: '向 AI 投研助手提问' });
+  await act(async () => { fireEvent.change(input, { target: { value: '保留我正在写的问题' } }); });
+  await click(screen.getByRole('button', { name: '← 返回比亚迪研究' }));
+  await click(screen.getByRole('button', { name: /带着这只股票问 AI/ }));
+  expect(screen.getByRole('textbox', { name: '向 AI 投研助手提问' })).toHaveValue('保留我正在写的问题');
+  await act(async () => { invalidateAuthSession(); });
+  expect(screen.queryByRole('navigation', { name: '当前研究上下文' })).not.toBeInTheDocument();
 });

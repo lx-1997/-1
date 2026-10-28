@@ -16,6 +16,8 @@ interface Props {
   loggedIn: boolean;
   username?: string | null;
   onRequireLogin: (why: string) => void;
+  initialSection?: SectionKey;
+  onSectionChange?: (section: SectionKey) => void;
 }
 
 type SectionKey = 'overview' | 'research' | 'evidence';
@@ -165,14 +167,16 @@ function PlatformSourceContext({ data, sourceId }: { data: StockIntelligence; so
   return <section className="si-detail-block"><h4><ResearchIcon name="document" className="si-section-icon" />{document.title}</h4><p className="si-detail-caption">{PLATFORM_BODY_LABELS[document.body_state]} · {PLATFORM_ROLE_LABELS[document.role]}</p>{citations.length ? citations.map(citation => <article className="si-platform-citation" key={citation.id}><p>第 {citation.paragraph} 段 · 本次可见引用</p><blockquote>{citation.quote}</blockquote></article>) : <p>{document.excerpt || '本次只取得标题线索。'}</p>}<p className="si-detail-caption">文本版本 {document.revision}；引用范围受本次账号权限与读取上限约束。</p></section>;
 }
 
-export default function StockIntelligencePanel({ symbol, name, loggedIn, username, onRequireLogin }: Props) {
+export default function StockIntelligencePanel({ symbol, name, loggedIn, username, onRequireLogin, initialSection, onSectionChange }: Props) {
   const session = useSyncExternalStore(subscribeAuth, getAuthSnapshot, getAuthSnapshot);
   const canRead = loggedIn && !!session.token;
   const scope = JSON.stringify([symbol, name, canRead, username, session.revision]);
   const [result, setResult] = useState<{ scope: string; data: StockIntelligence } | null>(null);
   const [loadingScope, setLoadingScope] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ scope: string; message: string } | null>(null);
-  const [section, setSection] = useState<SectionKey>('overview');
+  const [section, setLocalSection] = useState<SectionKey>(initialSection || 'overview');
+  const setSection = (next: SectionKey) => { setLocalSection(next); onSectionChange?.(next); };
+  const resumeSection = useRef(initialSection); resumeSection.current = initialSection;
   const [evidenceFilter, setEvidenceFilter] = useState<'all' | 'platform' | 'public'>('all');
   const [detail, setDetail] = useState<DetailView | null>(null);
   const [detailHistory, setDetailHistory] = useState<DetailView[]>([]);
@@ -203,7 +207,7 @@ export default function StockIntelligencePanel({ symbol, name, loggedIn, usernam
     } finally { if (!aborter.signal.aborted && currentSequence === sequence.current) setLoadingScope(null); }
   }, [canRead, name, scope, session.revision, symbol]);
   useEffect(() => {
-    setResult(null); setFailure(null); setSection('overview'); setEvidenceFilter('all'); setDetail(null); setDetailHistory([]); setScenarioDriverOpen({}); detailScroll.current.clear();
+    setResult(null); setFailure(null); setLocalSection(resumeSection.current || 'overview'); setEvidenceFilter('all'); setDetail(null); setDetailHistory([]); setScenarioDriverOpen({}); detailScroll.current.clear();
     void load();
     return () => { controller.current?.abort(); sequence.current += 1; };
   }, [load]);
