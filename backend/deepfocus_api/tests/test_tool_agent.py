@@ -11,6 +11,17 @@ import json
 from types import SimpleNamespace
 
 from starlette.requests import Request
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_tool_agent_state(monkeypatch):
+    from deepfocus_api import llm as adapter
+    adapter._TOOL_ANSWER_CACHE.clear()
+    monkeypatch.setattr(adapter, "dsh_enabled", lambda: False, raising=False)
+    yield
+    adapter._TOOL_ANSWER_CACHE.clear()
+
 
 from deepfocus_api import agent_tools
 from deepfocus_api import llm as llm_mod
@@ -557,7 +568,20 @@ def test_tool_research_stream_accepts_json_history_and_attachment(monkeypatch):
             suggested_actions=["再看估值"], title="个股研究", chips=["行情"], confidence=0.82,
         )
 
+    async def fake_core(request, *, emit=None, tool_kwargs=None):
+        captured["message"] = request.objective
+        captured["attached_files"] = ["memo.txt"] if "memo.txt" in request.context else []
+        captured["context_prefix"] = request.context
+        if emit:
+            await emit("tool_start", {"tool": "get_market_quote"})
+            await emit("tool_result", {"tool": "get_market_quote", "ok": True, "summary": "已取得行情"})
+        return SimpleNamespace(ok=True, answer="附件与行情已交叉核对。",
+                               raw={"answer": "附件与行情已交叉核对。", "tool_trace": [], "rounds": 1},
+                               run_id="fixture", protocol_version="core-agent-v1", route="tool-agent")
+
     monkeypatch.setattr(main_app, "_route_orchestrator_chat", fake_route)
+    monkeypatch.setattr(main_app.core_agent, "run_tool_only", fake_core)
+    monkeypatch.setattr(main_app, "_web_qa_timeout_seconds", lambda mode: 120.0)
     monkeypatch.setattr(main_app, "_check_agent_quota", lambda user, request: None)
     monkeypatch.setattr(main_app, "ifind_enhance_enabled", lambda request: False)
 

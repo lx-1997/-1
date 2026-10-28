@@ -1652,6 +1652,8 @@ class CloudResearchLLM:
         # 单股泛问也会透明披露本轮采用的投资期限假设。
         from .buy_side_qa import answer_protocol_issues, build_buy_side_mandate
         from .research_harness import live_references_for_trace
+        from .watchlist_prefetch import TOOLS as _updates_tools, watchlist_update_plan, run_watchlist_plan
+        updates_plan = [] if re.search(r"用户上传文件|附件", context_hint) else watchlist_update_plan(question)
 
         research_mandate = build_buy_side_mandate(question, context_hint)
         deep_research_answer = research_mandate.key_variable_target >= 15
@@ -1913,6 +1915,8 @@ class CloudResearchLLM:
                 f"10. 结论保留在第一句，总长不超过 {char_budget} 个中文字符。"
             )
             audit_prompt += research_mandate.audit_prompt()
+            if updates_plan:
+                audit_prompt += "\n本题是多股资料核对。必须逐一保留用户列出的全部股票和完整代码，每只最多两句、约75个中文字，合计不超过450字；没有事件证据就写未核得，不要导语、总评或重复背景。"
             evidence_text = "\n".join(
                 f"{item.get('name', '')}: {item.get('content', '')}"
                 for item in messages
@@ -1924,7 +1928,7 @@ class CloudResearchLLM:
                     {"role": "system", "content": "你只删除或改正无证据内容，绝不使用常识、记忆或外部知识补充。"},
                     {"role": "user", "content": f"【用户问题】\n{question}\n\n【证据 JSON】\n{evidence_text}\n\n【待审草稿】\n{draft}\n\n【审校规则】\n{audit_prompt}"},
                 ],
-                "max_tokens": 1500 if deep_research_answer else 600 if is_comparison else 320 if is_simple_quote else 650,
+                "max_tokens": 1100 if updates_plan else 1500 if deep_research_answer else 600 if is_comparison else 320 if is_simple_quote else 650,
             }
             if self.provider == "minimax" and self.model.lower().startswith("minimax-m3"):
                 audit_payload["extra_body"] = {"reasoning_split": True, "thinking": {"type": "disabled"}}
@@ -1947,6 +1951,29 @@ class CloudResearchLLM:
             # 标的防幻觉护栏：问题含公司名时先做确定性解析（东财 suggest，候选名须原样出现在
             # 问题里），供下方工具分发时改写模型凭记忆猜错的代码（实测「建滔集团」被猜成 0005/600545）。
             resolved_stock = await resolve_question_stock(question)
+            updates_prefilled = False
+            if (updates_plan and not (_updates_tools & set(mcp_tools))
+                    and (allowed_names is None or _updates_tools <= allowed_names)):
+                async def execute_update(name, args):
+                    return await execute_tool(name, args, extra_tools=mcp_tools, ifind_user=ifind_user)
+                async def emit_update(kind, payload):
+                    await _safe_emit(emit, kind, payload)
+                updates = await run_watchlist_plan(updates_plan, execute_update, emit_update)
+                calls = []
+                for index, name, args, result in updates:
+                    from . import privacy_guard
+                    result = privacy_guard.scrub_internal_fields(result)
+                    call_id = f"watchlist-evidence-{index}"
+                    calls.append({"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}})
+                    trace.append({"tool": name, "args": args, "ok": bool(result.get("ok")),
+                                  "summary": _summarize_tool_result(result), "references": live_references_for_trace(name, result)})
+                messages.append({"role": "assistant", "content": "", "tool_calls": calls})
+                for (index, name, args, result) in updates:
+                    result = privacy_guard.scrub_internal_fields(result)
+                    messages.append({"role": "tool", "tool_call_id": f"watchlist-evidence-{index}", "name": name,
+                                     "content": json.dumps(result, ensure_ascii=False)})
+                updates_prefilled = True
+                messages.append({"role": "user", "content": "已按本轮明确列出的每只股票逐一核对行情、新闻与本站材料。现在直接逐只给出简洁核对结果：每只保留完整股票代码、最多两句，全部合计450个中文字符以内；不要导语、总评或重复背景。标注材料日期；变化只写真实回执里的事实，风险只写资料明确给出的风险和缺口。取不到的股票如实说明；不需要持仓权重，不要转为组合优化，不要声称尚未查找接口。不要编造数据。"})
             for round_index in range(max_rounds):
                 tool_payload: dict[str, Any] = {
                     "model": self.model,
@@ -1959,6 +1986,9 @@ class CloudResearchLLM:
                 # thinking 上，tool-agent 可能因此迟迟不返回 tool_calls。
                 if self.provider == "minimax" and self.model.lower().startswith("minimax-m3"):
                     tool_payload["extra_body"] = {"reasoning_split": True, "thinking": {"type": "disabled"}}
+                if updates_prefilled:
+                    tool_payload.pop("tools", None)
+                    tool_payload.pop("tool_choice", None)
                 response = await self._completion(tool_payload, timeout_seconds=timeout_seconds)
                 message = response.choices[0].message
                 tool_calls = list(getattr(message, "tool_calls", None) or [])

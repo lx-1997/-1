@@ -877,7 +877,10 @@ def _build_news_prompt(title: Optional[str], content: str) -> str:
         "bullish=原文明确写出的积极影响；bearish=原文明确写出的风险、不确定性或数据缺口；"
         "rating/target_price 新闻通常没有，没有就留空。"
         f"{_STYLE_RULE}\n\n"
-        f"=== 新闻 ===\n标题：{title or ''}\n正文：{content[:MAX_TEXT_CHARS]}"
+        + ("短资讯请简洁成稿：总计不超过400个中文字符（JSON字段名不计）；summary以2句为主，"
+           "logic_lines只补充摘要未写的独立事实，字段不重复。必须保留正文给出的主体、措施、日期、关键数字和单位，"
+           "不得为缩短而删掉核心事实或风险。\n\n" if len(content.strip()) <= 800 else "")
+        + f"=== 新闻 ===\n标题：{title or ''}\n正文：{content[:MAX_TEXT_CHARS]}"
     )
 
 
@@ -954,7 +957,7 @@ async def analyze_news(
         try:
             data = await asyncio.wait_for(
                 llm.complete_json(
-                    retry_prompt, max_tokens=1800 if attempt == 0 else 2400,
+                    retry_prompt, max_tokens=(1400 if len(body) <= 800 else 1800) if attempt == 0 else 2400,
                     timeout_seconds=30 if attempt == 0 else 45,
                     retry_schema_hint=_NEWS_RETRY_SCHEMA_HINT,
                 ),

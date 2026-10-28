@@ -499,6 +499,21 @@ def _financial_period_key(report_date: Any) -> str | None:
     return f"{date.year}-{period}" if period else f"{date.year}-{date.month:02d}"
 
 
+_SNAPSHOT_SOURCE_TIMEOUTS = {"quote": 8.0, "valuation": 8.0, "financials": 12.0, "consensus": 6.0}
+
+
+async def _snapshot_component(name: str, awaitable) -> dict[str, Any]:
+    # One unavailable enrichment must not hold back every usable sibling.
+    # wait_for cancels and joins the owned coroutine; caller cancellation propagates.
+    try:
+        value = await asyncio.wait_for(awaitable, timeout=_SNAPSHOT_SOURCE_TIMEOUTS[name])
+        return {"value": value, "status": "completed"}
+    except asyncio.TimeoutError:
+        return {"value": None, "status": "timeout"}
+    except Exception:
+        return {"value": None, "status": "unavailable"}
+
+
 async def _tool_compare_stocks(symbols: str = "") -> Any:
     """2~4 股比较数据包；明确区分共同报告期和各自最新报告期。"""
     parts = [p.strip() for p in _re.split(r"[,，、\s]+", symbols or "") if p.strip()][:4]
@@ -506,13 +521,14 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
         return {"items": [], "note": "请提供股票名称或代码"}
 
     async def one(symbol: str) -> dict[str, Any]:
-        quote, valuation, financials, consensus = await asyncio.gather(
-            _tool_get_market_quote(symbol),
-            _tool_get_valuation(symbol),
-            _tool_get_financials(symbol),
-            _tool_get_analyst_consensus(symbol),
-            return_exceptions=True,
+        components = await asyncio.gather(
+            _snapshot_component("quote", _tool_get_market_quote(symbol)),
+            _snapshot_component("valuation", _tool_get_valuation(symbol)),
+            _snapshot_component("financials", _tool_get_financials(symbol)),
+            _snapshot_component("consensus", _tool_get_analyst_consensus(symbol)),
         )
+        quote, valuation, financials, consensus = (item["value"] for item in components)
+        source_status = dict(zip(_SNAPSHOT_SOURCE_TIMEOUTS, (item["status"] for item in components)))
         qrow = None
         if isinstance(quote, dict) and isinstance(quote.get("quotes"), list) and quote["quotes"]:
             qrow = quote["quotes"][0]
@@ -520,6 +536,10 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
         frow = financials if isinstance(financials, dict) else None
         crow = consensus if isinstance(consensus, dict) else None
         gaps: list[str] = []
+        labels = {"quote": "行情", "valuation": "估值", "financials": "财报", "consensus": "卖方共识"}
+        for key, status in source_status.items():
+            if status == "timeout":
+                gaps.append(f"{labels[key]}取数超时，本轮未取得；未使用旧数据补齐")
         # 历史覆盖很少的标的可能返回多年前的目标价。这种数字
         # 不只是「置信度低」，而是不应再进入当前比较表，否则模型会
         # 拿 2017 年目标价与 2026 年市值混用。
@@ -557,6 +577,7 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
             "financials": financial_projection,
             "consensus": _compact_fields(crow, ("consensus_rating", "rating_summary", "report_count", "period", "avg_target_price", "target_price_low", "target_price_high", "currency")),
             "data_gaps": gaps,
+            "source_status": source_status,
         }
 
     items = await asyncio.gather(*(one(symbol) for symbol in parts))
@@ -782,7 +803,7 @@ async def _tool_search_our_content(
     anyq = ",".join(terms) if terms else ""
     try:
         # limit 上限放宽到 60，便于「近 24 小时全覆盖」式总结取全近期快讯。
-        msgs = list_realtime_messages(
+        msgs = await asyncio.to_thread(list_realtime_messages,
             anyq=anyq,
             since=since,
             exclude_futoucaixin=_exclude_restricted_news_source(),
@@ -824,7 +845,7 @@ async def _tool_search_our_content(
             _t = (getattr(m, "title", "") or "").strip()
             _c = (getattr(m, "content", "") or "").strip()
             if len(_t + _c) >= 60:
-                cached = get_ai_cache("news:" + _hashlib.sha1(f"{_t}\n{_c}".encode("utf-8")).hexdigest()[:20])
+                cached = await asyncio.to_thread(get_ai_cache, "news:" + _hashlib.sha1(f"{_t}\n{_c}".encode("utf-8")).hexdigest()[:20])
                 if cached:
                     item["ai_summary"] = (cached.get("summary") or cached.get("one_liner") or "")[:300]
         out.append(item)
