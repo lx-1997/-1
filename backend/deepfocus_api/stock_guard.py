@@ -80,25 +80,49 @@ async def resolve_question_stock(question: str) -> Optional[dict[str, Any]]:
         hits: dict[str, dict[str, Any]] = {}
         probes = 0
         done_runs: set[int] = set()
-        for piece, run_idx in _probe_names(text):
-            if probes >= _MAX_PROBES or run_idx in done_runs:
+        pending = iter(_probe_names(text))
+        exhausted = False
+        while probes < _MAX_PROBES and not exhausted:
+            batch: list[tuple[str, int]] = []
+            # Keep a normal exact-name hit at one request. Only an unresolved
+            # name opens a bounded window; the total request budget stays ten.
+            width = 1 if probes == 0 else 3
+            while len(batch) < width and probes + len(batch) < _MAX_PROBES:
+                candidate = next(pending, None)
+                if candidate is None:
+                    exhausted = True
+                    break
+                if candidate[1] not in done_runs:
+                    batch.append(candidate)
+            if not batch:
                 continue
-            probes += 1
-            try:
-                resp = await asyncio.wait_for(search_market_symbols(piece), timeout=_PROBE_TIMEOUT)
-            except Exception:  # noqa: BLE001 — 搜索任何失败都不拦问答
-                continue
-            for cand in (getattr(resp, "candidates", None) or []):
-                name = (getattr(cand, "name", "") or "").strip()
-                if len(name) < 2 or name not in text:
-                    continue  # 只有候选名原样出现在问题里才采信
-                symbol = (getattr(cand, "symbol", "") or "").strip()
-                if symbol:
-                    hits[name] = {"symbol": symbol, "code": (getattr(cand, "code", "") or "").strip(),
-                                  "name": name, "market": getattr(cand, "market", "") or ""}
-            if hits:
-                done_runs.add(run_idx)  # 命中后同段更短前缀必是其子串，无需再探
-        if hits:
+            probes += len(batch)
+            results = await asyncio.gather(*(
+                asyncio.wait_for(search_market_symbols(piece), timeout=_PROBE_TIMEOUT)
+                for piece, _ in batch
+            ), return_exceptions=True)
+            # Consume in original priority order, even if replies arrive out of
+            # order. gather also cancels/joins children when the caller stops.
+            for (_, run_idx), resp in zip(batch, results):
+                if run_idx in done_runs or isinstance(resp, BaseException):
+                    continue
+                run_hit = False
+                for cand in (getattr(resp, "candidates", None) or []):
+                    name = (getattr(cand, "name", "") or "").strip()
+                    if len(name) < 2 or name not in text:
+                        continue
+                    symbol = (getattr(cand, "symbol", "") or "").strip()
+                    if symbol:
+                        hits[name] = {"symbol": symbol, "code": (getattr(cand, "code", "") or "").strip(),
+                                      "name": name, "market": getattr(cand, "market", "") or ""}
+                        run_hit = True
+                if run_hit:
+                    done_runs.add(run_idx)
+        # A speculative batch may spend the last slots before another name
+        # segment was checked. Never rewrite a model's symbol from a partial
+        # single-company discovery when an unsearched segment still remains.
+        complete = all(run_idx in done_runs for _, run_idx in pending)
+        if hits and complete:
             ordered = sorted(hits.values(), key=lambda h: -len(h["name"]))
             resolved = {"primary": ordered[0], "all": ordered}
     except Exception:  # noqa: BLE001

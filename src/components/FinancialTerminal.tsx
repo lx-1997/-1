@@ -87,6 +87,7 @@ import './TerminalMobileChat.css';
 import './terminal/terminal-market-ui.css';
 import './TerminalReadingWorkspace.css';
 import './TerminalAssistantExperience.css';
+import NewsSourcePreview from './NewsSourcePreview';
 import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, conciseAssistantFollowups, type AiReferenceContext } from '../utils/aiAssistantExperience';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
@@ -3879,6 +3880,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       requireLogin(() => void runNewsAi(m), 'AI 解读');
       return;
     }
+    setNewsPreview(null);
     logAct('ai_news', m.title);
     const report = { title: m.title, date: (m.created_at || '').slice(0, 10) };
     const cacheKey = newsInterpretationCacheKey(m.id, m.title, m.content || '');
@@ -3896,7 +3898,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (resumeAiTask(cacheKey)) return;
     registerAiTask({
       key: cacheKey, kind: 'news', title: m.title, report, meta: null,
-      content: (m.content || '').slice(0, 20000),
+      content: ((articleOriginal?.id === m.id ? articleOriginal.content : '') || m.content || '').slice(0, 20000),
       restart: () => { void runNewsAi(m, true); },
       startedAt: Date.now(), status: 'running', stage: '', result: null, deepDraft: null, error: '',
     });
@@ -3916,7 +3918,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (status === 401 || status === 402 || status === 403) { gateAiTask(cacheKey, status, detail); return; }
       failAiTask(cacheKey, (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')) ? '解读超时了，请重试。' : (detail || e?.message || 'AI 解读失败，请稍后重试'));
     }
-  }, [logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask, requireLogin]);
+  }, [articleOriginal, logAct, showToast, openAiReading, openAiTaskView, resumeAiTask, registerAiTask, removeAiTask, settleAiTask, failAiTask, gateAiTask, requireLogin]);
   useEffect(() => { newsRegenerateRef.current = m => { void runNewsAi(m, true); }; }, [runNewsAi]);
   useEffect(() => { runNewsAiRef.current = runNewsAi; }, [runNewsAi]);
 
@@ -7238,7 +7240,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       })()}
 
       {aiReport && (
-        <div className={`bbt-doc-overlay${aiReportMeta ? ' bbt-doc-overlay--deep' : ''}${aiModalExpanded ? ' bbt-doc-overlay--expanded' : ''}`} onMouseDown={closeAi}>
+        <div className={`bbt-doc-overlay bbt-doc-overlay--ai${aiReportMeta ? ' bbt-doc-overlay--deep' : ''}${aiModalExpanded ? ' bbt-doc-overlay--expanded' : ''}`} onMouseDown={closeAi}>
           <div
             className={`bbt-doc bbt-doc--ai${aiReportMeta ? ' bbt-doc--deep' : ''}${aiModalExpanded ? ' bbt-doc--expanded is-expanded' : ''}`}
             onMouseDown={e => e.stopPropagation()}
@@ -7303,8 +7305,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       <span key={stage} className={index < activeStage ? 'is-done' : index === activeStage ? 'is-active' : ''}><i>{index < activeStage ? '✓' : index + 1}</i>{stage}</span>
                     ))}
                   </div>
-                  <div className="bbt-ai-load-hint"><b>{(task && task.stage) || stageDetail[activeStage]}…</b>{aiReportMeta ? '正在后台读取原文并整理证据、章节与跟踪项；通常需要几十秒，可随时关闭继续浏览' : '文字型约 10s · 图片型研报首次约 30–60s（完成后再看即秒开）'}</div>
-                  {aiOriginal ? (
+                  <div className="bbt-ai-load-hint"><b>{(task && task.stage) || stageDetail[activeStage]}…</b>{aiReportMeta ? '正在后台读取原文并整理证据、章节与跟踪项；通常需要几十秒，可随时关闭继续浏览' : '解读仍在生成，可先看来源资料；完成后自动显示结果'}</div>
+                  {aiOriginal && !aiReportMeta ? <NewsSourcePreview title={aiReport.title || ''} content={aiOriginal} /> : aiOriginal ? (
                     <div aria-label="文章原文（AI 解读生成期间可直接阅读）" style={{ marginTop: 12, maxHeight: 300, overflowY: 'auto', textAlign: 'left', fontSize: 13, lineHeight: 1.9, color: 'rgba(255,255,255,0.78)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 10, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>原文 · AI 解读完成后自动替换为本区块</div>
                       {aiOriginal}

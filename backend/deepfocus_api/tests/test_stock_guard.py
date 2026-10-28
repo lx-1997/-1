@@ -110,3 +110,89 @@ def test_guard_passthrough_when_symbol_absent():
         {"symbol": "00148.HK", "name": "建滔集团"}]}
     args = {"query": "建滔集团"}
     assert sg.guard_symbol_args("get_market_data", args, resolved) is args
+
+
+def test_unresolved_probes_have_bounded_concurrency_and_original_budget(monkeypatch):
+    _install(monkeypatch, {})
+    active = 0
+    peak = 0
+    calls = 0
+    async def delayed(query, market=None):
+        nonlocal active, peak, calls
+        calls += 1
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.001)
+            return _resp()
+        finally:
+            active -= 1
+    import deepfocus_api.market_data as md
+    monkeypatch.setattr(md, 'search_market_symbols', delayed)
+    monkeypatch.setattr(sg, '_probe_names', lambda text: [(f'候选{i}', 0) for i in range(20)])
+    assert asyncio.run(sg.resolve_question_stock('未知公司情况')) is None
+    assert calls == sg._MAX_PROBES
+    assert 1 < peak <= 3
+    assert active == 0
+
+
+def test_cancellation_joins_all_probe_children(monkeypatch):
+    _install(monkeypatch, {})
+    import deepfocus_api.market_data as md
+    active = 0
+    async def scenario():
+        nonlocal active
+        batch_started = asyncio.Event()
+        async def blocked(query, market=None):
+            nonlocal active
+            if query == 'first':
+                return _resp()
+            active += 1
+            if active == 3:
+                batch_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                active -= 1
+        monkeypatch.setattr(md, 'search_market_symbols', blocked)
+        monkeypatch.setattr(sg, '_probe_names', lambda text: [('first', 0)] + [(f'probe{i}', 0) for i in range(9)])
+        task = asyncio.create_task(sg.resolve_question_stock('未知公司情况'))
+        await asyncio.wait_for(batch_started.wait(), timeout=1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert active == 0
+    asyncio.run(scenario())
+
+
+def test_out_of_order_probes_preserve_priority_and_other_company_detection(monkeypatch):
+    _install(monkeypatch, {})
+    import deepfocus_api.market_data as md
+    monkeypatch.setattr(sg, '_probe_names', lambda text: [('miss', 0), ('long', 0), ('short', 0), ('other', 1)])
+    async def search(query, market=None):
+        if query == 'long':
+            await asyncio.sleep(0.002)
+            return _resp(('00148.HK', '00148', '甲公司', 'HK'))
+        if query == 'short':
+            return _resp(('00700.HK', '00700', '乙公司', 'HK'))
+        if query == 'other':
+            return _resp(('0005.HK', '0005', '丙公司', 'HK'))
+        return _resp()
+    monkeypatch.setattr(md, 'search_market_symbols', search)
+    result = asyncio.run(sg.resolve_question_stock('甲公司乙公司丙公司'))
+    assert {item['name'] for item in result['all']} == {'甲公司', '丙公司'}
+    args = {'symbol': 'wrong'}
+    assert sg.guard_symbol_args('get_stock_snapshot', args, result) is args
+
+
+def test_budget_exhaustion_does_not_turn_partial_discovery_into_a_unique_rewrite(monkeypatch):
+    _install(monkeypatch, {})
+    import deepfocus_api.market_data as md
+    monkeypatch.setattr(sg, '_MAX_PROBES', 2)
+    monkeypatch.setattr(sg, '_probe_names', lambda text: [('miss', 0), ('found', 0), ('second-company', 1)])
+    async def search(query, market=None):
+        return _resp(('00148.HK', '00148', '甲公司', 'HK')) if query == 'found' else _resp()
+    monkeypatch.setattr(md, 'search_market_symbols', search)
+    assert asyncio.run(sg.resolve_question_stock('甲公司和乙公司')) is None

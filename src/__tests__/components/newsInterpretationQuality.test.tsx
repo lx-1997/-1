@@ -197,3 +197,39 @@ it('does not replay account A\'s delayed response into account B\'s same article
   expect(cached('B')[cacheKey]?.result).toEqual(answerB);
   expect(cached('A')[cacheKey]).toBeUndefined();
 });
+
+it('reuses an already opened original for an immediate source preview while analysis is pending', async () => {
+  const fullText = '已打开的完整来源正文：两项措施适用的生效日期为公告披露当日，尚无量化市场影响。';
+  const base = (apiGet as jest.Mock).getMockImplementation()!;
+  (apiGet as jest.Mock).mockImplementation((path: string, options: unknown) => path.endsWith('/original-text')
+    ? Promise.resolve({ id: article.id, title: article.title, content: fullText, paragraphs: [fullText], parser: 'stored-text', truncated: false })
+    : base(path, options));
+  let finish!: (value: unknown) => void;
+  (apiPost as jest.Mock).mockImplementation((path: string) => path === '/api/news/ai-analyze'
+    ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({}));
+  await mountArticles();
+  await act(async () => { fireEvent.click(screen.getByText(article.title)); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '✕ 关闭' })); });
+  await clickArticleAi();
+  expect(within(reader()).getByLabelText('等待期间的原文资料')).toHaveTextContent(fullText);
+  expect(reader()).toHaveTextContent('AI 解读仍在生成');
+  expect(reader()).not.toHaveTextContent('约 10s');
+  expect(newsCalls()).toHaveLength(1);
+  await act(async () => { finish(good); });
+  expect(reader()).not.toHaveTextContent('AI 解读仍在生成');
+  expect(reader()).toHaveTextContent(good.one_liner);
+});
+
+it('switches from the original into the pending analysis instead of opening it underneath', async () => {
+  let finish!: (value: unknown) => void;
+  (apiPost as jest.Mock).mockImplementation((path: string) => path === '/api/news/ai-analyze'
+    ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({}));
+  await mountArticles();
+  await act(async () => { fireEvent.click(screen.getByText(article.title)); });
+  const original = document.querySelector('.bbt-doc--article')!;
+  expect(original).toBeTruthy();
+  await act(async () => { fireEvent.click(within(original as HTMLElement).getByRole('button', { name: '✦ AI 解读' })); });
+  expect(document.querySelector('.bbt-doc--article')).toBeNull();
+  expect(reader().closest('.bbt-doc-overlay--ai')).not.toBeNull();
+  await act(async () => { finish(good); });
+});

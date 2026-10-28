@@ -68,3 +68,11 @@
 .bbt-side-ai .bbt-ai-latest-answer .bbt-md p { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .bbt-side-ai .bbt-ai-latest-answer .bbt-md p { margin: 0 0 12px; }
 .bbt-side-ai .bbt-ai-latest-answer .bbt-ai-message--assistant { max-width: 100%; }
+.bbt-news-source-preview { margin-top: 20px; padding: 16px 0; border-top: 1px solid var(--line); color: var(--text-soft); font-size: 14px; line-height: 1.8; text-align: left; }
+.bbt-news-source-preview h3 { margin: 0 0 6px; color: var(--text-strong); font-size: 15px; }
+.bbt-news-source-preview .bbt-news-source-preview__note { color: var(--mute); font-size: 12px; }
+.bbt-news-source-preview li + li { margin-top: 8px; }
+.bbt-news-source-preview details { margin-top: 12px; }
+.bbt-news-source-preview summary { min-height: 32px; color: var(--accent); cursor: pointer; font-size: 12px; }
+.bbt-news-source-preview details > div { max-height: 36vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.bbt .bbt-doc-overlay--ai { z-index: 160; }
