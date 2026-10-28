@@ -57,3 +57,23 @@ def test_attachments_always_keep_the_evidence_route(message):
 @pytest.mark.parametrize("message", [None, 123, {}, [], "什么是市盈率？" + "有" * 400])
 def test_invalid_or_overlong_input_is_conservative(message):
     assert not is_static_explanation(message)
+
+
+@pytest.mark.parametrize("message", [
+    "请用三句话解释经营现金流和净利润为什么不同，再列一个需要核对的风险。不需要实时行情。",
+    "解释经营现金流与净利润为什么不同。",
+    "什么是市盈率？无需查询实时行情。",
+])
+def test_generic_explanation_with_explicit_live_opt_out_remains_static(message):
+    assert is_static_explanation(message)
+
+
+@pytest.mark.parametrize("message", [
+    "解释贵州茅台经营现金流和净利润为什么不同，再列一个需要核对的风险。不需要实时行情。",
+    "解释600519的经营现金流为什么不同。不需要实时行情。",
+    "解释最新经营现金流和净利润为什么不同。不需要实时行情。",
+    "核对我的经营现金流，再列一个需要核对的风险。不需要实时行情。",
+    "解释经营现金流和净利润为什么不同，再列一个需要核对的风险。查询贵州茅台。",
+])
+def test_live_opt_out_does_not_hide_company_or_personal_scope(message):
+    assert not is_static_explanation(message)

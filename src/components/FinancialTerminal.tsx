@@ -86,6 +86,8 @@ import './TerminalMobile.css';
 import './TerminalMobileChat.css';
 import './terminal/terminal-market-ui.css';
 import './TerminalReadingWorkspace.css';
+import './TerminalAssistantExperience.css';
+import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, type AiReferenceContext } from '../utils/aiAssistantExperience';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
@@ -296,6 +298,8 @@ interface AiConversationTurn {
   mode: 'quick' | 'deep';
   updatedAt: number;
   attachmentName?: string;
+  reference?: AiReferenceContext | null;
+  referenceKey?: string;
   tools?: ToolTraceItem[];
   suggestions?: string[];
   feedback?: '' | 'up' | 'down';
@@ -310,6 +314,8 @@ interface AiConversationRecord {
   mode: 'quick' | 'deep';
   updatedAt: number;
   attachmentName?: string;
+  referenceKey?: string;
+  reference?: AiReferenceContext | null;
   deepAnswer?: DulusRoundtableResponse | null;
   roundtable?: DulusRoundtableResponse | null;
   turns?: AiConversationTurn[];
@@ -465,9 +471,9 @@ const TOOL_LABEL: Record<string, string> = {
 };
 
 const AI_STARTER_PROMPTS = [
-  { tag: '看市场', question: '昨天 A 股复盘里最该注意什么？' },
+  { tag: '看市场', question: '最近一个交易日，市场发生了哪些重要变化？' },
   { tag: '看板块', question: '最近哪些板块的资金在流入？' },
-  { tag: '筛股票', question: '帮我初筛几只稳健型的 A 股候选' },
+  { tag: '查风险', question: '分析一家公司时，应该先核对哪些财务风险？' },
 ] as const;
 
 // 安全 markdown-lite：仅支持 **加粗** / - · 列表 / 1. 有序 / 换行段落；纯 React 元素拼接，
@@ -493,7 +499,7 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
   }, [roundtable]);
   const activeTools = tools.slice(-4);
   const roundtableSteps = ['统一取数', '证据专家', '研究专家', '风险专家', '主编综合'];
-  const completedAgents = new Set(activeTools.filter(tool => tool.ok === true).map(tool => tool.tool));
+  const completedAgents = new Set(tools.filter(tool => tool.ok === true).map(tool => tool.tool));
   const statusStage = status?.includes('主编') || status?.includes('组织结论') ? 4
     : status?.includes('风险专家') ? 3
       : status?.includes('研究专家') ? 2
@@ -510,7 +516,7 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
   // 这是执行进度的可视化，不代表模型隐藏思考 token；只有收到工具/状态事件
   // 才推进阶段，避免用“假进度”误导用户。
   const progressPercent = Math.round((activeStage / Math.max(1, stageLabels.length - 1)) * 100);
-  const auditedScope = Array.from(new Set(tools
+  const auditedScope = Array.from(new Set(tools.filter(tool => tool.ok === true)
     .map(tool => TOOL_LABEL[tool.tool] || '')
     .filter(label => label && label !== '统一研究取数' && !label.startsWith('研究数据')))).slice(-8);
   const latestAudited = [...tools].reverse().find(tool => tool.ok !== undefined && tool.summary);
@@ -533,12 +539,12 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
             {index < stageLabels.length - 1 && <em aria-hidden="true">›</em>}
           </React.Fragment>)}
         </span>
-        <span className="bbt-ai-thinking-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
-          <span style={{ width: `${Math.max(8, progressPercent)}%` }} />
+        <span className="bbt-ai-thinking-progress" role="progressbar" aria-label="研究进行中" aria-valuetext={stageLabels[activeStage]}>
+          <span style={{ width: `${Math.max(8, Math.min(90, progressPercent))}%` }} />
         </span>
         <small>{roundtable
-          ? `真实协作 · 已用 ${elapsed} 秒 · 实时核对中，30 秒无进度自动兜底 · 仅展示执行步骤`
-          : `快速问答 · 已用 ${elapsed} 秒 · ${progressPercent >= 67 ? '正在组织回答' : '正在核对可用数据'} · 30 秒无进度自动兜底`}</small>
+          ? `已用 ${elapsed} 秒 · ${elapsed >= 30 ? '这次研究耗时较长，可随时停止' : '按实际数据返回更新进度'}`
+          : `已用 ${elapsed} 秒 · ${elapsed >= 30 ? '这次研究耗时较长，可随时停止' : progressPercent >= 67 ? '正在组织回答' : '正在核对可用数据'}`}</small>
         {/* 阶段性结果对快速问答同样可见：工具摘要/已查范围随 SSE 事件逐条到达，
             是真实取数结论而非预估动画——这是等待期唯一「有内容可看」的来源。 */}
         {auditedScope.length > 0 && <span className="bbt-ai-thinking-scope"><b>已查范围</b>{auditedScope.map(label => <i key={label}>{label}</i>)}</span>}
@@ -1198,6 +1204,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     } catch { /* 隐私模式无 localStorage */ }
     apiPost('/api/activity', { action, target: (target || '').slice(0, 180), session: sess }).catch(() => { /* 失败忽略 */ });
   }, []);
+  useEffect(() => { if (sideNavKey === 'ai') logAct('ai_workspace_view', 'experience:v1'); }, [logAct, session.account?.id, sideNavKey]);
   const openReferral = useCallback(() => {
     setShowReferral(true);
     try { localStorage.setItem('bbt_ref_opened', '1'); } catch { /* 隐私模式忽略 */ }
@@ -1779,7 +1786,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const navRef = useRef<string[]>(watchlist);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); aiViewingTaskRef.current = ''; setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiOriginal(''); setAiModalExpanded(false); return; }
+      if (e.key === 'Escape') { setHelpMenuOpen(false); setAcctOpen(false); setSideNavOpen(false); setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); aiViewingTaskRef.current = ''; setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiOriginal(''); setAiModalExpanded(false); return; }
       if (paletteOpen) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -2014,6 +2021,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiAnswer, setAiAnswer] = useState('');
   const [aiQuestion, setAiQuestion] = useState('');   // 已作答的问题（对话回显）
   const [aiErr, setAiErr] = useState('');
+  const [aiReference, setAiReference] = useState<AiReferenceContext | null>(null);
+  const [aiAccessIssue, setAiAccessIssue] = useState<'' | 'login' | 'membership' | 'quota'>('');
+  const aiRequestLockRef = useRef<object | null>(null);
   const [aiSugg, setAiSugg] = useState<string[]>([]);            // 答案后的确定性追问建议（后端按工具轨迹反推）
   const [aiQuotaLeft, setAiQuotaLeft] = useState<number | null>(null);  // 剩余免费次数；null=不限/未知
   const [aiFeedback, setAiFeedback] = useState<'' | 'up' | 'down'>(''); // 本条答案已投的反馈
@@ -2162,6 +2172,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [activeAiConversationId]);
   const resetAiConversation = useCallback(() => {
     aiConversationEpochRef.current += 1;
+    aiRequestLockRef.current = null;
+    setAiReference(null); setAiAccessIssue('');
     setDeepAnswerBusy(false);
     aiStreamCancelRef.current?.(); aiStreamCancelRef.current = null;
     setActiveAiConversationId(null);
@@ -2176,13 +2188,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       updatedAt: record.updatedAt, attachmentName: record.attachmentName, deepAnswer: record.deepAnswer, roundtable: record.roundtable,
     }] : []);
     const latest = turns[turns.length - 1];
+    setAiReference(record.reference || null); setAiAccessIssue('');
+    logAct('ai_resume', 'saved_conversation');
     setActiveAiConversationId(record.id);
     setAiAnswerMode(latest?.mode === 'deep' ? 'deep' : 'quick');
     setAiInput(''); setAiQuestion(latest?.question || record.question); setAiAnswer(latest?.mode === 'deep' && latest.deepAnswer ? '' : (latest?.answer || record.answer)); setAiErr(''); setAiTools(latest?.tools || []); setAiSugg(latest?.suggestions || []); setAiFeedback(latest?.feedback || '');
     setAiLiveStatus(''); setAiRoundtableMeta(latest?.roundtable || null); setAiAnswerCopied(false);
     setDeepAnswer(latest?.mode === 'deep' ? (latest.deepAnswer || null) : null); setDeepAnswerErr(''); setDeepAnswerQuotaLeft(null); setAiAttachment(null); setAiAttachmentErr('');
     aiHistoryRef.current = turns.slice(-3).map(turn => [turn.question, turn.answer.slice(0, 500)]);
-  }, []);
+  }, [logAct]);
   const renameAiConversation = useCallback((id: string, title: string) => {
     const clean = title.trim().slice(0, 40);
     if (clean) setAiConversations(previous => previous.map(record => record.id === id ? { ...record, title: clean } : record));
@@ -2258,7 +2272,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     el.style.height = `${Math.min(el.scrollHeight, 112)}px`;
   }, [aiInput]);
   // 窄屏下长占位文案会折行，超出单行高度被裁出半行鬼影；移动端换短占位。
-  const [isNarrowViewport] = useState(() => isMobileView());
+  const [isNarrowViewport, setIsNarrowViewport] = useState(() => isMobileView());
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 820px)');
+    const sync = () => setIsNarrowViewport(media.matches);
+    sync(); media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
   const attachAiFile = useCallback(async (file: File) => {
     if (!file) return;
     const revision = getAuthSnapshot().revision;
@@ -2276,7 +2296,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, []);
   const askAi = useCallback(async (q?: string) => {
     const msg = (q ?? aiInput).trim();
-    if (!msg || aiBusy || deepAnswerBusy) return;
+    if (!msg || aiBusy || deepAnswerBusy || aiRequestLockRef.current) return;
+    const requestTicket = {}; aiRequestLockRef.current = requestTicket;
     const revision = getAuthSnapshot().revision;
     const epoch = aiConversationEpochRef.current;
     const isCurrent = () => isAuthRevisionCurrent(revision) && aiConversationEpochRef.current === epoch;
@@ -2288,11 +2309,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const conversationId = ensureAiConversationId();
     const turnId = `${conversationId}-${Date.now()}`;
     const attachmentForRequest = aiAttachment;
+    const referenceForRequest = aiReference;
+    const requestContext = assistantRequestContext(msg, referenceForRequest);
+    const startedAt = Date.now();
+    setAiAccessIssue('');
     setAiBusy(true); setAiInput(''); setAiErr(''); setDeepAnswerErr(''); setDeepAnswer(null); setAiAnswer(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback('');
     setAiAnswerCopied(false); setAiRoundtableActive(useRoundtable); setAiLiveStatus(useRoundtable ? '正在组建投研圆桌 · 证据专家先行' : '正在识别问题并选择研究路径');
     // 先写入一条待完成记录，用户刷新或接口失败时也能在历史侧栏找回这次提问。
-    rememberAiConversation({ id: conversationId, title: msg.slice(0, 32), question: msg, answer: '', mode: 'quick', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename });
-    logAct('ai_chat', msg.slice(0, 60));
+    rememberAiConversation({ id: conversationId, title: referenceForRequest?.title.slice(0, 32) || msg.slice(0, 32), question: msg, answer: '', mode: 'quick', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest) });
+    logAct('ai_chat', referenceForRequest ? 'context:article' : 'context:none');
+    logAct('ai_request_start', referenceForRequest ? 'quick:article' : 'quick:general');
     // AI 对话是独立工作区，不能把终端当前选中的自选股暗塞进每个问题；否则用户比较 A/B 时
     // 后台还会收到无关的 C「当前标的」。从个股卡进入 AI 时，入口已把名称+代码写进问题本身。
     await new Promise<void>(resolve => {
@@ -2300,36 +2326,43 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       let fallbackRunning = false;
       const settle = () => {
         if (settled) return;
-        settled = true; aiStreamCancelRef.current = null; setAiBusy(false); setAiRoundtableActive(false); setAiLiveStatus(''); resolve();
+        settled = true;
+        if (aiRequestLockRef.current === requestTicket) aiRequestLockRef.current = null;
+        aiStreamCancelRef.current = null; setAiBusy(false); setAiRoundtableActive(false); setAiLiveStatus(''); resolve();
       };
       const applyResult = (r: Awaited<ReturnType<typeof runToolResearch>>) => {
         if (settled || !isCurrent()) return;
         if (!r.ok && r.status === 402) {
-          setUpgradeReason(r.error || '今日免费 AI 问答已用完，开通会员畅享无限');
-          setUpgradeOpen(true); setAiInput(msg); settle(); return;
+          setAiAccessIssue('quota'); setAiErr('本次请求受到额度或会员权益限制，问题已保留。');
+          logAct('ai_access_gate', 'quota'); setAiInput(previous => previous.trim() ? previous : msg); settle(); return;
         }
         if (!r.ok && r.status === 401 && !authUserRef.current) {
           // 匿名（从未登录）拿到 401 不是「登录过期」——apiClient 会把 401 统一拍成
           // 「登录已过期，请重新登录」，对从未登录的游客是句死错误文案。按「引导登录」重写。
-          setAiErr('AI 投研问答为会员功能——登录后开通会员即可使用');
-          setAiInput(msg); settle(); return;
+          setAiAccessIssue('login'); setAiErr('请先登录，问题已保留。登录后会核对可用权益。');
+          logAct('ai_access_gate', 'login');
+          setAiInput(previous => previous.trim() ? previous : msg); settle(); return;
         }
         if (!r.ok && r.status === 403) {
-          setAiErr(r.error || 'AI 投研问答为会员功能——登录后开通会员即可使用');
-          setAiInput(msg); settle(); return;
+          setAiAccessIssue(authUserRef.current ? 'membership' : 'login');
+          setAiErr(authUserRef.current ? 'AI 问答需要对应会员权益，问题已保留。' : '请先登录后查看可用权益，问题已保留。');
+          logAct('ai_access_gate', authUserRef.current ? 'membership' : 'login');
+          setAiInput(previous => previous.trim() ? previous : msg); settle(); return;
         }
         if (r.ok && r.answer) {
+          logAct('ai_answer_complete', `quick:${Math.round((Date.now() - startedAt) / 1000)}s`);
           setAiAnswer(r.answer); setAiTools(r.tool_trace || []); setAiRoundtableMeta(r.roundtable || null); setAiSugg(r.suggestions || []);
           setAiQuotaLeft(typeof r.quota_left === 'number' ? r.quota_left : null);
           aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, r.answer.slice(0, 300)]];
           const completedAt = Date.now();
           completeAiConversation(
-            { id: conversationId, title: msg.slice(0, 32), question: msg, answer: r.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, roundtable: r.roundtable || null },
-            { id: turnId, question: msg, answer: r.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, tools: r.tool_trace || [], suggestions: r.suggestions || [], roundtable: r.roundtable || null },
+            { id: conversationId, title: referenceForRequest?.title.slice(0, 32) || msg.slice(0, 32), question: msg, answer: r.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest), roundtable: r.roundtable || null },
+            { id: turnId, question: msg, answer: r.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest), tools: r.tool_trace || [], suggestions: r.suggestions || [], roundtable: r.roundtable || null },
           );
           setAiAttachment(null); setAiAttachmentErr('');
         } else {
-          setAiErr(r.error || r.reason || '暂时没有得出结论，换个问法或稍后再试'); setAiInput(msg);
+          setAiErr(assistantErrorMessage(r.error || r.reason, r.status)); setAiInput(previous => previous.trim() ? previous : msg);
+          logAct('ai_answer_error', `quick:${r.status || 'network'}`);
         }
         settle();
       };
@@ -2340,19 +2373,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const result = await runToolResearch(
           msg, '', '', aiHistoryRef.current,
           attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
-          { roundtable: false, signal: fallbackController.signal },
+          { roundtable: false, context_hint: requestContext, signal: fallbackController.signal },
         );
         applyResult(result);
       };
       const cancelTransport = runToolResearchStream({
         message: msg,
         roundtable: useRoundtable,
+        context_hint: requestContext,
         history: aiHistoryRef.current,
         attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
       }, {
-        onStatus: status => { if (status && isCurrent()) setAiLiveStatus(status); },
+        onStatus: status => { if (!settled && status && isCurrent()) setAiLiveStatus(status); },
         onTool: (event, phase) => {
-          if (!isCurrent()) return;
+          if (settled || !isCurrent()) return;
           const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
           setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
           setAiTools(previous => {
@@ -2379,27 +2413,36 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       });
       aiStreamCancelRef.current = () => {
         if (settled) return;
-        cancelTransport(); fallbackController.abort(); setAiInput(msg); setAiErr('已停止本次研究，问题已保留，可修改后重试。'); settle();
+        cancelTransport(); fallbackController.abort(); logAct('ai_answer_stop', 'quick'); setAiInput(previous => previous.trim() ? previous : msg); setAiErr('已停止本次研究，问题已保留，可修改后重试。'); settle();
       };
     });
-  }, [aiAttachment, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
+  }, [aiAttachment, aiReference, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
   const stopAiResearch = useCallback(() => { aiStreamCancelRef.current?.(); }, []);
   const askDeepAnswer = useCallback(async (q?: string) => {
     const msg = (q ?? aiInput).trim();
-    if (!msg || deepAnswerBusy || aiBusy) return;
+    if (!msg || deepAnswerBusy || aiBusy || aiRequestLockRef.current) return;
+    const requestTicket = {}; aiRequestLockRef.current = requestTicket;
+    const fallbackController = new AbortController();
+    let stopped = false;
+    const startedAt = Date.now();
     const revision = getAuthSnapshot().revision;
     const epoch = aiConversationEpochRef.current;
     const isCurrent = () => isAuthRevisionCurrent(revision) && aiConversationEpochRef.current === epoch;
     const conversationId = ensureAiConversationId();
     const turnId = `${conversationId}-deep-${Date.now()}`;
     const attachmentForRequest = aiAttachment;
+    const referenceForRequest = aiReference;
+    setAiAccessIssue('');
+    setAiInput('');
     setDeepAnswerBusy(true); setDeepAnswerErr(''); setAiErr(''); setDeepAnswer(null); setAiAnswer(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback(''); setAiRoundtableActive(true); setAiLiveStatus('正在启动深度研判 · 证据专家先行');
     // 深度研判也先落一条待完成记录，避免长耗时期间历史侧栏看起来是空的。
-    rememberAiConversation({ id: conversationId, title: msg.slice(0, 32), question: msg, answer: '', mode: 'deep', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename });
-    logAct('deep_answer_start', msg.slice(0, 60));
+    rememberAiConversation({ id: conversationId, title: referenceForRequest?.title.slice(0, 32) || msg.slice(0, 32), question: msg, answer: '', mode: 'deep', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest) });
+    logAct('deep_answer_start', referenceForRequest ? 'context:article' : 'context:none');
+    logAct('ai_request_start', referenceForRequest ? 'deep:article' : 'deep:general');
     // AI 对话是独立工作区。不能把行情页当前选中的股票暗塞进“推荐买哪些股票”这类
     // 全市场问题；从个股入口进入时，名称和代码已经明确写在用户问题里，后端会自行解析。
     const context = [
+      assistantRequestContext(msg, referenceForRequest),
       attachmentForRequest ? `用户上传文件：${attachmentForRequest.filename}\n${attachmentForRequest.text.slice(0, 12000)}` : '',
       aiHistoryRef.current.slice(-3).map(([question, answer]) => `上一轮问题：${question}\n上一轮结论：${answer}`).join('\n'),
     ].filter(Boolean).join('\n');
@@ -2426,9 +2469,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           history: aiHistoryRef.current,
           attachment: attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
         }, {
-          onStatus: status => { if (status && isCurrent()) setAiLiveStatus(status); },
+          onStatus: status => { if (!settled && status && isCurrent()) setAiLiveStatus(status); },
           onTool: (event, phase) => {
-            if (!isCurrent()) return;
+            if (settled || !isCurrent()) return;
             const label = TOOL_LABEL[event.tool] || (event.tool.startsWith('get_') ? '研究数据' : event.tool);
             setAiLiveStatus(phase === 'start' ? `正在核对${label}` : `已核对${label}，继续交叉验证`);
             setAiTools(previous => {
@@ -2474,24 +2517,26 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, deepResult.synthesis.slice(0, 500)]];
       const completedAt = Date.now();
       completeAiConversation(
-        { id: conversationId, title: msg.slice(0, 32), question: msg, answer: deepResult.synthesis, mode: 'deep', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, deepAnswer: deepResult },
-        { id: turnId, question: msg, answer: deepResult.synthesis, mode: 'deep', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, deepAnswer: deepResult },
+        { id: conversationId, title: referenceForRequest?.title.slice(0, 32) || msg.slice(0, 32), question: msg, answer: deepResult.synthesis, mode: 'deep', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest), deepAnswer: deepResult },
+        { id: turnId, question: msg, answer: deepResult.synthesis, mode: 'deep', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest), deepAnswer: deepResult },
       );
       setAiAttachment(null); setAiAttachmentErr('');
-      logAct('deep_answer_done', msg.slice(0, 60));
+      logAct('deep_answer_done', 'completed');
+      logAct('ai_answer_complete', `deep:${Math.round((Date.now() - startedAt) / 1000)}s`);
     } catch (e: any) {
       if (!isCurrent()) return;
       const status = e?.response?.status;
       const detail = e?.response?.data?.detail || e?.message || '深度研判暂时不可用，请稍后重试';
       aiStreamCancelRef.current = null;
       if (status === 499 || e?.code === 'AI_USER_CANCELLED') {
-        setAiInput(msg);
+        setAiInput(previous => previous.trim() ? previous : msg);
         setDeepAnswerErr(detail);
       } else if (status === 402) {
-        setUpgradeReason(detail);
-        setUpgradeOpen(true);
+        setAiAccessIssue('quota'); setDeepAnswerErr('本次请求受到额度或会员权益限制，问题已保留。'); setAiInput(previous => previous.trim() ? previous : msg);
+        logAct('ai_access_gate', 'quota');
       } else if (status === 403) {
-        setDeepAnswerErr(detail || '登录后即可使用每日一次深度研判');
+        setAiAccessIssue('membership'); setDeepAnswerErr('AI 问答需要对应会员权益，问题已保留。'); setAiInput(previous => previous.trim() ? previous : msg);
+        logAct('ai_access_gate', 'membership');
       } else {
         // 深研服务异常/超时不能让整个对话失败。自动切换到独立 quick
         // 路由，并把实际拿到的答案落入同一会话；这样用户至少能先得到
@@ -2500,13 +2545,20 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         // 仍显示圆桌阶段 2 停滞；兜底请求本身仍受独立 90s 超时保护。
         setAiRoundtableActive(false);
         setAiLiveStatus('深度研判暂时不可用，正在切换快速问答');
+        aiStreamCancelRef.current = () => {
+          stopped = true; fallbackController.abort(); setAiInput(previous => previous.trim() ? previous : msg);
+          setDeepAnswerErr('已停止本次研究，问题已保留，可修改后重试。');
+          setDeepAnswerBusy(false); setAiRoundtableActive(false); setAiLiveStatus('');
+          if (aiRequestLockRef.current === requestTicket) aiRequestLockRef.current = null;
+          logAct('ai_answer_stop', 'deep_fallback');
+        };
         try {
           const fallback = await runToolResearch(
             msg, '', '', aiHistoryRef.current,
             attachmentForRequest ? { filename: attachmentForRequest.filename, text: attachmentForRequest.text } : undefined,
-            { roundtable: false, timeoutMs: 90000 },
+            { roundtable: false, context_hint: context, timeoutMs: 90000, signal: fallbackController.signal },
           );
-          if (!isCurrent()) return;
+          if (!isCurrent() || stopped) return;
           if (fallback.ok && fallback.answer) {
             setAiAnswer(fallback.answer);
             setAiTools(fallback.tool_trace || []);
@@ -2516,34 +2568,39 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, fallback.answer.slice(0, 500)]];
             const completedAt = Date.now();
             completeAiConversation(
-              { id: conversationId, title: msg.slice(0, 32), question: msg, answer: fallback.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, roundtable: fallback.roundtable || null },
-              { id: turnId, question: msg, answer: fallback.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, tools: fallback.tool_trace || [], suggestions: fallback.suggestions || [], roundtable: fallback.roundtable || null },
+              { id: conversationId, title: referenceForRequest?.title.slice(0, 32) || msg.slice(0, 32), question: msg, answer: fallback.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest), roundtable: fallback.roundtable || null },
+              { id: turnId, question: msg, answer: fallback.answer, mode: 'quick', updatedAt: completedAt, attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest), tools: fallback.tool_trace || [], suggestions: fallback.suggestions || [], roundtable: fallback.roundtable || null },
             );
             setAiAttachment(null); setAiAttachmentErr('');
             setDeepAnswerErr(`深度研判暂时不可用，已切换快速问答（${detail.slice(0, 80)}）`);
-            logAct('deep_answer_fallback', msg.slice(0, 60));
+            logAct('deep_answer_fallback', 'quick_completed');
+            logAct('ai_answer_complete', `deep_fallback:${Math.round((Date.now() - startedAt) / 1000)}s`);
           } else if (fallback.status === 402) {
-            setUpgradeReason(fallback.error || '今日免费 AI 问答已用完，开通会员畅享无限');
-            setUpgradeOpen(true);
+            setAiAccessIssue('quota'); setDeepAnswerErr('本次请求受到额度或会员权益限制，问题已保留。'); setAiInput(previous => previous.trim() ? previous : msg);
           } else if (fallback.status === 403) {
-            setDeepAnswerErr(fallback.error || '登录后即可继续 AI 问答');
+            setAiAccessIssue('membership'); setDeepAnswerErr('AI 问答需要对应会员权益，问题已保留。'); setAiInput(previous => previous.trim() ? previous : msg);
           } else {
-            setDeepAnswerErr(`${detail}；快速问答也未返回结果，请稍后重试`);
+            setAiInput(previous => previous.trim() ? previous : msg);
+            setDeepAnswerErr(assistantErrorMessage(fallback.error, fallback.status));
+            logAct('ai_answer_error', `deep_fallback:${fallback.status || 'network'}`);
           }
         } catch (fallbackError: any) {
-          if (!isCurrent()) return;
-          setDeepAnswerErr(`${detail}；快速问答也失败：${fallbackError?.message || '网络异常'}`);
+          if (!isCurrent() || stopped) return;
+          if (stopped) return;
+          setAiInput(previous => previous.trim() ? previous : msg);
+          setDeepAnswerErr(assistantErrorMessage(fallbackError?.message));
         }
       }
     } finally {
-      if (isCurrent()) {
+      if (aiRequestLockRef.current === requestTicket) aiRequestLockRef.current = null;
+      if (isCurrent() && !stopped) {
         aiStreamCancelRef.current = null;
         setDeepAnswerBusy(false);
         setAiRoundtableActive(false);
         setAiLiveStatus('');
       }
     }
-  }, [aiAttachment, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
+  }, [aiAttachment, aiReference, aiBusy, aiInput, completeAiConversation, deepAnswerBusy, ensureAiConversationId, logAct, rememberAiConversation]);
   const submitAiQuestion = useCallback((q?: string) => {
     return void (aiAnswerMode === 'deep' ? askDeepAnswer(q) : askAi(q));
   }, [aiAnswerMode, askAi, askDeepAnswer]);
@@ -2561,7 +2618,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setActive(null);
     setAiOpen(false);
     setShowOnb(false);
-    setSideNavKey('ai'); setSideNavOpen(false); setSideToolsOpen(false);
+    setSideNavKey('ai'); setSideNavOpen(false); setSideToolsOpen(false); setHelpMenuOpen(false); setAcctOpen(false);
     logAct('tab', 'ai_chat');
     window.setTimeout(() => aiWorkspaceRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
     // 进入欢迎态时把消息区滚回顶部：切页时浏览器/父级 scrollIntoView 会让内部滚动容器
@@ -2571,6 +2628,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       if (body && !body.querySelector('.bbt-ai-latest-answer')) body.scrollTop = 0;
     }, 80);
   }, [logAct]);
+  const askAboutArticle = useCallback((message: RealtimeMessageRecord) => {
+    resetAiConversation();
+    const excerpt = stripUrls(message.content || '').split(/——\s*[🔒🔓]/)[0].trim().slice(0, 1000);
+    setAiReference({ kind: 'article', id: message.id, title: stripUrls(message.title) || message.title, excerpt,
+      publishedAt: String(message.metadata?.source_time || message.created_at || '') });
+    openAi();
+    primeAiQuestion(`这篇《${stripUrls(message.title) || message.title}》的核心变化是什么？可能影响谁，还有哪些风险需要核对？`);
+    setNewsPreview(null);
+    logAct('ai_context_open', 'article');
+  }, [logAct, openAi, primeAiQuestion, resetAiConversation]);
   // 深度研判（多智能体辩论：取证→多空立论→交叉反驳→风控→投委会裁决）。纯轮询，灰度白名单。
   const [deepMode, setDeepMode] = useState(false);
   const [deepSymbol, setDeepSymbol] = useState('');
@@ -3216,6 +3283,31 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       } finally { if (isAuthRevisionCurrent(revision)) setTrialClaiming(false); }
     }, '领取 3 天体验会员');
   }, [requireLogin, showToast, logAct, setMembership, setTrialClaimable]);
+  const aiTrialClaimRef = useRef(false);
+  const claimAiTrial = useCallback(async () => {
+    if (aiTrialClaimRef.current || !getAuthSnapshot().account) return;
+    const revision = getAuthSnapshot().revision;
+    const question = aiInput.trim() || aiQuestion;
+    const reference = aiReference;
+    aiTrialClaimRef.current = true; setTrialClaiming(true);
+    logAct('ai_trial_click', 'access_gate');
+    try {
+      const result = await authService.claimTrial();
+      if (!isAuthRevisionCurrent(revision)) return;
+      setMembership(result.membership ?? null); setTrialClaimable(false);
+      openAi(); primeAiQuestion(question); setAiReference(reference);
+      logAct('claim_trial', 'ai_experience');
+      showToast('体验权益已领取，原问题已保留，可以继续发送');
+    } catch {
+      if (!isAuthRevisionCurrent(revision)) return;
+      showToast('暂未领取成功，请稍后重试或查看会员权益');
+    } finally {
+      aiTrialClaimRef.current = false;
+      // An entitlement change may increment the revision for the same account.
+      setTrialClaiming(false);
+    }
+  }, [aiInput, aiQuestion, aiReference, logAct, openAi, primeAiQuestion, setMembership, setTrialClaimable, showToast]);
+
   const onLogout = useCallback(() => {
     authService.logout();
     showToast('已退出登录');
@@ -4498,7 +4590,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const railSignals = useMemo(() => dedupedMessages.filter(m => (m.topic || '') === '快讯'
     && (m.severity === 'critical' || m.severity === 'warning' || m.severity === 'success')
     && !pinnedIds.has(m.id)).slice(0, 8), [dedupedMessages, pinnedIds]);
-  const railOn = railWide && !maxed;
+  const railOn = railWide && !maxed && (sideNavKey === 'market' || sideNavKey === 'stocks');
   const railHeadItems = useMemo(() => ([
     ...heads.kx.map((m: any) => ({ kind: 'kx' as const, m })),
     ...heads.wz.map((m: any) => ({ kind: 'wz' as const, m })),
@@ -5682,6 +5774,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const focusSideModule = (key: string, nextFeed?: string) => {
     setActive(null);
     setSideNavKey(key);
+    setHelpMenuOpen(false); setAcctOpen(false);
     setSideNavOpen(false);
     setSideToolsOpen(false);
     setMaxed(null);
@@ -5704,6 +5797,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     window.setTimeout(() => toolWorkspaceRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }), 0);
   };
   const aiWorkspaceBusy = aiBusy || deepAnswerBusy;
+  const latestSavedAi = aiConversations.find(record => record.answer || record.turns?.some(turn => turn.answer));
+  const currentAiRecord = aiConversations.find(record => record.id === activeAiConversationId);
+  const aiStarterPrompts: ReadonlyArray<{ tag: string; question: string; label?: string }> = watchlist.length ? [
+    { tag: '看自选', label: '我的自选最近有什么变化？', question: `帮我核对这些自选最近有哪些重要变化与风险：${watchlist.slice(0, 5).map(symbol => `${nameOf(symbol)}(${symbol})`).join('、')}` },
+    ...AI_STARTER_PROMPTS.slice(0, 2),
+  ] : AI_STARTER_PROMPTS;
   const mobileNavView = getMobileNavView(sideNavKey, feedFilter);
   const jumpFromMobileNav = (view: MobileNavView) => {
     if (view === 'ai') {
@@ -6345,12 +6444,15 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     <h2>像问分析师一样，直接问</h2>
                     <p>不用挑模式。我会自动核对行情、财报与站内资料，先说结论，再列依据和风险。</p>
                     <div className="bbt-ai-sugg-grid">
-                      {AI_STARTER_PROMPTS.map(item => (
-                        <button key={item.question} type="button" onClick={() => primeAiQuestion(item.question)}>
-                          <small>{item.tag}</small><b>{item.question}</b><span>↘</span>
+                      {aiStarterPrompts.map(item => (
+                        <button key={item.question} type="button" onClick={() => { primeAiQuestion(item.question); logAct('ai_starter', item.tag === '看自选' ? 'watchlist' : 'general'); }}>
+                          <small>{item.tag}</small><b>{item.label || item.question}</b><span>↘</span>
                         </button>
                       ))}
                     </div>
+                    {latestSavedAi && <button type="button" className="bbt-ai-resume" onClick={() => openAiConversation(latestSavedAi)}>
+                      <span>继续上次研究</span><b>{latestSavedAi.title}</b><time>{new Date(latestSavedAi.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</time><i aria-hidden="true">→</i>
+                    </button>}
                     <div className="bbt-ai-welcome-proof" aria-label="AI 研究能力">
                       <span><i>●</i>先查数据</span>
                       <span><i>●</i>支持连续追问</span>
@@ -6367,12 +6469,23 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 {aiQuestion && <div className="bbt-ai-message bbt-ai-message--user"><span>你</span><p>{aiQuestion}</p></div>}
                 {aiAttachmentErr && <div className="bbt-ai-workspace-error">⚠ {aiAttachmentErr}</div>}
                 {aiWorkspaceBusy && <AiResearchProgress status={aiLiveStatus} tools={aiTools} roundtable={aiRoundtableActive} onStop={aiBusy || deepAnswerBusy ? stopAiResearch : undefined} />}
-                {aiErr && <div className="bbt-ai-workspace-error"><span>⚠ {aiErr}</span>{!authUser && /登录|试问/.test(aiErr) && <button type="button" onClick={() => requireLogin(() => void submitAiQuestion(), 'AI 投研问答')}>登录后继续</button>}</div>}
+                {(aiErr || deepAnswerErr) && <div className={`bbt-ai-recovery${aiAccessIssue ? ' is-access' : ''}`} role="status">
+                  <b>{aiAccessIssue ? '继续这次研究' : /已停止/.test(aiErr || deepAnswerErr) ? '研究已停止' : aiAnswer ? '已提供可用回答' : '这次研究还没有完成'}</b>
+                  <p>{aiErr || deepAnswerErr}</p>
+                  <div>
+                    {aiAccessIssue ? (<>
+                      {!authUser ? <button type="button" onClick={() => { logAct('ai_login_click', 'access_gate'); const question = aiInput.trim() || aiQuestion; requireLogin(() => { openAi(); primeAiQuestion(question); }, 'AI 投研问答'); }}>登录并保留问题</button>
+                        : <button type="button" onClick={() => { logAct('ai_upgrade_click', aiAccessIssue); void openBuy(); }}>查看会员权益与价格</button>}
+                      {authUser && trialClaimable && <button type="button" disabled={trialClaiming} onClick={() => void claimAiTrial()}>{trialClaiming ? '领取中…' : '领取可用体验权益'}</button>}
+                    </>) : !aiWorkspaceBusy && !aiAnswer && <button type="button" onClick={() => { logAct('ai_retry', 'same_question'); void submitAiQuestion(aiQuestion); }}>重试原问题</button>}
+                    {!aiWorkspaceBusy && <button type="button" className="secondary" onClick={() => primeAiQuestion(aiQuestion)}>修改问题</button>}
+                  </div>
+                </div>}
                 {aiAnswer && <div className="bbt-ai-latest-answer">{aiRoundtableMeta
                   ? <AiRoundtableAnswerCard answer={aiAnswer} result={aiRoundtableMeta} />
                   : <div className="bbt-ai-message bbt-ai-message--assistant"><span>AI</span><div><Markdownlite text={aiAnswer} /></div></div>}
                 </div>}
-                {deepAnswerErr && <div className="bbt-ai-workspace-error">⚠ {deepAnswerErr}</div>}
+
                 {deepAnswer && (
                   <div className={`bbt-ai-latest-answer bbt-ai-deep-answer${deepAnswerNeedsInput ? ' is-clarification' : ''}`}>
                     <div className="bbt-ai-deep-answer-head"><span>{deepAnswerNeedsInput ? '先确定选股范围' : '🔬 深度研判结论'}</span><span>{deepAnswerNeedsInput ? '补充条件后开始查证' : `${deepAnswer.decision === 'candidate' ? '可继续研究' : deepAnswer.decision === 'watch' ? '保持观察' : deepAnswer.decision === 'blocked' ? '暂缓判断' : '需要补证据'} · 置信 ${Math.round((deepAnswer.confidence || 0) * 100)}%`}</span></div>
@@ -6391,7 +6504,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       </div>;
                     })()}
                     <div className="bbt-ai-deep-answer-synthesis"><div className="bbt-ai-deep-section-label">{deepAnswerNeedsInput ? '还需要你选择' : '综合判断'}</div><Markdownlite text={deepAnswer.synthesis} /></div>
-                    {(deepAnswer.research_steps || []).length > 0 && <div className="bbt-ai-deep-workflow" aria-label="本次研究路径">
+                    {(deepAnswer.research_steps || []).length > 0 && <details className="bbt-ai-deep-workflow bbt-ai-method"><summary>查看本次研究过程</summary>
                       <div className="bbt-ai-deep-section-head"><span>研究路径</span><small>已执行的取数与证据归纳</small></div>
                       <div className="bbt-ai-deep-workflow-track">
                         {(deepAnswer.research_steps || []).map((step, index) => <React.Fragment key={step.id || `${step.label}-${index}`}>
@@ -6404,7 +6517,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                         </React.Fragment>)}
                       </div>
                       <div className="bbt-ai-deep-workflow-note">仅展示已执行的研究步骤和可复核事实，不展示模型隐藏思考链。</div>
-                    </div>}
+                    </details>}
                     {(deepAnswer.evidence_highlights || []).length > 0 && <div className="bbt-ai-deep-facts">
                       <div className="bbt-ai-deep-section-head"><span>关键事实</span><small>来自本次研究数据包</small></div>
                       <div className="bbt-ai-deep-facts-grid">{(deepAnswer.evidence_highlights || []).map((fact, index) => <div className="bbt-ai-deep-fact" key={`${fact}-${index}`}><span>{fact.split('：', 1)[0]}</span><p>{fact.includes('：') ? fact.slice(fact.indexOf('：') + 1) : fact}</p></div>)}</div>
@@ -6521,6 +6634,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                         </div>
                       </details>;
                     })()}
+                    {deepAnswer.warnings.length > 0 && <div className="bbt-ai-research-warning" role="note">本次研究的限制：{deepAnswer.warnings.slice(0, 3).map(humanizeDeepWarning).join('；')}</div>}
                     <details className="bbt-ai-deep-evidence">
                       <summary><span>分析视角与技术日志</span><small>{deepAnswer.turns.filter(turn => turn.participant_id !== 'synthesis').length} 个分析视角 · {deepAnswer.tool_traces.filter(trace => trace.status === 'completed').length} 项数据调用</small><i>展开</i></summary>
                       <div className="bbt-ai-deep-evidence-body">
@@ -6541,9 +6655,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                     <div className="bbt-ai-composer-note">{deepAnswer.disclaimer || '多角色 AI 综合生成 · 仅供研究参考，不构成投资建议'}</div>
                   </div>
                 )}
+                {(aiAnswer || deepAnswer?.synthesis) && !aiWorkspaceBusy && currentAiRecord && <p className="bbt-ai-saved" role="status">已保存到研究历史 · 本次研究 {fmtTimeSmart(new Date(currentAiRecord.updatedAt).toISOString())}</p>}
                 {(aiAnswer || deepAnswer?.synthesis) && !aiWorkspaceBusy && <div className="bbt-ai-answer-actions" aria-label="回答操作">
-                  <button type="button" onClick={() => { const text = aiAnswer || deepAnswer?.synthesis || ''; void copyText(text).then(ok => { if (ok) { setAiAnswerCopied(true); showToast('已复制回答'); window.setTimeout(() => setAiAnswerCopied(false), 1800); } }); }}>{aiAnswerCopied ? '✓ 已复制' : '⎘ 复制'}</button>
-                  <button type="button" onClick={() => { if (aiQuestion) void submitAiQuestion(aiQuestion); }} title="会作为新的一轮回答并计入今日额度">↻ 重新生成</button>
+                  <button type="button" onClick={() => { const text = aiAnswer || deepAnswer?.synthesis || ''; void copyText(text).then(ok => { if (ok) { logAct('ai_answer_copy', 'latest'); setAiAnswerCopied(true); showToast('已复制回答'); window.setTimeout(() => setAiAnswerCopied(false), 1800); } }); }}>{aiAnswerCopied ? '✓ 已复制' : '⎘ 复制'}</button>
+                  <button type="button" onClick={() => { logAct('ai_regenerate', 'latest'); if (aiQuestion) void submitAiQuestion(aiQuestion); }} title="会作为新的一轮回答并计入今日额度">↻ 重新生成</button>
                   <span className="bbt-ai-answer-actions-divider" />
                   <button type="button" className={aiFeedback === 'up' ? 'is-active' : ''} disabled={!!aiFeedback} onClick={() => { const answer = aiAnswer || deepAnswer?.synthesis || ''; setAiFeedback('up'); rememberAiFeedback('up'); sendAgentFeedback(aiQuestion, answer, 'up', aiTools); }} aria-label="这条回答有帮助">👍{aiFeedback === 'up' ? ' 有帮助' : ''}</button>
                   <button type="button" className={aiFeedback === 'down' ? 'is-active is-down' : ''} disabled={!!aiFeedback} onClick={() => { const answer = aiAnswer || deepAnswer?.synthesis || ''; setAiFeedback('down'); rememberAiFeedback('down'); sendAgentFeedback(aiQuestion, answer, 'down', aiTools); showToast('已收到反馈，我们会改进这个答案'); }} aria-label="这条回答需要改进">👎{aiFeedback === 'down' ? ' 已记录' : ''}</button>
@@ -6555,31 +6670,37 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 {aiAnswer && !aiWorkspaceBusy && aiSugg.length > 0 && <div className="bbt-ai-followups">
                   <span className="bbt-ai-followups-label">继续追问</span>
                   {aiSugg.map(s => <button key={s} type="button" onClick={() => {
+                    logAct('ai_followup', 'suggestion');
                     primeAiQuestion(s);
                     if (!authUser) requireLogin(() => void submitAiQuestion(s), 'AI 投研问答');
                     else void submitAiQuestion(s);
                   }}>{s} →</button>)}
                 </div>}
               </div>
+              {aiReference && <div className="bbt-ai-reference" aria-label="本次参考资料">
+                <span>参考文章</span><b title={aiReference.title}>{aiReference.title}</b><small>仅附所选内容摘录</small>
+                <button type="button" disabled={aiWorkspaceBusy} onClick={() => { setAiReference(null); logAct('ai_context_remove', 'article'); }} aria-label="移除参考文章">×</button>
+              </div>}
               {aiAttachment && <div className="bbt-ai-attachment-chip"><span>📎 {aiAttachment.filename} · 已读取 {aiAttachment.charCount.toLocaleString()} 字{aiAttachment.truncated ? '（已截取）' : ''}</span><button type="button" onClick={() => setAiAttachment(null)} aria-label="移除附件">×</button></div>}
               <div className="bbt-ai-composer">
                 <div className="bbt-ai-auto-route" title="AI 会根据问题自动选择行情、财务、资讯、研报或市场扫描能力"><i>✦</i><span>自动</span></div>
                 <button type="button" className="bbt-ai-attach" onClick={() => aiFileInputRef.current?.click()} disabled={aiAttachmentBusy || aiWorkspaceBusy} title="上传 PDF、Word、Excel、CSV 或文本文件">{aiAttachmentBusy ? '读取中…' : '📎'}</button>
                 <input ref={aiFileInputRef} className="bbt-ai-file-input" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.markdown,.json,.log" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void attachAiFile(file); }} />
-                <textarea ref={aiPromptInputRef} rows={1} value={aiInput} aria-label="向 AI 投研助手提问" placeholder={isNarrowViewport ? '问行情、估值、财报…' : '问行情、估值、财报，或比较几只股票…'} onChange={e => setAiInput(e.target.value)} onKeyDown={e => {
+                <textarea ref={aiPromptInputRef} rows={1} value={aiInput} aria-label="向 AI 投研助手提问" placeholder={isNarrowViewport ? '输入问题…' : '问行情、估值、财报，或比较几只股票…'} onChange={e => setAiInput(e.target.value)} onKeyDown={e => {
                   if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
                   e.preventDefault();
+                  if (aiWorkspaceBusy || aiAttachmentBusy) return;
                   if (!aiInput.trim()) return;
                   if (authUser) void submitAiQuestion();
-                  else requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
+                  else { const question = aiInput.trim(); logAct('ai_login_click', 'composer'); requireLogin(() => { openAi(); primeAiQuestion(question); }, 'AI 投研问答'); }
                 }} />
                 <button type="button" className="bbt-ai-send" aria-label={authUser ? '发送问题' : '登录后使用'} onClick={() => {
                   if (authUser) void submitAiQuestion();
-                  else requireLogin(() => void submitAiQuestion(), 'AI 投研问答');
+                  else { const question = aiInput.trim(); logAct('ai_login_click', 'composer'); requireLogin(() => { openAi(); primeAiQuestion(question); }, 'AI 投研问答'); }
                 }} disabled={aiWorkspaceBusy || aiAttachmentBusy || !aiInput.trim()}>{aiWorkspaceBusy ? '投研中…' : authUser ? '发送 ↗' : '登录使用'}</button>
               </div>
               {!authUser ? (
-                <div className="bbt-ai-composer-note is-login">AI 问答为会员功能 · 登录后开通会员即可畅享<button type="button" onClick={() => requireLogin(() => aiPromptInputRef.current?.focus(), 'AI 投研问答')}>登录</button></div>
+                <div className="bbt-ai-composer-note is-login">AI 问答需会员权益 · 登录后查看可用额度与价格 · 提问前可先编辑问题</div>
               ) : (
                 <div className="bbt-ai-composer-note">Enter 发送 · Shift + Enter 换行{aiQuotaLeft !== null ? ` · 今日剩余 ${aiQuotaLeft} 次` : ''} · 仅供研究参考</div>
               )}
@@ -7073,6 +7194,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               <button className="bbt-doc-close" onClick={() => setNewsPreview(null)}>✕ 关闭</button>
             </div>
             <div className="bbt-news-actions">
+              {isArticlePreview && <button type="button" className="bbt-news-btn bbt-news-btn--src" onClick={() => askAboutArticle(newsPreview)}>围绕这篇问 AI</button>}
               <button className="bbt-news-btn bbt-news-btn--ai" onClick={() => runNewsAi(newsPreview)}>✦ AI 解读</button>
               {!isArticlePreview && newsPreview.url && !isImg && <a className="bbt-news-btn bbt-news-btn--src" href={newsPreview.url} target="_blank" rel="noopener noreferrer">查看原文 ↗</a>}
             </div>

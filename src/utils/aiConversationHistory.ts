@@ -25,6 +25,7 @@ export interface AiHistoryRecord {
   mode: AiHistoryMode;
   updatedAt: number;
   attachmentName?: string;
+  referenceKey?: string;
   turns?: AiHistoryTurn[];
 }
 
@@ -62,6 +63,7 @@ function historyKey(record: AiHistoryRecord): string {
     normalizeAiHistoryText(record.question),
     normalizeAiHistoryText(record.mode),
     normalizeAiHistoryText(record.attachmentName),
+    normalizeAiHistoryText(record.referenceKey),
   ].join('\u001f');
 }
 

@@ -1,0 +1,47 @@
+/* Assistant: a readable conversation, explicit context and recoverable interruptions. */
+.bbt-side-ai .bbt-ai-welcome { max-width: 700px; margin-left: auto; margin-right: auto; }
+.bbt-side-ai .bbt-ai-welcome h2 { font-weight: 650; letter-spacing: -.02em; }
+.bbt-side-ai .bbt-ai-welcome-proof { opacity: .8; }
+.bbt-side-ai .bbt-ai-resume { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 18px; padding: 12px 0; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--mute2); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.bbt-side-ai .bbt-ai-resume b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-weight: 500; }
+.bbt-side-ai .bbt-ai-resume time { font-size: 11px; white-space: nowrap; }
+.bbt-side-ai .bbt-ai-resume i { font-style: normal; color: var(--accent); }
+.bbt-side-ai .bbt-ai-reference { display: flex; align-items: center; gap: 8px; margin: 6px 18px; padding: 9px 12px; color: var(--text-soft); border: 1px solid var(--line); background: var(--panel); border-radius: 8px; font-size: 12px; }
+.bbt-side-ai .bbt-ai-reference > span { flex: 0 0 auto; color: var(--accent); font-size: 11px; }
+.bbt-side-ai .bbt-ai-reference b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.bbt-side-ai .bbt-ai-reference small { flex: 0 0 auto; color: var(--mute2); font-size: 10px; }
+.bbt-side-ai .bbt-ai-reference button { min-width: 30px; min-height: 30px; padding: 0; border: 0; background: transparent; color: var(--mute2); cursor: pointer; font-size: 18px; }
+.bbt-side-ai .bbt-ai-recovery { max-width: 760px; margin: 16px 0; padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 8px; background: var(--panel); color: var(--text-soft); }
+.bbt-side-ai .bbt-ai-recovery > b { display: block; color: var(--text-strong); font-size: 14px; }
+.bbt-side-ai .bbt-ai-recovery p { margin: 7px 0 12px; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.bbt-side-ai .bbt-ai-recovery > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.bbt-side-ai .bbt-ai-recovery button { min-height: 36px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--blue-bg); color: var(--text-strong); font: inherit; font-size: 12px; cursor: pointer; }
+.bbt-side-ai .bbt-ai-recovery button.secondary { background: transparent; color: var(--mute2); }
+.bbt-side-ai .bbt-ai-recovery.is-access { border-left-color: var(--accent); }
+.bbt-side-ai .bbt-ai-saved { margin: 10px 0 0 43px; color: var(--mute2); font-size: 11px; }
+.bbt-side-ai .bbt-ai-method summary { cursor: pointer; color: var(--text-soft); font-size: 12px; padding: 8px 0; }
+.bbt-side-ai .bbt-ai-research-warning { padding: 12px 14px; border-left: 3px solid var(--warn); color: var(--text-soft); background: var(--panel); line-height: 1.65; font-size: 12px; }
+.bbt-side-ai :is(.bbt-ai-resume, .bbt-ai-reference button, .bbt-ai-recovery button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 820px) {
+  .bbt-side-ai .bbt-ai-reference { flex-wrap: wrap; gap: 5px 8px; margin: 4px 2px; padding: 7px 9px; }
+  .bbt-side-ai .bbt-ai-reference small { display: none; }
+  .bbt-side-ai .bbt-ai-reference button { min-width: 36px; min-height: 36px; }
+  .bbt-side-ai .bbt-ai-resume { gap: 7px; font-size: 11px; }
+  .bbt-side-ai .bbt-ai-saved { margin-left: 0; line-height: 1.5; }
+  .bbt-side-ai .bbt-ai-recovery { padding: 11px 12px; }
+  .bbt-side-ai .bbt-ai-recovery button { min-height: 40px; }
+}
+
+/* Let the actual header height determine the desktop conversation area. */
+@media (min-width: 821px) {
+  .terminal-only-root .bbt.bbt-with-sidebar.bbt-side-ai { height: 100dvh; min-height: 0; overflow: hidden; }
+  .terminal-only-root .bbt.bbt-side-ai .bbt-ai-workspace { height: auto; min-height: 0; flex: 1 1 0; overflow: hidden; }
+}
+@media (max-width: 640px) {
+  [data-theme="dark"] .bbt-side-ai :is(.bbt-ai-sugg-grid button, .bbt-ai-followups button, .bbt-ai-composer) { background: #152536 !important; color: #dce8f7 !important; }
+  [data-theme="dark"] .bbt-side-ai .bbt-ai-sugg-grid button b { color: #dce8f7; }
+  [data-theme="dark"] .bbt-side-ai .bbt-ai-composer textarea { color: #e5effa; }
+  [data-theme="dark"] .bbt-side-ai .bbt-ai-composer textarea::placeholder { color: #a0b4c9; }
+  [data-theme="dark"] .bbt-side-ai .bbt-ai-history-item-main { background: #152536; color: #dce8f7; }
+  [data-theme="dark"] .bbt-side-ai .bbt-ai-history-item.is-active .bbt-ai-history-item-main { background: #213a53; }
+}

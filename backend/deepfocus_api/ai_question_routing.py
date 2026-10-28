@@ -73,7 +73,7 @@ _GRAMMAR_TOKEN_RE = re.compile(
     r"(?:__TERM__|[\s,，。.!！?？:：;；、()（）\[\]【】“”\"'‘’/\-—]|"
     r"请问|请|麻烦|帮忙|帮我|简单|简短|简要|通俗|易懂|清楚|准确|分别|各自|一般|通常|金融|术语|"
     r"解释|说明|介绍|定义|含义|概念|区别|差别|不同|差异|什么|是|意思|之间|关系|对比|比较|"
-    r"计算公式|公式|和|与|及|以及|或者|或|的|有|有什么|怎么|如何|用|一下|一下子|呢|吗|啊|"
+    r"为什么|计算公式|公式|和|与|及|以及|或者|或|的|有|有什么|怎么|如何|用|一下|一下子|呢|吗|啊|"
     r"\b(?:what|is|are|the|a|an|of|and|or|between|to|please|briefly|plain|simple|language|terms|financial|finance|"
     r"explain|define|definition|definitions|meaning|difference|differences|distinguish|compare|versus|vs|in|how|do|does|differ|from|its|their|formula)\b)",
     re.I,
@@ -91,6 +91,11 @@ def is_static_explanation(message: str, has_attachment: bool = False) -> bool:
         return True
     if not _INTENT_RE.search(text):
         return False
+    # Explicit opt-outs and a generic risk-check example do not request live
+    # company evidence. Strip only these anchored clauses; the remaining
+    # glossary grammar must still reject every unknown company or identifier.
+    text = re.sub(r"(?:[，,。；;]\s*)?(?:不需要|无需)(?:查询)?实时行情[。.!！\s]*\Z", "", text)
+    text = re.sub(r"(?:[，,。；;]\s*)?(?:再|并)?列(?:出)?(?:一个|一项)需要核对的风险[。.!！\s]*\Z", "", text)
     text = _CN_OUTPUT_FORMAT_RE.sub(" ", text)
     text = _EN_OUTPUT_FORMAT_RE.sub(" ", text)
     residual, term_count = _TERM_RE.subn(" __TERM__ ", text)
