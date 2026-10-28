@@ -152,3 +152,27 @@
 
 /* Full notes must begin below the sticky navigation even when opened far down a mobile list. */
 .tzs-reader { scroll-margin-top: 100px; }
+
+/* A dedicated reader has one scroll area and is independent of terminal zoom. */
+.tzs-reader-overlay { position: fixed; inset: 0; z-index: 22000; display: flex; flex-direction: column; background: var(--app-bg,#f5f6f8); color: var(--text,#222); --text-body: var(--text); --line: var(--border-soft); --mute: var(--text-muted); --mute2: var(--text-muted); --panel: var(--surface); --purple: var(--accent); font-family: -apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif; }
+.tzs-reader-toolbar { display: flex; align-items: center; gap: 24px; flex: 0 0 auto; height: 60px; padding: 0 max(24px,calc((100vw - 800px)/2)); border-bottom: 1px solid var(--border-soft); background: var(--surface); font-size: 12px; color: var(--text-muted); }
+.tzs-reader-toolbar .tzs-reader-back { white-space: nowrap; margin-right: auto; font-size: 13px; }
+.tzs-reader-escape { color: var(--text-muted); font-size: 11px; }
+.tzs-reader-content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 36px 24px 80px; }
+.tzs-reader-overlay .tzs-reader { max-width: 800px; padding: 32px 40px 48px; box-sizing: border-box; background: var(--surface); }
+.tzs-reader-overlay .tzs-reader-title { font-size: clamp(21px,2vw,28px); line-height: 1.55; margin: 0 0 18px; font-weight: 600; }
+.tzs-reader-overlay .tzs-item-head { padding-bottom: 16px; border-bottom: 1px solid var(--border-soft); }
+.tzs-reader-overlay .tzs-item-body { color: var(--text); margin-top: 24px; }
+.tzs-reader-overlay :is(.tzs-para,.tzs-qa-text) { color: var(--text); font-size: 15px; line-height: 1.95; }
+.tzs-reader-overlay .tzs-img { max-width: 100%; }
+@media(max-width:620px) { .tzs-reader-toolbar { height: 52px; padding: 0 16px; gap: 12px; }.tzs-reader-escape { display: none; }.tzs-reader-content { padding: 0; background: var(--surface); }.tzs-reader-overlay .tzs-reader { padding: 24px 20px 60px; }.tzs-reader-overlay .tzs-reader-title { font-size: 21px; }.tzs-reader-overlay :is(.tzs-para,.tzs-qa-text) { font-size: 15px; } }
+.tzs-lightbox { z-index: 23000; }
+.tzs-sentiment > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text); }
+.tzs-sentiment > summary span { color: var(--text-muted); font-size: 10px; }
+.tzs-sentiment:not([open]) { padding: 4px 12px; background: transparent; }
+.tzs-sentiment[open] > summary { margin-bottom: 12px; }
+.tzs-sentiment-head { display: none; }
+body:has(.tzs-reader-overlay) .ant-modal-root .ant-modal-mask { z-index: 23999; }
+body:has(.tzs-reader-overlay) .ant-modal-root .ant-modal-wrap { z-index: 24000; }
+
+[data-theme='dark'] .tzs-reader-overlay { --accent: #7ab8ff; }

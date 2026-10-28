@@ -227,3 +227,14 @@ html[data-theme] .si-inspector-category { color: var(--text-muted); }
  .bbt.bbt-with-sidebar .si-company-header > .si-button { grid-row: 1; grid-column: 2; min-height: 44px; margin: 0; }
  .bbt.bbt-with-sidebar .si-header-quote { grid-row: 2; grid-column: 1 / -1; min-width: 0; }
 }
+
+/* Research lists lead with search and content, without stacked introductions. */
+.bbt.bbt-with-sidebar:is(.bbt-side-articles,.bbt-side-notes,.bbt-side-reports) > .dc-page-heading { display: none; }
+.bbt.bbt-with-sidebar:is(.bbt-side-articles,.bbt-side-notes,.bbt-side-reports) .tzs-scroll { overflow: visible; height: auto; flex: none; padding: 0 16px 20px; }
+.bbt.bbt-with-sidebar:is(.bbt-side-articles,.bbt-side-notes,.bbt-side-reports) .tzs-inline { height: auto; flex: none; }
+.bbt.bbt-with-sidebar .tzs-note-open { padding: 18px 4px; }
+.bbt.bbt-with-sidebar .tzs-note-open h2 { font-size: 17px; margin: 7px 0; line-height: 1.6; }
+.bbt.bbt-with-sidebar .tzs-note-open p { font-size: 13px; line-height: 1.7; -webkit-line-clamp: 2; line-clamp: 2; }
+.bbt.bbt-with-sidebar .tzs-note-read { margin-top: 8px; }
+.bbt.bbt-with-sidebar.bbt-side-notes .bbt-news-panel { overflow-y: auto; overscroll-behavior-y: contain; }
+@media(max-width:820px) { .bbt.bbt-with-sidebar.bbt-side-notes .bbt-news-panel { overflow: visible; } }

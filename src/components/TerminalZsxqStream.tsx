@@ -185,7 +185,9 @@ const TopicRow: React.FC<{
   onOpen?: (item: ZsxqTopic, trigger: HTMLButtonElement) => void;
 }> = ({ item, onZoom, focused = false, kw = '', detail = false, onOpen }) => {
   const cleanText = cleanSourceBrand(item.text || '');
-  const bodyText = cleanText;
+  const heading = notePreview(item).title;
+  const firstLine = cleanText.split('\n')[0].replace(/^#+\s*/, '').trim();
+  const bodyText = firstLine === heading ? cleanText.slice(cleanText.indexOf('\n') < 0 ? cleanText.length : cleanText.indexOf('\n') + 1).trim() : cleanText;
   // 分享长图用完整正文（不受卡片折叠限制）；落地页二维码仍指向 /note/{id}
   const drawShareImage = useCallback(async (): Promise<Blob | null> => {
     const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
@@ -288,16 +290,25 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
     if (scrollHost.current) scrollHost.current.scrollTop = selected ? 0 : listPosition.current;
     if (selected) {
       readerTitle.current?.focus({ preventScroll: true });
-      readerTitle.current?.closest<HTMLElement>('.tzs-reader')?.scrollIntoView?.({ block: 'start', behavior: 'instant' as ScrollBehavior });
+
     } else {
       outerPositions.current.forEach(({ element, top }) => { element.scrollTop = top; });
       if (listTrigger.current?.isConnected) listTrigger.current.focus({ preventScroll: true });
     }
   }, [selected]);
+  useLayoutEffect(() => {
+    if (!selected) return;
+    const previous = document.body.style.overflow;
+    const root = document.getElementById('root');
+    const wasInert = root?.hasAttribute('inert');
+    document.body.style.overflow = 'hidden';
+    root?.setAttribute('inert', '');
+    return () => { document.body.style.overflow = previous; if (!wasInert) root?.removeAttribute('inert'); };
+  }, [selected]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((!selected && !zoom) || event.key !== 'Escape') return;
-      if (!zoom && document.querySelector('dialog[open], [role="dialog"]')) return;
+      if (!zoom && Array.from(document.querySelectorAll('dialog[open], [role="dialog"]:not(.tzs-reader-overlay)')).some(dialog => dialog.getClientRects().length > 0 && getComputedStyle(dialog).visibility !== 'hidden')) return;
       event.preventDefault(); event.stopImmediatePropagation();
       if (zoom) setZoom(null); else setSelected(null);
     };
@@ -439,16 +450,24 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
       </div>
 
       <div className="tzs-scroll" ref={scrollHost}>
-        {selected && <section className="tzs-reader" aria-label="机构纪要全文">
-          <button type="button" className="tzs-reader-back" onClick={() => setSelected(null)}>← 返回纪要列表</button>
-          <h1 className="tzs-reader-title" ref={readerTitle} tabIndex={-1}>{notePreview(selected).title}</h1>
-          <TopicRow item={selected} detail kw={applied} onZoom={url => { setFitWin(false); setZoom(url); }} />
-        </section>}
+        {selected && createPortal(<div className="tzs-reader-overlay" role="dialog" aria-modal="true" aria-label="阅读机构纪要" onKeyDown={event => {
+          if (event.key !== 'Tab') return;
+          const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],[tabindex="0"]'));
+          const first = controls[0], last = controls[controls.length - 1];
+          if (event.shiftKey && (document.activeElement === first || document.activeElement === readerTitle.current)) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }}>
+          <div className="tzs-reader-toolbar"><button type="button" className="tzs-reader-back" onClick={() => setSelected(null)}>← 返回纪要列表</button><span>机构纪要</span><span className="tzs-reader-escape">Esc 返回</span></div>
+          <div className="tzs-reader-content"><section className="tzs-reader" aria-label="机构纪要全文">
+            <h1 className="tzs-reader-title" ref={readerTitle} tabIndex={-1}>{notePreview(selected).title}</h1>
+            <TopicRow item={selected} detail kw={applied} onZoom={url => { setFitWin(false); setZoom(url); }} />
+          </section></div>
+        </div>, document.body)}
         <div className="tzs-list-view" hidden={!!selected}>
         <ContentCategories entries={pool.map(categoryEntry)} value={category} onChange={next => { setCategory(next); if (scrollHost.current) scrollHost.current.scrollTop = 0; }} kinds={NOTE_KINDS} />
         {pool.length > 0 && visiblePool.length === 0 && <div className="tzs-empty">当前已加载纪要中没有匹配此分类的内容，可清除分类或继续加载更早纪要。</div>}
         {sentiment?.ok && (sentiment.sample || 0) > 0 && (
-          <div className="tzs-sentiment" aria-label="今日机构纪要多空统计（AI 判定）">
+          <details className="tzs-sentiment" aria-label="今日机构纪要多空统计（AI 判定）"><summary>今日机构观点 <span>AI 统计 · {sentiment.sample} 条样本</span></summary>
             <div className="tzs-sentiment-head">
               <span className="tzs-sentiment-title">今日纪要多空 · AI 统计</span>
               <span className="tzs-sentiment-sample">样本 {sentiment.sample} 条</span>
@@ -474,7 +493,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
               </div>
             ) : null}
             <div className="tzs-sentiment-note">AI 判定 · 仅供参考，不构成投资建议</div>
-          </div>
+          </details>
         )}
         {loading && pool.length === 0 && <div className="tzs-loading">加载中…</div>}
         {err && pool.length === 0 && !loading && <div className="tzs-error">{err}</div>}

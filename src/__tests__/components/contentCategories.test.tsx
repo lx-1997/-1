@@ -23,7 +23,8 @@ it('updates result counts for intersected filters, and clears both dimensions to
     return <><ContentCategories entries={entries} value={value} onChange={setValue} sourceLabel="来源" /><output>{entries.filter(entry => matchesContent(entry, value)).map(item => item.title).join('|')}</output></>;
   }
   render(<Example />);
-  fireEvent.click(within(screen.getByRole('group', { name: '内容主题' })).getByRole('button', { name: /科技与 AI/ }));
+  fireEvent.click(screen.getByRole('button', { name: /全部行业.*筛选/ }));
+  fireEvent.change(screen.getByRole('combobox', { name: '一级分类' }), { target: { value: 'technology' } });
   fireEvent.change(screen.getByRole('combobox', { name: '来源' }), { target: { value: '甲' } });
   expect(screen.getByRole('status')).toHaveTextContent('AI 芯片产业');
   expect(screen.getByRole('status')).not.toHaveTextContent('AI 软件');
@@ -54,18 +55,21 @@ it('reveals the next level and clears incompatible descendants when an ancestor 
     return <ContentCategories entries={[{ title: 'HBM 存储芯片价格' }, { title: 'GPU 算力芯片' }]} value={value} onChange={setValue} />;
   }
   render(<Example />);
-  const group = (name: string) => within(screen.getByRole('group', { name }));
-  fireEvent.click(group('一级分类').getByRole('button', { name: /科技与 AI/ }));
-  fireEvent.click(group('二级行业').getByRole('button', { name: /半导体/ }));
-  fireEvent.click(group('三级细分').getByRole('button', { name: /存储芯片/ }));
+  expect(screen.queryByRole('combobox', { name: '一级分类' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /全部行业.*筛选/ }));
+  const choose = (name: string, value: string) => fireEvent.change(screen.getByRole('combobox', { name }), { target: { value } });
+  choose('一级分类','technology'); choose('二级行业','semiconductors'); choose('三级细分','memory');
   expect(screen.getByRole('navigation', { name: '分类路径' })).toHaveTextContent('全部内容›科技与 AI›半导体›存储芯片');
   expect(screen.getByText(/已加载 2 篇 · 匹配 1 篇/)).toBeInTheDocument();
-  fireEvent.click(group('一级分类').getByRole('button', { name: /医药健康/ }));
-  expect(group('二级行业').getByRole('button', { name: /药品研发/ })).toBeInTheDocument();
-  expect(group('三级细分').queryByRole('button', { name: /存储芯片/ })).not.toBeInTheDocument();
+  choose('一级分类','health');
+  expect(screen.getByRole('combobox', { name: '二级行业' })).toHaveValue('all');
+  expect(screen.getByRole('combobox', { name: '三级细分' })).toBeDisabled();
   expect(screen.getByRole('navigation', { name: '分类路径' })).not.toHaveTextContent('半导体');
+  fireEvent.click(screen.getByRole('button', { name: '查看结果' }));
+  expect(screen.queryByRole('combobox', { name: '一级分类' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /医药健康.*筛选/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '清除分类' }));
-  expect(screen.getByText(/已加载 2 篇 · 匹配 2 篇/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /全部行业.*筛选/ })).toBeInTheDocument();
 });
 
 it('uses Beijing calendar boundaries for date ranges and excludes undated or future content', () => {

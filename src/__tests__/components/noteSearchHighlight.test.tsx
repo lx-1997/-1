@@ -24,7 +24,7 @@ describe('机构纪要搜索关键词高亮', () => {
 
   it('回车检索后正文命中词渲染为 <mark class=tzs-mark>', async () => {
     mockedStream.mockResolvedValue(streamResponse('覆铜板巨头建滔集团再度发布涨价通知，建滔电子布需求紧张。'));
-    const { getByPlaceholderText, container } = render(<TerminalZsxqStream />);
+    const { getByPlaceholderText, baseElement: container } = render(<TerminalZsxqStream />);
     await waitFor(() => expect(mockedStream).toHaveBeenCalledTimes(1));
     expect(container.querySelector('mark.tzs-mark')).toBeNull();
 
@@ -41,7 +41,7 @@ describe('机构纪要搜索关键词高亮', () => {
 
   it('清除搜索后高亮消失', async () => {
     mockedStream.mockResolvedValue(streamResponse('建滔集团发布涨价通知。'));
-    const { getByPlaceholderText, getByLabelText, container } = render(<TerminalZsxqStream />);
+    const { getByPlaceholderText, getByLabelText, baseElement: container } = render(<TerminalZsxqStream />);
     await waitFor(() => expect(mockedStream).toHaveBeenCalledTimes(1));
 
     const input = getByPlaceholderText(/搜机构纪要/);
@@ -59,7 +59,7 @@ describe('机构纪要搜索关键词高亮', () => {
 it('shows only a heading and introduction until a note is opened, then restores the list position and focus', async () => {
   const text = '公司调研纪要\n' + '简介与研究背景。'.repeat(90) + '\n全文末尾仅在详情显示';
   mockedStream.mockResolvedValue(streamResponse(text));
-  const { container } = render(<TerminalZsxqStream />);
+  const { baseElement: container } = render(<TerminalZsxqStream />);
   await screen.findByRole('heading', { name: '公司调研纪要' });
   expect(container.querySelector('.tzs-item-body')).toBeNull();
   expect(screen.queryByText('全文末尾仅在详情显示')).not.toBeInTheDocument();
@@ -74,7 +74,7 @@ it('shows only a heading and introduction until a note is opened, then restores 
   expect(list.scrollTop).toBe(0);
   outer.scrollTop = 20;
   expect(within(reader).queryByRole('button', { name: /展开全文/ })).not.toBeInTheDocument();
-  fireEvent.click(within(reader).getByRole('button', { name: '← 返回纪要列表' }));
+  fireEvent.click(screen.getByRole('button', { name: '← 返回纪要列表' }));
   expect(screen.queryByRole('region', { name: '机构纪要全文' })).not.toBeInTheDocument();
   expect(list.scrollTop).toBe(180);
   expect(outer.scrollTop).toBe(260);
@@ -99,10 +99,40 @@ it('describes an image-only note in the list and loads original images only in t
   response.items[0].images = ['https://images.zsxq.com/verified-original.jpg'];
   response.items[0].image_fulls = response.items[0].images;
   mockedStream.mockResolvedValue(response);
-  const { container } = render(<TerminalZsxqStream />);
+  const { baseElement: container } = render(<TerminalZsxqStream />);
   const open = await screen.findByRole('button', { name: /图片纪要标题.*图片纪要，含 1 张原始资料/ });
   expect(container.querySelector('.tzs-img')).toBeNull();
   fireEvent.click(open);
   expect(screen.getByRole('region', { name: '机构纪要全文' })).toBeInTheDocument();
   expect(container.querySelector('.tzs-img')).toHaveAttribute('src', expect.stringContaining('/api/zsxq/image?u='));
+});
+
+it('opens a dedicated reader, removes the repeated source heading, and restores page scrolling', async () => {
+  mockedStream.mockResolvedValue(streamResponse('独立阅读标题\n完整正文与最后一段。'));
+  const previousOverflow = document.body.style.overflow;
+  render(<TerminalZsxqStream />);
+  fireEvent.click(await screen.findByRole('button', { name: /独立阅读标题.*查看全文/ }));
+  const dialog = screen.getByRole('dialog', { name: '阅读机构纪要' });
+  expect(dialog).toHaveAttribute('aria-modal', 'true');
+  expect(document.body.style.overflow).toBe('hidden');
+  expect(dialog.querySelector('.tzs-item-body')).toHaveTextContent('完整正文与最后一段。');
+  expect(dialog.querySelector('.tzs-item-body')).not.toHaveTextContent('独立阅读标题');
+  const heading = within(dialog).getByRole('heading', { name: '独立阅读标题' });
+  expect(heading).toHaveFocus();
+  fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+  expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: /分享/ }));
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: '阅读机构纪要' })).not.toBeInTheDocument();
+  expect(document.body.style.overflow).toBe(previousOverflow);
+});
+
+it('allows Escape after a previous nested dialog has become hidden', async () => {
+  mockedStream.mockResolvedValue(streamResponse('纪要标题\n完整内容'));
+  render(<TerminalZsxqStream />);
+  fireEvent.click(await screen.findByRole('button', { name: /查看全文/ }));
+  const hiddenDialog = document.createElement('div');
+  hiddenDialog.setAttribute('role', 'dialog'); hiddenDialog.style.display = 'none';
+  document.body.appendChild(hiddenDialog);
+  try { fireEvent.keyDown(window, { key: 'Escape' }); expect(screen.queryByRole('dialog', { name: '阅读机构纪要' })).not.toBeInTheDocument(); }
+  finally { hiddenDialog.remove(); }
 });
