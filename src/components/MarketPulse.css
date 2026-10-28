@@ -140,3 +140,11 @@
 }
 .mp-ev-meta { font-size: 10.5px; color: var(--mute, #8a94a3); display: flex; gap: 6px; align-items: center; }
 .mp-ev-stars { color: var(--warn, #ffb000); letter-spacing: 1px; }
+
+/* Keep historical evidence readable in the compact radar. */
+.mp-quality-warning { color: var(--warn, #a86d16); opacity: 1; }
+.mp-bt-table { width: 100%; border-collapse: collapse; margin: 6px 0; font-variant-numeric: tabular-nums; }
+.mp-bt-table th, .mp-bt-table td { padding: 4px 2px; text-align: right; border-bottom: 1px solid var(--line, #e5e5e1); }
+.mp-bt-table th:first-child, .mp-bt-table td:first-child { text-align: left; }
+.mp-bt-note { overflow-wrap: anywhere; }
+.bbt-rail > .mp-wrap { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
