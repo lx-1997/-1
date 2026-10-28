@@ -843,8 +843,8 @@
 </style>
 </head>
 <body>
-<section class="aif-report" style="max-width:1180px;margin:12px auto 0;padding:10px 18px;border:1px solid rgba(124,58,237,.25);border-radius:14px;background:rgba(124,58,237,.05);font-size:13px;line-height:1.8;color:#c9cdd8">
-  <h1 style="font-size:16px;margin:0 0 4px;color:#e6e8f0">稻草财经 AI 模拟炒股 v2 · 六位 AI 操盘手同场竞技</h1>
+<section class="aif-report" style="max-width:1180px;margin:12px auto 0;padding:10px 18px;border:1px solid rgba(124,58,237,.25);border-radius:14px;background:rgba(124,58,237,.05);font-size:13px;line-height:1.8;color:var(--ink2)">
+  <h1 style="font-size:16px;margin:0 0 4px;color:var(--ink)">稻草财经 AI 模拟炒股 v2 · 六位 AI 操盘手同场竞技</h1>
   <p style="margin:0 0 6px">规则升级 v2：情绪周期四阶段闸门（冰点 / 主升 / 分歧 / 退潮）入引擎，六位 AI 各带 ¥100 万虚拟资金重新开赛；只做模拟盘，不接入券商，每笔决策完整公开。</p>
   <!--AIF:REPORT:START-->
   <p>AI 赛马战报生成中：交易日内每 30 分钟更新冠军、最大分歧与情绪周期档位。</p>
@@ -869,19 +869,19 @@
 <style>
   .aif-int-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   @media(max-width:860px){.aif-int-grid{grid-template-columns:1fr}}
-  .aif-int-h{font-size:14px;font-weight:800;color:#e6e8f0;margin-bottom:8px}
-  .aif-int-h small{font-weight:500;color:#8a90a8;font-size:11px;margin-left:4px}
-  .aif-int-tip{font-size:12px;color:#aeb4c8;margin-bottom:8px;line-height:1.6}
+  .aif-int-h{font-size:14px;font-weight:800;color:var(--ink);margin-bottom:8px}
+  .aif-int-h small{font-weight:500;color:var(--ink2);font-size:11px;margin-left:4px}
+  .aif-int-tip{font-size:12px;color:var(--ink2);margin-bottom:8px;line-height:1.6}
   .aif-int-chips{display:flex;flex-wrap:wrap;gap:7px}
-  .aif-chip{cursor:pointer;border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:5px 12px;font-size:12px;color:#c9cdd8;background:rgba(255,255,255,.03);user-select:none}
+  .aif-chip{cursor:pointer;border:1px solid var(--line);border-radius:20px;padding:5px 12px;font-size:12px;color:var(--ink2);background:var(--card);user-select:none}
   .aif-chip:hover{border-color:rgba(124,58,237,.7)}
-  .aif-chip.on{background:rgba(124,58,237,.28);border-color:#a78bfa;color:#fff;font-weight:700}
-  .aif-chip .n{color:#8a90a8;font-size:11px;margin-left:4px}
+  .aif-chip.on{background:var(--purple);border-color:var(--purple);color:#fff;font-weight:700}
+  .aif-chip .n{color:inherit;font-size:11px;margin-left:4px}
   .aif-chip.disabled{opacity:.45;cursor:not-allowed}
-  .aif-int-mini{margin-top:8px;font-size:11px;color:#8a90a8;line-height:1.7}
-  .aif-int-feed{margin-top:8px;font-size:12px;line-height:1.9;color:#c9cdd8}
-  .aif-int-feed .up{color:#2bd96a}.aif-int-feed .down{color:#ff5a52}
-  .aif-int a{color:#a78bfa;text-decoration:none}
+  .aif-int-mini{margin-top:8px;font-size:11px;color:var(--ink2);line-height:1.7}
+  .aif-int-feed{margin-top:8px;font-size:12px;line-height:1.9;color:var(--ink2)}
+  .aif-int-feed .up{color:var(--up)}.aif-int-feed .down{color:var(--down)}
+  .aif-int a{color:var(--purple);text-decoration:none}
 </style>
 <div class="arena" id="arenaView"></div>
 <div class="app" id="appView" style="display:none">
