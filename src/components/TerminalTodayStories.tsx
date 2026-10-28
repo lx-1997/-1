@@ -132,14 +132,20 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
   const [mine, setMine] = useState<StoryCard[] | null>(null);
   const [personalized, setPersonalized] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const requestId = useRef(0);
   const isMobile = useIsMobile();
 
   const load = useCallback(async () => {
+    const current = ++requestId.current;
     setLoading(true);
     const [todayResult, meResult] = await Promise.allSettled([
       getTodayStories(12),
       loggedIn ? getMyStories(8) : Promise.resolve(null),
     ]);
+    if (current !== requestId.current) return;
+    setFailed(todayResult.status === 'rejected');
     if (todayResult.status === 'fulfilled') {
       setBrief(todayResult.value.brief);
       setHealth(todayResult.value.health);
@@ -154,7 +160,7 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
     setLoading(false);
   }, [loggedIn]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { requestId.current += 1; }; }, [load]);
 
   const sections = useMemo(() => (brief?.sections || []).filter(s => s.items.length > 0), [brief]);
   const personalLimit = isMobile ? 4 : 6;
@@ -167,30 +173,22 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
     else onOpenMarket();
   }, [onSelectSymbol, onOpenMarket]);
 
-  if (!brief && !loading) {
-    return (
-      <section className="bbt-stories" aria-label="今日事件看板">
-        <div className="bbt-stories-head">
-          <span>TODAY&apos;S STORIES</span>
-          <h2>今天站内发生了什么</h2>
-        </div>
-        <div className="bbt-stories-empty">站内正在把快讯、文章、研报、机构纪要聚成「一件事」，稍后再来看看。</div>
-      </section>
-    );
-  }
 
   return (
     <section className="bbt-stories" aria-label="今日事件看板">
       <div className="bbt-stories-head">
         <div>
-          <span>TODAY&apos;S STORIES</span>
-          <h2>今天站内发生了什么</h2>
-          <p>把上千条快讯、文章、研报、机构纪要聚成「一件事」，先看结论再点开原文核对。</p>
+          <h2>市场事件</h2>
+          <p>{loading && !brief ? '正在同步…' : failed ? '事件摘要暂未更新，可重试' : brief?.headline || '暂无事件摘要'}</p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading}>{loading ? '更新中…' : '更新'}</button>
+        <div className="bbt-stories-actions">
+          {failed && <button type="button" onClick={() => void load()} disabled={loading}>{loading ? '重试中…' : '重试'}</button>}
+          <button type="button" aria-expanded={expanded} aria-controls="bbt-story-details" onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '查看事件'}</button>
+        </div>
       </div>
 
-      {brief?.headline && <div className="bbt-stories-headline">{brief.headline}</div>}
+      {expanded && <div id="bbt-story-details">
+      <button type="button" className="bbt-stories-refresh" onClick={() => void load()} disabled={loading}>{loading ? '更新中…' : '刷新事件'}</button>
 
       {personalized && personalStories.length > 0 && (
         <div className="bbt-stories-block">
@@ -213,6 +211,7 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
         </button>
       )}
 
+      {!loading && !sections.length && !personalStories.length && <div className="bbt-stories-empty">{failed ? '暂时无法获取事件，请重试。' : '暂时没有可展示的事件，稍后刷新查看。'}</div>}
       <div className="bbt-stories-grid">
         {sections.map(section => (
           <div className="bbt-stories-block" key={section.key}>
@@ -243,6 +242,7 @@ const TerminalTodayStories: React.FC<TerminalTodayStoriesProps> = ({
         {brief?.disclaimer || '以上为站内公开内容的事实聚合，不构成投资建议。'}
         {health ? ` · 已聚合 ${health.stories} 件事、${health.story_items} 条内容` : ''}
       </div>
+      </div>}
     </section>
   );
 };

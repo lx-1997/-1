@@ -54,10 +54,21 @@ async function fetchArena(): Promise<ArenaResp> {
 const pct = (v: number | null | undefined): string =>
   typeof v === 'number' ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—';
 
-const ACTION_EMOJI: Record<string, string> = { buy: '买入', sell: '卖出' };
+function readExpanded(): boolean {
+  try { return localStorage.getItem('bbt-aif-expanded') === '1'; } catch { return false; }
+}
 
 const TerminalAiFundCard: React.FC = () => {
   const [arena, setArena] = useState<ArenaResp | null>(null);
+  const [expanded, setExpanded] = useState(readExpanded);
+
+  const toggle = useCallback(() => {
+    setExpanded(v => {
+      const next = !v;
+      try { localStorage.setItem('bbt-aif-expanded', next ? '1' : '0'); } catch { /* Session state still works. */ }
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -81,21 +92,37 @@ const TerminalAiFundCard: React.FC = () => {
   const worst = ranked[ranked.length - 1];
   const cycle = arena.cycle || { stage: 'neutral', label: '温和轮动', stance: '' };
 
+  if (!expanded) {
+    return (
+      <section className="bbt-aif bbt-aif--collapsed" aria-label="AI 模拟盘">
+        <button type="button" className="bbt-aif-toggle" aria-expanded={false} onClick={toggle}>
+          <span className="bbt-aif-kicker">AI 模拟盘</span>
+          <span className="bbt-aif-mini-champ">🏆 {champ?.emoji} {champ?.name} <b className={champ && champ.nav_pct >= 0 ? 'up' : 'down'}>{pct(champ?.nav_pct)}</b></span>
+          <span className="bbt-aif-mini-worst">末位 {worst?.emoji} {worst?.name} <b className={worst && worst.nav_pct >= 0 ? 'up' : 'down'}>{pct(worst?.nav_pct)}</b></span>
+          <span className="bbt-aif-mini-bench">沪深300 <b className={(arena.benchmark?.nav_pct ?? 0) >= 0 ? 'up' : 'down'}>{pct(arena.benchmark?.nav_pct)}</b></span>
+          <span className="bbt-aif-phase">{arena.in_session ? '● 撮合中' : (arena.phase_label || '休市')}</span>
+          <span className="bbt-aif-toggle-hint" aria-hidden="true">展开</span>
+        </button>
+      </section>
+    );
+  }
+
   return (
-    <section className="bbt-aif" aria-label="AI 赛马实盘直播">
+    <section className="bbt-aif" aria-label="AI 模拟盘">
       <div className="bbt-aif-head">
         <div>
-          <span className="bbt-aif-kicker">AI FUND ARENA</span>
-          <h2>六位 AI 操盘手 · 实盘直播</h2>
-          <p>{arena.in_session ? '盘中每 30 分钟一次决策，看谁在主线上吃到肉。' : `${arena.phase_label || '休市中'}：AI 仍在复盘与备弹，开盘自动开赛。`}</p>
+          <span className="bbt-aif-kicker">AI 模拟盘</span>
+          <h2>AI 策略模拟盘</h2>
+          <p>{arena.in_session ? '虚拟资金模拟交易，策略表现仅供研究。' : `${arena.phase_label || '休市中'}：AI 仍在复盘与备弹，开盘自动开赛。`}</p>
         </div>
         <span className="bbt-aif-phase">{arena.in_session ? '● 撮合中' : (arena.phase_label || '休市')}</span>
+        <button type="button" className="bbt-aif-toggle bbt-aif-toggle--inline" aria-expanded={true} onClick={toggle}>收起</button>
       </div>
       <div className="bbt-aif-report">
         <span className="bbt-aif-champ" style={{ borderColor: champ?.color }}>
           🏆 {champ?.emoji} {champ?.name} <b className={champ && champ.nav_pct >= 0 ? 'up' : 'down'}>{pct(champ?.nav_pct)}</b>
         </span>
-        <span className="bbt-aif-worst">垫底 {worst?.emoji} {worst?.name} <b className={worst && worst.nav_pct >= 0 ? 'up' : 'down'}>{pct(worst?.nav_pct)}</b></span>
+        <span className="bbt-aif-worst">末位 {worst?.emoji} {worst?.name} <b className={worst && worst.nav_pct >= 0 ? 'up' : 'down'}>{pct(worst?.nav_pct)}</b></span>
         <span className="bbt-aif-bench">沪深300 <b className={(arena.benchmark?.nav_pct ?? 0) >= 0 ? 'up' : 'down'}>{pct(arena.benchmark?.nav_pct)}</b></span>
       </div>
       <div className="bbt-aif-cycle">
@@ -117,7 +144,7 @@ const TerminalAiFundCard: React.FC = () => {
         ))}
       </div>
       <a className="bbt-aif-cta" href="/ai-fund">
-        v2 规则开赛：情绪周期入引擎，六人各带 ¥100 万 · 看完整直播 →
+        查看策略、持仓与模拟交易记录 →
       </a>
     </section>
   );

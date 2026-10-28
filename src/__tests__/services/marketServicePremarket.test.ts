@@ -5,7 +5,10 @@ jest.mock('../../services/apiClient', () => ({
   apiGet: jest.fn(),
 }));
 
-const sampleResponse = {
+const sampleResponse: import('../../services/marketService').PremarketOpportunityResponse = {
+  provider: 'fixture',
+  model: 'fixture',
+  disclaimer: '测试数据',
   generated_at: '2026-10-25T01:00:00Z',
   market_phase: '盘前',
   regime_score: 60,

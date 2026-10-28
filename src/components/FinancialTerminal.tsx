@@ -85,6 +85,7 @@ import './TerminalSimpleStart.css';
 import './TerminalMobile.css';
 import './TerminalMobileChat.css';
 import './terminal/terminal-market-ui.css';
+import './TerminalReadingWorkspace.css';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
@@ -5683,6 +5684,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setSideNavKey(key);
     setSideNavOpen(false);
     setSideToolsOpen(false);
+    setMaxed(null);
+    setCollapsed(previous => ({ ...previous, eq: false, news: false }));
     if (nextFeed) setFeedFilter(nextFeed);
     if (key === 'market' && nextFeed === '快讯') setFastNewsRefresh(value => value + 1);
     window.setTimeout(() => {
@@ -5958,7 +5961,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       {supportUnread > 0 && <span className="bbt-avatar-dot" title="管理员有新回复" />}
                       <span className="bbt-acct-trigger-caret" aria-hidden="true">▾</span>
                     </button>
-                    {showAcctHint && !acctOpen && (
+                    {showAcctHint && !acctOpen && (sideNavKey === 'market' || sideNavKey === 'stocks') && (
                       <div className="bbt-acct-hint" role="note">
                         <span className="bbt-acct-hint-txt">👆 会员 · 绑定微信 · 邀请好友 · 收藏 · 设置 都在这里</span>
                         <button className="bbt-acct-hint-ok" onClick={dismissAcctHint}>知道了</button>
@@ -6075,7 +6078,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onOpenMarket={() => { void openReview(); }}
       />
 
+      {sideNavKey === 'market' && <div className="bbt-market-overview">
       <TerminalTodayStories
+        key={`stories:${getAuthSnapshot().revision}`}
         loggedIn={!!authUser}
         onSelectSymbol={(symbol) => { setActive(symbol); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
         onOpenMarket={() => { void openReview(); }}
@@ -6083,6 +6088,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       />
 
       <TerminalAiFundCard />
+      </div>}
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}
       {primaryBanner === 'admin-unread' && (
@@ -6704,7 +6710,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </div>
           )}
 
-          <MarketPulse variant="strip" />
+          {sideNavKey === 'market' && <MarketPulse variant="strip" />}
           {isCelebrity ? (
             <TerminalCelebrityViews inline />
           ) : isZsxqStream ? (
