@@ -24,13 +24,18 @@
 .bbt-article-reader__alert--muted { display: block; border-color: var(--line-2, rgba(255,255,255,.12)); color: var(--mute, #95a3b3); background: var(--panel-2, rgba(255,255,255,.03)); }
 .bbt-article-reader__alert--with-action { display: flex; }
 
-.bbt-article-reader__takeaways { margin: 24px 0 30px; padding: 17px 18px 14px; border: 1px solid rgba(255,176,0,.25); border-left: 3px solid var(--amber, #ffb000); border-radius: 12px; background: linear-gradient(135deg, rgba(255,176,0,.10), rgba(255,176,0,.025)); }
-.bbt-article-reader__section-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 11px; color: var(--amber-2, #ffd36a); font-size: 11px; font-weight: 850; letter-spacing: .08em; }
-.bbt-article-reader__section-label em { color: var(--mute, #95a3b3); font-size: 11px; font-style: normal; font-weight: 500; letter-spacing: 0; }
-.bbt-article-reader__takeaways ol { margin: 0; padding-left: 21px; }
-.bbt-article-reader__takeaways li { padding-left: 4px; color: var(--text-body, #e6edf3); }
-.bbt-article-reader__takeaways li + li { margin-top: 11px; }
-.bbt-article-reader__takeaways p { margin: 0; font-size: 14px; line-height: 1.75; }
+/* A short source summary leads into the full article, without a second card stack. */
+.bbt-article-reader__takeaways { margin: 24px 0 30px; padding: 16px 0 18px; border-top: 2px solid var(--text-strong, #e6edf3); border-bottom: 1px solid var(--line); }
+.bbt-article-reader__section-label { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.bbt-article-reader__section-label h2 { margin: 0; color: var(--text-strong); font-size: 15px; font-weight: 650; }
+.bbt-article-reader__section-label span, .bbt-article-reader__takeaways > small { color: var(--mute); font-size: 11px; line-height: 1.6; }
+.bbt-article-reader__takeaways ul { margin: 0 0 10px; padding-left: 20px; }
+.bbt-article-reader__takeaways li { padding-left: 3px; }
+.bbt-article-reader__takeaways li + li { margin-top: 9px; }
+.bbt-article-reader__takeaways p { margin: 0; color: var(--text-body, #e6edf3); font-size: 15px; line-height: 1.8; }
+.bbt-article-reader__ask { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--mute); font-size: 12px; }
+.bbt-article-reader__ask button { min-height: 40px; padding: 8px 12px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 6px; color: var(--accent, #448fff); background: transparent; font: inherit; cursor: pointer; }
+.bbt-article-reader__ask button:focus-visible, .bbt-article-reader__source-file > summary:focus-visible { outline: 2px solid var(--accent, #448fff); outline-offset: 3px; }
 
 .bbt-article-reader__body { padding-top: 2px; }
 .bbt-article-reader__section + .bbt-article-reader__section { margin-top: 28px; padding-top: 23px; border-top: 1px solid var(--line-2, rgba(255,255,255,.12)); }
@@ -62,7 +67,23 @@
 
 /* 原文原件直出（会员）：一次性令牌的源截图/PDF 直接渲染，不经 AI 转写 */
 .bbt-article-reader__source-file { margin: 24px 0 8px; padding: 0; border: 1px solid var(--line-2, rgba(255,255,255,.12)); border-radius: 12px; background: #fff; overflow: hidden; }
-.bbt-article-reader__source-file figcaption { padding: 8px 12px; background: var(--panel-2, rgba(22,28,34,.96)); color: var(--amber-2, #ffd36a); font-size: 11px; letter-spacing: .06em; }
+.bbt-article-reader__source-file > summary { cursor: pointer; list-style-position: inside; padding: 8px 12px; background: var(--panel-2, rgba(22,28,34,.96)); color: var(--amber-2, #ffd36a); font-size: 11px; letter-spacing: .06em; }
 .bbt-article-reader__extracting { color: var(--mute, #9aa4b2); letter-spacing: 0; }
 .bbt-article-reader__source-img { display: block; width: 100%; height: auto; }
 .bbt-article-reader__pdf { display: block; width: 100%; height: 72vh; border: 0; }
+
+.bbt-article-reader__header h1, .bbt-article-reader__paragraph, .bbt-article-reader__takeaways { overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .bbt-article-reader__header h1 { font-size: 23px; line-height: 1.4; }
+  .bbt-article-reader__ask { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .bbt-article-reader__takeaways { margin: 20px 0 24px; }
+}
+/* Reading must stay above the fixed navigation, including during viewport changes. */
+.bbt .bbt-doc-overlay--article { z-index: 160; }
+.bbt-doc--article .bbt-doc-title { flex: 1 1 auto; font-size: 12px; font-weight: 500; }
+.bbt-doc--article .bbt-doc-meta { display: none; }
+.bbt-doc--article .bbt-doc-bar { flex-wrap: nowrap; }
+.bbt-doc--article .bbt-doc-close { flex: 0 0 auto; }
+.bbt-doc--article .bbt-news-actions { padding: 5px 14px; background: transparent; }
+.bbt-doc--article .bbt-news-btn--ai { min-height: 32px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--accent, #448fff); font-size: 12px; }
+.bbt-article-reader__source-file > summary { min-height: 40px; box-sizing: border-box; }

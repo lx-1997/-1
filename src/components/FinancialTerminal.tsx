@@ -87,7 +87,7 @@ import './TerminalMobileChat.css';
 import './terminal/terminal-market-ui.css';
 import './TerminalReadingWorkspace.css';
 import './TerminalAssistantExperience.css';
-import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, type AiReferenceContext } from '../utils/aiAssistantExperience';
+import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, conciseAssistantFollowups, type AiReferenceContext } from '../utils/aiAssistantExperience';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
@@ -603,7 +603,7 @@ function Markdownlite({ text }: { text: string }) {
     if (heading) {
       flush();
       const k = blocks.length;
-      blocks.push(<h3 key={`heading${k}`} className="bbt-md-heading">{mdInline(heading[1], `heading${k}`)}</h3>);
+      blocks.push(<h3 key={`heading${k}`} className={`bbt-md-heading${/风险|反证|缺口/.test(heading[1]) ? ' is-risk' : /结论|判断/.test(heading[1]) ? ' is-conclusion' : ''}`}>{mdInline(heading[1], `heading${k}`)}</h3>);
       continue;
     }
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
@@ -725,7 +725,7 @@ function AiRoundtableAnswerCard({ answer, result }: { answer: string; result: Du
       {turns.length > 0 && <section className="bbt-ai-roundtable-experts">
         <div className="bbt-ai-roundtable-section-head"><b>三个专家怎么看</b><small>点击展开原始观点摘要</small></div>
         <div className="bbt-ai-roundtable-expert-grid">{turns.map((turn, index) => (
-          <details key={`${turn.participant_id}-${index}`} open={index === 0} className={`bbt-ai-roundtable-expert is-${turn.stance}`}>
+          <details key={`${turn.participant_id}-${index}`} className={`bbt-ai-roundtable-expert is-${turn.stance}`}>
             <summary><span className="bbt-ai-roundtable-expert-dot" /><b>{ROUNDTABLE_ROLE_LABEL[turn.stance] || turn.participant_name}</b><small>{ROUNDTABLE_ROLE_NOTE[turn.stance] || '独立复核'}</small><em>{Math.round((turn.confidence || 0) * 100)}%</em></summary>
             <div><Markdownlite text={turn.content} />{turn.risks?.length > 0 && <p className="bbt-ai-roundtable-expert-risk">风险提示：{turn.risks.slice(0, 2).join('；')}</p>}</div>
           </details>
@@ -2025,6 +2025,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiAccessIssue, setAiAccessIssue] = useState<'' | 'login' | 'membership' | 'quota'>('');
   const aiRequestLockRef = useRef<object | null>(null);
   const [aiSugg, setAiSugg] = useState<string[]>([]);            // 答案后的确定性追问建议（后端按工具轨迹反推）
+  const aiFollowups = useMemo(() => conciseAssistantFollowups(aiSugg), [aiSugg]);
   const [aiQuotaLeft, setAiQuotaLeft] = useState<number | null>(null);  // 剩余免费次数；null=不限/未知
   const [aiFeedback, setAiFeedback] = useState<'' | 'up' | 'down'>(''); // 本条答案已投的反馈
   const [aiAnswerCopied, setAiAnswerCopied] = useState(false);
@@ -6667,9 +6668,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <summary><span>✓ 已执行 {aiTools.length} 次数据调用</span><small>查看核对记录</small></summary>
                   <div>{aiTools.slice(0, 8).map((tool, index) => <p key={`${tool.tool || 'tool'}-${index}`} className={tool.ok === false ? 'is-error' : ''}><b>{TOOL_LABEL[tool.tool] || (tool.tool.startsWith('get_') ? '研究数据' : tool.tool)}</b><span>{tool.summary || (tool.ok === false ? '本项数据暂不可用' : '已完成核对')}</span></p>)}</div>
                 </details>}
-                {aiAnswer && !aiWorkspaceBusy && aiSugg.length > 0 && <div className="bbt-ai-followups">
+                {aiAnswer && !aiWorkspaceBusy && aiFollowups.length > 0 && <div className="bbt-ai-followups">
                   <span className="bbt-ai-followups-label">继续追问</span>
-                  {aiSugg.map(s => <button key={s} type="button" onClick={() => {
+                  {aiFollowups.map(s => <button key={s} type="button" onClick={() => {
                     logAct('ai_followup', 'suggestion');
                     primeAiQuestion(s);
                     if (!authUser) requireLogin(() => void submitAiQuestion(s), 'AI 投研问答');
@@ -7189,12 +7190,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <div className="bbt-doc-bar">
               {(newsPreview.severity === 'critical' || newsPreview.severity === 'warning' || newsPreview.severity === 'success') && <span className={`bbt-ntag tag-${newsPreview.severity}`}>{SEV_TAG[newsPreview.severity]}</span>}
               <span className="bbt-doc-tag">{newsPreview.topic || '资讯'}</span>
-              <span className="bbt-doc-title" title={stripUrls(newsPreview.title) || newsPreview.title}>{stripUrls(newsPreview.title) || newsPreview.title}</span>
+              <span className="bbt-doc-title" title={stripUrls(newsPreview.title) || newsPreview.title}>{isArticlePreview ? '原文阅读' : stripUrls(newsPreview.title) || newsPreview.title}</span>
               <span className="bbt-doc-meta">{fmtTimeSmart(newsPreview.created_at)}</span>
               <button className="bbt-doc-close" onClick={() => setNewsPreview(null)}>✕ 关闭</button>
             </div>
             <div className="bbt-news-actions">
-              {isArticlePreview && <button type="button" className="bbt-news-btn bbt-news-btn--src" onClick={() => askAboutArticle(newsPreview)}>围绕这篇问 AI</button>}
               <button className="bbt-news-btn bbt-news-btn--ai" onClick={() => runNewsAi(newsPreview)}>✦ AI 解读</button>
               {!isArticlePreview && newsPreview.url && !isImg && <a className="bbt-news-btn bbt-news-btn--src" href={newsPreview.url} target="_blank" rel="noopener noreferrer">查看原文 ↗</a>}
             </div>
@@ -7206,6 +7206,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             ) : isArticlePreview ? (
               <ArticleOriginalReader
                 title={stripUrls(newsPreview.title) || newsPreview.title}
+                onAsk={() => askAboutArticle(newsPreview)}
                 sourceName={normalizePublisherName(stripUrls(newsPreview.source_name))}
                 createdAt={newsPreview.created_at}
                 paragraphs={articleOriginal?.id === newsPreview.id ? articleOriginal.paragraphs : undefined}

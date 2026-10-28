@@ -45,3 +45,26 @@
   [data-theme="dark"] .bbt-side-ai .bbt-ai-history-item-main { background: #152536; color: #dce8f7; }
   [data-theme="dark"] .bbt-side-ai .bbt-ai-history-item.is-active .bbt-ai-history-item-main { background: #213a53; }
 }
+
+/* Answers read as one document: conclusion, evidence, then visible risks. */
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md { max-width: 760px; color: var(--text-soft); }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md :is(.bbt-md-p, li) { font-size: 15px; line-height: 1.85; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md > .bbt-md-p:first-child { color: var(--text-strong); font-weight: 550; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md-heading { margin: 24px 0 10px; padding: 0; border: 0; color: var(--text-strong); font-size: 15px; line-height: 1.6; font-weight: 650; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md-heading:first-child { margin-top: 0; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md-heading.is-risk { padding-top: 16px; border-top: 1px solid var(--line); }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md-section { flex-direction: column; align-items: flex-start; gap: 7px; margin-top: 22px; padding: 0; border: 0; background: none; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md-section > b::before { display: none; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md-section > span { font-size: 15px; line-height: 1.85; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md-section--risk { padding-top: 16px; border-top: 1px solid var(--line); }
+.bbt-side-ai .bbt-ai-roundtable-facts-grid { display: block; }
+.bbt-side-ai .bbt-ai-roundtable-facts-grid > div { margin: 0; padding: 9px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; }
+.bbt-side-ai .bbt-ai-roundtable-section-head small { display: none; }
+.bbt-side-ai .bbt-ai-followups { gap: 6px; }
+@media (max-width: 640px) {
+  .bbt-side-ai .bbt-ai-latest-answer .bbt-md :is(.bbt-md-p, li) { font-size: 15px; line-height: 1.8; }
+}
+.bbt-side-ai .bbt-ai-latest-answer .bbt-ai-message--assistant > div,
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md p { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-md p { margin: 0 0 12px; }
+.bbt-side-ai .bbt-ai-latest-answer .bbt-ai-message--assistant { max-width: 100%; }

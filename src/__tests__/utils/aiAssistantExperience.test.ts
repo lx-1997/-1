@@ -1,4 +1,4 @@
-import { assistantRequestContext, assistantErrorMessage } from '../../utils/aiAssistantExperience';
+import { assistantRequestContext, assistantErrorMessage, conciseAssistantFollowups } from '../../utils/aiAssistantExperience';
 import { normalizeAiConversationHistory } from '../../utils/aiConversationHistory';
 test('concise defaults preserve an explicit request for detailed analysis', () => {
   expect(assistantRequestContext('公司有什么变化')).toContain('优先简明回答');
@@ -20,4 +20,10 @@ test('network and quota errors do not become misleading success messages', () =>
   expect(assistantErrorMessage('internal', 503)).toContain('暂时不可用');
   expect(assistantErrorMessage('timeout')).toContain('暂未完成');
   expect(assistantErrorMessage('', 429)).toContain('稍后重试');
+});
+
+test('answers keep one specific continuation without unrelated market shortcuts', () => {
+  expect(conciseAssistantFollowups(['今天大盘怎么样？', '现在哪些板块最热？', '看看今日涨停天梯'])).toEqual([]);
+  expect(conciseAssistantFollowups(['核对订单兑现风险？', '再看估值？'])).toEqual(['核对订单兑现风险？']);
+  expect(assistantRequestContext('什么是现金流')).toContain('不强行套研究报告结构');
 });
