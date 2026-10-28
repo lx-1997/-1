@@ -84,6 +84,18 @@ def _direct_write_authorized(objective: str, capability: dict) -> bool:
 
 def is_platform_intent(message: str) -> bool:
     text = str(message or "").strip()
+    # Research about watched securities belongs to the finance tool loop.
+    # The platform executor only manages the list; discovering platform APIs
+    # cannot answer changes, news, or investment risks for its constituents.
+    # Mixed writes/navigation remain on the existing guarded executor.
+    watchlist_research = (
+        re.search(r"自选|关注的(?:股票|票|标的)|观察池|watchlist", text, re.I)
+        and re.search(r"变化|风险|新闻|资讯|研报|公告|财报|业绩|走势|估值|分析|研判|解读|涨跌|催化|基本面|发生", text)
+        and not _WRITE_INTENT.search(text)
+        and not re.search(r"任务|提醒|设置|页面|功能|接口|平台能力", text)
+    )
+    if watchlist_research and not _NAVIGATION.search(text):
+        return False
     return bool(_SUBJECT.search(text) or _NAVIGATION.search(text))
 
 

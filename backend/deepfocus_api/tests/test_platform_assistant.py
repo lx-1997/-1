@@ -753,3 +753,30 @@ def test_switching_from_native_to_json_plan_cannot_repeat_already_performed_writ
 ])
 def test_live_authorization_matches_operation_within_the_same_domain(objective, path, expected):
     assert platform._direct_write_authorized(objective, {"path": path, "method": "POST"}) is expected
+
+
+@pytest.mark.parametrize('message', [
+    '帮我核对这些自选最近有哪些重要变化与风险：贵州茅台(600519)、比亚迪(002594)、阿里巴巴(09988)、特斯拉(TSLA)、小米集团-W(01810)',
+    '我的自选股最近有什么变化？',
+    '分析我的自选股风险',
+    '关注的股票有什么最新公告和财报？',
+    '观察池里的公司最近有哪些新闻？',
+])
+@pytest.mark.parametrize('path', ['/api/agents/tool-research','/api/agents/tool-research/stream'])
+def test_watchlist_research_reaches_finance_handler_with_original_body(make_app,message,path):
+    fixture = make_app([])
+    payload={'message':message,'mode':'quick','history':[{'role':'user','content':'上一轮研究'}]}
+    response=fixture.client.post(path,json=payload,headers={'authorization':'Bearer alice'})
+    assert response.status_code==200
+    assert response.json()['legacy'] is True
+    assert json.loads(response.json()['body'])==payload
+    assert fixture.seen==[('legacy',path)]
+
+
+@pytest.mark.parametrize('message', [
+    '我的自选股有哪些？', '添加 TSLA 到我的自选股', '删除自选股里的 TSLA',
+    '打开观察池', '分析自选股风险并创建盯盘提醒',
+    '自选股功能在哪里', '修改自选股的提醒设置', '帮我运行自选股回测',
+])
+def test_watchlist_management_keeps_platform_guard(message):
+    assert platform.is_platform_intent(message)

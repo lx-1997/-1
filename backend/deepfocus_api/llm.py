@@ -20,6 +20,7 @@ from .stock_guard import guard_symbol_args, resolve_question_stock
 from .compliance import neutralize_text
 from .mcp_tools import discover_mcp_agent_tools
 from .model_config import load_model_config
+from .model_balancer import balance_candidates
 from .llm_runtime import (
     CompletionDeadline, DeadlineStream, ModelPoolUnavailableError, VisionUnavailableError,
     borrow_client, cooldown_slot, get_cached_client, is_vision_capability_error,
@@ -479,6 +480,7 @@ class CloudResearchLLM:
                 raise VisionUnavailableError("当前模型池没有可用视觉模型；请配置支持图片的模型或使用 OCR 文字提取。")
         if not candidates:
             raise ModelPoolUnavailableError("模型池暂不可用：配置槽位正在冷却或缺少凭证。")
+        candidates = balance_candidates(candidates, bool(self.config.get("load_balance")))
         last_exc: Exception | None = None
         for candidate in candidates:
             # Once the total budget is gone, do not construct/call or trip a

@@ -6,6 +6,18 @@ import pytest
 
 from deepfocus_api import llm as llm_mod
 from deepfocus_api import model_config
+from deepfocus_api import llm_runtime
+
+
+@pytest.fixture(autouse=True)
+def isolated_pool_circuits():
+    # Production circuits are process-wide. Reused fixture credentials must
+    # not carry a previous test's 401/429 cooldown into the next scenario.
+    llm_runtime._COOLDOWNS.clear()
+    llm_runtime._VISION_UNSUPPORTED.clear()
+    yield
+    llm_runtime._COOLDOWNS.clear()
+    llm_runtime._VISION_UNSUPPORTED.clear()
 
 
 class _Completions:
