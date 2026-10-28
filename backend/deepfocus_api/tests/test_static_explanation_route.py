@@ -8,8 +8,8 @@ from deepfocus_api import main
 from deepfocus_api.schemas import GeneralChatResponse
 
 
-def request(path):
-    payload = json.dumps({"message": "市盈率与市净率有什么区别？请用三句话说明。", "roundtable": False}, ensure_ascii=False).encode()
+def request(path, message="市盈率与市净率有什么区别？请用三句话说明。", **extra):
+    payload = json.dumps({"message": message, "roundtable": False, **extra}, ensure_ascii=False).encode()
     sent = False
 
     async def receive():
@@ -70,3 +70,30 @@ def test_comparison_preserves_evidence_rounds_within_total_budget(monkeypatch):
     assert main._web_qa_round_budget("建滔集团和快手更偏向谁？") == 6
     assert main._web_qa_round_budget("贵州茅台股价多少？") == 4
     assert main._web_qa_round_budget("解释文件", has_attachment=True) == 6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("question", ["你是谁", "你好，你是谁？", "你能做什么？", "你是什么模型？", "你好"])
+async def test_assistant_info_never_calls_a_model_or_live_tool(simple_model, monkeypatch, stream, question):
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("assistant identity must not invoke an LLM or tool")
+    monkeypatch.setattr(main.llm, "general_chat", forbidden)
+    monkeypatch.setattr(main.llm, "run_tool_agent", forbidden)
+    monkeypatch.setattr(main, "_run_web_roundtable", forbidden)
+    suffix = "/stream" if stream else ""
+    req = request("/api/agents/tool-research" + suffix, question, roundtable=True,
+                  history=[["贵州茅台估值", "旧行情数据不能污染本轮身份说明"]], symbol="600519")
+    if stream:
+        response = await main.tool_research_stream(req, _user=None)
+        chunks = [chunk async for chunk in response.body_iterator]
+        text = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
+        assert "event: final" in text
+        assert "event: tool_start" not in text
+        assert main.assistant_info_answer(question) in text
+    else:
+        result = await main.tool_research(req, _user=None)
+        assert result["ok"]
+        assert result["tool_trace"] == []
+        assert main.assistant_info_answer(question) in result["answer"]
+    assert not simple_model

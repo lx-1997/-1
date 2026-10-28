@@ -2240,7 +2240,14 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         return;
       }
       const latest = body.querySelector<HTMLElement>('.bbt-ai-latest-answer');
-      if (latest) body.scrollTo({ top: Math.max(0, latest.offsetTop - 12), behavior: 'auto' });
+      if (latest) {
+        // offsetTop may be relative to a nested positioned ancestor, not this
+        // scroll body. Compare viewport rectangles and account for CSS zoom.
+        const bodyBounds = body.getBoundingClientRect();
+        const scale = body.offsetHeight ? bodyBounds.height / body.offsetHeight : 1;
+        const top = body.scrollTop + (latest.getBoundingClientRect().top - bodyBounds.top) / (scale || 1) - 12;
+        body.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+      }
     });
     return () => window.cancelAnimationFrame(frame);
   }, [activeAiPreviousTurns.length, aiAnswer, aiBusy, aiQuestion, deepAnswer, deepAnswerBusy, sideNavKey]);

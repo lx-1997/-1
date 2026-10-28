@@ -80,6 +80,30 @@ _GRAMMAR_TOKEN_RE = re.compile(
 )
 
 
+def assistant_info_answer(message: str, has_attachment: bool = False) -> str | None:
+    """Answer only complete, standalone product-info turns without a model.
+
+    A mixed request (company, account, current data, or an attachment) must
+    retain the normal evidence/permission path. Never infer an active model.
+    """
+    if has_attachment or not isinstance(message, str):
+        return None
+    text = unicodedata.normalize("NFKC", message).strip()
+    if not text or len(text) > 160 or any(unicodedata.category(char) == "Cf" for char in text):
+        return None
+    text = re.sub(r"[\s!！?？。.,，~～]+$", "", text)
+    if _GREETING_RE.fullmatch(text):
+        return "你好，我是稻草财经 AI 投研助手。你可以直接问一个问题，或选一篇文章让我帮你解读。" if not re.fullmatch(r"谢谢(?:你)?|thanks|thank\s+you", text, re.I) else "不客气。需要继续核对资料时，直接问我就好。"
+    text = re.sub(r"^(?:你好|您好|嗨|hello|hi)[，,！!。\s]+", "", text, flags=re.I)
+    if re.fullmatch(r"(?:请问|请)?(?:你|您)(?:是谁|是哪位|是什么助手|是干(?:什么|啥)的)(?:啊|呀|呢|吗)?|(?:请)?(?:介绍(?:一下|下)?你自己|自我介绍(?:一下)?)|who\s+are\s+you", text, re.I):
+        return "我是稻草财经 AI 投研助手，可以帮你梳理财经资讯、文章和研报，核对公司信息、依据与风险。你可以直接提问，也可以选一篇文章让我帮你解读。"
+    if re.fullmatch(r"(?:请问)?(?:你|您)(?:能(?:做什么|干什么|干嘛|帮我做什么)|有什么功能|会什么)(?:啊|呀|呢|吗)?|what\s+can\s+you\s+do", text, re.I):
+        return "我可以帮你解读文章和研报、梳理公司财务与估值、核对自选股相关信息和风险。涉及实时数据时会先查询来源，证据不足时会说明缺口。"
+    if re.fullmatch(r"(?:请问)?你(?:是(?:什么|哪个)模型|用的(?:是什么|是哪个|什么|哪个)模型)|你是(?:GPT|ChatGPT|Claude|DeepSeek|豆包)吗|what\s+model\s+are\s+you(?:\s+using)?", text, re.I):
+        return "我是稻草财经 AI 投研助手。底层模型会按服务配置调度，我不能仅凭这段对话确认当前使用的具体型号。"
+    return None
+
+
 def is_static_explanation(message: str, has_attachment: bool = False) -> bool:
     """Allow only a standalone greeting or an explicit finance glossary request."""
     if has_attachment or not isinstance(message, str):
@@ -87,7 +111,7 @@ def is_static_explanation(message: str, has_attachment: bool = False) -> bool:
     text = unicodedata.normalize("NFKC", message).strip()
     if not text or len(text) > 400 or any(unicodedata.category(char) == "Cf" for char in text):
         return False
-    if _GREETING_RE.fullmatch(text):
+    if assistant_info_answer(text) is not None:
         return True
     if not _INTENT_RE.search(text):
         return False

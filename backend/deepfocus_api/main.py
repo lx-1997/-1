@@ -185,7 +185,7 @@ from .llm import CloudResearchLLM, extract_citable_sources, tool_agent_to_orches
 from .core_agent import CoreAgent, CoreAgentRequest
 from .llm_runtime import close_llm_clients, llm_deadline
 from .analysis_limiter import AnalysisLimiter, AnalysisBusy
-from .ai_question_routing import is_static_explanation
+from .ai_question_routing import is_static_explanation, assistant_info_answer
 from .market_data import fetch_market_quotes, search_market_symbols
 from .market_layers import build_market_data_layer_status
 from .major_event_skill import (
@@ -12979,6 +12979,16 @@ def _web_qa_round_budget(message: str, *, has_attachment: bool = False) -> int:
 
 async def _run_static_explanation(message: str, *, emit=None):
     """Explain stable definitions through the tool-free CoreAgent profile."""
+    direct_answer = assistant_info_answer(message)
+    if direct_answer is not None:
+        result = await core_agent.run_adapter(
+            CoreAgentRequest(objective=message, mode="chat", channel="web", timeout_seconds=2.0),
+            lambda: {"answer": direct_answer, "tool_trace": [], "rounds": 0},
+            route="assistant-info", emit=emit,
+        )
+        result.provider = "daocaijing"
+        result.model = "assistant-info"
+        return result
     return await core_agent.run_chat(
         CoreAgentRequest(objective=message, mode="chat", channel="web", timeout_seconds=20.0),
         legacy_request=GeneralChatRequest(
@@ -13317,6 +13327,9 @@ async def tool_research(request: Request, message: str = "", symbol: str = "", n
             history = json.dumps(raw_history[-3:], ensure_ascii=False)
         elif isinstance(raw_history, str) and raw_history.strip():
             history = raw_history
+    if assistant_info_answer(message, has_attachment=bool(body.get("attachment"))) is not None:
+        use_roundtable = False
+        request_mode = "quick"
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
     _ai_started = time.perf_counter()
@@ -13510,6 +13523,9 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
             history = json.dumps(raw_history[-3:], ensure_ascii=False)
         elif isinstance(raw_history, str) and raw_history.strip():
             history = raw_history
+    if assistant_info_answer(message, has_attachment=bool(body.get("attachment"))) is not None:
+        use_roundtable = False
+        request_mode = "quick"
     if not message.strip():
         raise HTTPException(status_code=400, detail="message 不能为空")
     # 仅确认市场/周期/风险偏好时无需登录，也不消耗游客试问。
