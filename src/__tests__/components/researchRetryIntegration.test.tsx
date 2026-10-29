@@ -251,12 +251,12 @@ it('opens report progress immediately and resumes the same task after closing', 
 it('keeps auxiliary market dashboards collapsed while preserving access to them', async () => {
   let view!: ReturnType<typeof render>;
   await act(async () => { view = render(<AuthProvider><FinancialTerminal /></AuthProvider>); });
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '市场快讯', exact: true })); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '市场快讯' })); });
   expect(document.querySelector('.dc-page-heading,.dc-intro')).toBeNull();
   const summary = screen.getByText('市场事件 · AI 模拟盘');
   const disclosure = summary.closest('details')!;
   expect(disclosure).not.toHaveAttribute('open');
-  expect(screen.queryByRole('heading', { name: '市场事件' })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: '市场事件' })).not.toBeVisible();
   await act(async () => { fireEvent.click(summary); });
   expect(disclosure).toHaveAttribute('open');
   expect(screen.getByRole('heading', { name: '市场事件' })).toBeVisible();
