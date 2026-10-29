@@ -9,6 +9,8 @@ MD_UP = {"closes": [90, 91, 92, 93, 95, 96, 97, 98, 99, 100] * 3, "flow5": 3.0e8
 @pytest.fixture
 def fund(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_fund, "_db_path", lambda: tmp_path / "ai_fund.sqlite3")
+    monkeypatch.setattr(ai_fund, 'AIF_REPORT_PAGE', tmp_path/'isolated-report.html')
+    monkeypatch.setattr(ai_fund.emotion_cycle, 'current_cycle', lambda **kw: {'stage':'neutral','label':'隔离中性'})
     monkeypatch.setattr(ai_fund, "_our_content", lambda name: [])
     monkeypatch.setattr(ai_fund, "_sentiment", lambda items: None)
     monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {})
@@ -26,8 +28,11 @@ def fund(monkeypatch, tmp_path):
 
 def _wire(monkeypatch, quotes):
     monkeypatch.setattr(ai_fund, "ifind_enabled", lambda: True)
-    monkeypatch.setattr(ai_fund, "cached_single_quote",
-                        lambda s: quotes.get((ai_fund.normalize_a_code(s) or "").split(".")[0]))
+    from datetime import datetime, timezone
+    def fresh_quote(symbol):
+        q = quotes.get((ai_fund.normalize_a_code(symbol) or "").split(".")[0])
+        return {**q, "time": datetime.now(timezone.utc).isoformat()} if q else None
+    monkeypatch.setattr(ai_fund, "cached_single_quote", fresh_quote)
 
 
 def _age_pos(symbol):
@@ -50,7 +55,7 @@ def test_techstats_trend():
 
 def test_analyze_rigor_entry_gate():
     q = {"latest": 100, "pe_ttm": 22, "pb": 3, "changeRatio": 3.0, "turnoverRatio": 6, "high": 101, "low": 96}
-    items = [{"title": "海外扩产、获大订单", "severity": "success", "age_h": 1, "id": "x", "src": "快讯"}]
+    items = [{"title": "某股海外扩产、获大订单", "severity": "success", "age_h": 1, "id": "x", "src": "快讯"}]
     an = ai_fund._analyze("某股", q, items, MD_UP)
     assert an["entry_ok"] is True and an["trend_up"] is True
     assert "技术面" in an["scores"] and "资金面" in an["scores"] and "消息面" in an["scores"]
@@ -195,7 +200,8 @@ def test_bull_playbook_dims_flow_through_tick(fund, monkeypatch):
     monkeypatch.setattr(ai_fund, "_market_regime_now",
                         lambda: {"regime": "bear", "above_ma60": False, "ma60_rising": False})
     closes = [50 + i * 0.2 for i in range(250)]          # 一年上升日线
-    ohlc = [{"o": c - 0.2, "h": c + 0.4, "l": c - 0.5, "c": c, "v": 1000} for c in closes]
+    from datetime import datetime, timedelta
+    ohlc = [{"d": (datetime.now(ai_fund.BJ_TZ)-timedelta(days=250-i)).date().isoformat(), "o": c - 0.2, "h": c + 0.4, "l": c - 0.5, "c": c, "v": 1000} for i,c in enumerate(closes)]
     md = {"002594": {"closes": closes, "ohlc": ohlc, "flow5": 3.0e8,
                      "fundamentals": {"roe": 22.0, "revenue_yoy": 30.0, "profit_yoy": 40.0}}}
     monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: md)
@@ -229,7 +235,7 @@ def test_thesis_voice_differentiated_per_style():
 def test_snapshot_shape(fund, monkeypatch):
     _wire(monkeypatch, {"300750": {"latest": 200, "pe_ttm": 25, "pb": 4, "changeRatio": 3.0, "turnoverRatio": 4, "high": 202, "low": 196}})
     monkeypatch.setattr(ai_fund, "_our_content",
-                        lambda name: [{"title": "宁德储能放量", "severity": "success", "age_h": 1, "id": "c", "src": "研报"}] if name == "宁德时代" else [])
+                        lambda name: [{"title": "宁德时代储能放量", "severity": "success", "age_h": 1, "id": "c", "src": "研报"}] if name == "宁德时代" else [])
     ai_fund.run_tick()
     snap = ai_fund.get_snapshot()
     for k in ("nav", "nav_unit", "commentary", "feed", "persona", "mood", "stats", "positions", "history", "data_quality", "risk", "review"):
@@ -314,6 +320,11 @@ def test_risk_metrics_sample_gating():
     hist = [{"date": f"2026-01-{i:02d}", "value": v} for i, v in enumerate(vals, start=1)]
     bench = [{"date": f"2026-01-{i:02d}", "value": v}
              for i, v in enumerate([1.0, 1.01, 1.005, 1.02, 1.015, 1.03, 1.02], start=1)]
+    r_short = ai_fund._risk_metrics(hist, 1_000_000, bench)
+    assert r_short['sufficient'] is False and r_short['sharpe'] is None
+    from datetime import datetime, timedelta
+    hist = [{'date': (datetime(2026,1,1)+timedelta(days=i)).date().isoformat(), 'value': 1+i*.001+(i%3)*.002} for i in range(60)]
+    bench = [{'date': h['date'], 'value': 1+i*.0005+(i%2)*.001} for i,h in enumerate(hist)]
     r = ai_fund._risk_metrics(hist, 1_000_000, bench)
     assert r["sufficient"] is True
     assert r["sharpe"] is not None and r["annualized_vol"] is not None
@@ -343,8 +354,9 @@ def test_arena_isolation_and_leaderboard(fund, monkeypatch):
     assert snap_main["persona"]["name"] == "阿尔法" and snap_main["fund_id"] == "main"
     assert snap_mam["persona"]["name"] == "猛犸" and snap_mam["persona"]["emoji"] == "🦣"
     assert snap_main["position_count"] == 1 and snap_mam["position_count"] == 1
-    # 猛犸单仓更重（pos_size_mult 1.35 + 集中）→ 仓位权重高于阿尔法
-    assert snap_mam["positions"][0]["weight"] >= snap_main["positions"][0]["weight"]
+    # Equal risk budgets: the wider hard stop requires a smaller, not larger, position.
+    assert 0 < snap_mam['positions'][0]['weight'] <= .05
+    assert snap_mam['positions'][0]['weight'] <= snap_main['positions'][0]['weight'] <= .0625
 
     arena = ai_fund.get_arena()
     # 前端竞技场契约：strategies[] + benchmark{name,nav_pct}；strategies 与 agents 同物
@@ -366,7 +378,7 @@ def test_arena_isolation_and_leaderboard(fund, monkeypatch):
 
 def test_style_divergence_aggressive_and_value():
     """同一只票，不同流派给出不同决策：激进追涨停 / 价值拒绝高估值。"""
-    strong = [{"title": "中标15亿大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "x", "src": "快讯"}]
+    strong = [{"title": "某股中标15亿大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "x", "src": "快讯"}]
     # 涨停板（changeRatio 9.5）：阿尔法不追(overbought 闸门)、猛犸敢追(chase_ok)
     q_ob = {"latest": 100, "pe_ttm": 22, "pb": 3, "changeRatio": 9.5, "turnoverRatio": 6, "high": 101, "low": 96}
     an_main = ai_fund._analyze("某股", q_ob, strong, MD_UP, ai_fund.MAIN_CFG)
@@ -602,6 +614,7 @@ def test_lower_limit_blocks_sell(fund, monkeypatch):
 
 def test_t1_blocks_rotation_of_today_position(fund, monkeypatch):
     """换仓路径同样守 T+1：当日新仓不会被『卖最弱腾仓位』挤掉。"""
+    monkeypatch.setattr(ai_fund.policy, 'ROTATION_ACTIVE', True)  # Verify safety even if the experimental path is enabled.
     import dataclasses
     cfg1 = dataclasses.replace(ai_fund.MAIN_CFG, max_positions=1)   # 满仓=1，方便触发换仓
     # 第一天：比亚迪强 → 建仓(占满 1 个仓位)
@@ -634,6 +647,7 @@ def test_get_snapshot_unknown_strategy_falls_back_to_main(fund):
 
 def test_rotation_skips_when_incoming_at_upper_limit(fund, monkeypatch):
     """换仓接盘股涨停封板时不换仓——避免「卖了最弱却买不进」的空仓换仓。"""
+    monkeypatch.setattr(ai_fund.policy, 'ROTATION_ACTIVE', True)  # Verify safety even if the experimental path is enabled.
     import dataclasses
     cfg1 = dataclasses.replace(ai_fund.MAIN_CFG, max_positions=1)
     with ai_fund._connect() as conn:   # 注入一笔『昨天』的持仓占满仓位(可被换)
@@ -654,7 +668,7 @@ def test_rotation_skips_when_incoming_at_upper_limit(fund, monkeypatch):
         assert "300750" in {r["symbol"] for r in ai_fund._positions(conn, "main")}   # 宁德仍在
 
 
-def test_holding_period_learning_adapts_without_close(fund, monkeypatch):
+def test_holding_period_learning_frozen_pending_validation(fund, monkeypatch):
     """持仓期自适应集成：买入后浮盈，不平仓也会触发每日学习、抬高驱动维度乘子并落每日标记。"""
     q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96}}
     _wire(monkeypatch, q)
@@ -670,6 +684,6 @@ def test_holding_period_learning_adapts_without_close(fund, monkeypatch):
     with ai_fund._connect() as conn:
         row = conn.execute("SELECT learned_weights, hold_learn_date FROM aif_state WHERE fund_id=?", ("main",)).fetchone()
     import datetime as _dt
-    assert row["hold_learn_date"] == _dt.datetime.now(ai_fund.BJ_TZ).strftime("%Y-%m-%d")  # 已落每日标记
+    assert row['hold_learn_date'] is None
     learned = ai_fund._loadj(row["learned_weights"], {})
-    assert learned and max(learned.values()) > 1.0        # 浮盈→至少一个驱动维度乘子被抬高
+    assert learned == {}        # 浮盈→至少一个驱动维度乘子被抬高

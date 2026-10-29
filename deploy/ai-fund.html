@@ -908,6 +908,7 @@
 
 @media(max-width:360px){.pf-metric>strong,.pf-metric.primary>strong{font-size:20px}.pf-metric small{font-size:9px}}
 </style>
+<style>.pf-policy-note{margin:-6px 0 18px;color:#7c8797;font-size:10px;line-height:1.7;padding:8px 10px;background:#f5f7fb;border-radius:6px}</style>
 </head>
 <body>
 <style>
@@ -944,7 +945,7 @@
   </div>
   <div class="kpis">
     <div class="kpi card"><span class="l">胜率 / 连胜</span><span class="v" id="k_wr">—</span></div>
-    <div class="kpi card accent"><span class="l">本站信息驱动</span><span class="v" id="k_info">—</span><span class="x" id="k_info_x"></span></div>
+    <div class="kpi card accent"><span class="l">历史资讯关联</span><span class="v" id="k_info">—</span><span class="x" id="k_info_x"></span></div>
   </div>
   <div class="say"><span class="sa">AI</span><span class="t" id="commentary">加载中…</span><span class="scan" id="scan"></span></div>
   <div class="tabs" id="tabs"></div>
@@ -1007,9 +1008,9 @@ function liveState(d){const b=bjNow(),wd=b.getDay(),hm=b.getHours()*60+b.getMinu
   // 优先用后端权威的交易日/时段(含 A股节假日日历)；老快照缺字段时回退按星期+时间推算
   const tradingDay=(d.is_trading_day!==undefined)?d.is_trading_day:(wd>=1&&wd<=5);
   const sess=(d.in_session!==undefined)?d.in_session:(wd>=1&&wd<=5&&((hm>=570&&hm<=690)||(hm>=780&&hm<=900)));
-  if((d.data_quality||{}).level!=='live')return{bdg:'○ 等待行情',beat:'2.6s'};
   if(!tradingDay)return{bdg:'🎏 休市·下个交易日 09:30 继续',beat:'2.9s'};
-  if(sess)return{bdg:'● 实时撮合中',beat:'1.3s'};
+  if(sess&&(d.data_quality||{}).level!=='live')return{bdg:'○ 行情待刷新 · 暂停新增风险',beat:'2.6s'};
+  if(sess)return{bdg:'● 实时模拟撮合中',beat:'1.3s'};
   return{bdg:'🌙 已收盘·盘后复盘思考中',beat:'2.8s'};}
 function rankOf(st){const n=(st&&st.win_streak)||0;return n>=8?'👑 屠榜中':n>=5?'🚀 火力全开':n>=3?'🔥 '+n+'连胜':'蓄势中';}
 function gradeTxt(v){const a=Math.abs(v);return a<0.3?'中性':(v>0?(a>=0.6?'强多':'偏多'):(a>=0.6?'强空':'偏空'));}
@@ -1223,7 +1224,7 @@ function tradeRecordItem(f,id){
     '<div class="trade-rail"><span class="trade-side">'+(side==='buy'?'买':'卖')+'</span><span class="trade-time">'+tt(f.ts)+'</span></div>'+
     '<div class="trade-content"><div class="trade-title"><span><b>'+esc(f.name)+'</b><small>'+esc(f.symbol)+'</small></span>'+result+'</div>'+
     '<div class="trade-facts"><span><small>成交价</small><b>'+nf(f.price)+'</b></span><span><small>数量</small><b>'+Number(f.qty||0).toLocaleString('zh-CN')+' 股</b></span>'+
-    '<span><small>成交额</small><b>'+fmtMoney(amount)+'</b></span>'+(f.hold_days!=null?'<span><small>持有</small><b>'+f.hold_days+' 天</b></span>':'')+'</div>'+
+    '<span><small>成交额</small><b>'+fmtMoney(amount)+'</b></span><span><small>模拟费用</small><b>'+(f.fee==null?'原历史口径':'¥'+nf(f.fee))+'</b></span>'+(f.hold_days!=null?'<span><small>持有</small><b>'+f.hold_days+' 天</b></span>':'')+'</div>'+
     (f.narrative?'<p class="trade-narr">'+esc(f.narrative)+'</p>':'')+(op?'<div class="trade-detail">'+evFull(f)+'</div>':'')+
     '<button type="button" class="trade-expand">'+(op?'收起依据':'查看决策依据')+' <span>›</span></button></div></article>';
 }
@@ -1297,9 +1298,9 @@ function render(d){if(!d)return;const prev=S.data;S.data=d;const up=(d.nav_pct||
       ps.push('最大回撤 <b>-'+Number(rk.max_drawdown_pct).toFixed(1)+'%</b>');
       if(rk.sharpe!=null)ps.push('夏普 <b>'+Number(rk.sharpe).toFixed(2)+'</b>');
       if(rk.beta!=null)ps.push('β <b>'+Number(rk.beta).toFixed(2)+'</b>');
-      if(!rk.sufficient)ps.push('<span class="acc">比率待 '+(rk.sample_days||0)+'/5日</span>');
-    }else{ps.push('<span class="acc">回撤/夏普积累中（'+(rk.sample_days||0)+'/5 日）</span>');}
-    rl.title='操盘信条：拼的不是交易频次，是出手质量与回撤控制 —— 每笔买入都需本站快讯/文章/研报点火、站上 20 日线才出手，严格止损让利润奔跑。';
+      if(!rk.sufficient)ps.push('<span class="acc">比率待 '+(rk.sample_days||0)+'/'+(rk.minimum_days||60)+'日</span>');
+    }else{ps.push('<span class="acc">回撤/夏普积累中（'+(rk.sample_days||0)+'/'+(rk.minimum_days||60)+' 日）</span>');}
+    rl.title=(d.discipline||{}).rule||'按各策略独立规则执行，风险止损保留。';
     rl.innerHTML='<span class="acc">⚖️ 纪律</span>'+dp.join('<i>·</i>')+'<i style="opacity:.45;margin:0 4px">｜</i><span class="acc">📊 风控</span>'+ps.join('<i>·</i>');
     rl.style.display='flex';
   }
@@ -1309,7 +1310,7 @@ function render(d){if(!d)return;const prev=S.data;S.data=d;const up=(d.nav_pct||
   document.getElementById('herostat').innerHTML='总资产 <b class="num">'+fmtMoney(d.nav)+'</b> · 累计盈亏 <b class="num '+(pnl>=0?'up':'down')+'">'+(pnl>=0?'+':'')+fmtMoney(pnl)+'</b>';
   document.getElementById('k_wr').textContent=(s.win_rate!=null?s.win_rate+'%':'持有中')+' / '+(s.win_streak||0)+'连';
   const inf=s.info_driven;
-  if(inf&&inf.count){document.getElementById('k_info').textContent=(inf.trade_pct>=80?'🔥 ':'')+inf.trade_pct+'%';document.getElementById('k_info_x').textContent=inf.count+' 笔由稻草财经快讯/研报点火'+(inf.pnl_pct!=null?(' · 贡献'+inf.pnl_pct+'%收益'):'');}
+  if(inf&&inf.count){document.getElementById('k_info').textContent=(inf.trade_pct>=80?'🔥 ':'')+inf.trade_pct+'%';document.getElementById('k_info_x').textContent=inf.count+' 笔带关联资讯 · 不等同因果贡献';}
   else{document.getElementById('k_info').textContent='待平仓统计';document.getElementById('k_info_x').textContent=(dc.drive_label&&dc.drive_label!=='数据驱动'?('靠'+dc.drive_label+'选股，不依赖催化'):'每笔买入均由本站情报触发');}
   const sc=d.scan||{};document.getElementById('scan').textContent='📡 扫读 快讯'+(sc.news||0)+'·研报'+(sc.report||0)+'·文章'+(sc.article||0);
   document.getElementById('tabs').innerHTML=[['left','组合持仓'],['center','K 线交易'],['right','交割记录']].map(t=>'<button type="button" class="tab'+(S.tab===t[0]?' on':'')+'" data-tab="'+t[0]+'">'+t[1]+'</button>').join('');
@@ -1472,10 +1473,11 @@ function arenaShowcase(d,sts){
   const ratio=p.payoff_ratio==null?'—':Number(p.payoff_ratio).toFixed(2)+':1';
   const summary=[['今日收益率',fmtPct(p.today_return_pct),pc(p.today_return_pct),'今日盈亏 '+pm(p.today_pnl)],['累计收益率',fmtPct(selected.nav_pct),pc(selected.nav_pct),'累计盈亏 '+pm(p.total_pnl)],['超额收益',fmtPct(selected.alpha_pct),pc(selected.alpha_pct),'相对沪深300 · 同期累计'],['最大回撤',fmtPct(selected.max_drawdown_pct),pc(selected.max_drawdown_pct),'历史峰值至低点跌幅']];
   return '<section class="arena-showcase pf-dashboard" aria-label="策略收益分析"><div class="pf-header"><div><h2>收益分析</h2><p>先看赚亏，再看策略</p></div><div class="pf-selector" role="group" aria-label="选择收益分析策略">'+sts.map(s=>'<button type="button" data-pf-fund="'+esc(s.fund_id)+'" aria-pressed="'+(s.fund_id===selected.fund_id)+'" class="'+(s.fund_id===selected.fund_id?'on':'')+'">'+esc(s.emoji||'')+' '+esc(s.name)+'</button>').join('')+'</div></div>'+
+  (selected.policy?'<div class="pf-policy-note">策略研究验证中 · 新成交计入模拟费用，历史记录保留原口径。</div>':'')+
   '<div class="pf-metrics">'+summary.map((m,i)=>'<div class="pf-metric'+(i===0?' primary':'')+'"><span>'+m[0]+'</span><strong class="'+m[2]+'">'+m[1]+'</strong><small>'+esc(m[3])+'</small></div>').join('')+'</div>'+
   '<div class="pf-toolbar"><div><h3>每日收益</h3><span>'+esc(selected.name)+'</span></div><div class="pf-controls"><div class="pf-segment" role="group" aria-label="盈亏显示单位">'+[['percent','收益率'],['money','金额']].map(x=>'<button type="button" data-pf-unit="'+x[0]+'" aria-pressed="'+(PF.unit===x[0])+'" class="'+(PF.unit===x[0]?'on':'')+'">'+x[1]+'</button>').join('')+'</div><div class="pf-segment" role="group" aria-label="收益区间">'+[[5,'近5日'],[20,'近20日'],[0,'全部']].map(x=>'<button type="button" data-pf-range="'+x[0]+'" aria-pressed="'+(PF.range===x[0])+'" class="'+(PF.range===x[0]?'on':'')+'">'+x[1]+'</button>').join('')+'</div></div></div>'+
   '<div class="pf-charts"><div class="pf-bars">'+performanceChart(rows,PF.unit)+'<div class="pf-record" aria-live="polite">'+(day?'<span><small>快照日期</small><b>'+day.date+'</b></span><span><small>当日收益率</small><b class="'+pc(day.pnl)+'">'+fmtPct(day.return_pct)+'</b></span><span><small>当日盈亏</small><b class="'+pc(day.pnl)+'">'+pm(day.pnl)+'</b></span><span><small>日末总资产</small><b>'+fmtMoney(day.nav)+'</b></span>':'<p>暂无净值快照</p>')+'</div><p class="pf-basis">每日按相邻日期末次快照计算，当日使用最新估值；缺失日期不补值。历史记录 '+all.length+' 天。</p></div>'+performanceCalendar(all)+'</div>'+
-  '<details class="pf-method"><summary>计算口径与样本</summary><p>'+esc(p.basis||'收益数据接入中，请稍后刷新。')+'</p><p>已平仓盈亏比 '+ratio+'。已平仓：盈利 '+(p.winning_trades||0)+' 笔 / 亏损 '+(p.losing_trades||0)+' 笔。盈亏比与收益率、胜率是不同指标。仅为模拟盘，不代表真实交易收益。</p></details></section>';
+  '<details class="pf-method"><summary>计算口径与样本</summary>'+(selected.policy?'<p>当前规则 '+esc(selected.policy.version)+'：自学习与评分换仓暂冻结。单笔风险预算 '+fmtPct(Number(selected.policy.risk_per_trade)*100)+'，单股上限 '+fmtPct(Number(selected.policy.single_position_cap)*100)+'，总仓位上限 '+fmtPct(Number(selected.policy.gross_cap)*100)+'。这些是新增仓位的研究期初值，跳空、跌停和T+1可能使损失超出风险预算；尚未验证盈利能力，不接实盘。</p><p>新成交费用假设：佣金万分之2.5（最低5元），卖出税费万分之5、双边过户费十万分之1；不代表券商实际收费。</p>':'')+'<p>'+esc(p.basis||'收益数据接入中，请稍后刷新。')+'</p><p>已平仓盈亏比 '+ratio+'。已平仓：盈利 '+(p.winning_trades||0)+' 笔 / 亏损 '+(p.losing_trades||0)+' 笔。盈亏比与收益率、胜率是不同指标。仅为模拟盘，不代表真实交易收益。</p></details></section>';
 }
 
 const TOUR_KEY='df_ai_fund_tour_v1';

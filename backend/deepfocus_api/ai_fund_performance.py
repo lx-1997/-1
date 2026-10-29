@@ -15,7 +15,8 @@ def account_performance(conn, fund_id, nav, *, now=None, trading_day=True):
     initial = float(nav['started_nav'])
     started = _day(nav['started_at'])
     days = {}
-    for row in conn.execute('SELECT ts,nav FROM aif_nav WHERE fund_id=? ORDER BY ts', (fund_id,)):
+    nav_table = 'aif_nav_daily' if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='aif_nav_daily'").fetchone() else 'aif_nav'
+    for row in conn.execute(f'SELECT ts,nav FROM {nav_table} WHERE fund_id=? ORDER BY ts', (fund_id,)):
         day = _day(row['ts'])
         value = float(row['nav'])
         if started <= day <= today and math.isfinite(value):
@@ -37,17 +38,18 @@ def account_performance(conn, fund_id, nav, *, now=None, trading_day=True):
         previous, previous_day = value, day
     today_point = next((p for p in daily if p['date'] == today), None)
     wins, losses = [], []
-    for row in conn.execute("SELECT amount,pnl_pct FROM aif_trade WHERE fund_id=? AND side='sell' AND pnl_pct IS NOT NULL", (fund_id,)):
+    for row in conn.execute("SELECT * FROM aif_trade WHERE fund_id=? AND side='sell' AND pnl_pct IS NOT NULL", (fund_id,)):
         pct, amount = float(row['pnl_pct']) / 100, float(row['amount'])
         # amount = original cost * (1 + pnl_pct), including simulated execution impact.
         if not math.isfinite(pct) or not math.isfinite(amount) or pct <= -1:
             continue
-        pnl = amount * pct / (1 + pct)
+        pnl = float(row['realized_pnl']) if 'realized_pnl' in row.keys() and row['realized_pnl'] is not None else amount * pct / (1 + pct)
         if pnl > 0: wins.append(pnl)
         elif pnl < 0: losses.append(-pnl)
     return {'initial_capital': round(initial, 2), 'total_pnl': round(float(nav['nav']) - initial, 2),
             'today_pnl': today_point['pnl'] if today_point else None,
             'today_return_pct': today_point['return_pct'] if today_point else None,
+            'valuation_stale': bool(nav.get('valuation_stale')),
             'cash': round(float(nav['cash']), 2), 'market_value': round(float(nav['market_value']), 2),
             'payoff_ratio': round((sum(wins) / len(wins)) / (sum(losses) / len(losses)), 2) if wins and losses else None,
             'winning_trades': len(wins), 'losing_trades': len(losses),

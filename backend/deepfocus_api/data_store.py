@@ -109,6 +109,12 @@ def record(kind: str, symbol: str, payload: Any, *, market: str = "") -> None:
         _record_values(values[0], values[1], values)
 
 
+def record_confirmed(kind: str, symbol: str, payload: Any, *, market: str = "") -> bool:
+    """Acknowledge durable writes for a transactional producer's outbox."""
+    values = _record_params(kind, symbol, payload, market)
+    return values is not None and _record_values(values[0], values[1], values)
+
+
 # 一条专用线程，严格限制排队条数和 JSON 字节数，避免 ThreadPoolExecutor 无界队列。
 _WRITE_QUEUE_MAX = 128
 _WRITE_QUEUE_BYTES = 8 * 1024 * 1024
