@@ -9,6 +9,21 @@ _PREFIX = re.compile(r'^帮我核对这些自选最近有哪些重要变化与�
 _PAIR = re.compile(r'([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9 .\-]{1,24})[（(](\d{5,6}|[A-Z]{1,5})[)）]')
 TOOLS = frozenset({'get_market_quote','get_stock_news','search_our_content'})
 
+def company_update_plan(question: str, resolved) -> list[tuple[str,dict]]:
+    """Only a named, uniquely resolved company's short update request.
+
+    Valuation, comparisons, attachments and broader research keep model planning.
+    No symbol is guessed from a company alias or inherited page context.
+    """
+    if not isinstance(resolved, dict) or len(resolved.get('all') or []) != 1:return []
+    item=resolved.get('primary') or {}
+    name,symbol=str(item.get('name') or '').strip(),str(item.get('symbol') or '').strip()
+    if not name or not re.fullmatch(r'(?:[A-Z]{1,8}|\d{5,6})(?:[.][A-Z]{1,4})?',symbol):return []
+    pattern=re.escape(name)+r'最近(?:有哪些|有什么|有何)?(?:重要)?变化(?:与|和|及)风险[？?]?(?:请|，请|。请)?(?:简洁回答|简要回答|简要说明)[。.!！]?'
+    if not re.fullmatch(pattern,question.strip()):return []
+    return [('get_market_quote',{'symbol':symbol}),('get_stock_news',{'symbol':symbol,'limit':6}),
+            ('search_our_content',{'query':name,'limit':6})]
+
 def watchlist_update_plan(question: str) -> list[tuple[str,dict]]:
     match=_PREFIX.fullmatch(question.strip())
     if not match:return []

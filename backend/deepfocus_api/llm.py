@@ -1652,7 +1652,7 @@ class CloudResearchLLM:
         # 单股泛问也会透明披露本轮采用的投资期限假设。
         from .buy_side_qa import answer_protocol_issues, build_buy_side_mandate
         from .research_harness import live_references_for_trace
-        from .watchlist_prefetch import TOOLS as _updates_tools, watchlist_update_plan, run_watchlist_plan
+        from .watchlist_prefetch import TOOLS as _updates_tools, watchlist_update_plan, company_update_plan, run_watchlist_plan
         updates_plan = [] if re.search(r"用户上传文件|附件", context_hint) else watchlist_update_plan(question)
 
         research_mandate = build_buy_side_mandate(question, context_hint)
@@ -1951,6 +1951,8 @@ class CloudResearchLLM:
             # 标的防幻觉护栏：问题含公司名时先做确定性解析（东财 suggest，候选名须原样出现在
             # 问题里），供下方工具分发时改写模型凭记忆猜错的代码（实测「建滔集团」被猜成 0005/600545）。
             resolved_stock = await resolve_question_stock(question)
+            if not updates_plan and not re.search(r"用户上传文件|附件", context_hint):
+                updates_plan = company_update_plan(question, resolved_stock)
             updates_prefilled = False
             if (updates_plan and not (_updates_tools & set(mcp_tools))
                     and (allowed_names is None or _updates_tools <= allowed_names)):

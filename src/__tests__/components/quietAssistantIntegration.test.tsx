@@ -5,6 +5,7 @@ import FinancialTerminal from '../../components/FinancialTerminal';
 import { AuthProvider } from '../../context/AuthContext';
 import { apiGet, apiPost } from '../../services/apiClient';
 import { createRealtimeMessageStream, type RealtimeMessageRecord } from '../../services/eventService';
+import { runToolResearch, runToolResearchStream } from '../../services/agentService';
 import type { AuthUser } from '../../services/authService';
 import { authenticateSession, getAuthSnapshot, invalidateAuthSession } from '../../state/authSession';
 
@@ -22,6 +23,11 @@ jest.mock('../../services/apiClient', () => ({
 jest.mock('../../services/eventService', () => ({
   ...jest.requireActual('../../services/eventService'),
   createRealtimeMessageStream: jest.fn(() => ({ close: jest.fn() })),
+}));
+
+jest.mock('../../services/agentService', () => ({
+  ...jest.requireActual('../../services/agentService'),
+  runToolResearch: jest.fn(), runToolResearchStream: jest.fn(() => jest.fn()),
 }));
 
 const stream = createRealtimeMessageStream as jest.MockedFunction<typeof createRealtimeMessageStream>;
@@ -182,6 +188,22 @@ it('names the floating assistant clearly and lets Enter and Space expand and col
   expect(screen.queryByRole('dialog', { name: 'AI 助手' })).not.toBeInTheDocument();
 });
 
+it('uses the compact AI navigation entry to expand, collapse and enter a full conversation without sending', async () => {
+  await mountTerminal();
+  const entry = within(screen.getByRole('navigation', { name: '移动端内容导航' })).getByRole('button', { name: /^AI$/ });
+  expect(entry).toHaveAttribute('aria-haspopup', 'dialog');
+  expect(entry).toHaveAttribute('aria-expanded', 'false');
+  await act(async () => { fireEvent.click(entry); });
+  expect(screen.getByRole('dialog', { name: 'AI 助手' })).toBeInTheDocument();
+  await act(async () => { fireEvent.click(entry); });
+  expect(screen.queryByRole('dialog', { name: 'AI 助手' })).not.toBeInTheDocument();
+  await act(async () => { fireEvent.click(entry); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /开始新对话/ })); });
+  expect(screen.getByRole('region', { name: 'AI 对话工作区' })).toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: 'AI 助手' })).not.toBeInTheDocument();
+  expect((apiPost as jest.Mock).mock.calls.some(([path]) => /ai-analyze|vision-analyze|tool-research/.test(path))).toBe(false);
+});
+
 // jsdom does not expose PointerEvent in all supported versions. MouseEvent
 // carries the real coordinates; these events still reach React's pointer hooks.
 function pointer(target: HTMLElement, type: string, x: number, y: number) {
@@ -241,4 +263,20 @@ it('prepares a market research draft from the launcher without submitting an AI 
   expect(screen.queryByRole('dialog', { name: 'AI 助手' })).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '向 AI 投研助手提问' })).toHaveValue('帮我梳理今天市场的重要变化与需要继续核实的线索。');
   expect((apiPost as jest.Mock).mock.calls.filter(([path]) => /ai|research/.test(path))).toEqual(writesBefore);
+});
+
+
+it.each(['error', 'eof'])('does not silently restart an executed quick question after %s', async failure => {
+  await mountTerminal();
+  await act(async () => { fireEvent.click(within(screen.getByRole('complementary', { name: '主导航' })).getByRole('button', { name: /AI 对话/ })); });
+  await act(async () => { fireEvent.change(screen.getByRole('textbox', { name: '向 AI 投研助手提问' }), { target: { value: '微软最近有哪些重要变化和风险？请简洁回答。' } }); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '发送问题' })); });
+  const callbacks = (runToolResearchStream as jest.Mock).mock.calls[0][1];
+  await act(async () => {
+    if (failure === 'error') callbacks.onError('本轮研究等待超时', 408);
+    callbacks.onDone();
+  });
+  expect(runToolResearch).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: '向 AI 投研助手提问' })).toHaveValue('微软最近有哪些重要变化和风险？请简洁回答。');
+  expect(screen.getByRole('button', { name: '发送问题' })).toBeEnabled();
 });

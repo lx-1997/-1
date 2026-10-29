@@ -1,10 +1,46 @@
 import asyncio
 from types import SimpleNamespace
 import pytest
-from deepfocus_api.watchlist_prefetch import watchlist_update_plan, run_watchlist_plan
+from deepfocus_api.watchlist_prefetch import watchlist_update_plan, company_update_plan, run_watchlist_plan
 from deepfocus_api import agent_tools, llm as module
 
 QUESTION='帮我核对这些自选最近有哪些重要变化与风险：贵州茅台(600519)、特斯拉(TSLA)'
+
+def test_single_company_short_updates_require_exact_name_and_unique_resolution():
+    stock={'name':'微软','symbol':'MSFT'}
+    resolved={'primary':stock,'all':[stock]}
+    question='微软最近有哪些重要变化和风险？请简洁回答。'
+    assert [p[0] for p in company_update_plan(question,resolved)]==['get_market_quote','get_stock_news','search_our_content']
+    assert company_update_plan(question,resolved)[2][1]=={'query':'微软','limit':6}
+    for q in ['微软估值和风险？请简洁回答。',question+'并加入自选',question.replace('微软','苹果'),'微软和苹果最近有哪些重要变化和风险？请简洁回答。','微软最近有哪些重要变化和风险？请详细分析。']:
+        assert not company_update_plan(q,resolved)
+    assert not company_update_plan(question,None)
+    assert not company_update_plan(question,{'primary':stock,'all':[stock,{'name':'苹果','symbol':'AAPL'}]})
+
+@pytest.mark.asyncio
+async def test_company_updates_use_parallel_sources_and_keep_fact_audit(monkeypatch):
+    from deepfocus_api.core_agent import TOOL_ALLOWLIST
+    calls=[];tools=[]
+    adapter=module.CloudResearchLLM()
+    monkeypatch.setattr(module,'load_model_config',lambda:{'provider':'openai-compatible','model':'glm-5.3-flash','temperature':.2,'model_pool':[]})
+    async def discover():return []
+    async def resolve(q):
+        item={'name':'微软','symbol':'MSFT'}
+        return {'primary':item,'all':[item]}
+    monkeypatch.setattr(module,'discover_mcp_agent_tools',discover)
+    monkeypatch.setattr(module,'resolve_question_stock',resolve)
+    async def execute(name,args,**kwargs):
+        tools.append((name,args));return {'ok':True,'data':{'title':'微软合成测试事实','date':'2026-10-29'}}
+    monkeypatch.setattr(module,'execute_tool',execute)
+    async def completion(payload,**kwargs):
+        calls.append(payload)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='微软(MSFT)：已核对材料，盈利能力缺资料。',tool_calls=None))])
+    monkeypatch.setattr(adapter,'_completion',completion)
+    result=await adapter.run_tool_agent(question='微软最近有哪些重要变化和风险？请简洁回答。',require_tool_first=True,require_site_evidence=True,audit_final_answer=True,allowed_tool_names=TOOL_ALLOWLIST)
+    assert len(tools)==3 and len(calls)==2
+    assert all('tools' not in p for p in calls)
+    assert '事实审校' in calls[1]['messages'][1]['content']
+    assert len(result['tool_trace'])==3
 
 def test_exact_shortcut_scope():
     plan=watchlist_update_plan(QUESTION)

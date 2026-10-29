@@ -1526,7 +1526,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   };
   const onAiDockHandleDown = (fromFab: boolean) => (e: React.PointerEvent) => {
     // 面板页签/关闭等按钮仍走点击，不做拖拽起步
-    if (!fromFab && (e.target as HTMLElement).closest('button')) return;
+    if (window.matchMedia('(max-width: 820px)').matches || (!fromFab && (e.target as HTMLElement).closest('button'))) return;
     aiDockDragRef.current = {
       px: e.clientX,
       py: e.clientY,
@@ -1576,6 +1576,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const el = aiDockRef.current;
     if (!el) return;
     const fit = () => {
+      if (window.matchMedia('(max-width: 820px)').matches) return;
       const style = getComputedStyle(el);
       const next = clampAiDockPos(parseFloat(style.right) || AI_DOCK_DEFAULT_POS.r, parseFloat(style.bottom) || AI_DOCK_DEFAULT_POS.b, aiDockEffectiveZoom());
       setAiDockPos(previous => previous && Math.abs(previous.r - next.r) < 1 && Math.abs(previous.b - next.b) < 1 ? previous : next);
@@ -1848,7 +1849,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const navRef = useRef<string[]>(watchlist);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && aiDockOpen) { setAiDockOpen(false); aiDockRef.current?.querySelector<HTMLButtonElement>('.bbt-ai-dock-fab')?.focus(); return; }
+      if (e.key === 'Escape' && aiDockOpen) { setAiDockOpen(false); (window.matchMedia('(max-width: 820px)').matches ? document.querySelector<HTMLButtonElement>('.bbt-mobile-ai-entry') : aiDockRef.current?.querySelector<HTMLButtonElement>('.bbt-ai-dock-fab'))?.focus(); return; }
       if (e.key === 'Escape' && paletteOpen) { setPaletteOpen(false); return; }
       if (e.key === 'Escape') { setHelpMenuOpen(false); setAcctOpen(false); setSideNavOpen(false); setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); aiViewingTaskRef.current = ''; setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiOriginal(''); setAiModalExpanded(false); return; }
       if (paletteOpen) return;
@@ -2475,13 +2476,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onFallback: reason => { void runFallback(reason); },
         onError: (error, status) => {
           if (!isCurrent()) return;
-          if (status === 402 || status === 403 || (status === 401 && !authUserRef.current)) {
-            applyResult({ ok: false, answer: '', tool_trace: [], error, status });
-          } else {
-            void runFallback(error);
-          }
+          // A failed/closed stream may already have executed and consumed work.
+          // Only onFallback's explicit missing-route signal permits a replay.
+          applyResult({ ok: false, answer: '', tool_trace: [], error, status });
         },
-        onDone: () => { if (!settled && !fallbackRunning) void runFallback(); },
+        onDone: () => { if (!settled && !fallbackRunning) applyResult({ ok: false, answer: '', tool_trace: [], error: '实时连接已中断，问题已保留，请手动重试。' }); },
       });
       aiStreamCancelRef.current = () => {
         if (settled) return;
@@ -7268,9 +7267,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           onClick={() => jumpFromMobileNav('reports')}>
           <span aria-hidden="true"><WorkspaceIcon name="reports" /></span><b>投行研报</b>
         </button>
-        <button type="button" className={mobileNavView === 'ai' ? 'active' : ''}
+        <button type="button" className={`bbt-mobile-ai-entry${mobileNavView === 'ai' ? ' active' : ''}`}
           aria-current={mobileNavView === 'ai' ? 'page' : undefined}
-          onClick={() => jumpFromMobileNav('ai')}>
+          aria-haspopup={mobileNavView !== 'ai' ? 'dialog' : undefined}
+          aria-expanded={mobileNavView !== 'ai' ? aiDockOpen : undefined}
+          aria-controls={mobileNavView !== 'ai' ? 'bbt-ai-dock-panel' : undefined}
+          title="AI 助手"
+          onClick={() => mobileNavView === 'ai' ? jumpFromMobileNav('ai') : setAiDockOpen(open => !open)}>
           <span aria-hidden="true"><WorkspaceIcon name="ai" /></span><b>AI</b>
         </button>
         <button type="button" onClick={openMobileMore}>
