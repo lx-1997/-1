@@ -80,7 +80,6 @@ import { QuoteStatus, QuoteValue } from './market-ui';
 import { TerminalQuoteName } from './terminal/TerminalQuoteName';
 import { toTerminalQuoteDisplay } from './terminal/terminalQuoteDisplay';
 import { useTheme } from '../context/ThemeContext';
-import WorkspaceIntro from './terminal/WorkspaceIntro';
 import ContentCategories, { ALL_CONTENT, NEWS_KINDS, CategoryTabs, matchesContent, hasContentSelection, type ContentSelection, type ContentEntry } from './terminal/ContentCategories';
 import WorkspaceIcon from './terminal/WorkspaceIcon';
 import './FinancialTerminal.css';
@@ -6215,12 +6214,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </span>
       </div>
 
-      {!stockWorkspaceFocused && <WorkspaceIntro section={sideNavKey} anonymous={!authUser}
-        connection={sidebarConnectionLabel}
-        onSearch={() => { setPaletteOpen(true); setPq(''); }}
-        onReview={() => focusSideModule('review')}
-        onResearch={() => focusSideModule('ai')} />}
-
       <section className="bbt-simple-start" aria-label="从这里开始">
         <div className="bbt-simple-start-copy">
           <span>从这里开始</span>
@@ -6251,7 +6244,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onOpenMarket={() => { void openReview(); }}
       />
 
-      {sideNavKey === 'market' && <div className="bbt-market-overview">
+      {sideNavKey === 'market' && <details className="bbt-market-tools">
+      <summary><span>市场事件 · AI 模拟盘</span><small>按需查看</small><span className="bbt-market-tools-arrow" aria-hidden="true">⌄</span></summary>
+      <div className="bbt-market-overview">
       <TerminalTodayStories
         key={`stories:${getAuthSnapshot().revision}`}
         loggedIn={!!authUser}
@@ -6261,7 +6256,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       />
 
       <TerminalAiFundCard />
-      </div>}
+      </div>
+      </details>}
 
       {/* 管理员专属：有用户未读私信 → 主页醒目提醒，点击打开运营看板处理 */}
       {primaryBanner === 'admin-unread' && (
