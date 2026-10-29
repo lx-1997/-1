@@ -2755,6 +2755,7 @@ def get_arena() -> dict[str, Any]:
     """赛马排行榜：名单内全部智能体的精简战绩卡，按累计收益率排名 + 共享沪深300算超额。
     一次拉全场，给前端「冠军 + 排行榜」用。绝不抛出（单个 agent 出错只跳过它）。
     输出字段对齐前端竞技场契约：strategies[]（含 nav_unit/color/rank）+ benchmark{name,nav_pct}。"""
+    from .ai_fund_performance import account_performance
     init_ai_fund_db()
     cards: list[dict] = []
     main_bench: dict = {}
@@ -2799,6 +2800,7 @@ def get_arena() -> dict[str, Any]:
                     "reentry_cooldown_days": cfg.reentry_cooldown_days, "daily_buy_cap": cfg.max_daily_buys,
                     "review": review,
                     "last_action": last_action, "last_tick_at": nv["last_tick_at"], "is_main": cfg.fund_id == FUND_ID,
+                    "performance": account_performance(conn, cfg.fund_id, nv, trading_day=_is_trading_day()),
                     "history": _nav_history(conn, cfg.fund_id, started_nav),   # 归一化净值火花线
                     "commentary": _commentary([], {}, mood, nv["position_count"], nav_pct, stats, cfg),  # 每张卡各自的直播一句话
                     "model_label": _MODEL_CN.get(cfg.model, cfg.model),

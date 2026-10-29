@@ -884,6 +884,30 @@
     .extras-body{padding:0 16px 16px}
   }
 </style>
+<style>
+  /* V8 · Account performance */
+  .arena{max-width:1480px;margin:auto;padding:24px 28px;gap:22px}
+  .arena-top{padding:0 0 20px;border:0;border-bottom:1px solid #dfe5ed;border-radius:0;background:none;color:var(--ink);box-shadow:none;gap:20px}
+  .arena-top .arena-share{color:#526b91;background:#fff;border:1px solid #dce4ef;box-shadow:none}
+  .arena-top:before,.arena-top:after{display:none}.arena-top .at-kicker{color:#64758b;margin-bottom:6px;letter-spacing:.08em}.arena-top .at-ttl{font-size:25px}.arena-top .at-sub{color:#727d8e;font-size:12px;max-width:620px;margin-top:7px}
+  .arena-top .at-status{color:#21856b;background:#eaf7f1;border:0}.arena-top .at-right{background:none;border:0}.at-stat{min-width:130px;padding:6px 16px}.at-stat+.at-stat{border-color:#e2e7ed}.at-stat strong{color:#253249}.at-stat span{color:#798496}.at-stat strong i.up{color:#df4747}.at-stat strong i.down{color:#159b80}
+  #arenaView{--up:#df4747;--down:#159b80;--ink:#1e293b;--ink2:#526174;--ink3:#7d8998;--line:#e2e7ed;--purple:#3567d6}
+  .arena-showcase.pf-dashboard{display:block;margin:0;padding:22px 24px 0;border:1px solid #e0e6ef;border-radius:16px;background:#fff;box-shadow:0 3px 16px #20375604}
+  .pf-header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:23px}.pf-header h2{font-size:19px;margin:0 0 5px;letter-spacing:-.02em}.pf-header p{font-size:11px;color:#8290a2;margin:0}
+  .pf-selector{display:flex;flex-wrap:wrap;gap:4px}.pf-selector button{border:0;background:none;color:#64748b;border-radius:7px;padding:8px 11px;cursor:pointer;font-size:12px;white-space:nowrap}.pf-selector button.on{background:#eef4ff;color:#2e62ce;font-weight:650}
+  .pf-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding-bottom:24px;border-bottom:1px solid #edf0f4;gap:20px}.pf-metric{display:flex;flex-direction:column;gap:7px;min-width:0}.pf-metric>span{font-size:12px;color:#758397}.pf-metric>strong{font-size:27px;font-weight:650;letter-spacing:-.03em;font-variant-numeric:tabular-nums}.pf-metric.primary>strong{font-size:32px;line-height:1.05}.pf-metric small{font-size:11px;color:#7c8899}
+  .neutral{color:#526174}.pf-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:21px 0 12px}.pf-toolbar>div:first-child{display:flex;align-items:baseline;gap:9px}.pf-toolbar h3{font-size:14px;margin:0}.pf-toolbar span{font-size:11px;color:#7e8a9c}.pf-controls{display:flex;gap:14px;flex-wrap:wrap}.pf-segment{display:flex;padding:3px;background:#f3f5f8;border-radius:7px;gap:2px}.pf-segment button{border:0;border-radius:5px;padding:5px 9px;font-size:11px;background:none;color:#7b8799;cursor:pointer}.pf-segment button.on{background:#fff;color:#2e62ce;box-shadow:0 1px 4px #17385812}
+  .pf-charts{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr);gap:28px;padding-bottom:17px}.pf-bars{min-width:0;padding-top:10px}.pf-bars svg{width:100%;display:block;min-height:180px}.pf-record{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;border-top:1px solid #edf0f4;padding-top:17px;margin-top:10px}.pf-record small{display:block;font-size:10px;color:#8a95a5;margin-bottom:6px}.pf-record b{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}.pf-basis{font-size:10px;line-height:1.65;color:#919cab;margin:14px 0 0}
+  .pf-calendar{border-left:1px solid #edf0f4;padding-left:26px}.pf-cal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-size:12px}.pf-cal-head>span{display:flex;align-items:center;gap:10px}.pf-cal-head strong{font-size:11px;font-weight:500;color:#66758a}.pf-cal-head button{border:0;background:#f5f7fa;border-radius:5px;width:24px;height:25px;color:#64748b;cursor:pointer}.pf-cal-head button:disabled{opacity:.3;cursor:default}
+  .pf-week,.pf-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.pf-week{font-size:10px;text-align:center;color:#9aa3b0;margin-bottom:7px}.pf-cal-day{min-width:0;height:42px;display:flex;flex-direction:column;gap:3px;align-items:center;justify-content:center;border:1px solid transparent;border-radius:6px;font-size:10px;background:#f9fafc}.pf-cal-day b{font-size:9px;font-weight:500;max-width:100%;overflow:hidden;text-overflow:ellipsis}.pf-cal-day.missing{color:#b2bac5;background:#fafbfd}.pf-cal-day.up{background:#fff0ef;color:#df4747;cursor:pointer}.pf-cal-day.down{background:#eaf7f2;color:#159b80;cursor:pointer}.pf-cal-day.selected{border-color:currentColor}.pf-cal-note{font-size:9px;color:#9ba5b3;margin:10px 0 0;text-align:right}.pf-method{border-top:1px solid #edf0f4;padding:12px 0;color:#8b97a8;font-size:10px;line-height:1.8}.pf-method summary{cursor:pointer}.pf-method p{max-width:900px}
+  .pf-empty{height:180px;display:grid;place-items:center;color:#8491a2;font-size:12px}
+  .arena-section-head{margin-bottom:13px}.arena-section-head h2{font-size:17px}.arena-section-head .section-kicker{display:none}.lbgrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.lbcard{border:1px solid #e0e6ee;padding:17px 18px;border-radius:12px}.lbcard:before{display:none}.lbhead{margin:0 0 16px;gap:8px}.lbava{width:30px;height:30px;background:#f3f6fa!important;font-size:18px}.lbrank{width:auto;height:auto;background:none;font-size:10px;color:#a4adba}.lbtag{max-width:220px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;font-size:10px}.lbwho{min-width:0}.lbnm{font-size:13px}.lbsty{background:#f1f5fa!important;color:#77879a!important}.lbcta{color:#8895a8;font-size:10px;margin-left:auto}.pf-card-values{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding-bottom:15px}.pf-card-values small{display:block;font-size:10px;color:#8793a4;margin-bottom:6px}.pf-card-values strong{display:block;font-size:23px;line-height:1.2;letter-spacing:-.03em;font-weight:650;font-variant-numeric:tabular-nums}.pf-card-values span{display:block;margin-top:4px;font-size:11px}.pf-card-foot{display:flex;justify-content:space-between;gap:8px;border-top:1px solid #edf0f4;padding-top:12px;font-size:10px;color:#8d98a7}.pf-card-foot b{font-weight:500;color:#526174}.pf-card-foot b.up{color:var(--up)}.pf-card-foot b.down{color:var(--down)}
+  .pf-dashboard button:focus-visible{outline:2px solid #3567d6;outline-offset:2px}
+  @media(max-width:1100px){.pf-charts{grid-template-columns:1fr}.pf-calendar{border-left:0;border-top:1px solid #edf0f4;padding:17px 0 0}.pf-cal-day{height:48px}.pf-cal-day b{font-size:11px}.lbgrid{grid-template-columns:repeat(2,minmax(0,1fr))}.arena-top .at-right{display:none}}
+  @media(max-width:640px){.arena{padding:16px 12px;gap:18px}.arena-top{gap:12px;padding:0 2px 14px}.arena-top .at-ttl{font-size:21px}.arena-top .at-sub{font-size:11px}.arena-top .at-actions{position:static;align-self:flex-start}.arena-share{font-size:11px;padding:7px 10px}.arena-showcase.pf-dashboard{padding:17px 14px 0;border-radius:12px}.pf-header{display:block;margin-bottom:19px}.pf-header p{display:none}.pf-header h2{font-size:17px;margin-bottom:13px}.pf-selector{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:#f6f8fb;border-radius:8px;padding:4px}.pf-selector button{padding:7px 4px;font-size:11px}.pf-selector button.on{background:#fff;box-shadow:0 1px 4px #17385812}.pf-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:21px 12px;padding-bottom:20px}.pf-metric>strong,.pf-metric.primary>strong{font-size:23px}.pf-metric>span{font-size:11px}.pf-metric small{font-size:10px}.pf-toolbar{display:block;margin-top:18px}.pf-controls{justify-content:space-between;gap:7px;margin-top:12px}.pf-segment button{padding:5px 8px;font-size:10px}.pf-charts{gap:16px}.pf-bars{padding-top:0}.pf-bars svg{min-height:130px}.pf-record{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.pf-cal-head{font-size:12px}.pf-cal-day b{font-size:8px;letter-spacing:-.04em}.pf-cal-day{height:42px}.pf-basis{font-size:9px}.arena-section-head{display:block}.arena-section-head p{font-size:10px;margin-top:5px}.lbgrid{grid-template-columns:1fr}.lbcard{padding:16px}.pf-card-values strong{font-size:24px}.lbtag{max-width:180px}.arena-section-head h2{font-size:16px}}
+
+@media(max-width:360px){.pf-metric>strong,.pf-metric.primary>strong{font-size:20px}.pf-metric small{font-size:9px}}
+</style>
 </head>
 <body>
 <style>
@@ -974,7 +998,7 @@ const TAGS={buy:'买入',sell:'卖出',watch:'观察'},EAV={buy:'▲',sell:'▼'
 const EVT_CLS={'快讯':'news','研报':'report','文章':'article','信号':'signal'},EVT_EM={'快讯':'⚡','研报':'📑','文章':'📰','信号':'📈'};
 const QRW='dfw_2vQ9_k7Rm';
 let S={data:null,tab:'center',sel:null,open:null,sort:'mv',logTab:'trades',lastTradeTs:null,mode:'arena',fund:'main',arena:null};
-const STY_CN={balanced:'消息面派',aggressive:'激进派',value:'价值派',event:'事件派',contrarian:'逆向派'};
+const STY_CN={balanced:'消息面派',aggressive:'激进派',value:'价值派',event:'事件派',contrarian:'逆向派',cycle:'周期派'};
 const isMobile=()=>window.innerWidth<1024;
 function countUp(el,to,fmt,from){if(from==null||Math.abs(to-from)<1e-9){el.textContent=fmt(to);return;}const t0=performance.now();
   (function step(t){const k=Math.min(1,(t-t0)/650),e=1-Math.pow(1-k,3);el.textContent=fmt(from+(to-from)*e);if(k<1)requestAnimationFrame(step);})(performance.now());}
@@ -1356,6 +1380,18 @@ async function arenaPoster(){
   document.getElementById('posterDl').onclick=()=>{const a=document.createElement('a');a.href=url;a.download='稻草财经-今日策略复盘.png';a.click();};
 }
 document.addEventListener('click',e=>{
+  const pf=e.target.closest('[data-pf-fund],[data-pf-unit],[data-pf-range],[data-pf-month],[data-pf-day]');
+  if(pf&&S.arena){
+    if(pf.dataset.pfFund){PF.fund=pf.dataset.pfFund;PF.day=null;PF.month=null;}
+    if(pf.dataset.pfUnit)PF.unit=pf.dataset.pfUnit;
+    if(pf.dataset.pfRange!=null)PF.range=Number(pf.dataset.pfRange);
+    if(pf.dataset.pfDay)PF.day=pf.dataset.pfDay;
+    if(pf.dataset.pfMonth){const rows=(S.arena.strategies.find(s=>s.fund_id===PF.fund)?.performance||{}).daily||[];const month=PF.month||(rows.at(-1)?.date||new Date().toISOString()).slice(0,7);const [y,m]=month.split('-').map(Number);PF.month=new Date(Date.UTC(y,m-1+Number(pf.dataset.pfMonth),1)).toISOString().slice(0,7);}
+    const old=document.querySelector('.pf-dashboard'),focused=Object.keys(pf.dataset).map(k=>[k,pf.dataset[k]]).find(x=>x[0].startsWith('pf'));
+    if(old){old.outerHTML=arenaShowcase(S.arena,S.arena.strategies);if(focused){const attr='data-'+focused[0].replace(/[A-Z]/g,x=>'-'+x.toLowerCase());document.querySelector('.pf-dashboard ['+attr+'="'+CSS.escape(focused[1])+'"]')?.focus({preventScroll:true});}}
+    return;
+  }
+
   if(e.target.closest('[data-factor-close]')||e.target.id==='factorModal'){closeStockFactorModal();return;}
   const currentFactors=e.target.closest('[data-current-factors]');if(currentFactors){openStockFactorModal(currentFactors.dataset.currentFactors,currentFactors.dataset.factorName,currentFactors);return;}
   if(e.target.closest('[data-factor-refresh]')){syncStockFactors(true);return;}
@@ -1404,23 +1440,44 @@ function arenaSay(s){
     return '最近'+(SIDE_CN[la.side]||'操作')+' '+esc(la.name)+pnl;}
   return esc(s.commentary||(((s.mood&&s.mood.label)||'盯盘找机会')+'，等待本站信息与买点共振。'));
 }
-function arenaShowcase(d,sts,racing){
-  const champ=sts.find(s=>s.fund_id===d.champion)||sts[0]||{};
-  const weak=sts.slice().sort((a,b)=>(a.nav_pct||0)-(b.nav_pct||0))[0]||{};
-  const review=champ.review||{};
-  const cons=Array.isArray(d.consensus)?d.consensus:[],div=Array.isArray(d.divergence)?d.divergence:[];
-  const champRet=racing?fmtPct(champ.nav_pct):'待开赛';
-  const alpha=champ.alpha_pct!=null?('，跑赢基准 '+fmtPct(champ.alpha_pct)):'。';
-  const headline=review.headline||'今天的交易，先看结果，再看理由。';
-  const scene=racing?((champ.emoji||'🤖')+' '+esc(champ.name)+' 领跑 '+champRet+alpha):'五种纪律已经就位，等待第一笔有效信号。';
-  const crowd=cons.length?('共识 '+cons.length+' 只票'):'暂无共识票';
-  const split=div.length?('分歧 '+div.length+' 组'):'分歧待发生';
-  return '<section class="arena-showcase">'+
-    '<div class="showcase-main"><span class="showcase-kicker">Today · AI review</span><h3>'+scene+'</h3><p>'+esc(headline)+'</p><div class="showcase-foot"><span>🧠 '+esc(review.mode_label||champ.brain_mode_label||'正常')+'</span><b>'+esc(review.brief||'保持公开决策链，按纪律执行。')+'</b></div></div>'+
-    '<div class="showcase-card"><span class="showcase-label">赛场看点</span><div class="showcase-value">'+crowd+' · '+split+'</div><div class="showcase-note">同一组公开信息，策略为何拿与躲，一眼看清。</div></div>'+
-    '<div class="showcase-card"><span class="showcase-label">本期复盘对象</span><div class="showcase-value '+(((weak.nav_pct||0)>=0)?'up':'down')+'">'+esc(weak.emoji||'🤖')+' '+esc(weak.name||'—')+' '+fmtPct(weak.nav_pct)+'</div><div class="showcase-note">'+esc((weak.review&&weak.review.bad&&weak.review.bad[0])||'继续观察回撤与出手质量。')+'</div></div>'+
-    '</section>';
+/* Account analytics: amounts come from the API's unrounded ledger snapshots. */
+const PF={fund:null,unit:'money',range:20,month:null,day:null};
+const pm=v=>v==null||!Number.isFinite(Number(v))?'—':(Number(v)>0?'+':Number(v)<0?'−':'')+'¥'+Math.abs(Number(v)).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const calendarMoney=v=>v==null?'—':(v>0?'+':v<0?'−':'')+(Math.abs(v)>=10000?(Math.abs(v)/10000).toFixed(2)+'万':Math.abs(v)>=1000?(Math.abs(v)/1000).toFixed(1)+'千':Math.abs(v).toFixed(0));
+const pc=v=>v==null?'neutral':Number(v)>0?'up':Number(v)<0?'down':'neutral';
+function performanceChart(rows,unit){
+  rows=rows.filter(r=>r.pnl!=null && (unit==='money'||r.return_pct!=null));
+  if(!rows.length)return '<div class="pf-empty">暂无净值记录，数据积累后展示每日盈亏</div>';
+  const W=720,H=196,L=72,R=18,T=16,B=32,amount=r=>Number(unit==='money'?r.pnl:r.return_pct)||0;
+  const scale=Math.max(...rows.map(r=>Math.abs(amount(r))),unit==='money'?1:.01)*1.12;
+  const y=v=>T+(H-T-B)/2*(1-v/scale),step=(W-L-R)/rows.length;
+  let svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="每日'+(unit==='money'?'盈亏金额':'收益率')+'柱状图">';
+  [scale,0,-scale].forEach(v=>{svg+='<line x1="'+L+'" y1="'+y(v)+'" x2="'+(W-R)+'" y2="'+y(v)+'" stroke="#e9edf2"'+(v?' stroke-dasharray="3 4"':'')+'/><text x="'+(L-10)+'" y="'+(y(v)+4)+'" text-anchor="end" fill="#818a98" font-size="11">'+(unit==='money'?Math.round(v).toLocaleString('zh-CN'):v.toFixed(2)+'%')+'</text>';});
+  rows.forEach((r,i)=>{const v=amount(r),x=L+step*(i+.5),bar=Math.min(34,step*.52);svg+='<rect x="'+(x-bar/2)+'" y="'+Math.min(y(v),y(0))+'" width="'+bar+'" height="'+Math.max(2,Math.abs(y(v)-y(0)))+'" rx="3" fill="'+(v>0?'#e34c4c':v<0?'#159b80':'#b7c0cb')+'"><title>'+r.date+' '+(unit==='money'?pm(r.pnl):fmtPct(r.return_pct))+'</title></rect>';
+    if(rows.length<9||i===0||i===rows.length-1||i%Math.ceil(rows.length/7)===0)svg+='<text x="'+x+'" y="'+(H-8)+'" text-anchor="middle" fill="#818a98" font-size="11">'+r.date.slice(5)+'</text>';});
+  return svg+'</svg>';
 }
+function performanceCalendar(rows){
+  const lookup=new Map(rows.map(r=>[r.date,r])),last=rows[rows.length-1],first=rows[0];
+  const month=PF.month||(last?last.date.slice(0,7):new Date().toISOString().slice(0,7));
+  const [year,mon]=month.split('-').map(Number),start=new Date(Date.UTC(year,mon-1,1)).getUTCDay(),count=new Date(Date.UTC(year,mon,0)).getUTCDate();
+  let cells=Array.from({length:(start+6)%7},()=>'<span class="pf-cal-blank"></span>').join('');
+  for(let n=1;n<=count;n++){const date=month+'-'+String(n).padStart(2,'0'),r=lookup.get(date),v=r?(PF.unit==='money'?calendarMoney(r.pnl):fmtPct(r.return_pct)):'—';cells+=r?'<button type="button" data-pf-day="'+date+'" class="pf-cal-day '+pc(r.pnl)+((PF.day||last?.date)===date?' selected':'')+'" aria-label="'+date+' 盈亏 '+esc(v)+'"><span>'+n+'</span><b>'+esc(v)+'</b></button>':'<span class="pf-cal-day missing"><span>'+n+'</span><b>—</b></span>';}
+  return '<div class="pf-calendar"><div class="pf-cal-head"><b>收益日历</b><span><button type="button" data-pf-month="-1" aria-label="上个月"'+(!first||month<=first.date.slice(0,7)?' disabled':'')+'>‹</button><strong>'+year+' 年 '+mon+' 月</strong><button type="button" data-pf-month="1" aria-label="下个月"'+(!last||month>=last.date.slice(0,7)?' disabled':'')+'>›</button></span></div><div class="pf-week">'+['一','二','三','四','五','六','日'].map(x=>'<span>'+x+'</span>').join('')+'</div><div class="pf-cal-grid">'+cells+'</div><p class="pf-cal-note">红色盈利 · 绿色亏损 · — 无快照</p></div>';
+}
+function arenaShowcase(d,sts){
+  const selected=sts.find(s=>s.fund_id===PF.fund)||sts[0];PF.fund=selected.fund_id;
+  const p=selected.performance||{},all=p.daily||[],rows=PF.range?all.slice(-PF.range):all;
+  const day=all.find(r=>r.date===PF.day)||all[all.length-1];
+  const ratio=p.payoff_ratio==null?'—':Number(p.payoff_ratio).toFixed(2)+':1';
+  const summary=[['今日盈亏',pm(p.today_pnl),pc(p.today_pnl),'今日收益率 '+fmtPct(p.today_return_pct)],['累计盈亏',pm(p.total_pnl),pc(p.total_pnl),'累计收益率 '+fmtPct(selected.nav_pct)],['总资产',p.initial_capital==null?'—':fmtMoney(selected.nav),'neutral',p.initial_capital==null?'初始资金 —':'初始资金 '+fmtMoney(p.initial_capital)],['已平仓盈亏比',ratio,'neutral',p.payoff_ratio==null?'需同时有盈利与亏损样本':'平均盈利 / 平均亏损']];
+  return '<section class="arena-showcase pf-dashboard" aria-label="策略收益分析"><div class="pf-header"><div><h2>收益分析</h2><p>先看赚亏，再看策略</p></div><div class="pf-selector" role="group" aria-label="选择收益分析策略">'+sts.map(s=>'<button type="button" data-pf-fund="'+esc(s.fund_id)+'" aria-pressed="'+(s.fund_id===selected.fund_id)+'" class="'+(s.fund_id===selected.fund_id?'on':'')+'">'+esc(s.emoji||'')+' '+esc(s.name)+'</button>').join('')+'</div></div>'+
+  '<div class="pf-metrics">'+summary.map((m,i)=>'<div class="pf-metric'+(i===0?' primary':'')+'"><span>'+m[0]+'</span><strong class="'+m[2]+'">'+m[1]+'</strong><small>'+esc(m[3])+'</small></div>').join('')+'</div>'+
+  '<div class="pf-toolbar"><div><h3>每日盈亏</h3><span>人民币 · '+esc(selected.name)+'</span></div><div class="pf-controls"><div class="pf-segment" role="group" aria-label="盈亏显示单位">'+[['money','金额'],['percent','收益率']].map(x=>'<button type="button" data-pf-unit="'+x[0]+'" aria-pressed="'+(PF.unit===x[0])+'" class="'+(PF.unit===x[0]?'on':'')+'">'+x[1]+'</button>').join('')+'</div><div class="pf-segment" role="group" aria-label="收益区间">'+[[5,'近5日'],[20,'近20日'],[0,'全部']].map(x=>'<button type="button" data-pf-range="'+x[0]+'" aria-pressed="'+(PF.range===x[0])+'" class="'+(PF.range===x[0]?'on':'')+'">'+x[1]+'</button>').join('')+'</div></div></div>'+
+  '<div class="pf-charts"><div class="pf-bars">'+performanceChart(rows,PF.unit)+'<div class="pf-record" aria-live="polite">'+(day?'<span><small>快照日期</small><b>'+day.date+'</b></span><span><small>当日盈亏</small><b class="'+pc(day.pnl)+'">'+pm(day.pnl)+'</b></span><span><small>当日收益率</small><b class="'+pc(day.pnl)+'">'+fmtPct(day.return_pct)+'</b></span><span><small>日末总资产</small><b>'+fmtMoney(day.nav)+'</b></span>':'<p>暂无净值快照</p>')+'</div><p class="pf-basis">每日按相邻日期末次快照计算，当日使用最新估值；缺失日期不补值。历史记录 '+all.length+' 天。</p></div>'+performanceCalendar(all)+'</div>'+
+  '<details class="pf-method"><summary>计算口径与样本</summary><p>'+esc(p.basis||'收益数据接入中，请稍后刷新。')+'</p><p>已平仓：盈利 '+(p.winning_trades||0)+' 笔 / 亏损 '+(p.losing_trades||0)+' 笔。盈亏比与收益率、胜率是不同指标。仅为模拟盘，不代表真实交易收益。</p></details></section>';
+}
+
 const TOUR_KEY='df_ai_fund_tour_v1';
 const TOUR_STEPS=[
   {selector:'#arenaView .arena-top',title:'先看今天的结论',text:'这里展示当前交易时段、领先策略和市场基准，先用 10 秒建立全局判断。'},
@@ -1461,25 +1518,11 @@ function maybeStartTour(){
 function nextTour(){if(Tour.step>=TOUR_STEPS.length-1)return closeTour(true);Tour.step++;renderTour();}
 function prevTour(){if(Tour.step>0){Tour.step--;renderTour();}}
 function lbcard(s,bench,racing){
-  // 策略色直插 style 属性，须做十六进制白名单，防 CSS 注入(color 字段理论上可被上游污染)
-  const up=(s.nav_pct||0)>=0,c=/^#[0-9a-fA-F]{3,8}$/.test(s.color)?s.color:'#7c3aed';
-  const la=s.last_action,chip=(la&&la.name)?('<div class="lbtop">'+esc(SIDE_CN[la.side]||'观察')+' · '+esc(la.name)+((la.pnl_pct!=null)?(' '+fmtPct(la.pnl_pct)):'')+'</div>'):'';
-  const a=s.alpha_pct,alpha=(a==null)?'—':fmtPct(a);
-  const review=s.review||{},brain=s.brain_mode_label||review.mode_label||'正常',brainKey=s.brain_mode||review.mode||'normal';
-  // 未开赛时收益都是 0%，让「章法」当主角；开赛后才以最近动作/收益为主
-  const say=racing?arenaSay(s):esc(s.blurb||s.tag||'');
-  const rank=Number(s.rank)||0,rankHtml='<span class="lbrank">'+(rank?String(rank).padStart(2,'0'):'—')+'</span>';
-  return '<button type="button" class="lbcard'+(s.rank===1&&racing?' rank1':'')+'" data-fund="'+esc(s.fund_id)+'" aria-label="查看 '+esc(s.name)+' 的持仓与决策" style="--c:'+c+';--cbg:'+c+'1a">'+
-    '<div class="lbhead">'+rankHtml+'<span class="lbava" style="background:'+c+'1a">'+(s.emoji||'🤖')+'</span>'+
-    '<span class="lbwho"><span class="lbnm">'+esc(s.name)+'<span class="lbsty">'+esc(STY_CN[s.style]||s.style||'')+'</span></span><span class="lbtag">'+esc(s.tag||s.blurb||'')+'</span></span>'+
-    '<span class="lbmood">'+((s.mood&&s.mood.emoji)||'')+'</span></div>'+
-    '<div class="lbmetric"><div><span class="lbmetric-label">累计收益</span><div class="lbret '+(up?'up':'down')+'">'+fmtPct(s.nav_pct)+'</div></div>'+
-    '<div class="lbalpha">相对沪深300<b class="'+(Number(a)>=0?'up':'down')+'">'+alpha+'</b></div></div>'+
-    '<div class="lbspark">'+spark(s.history,bench&&bench.history,c)+'</div>'+
-    '<div class="lbsay">'+say+'</div>'+
-    '<div class="lbbrain">🧠 <b class="'+esc(brainKey)+'">'+esc(brain)+'</b><span>'+esc(review.brief||'按既定纪律执行')+'</span></div>'+
-    '<div class="lbmeta"><span class="lbstat">当前持仓<b>'+(s.position_count||0)+' / '+(s.max_positions||6)+'</b></span><span class="lbstat">历史胜率<b>'+(s.win_rate!=null?s.win_rate+'%':'—')+'</b></span><span class="lbstat">已平仓<b>'+(s.closed||0)+'</b></span></div>'+
-    '<div class="lbfoot">'+chip+'<span class="lbcta">查看详情&nbsp; →</span></div></button>';
+  const p=s.performance||{},a=s.alpha_pct;
+  return '<button type="button" class="lbcard" data-fund="'+esc(s.fund_id)+'" aria-label="查看 '+esc(s.name)+' 的持仓与决策">'+
+    '<div class="lbhead"><span class="lbrank">'+String(s.rank||0).padStart(2,'0')+'</span><span class="lbava">'+esc(s.emoji||'🤖')+'</span><span class="lbwho"><span class="lbnm">'+esc(s.name)+'<span class="lbsty">'+esc(STY_CN[s.style]||s.style||'')+'</span></span><span class="lbtag">'+esc(s.blurb||'')+'</span></span><span class="lbcta">持仓与决策 ↗</span></div>'+
+    '<div class="pf-card-values"><div><small>今日盈亏</small><strong class="'+pc(p.today_pnl)+'">'+pm(p.today_pnl)+'</strong><span class="'+pc(p.today_pnl)+'">'+fmtPct(p.today_return_pct)+'</span></div><div><small>累计盈亏</small><strong class="'+pc(p.total_pnl)+'">'+pm(p.total_pnl)+'</strong><span class="'+pc(s.nav_pct)+'">'+fmtPct(s.nav_pct)+'</span></div></div>'+
+    '<div class="pf-card-foot"><span>持仓 <b>'+Number(s.position_count||0)+' 只</b></span><span>胜率 <b>'+(s.win_rate==null?'—':nf(s.win_rate,1)+'%')+'</b></span><span>超额收益 <b class="'+pc(a)+'">'+fmtPct(a)+'</b></span></div></button>';
 }
 function renderArena(d){
   const el=document.getElementById('arenaView');
@@ -1497,8 +1540,8 @@ function renderArena(d){
     '<div class="at-stat"><span>市场基准</span><strong>'+esc((bench&&bench.name)||'沪深300')+'<i class="'+(((bench&&bench.nav_pct)||0)>=0?'up':'down')+'">'+benchValue+'</i></strong></div></div>'+
     '<div class="at-actions"><button type="button" class="arena-share" id="arenaShare">生成今日复盘卡 ↗</button></div></header>';
   const showcase=arenaShowcase(d,sts,racing);
-  const cards='<section class="arena-portfolios"><div class="arena-section-head"><div><span class="section-kicker">Live portfolios</span><h2>六种风格，同场验证</h2></div>'+
-    '<p>点击任一策略，查看持仓、净值与完整决策链</p></div><div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div></section>';
+  const cards='<section class="arena-portfolios"><div class="arena-section-head"><div><span class="section-kicker">Live portfolios</span><h2>策略表现对比</h2></div>'+
+    '<p>按累计收益率排名 · 点策略查看持仓与交易依据</p></div><div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div></section>';
   const foot='<div class="arena-foot">虚拟资金 · 模拟交易 · 不构成投资建议 · 历史表现不代表未来 · <a href="https://daocaijing.com?ch=aifund_arena">进入稻草财经终端查看原始信息 →</a> · <button type="button" class="tour-open" id="tourOpen">页面导览</button></div>';
   el.innerHTML=head+showcase+cards+divergenceCard(d)+'<div id="debateBox"></div>'+foot;
   renderDebateBox();
