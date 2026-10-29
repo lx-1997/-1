@@ -76,3 +76,32 @@
 .bbt-news-source-preview summary { min-height: 32px; color: var(--accent); cursor: pointer; font-size: 12px; }
 .bbt-news-source-preview details > div { max-height: 36vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .bbt .bbt-doc-overlay--ai { z-index: 160; }
+.bbt-generation-activity { margin: 0 0 18px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); color: var(--text-body); text-align: left; }
+.bbt-generation-activity__head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.bbt-generation-activity__head strong { font-size: 14px; }
+.bbt-generation-activity time { flex-shrink: 0; color: var(--mute); font-size: 11px; font-variant-numeric: tabular-nums; }
+.bbt-generation-activity p { margin: 10px 0; font-size: 13px; line-height: 1.7; color: var(--text-strong); overflow-wrap: anywhere; }
+.bbt-generation-activity ol { list-style: none; margin: 12px 0; padding: 0; max-height: 180px; overflow-y: auto; }
+.bbt-generation-activity li { display: flex; gap: 10px; padding: 6px 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.bbt-generation-activity li.is-current { color: var(--blue); }
+.bbt-generation-activity small { display: block; font-size: 11px; line-height: 1.7; color: var(--mute); }
+.bbt-ai-execution-log { margin-top: 12px; max-width: 100%; }
+.bbt-ai-execution-log summary { cursor: pointer; font-size: 12px; color: var(--text-body); }
+.bbt-ai-execution-log ol { max-height: 220px; overflow-y: auto; padding-left: 18px; margin: 8px 0 0; }
+.bbt-ai-execution-log li { margin: 0 0 10px; font-size: 12px; line-height: 1.7; }
+.bbt-ai-execution-log li > span { margin-left: 8px; color: var(--mute); }
+.bbt-ai-execution-log li.is-error > span { color: var(--down); }
+.bbt-ai-execution-log li > p { margin: 3px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; font-weight: 400; color: var(--text-soft); }
+.bbt .bbt-ai-thinking { color: var(--text-body); background: var(--panel-2); border-color: var(--line); }
+.bbt .bbt-ai-thinking b, .bbt .bbt-ai-thinking strong { color: var(--text-strong); }
+.bbt .bbt-ai-thinking > div > b { font-size: 13px; line-height: 1.6; }
+.bbt .bbt-ai-thinking small { color: var(--mute); font-size: 11px; line-height: 1.7; }
+.bbt .bbt-ai-thinking-scope, .bbt .bbt-ai-thinking-latest { color: var(--mute); }
+.bbt .bbt-ai-thinking-tools i, .bbt .bbt-ai-thinking-scope i,
+.bbt .bbt-ai-thinking-roundtable i { color: var(--text-body); background: var(--panel); border-color: var(--line); }
+.bbt .bbt-ai-thinking-roundtable i.is-live, .bbt .bbt-ai-thinking-tools i.is-live { color: var(--blue); background: var(--blue-bg); }
+.bbt .bbt-ai-thinking-mark { color: var(--blue); background: var(--blue-bg); }
+.bbt .bbt-ai-thinking-stop { color: var(--text-body); border-color: var(--line); }
+.bbt .bbt-ai-thinking-progress > span { width: 30%; animation: bbt-generation-wait 1.8s ease-in-out infinite; }
+@keyframes bbt-generation-wait { from { transform: translateX(-110%); } to { transform: translateX(350%); } }
+@media (prefers-reduced-motion: reduce) { .bbt .bbt-ai-thinking-progress > span { animation: none; } }

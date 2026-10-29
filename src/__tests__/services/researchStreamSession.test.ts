@@ -48,6 +48,15 @@ const streamFrames = (events: unknown[]) => {
   global.fetch = jest.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } });
 };
 
+it('forwards actual source readiness but never exposes raw model JSON fragments as progress', async () => {
+  streamFrames([{ type: 'ready', detail: '原文已获取 · 24 页 · 文本层 83000 字符' },
+    { type: 'thought', delta: '{"private_fragment":' }, { type: 'tick', elapsed: 10 },
+    { type: 'stage', detail: '正在生成深度解读' }, { type: 'done', data: { title: '完成' } }]);
+  const onStage = jest.fn();
+  await generateResearchDeepDraftSmart({ title: 'Report' }, onStage);
+  expect(onStage.mock.calls).toEqual([['原文已获取 · 24 页 · 文本层 83000 字符'], ['正在生成深度解读']]);
+});
+
 it('delivers the quick preview before the deep result', async () => {
   const quick = { one_liner: 'Preview', quick: true };
   const result = { title: 'Research result', summary: 'Deep result' };

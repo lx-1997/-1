@@ -1030,7 +1030,7 @@ async function streamResearchDeepDraft(
         let evt: any;
         try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
         if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
-        if (evt.type === 'stage' && onStage && evt.detail) onStage(evt.detail);
+        if ((evt.type === 'stage' || evt.type === 'ready') && onStage && typeof evt.detail === 'string') onStage(evt.detail);
         else if (evt.type === 'quick' && evt.data) {
           deliveredQuick = true;
           onQuick?.(evt.data);

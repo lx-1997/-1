@@ -91,6 +91,7 @@ import './TerminalReadingWorkspace.css';
 import './TerminalAssistantExperience.css';
 import './terminal/assistant-launcher.css';
 import NewsSourcePreview from './NewsSourcePreview';
+import GenerationActivity, { appendGenerationActivity, type GenerationActivityEvent } from './GenerationActivity';
 import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, conciseAssistantFollowups, type AiReferenceContext } from '../utils/aiAssistantExperience';
 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
@@ -225,6 +226,7 @@ interface AiBgTask {
   startedAt: number;
   status: 'running' | 'done' | 'error';
   stage: string;
+  activity?: GenerationActivityEvent[];
   result: AiAnalysis | null;
   quick?: AiAnalysisLike | null;  // 快轨速览卡：深稿完成前先行渲染
   deepDraft: ResearchDeepDraftInput;
@@ -287,12 +289,8 @@ export function createResearchRetryQueue(isCurrent: (revision: number) => boolea
   };
 }
 
-// 进度按耗时渐近爬升（预估节奏）：深稿分钟级、快讯十秒级；完成即被真实结果替代。
-const aiTaskPulse = (t: AiBgTask, now = Date.now()) => {
-  const ms = Math.max(0, now - t.startedAt);
-  const tau = t.kind === 'report' ? 45000 : 8000;
-  return { elapsed: Math.floor(ms / 1000), progress: Math.min(94, 6 + 88 * (1 - Math.exp(-ms / tau))) };
-};
+// Elapsed time is a clock, not an estimate of completion or an execution stage.
+const aiTaskPulse = (t: AiBgTask, now = Date.now()) => ({ elapsed: Math.max(0, Math.floor((now - t.startedAt) / 1000)) });
 
 const clipTitle = (s: string, n = 24) => (s.length > n ? `${s.slice(0, n)}…` : s);
 interface AiConversationTurn {
@@ -514,12 +512,13 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
     ? Math.min(roundtableSteps.length - 1, Math.max(statusStage, traceStage))
     : 0;
   const quickSteps = ['理解问题', '核对数据', '组织答案'];
-  const quickStage = status?.match(/核对|取数|检索|Harness|公开资料|数据工具/) ? 1 : status?.match(/组织|结论|回答|完成/) ? 2 : 0;
+  const batchReturned = tools.length > 0 && tools.every(tool => tool.ok !== undefined);
+  const quickStage = batchReturned ? 2 : status?.match(/核对|取数|检索|Harness|公开资料|数据工具/) ? 1 : status?.match(/组织|结论|回答|完成/) ? 2 : 0;
   const stageLabels = roundtable ? roundtableSteps : quickSteps;
   const activeStage = roundtable ? activeRoundtableStep : quickStage;
   // 这是执行进度的可视化，不代表模型隐藏思考 token；只有收到工具/状态事件
   // 才推进阶段，避免用“假进度”误导用户。
-  const progressPercent = Math.round((activeStage / Math.max(1, stageLabels.length - 1)) * 100);
+  const waitingForAnswer = !roundtable && batchReturned;
   const auditedScope = Array.from(new Set(tools.filter(tool => tool.ok === true)
     .map(tool => TOOL_LABEL[tool.tool] || '')
     .filter(label => label && label !== '统一研究取数' && !label.startsWith('研究数据')))).slice(-8);
@@ -536,7 +535,7 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
     <div className="bbt-ai-thinking" role="status" aria-live="polite">
       <span className="bbt-ai-thinking-mark">✦</span>
       <div>
-        <b>{status || (roundtable ? '正在组建投研圆桌' : '正在识别你的问题并选择研究路径')}</b>
+        <b>{waitingForAnswer ? '本批资料已返回，正在等待回答生成' : status || (roundtable ? '正在组建投研圆桌' : '正在识别你的问题并选择研究路径')}</b>
         <span className="bbt-ai-thinking-roundtable" aria-label={roundtable ? '多专家协作阶段' : '快速问答执行阶段'}>
           {stageLabels.map((label, index) => <React.Fragment key={label}>
             <i className={index < activeStage ? 'is-done' : index === activeStage ? 'is-live' : ''}>{index < activeStage ? '✓ ' : ''}{label}</i>
@@ -544,11 +543,11 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
           </React.Fragment>)}
         </span>
         <span className="bbt-ai-thinking-progress" role="progressbar" aria-label="研究进行中" aria-valuetext={stageLabels[activeStage]}>
-          <span style={{ width: `${Math.max(8, Math.min(90, progressPercent))}%` }} />
+          <span />
         </span>
         <small>{roundtable
           ? `已用 ${elapsed} 秒 · ${elapsed >= 30 ? '这次研究耗时较长，可随时停止' : '按实际数据返回更新进度'}`
-          : `已用 ${elapsed} 秒 · ${elapsed >= 30 ? '这次研究耗时较长，可随时停止' : progressPercent >= 67 ? '正在组织回答' : '正在核对可用数据'}`}</small>
+          : `已用 ${elapsed} 秒 · ${elapsed >= 30 ? '这次研究耗时较长，可随时停止' : waitingForAnswer ? '正在等待回答生成' : '正在核对可用数据'}`}</small>
         {/* 阶段性结果对快速问答同样可见：工具摘要/已查范围随 SSE 事件逐条到达，
             是真实取数结论而非预估动画——这是等待期唯一「有内容可看」的来源。 */}
         {auditedScope.length > 0 && <span className="bbt-ai-thinking-scope"><b>已查范围</b>{auditedScope.map(label => <i key={label}>{label}</i>)}</span>}
@@ -561,6 +560,13 @@ function AiResearchProgress({ status, tools = [], onStop, roundtable = false }: 
             <small>{[reference.source, reference.published_at?.slice(0, 10)].filter(Boolean).join(' · ')}</small>
           </span>)}
         </span>}
+        {tools.length > 0 && <details className="bbt-ai-execution-log" open>
+          <summary>执行过程 · {tools.filter(tool => tool.ok !== undefined).length}/{tools.length} 项已返回</summary>
+          <ol>{tools.slice(-12).map((tool, index) => <li key={`${tool.tool}-${index}`} className={tool.ok === false ? 'is-error' : ''}>
+            <strong>{TOOL_LABEL[tool.tool] || '研究数据'}</strong><span>{tool.ok === undefined ? '查询中' : tool.ok ? '已返回' : '未能取得资料'}</span>
+            {tool.summary && <p>{tool.summary.slice(0, 280)}</p>}
+          </li>)}</ol>
+        </details>}
         {activeTools.length > 0 ? (
           <span className="bbt-ai-thinking-tools">{activeTools.map((tool, index) => <i className={tool.ok === false ? 'is-error' : tool.ok === true ? 'is-done' : 'is-live'} key={`${tool.tool}-${index}`}>{TOOL_LABEL[tool.tool] || (tool.tool.startsWith('get_') ? '研究数据' : tool.tool)}{tool.ok === true ? ' ✓' : ''}</i>)}</span>
         ) : null}
@@ -3746,6 +3752,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const registerAiTask = useCallback((task: AiBgTask) => {
     aiTasksRef.current.get(task.key)?.cancel?.();
+    task.activity = task.activity || [{ detail: task.stage || '已提交解读请求，等待服务返回', at: task.startedAt }];
     aiTasksRef.current.set(task.key, task);
     // 启动即写历史（status=running）：刷新后进行中的解读显示为「中断 · 点击继续」而非凭空消失
     upsertAiTaskHistory({
@@ -3868,7 +3875,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       cancel: () => controller.abort(),
       hidden,
       restart: () => { removeAiTask(cacheKey); runAiAnalysis(r); },
-      startedAt: Date.now(), status: 'running', stage: '', result: null, deepDraft: null, error: '',
+      startedAt: Date.now(), status: 'running', stage: '已提交解读请求，等待服务返回', result: null, deepDraft: null, error: '',
     };
     const isTaskCurrent = () => aiMountedRef.current && isAuthRevisionCurrent(revision)
       && aiTasksRef.current.get(cacheKey) === task;
@@ -3886,12 +3893,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const cur = aiTasksRef.current.get(cacheKey);
         // 速览已出后，深度阶段的「模型解读中」让位给更准确的速览文案
         const stageText = cur?.quick && detail.startsWith('模型解读中') ? '速览完成 · 深度解读继续生成中' : detail;
-        if (cur && cur.stage !== stageText) { cur.stage = stageText; setAiTasksVersion(v => v + 1); }
+        if (cur && cur.stage !== stageText) { cur.stage = stageText; cur.activity = appendGenerationActivity(cur.activity, stageText); setAiTasksVersion(v => v + 1); }
       }, (quick) => {
         if (!isTaskCurrent()) return;
         // 快轨速览上屏：深稿完成前先给方向感；深稿 settle 时自动替换
         const cur = aiTasksRef.current.get(cacheKey);
-        if (cur) { cur.quick = quick; cur.stage = '速览完成 · 深度解读继续生成中'; setAiTasksVersion(v => v + 1); }
+        if (cur) { cur.quick = quick; cur.stage = '速览完成 · 深度解读继续生成中'; cur.activity = appendGenerationActivity(cur.activity, cur.stage); setAiTasksVersion(v => v + 1); }
         if (aiViewingTaskRef.current === cacheKey) { setAiResult(quick as AiAnalysis); setAiQuickPending(true); }
       }, controller.signal);
       const compact = deep.compact || compactFromDeepDraft(deep);
@@ -3925,6 +3932,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         });
         if (attempts) {
           task.stage = '网络波动，6 秒后自动重试';
+          task.activity = appendGenerationActivity(task.activity, task.stage);
           setAiTasksVersion(v => v + 1);
           if (!task.hidden) showToast(`网络波动，6 秒后自动重试（${attempts}/2）`, () => {
             if (isTaskCurrent()) openAiTaskView(cacheKey);
@@ -3987,7 +3995,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       key: cacheKey, kind: 'news', title: m.title, report, meta: null,
       content: ((articleOriginal?.id === m.id ? articleOriginal.content : '') || m.content || '').slice(0, 20000),
       restart: () => { void runNewsAi(m, true); },
-      startedAt: Date.now(), status: 'running', stage: '', result: null, deepDraft: null, error: '',
+      startedAt: Date.now(), status: 'running', stage: '已提交解读请求，等待服务返回', result: null, deepDraft: null, error: '',
     });
     // 立即打开阅读模态展示文章原文：解读在后台生成，完成后自动切换为解读结果
     openAiTaskView(cacheKey);
@@ -7385,26 +7393,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   />
                 </div>
               ) : <>
-              {aiLoading && !aiQuickPending && (() => {
-                // 进度按耗时渐近爬升（预估节奏）；跟随后台任务时用其真实阶段文本与开始时刻。
+              {aiLoading && (() => {
                 const task = aiViewingTaskRef.current ? aiTasksRef.current.get(aiViewingTaskRef.current) : undefined;
-                const pulse = task && task.status === 'running' ? aiTaskPulse(task) : { elapsed: 0, progress: 6 };
-                const stages = aiReportMeta ? ['读取原文', '提炼事实', '组织逻辑', '核对风险', '生成结论'] : ['读取内容', '提炼要点', '生成解读'];
-                const stageCut = aiReportMeta ? [0, 26, 52, 74, 90] : [0, 38, 74];
-                const activeStage = stages.reduce((acc, _, index) => (pulse.progress >= stageCut[index] ? index : acc), 0);
-                const stageDetail = aiReportMeta
-                  ? ['正在下载并解析研报原文', '正在逐页提炼事实与数据', '正在组织章节逻辑与证据链', '正在核对风险与反方观点', '正在汇总结论与跟踪项']
-                  : ['正在读取内容', '正在提炼关键要点', '正在生成解读'];
                 return (
                 <div className="bbt-ai-loading">
-                  <div className="bbt-ai-load-head"><span>✦ {aiReportMeta ? '正在生成深度研报稿…' : 'AI 正在解读…'}</span><span className="bbt-ai-load-pct">{Math.round(pulse.progress)}% · 已用 {Math.max(1, pulse.elapsed)}s</span></div>
-                  <div className="bbt-ai-bar"><div className="bbt-ai-bar-fill" style={{ width: `${pulse.progress}%` }} /></div>
-                  <div className="bbt-ai-load-stages" aria-label="AI 解读阶段（按典型耗时预估）">
-                    {stages.map((stage, index) => (
-                      <span key={stage} className={index < activeStage ? 'is-done' : index === activeStage ? 'is-active' : ''}><i>{index < activeStage ? '✓' : index + 1}</i>{stage}</span>
-                    ))}
-                  </div>
-                  <div className="bbt-ai-load-hint"><b>{(task && task.stage) || stageDetail[activeStage]}…</b>{aiReportMeta ? '正在后台读取原文并整理证据、章节与跟踪项；通常需要几十秒，可随时关闭继续浏览' : '解读仍在生成，可先看来源资料；完成后自动显示结果'}</div>
+                  <GenerationActivity key={task?.key || 'loading'} startedAt={task?.startedAt} events={task?.activity} detail={task?.stage} previewReady={aiQuickPending} />
                   {aiOriginal && !aiReportMeta ? <NewsSourcePreview title={aiReport.title || ''} content={aiOriginal} /> : aiOriginal ? (
                     <div aria-label="文章原文（AI 解读生成期间可直接阅读）" style={{ marginTop: 12, maxHeight: 300, overflowY: 'auto', textAlign: 'left', fontSize: 13, lineHeight: 1.9, color: 'rgba(255,255,255,0.78)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 10, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>原文 · AI 解读完成后自动替换为本区块</div>

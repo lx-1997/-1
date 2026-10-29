@@ -43,6 +43,7 @@ afterAll(() => { HTMLElement.prototype.scrollIntoView = originalScrollIntoView; 
 beforeEach(() => {
   jest.useFakeTimers();
   jest.clearAllMocks();
+  (runToolResearchStream as jest.Mock).mockImplementation(() => jest.fn());
   invalidateAuthSession();
   localStorage.clear();
   localStorage.setItem('bbt_acct_hint_v1', '1');
@@ -279,4 +280,22 @@ it.each(['error', 'eof'])('does not silently restart an executed quick question 
   expect(runToolResearch).not.toHaveBeenCalled();
   expect(screen.getByRole('textbox', { name: '向 AI 投研助手提问' })).toHaveValue('微软最近有哪些重要变化和风险？请简洁回答。');
   expect(screen.getByRole('button', { name: '发送问题' })).toBeEnabled();
+});
+
+it('exposes both successful and unavailable source receipts while the answer is generating', async () => {
+  await mountTerminal();
+  await act(async () => { fireEvent.click(within(screen.getByRole('complementary', { name: '主导航' })).getByRole('button', { name: /AI 对话/ })); });
+  await act(async () => { fireEvent.change(screen.getByRole('textbox', { name: '向 AI 投研助手提问' }), { target: { value: '核对微软最近变化' } }); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '发送问题' })); });
+  const callbacks = (runToolResearchStream as jest.Mock).mock.calls[0][1];
+  await act(async () => {
+    callbacks.onTool({ tool: 'get_stock_news' }, 'start');
+    callbacks.onTool({ tool: 'search_our_content' }, 'start');
+    callbacks.onTool({ tool: 'get_stock_news', ok: false, summary: '该新闻源本轮不可用' }, 'result');
+    callbacks.onTool({ tool: 'search_our_content', ok: true, summary: '找到两条相关站内资料' }, 'result');
+  });
+  expect(screen.getByText('执行过程 · 2/2 项已返回')).toBeInTheDocument();
+  expect(screen.getByText('未能取得资料')).toBeInTheDocument();
+  expect(screen.getByText('该新闻源本轮不可用')).toBeInTheDocument();
+  expect(screen.getByText('找到两条相关站内资料')).toBeInTheDocument();
 });

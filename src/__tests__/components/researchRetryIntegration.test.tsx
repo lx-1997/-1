@@ -248,6 +248,23 @@ it('opens report progress immediately and resumes the same task after closing', 
   expectNoCompactRequest();
 });
 
+it('retains real generation events across reopen and continues showing them with a quick preview', async () => {
+  pendingResearch();
+  await openReport();
+  const onStage = research.mock.calls[0][1]!;
+  const onQuick = research.mock.calls[0][2]!;
+  await act(async () => { onStage('原文已获取 · 24 页 · 文本层 83000 字符'); });
+  await act(async () => { onStage('正在生成深度解读'); });
+  expect(screen.getByText('原文已获取 · 24 页 · 文本层 83000 字符')).toBeInTheDocument();
+  await act(async () => { fireEvent.click(document.querySelector('.bbt-doc-close')!); });
+  await clickReport();
+  expect(screen.getByText('原文已获取 · 24 页 · 文本层 83000 字符')).toBeInTheDocument();
+  await act(async () => { onQuick({ one_liner: '已生成的初步摘要', summary: '全文仍在生成', quick: true } as any); });
+  expect(screen.getByText('速览已就绪 · 全文继续生成')).toBeInTheDocument();
+  expect(screen.getByText('原文已获取 · 24 页 · 文本层 83000 字符')).toBeInTheDocument();
+  expect(research).toHaveBeenCalledTimes(1);
+});
+
 it('keeps auxiliary market dashboards collapsed while preserving access to them', async () => {
   let view!: ReturnType<typeof render>;
   await act(async () => { view = render(<AuthProvider><FinancialTerminal /></AuthProvider>); });
