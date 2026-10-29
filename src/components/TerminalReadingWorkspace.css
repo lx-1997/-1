@@ -37,8 +37,6 @@
 .bbt:is(.bbt-side-articles, .bbt-side-notes, .bbt-side-reports) .bbt-rail { display: none; }
 .bbt:is(.bbt-side-articles, .bbt-side-notes, .bbt-side-reports) .bbt-grid { padding: 16px clamp(14px, 2.5vw, 32px); gap: 0; background: var(--bg); }
 .bbt:is(.bbt-side-articles, .bbt-side-notes, .bbt-side-reports) .bbt-news-panel { border: 1px solid var(--line); border-radius: 10px; max-width: 1120px; width: 100%; margin: 0 auto; }
-/* Header and mobile navigation already expose AI; the duplicate floating entry obscures reading. */
-.bbt:is(.bbt-side-articles, .bbt-side-notes, .bbt-side-reports) .bbt-ai-dock:not(.is-open) { display: none; }
 @media (min-width: 821px) {
   .terminal-only-root .bbt.bbt-with-sidebar { min-height: 0; overflow-y: auto; overflow-x: hidden; }
   .terminal-only-root .bbt.bbt-with-sidebar.bbt--anon { height: auto; min-height: calc(100dvh / var(--z)); }

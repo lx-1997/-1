@@ -90,6 +90,7 @@ import './TerminalMobileChat.css';
 import './terminal/terminal-market-ui.css';
 import './TerminalReadingWorkspace.css';
 import './TerminalAssistantExperience.css';
+import './terminal/assistant-launcher.css';
 import NewsSourcePreview from './NewsSourcePreview';
 import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, conciseAssistantFollowups, type AiReferenceContext } from '../utils/aiAssistantExperience';
 
@@ -1495,7 +1496,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiDockPos, setAiDockPos] = useState<{ r: number; b: number } | null>(() => {
     try {
       const v = JSON.parse(localStorage.getItem('bbt_ai_dock_pos') || 'null');
-      if (v && typeof v.r === 'number' && typeof v.b === 'number') return v;
+      if (v && Number.isFinite(v.r) && Number.isFinite(v.b)) return v;
     } catch { /* 损坏即回默认位 */ }
     return null;
   });
@@ -1511,11 +1512,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   };
   const clampAiDockPos = (right: number, bottom: number, z: number) => {
     const fab = aiDockRef.current?.querySelector<HTMLButtonElement>('.bbt-ai-dock-fab');
-    const width = fab?.offsetWidth || 118;
-    const height = fab?.offsetHeight || 44;
+    const width = aiDockRef.current?.offsetWidth || fab?.offsetWidth || 168;
+    const height = aiDockRef.current?.offsetHeight || fab?.offsetHeight || 56;
+    const mobileNav = document.querySelector('.bbt-mobile-nav')?.getBoundingClientRect();
+    const minimumBottom = mobileNav && mobileNav.height > 0 ? (window.innerHeight - mobileNav.top + 12) / z : 12;
     return {
-      r: Math.max(8, Math.min(right, Math.max(8, window.innerWidth / z - width - 8))),
-      b: Math.max(8, Math.min(bottom, Math.max(8, window.innerHeight / z - height - 8))),
+      r: Math.max(12, Math.min(right, Math.max(12, (document.documentElement.clientWidth || window.innerWidth) / z - width - 12))),
+      b: Math.max(minimumBottom, Math.min(bottom, Math.max(minimumBottom, window.innerHeight / z - height - 12))),
     };
   };
   const persistAiDockPos = (p: { r: number; b: number }) => {
@@ -1528,8 +1531,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     aiDockDragRef.current = {
       px: e.clientX,
       py: e.clientY,
-      r0: aiDockPos ? aiDockPos.r : AI_DOCK_DEFAULT_POS.r,
-      b0: aiDockPos ? aiDockPos.b : AI_DOCK_DEFAULT_POS.b,
+      r0: parseFloat(getComputedStyle(aiDockRef.current!).right) || AI_DOCK_DEFAULT_POS.r,
+      b0: parseFloat(getComputedStyle(aiDockRef.current!).bottom) || AI_DOCK_DEFAULT_POS.b,
       moved: false,
       fromFab,
       z: aiDockEffectiveZoom(),
@@ -1568,6 +1571,23 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       else { el.style.right = ''; el.style.bottom = ''; }
     }
   };
+  // Stored desktop coordinates and a growing history panel must stay reachable
+  // when the viewport shrinks. Clamp the whole widget, including the open panel.
+  useLayoutEffect(() => {
+    const el = aiDockRef.current;
+    if (!el) return;
+    const fit = () => {
+      const style = getComputedStyle(el);
+      const next = clampAiDockPos(parseFloat(style.right) || AI_DOCK_DEFAULT_POS.r, parseFloat(style.bottom) || AI_DOCK_DEFAULT_POS.b, aiDockEffectiveZoom());
+      setAiDockPos(previous => previous && Math.abs(previous.r - next.r) < 1 && Math.abs(previous.b - next.b) < 1 ? previous : next);
+    };
+    fit();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    observer?.observe(el);
+    window.addEventListener('resize', fit);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', fit); };
+    // The observer reads live geometry, independent of the position state.
+  }, [aiDockOpen, sideNavKey]);
   const aiViewingTaskRef = useRef('');  // 阅读模态当前跟随的后台任务 key；空串=模态未跟随任务
   const [shareImgUrl, setShareImgUrl] = useState<string>('');  // 出图兜底预览（长按保存）
   const [aiResult, setAiResult] = useState<AiAnalysis | null>(null);
@@ -1829,6 +1849,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const navRef = useRef<string[]>(watchlist);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && aiDockOpen) { setAiDockOpen(false); aiDockRef.current?.querySelector<HTMLButtonElement>('.bbt-ai-dock-fab')?.focus(); return; }
       if (e.key === 'Escape' && paletteOpen) { setPaletteOpen(false); return; }
       if (e.key === 'Escape') { setHelpMenuOpen(false); setAcctOpen(false); setSideNavOpen(false); setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); aiViewingTaskRef.current = ''; setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiOriginal(''); setAiModalExpanded(false); return; }
       if (paletteOpen) return;
@@ -1850,7 +1871,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paletteOpen]);
+  }, [paletteOpen, aiDockOpen]);
   useEffect(() => { if (paletteOpen) setTimeout(() => paletteInput.current?.focus(), 30); }, [paletteOpen]);
   useEffect(() => { paletteActiveRef.current?.scrollIntoView({ block: 'nearest' }); }, [paletteActive]);
 
@@ -7508,6 +7529,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           >
             {aiDockOpen && (
               <div id="bbt-ai-dock-panel" className="bbt-ai-dock-panel" role="dialog" aria-label="AI 助手">
+                <div className="bbt-ai-dock-hero">
+                  <div className="bbt-ai-dock-eyebrow"><span className="bbt-ai-dock-signal" />DAOCAIJING INTELLIGENCE</div>
+                  <h2>让研究，再进一步。</h2>
+                  <p>{active ? `从${nameOf(active)}出发，连接行情与研究证据。` : '从市场变化到个股线索，陪你把问题看清楚。'}</p>
+                  <span className="bbt-ai-dock-hero-star" aria-hidden="true">✦</span>
+                </div>
                 <div
                   className="bbt-ai-dock-tabs"
                   onPointerDown={onAiDockHandleDown(false)}
@@ -7523,8 +7550,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 </div>
                 {aiDockTab === 'chat' ? (
                   <div className="bbt-ai-dock-chat">
-                    <button type="button" className="bbt-ai-dock-new" disabled={aiWorkspaceBusy} onClick={() => { resetAiConversation(); focusSideModule('ai'); setAiDockOpen(false); }}>＋ 新对话</button>
-                    <div className="bbt-ai-dock-convlist" aria-label="最近对话">
+                    <div className="bbt-ai-dock-shortcuts">
+                      <button type="button" disabled={aiWorkspaceBusy || !watchlist.length} onClick={() => {
+                        const question = `帮我核对这些自选最近有哪些重要变化与风险：${watchlist.slice(0, 6).map(symbol => `${nameOf(symbol)}(${symbol})`).join('、')}`;
+                        openAi(); primeAiQuestion(question); setAiDockOpen(false);
+                      }}><span aria-hidden="true">◉</span><b>看自选变化</b><small>{watchlist.length ? `${watchlist.length} 只关注 · 变化与风险` : '添加自选后开始'}</small><i aria-hidden="true">↗</i></button>
+                      <button type="button" disabled={aiWorkspaceBusy} onClick={() => {
+                        const question = active ? `帮我研究${nameOf(active)}（${active}）最近的重要变化、基本面与主要风险。` : '帮我梳理今天市场的重要变化与需要继续核实的线索。';
+                        openAi(); primeAiQuestion(question); setAiDockOpen(false);
+                      }}><span aria-hidden="true">⌁</span><b>{active ? `研究${nameOf(active)}` : '梳理市场线索'}</b><small>{active ? '带上当前股票继续问' : '从事件到影响，逐步核实'}</small><i aria-hidden="true">↗</i></button>
+                    </div>
+                    <button type="button" className="bbt-ai-dock-new" disabled={aiWorkspaceBusy} onClick={() => { resetAiConversation(); focusSideModule('ai'); setAiDockOpen(false); }}>＋ 开始新对话 <span aria-hidden="true">↗</span></button>
+                    <div className="bbt-ai-dock-history-label">最近对话</div><div className="bbt-ai-dock-convlist" aria-label="最近对话">
                       {aiConversations.length === 0 && <p className="bbt-ai-dock-empty">暂无历史对话</p>}
                       {aiConversations.slice(0, 5).map(c => (
                         <button key={c.id} type="button" className="bbt-ai-dock-conv" disabled={aiWorkspaceBusy} onClick={() => { openAiConversation(c); focusSideModule('ai'); setAiDockOpen(false); }}>
@@ -7571,8 +7608,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               aria-controls="bbt-ai-dock-panel"
               title="AI 助手 · 点击打开，可拖动位置"
             >
-              <span className="bbt-ai-dock-icon" aria-hidden="true">✦</span>
-              <span>AI 助手</span>
+              <span className="bbt-ai-dock-icon" aria-hidden="true"><span>✦</span></span>
+              <span className="bbt-ai-dock-label"><b>AI 助手</b><small>{running.length > 0 ? '正在为你解读' : done > 0 ? '研究已就绪 · 点击查看' : active ? `正在关注 · ${nameOf(active)}` : '投研，随时开始'}</small></span>
+              <span className="bbt-ai-dock-chevron" aria-hidden="true">{aiDockOpen ? '⌄' : '↗'}</span>
               {running.length > 0
                 ? <><i className="bbt-ai-tasks-spin" aria-hidden="true" /><span className="bbt-ai-dock-badge" aria-label={`${running.length} 项解读进行中`}>{running.length}</span></>
                 : done > 0 && <span className="bbt-ai-dock-badge" aria-label={`${done} 项解读待查看`}>{done}</span>}

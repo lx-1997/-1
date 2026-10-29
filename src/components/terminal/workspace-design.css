@@ -127,7 +127,6 @@
 .bbt.bbt-with-sidebar .bbt-side-item.active { box-shadow: none; }
 .bbt.bbt-with-sidebar .bbt-side-item.active .bbt-side-icon { color: var(--accent); }
 .bbt.bbt-with-sidebar .bbt-ph { border-bottom-color: var(--border-soft); }
-.bbt.bbt-with-sidebar .bbt-ai-dock:not(.is-open) { display: none; }
 .bbt.bbt-with-sidebar .bbt-review-workspace { margin: 24px var(--dc-gutter); background: var(--surface); border-color: var(--border-soft); border-radius: var(--r-m); box-shadow: none; }
 .bbt.bbt-with-sidebar .bbt-review-workspace-head { background: var(--surface); border-color: var(--border-soft); }
 .bbt.bbt-with-sidebar .bbt-review-workspace-head h1 { color: var(--text); font-weight: 650; }

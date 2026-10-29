@@ -222,3 +222,23 @@ it('toggles exactly once for a pointer tap and preserves the expanded state duri
   expect(fab).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('dialog', { name: 'AI 助手' })).toBeInTheDocument();
 });
+
+it('closes the floating home with Escape and restores focus to its launcher', async () => {
+  await mountTerminal();
+  const fab = screen.getByRole('button', { name: 'AI 助手' });
+  await act(async () => { fireEvent.click(fab); });
+  expect(screen.getByRole('dialog', { name: 'AI 助手' })).toBeInTheDocument();
+  await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }); });
+  expect(screen.queryByRole('dialog', { name: 'AI 助手' })).not.toBeInTheDocument();
+  expect(fab).toHaveFocus();
+});
+
+it('prepares a market research draft from the launcher without submitting an AI request', async () => {
+  await mountTerminal();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'AI 助手' })); });
+  const writesBefore = (apiPost as jest.Mock).mock.calls.filter(([path]) => /ai|research/.test(path));
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /梳理市场线索/ })); });
+  expect(screen.queryByRole('dialog', { name: 'AI 助手' })).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: '向 AI 投研助手提问' })).toHaveValue('帮我梳理今天市场的重要变化与需要继续核实的线索。');
+  expect((apiPost as jest.Mock).mock.calls.filter(([path]) => /ai|research/.test(path))).toEqual(writesBefore);
+});

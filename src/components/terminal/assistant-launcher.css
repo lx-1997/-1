@@ -1,0 +1,69 @@
+/* Persistent assistant: branded launcher, compact home, existing research flow. */
+.bbt .bbt-ai-dock { gap: 12px; max-width: calc(100vw / var(--z, 1) - 32px); }
+.bbt .bbt-ai-dock-fab {
+  position: relative; min-width: 172px; min-height: 58px; padding: 7px 13px 7px 8px;
+  gap: 10px; border: 1px solid #4e79a7; border-radius: 20px;
+  background: linear-gradient(125deg, #102941 0%, #183c60 65%, #1b4366 100%);
+  color: #f6fbff; text-align: left; font-weight: 600;
+  box-shadow: 0 8px 28px #09223b40, 0 2px 6px #09223b29, inset 0 1px 0 #ffffff20;
+  transition: box-shadow .2s ease, border-color .2s ease;
+}
+.bbt .bbt-ai-dock-fab:hover, .bbt .bbt-ai-dock-fab.is-open {
+  border-color: #81c6e5; box-shadow: 0 10px 32px #12375b4a, 0 0 0 3px #59b9e51a, inset 0 1px 0 #ffffff25;
+}
+.bbt .bbt-ai-dock-icon {
+  position: relative; flex: 0 0 40px; width: 40px; height: 40px; display: grid; place-items: center;
+  border-radius: 50%; border: 1px solid #91e4f49c; color: #e6fbff; font-size: 26px;
+  background: radial-gradient(circle at 28% 20%, #d4faffb3, transparent 35%), linear-gradient(145deg, #53c5d9, #3c84d0 55%, #484997);
+  box-shadow: inset 0 0 12px #d5faff70, 0 0 15px #5ed8ed40;
+}
+.bbt .bbt-ai-dock-icon::before {
+  content: ''; position: absolute; inset: 5px -3px; border: 1px solid #c7efff80; border-radius: 50%; transform: rotate(-34deg) scaleY(.5); pointer-events: none;
+}
+.bbt .bbt-ai-dock-label { display: flex; flex-direction: column; min-width: 0; gap: 4px; }
+.bbt .bbt-ai-dock-label b { font-size: 14px; line-height: 1.2; color: #f4fbff; letter-spacing: .2px; }
+.bbt .bbt-ai-dock-label small { max-width: 145px; overflow: hidden; text-overflow: ellipsis; color: #b4d1e6; font-size: 10px; font-weight: 400; line-height: 1.3; }
+.bbt .bbt-ai-dock-chevron { margin-left: 2px; font-size: 17px; color: #a8d5eb; }
+.bbt .bbt-ai-dock-badge { position: absolute; top: -7px; right: -4px; min-width: 20px; box-sizing: border-box; border: 2px solid var(--panel); background: #bef1f3; color: #12394f; font-weight: 700; }
+.bbt .bbt-ai-dock-fab .bbt-ai-tasks-spin { position: absolute; inset: 5px auto auto 5px; width: 42px; height: 42px; border-color: transparent; border-top-color: #caf9ff; pointer-events: none; }
+.bbt .bbt-ai-dock-panel {
+  box-sizing: border-box; width: min(356px, calc(100vw / var(--z, 1) - 32px));
+  max-height: calc((100dvh - 180px) / var(--z, 1)); padding: 0;
+  color: var(--text-body); background: var(--panel); border: 1px solid var(--line-2); border-radius: 20px;
+  box-shadow: 0 20px 70px #08223c33, 0 4px 16px #08223c14; overscroll-behavior: contain;
+}
+.bbt .bbt-ai-dock-hero { position: relative; overflow: hidden; padding: 22px 22px 20px; background: radial-gradient(ellipse at 100% 0, #378ca45c, transparent 70%), linear-gradient(125deg, #102941, #183b5b); color: #f1f8ff; }
+.bbt .bbt-ai-dock-eyebrow { display: flex; align-items: center; gap: 6px; font: 600 8px/1.4 system-ui, sans-serif; letter-spacing: 1.5px; color: #a6d7e9; }
+.bbt .bbt-ai-dock-signal { width: 5px; height: 5px; border-radius: 50%; background: #9ee7de; box-shadow: 0 0 8px #9ee7de70; }
+.bbt .bbt-ai-dock-hero h2 { position: relative; margin: 16px 0 7px; font-size: 22px; line-height: 1.3; font-weight: 600; letter-spacing: -.5px; color: #f3faff; }
+.bbt .bbt-ai-dock-hero p { position: relative; max-width: 245px; margin: 0; font-size: 11px; line-height: 1.8; color: #b7cfdf; }
+.bbt .bbt-ai-dock-hero-star { position: absolute; right: 14px; top: 22px; font-size: 100px; line-height: 1; color: #aee6f21f; transform: rotate(12deg); pointer-events: none; }
+.bbt .bbt-ai-dock-tabs { gap: 4px; padding: 10px 12px; margin: 0; border-bottom: 1px solid var(--line-2); }
+.bbt .bbt-ai-dock-tabs button { padding: 7px 10px; border-radius: 7px; font-size: 11px; background: transparent; }
+.bbt .bbt-ai-dock-tabs button.active { background: var(--blue-bg); color: var(--blue); border-color: transparent; }
+.bbt .bbt-ai-dock-tabs .bbt-ai-dock-x { min-width: 32px; min-height: 32px; }
+.bbt .bbt-ai-dock-chat, .bbt .bbt-ai-dock-tasks { padding: 14px; }
+.bbt .bbt-ai-dock-shortcuts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.bbt .bbt-ai-dock-shortcuts button { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 8px; text-align: left; padding: 12px 10px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--panel-2); color: var(--text-body); cursor: pointer; }
+.bbt .bbt-ai-dock-shortcuts button:hover { border-color: var(--blue); background: var(--blue-bg); }
+.bbt .bbt-ai-dock-shortcuts button:disabled { opacity: .5; cursor: default; }
+.bbt .bbt-ai-dock-shortcuts span { color: var(--blue); font-size: 21px; line-height: 1; }
+.bbt .bbt-ai-dock-shortcuts b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.bbt .bbt-ai-dock-shortcuts small { font-size: 9px; line-height: 1.6; color: var(--mute); }
+.bbt .bbt-ai-dock-shortcuts i { position: absolute; right: 10px; top: 12px; font-size: 13px; color: var(--mute); font-style: normal; }
+.bbt .bbt-ai-dock-new { display: flex; align-items: center; justify-content: space-between; margin: 0 0 16px; padding: 11px 12px; border-radius: 10px; background: var(--blue-bg); color: var(--blue); border-color: var(--blue-line); font-size: 12px; font-weight: 600; }
+.bbt .bbt-ai-dock-history-label { padding: 0 3px 5px; color: var(--mute); font-size: 10px; }
+.bbt .bbt-ai-dock-empty { margin: 8px 3px 3px; font-size: 11px; line-height: 1.8; }
+.bbt .bbt-ai-dock-conv { gap: 8px; padding: 9px 4px; border-radius: 6px; }
+.bbt .bbt-ai-dock-conv b { font-size: 11px; }
+.bbt .bbt-ai-dock-conv time { font-size: 9px; }
+@media (max-width: 820px) {
+  .bbt .bbt-ai-dock { right: 12px; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+  .bbt .bbt-ai-dock-fab { min-width: 148px; min-height: 54px; padding: 6px 12px 6px 7px; border-radius: 18px; }
+  .bbt .bbt-ai-dock-icon { flex-basis: 36px; width: 36px; height: 36px; font-size: 23px; }
+  .bbt .bbt-ai-dock-label b { font-size: 13px; }
+  .bbt .bbt-ai-dock-panel { max-height: calc((100dvh - 190px - env(safe-area-inset-bottom, 0px)) / var(--z, 1)); border-radius: 18px; }
+  .bbt .bbt-ai-dock-hero { padding: 18px; }
+  .bbt .bbt-ai-dock-hero h2 { font-size: 20px; }
+  .bbt .bbt-ai-dock-shortcuts button { padding: 11px 9px; }
+}
