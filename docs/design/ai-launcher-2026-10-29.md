@@ -26,3 +26,11 @@
 本地真实 API 候选：桌面浅色、桌面个股深色、320px 手机深色截图已留存。320x740 下挂件 left14/right302/top177.83/bottom654，底部导航 top678；无横向右溢出。打开面板拖到顶部后 top11.83，仍展开；Escape 正常收起。文章、纪要、研报、自选均显示入口；苹果研究页展示“研究苹果”，进入后问题带 AAPL；解读记录空状态诚实显示。
 
 证据：artifacts/ai-launcher-20261029。生产发布回执与真实会员验收在完成后追加。
+
+## Production acceptance
+
+Published main.bd2fc7b6.js; index SHA256 7c71e52157d93a7c6b753d701872c4b9d1520171abb70188bee868c1d8ee2c7c. Backup /root/deepfocus-ai-launcher-web-20261029-121156.tgz. Four release locks and previous index/main guards; all 276 disk files and 234 HTTP assets verified, three routes returned 200. Backend and standalone ai-fund were unchanged.
+
+Formal member session: launcher visible in articles, institution notes, reports and stocks; the 600519 research view carries the company into the shortcut. Five account stocks, real recent conversations and cloud/local interpretation records displayed. At 320x740 the widget bounds were left12/right300/top15.86/bottom631.86, mobile navigation top678, no horizontal overflow. Watchlist shortcut populated an editable five-stock question without submitting it. Browser error list empty. Temporary viewport reset.
+
+localhost:3017 now serves the identical frozen build; 3019 is this release's preview. Final evidence is in artifacts/ai-launcher-20261029.
