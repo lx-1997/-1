@@ -34,7 +34,7 @@ it('seeds only a first login using the guest list', async () => {
   const { result } = renderHook(() => useAccountWatchlist('A', defaults, defaultNames));
   await settle();
   expect(result.current.watchlist).toEqual(['GUEST']);
-  act(() => jest.advanceTimersByTime(800));
+  await act(async () => { jest.advanceTimersByTime(800); });
   expect(saveList).toHaveBeenCalledWith(['GUEST'], defaultNames, expect.any(AbortSignal));
 });
 
@@ -99,4 +99,60 @@ it('keeps a deliberately empty server list stable after hydration', async () => 
   expect(result.current.watchlist).toBe(symbols);
   expect(fetchList).toHaveBeenCalledTimes(1);
   expect(saveList).not.toHaveBeenCalled();
+});
+
+it('exposes failed hydration and retries without writing an empty list', async () => {
+  authenticateSession(user('A'), 'test-a', 'https://example.test');
+  fetchList.mockRejectedValueOnce(new Error('offline'));
+  fetchList.mockResolvedValueOnce({ symbols: ['SERVER'], names: {}, empty: false });
+  const { result } = renderHook(() => useAccountWatchlist('A', defaults, defaultNames));
+  await settle();
+  expect(result.current.ready).toBe(false);
+  expect(result.current.loadError).toContain('加载失败');
+  act(() => result.current.setWatchlist(['IGNORED']));
+  expect(saveList).not.toHaveBeenCalled();
+  act(() => result.current.retrySync()); await settle();
+  expect(result.current.ready).toBe(true);
+  expect(result.current.loadError).toBe('');
+  expect(result.current.watchlist).toEqual(['SERVER']);
+  expect(saveList).not.toHaveBeenCalled();
+});
+
+it('retains failed edits, exposes the sync error and retries the latest list', async () => {
+  authenticateSession(user('A'), 'test-a', 'https://example.test');
+  fetchList.mockResolvedValueOnce({ symbols: ['SERVER'], names: {}, empty: false });
+  saveList.mockRejectedValueOnce(new Error('offline'));
+  const { result } = renderHook(() => useAccountWatchlist('A', defaults, defaultNames));
+  await settle();
+  act(() => result.current.setWatchlist(['SERVER', 'NEW']));
+  await act(async () => { jest.advanceTimersByTime(800); });
+  expect(result.current.saveError).toContain('尚未同步');
+  expect(result.current.watchlist).toEqual(['SERVER', 'NEW']);
+  act(() => result.current.setWatchlist(['SERVER', 'LATEST']));
+  act(() => result.current.retrySync());
+  await act(async () => { jest.advanceTimersByTime(800); });
+  expect(saveList).toHaveBeenLastCalledWith(['SERVER', 'LATEST'], expect.any(Object), expect.any(AbortSignal));
+  expect(result.current.saveError).toBe('');
+  expect(result.current.syncing).toBe(false);
+});
+
+it('serializes in-flight saves and follows with the newest snapshot without aborting the old write', async () => {
+  authenticateSession(user('A'), 'test-a', 'https://example.test');
+  fetchList.mockResolvedValueOnce({ symbols: ['SERVER'], names: {}, empty: false });
+  let finish!: (data: any) => void;
+  saveList.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const { result } = renderHook(() => useAccountWatchlist('A', defaults, defaultNames));
+  await settle();
+  act(() => result.current.setWatchlist(['FIRST']));
+  await act(async () => { jest.advanceTimersByTime(800); });
+  const signal = saveList.mock.calls[0][2];
+  act(() => result.current.setWatchlist(['LATEST']));
+  await act(async () => { jest.advanceTimersByTime(2000); });
+  expect(saveList).toHaveBeenCalledTimes(1);
+  expect(signal?.aborted).toBe(false);
+  await act(async () => { finish({ symbols: ['FIRST'], names: {} }); });
+  await act(async () => { jest.advanceTimersByTime(800); });
+  expect(saveList).toHaveBeenCalledTimes(2);
+  expect(saveList.mock.calls[1][0]).toEqual(['LATEST']);
+  expect(result.current.syncing).toBe(false);
 });

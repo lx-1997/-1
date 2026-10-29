@@ -28,6 +28,15 @@ jest.mock('../../components/StockIntelligencePanel', () => ({
     <section aria-label={`${name}个股研究台`}>研究 {symbol}</section>,
 }));
 
+jest.mock('../../components/TerminalAuthModal', () => ({
+  __esModule: true,
+  default: ({ open, onAuthed }: any) => open ? <button onClick={() => mockCompleteLogin(onAuthed)}>完成测试登录</button> : null,
+}));
+const mockCompleteLogin = (onAuthed: (name: string) => void) => {
+  authenticateSession(account, 'stock-workspace-test', 'https://example.test');
+  onAuthed(account.username);
+};
+
 const watchlist = {
   symbols: ['002594', '600519'], names: { '002594': '比亚迪', '600519': '贵州茅台' }, empty: false,
 };
@@ -161,4 +170,54 @@ it('preserves an existing AI draft when entering from stock research and clears 
   expect(screen.getByRole('textbox', { name: '向 AI 投研助手提问' })).toHaveValue('保留我正在写的问题');
   await act(async () => { invalidateAuthSession(); });
   expect(screen.queryByRole('navigation', { name: '当前研究上下文' })).not.toBeInTheDocument();
+});
+
+async function searchApple(anonymous = false) {
+  if (anonymous) { invalidateAuthSession(); localStorage.setItem('bbt.watchlist', '[]'); }
+  (apiGet as jest.Mock).mockImplementation(async (path: string) => {
+    if (path === '/api/auth/me') return getAuthSnapshot().account;
+    if (path === '/api/me/watchlist') return { ...watchlist };
+    if (path === '/api/market/search') return { candidates: [{ code: 'AAPL', symbol: 'AAPL', name: '苹果', market: 'US' }] };
+    if (path === '/api/market/quotes') return { quotes: [] }; // quote outage must not block a known security
+    return { items: [], messages: [], quotes: [], markets: [], themes: [], available: {}, has_more: false };
+  });
+  await act(async () => { render(<AuthProvider><FinancialTerminal /></AuthProvider>); });
+  await click(sidebar().getByRole('button', { name: '机构纪要' }));
+  await click(screen.getByRole('button', { name: '搜索股票、行业或资讯' }));
+  await act(async () => { fireEvent.change(screen.getByPlaceholderText(/搜索代码或名称/), { target: { value: 'AAPL' } }); });
+  await act(async () => { jest.advanceTimersByTime(250); });
+}
+
+it('adds a verified search result with a semantic button click despite a quote outage, then persists it once', async () => {
+  await searchApple();
+  const add = screen.getByRole('button', { name: '添加 苹果（AAPL）到自选' });
+  // Keyboard activation dispatches click without mousedown.
+  await click(add);
+  expect(watchlistButtons().map(button => button.textContent)).toContain('AAPL 苹果');
+  expect(root()).toHaveClass('bbt-side-notes');
+  expect(screen.getByRole('dialog', { name: '搜索股票与添加自选' })).toHaveTextContent('已自选');
+  await act(async () => { jest.advanceTimersByTime(800); });
+  expect(saves()).toHaveLength(1);
+  expect(saves()[0][1].symbols).toContain('AAPL');
+});
+
+it('opens a stock search result in the visible research workspace without adding it', async () => {
+  await searchApple();
+  const input = screen.getByPlaceholderText(/搜索代码或名称/);
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }); });
+  expect(root()).toHaveClass('bbt-side-stocks');
+  expect(screen.getByRole('region', { name: '苹果个股研究台' })).toBeInTheDocument();
+  await act(async () => { jest.advanceTimersByTime(1000); });
+  // A read-only lookup also updates the display name; the existing hook may persist names.
+  expect(watchlistButtons().map(button => button.textContent)).not.toContain('AAPL 苹果');
+});
+
+
+it('continues a guest add after login using the newly hydrated account list', async () => {
+  await searchApple(true);
+  await click(screen.getByRole('button', { name: '添加 苹果（AAPL）到自选' }));
+  await click(screen.getByRole('button', { name: '完成测试登录' }));
+  await act(async () => { jest.advanceTimersByTime(800); });
+  expect(saves()).toHaveLength(1);
+  expect(saves()[0][1].symbols).toEqual(['002594', '600519', 'AAPL']);
 });

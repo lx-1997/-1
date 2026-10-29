@@ -1619,6 +1619,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [pq, setPq] = useState('');
   const [paletteActive, setPaletteActive] = useState(0);   // 命令面板当前高亮项（↑↓ 导航）
   const [paletteLoading, setPaletteLoading] = useState(false);
+  const [paletteError, setPaletteError] = useState('');
+  const [paletteRetry, setPaletteRetry] = useState(0);
   const paletteInput = useRef<HTMLInputElement>(null);
   const paletteActiveRef = useRef<HTMLDivElement>(null);
   const seen = useRef<Set<string>>(new Set(messages.map(message => message.id)));
@@ -1630,7 +1632,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }
 
   // 自选股 + 名称(可编辑、持久化)
-  const { watchlist, names, setWatchlist, setNames, watchlistRef, namesRef } = useAccountWatchlist(
+  const { watchlist, names, setWatchlist, setNames, watchlistRef, namesRef, ready: watchlistReady, loadError: watchlistLoadError, saveError: watchlistSaveError, syncing: watchlistSyncing, retrySync: retryWatchlist } = useAccountWatchlist(
     session.account?.id ?? null, DEFAULT_WATCHLIST, DEFAULT_NAMES, symbols => {
       if (getNotificationPermission() === 'granted' && loadRecallPrefs().browserEnabled) void subscribeWebPush({ symbols });
     });
@@ -1688,21 +1690,47 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => { LS.write('bbt.personal.interests.v1', personalInterests); }, [personalInterests]);
   useEffect(() => { LS.write('bbt.personal.signals.v1', interestSignals); }, [interestSignals]);
 
-  const addSymbol = useCallback(async (code: string, name?: string, activate = true) => {
+  const pendingAdds = useRef(new Set<string>());
+  const [addingSymbols, setAddingSymbols] = useState<string[]>([]);
+  const addSymbol = useCallback(async (code: string, name?: string, activate = true, verified = false) => {
     const sym = (code || '').trim();
-    if (!sym) return;
-    // 加之前先校验行情：拿不到价 = 无效代码/乱输入 → 不加，给提示（挡掉「MUXIGUFEN」这类垃圾）
+    if (!sym || pendingAdds.current.has(sym)) return;
+    if (!watchlistReady) { showToast(watchlistLoadError || '正在加载自选，请稍后再试'); return; }
+    if (watchlistRef.current.includes(sym)) { showToast('该股票已在自选中'); return; }
+    const revision = getAuthSnapshot().revision;
+    pendingAdds.current.add(sym); setAddingSymbols(Array.from(pendingAdds.current));
     try {
-      const resp = await apiGet<{ quotes: Quote[] }>('/api/market/quotes', { params: { symbols: sym } });
-      const q = (resp.quotes || [])[0];
-      if (!q || q.price == null) { showToast(`未找到「${name || sym}」的行情，未添加`); return; }
-    } catch { showToast('行情校验失败，请稍后再试'); return; }
-    if (name) setNames(prev => ({ ...prev, [sym]: name }));
-    setWatchlist(prev => (prev.includes(sym) ? prev : [...prev, sym]));
-    if (activate) setActive(sym);  // 命令面板加股=下钻该标的；激活卡加股传 false，只悄悄入自选、不跳转
-    logAct('watch_add', name ? `${sym} ${name}` : sym);
-    showToast(`已添加自选 ${name || sym}`);
-  }, [showToast, logAct]);
+      // Search candidates identify a security even when today's quote is missing
+      // (suspension, new listing or a quote-provider outage).
+      if (!verified) {
+        const response = await searchMarketSymbols(sym);
+        const hit = response.candidates?.find(item => (item.code || item.symbol || '').toUpperCase() === sym.toUpperCase());
+        if (!hit) { if (isAuthRevisionCurrent(revision)) showToast(`未找到「${name || sym}」，请通过搜索结果添加`); return; }
+        name = name || hit.name;
+      }
+      if (!isAuthRevisionCurrent(revision)) return;
+      if (name) setNames(prev => ({ ...prev, [sym]: name! }));
+      setWatchlist(prev => prev.includes(sym) ? prev : [...prev, sym]);
+      setWatchMarket('all');
+      if (activate) { setSideNavKey('stocks'); setFeedFilter('自选'); setActive(sym); }
+      logAct('watch_add', name ? `${sym} ${name}` : sym);
+      showToast(`已加入自选 ${name || sym}，正在同步`);
+    } catch { if (isAuthRevisionCurrent(revision)) showToast('股票检索失败，请稍后重试'); }
+    finally { pendingAdds.current.delete(sym); setAddingSymbols(Array.from(pendingAdds.current)); }
+  }, [watchlistReady, watchlistLoadError, watchlistRef, setNames, setWatchlist, showToast, logAct]);
+  // Login continuations run before React has hydrated the new account's list.
+  // Keep the intent scoped to that session and apply it only after hydration.
+  const [watchAddIntent, setWatchAddIntent] = useState<null | { code: string; name?: string; activate: boolean; verified: boolean; revision: number }>(null);
+  const requestAddSymbol = useCallback((code: string, name?: string, activate = false, verified = false) => {
+    setWatchAddIntent({ code, name, activate, verified, revision: getAuthSnapshot().revision });
+  }, []);
+  useEffect(() => {
+    if (!watchAddIntent) return;
+    if (!isAuthRevisionCurrent(watchAddIntent.revision)) { setWatchAddIntent(null); return; }
+    if (!watchlistReady) return;
+    setWatchAddIntent(null);
+    void addSymbol(watchAddIntent.code, watchAddIntent.name, watchAddIntent.activate, watchAddIntent.verified);
+  }, [watchAddIntent, watchlistReady, addSymbol]);
   const removeSymbol = useCallback((code: string) => {
     setWatchlist(prev => prev.filter(s => s !== code));
     setActive(prev => (prev === code ? null : prev));
@@ -1736,7 +1764,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       try {
         const resp = await searchMarketSymbols(s);
         const hit = (resp.candidates || []).find(c => !!c.symbol);
-        if (hit?.symbol) { await addSymbol(hit.symbol, hit.name || s, true); focusWorkspace(); return; }
+        if (hit?.symbol) { await addSymbol(hit.symbol, hit.name || s, true, true); focusWorkspace(); return; }
       } catch { /* 搜索失败落到原文直校验 */ }
       await addSymbol(s, undefined, true);
     })();
@@ -1801,6 +1829,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const navRef = useRef<string[]>(watchlist);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && paletteOpen) { setPaletteOpen(false); return; }
       if (e.key === 'Escape') { setHelpMenuOpen(false); setAcctOpen(false); setSideNavOpen(false); setPaletteOpen(false); setMaxed(null); setActive(null); setNewsPreview(null); aiViewingTaskRef.current = ''; setAiReport(null); setAiReportMeta(null); setAiDeepDraft(null); setAiOriginal(''); setAiModalExpanded(false); return; }
       if (paletteOpen) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -4886,10 +4915,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 搜索是散户第一动作，此前搜「白酒」只出股票候选，已建的题材导航/研报库/学堂在搜索里全是暗资产。
   const [uniHits, setUniHits] = useState<{ news: any[]; reports: any[]; terms: any[]; boards: any[] }>({ news: [], reports: [], terms: [], boards: [] });
   useEffect(() => {
-    if (!paletteOpen) { setRemoteHits([]); setUniHits({ news: [], reports: [], terms: [], boards: [] }); setPaletteLoading(false); return; }
+    if (!paletteOpen) { setRemoteHits([]); setUniHits({ news: [], reports: [], terms: [], boards: [] }); setPaletteLoading(false); setPaletteError(''); return; }
     const q = pq.trim();
-    if (q.length < 1) { setRemoteHits([]); setUniHits({ news: [], reports: [], terms: [], boards: [] }); setPaletteLoading(false); return; }
+    if (q.length < 1) { setRemoteHits([]); setUniHits({ news: [], reports: [], terms: [], boards: [] }); setPaletteLoading(false); setPaletteError(''); return; }
     let cancelled = false;
+    setRemoteHits([]); setPaletteError('');
     setPaletteLoading(true);
     const t = window.setTimeout(async () => {
       try {
@@ -4897,7 +4927,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         if (cancelled) return;
         const hits = (resp.candidates || []).filter(c => c.code && !watchlist.includes(c.code)).slice(0, 8);
         setRemoteHits(hits);
-      } catch { if (!cancelled) setRemoteHits([]); }
+      } catch { if (!cancelled) { setRemoteHits([]); setPaletteError('股票搜索失败，请重试。'); } }
       finally { if (!cancelled) setPaletteLoading(false); }
       // 聚合搜索并行补充（失败静默——旧后端没有该端点时体验与原先完全一致）
       try {
@@ -4906,7 +4936,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       } catch { /* 静默回退 */ }
     }, 250);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [pq, paletteOpen, watchlist]);
+  }, [pq, paletteOpen, watchlist, paletteRetry]);
   // 输入变化 / 打开时，高亮回到第一项
   useEffect(() => { setPaletteActive(0); }, [pq, paletteOpen]);
 
@@ -5763,10 +5793,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     | { key: string; type: 'uni'; label: string; run: () => void }
     | { key: string; type: 'cmd'; label: string; run: () => void };
   const paletteItems: PItem[] = [
-    ...paletteSyms.map((it): PItem => ({ key: 's' + it.sym, type: 'go', sym: it.sym, label: it.label, quote: it.quote, run: () => selectStock(it.sym) })),
+    ...paletteSyms.map((it): PItem => ({ key: 's' + it.sym, type: 'go', sym: it.sym, label: it.label, quote: it.quote, run: () => { setSideNavKey('stocks'); setFeedFilter('自选'); setActive(it.sym); } })),
     // 「查看」与「收藏」分离：点结果=匿名可下钻看行情K线（查股是散户第一动作，价值未展示先要账号=摩擦前置）；
     // 登录墙留给行尾「＋添加」这类真正需要身份的时刻（注册意愿反而更强）。
-    ...remoteHits.map((it): PItem => ({ key: 'r' + it.code, type: 'add', code: it.code, name: it.name, exch: it.exchange || it.market || '', run: () => { setNames(prev => ({ ...prev, [it.code]: it.name })); selectStock(it.code); } })),
+    ...remoteHits.map((it): PItem => ({ key: 'r' + it.code, type: 'add', code: it.code, name: it.name, exch: it.exchange || it.market || '', run: () => { setNames(prev => ({ ...prev, [it.code]: it.name })); setSideNavKey('stocks'); setFeedFilter('自选'); setActive(it.code); } })),
     // 统一搜索补充组：板块/快讯/研报/名词学堂（已建资产接进搜索这个第一动作）
     ...uniHits.boards.slice(0, 3).map((b: any, i: number): PItem => ({
       key: 'ub' + i, type: 'uni', label: `📊 ${b.name || b.board_name || ''} 板块 · 问 AI 受益股`,
@@ -6191,7 +6221,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         quotes={quotes}
         loggedIn={!!authUser}
         onSelectSymbol={(symbol) => { setActive(symbol); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-        onAddSymbol={(symbol, name) => requireLogin(() => { void addSymbol(symbol, name, false); }, '添加关注股票')}
+        onAddSymbol={(symbol, name) => requireLogin(() => { requestAddSymbol(symbol, name, false); }, '添加关注股票')}
         onRequireLogin={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '添加关注股票')}
         onOpenMarket={() => { void openReview(); }}
       />
@@ -6765,10 +6795,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 }}>🩺</button>
             )}
             <button className="bbt-max-btn" title={eqNarrow ? '加宽（显示全部列）' : '收窄'} onClick={() => setEqW(eqNarrow ? 460 : 260)}>{eqNarrow ? '⇥' : '⇤'}</button>
-            <button className="bbt-max-btn" title="搜索/添加标的" onClick={() => { setPaletteOpen(true); setPq(''); }}>＋</button>
+            <button type="button" className="bbt-watch-add" aria-label="搜索并添加自选" title="搜索/添加标的" onClick={() => { setPaletteOpen(true); setPq(''); }}>＋ 添加自选</button>
             <button className="bbt-max-btn" title={maxed === 'eq' ? '还原' : '最大化'} onClick={() => setMaxed(maxed === 'eq' ? null : 'eq')}>{maxed === 'eq' ? '⤡' : '⤢'}</button>
           </div>
           <CategoryTabs label="市场" value={watchMarket} onChange={setWatchMarket} options={[{ key: 'all', label: '全部' }, { key: 'A', label: 'A股' }, { key: 'HK', label: '港股' }, { key: 'US', label: '美股' }]} />
+          {(watchlistLoadError || watchlistSaveError) && <div className="bbt-quotes-warn" role="alert">{watchlistLoadError || watchlistSaveError} <button type="button" onClick={retryWatchlist}>重试同步</button></div>}
+          {!watchlistReady && !watchlistLoadError && <div role="status">正在加载云端自选…</div>}
+          {watchlistSyncing && <div role="status">自选同步中…</div>}
           {displayList.length === 0 && watchlist.length > 0 && <div className="bbt-empty">该市场暂未添加自选股票。</div>}
           <div className="bbt-qhead">
             <span className="c-name">代码/名称</span>
@@ -6788,7 +6821,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               <div className="bbt-qrow-fund-note">基本面数据来源 <b>同花顺 iFinD</b></div>
             )}
             {/* 提示指向头部常驻「＋」，而不是再放一个重复的"添加自选"按钮（此前两个入口做同一件事，点法完全一样） */}
-            {displayList.length === 0 && <div className="bbt-empty">自选为空 · 点上方「＋」搜索标的</div>}
+            {watchlistReady && watchlist.length === 0 && <div className="bbt-empty">自选为空 · 点上方「＋」搜索标的</div>}
             {groupedWatch.map(grp => (
               <React.Fragment key={grp.key}>
                 {groupedWatch.length > 1 && <div className="bbt-qgroup">{grp.label}<span className="bbt-qgroup-n">{grp.syms.length}</span></div>}
@@ -7137,7 +7170,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       const inWl = watchlist.includes(p.code);
                       return (
                         <button key={p.code} className={'bbt-activate-chip' + (inWl ? ' on' : '')} disabled={inWl}
-                          onClick={() => requireLogin(() => addSymbol(p.code, p.name, false), '添加自选股票')}>{inWl ? '✓ 已加' : '＋ ' + p.name}</button>
+                          onClick={() => requireLogin(() => requestAddSymbol(p.code, p.name, false), '添加自选股票')}>{inWl ? '✓ 已加' : '＋ ' + p.name}</button>
                       );
                     })}
                     <button className="bbt-activate-chip bbt-activate-chip--more" onClick={() => { setPaletteOpen(true); setPq(''); }}>🔍 搜索添加</button>
@@ -7585,7 +7618,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       )}
 
       {paletteOpen && (
-        <div className="bbt-palette-overlay" onMouseDown={() => setPaletteOpen(false)}>
+        <div className="bbt-palette-overlay" role="dialog" aria-modal="true" aria-label="搜索股票与添加自选" onMouseDown={() => setPaletteOpen(false)}>
           <div className="bbt-palette" onMouseDown={e => e.stopPropagation()}>
             <div className="bbt-palette-bar">
               <span className="bbt-palette-prompt">🔍</span>
@@ -7600,8 +7633,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 }}
               />
               {paletteLoading && <span className="bbt-palette-spin" />}
-              <span className="bbt-palette-esc">ESC</span>
+              <button type="button" className="bbt-palette-esc" aria-label="关闭股票搜索" onClick={() => setPaletteOpen(false)}>ESC</button>
             </div>
+            {paletteError && <div className="bbt-quotes-warn" role="alert">{paletteError} <button type="button" onClick={() => setPaletteRetry(value => value + 1)}>重试搜索</button></div>}
+            {(watchlistLoadError || watchlistSaveError) && <div className="bbt-quotes-warn" role="alert">{watchlistLoadError || watchlistSaveError} <button type="button" onClick={retryWatchlist}>重试同步</button></div>}
+            {watchlistSyncing && <div role="status">自选同步中…</div>}
             <div className="bbt-palette-list">
               {paletteItems.map((it, i) => {
                 const prevType = i > 0 ? paletteItems[i - 1].type : null;
@@ -7631,8 +7667,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                         <span className="bbt-palette-label">{it.code}　{it.name} <span className="bbt-dim">{it.exch}</span></span>
                         {watchlist.includes(it.code)
                           ? <span className="bbt-palette-add added">✓ 已加</span>
-                          : <button className="bbt-palette-add" title="加入自选(不跳转)"
-                              onMouseDown={e => { e.stopPropagation(); requireLogin(() => addSymbol(it.code, it.name, false), '添加自选股票'); }}>＋ 添加</button>}
+                          : <button type="button" className="bbt-palette-add" title="加入自选(不跳转)" aria-label={`添加 ${it.name}（${it.code}）到自选`}
+                              disabled={!watchlistReady || addingSymbols.includes(it.code)}
+                              onMouseDown={e => e.stopPropagation()}
+                              onClick={e => { e.stopPropagation(); requireLogin(() => requestAddSymbol(it.code, it.name, false, true), '添加自选股票'); }}>{addingSymbols.includes(it.code) ? '添加中…' : '＋ 添加'}</button>}
                         <span className="bbt-palette-go">查看 ›</span>
                       </>)}
                       {it.type === 'uni' && (<>
