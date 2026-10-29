@@ -323,6 +323,8 @@ function isHeadingCandidate(value: string): boolean {
   if (text.length < 4 || text.length > 88 || SENTENCE_END_RE.test(text)) return false;
   if (/^(?:by\b|来源|原文|bloomberg\b|author\b)/i.test(text)) return false;
   if (isNavigationLine(text) || DATE_RE.test(text) || isTakeawayHeading(text)) return false;
+  // Multi-clause Chinese digest sentences remain body even without final punctuation.
+  if (isChinese(text) && text.length >= 48 && /[，。；]/.test(text)) return false;
   // A long English sentence without terminal punctuation is still usually body copy.
   if (isEnglish(text) && text.split(/\s+/).length > 11) return false;
   return true;

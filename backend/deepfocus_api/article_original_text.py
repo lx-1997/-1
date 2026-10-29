@@ -627,6 +627,9 @@ def _is_related_card_headline(lines: list[str], index: int) -> bool:
     return len(non_chrome[0]) <= 60 and not re.search(r"[。！？!?]$", non_chrome[0])
 
 
+_NEWS_DIGEST_TITLE_RE = re.compile(r"早茶|早报|晨报|晚报|日报|简报|newsletter|morning\s+brief", re.I)
+
+
 def _trim_stored_article_page(lines: list[str], title: str = "") -> list[str]:
     """Keep the article window when a stored field is actually a whole web page.
 
@@ -679,7 +682,8 @@ def _trim_stored_article_page(lines: list[str], title: str = "") -> list[str]:
             end = index
             break
         # Recommendation cards (short headline + author credit) after body prose.
-        if index > start + 2 and _is_related_card_headline(lines, index):
+        # Unpunctuated digest items are article copy, not recommendation cards.
+        if index > start + 2 and not _NEWS_DIGEST_TITLE_RE.search(title) and _is_related_card_headline(lines, index):
             end = index
             break
 
@@ -703,6 +707,9 @@ def _stored_paragraphs(content: Optional[str], title: str = "") -> list[str]:
         markup_cleaned = _HTML_BLOCK_MARKUP_RE.sub("\n", markup_cleaned)
         markup_cleaned = _HTML_TAG_RE.sub(" ", markup_cleaned)
         for candidate in markup_cleaned.split("\n"):
+            if _NEWS_DIGEST_TITLE_RE.search(title):
+                # Keep inline corrections but exclude the newsletter signup/address tail.
+                candidate = re.split(r"关注我们\s+以便在收件箱|取消订阅\s+Bloomberg\.com", candidate, maxsplit=1, flags=re.I)[0]
             if _SOURCE_RE.match(candidate) or _URL_RE.fullmatch(candidate.strip()):
                 continue
             cleaned = _URL_RE.sub("", candidate)
@@ -884,6 +891,8 @@ async def _extract_remote_source(url: str) -> ArticleOriginalText:
 
 def _cache_key(message: RealtimeMessageRecord, source_urls: str) -> str:
     fingerprint = "\n".join((message.id, source_urls, message.content or ""))
+    if _NEWS_DIGEST_TITLE_RE.search(message.title or ""):
+        fingerprint = "digest-items-v2\n" + fingerprint
     return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
 
 

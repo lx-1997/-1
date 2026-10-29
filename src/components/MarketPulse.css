@@ -148,3 +148,9 @@
 .mp-bt-table th:first-child, .mp-bt-table td:first-child { text-align: left; }
 .mp-bt-note { overflow-wrap: anywhere; }
 .bbt-rail > .mp-wrap { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* Keep the phone reading area free of a multi-row calendar; swipe for events. */
+@media (max-width: 820px) {
+  .mp-wrap--strip { flex-wrap: nowrap; white-space: nowrap; }
+  .mp-wrap--strip .mp-chip { white-space: nowrap; }
+}

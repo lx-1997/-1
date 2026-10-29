@@ -364,3 +364,21 @@ def test_reader_copy_roundtrip_drops_toggle_labels_related_cards_and_nav_menu():
     assert "Home 主页" not in body
     assert "BTV+" not in body
     assert "Economic Calendar" not in body
+
+
+def test_news_digest_keeps_short_unpunctuated_items_and_still_removes_footer():
+    title = "彭博财经早茶：市场动态"
+    items = [
+        title, "国际要闻",
+        "美联储维持利率不变，重申遏制通胀的决心，主席提到金融条件已有所收紧，明年将减少利率决策次数",
+        "工作组将在明年一季度提出建议，委员会将认真考虑",
+        "加拿大央行首次加息，并表示可能进一步提高利率",
+        "市场表现", "股票市场上涨，债券市场下跌",
+        "（更正：昨日报价已更正） 关注我们 以便在收件箱中收到该通讯。取消订阅 Bloomberg.com 联系我们",
+        "More From Bloomberg", "无关推荐卡片",
+    ]
+    result = _stored_paragraphs("\n\n".join(items), title)
+    assert items[3] in result and items[4] in result and items[6] in result
+    assert "无关推荐卡片" not in result
+    assert any("更正：昨日报价已更正" in line for line in result)
+    assert "取消订阅" not in "\n".join(result)

@@ -1391,8 +1391,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 面板折叠：移动端进入任一模块时默认展示完整内容，用户仍可手动收起单个面板。
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const toggleCollapse = useCallback((k: string) => setCollapsed(p => ({ ...p, [k]: !p[k] })), []);
-  const [headsHidden, setHeadsHidden] = useState<boolean>(() => LS.read('bbt.heads_hidden_v3', false));
-  useEffect(() => { LS.write('bbt.heads_hidden_v3', headsHidden); }, [headsHidden]);
+  const [headsHidden, setHeadsHidden] = useState<boolean>(() => LS.read(isMobileView() ? 'bbt.heads_hidden_mobile_v1' : 'bbt.heads_hidden_v3', isMobileView()));
+  useEffect(() => { LS.write(isMobileView() ? 'bbt.heads_hidden_mobile_v1' : 'bbt.heads_hidden_v3', headsHidden); }, [headsHidden]);
   // 行情监视列宽（px）可拖拽，记 localStorage；过窄自动隐藏附加列
   const [eqW, setEqW] = useState<number>(() => Math.max(EQ_MIN, Math.min(EQ_MAX, LS.read('bbt.eqw', 330))));
   useEffect(() => { LS.write('bbt.eqw', eqW); }, [eqW]);
@@ -5549,7 +5549,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     );
   };
 
-  // 头条区块：带「收起/展开」开关（默认展开）；收起后只留一条标题栏，省版面。
+  // 头条区块：手机默认收起，电脑保留原偏好，均可手动展开；收起后只留一条标题栏，省版面。
   const renderHeads = (rows: any[]) => {
     if (!rows.length) return null;
     return (

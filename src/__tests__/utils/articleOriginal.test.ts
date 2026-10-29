@@ -303,3 +303,9 @@ describe('article original reader parser', () => {
     expect(doc.publishedAt).toContain('September 10, 2026');
   });
 });
+
+it('keeps a long unpunctuated Chinese digest sentence as readable body', () => {
+  const text = '美联储以十比二的投票结果维持利率不变，重申遏制通胀的决心，但未对下一次利率行动做出暗示。主席提到金融条件已经有所收紧，明年将减少利率决策次数';
+  const parsed = parseArticleOriginal({ title: '财经早茶', paragraphs: [text] });
+  expect(parsed.sections.flatMap(section => section.paragraphs.map(p => p.text))).toContain(text);
+});
