@@ -554,6 +554,33 @@ class CloudResearchLLM:
         assert last_exc is not None
         raise last_exc
 
+    async def _stream_user_text(self, payload, *, timeout_seconds, on_delta):
+        stream = await self._completion({**payload, "stream": True}, timeout_seconds=timeout_seconds)
+        stripper = _ThinkingStripper()
+        pieces = []
+        truncated = False
+        try:
+            async for chunk in stream:
+                for choice in getattr(chunk, "choices", None) or []:
+                    if getattr(choice, "finish_reason", None) == "length":
+                        truncated = True
+                    text = stripper.feed(getattr(choice.delta, "content", None) or "")
+                    if text:
+                        pieces.append(text)
+                        result = on_delta(text)
+                        if inspect.isawaitable(result): await result
+            tail = stripper.flush()
+            if tail:
+                pieces.append(tail)
+                result = on_delta(tail)
+                if inspect.isawaitable(result): await result
+            if truncated: raise RuntimeError("回答达到输出长度上限，正文尚未完整生成")
+            if not pieces: raise RuntimeError("模型没有返回可读正文")
+            return "".join(pieces)
+        finally:
+            close = getattr(stream, "close", None)
+            if close: await close()
+
     async def complete_json(
         self,
         prompt: str,
@@ -821,6 +848,7 @@ class CloudResearchLLM:
         max_tokens: int = 2200,
         timeout_seconds: float = 120,
         force_json: bool = True,
+        on_delta=None,
     ) -> str:
         """多模态：把若干页面图像 + 指令发给视觉模型，返回已剥离 <think> 的文本。
 
@@ -869,6 +897,8 @@ class CloudResearchLLM:
             payload["response_format"] = {"type": "json_object"}
 
         async def _create() -> Any:
+            if on_delta is not None:
+                return await self._stream_user_text(payload, timeout_seconds=deadline.remaining(), on_delta=on_delta)
             return await self._completion(payload, timeout_seconds=deadline.remaining())
 
         try:
@@ -887,7 +917,7 @@ class CloudResearchLLM:
             else:
                 raise RuntimeError(f"视觉模型调用失败：{_clean_error(exc)}") from exc
 
-        text = _strip_thinking_blocks(response.choices[0].message.content or "") or ""
+        text = response if isinstance(response, str) else (_strip_thinking_blocks(response.choices[0].message.content or "") or "")
         if text.strip() in {"", "{}"}:
             # HTTP 200 但正文为空：thinking 预算耗尽或内容策略拦截的典型形态。
             # 抛错交给上层减页重试/退避，而不是把空结果当成功解析成兜底壳。
@@ -1932,11 +1962,19 @@ class CloudResearchLLM:
             }
             if self.provider == "minimax" and self.model.lower().startswith("minimax-m3"):
                 audit_payload["extra_body"] = {"reasoning_split": True, "thinking": {"type": "disabled"}}
+            emitted = False
+            async def publish(piece):
+                nonlocal emitted
+                emitted = True
+                await _safe_emit(emit, "answer_delta", {"delta": piece})
             try:
+                if emit is not None:
+                    return (await self._stream_user_text(audit_payload, timeout_seconds=timeout_seconds, on_delta=publish)).strip()
                 checked = await self._completion(audit_payload, timeout_seconds=timeout_seconds)
                 clean = _strip_thinking_blocks(checked.choices[0].message.content or "").strip()
                 return clean or draft
             except Exception:
+                if emitted: raise
                 return draft
 
         try:

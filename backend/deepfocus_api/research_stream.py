@@ -37,6 +37,7 @@ from .research_digest import (
     resolve_source_documents,
 )
 from .research_quick import generate_deep_quick
+from .streamed_prose import streamed_prose, REPORT_PROSE_DELTA
 
 router = APIRouter()
 _STREAM_TOTAL_TIMEOUT_SECONDS = max(
@@ -249,15 +250,20 @@ async def api_research_deep_draft_stream(
             delta_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
             preview_prefix = ""
             prefix_preview: dict[str, str] = {}
+            body_preview: dict = {}
 
             def _progress(kind: str, value: Any) -> None:
-                nonlocal preview_prefix, prefix_preview
+                nonlocal preview_prefix, prefix_preview, body_preview
+                if kind == "llm_reset":
+                    preview_prefix = ""; prefix_preview = {}; body_preview = {}
+                    return
                 if kind == "llm_delta" and value:
                     # Keep the exact bounded prefix before the display queue can
                     # drop fragments. This preview never enters either cache.
-                    if not prefix_preview and len(preview_prefix) < 16000:
-                        preview_prefix = (preview_prefix + str(value))[:16000]
-                        prefix_preview = _draft_prefix_preview(preview_prefix)
+                    if len(preview_prefix) < 128000:
+                        preview_prefix = (preview_prefix + str(value))[:128000]
+                        if not prefix_preview: prefix_preview = _draft_prefix_preview(preview_prefix)
+                        body_preview = streamed_prose(preview_prefix)
                     try:
                         if delta_queue.full():
                             delta_queue.get_nowait()
@@ -301,7 +307,11 @@ async def api_research_deep_draft_stream(
                 if _valid_cached_draft(late_cached):
                     return late_cached
                 async with _AI_ANALYZE_SEM:
-                    result = await generate_deep_draft(request, documents=docs, progress=_progress)
+                    token = REPORT_PROSE_DELTA.set(lambda piece: _progress("llm_reset", True) if piece is None else _progress("llm_delta", piece))
+                    try:
+                        result = await generate_deep_draft(request, documents=docs, progress=_progress)
+                    finally:
+                        REPORT_PROSE_DELTA.reset(token)
                 payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
                 if _valid_cached_draft(payload):
                     await asyncio.to_thread(metrics_set_ai_cache, cache_key, payload)
@@ -316,6 +326,8 @@ async def api_research_deep_draft_stream(
             yield _sse({"type": "stage", "stage": "generate", "detail": "正在排队或生成深度解读，速览就绪后先展示"})
             get_task = None
             quick_delivered = False
+            body_delivered = False
+            body_sent = {}
             quick_pending = True
             try:
                 while True:
@@ -332,8 +344,17 @@ async def api_research_deep_draft_stream(
                     get_task = None
                     while not delta_queue.empty():
                         fragments.append(delta_queue.get_nowait())
-                    if fragments:
-                        yield _sse({"type": "thought", "delta": "".join(fragments)[-240:]})
+                    if body_preview and body_preview != body_sent:
+                        from .compliance import neutralize_text
+                        from .privacy_guard import scrub_internal_text
+                        def clean(value):
+                            if isinstance(value, str): return neutralize_text(scrub_internal_text(value))
+                            if isinstance(value, list): return [clean(item) for item in value]
+                            if isinstance(value, dict): return {key: clean(item) for key, item in value.items()}
+                            return value
+                        body_sent = body_preview
+                        body_delivered = True
+                        yield _sse({"type": "body", "data": clean(body_preview), "provisional": True})
                     if prefix_preview and not quick_delivered:
                         complete_once()
                         quick_delivered = True
@@ -374,7 +395,7 @@ async def api_research_deep_draft_stream(
                     await asyncio.gather(quick_task, return_exceptions=True)
             complete_once()
             if isinstance(payload, dict) and payload.get("provider") == "local-fallback":
-                if quick_delivered:
+                if quick_delivered or body_delivered:
                     yield _sse({"type": "error", "status": 502, "detail": "完整解读未生成，已保留初步速览；可查看原文或稍后手动重试"})
                     return
                 yield _sse({"type": "stage", "stage": "fallback", "detail": "本轮模型未完成，先展示原文摘录版；稍后重试可获取完整解读"})

@@ -299,3 +299,19 @@ it('exposes both successful and unavailable source receipts while the answer is 
   expect(screen.getByText('该新闻源本轮不可用')).toBeInTheDocument();
   expect(screen.getByText('找到两条相关站内资料')).toBeInTheDocument();
 });
+
+it('shows growing answer prose before final and retains it as incomplete after a failure', async () => {
+  await mountTerminal();
+  await act(async () => { fireEvent.click(within(screen.getByRole('complementary', { name: '主导航' })).getByRole('button', { name: /AI 对话/ })); });
+  await act(async () => { fireEvent.change(screen.getByRole('textbox', { name: '向 AI 投研助手提问' }), { target: { value: '测试流式正文' } }); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '发送问题' })); });
+  const callbacks = (runToolResearchStream as jest.Mock).mock.calls[0][1];
+  await act(async () => { callbacks.onPreview('第一段逐步出现'); });
+  expect(screen.getByRole('region', { name: '正在生成的对话正文' })).toHaveTextContent('第一段逐步出现');
+  await act(async () => { callbacks.onPreview('第一段逐步出现，第二段继续'); });
+  expect(screen.getByRole('region', { name: '正在生成的对话正文' })).toHaveTextContent('第二段继续');
+  expect(screen.queryByText(/已保存到研究历史/)).not.toBeInTheDocument();
+  await act(async () => { callbacks.onError('服务中断', 502); callbacks.onDone(); });
+  expect(screen.getByRole('region', { name: '正在生成的对话正文' })).toHaveTextContent('生成已中断');
+  expect(runToolResearch).not.toHaveBeenCalled();
+});

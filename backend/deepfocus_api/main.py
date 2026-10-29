@@ -12989,6 +12989,21 @@ async def _run_static_explanation(message: str, *, emit=None):
         result.provider = "daocaijing"
         result.model = "assistant-info"
         return result
+    stream_llm = core_agent.llm
+    if emit is not None and hasattr(stream_llm, "general_chat_stream"):
+        async def stream_definition():
+            parts = []
+            async for piece in stream_llm.general_chat_stream(GeneralChatRequest(
+                message=message + "\n只解释所问概念，不推测当前行情，不添加交易建议。", history=[], context={},
+            )):
+                parts.append(piece)
+                await emit("answer_delta", {"delta": piece})
+            return GeneralChatResponse(provider=stream_llm.provider_name, model=stream_llm.model,
+                generated_at=datetime.now(timezone.utc), title="稻草财经", content="".join(parts))
+        return await core_agent.run_adapter(
+            CoreAgentRequest(objective=message, mode="chat", channel="web", timeout_seconds=20.0),
+            stream_definition, route="chat-stream", emit=emit,
+        )
     return await core_agent.run_chat(
         CoreAgentRequest(objective=message, mode="chat", channel="web", timeout_seconds=20.0),
         legacy_request=GeneralChatRequest(
@@ -13542,7 +13557,13 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
         _ai_started = time.perf_counter()
         queue: asyncio.Queue = asyncio.Queue()
 
+        preview_parts = []
         async def emit(event_type: str, payload: dict) -> None:
+            if event_type == "answer_delta":
+                from .privacy_guard import scrub_internal_text
+                preview_parts.append(str(payload.get("delta") or ""))
+                event_type = "answer_preview"
+                payload = {"text": scrub_internal_text("".join(preview_parts)[:20000]), "provisional": True}
             await queue.put(_sse_frame(event_type, payload))
 
         hint_parts = [p for p in (context_hint, _history_context_prefix(history)) if p]

@@ -91,6 +91,7 @@ import './TerminalReadingWorkspace.css';
 import './TerminalAssistantExperience.css';
 import './terminal/assistant-launcher.css';
 import NewsSourcePreview from './NewsSourcePreview';
+import StreamedResearchBody, { type StreamedResearchProse } from './StreamedResearchBody';
 import GenerationActivity, { appendGenerationActivity, type GenerationActivityEvent } from './GenerationActivity';
 import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, conciseAssistantFollowups, type AiReferenceContext } from '../utils/aiAssistantExperience';
 
@@ -227,6 +228,7 @@ interface AiBgTask {
   status: 'running' | 'done' | 'error';
   stage: string;
   activity?: GenerationActivityEvent[];
+  prose?: StreamedResearchProse;
   result: AiAnalysis | null;
   quick?: AiAnalysisLike | null;  // 快轨速览卡：深稿完成前先行渲染
   deepDraft: ResearchDeepDraftInput;
@@ -2090,6 +2092,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiTools, setAiTools] = useState<ToolTraceItem[]>([]);
   const [aiAnswer, setAiAnswer] = useState('');
+  const [aiStreamText, setAiStreamText] = useState('');
   const [aiQuestion, setAiQuestion] = useState('');   // 已作答的问题（对话回显）
   const [aiErr, setAiErr] = useState('');
   const [aiReference, setAiReference] = useState<AiReferenceContext | null>(null);
@@ -2249,7 +2252,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setDeepAnswerBusy(false);
     aiStreamCancelRef.current?.(); aiStreamCancelRef.current = null;
     setActiveAiConversationId(null);
-    setAiInput(''); setAiQuestion(''); setAiAnswer(''); setAiErr(''); setAiTools([]); setAiSugg([]); setAiFeedback('');
+    setAiInput(''); setAiQuestion(''); setAiAnswer(''); setAiStreamText(''); setAiErr(''); setAiTools([]); setAiSugg([]); setAiFeedback('');
     setAiLiveStatus(''); setAiRoundtableActive(false); setAiRoundtableMeta(null); setAiAnswerCopied(false); setAiBusy(false);
     setDeepAnswer(null); setDeepAnswerErr(''); setDeepAnswerQuotaLeft(null); setAiAttachment(null); setAiAttachmentErr(''); setAiAnswerMode('quick');
     aiHistoryRef.current = [];
@@ -2392,7 +2395,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const requestContext = assistantRequestContext(msg, referenceForRequest);
     const startedAt = Date.now();
     setAiAccessIssue('');
-    setAiBusy(true); setAiInput(''); setAiErr(''); setDeepAnswerErr(''); setDeepAnswer(null); setAiAnswer(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback('');
+    setAiBusy(true); setAiInput(''); setAiErr(''); setDeepAnswerErr(''); setDeepAnswer(null); setAiAnswer(''); setAiStreamText(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback('');
     setAiAnswerCopied(false); setAiRoundtableActive(useRoundtable); setAiLiveStatus(useRoundtable ? '正在组建投研圆桌 · 证据专家先行' : '正在识别问题并选择研究路径');
     // 先写入一条待完成记录，用户刷新或接口失败时也能在历史侧栏找回这次提问。
     rememberAiConversation({ id: conversationId, title: referenceForRequest?.title.slice(0, 32) || msg.slice(0, 32), question: msg, answer: '', mode: 'quick', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest) });
@@ -2430,7 +2433,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         }
         if (r.ok && r.answer) {
           logAct('ai_answer_complete', `quick:${Math.round((Date.now() - startedAt) / 1000)}s`);
-          setAiAnswer(r.answer); setAiTools(r.tool_trace || []); setAiRoundtableMeta(r.roundtable || null); setAiSugg(r.suggestions || []);
+          setAiStreamText(''); setAiAnswer(r.answer); setAiTools(r.tool_trace || []); setAiRoundtableMeta(r.roundtable || null); setAiSugg(r.suggestions || []);
           setAiQuotaLeft(typeof r.quota_left === 'number' ? r.quota_left : null);
           aiHistoryRef.current = [...aiHistoryRef.current.slice(-2), [msg, r.answer.slice(0, 300)]];
           const completedAt = Date.now();
@@ -2478,6 +2481,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             return previous.map((item, index) => index === target ? { ...item, ...event } : item);
           });
         },
+        onPreview: text => { if (!settled && isCurrent()) setAiStreamText(text); },
         onFinal: result => applyResult(result),
         onFallback: reason => { void runFallback(reason); },
         onError: (error, status) => {
@@ -2511,7 +2515,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const referenceForRequest = aiReference;
     setAiAccessIssue('');
     setAiInput('');
-    setDeepAnswerBusy(true); setDeepAnswerErr(''); setAiErr(''); setDeepAnswer(null); setAiAnswer(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback(''); setAiRoundtableActive(true); setAiLiveStatus('正在启动深度研判 · 证据专家先行');
+    setDeepAnswerBusy(true); setDeepAnswerErr(''); setAiErr(''); setDeepAnswer(null); setAiAnswer(''); setAiStreamText(''); setAiTools([]); setAiRoundtableMeta(null); setAiQuestion(msg); setAiSugg([]); setAiFeedback(''); setAiRoundtableActive(true); setAiLiveStatus('正在启动深度研判 · 证据专家先行');
     // 深度研判也先落一条待完成记录，避免长耗时期间历史侧栏看起来是空的。
     rememberAiConversation({ id: conversationId, title: referenceForRequest?.title.slice(0, 32) || msg.slice(0, 32), question: msg, answer: '', mode: 'deep', updatedAt: Date.now(), attachmentName: attachmentForRequest?.filename, reference: referenceForRequest, referenceKey: assistantReferenceKey(referenceForRequest) });
     logAct('deep_answer_start', referenceForRequest ? 'context:article' : 'context:none');
@@ -3785,7 +3789,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     // 落盘失败（超大条目/配额耗尽）时记录只活在本次会话内。
     const persisted = persistInterpretEntry(key, { result, deepDraft: deepDraft || undefined });
     if (cur) {
-      cur.status = 'done'; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1);
+      cur.status = 'done'; cur.prose = undefined; cur.result = result; cur.deepDraft = deepDraft; setAiTasksVersion(v => v + 1);
       if (persisted) upsertAiTaskHistory({ key, kind: cur.kind, title: cur.title, report: cur.report, meta: cur.meta, startedAt: cur.startedAt, status: 'done', content: cur.kind === 'news' ? cur.content : undefined });
       // 跨端同步：登录后把研报解读元数据写入用户 memory（元数据含完整重跑参数；
       // 已同步过的不重复写）。失败静默，下次同 key 完成时自然重试。
@@ -3900,7 +3904,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const cur = aiTasksRef.current.get(cacheKey);
         if (cur) { cur.quick = quick; cur.stage = '速览完成 · 深度解读继续生成中'; cur.activity = appendGenerationActivity(cur.activity, cur.stage); setAiTasksVersion(v => v + 1); }
         if (aiViewingTaskRef.current === cacheKey) { setAiResult(quick as AiAnalysis); setAiQuickPending(true); }
-      }, controller.signal);
+      }, controller.signal, (prose) => {
+        if (!isTaskCurrent()) return;
+        task.prose = prose;
+        setAiTasksVersion(v => v + 1);
+      });
       const compact = deep.compact || compactFromDeepDraft(deep);
       if (!isTaskCurrent()) return;
       settleAiTask(cacheKey, r.title, compact, deep as unknown as ResearchDeepDraftInput);
@@ -6562,6 +6570,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 </React.Fragment>)}
                 {aiQuestion && <div className="bbt-ai-message bbt-ai-message--user"><span>你</span><p>{aiQuestion}</p></div>}
                 {aiAttachmentErr && <div className="bbt-ai-workspace-error">⚠ {aiAttachmentErr}</div>}
+                {aiStreamText && !aiAnswer && <section className="bbt-streamed-body" aria-label="正在生成的对话正文"><small>{aiWorkspaceBusy ? '正文正在生成 · 完成后以最终回答为准' : '生成已中断 · 以下为未完成正文，可手动重试'}</small><Markdownlite text={aiStreamText} /></section>}
                 {aiWorkspaceBusy && <AiResearchProgress status={aiLiveStatus} tools={aiTools} roundtable={aiRoundtableActive} onStop={aiBusy || deepAnswerBusy ? stopAiResearch : undefined} />}
                 {(aiErr || deepAnswerErr) && <div className={`bbt-ai-recovery${aiAccessIssue ? ' is-access' : ''}`} role="status">
                   <b>{aiAccessIssue ? '继续这次研究' : /已停止/.test(aiErr || deepAnswerErr) ? '研究已停止' : aiAnswer ? '已提供可用回答' : '这次研究还没有完成'}</b>
@@ -7407,8 +7416,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 </div>
                 );
               })()}
+              {(() => { const prose = aiTasksRef.current.get(aiViewingTaskRef.current)?.prose; return prose && !aiDeepDraft ? <StreamedResearchBody prose={prose} interrupted={!aiLoading} /> : null; })()}
               {!aiLoading && aiError && <div className="bbt-empty bbt-ai-err">⚠ {aiError}</div>}
-              {aiResult && (!aiLoading || aiQuickPending) && (() => {
+              {aiResult && (!aiLoading || aiQuickPending) && !aiTasksRef.current.get(aiViewingTaskRef.current)?.prose && (() => {
                 const compactReport = !!aiReportMeta;
                 const newsReport = !compactReport;
                 const allBull = aiResult.bullish?.length ? aiResult.bullish : (aiResult.key_points || []);
@@ -8376,6 +8386,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               {aiQuestion && (aiAnswer || aiBusy || aiErr) && <div className="bbt-ai-q"><span className="bbt-ai-q-tag">问</span>{aiQuestion}</div>}
               {aiBusy && <AiResearchProgress status={aiLiveStatus} tools={aiTools} onStop={stopAiResearch} />}
               {aiErr && <div className="bbt-empty">{aiErr}</div>}
+              {aiStreamText && !aiAnswer && <section className="bbt-streamed-body" aria-label="正在生成的对话正文"><small>{aiBusy ? '正文正在生成 · 完成后以最终回答为准' : '生成已中断 · 以下为未完成正文，可手动重试'}</small><Markdownlite text={aiStreamText} /></section>}
               {aiAnswer && <div className="bbt-ai-answer"><Markdownlite text={aiAnswer} /></div>}
               {!aiBusy && aiTools.length > 0 && <ToolTrace trace={aiTools} />}
               {aiAnswer && (

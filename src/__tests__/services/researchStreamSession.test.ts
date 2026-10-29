@@ -48,6 +48,15 @@ const streamFrames = (events: unknown[]) => {
   global.fetch = jest.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } });
 };
 
+it('delivers provisional report sections and prevents replay if the stream then fails', async () => {
+  const prose = { intro: '正在写出的判断', sections: [{ title: '需求', paragraphs: ['第一段正在增长'] }] };
+  streamFrames([{ type: 'body', data: prose }, { type: 'error', detail: '连接中断' }]);
+  const onBody = jest.fn();
+  await expect(generateResearchDeepDraftSmart({ title: 'Report' }, undefined, undefined, undefined, onBody)).rejects.toMatchObject({ streamDeliveredResult: true });
+  expect(onBody).toHaveBeenCalledWith(prose);
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
 it('forwards actual source readiness but never exposes raw model JSON fragments as progress', async () => {
   streamFrames([{ type: 'ready', detail: '原文已获取 · 24 页 · 文本层 83000 字符' },
     { type: 'thought', delta: '{"private_fragment":' }, { type: 'tick', elapsed: 10 },

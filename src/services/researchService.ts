@@ -1,3 +1,4 @@
+import type { StreamedResearchProse } from '../components/StreamedResearchBody';
 import axios from 'axios';
 import { getAuthSnapshot, isAuthRevisionCurrent, registerSessionCleanup, invalidateAuthSession } from '../state/authSession';
 import { DataQuality, Post, Stock } from '../types';
@@ -944,9 +945,10 @@ export async function generateResearchDeepDraftSmart(
   onStage?: (detail: string) => void,
   onQuick?: (quick: AiAnalysisLike) => void,
   signal?: AbortSignal,
+  onBody?: (body: StreamedResearchProse) => void,
 ): Promise<ResearchDeepDraftResponse> {
   try {
-    return await streamResearchDeepDraft(payload, onStage, onQuick, signal);
+    return await streamResearchDeepDraft(payload, onStage, onQuick, signal, onBody);
   } catch (err: any) {
     if (signal?.aborted) throw new axios.CanceledError('Research canceled');
     const status = err?.response?.status;
@@ -977,6 +979,7 @@ async function streamResearchDeepDraft(
   onStage?: (detail: string) => void,
   onQuick?: (quick: AiAnalysisLike) => void,
   signal?: AbortSignal,
+  onBody?: (body: StreamedResearchProse) => void,
 ): Promise<ResearchDeepDraftResponse> {
   if (signal?.aborted) throw new axios.CanceledError('Research canceled');
   const session = getAuthSnapshot();
@@ -1031,6 +1034,10 @@ async function streamResearchDeepDraft(
         try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
         if (controller.signal.aborted || !isAuthRevisionCurrent(session.revision)) throw new axios.CanceledError('Research canceled');
         if ((evt.type === 'stage' || evt.type === 'ready') && onStage && typeof evt.detail === 'string') onStage(evt.detail);
+        else if (evt.type === 'body' && evt.data && typeof evt.data === 'object') {
+          deliveredQuick = true;
+          onBody?.(evt.data);
+        }
         else if (evt.type === 'quick' && evt.data) {
           deliveredQuick = true;
           onQuick?.(evt.data);

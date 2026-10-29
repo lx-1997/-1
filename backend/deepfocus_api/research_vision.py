@@ -726,7 +726,8 @@ async def analyze_pdf_text(
     # Text reports should stay on the fast path. The schema is compact-report
     # shaped, so a 2.4k completion budget is enough and avoids long reasoning
     # tails on Qwen/GLM that make the UI look stuck.
-    data = await llm.complete_json(
+    from .streamed_prose import complete_report_json
+    data = await complete_report_json(llm,
         _build_text_prompt(title, symbol, text), max_tokens=2400, timeout_seconds=45,
     )
     return _normalize_result(
@@ -1055,8 +1056,12 @@ async def analyze_pdf_vision(
         if not attempt_images:
             raise RuntimeError("所有页面均被视觉模型安全策略拦截，无法解读。")
         try:
+            from .streamed_prose import REPORT_PROSE_DELTA
+            sink = REPORT_PROSE_DELTA.get()
+            if sink is not None: sink(None)
             raw = await llm.complete_vision(
                 prompt, attempt_images, max_tokens=4200, timeout_seconds=180,
+                **({"on_delta": sink} if sink is not None else {}),
             )
             break
         except VisionUnavailableError:

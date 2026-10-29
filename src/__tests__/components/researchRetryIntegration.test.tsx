@@ -265,6 +265,33 @@ it('retains real generation events across reopen and continues showing them with
   expect(research).toHaveBeenCalledTimes(1);
 });
 
+it('renders growing report paragraphs before completion and retains them after reopening', async () => {
+  pendingResearch();
+  await openReport();
+  const onBody = research.mock.calls[0][4]!;
+  await act(async () => { onBody({ intro: '正在形成的判断', sections: [{ title: '需求变化', paragraphs: ['第一段已写出'] }] }); });
+  expect(screen.getByRole('region', { name: '正在生成的研报正文' })).toHaveTextContent('第一段已写出');
+  await act(async () => { onBody({ intro: '正在形成的判断', sections: [{ title: '需求变化', paragraphs: ['第一段已写出，正文继续增长'] }] }); });
+  expect(screen.getByRole('region', { name: '正在生成的研报正文' })).toHaveTextContent('正文继续增长');
+  await act(async () => { fireEvent.click(document.querySelector('.bbt-doc-close')!); });
+  await clickReport();
+  expect(screen.getByRole('region', { name: '正在生成的研报正文' })).toHaveTextContent('正文继续增长');
+  expect(research).toHaveBeenCalledTimes(1);
+});
+
+it('keeps interrupted streamed report prose without retrying generation or claiming completion', async () => {
+  research.mockImplementationOnce(async (_p, _stage, _quick, _signal, onBody) => {
+    onBody?.({ intro: '已写出的部分正文' });
+    throw Object.assign(new Error('模型连接中断'), { streamDeliveredResult: true });
+  });
+  await openReport();
+  expect(screen.getByRole('region', { name: '正在生成的研报正文' })).toHaveTextContent('已写出的部分正文');
+  expect(screen.getByRole('region', { name: '正在生成的研报正文' })).toHaveTextContent('生成已中断');
+  await act(async () => { jest.advanceTimersByTime(18000); });
+  expect(research).toHaveBeenCalledTimes(1);
+  expectNoCompactRequest();
+});
+
 it('keeps auxiliary market dashboards collapsed while preserving access to them', async () => {
   let view!: ReturnType<typeof render>;
   await act(async () => { view = render(<AuthProvider><FinancialTerminal /></AuthProvider>); });

@@ -76,6 +76,11 @@
 .bbt-news-source-preview summary { min-height: 32px; color: var(--accent); cursor: pointer; font-size: 12px; }
 .bbt-news-source-preview details > div { max-height: 36vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .bbt .bbt-doc-overlay--ai { z-index: 160; }
+.bbt-streamed-body { margin: 12px 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text-body); overflow-wrap: anywhere; }
+.bbt-streamed-body > small { display: block; margin-bottom: 14px; color: var(--mute); font-size: 11px; line-height: 1.7; }
+.bbt-streamed-body p { white-space: pre-wrap; font-size: 15px; line-height: 1.9; margin: 0 0 14px; }
+.bbt-streamed-body h3, .bbt-streamed-body__intro { color: var(--text-strong); font-weight: 650; }
+.bbt-streamed-body h3 { margin: 20px 0 10px; font-size: 17px; }
 .bbt-generation-activity { margin: 0 0 18px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); color: var(--text-body); text-align: left; }
 .bbt-generation-activity__head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .bbt-generation-activity__head strong { font-size: 14px; }

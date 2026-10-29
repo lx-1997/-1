@@ -31,13 +31,14 @@ def _request():
 @pytest.mark.asyncio
 async def test_research_stream_delivers_first_model_fragment(monkeypatch):
     async def generate(request, documents, progress):
-        progress("llm_delta", "first fragment")
+        progress("llm_delta", '{"sections":[{"title":"需求","paragraphs":["第一段正文')
         await asyncio.sleep(0.01)
         return ResearchDeepDraftResponse(title="test", provider="test")
     monkeypatch.setattr(research_stream, "generate_deep_draft", generate)
     response = await research_stream.api_research_deep_draft_stream(ResearchDeepDraftRequest(), _request(), None)
     events = [json.loads(chunk.removeprefix("data: ").strip()) async for chunk in response.body_iterator]
-    assert any(event.get("delta") == "first fragment" for event in events)
+    assert any(event.get("type") == "body" and event["data"]["sections"][0]["paragraphs"] == ["第一段正文"] for event in events)
+    assert not any(event.get("type") == "thought" for event in events)
     assert events[-1]["type"] == "done"
     assert quotas.used("draft-test") == 1
 

@@ -658,6 +658,8 @@ export function runToolResearchStream(
   handlers: {
     onTool?: (e: ToolEvent, phase: 'start' | 'result') => void;
     onStatus?: (status: string) => void;
+    /** Provisional text, replaced by final and never saved as a completed answer. */
+    onPreview?: (text: string) => void;
     onFinal?: (result: ToolResearchResult) => void;
     /** Only an HTTP response that explicitly identifies a missing stream route permits replay. */
     onFallback?: (reason: string) => void;
@@ -764,6 +766,7 @@ export function runToolResearchStream(
             let data: any; try { data = JSON.parse(frame.data); } catch { continue; }
             if (data.platform === true) platformStream = true;
             if (eventType === 'status') handlers.onStatus?.(String(data.message || ''));
+            else if (eventType === 'answer_preview' && typeof data.text === 'string') handlers.onPreview?.(data.text);
             else if (eventType === 'tool_start') handlers.onTool?.({ tool: data.tool }, 'start');
             else if (eventType === 'tool_result') handlers.onTool?.({
               tool: data.tool,

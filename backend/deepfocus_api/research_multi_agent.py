@@ -361,12 +361,16 @@ async def _call_role(
         if not attempt_images:
             break
         try:
+            from .streamed_prose import REPORT_PROSE_DELTA
+            sink = REPORT_PROSE_DELTA.get() if role.key == "thesis" else None
+            if sink is not None: sink(None)
             async with _agent_semaphore():
                 raw = await llm.complete_vision(
                     prompt,
                     attempt_images,
                     max_tokens=role.max_tokens,
                     timeout_seconds=_AGENT_TIMEOUT_SECONDS,
+                    **({"on_delta": sink} if sink is not None else {}),
                 )
             data = rv._parse_model_json(raw)
             if not data:
@@ -567,8 +571,9 @@ async def _synthesize_page_results(
         f"线索标的：{target}；总页数：{total_pages}；成功读取页数：{len(page_results)}。\n"
         f"=== 页面笔记 ===\n{source}"
     )
+    from .streamed_prose import complete_report_json
     async with _agent_semaphore():
-        data = await llm.complete_json(
+        data = await complete_report_json(llm,
             prompt,
             max_tokens=4200,
             timeout_seconds=_PAGE_SYNTHESIS_TIMEOUT_SECONDS,
@@ -669,12 +674,11 @@ async def _call_text_role(
 ) -> dict[str, Any]:
     """Run one text specialist; text models return a decoded JSON object directly."""
     prompt = _build_text_prompt(role, title, symbol, text)
+    from .streamed_prose import complete_report_json
     async with _agent_semaphore():
-        data = await llm.complete_json(
-            prompt,
-            max_tokens=role.max_tokens,
-            timeout_seconds=_AGENT_TIMEOUT_SECONDS,
-        )
+        options = {"max_tokens": role.max_tokens, "timeout_seconds": _AGENT_TIMEOUT_SECONDS}
+        data = (await complete_report_json(llm, prompt, **options) if role.key == "thesis"
+                else await llm.complete_json(prompt, **options))
     if not isinstance(data, dict) or not data:
         raise RuntimeError(f"{role.label}未返回有效 JSON")
     return data

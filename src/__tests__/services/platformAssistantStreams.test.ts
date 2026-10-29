@@ -25,6 +25,15 @@ function stream(frame: string) {
   global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, body: { getReader: () => ({ read, releaseLock: jest.fn() }) } });
 }
 
+it('delivers cumulative prose before final and does not publish partial text as completed', async () => {
+  stream('event: answer_preview\ndata: {"text":"第一段","provisional":true}\n\nevent: answer_preview\ndata: {"text":"第一段第二段","provisional":true}\n\nevent: final\ndata: {"ok":true,"answer":"已校验全文","tool_trace":[]}\n\n');
+  const order: string[] = [];
+  runToolResearchStream({ message: '测试流式正文' }, { onPreview: text => order.push(text), onFinal: result => order.push(result.answer) });
+  await settle();
+  expect(order).toEqual(['第一段','第一段第二段','已校验全文']);
+  expect(listener).not.toHaveBeenCalled(); // No operation receipt exists in this text-only final.
+});
+
 it('publishes general stream receipts once at done and sends current identity/request ID', async () => {
   stream(`data: ${JSON.stringify({ delta: '完成' })}\n\ndata: ${JSON.stringify({ done: true, ...result })}\n\n`);
   const done = jest.fn();

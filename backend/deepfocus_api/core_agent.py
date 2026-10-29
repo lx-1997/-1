@@ -470,6 +470,12 @@ class CoreAgent:
         payload: Mapping[str, Any],
         emit: EmitCallback | None,
     ) -> None:
+        # Provisional tokens belong to the live response, not the durable event
+        # ledger. Persist only the existing completed answer/lifecycle records.
+        if event_type == "answer_delta":
+            if emit is not None:
+                await emit(event_type, dict(payload))
+            return
         tool = str(payload.get("tool") or "")
         await self._event(
             run_id,

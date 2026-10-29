@@ -1,4 +1,5 @@
 import json
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -33,6 +34,12 @@ def simple_model(monkeypatch):
     async def forbidden(**kwargs):
         raise AssertionError("a standalone definition must not start live-data tools")
 
+    async def general_stream(req):
+        result = await general(req)
+        yield result.content[:8]
+        yield result.content[8:]
+
+    monkeypatch.setattr(main.llm, "general_chat_stream", general_stream)
     monkeypatch.setattr(main.llm, "general_chat", general)
     monkeypatch.setattr(main.llm, "run_tool_agent", forbidden)
     monkeypatch.setattr(main, "_check_agent_quota", lambda *args, **kwargs: None)
@@ -63,6 +70,30 @@ async def test_definition_sse_keeps_final_contract_without_tools(simple_model):
     assert "每股利润" in text
     assert "event: tool_start" not in text
     assert len(simple_model) == 1
+
+@pytest.mark.asyncio
+async def test_definition_sse_delivers_body_before_the_model_finishes(simple_model,monkeypatch):
+    release=asyncio.Event();finished=asyncio.Event()
+    async def tokens(req):
+        yield '先出现的正文。'
+        await release.wait()
+        yield '后出现的正文。'
+        finished.set()
+    monkeypatch.setattr(main.llm,'general_chat_stream',tokens)
+    response=await main.tool_research_stream(request('/api/agents/tool-research/stream'),_user=None)
+    frames=[]
+    try:
+        async for frame in response.body_iterator:
+            frame=frame.decode() if isinstance(frame,bytes) else frame
+            frames.append(frame)
+            if 'event: answer_preview' in frame and not release.is_set():
+                assert '先出现的正文' in frame and not finished.is_set()
+                assert not any('event: final' in row for row in frames)
+                release.set()
+        assert any('event: final' in row and '后出现的正文' in row for row in frames)
+    finally:
+        release.set()
+        await response.body_iterator.aclose()
 
 
 def test_comparison_preserves_evidence_rounds_within_total_budget(monkeypatch):
