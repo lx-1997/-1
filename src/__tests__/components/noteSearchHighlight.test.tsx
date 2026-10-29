@@ -136,3 +136,49 @@ it('allows Escape after a previous nested dialog has become hidden', async () =>
   try { fireEvent.keyDown(window, { key: 'Escape' }); expect(screen.queryByRole('dialog', { name: '阅读机构纪要' })).not.toBeInTheDocument(); }
   finally { hiddenDialog.remove(); }
 });
+
+it('reads full-resolution document pages instead of square thumbnails and supports full-only attachments', async () => {
+  const response = streamResponse('Original image note');
+  response.items[0].title = 'Original image note';
+  response.items[0].images = ['https://images.zsxq.com/thumb.jpg'];
+  response.items[0].image_fulls = ['https://images.zsxq.com/full.jpg', 'https://images.zsxq.com/full-two.jpg'];
+  mockedStream.mockResolvedValue(response);
+  render(<TerminalZsxqStream />);
+  fireEvent.click(await screen.findByRole('button', { name: /Original image note.*查看全文/ }));
+  const pages = screen.getByRole('region', { name: '纪要原始资料' });
+  const images = within(pages).getAllByRole('img');
+  expect(images).toHaveLength(2);
+  expect(images[0]).toHaveAttribute('src', expect.stringContaining(encodeURIComponent('https://images.zsxq.com/full.jpg')));
+  expect(images[1]).toHaveAttribute('src', expect.stringContaining(encodeURIComponent('https://images.zsxq.com/full-two.jpg')));
+  expect(images[0]).toHaveClass('tzs-document-img');
+  fireEvent.load(images[0]);
+  expect(within(pages).getAllByRole('status')).toHaveLength(1);
+  fireEvent.error(images[1]);
+  expect(within(pages).getByRole('alert')).toHaveTextContent('原图加载失败');
+  fireEvent.click(within(pages).getByRole('button', { name: '重新加载' }));
+  expect(images[1]).toHaveAttribute('src', expect.stringContaining('&retry=1'));
+});
+
+it('zooms an original image and returns to the same note before leaving its reader', async () => {
+  const response = streamResponse('Image note'); response.items[0].title = 'Image note';
+  response.items[0].images = ['https://images.zsxq.com/original.jpg'];
+  mockedStream.mockResolvedValue(response);
+  render(<TerminalZsxqStream />);
+  fireEvent.click(await screen.findByRole('button', { name: /Image note.*查看全文/ }));
+  const trigger = screen.getByRole('button', { name: '放大第 1 张纪要原图' });
+  trigger.focus(); fireEvent.click(trigger);
+  const viewer = screen.getByRole('dialog', { name: '查看图片' });
+  expect(screen.getByRole('dialog', { name: '阅读机构纪要', hidden: true })).toHaveAttribute('inert');
+  fireEvent.click(within(viewer).getByRole('button', { name: '放大原图' }));
+  expect(within(viewer).getByRole('status')).toHaveTextContent('125%');
+  fireEvent.click(within(viewer).getByRole('button', { name: '整图预览' }));
+  expect(within(viewer).getByRole('status')).toHaveTextContent('整图');
+  fireEvent.click(within(viewer).getByRole('button', { name: '适合宽度' }));
+  expect(within(viewer).getByRole('status')).toHaveTextContent('100%');
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: '查看图片' })).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  expect(screen.getByRole('dialog', { name: '阅读机构纪要' })).not.toHaveAttribute('inert');
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: '阅读机构纪要' })).not.toBeInTheDocument();
+});

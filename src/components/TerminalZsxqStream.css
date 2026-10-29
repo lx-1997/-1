@@ -176,3 +176,42 @@ body:has(.tzs-reader-overlay) .ant-modal-root .ant-modal-mask { z-index: 23999; 
 body:has(.tzs-reader-overlay) .ant-modal-root .ant-modal-wrap { z-index: 24000; }
 
 [data-theme='dark'] .tzs-reader-overlay { --accent: #7ab8ff; }
+
+/* Image notes are document pages, never cropped feed thumbnails. */
+.tzs-image-pages { display: flex; flex-direction: column; gap: 24px; margin-top: 24px; }
+.tzs-image-intro { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; color: var(--text); }
+.tzs-image-intro b { font-size: 13px; font-weight: 600; }
+.tzs-image-intro span { font-size: 11px; color: var(--text-muted, var(--mute)); }
+.tzs-image-page { margin: 0; min-width: 0; }
+.tzs-image-page figcaption { display: flex; justify-content: space-between; align-items: center; padding: 0 0 10px; gap: 12px; color: var(--text-muted, var(--mute)); font-size: 11px; }
+.tzs-image-page figcaption button { border: 0; padding: 4px 0; background: none; color: var(--accent, #448dd0); font: inherit; cursor: pointer; }
+.tzs-image-document { display: block; width: 100%; padding: 0; border: 1px solid var(--border-soft, #d9dfe5); border-radius: 6px; background: #fff; cursor: zoom-in; overflow: hidden; }
+.tzs-image-document[hidden] { display: none; }
+.tzs-reader-overlay .tzs-document-img { display: block; width: 100%; height: auto; max-width: 100%; object-fit: contain; }
+.tzs-image-status { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 16px; border: 1px dashed var(--border-soft); border-radius: 6px; font-size: 12px; color: var(--text-muted); }
+.tzs-image-status button { padding: 6px 10px; color: var(--accent); background: transparent; border: 1px solid currentColor; border-radius: 6px; cursor: pointer; }
+.tzs-lightbox { padding: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; background: #11151c; }
+.tzs-image-viewer-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #ffffff1f; background: #191f29; color: #dce7f2; }
+.tzs-image-viewer-label { margin-right: auto; color: #aebdce; font-size: 12px; }
+.tzs-image-viewer-toolbar .tzs-lightbox-btn { border-radius: 6px; padding: 7px 10px; background: #222c39; border-color: #ffffff20; color: #e0eaf5; font-size: 12px; white-space: nowrap; }
+.tzs-image-viewer-toolbar .tzs-lightbox-btn:disabled { opacity: .35; cursor: default; }
+.tzs-image-viewer-zoom { display: flex; gap: 6px; align-items: center; }
+.tzs-image-viewer-zoom output { min-width: 38px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
+.tzs-lightbox .tzs-lightbox-scroll { flex: 1 1 auto; min-height: 0; box-sizing: border-box; width: 100%; height: 100%; max-width: none; max-height: none; padding: 20px 16px 40px; border-radius: 0; overflow: auto; overscroll-behavior: contain; }
+.tzs-lightbox .tzs-lightbox-img { width: calc(min(960px, 100vw - 32px) * var(--image-scale, 1)); max-width: none; height: auto; margin: 0 auto; border-radius: 2px; cursor: default; }
+.tzs-lightbox .tzs-lightbox-scroll.fit { display: flex; align-items: flex-start; justify-content: center; overflow: auto; }
+.tzs-lightbox .tzs-lightbox-img.fit { width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
+@media (max-width: 620px) {
+  .tzs-reader-overlay .tzs-reader { padding: 20px 14px 40px; }
+  .tzs-reader-overlay .tzs-reader-title { font-size: 20px; line-height: 1.5; }
+  .tzs-image-pages { gap: 20px; margin-top: 20px; }
+  .tzs-image-intro { gap: 6px; }
+  .tzs-image-intro span { font-size: 10px; }
+  .tzs-image-viewer-toolbar { gap: 6px; padding: 8px; flex-wrap: wrap; }
+  .tzs-image-viewer-label { flex: 1 0 calc(100% - 110px); white-space: nowrap; text-align: right; }
+  .tzs-image-viewer-zoom { margin-right: auto; }
+  .tzs-image-viewer-toolbar .tzs-lightbox-btn { min-height: 36px; padding: 7px 9px; }
+}
+
+.tzs-reader-overlay .tzs-reader:has(.tzs-image-pages) { max-width: 1040px; }
+.tzs-reader-overlay .tzs-reader:has(.tzs-image-pages) .tzs-reader-title { font-size: clamp(20px, 1.8vw, 26px); line-height: 1.5; }

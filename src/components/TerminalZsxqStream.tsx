@@ -170,10 +170,29 @@ function notePreview(item: ZsxqTopic) {
   const title = cleanSourceBrand(item.title || '').replace(/^#+\s*/, '').trim()
     || text.split('\n')[0]?.slice(0, 90) || '机构纪要';
   const rest = (text.startsWith(title) ? text.slice(title.length) : text).replace(/\s+/g, ' ').trim();
-  const imageCount = (item.image_fulls?.length ? item.image_fulls : item.images)?.length || 0;
+  const imageCount = Math.max(item.image_fulls?.length || 0, item.images?.length || 0);
   const summary = rest || (imageCount ? `图片纪要，含 ${imageCount} 张原始资料，点击查看完整内容。` : '点击查看这篇纪要的完整内容。');
   return { title, summary: summary.length > 140 ? summary.slice(0, 140).trimEnd() + '…' : summary };
 }
+
+const noteImages = (item: ZsxqTopic): string[] => {
+  const count = Math.max(item.images?.length || 0, item.image_fulls?.length || 0);
+  return Array.from({ length: count }, (_, index) => item.image_fulls?.[index] || item.images?.[index]).filter(Boolean);
+};
+
+const NoteImagePage: React.FC<{ url: string; index: number; total: number; onZoom: (url: string) => void }> = ({ url, index, total, onZoom }) => {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  return <figure className="tzs-image-page">
+    <figcaption><span>原图 {index + 1} / {total}</span><button type="button" onClick={() => onZoom(url)}>放大阅读 ↗</button></figcaption>
+    {!loaded && !failed && <div className="tzs-image-status" role="status">正在加载原图…</div>}
+    {failed && <div className="tzs-image-status" role="alert">原图加载失败 <button type="button" onClick={() => { setFailed(false); setLoaded(false); setRetry(value => value + 1); }}>重新加载</button></div>}
+    <button type="button" className="tzs-image-document" aria-label={`放大第 ${index + 1} 张纪要原图`} onClick={() => onZoom(url)} hidden={failed}>
+      <img className="tzs-img tzs-document-img" src={zsxqImg(url) + (retry ? `&retry=${retry}` : '')} alt={`纪要原图，第 ${index + 1} 页`} loading={index === 0 ? 'eager' : 'lazy'} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
+    </button>
+  </figure>;
+};
 
 // 列表只展示标题与简介；打开单篇后再展示完整正文、图片和评论。
 const TopicRow: React.FC<{
@@ -205,6 +224,7 @@ const TopicRow: React.FC<{
       qr,
     });
   }, [item, cleanText]);
+  const originals = noteImages(item);
   const preview = notePreview(item);
   const highlight = (text: string) => splitByKeywords(text, kw).map((part, index) => part.hit ? <mark className="tzs-mark" key={index}>{part.text}</mark> : part.text);
   if (!detail) return <article className={'tzs-note-card' + (focused ? ' tzs-item--focus' : '')} id={item.id ? `zsxq-${item.id}` : undefined}>
@@ -234,20 +254,13 @@ const TopicRow: React.FC<{
         )}
       </div>
 
-      {cleanText && <div className="tzs-item-body">{renderBody(bodyText, item.links, kw)}</div>}
+      {bodyText && <div className="tzs-item-body">{renderBody(bodyText, item.links, kw)}</div>}
 
 
-      {item.images.length > 0 && (
-        <div className="tzs-imgs">
-          {item.images.map((u, i) => (
-            <button type="button" className="tzs-img-btn" key={i} onClick={() => onZoom((item.image_fulls && item.image_fulls[i]) || u)} title="点击放大">
-              {/* 缩略图与灯箱统一走后端代理：直连星球图床会被 Referer 防盗链换成占位图，
-                  且占位图一旦进浏览器缓存会按 URL 持续回放（no-referrer 也救不回） */}
-              <img className="tzs-img" src={zsxqImg(u)} alt="" loading="lazy" />
-            </button>
-          ))}
-        </div>
-      )}
+      {originals.length > 0 && <section className="tzs-image-pages" aria-label="纪要原始资料">
+        <div className="tzs-image-intro"><b>原始资料</b><span>{originals.length} 张图片 · 按页阅读，点击可放大</span></div>
+        {originals.map((url, index) => <NoteImagePage key={`${item.id}-${index}-${url}`} url={url} index={index} total={originals.length} onZoom={onZoom} />)}
+      </section>}
 
       <CommentsBlock item={item} />
     </div>
@@ -268,7 +281,18 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
   const [zoom, setZoom] = useState<string | null>(null);
+  const [imageScale, setImageScale] = useState(1);
+  const lightboxCloseRef = useRef<HTMLButtonElement>(null);
   const [fitWin, setFitWin] = useState(false);   // 灯箱:false=铺满宽度可竖向滚动看清长图(默认)/true=整图适应窗口
+  useLayoutEffect(() => {
+    if (!zoom) return;
+    const trigger = document.activeElement as HTMLElement | null;
+    const reader = document.querySelector('.tzs-reader-overlay');
+    const wasInert = reader?.hasAttribute('inert');
+    reader?.setAttribute('inert', '');
+    lightboxCloseRef.current?.focus();
+    return () => { if (!wasInert) reader?.removeAttribute('inert'); trigger?.focus({ preventScroll: true }); };
+  }, [zoom]);
   const cursorRef = useRef('');
   const hasMoreRef = useRef(false);
   const [sentiment, setSentiment] = useState<NoteSentiment | null>(null);
@@ -406,17 +430,26 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
   const groups = data?.groups || [];
 
   const lightbox = zoom && (
-    <div className="tzs-lightbox" onMouseDown={() => setZoom(null)} role="dialog" aria-label="查看图片">
-      {/* 长图默认铺满宽度、可竖向滚动看清；点图切换「适应窗口」整图 */}
-      <div className={'tzs-lightbox-scroll' + (fitWin ? ' fit' : '')} onMouseDown={e => e.stopPropagation()}>
-        <img className={'tzs-lightbox-img' + (fitWin ? ' fit' : '')} src={zsxqImg(zoom)} alt=""
-             onClick={() => setFitWin(v => !v)} title={fitWin ? '点击放大阅读' : '点击适应窗口'} />
+    <div className="tzs-lightbox" role="dialog" aria-modal="true" aria-label="查看图片" onKeyDown={event => {
+      if (event.key !== 'Tab') return;
+      const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],[tabindex="0"]'));
+      if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls[controls.length - 1]?.focus(); }
+      else if (!event.shiftKey && document.activeElement === controls[controls.length - 1]) { event.preventDefault(); controls[0]?.focus(); }
+    }}>
+      <div className="tzs-image-viewer-toolbar">
+        <button type="button" className="tzs-lightbox-btn" ref={lightboxCloseRef} onClick={() => setZoom(null)} aria-label="关闭图片，返回纪要">← 返回纪要</button>
+        <span className="tzs-image-viewer-label">原图阅读</span>
+        <div className="tzs-image-viewer-zoom">
+          <button type="button" className="tzs-lightbox-btn" aria-label="缩小原图" disabled={!fitWin && imageScale <= .5} onClick={() => { setFitWin(false); setImageScale(value => Math.max(.5, value - .25)); }}>−</button>
+          <output aria-live="polite">{fitWin ? '整图' : `${Math.round(imageScale * 100)}%`}</output>
+          <button type="button" className="tzs-lightbox-btn" aria-label="放大原图" disabled={!fitWin && imageScale >= 3} onClick={() => { setFitWin(false); setImageScale(value => Math.min(3, value + .25)); }}>+</button>
+        </div>
+        <button type="button" className="tzs-lightbox-btn" onClick={() => { setFitWin(value => !value); setImageScale(1); }}>{fitWin ? '适合宽度' : '整图预览'}</button>
+        <a className="tzs-lightbox-btn" href={zsxqImg(zoom, true)} download target="_blank" rel="noreferrer">下载原图</a>
       </div>
-      <div className="tzs-lightbox-bar" onMouseDown={e => e.stopPropagation()}>
-        <button className="tzs-lightbox-btn" onClick={() => setFitWin(v => !v)}>{fitWin ? '🔍 放大阅读' : '⤢ 适应窗口'}</button>
-        <a className="tzs-lightbox-btn" href={zsxqImg(zoom, true)} download target="_blank" rel="noreferrer">⬇ 下载原图</a>
+      <div className={'tzs-lightbox-scroll' + (fitWin ? ' fit' : '')} tabIndex={0} aria-label="可滚动原图，放大后可横向查看" style={{ ['--image-scale' as string]: imageScale }}>
+        <img className={'tzs-lightbox-img' + (fitWin ? ' fit' : '')} src={zsxqImg(zoom)} alt="当前纪要高清原图" />
       </div>
-      <button className="tzs-lightbox-x" onClick={() => setZoom(null)} aria-label="关闭">✕</button>
     </div>
   );
 
@@ -460,7 +493,7 @@ const TerminalZsxqStream: React.FC<{ inline?: boolean; loggedIn?: boolean; onReq
           <div className="tzs-reader-toolbar"><button type="button" className="tzs-reader-back" onClick={() => setSelected(null)}>← 返回纪要列表</button><span>机构纪要</span><span className="tzs-reader-escape">Esc 返回</span></div>
           <div className="tzs-reader-content"><section className="tzs-reader" aria-label="机构纪要全文">
             <h1 className="tzs-reader-title" ref={readerTitle} tabIndex={-1}>{notePreview(selected).title}</h1>
-            <TopicRow item={selected} detail kw={applied} onZoom={url => { setFitWin(false); setZoom(url); }} />
+            <TopicRow item={selected} detail kw={applied} onZoom={url => { setFitWin(false); setImageScale(1); setZoom(url); }} />
           </section></div>
         </div>, document.body)}
         <div className="tzs-list-view" hidden={!!selected}>
