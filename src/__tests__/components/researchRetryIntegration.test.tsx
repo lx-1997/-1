@@ -100,9 +100,8 @@ it('keeps a delivered quick preview after a broken stream without another paid r
     throw new TypeError('Failed to fetch');
   });
   await openReport();
-  expect(screen.queryByRole('dialog', { name: 'AI 深度稿' })).not.toBeInTheDocument();
-  expect(screen.queryByText(/已交付的速览结论/)).not.toBeInTheDocument();
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /解读失败：研报断流集成回归/ })); });
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toBeInTheDocument();
+  expect(screen.getByText(/完整解读未生成，请以原文为准/)).toBeInTheDocument();
   expect(screen.getByText(/已交付的速览结论/)).toBeInTheDocument();
   expect(screen.getByText('速览内容仍可阅读')).toBeInTheDocument();
   await act(async () => { jest.advanceTimersByTime(18_000); });
@@ -114,7 +113,7 @@ it('does not let account A\'s delayed retry replay or cancel account B\'s same r
   research.mockRejectedValueOnce(new TypeError('Failed to fetch'));
   await openReport();
   expect(screen.getByRole('button', { name: /网络波动，6 秒后自动重试（1\/2）/ })).toBeInTheDocument();
-  expect(screen.queryByRole('dialog', { name: 'AI 深度稿' })).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toBeInTheDocument();
   expect(research).toHaveBeenCalledTimes(1);
   pendingResearch();
   await act(async () => { authenticateSession(account('B'), 'test-b', 'https://example.test'); });
@@ -203,7 +202,7 @@ it.each([
   await openReport();
   expectNoCompactRequest();
   expect(screen.queryByText(/网络波动，6 秒后自动重试/)).not.toBeInTheDocument();
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /解读失败：研报断流集成回归/ })); });
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toBeInTheDocument();
   expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toHaveTextContent(visible);
   await act(async () => { jest.advanceTimersByTime(18_000); });
   expect(research).toHaveBeenCalledTimes(1);
@@ -232,4 +231,19 @@ it.each([
   await act(async () => { jest.advanceTimersByTime(18_000); });
   expect(research).toHaveBeenCalledTimes(1);
   expect((apiPost as jest.Mock).mock.calls.filter(([path]) => path === '/api/research/vision-analyze')).toHaveLength(1);
+});
+
+
+it('opens report progress immediately and resumes the same task after closing', async () => {
+  pendingResearch();
+  await openReport();
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toBeInTheDocument();
+  expect(research).toHaveBeenCalledTimes(1);
+  await act(async () => { fireEvent.click(document.querySelector('.bbt-doc-close')!); });
+  expect(screen.queryByRole('dialog', { name: 'AI 深度稿' })).not.toBeInTheDocument();
+  expect(research.mock.calls[0][3]!.aborted).toBe(false);
+  await clickReport();
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toBeInTheDocument();
+  expect(research).toHaveBeenCalledTimes(1);
+  expectNoCompactRequest();
 });

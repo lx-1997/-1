@@ -49,6 +49,50 @@ def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
+def _draft_prefix_preview(prefix: str) -> dict[str, str]:
+    """Read only complete top-level JSON strings; unfinished tokens never escape."""
+    decoder = json.JSONDecoder()
+    text = prefix.lstrip()
+    if not text.startswith("{"):
+        return {}
+    values: dict[str, str] = {}
+    position = 1
+    for _ in range(24):
+        try:
+            while position < len(text) and text[position].isspace():
+                position += 1
+            key, position = decoder.raw_decode(text, position)
+            if not isinstance(key, str):
+                break
+            while position < len(text) and text[position].isspace():
+                position += 1
+            if position >= len(text) or text[position] != ":":
+                break
+            position += 1
+            while position < len(text) and text[position].isspace():
+                position += 1
+            value, position = decoder.raw_decode(text, position)
+            if isinstance(value, str) and key in ("one_liner", "plain_language_summary", "executive_summary", "subject"):
+                values[key] = value
+            while position < len(text) and text[position].isspace():
+                position += 1
+            if position >= len(text) or text[position] != ",":
+                break
+            position += 1
+        except (ValueError, IndexError, RecursionError):
+            break
+    summary = values.get("plain_language_summary") or values.get("executive_summary")
+    if not values.get("one_liner") or not summary:
+        return {}
+    from .compliance import neutralize_text
+
+    return {
+        "one_liner": neutralize_text(values["one_liner"][:400]),
+        "summary": neutralize_text(summary[:1200]),
+        "subject": neutralize_text(values.get("subject", "")[:200]),
+    }
+
+
 def _valid_cached_draft(value: Any) -> bool:
     from .research_cache import is_valid_deep_draft_cache
 
@@ -203,9 +247,17 @@ async def api_research_deep_draft_stream(
                 })
 
             delta_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+            preview_prefix = ""
+            prefix_preview: dict[str, str] = {}
 
             def _progress(kind: str, value: Any) -> None:
+                nonlocal preview_prefix, prefix_preview
                 if kind == "llm_delta" and value:
+                    # Keep the exact bounded prefix before the display queue can
+                    # drop fragments. This preview never enters either cache.
+                    if not prefix_preview and len(preview_prefix) < 16000:
+                        preview_prefix = (preview_prefix + str(value))[:16000]
+                        prefix_preview = _draft_prefix_preview(preview_prefix)
                     try:
                         if delta_queue.full():
                             delta_queue.get_nowait()
@@ -282,6 +334,15 @@ async def api_research_deep_draft_stream(
                         fragments.append(delta_queue.get_nowait())
                     if fragments:
                         yield _sse({"type": "thought", "delta": "".join(fragments)[-240:]})
+                    if prefix_preview and not quick_delivered:
+                        complete_once()
+                        quick_delivered = True
+                        yield _sse({"type": "quick", "data": {
+                            **prefix_preview, "title": request.title,
+                            "provider": "AI 速览", "quick": True,
+                            "source_note": "AI 初步解读 · 正文生成中，完成后自动替换；风险与证据请以完整解读为准",
+                            "bullish": [], "bearish": [], "key_points": [], "instruments": [],
+                        }})
                     if quick_pending and quick_task in done:
                         quick_pending = False
                         quick = quick_task.result()
@@ -313,7 +374,10 @@ async def api_research_deep_draft_stream(
                     await asyncio.gather(quick_task, return_exceptions=True)
             complete_once()
             if isinstance(payload, dict) and payload.get("provider") == "local-fallback":
-                yield _sse({"type": "stage", "stage": "fallback", "detail": "本轮模型超时，先展示原文摘录版；稍后重试可获取完整解读"})
+                if quick_delivered:
+                    yield _sse({"type": "error", "status": 502, "detail": "完整解读未生成，已保留初步速览；可查看原文或稍后手动重试"})
+                    return
+                yield _sse({"type": "stage", "stage": "fallback", "detail": "本轮模型未完成，先展示原文摘录版；稍后重试可获取完整解读"})
             yield _sse({"type": "done", "data": _finish(payload).model_dump(mode="json")})
         finally:
             # Includes parse/cache/preview/generation and queue waits, including

@@ -3804,13 +3804,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!cur) return;
     aiRetries.reset(key);
     cur.status = 'error'; cur.error = msg;
-    if (!cur.result && cur.quick) cur.result = cur.quick as AiAnalysis;
+    if (cur.quick && !cur.deepDraft) {
+      cur.quick = { ...cur.quick, source_note: '初步速览 · 完整解读未生成，请以原文为准' };
+      cur.result = cur.quick as AiAnalysis;
+    }
     setAiTasksVersion(v => v + 1);
     upsertAiTaskHistory({
       key, kind: cur.kind, title: cur.title, report: cur.report, meta: cur.meta,
       startedAt: cur.startedAt, status: 'error', error: msg, content: cur.content,
     });
-    if (aiViewingTaskRef.current === key) { setAiLoading(false); setAiError(msg); setAiQuickPending(false); aiRetryRef.current = cur.restart; }
+    if (aiViewingTaskRef.current === key) { if (cur.quick && !cur.deepDraft) setAiResult(cur.result); setAiLoading(false); setAiError(msg); setAiQuickPending(false); aiRetryRef.current = cur.restart; }
     else if (!cur.hidden) showToast(`⚠️ 解读失败：${clipTitle(cur.title)}`, () => openAiTaskView(key));
   }, [showToast, openAiTaskView, aiRetries]);
 
@@ -3833,7 +3836,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!existing) return false;
     if (existing.status === 'running') {
       if (existing.hidden) { existing.hidden = false; setAiTasksVersion(v => v + 1); }
-      showToast('✦ 正在后台解读中，完成后提醒你');
+      if (existing.kind === 'report') openAiTaskView(key);
+      else showToast('✦ 正在后台解读中，完成后提醒你');
     } else if (existing.status === 'done') openAiTaskView(key);
     else existing.restart();
     return true;
@@ -3871,7 +3875,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const isTaskCurrent = () => aiMountedRef.current && isAuthRevisionCurrent(revision)
       && aiTasksRef.current.get(cacheKey) === task;
     registerAiTask(task);
-    if (!hidden) showToast('✦ 已转入后台解读，完成后提醒你');
+    if (!hidden) openAiTaskView(cacheKey);
     try {
       // 研报主路径：文章式深度稿。返回中附带 compact 时复用它；否则从文章结构投影，
       // 保证旧分享/出图仍可用。

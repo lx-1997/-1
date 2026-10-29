@@ -10,7 +10,7 @@ from deepfocus_api.schemas import ResearchDeepDraftRequest, ResearchDeepDraftRes
 
 
 QUICK = {"one_liner": "Useful preview", "quick": True, "provider": "test-quick"}
-DEEP = ResearchDeepDraftResponse(title="Deep result", provider="test-deep")
+DEEP = ResearchDeepDraftResponse(title="Deep result", provider="test-deep", sections=[{"id": "s1", "title": "Source facts", "paragraphs": ["Full model-generated report with readable evidence."]}])
 
 
 @pytest.fixture(autouse=True)
@@ -545,6 +545,80 @@ async def test_parallel_stream_leaves_real_exclusive_vision_batch_to_deep(monkey
     assert len(batch_calls) == 1 and batch_calls[0] > 1
     assert not research_multi_agent._batch_semaphore().locked()
     assert research_multi_agent._batch_foreground_waiters == 0
-    assert any(key == "quick-test" and value["provider"] == "vision-compact-fallback" for key, value in writes)
+    # Visual compact fallback is readable live, but is never a reusable deep article.
+    assert not any(key == "quick-test" for key, value in writes)
     assert quotas.used("quick-test") == 1
     _no_owned_tasks(prior)
+
+
+def test_draft_prefix_requires_closed_top_level_summary_and_preserves_escapes():
+    # An incomplete string cannot become a preview, and nested keys do not count.
+    assert research_stream._draft_prefix_preview('{"nested":{"one_liner":"wrong","plain_language_summary":"wrong"}}') == {}
+    assert research_stream._draft_prefix_preview('{"one_liner":"20%","plain_language_summary":"unfinished') == {}
+    source = json.dumps({"one_liner": 'Revenue "quoted" 20%', "plain_language_summary": "2026年收入增速20%，并非利润增速。"}, ensure_ascii=False)
+    preview = research_stream._draft_prefix_preview(source[:-1])
+    assert preview["one_liner"] == 'Revenue "quoted" 20%'
+    assert preview["summary"] == "2026年收入增速20%，并非利润增速。"
+    assert research_stream._draft_prefix_preview('```json\n' + source) == {}
+
+
+@pytest.mark.asyncio
+async def test_draft_prefix_delivers_before_full_result_without_caching_partial(monkeypatch):
+    release_deep = asyncio.Event()
+    optional_closed = asyncio.Event()
+    writes = []
+    monkeypatch.setattr(main, "metrics_set_ai_cache", lambda *args: writes.append(args))
+
+    async def quick(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            optional_closed.set()
+
+    async def deep(request, documents, progress):
+        prefix = json.dumps({"subject": "Company", "one_liner": "Revenue grew 20%", "plain_language_summary": "Revenue growth is not earnings growth."})[:-1] + ',"sections":['
+        # Exceed the display queue capacity; exact prefix assembly must survive.
+        for char in prefix:
+            progress("llm_delta", char)
+        await release_deep.wait()
+        return DEEP
+
+    monkeypatch.setattr(research_stream, "generate_deep_quick", quick)
+    monkeypatch.setattr(research_stream, "generate_deep_draft", deep)
+    prior = set(asyncio.all_tasks())
+    response = await _response()
+    events = []
+    async def consume():
+        try:
+            async for chunk in response.body_iterator:
+                event = _event(chunk)
+                events.append(event)
+                if event["type"] == "quick":
+                    assert not release_deep.is_set()
+                    assert event["data"]["summary"] == "Revenue growth is not earnings growth."
+                    assert "正文生成中" in event["data"]["source_note"]
+                    assert writes == []
+                    release_deep.set()
+        finally:
+            await response.body_iterator.aclose()
+    await asyncio.wait_for(consume(), 2)
+    assert events[-1]["type"] == "done"
+    assert sum(event["type"] == "quick" for event in events) == 1
+    assert optional_closed.is_set()
+    assert quotas.used("quick-test") == 1
+    _no_owned_tasks(prior)
+
+
+@pytest.mark.asyncio
+async def test_full_model_failure_keeps_preview_instead_of_replacing_it_with_excerpts(monkeypatch):
+    async def deep(request, documents, progress):
+        progress("llm_delta", '{"one_liner":"Useful conclusion","plain_language_summary":"Readable preliminary summary",')
+        await asyncio.sleep(0.02)
+        return ResearchDeepDraftResponse(title="Excerpts", provider="local-fallback")
+    monkeypatch.setattr(research_stream, "generate_deep_draft", deep)
+    events = await asyncio.wait_for(_collect(await _response()), 1)
+    assert any(event["type"] == "quick" for event in events)
+    assert events[-1]["type"] == "error"
+    assert "已保留初步速览" in events[-1]["detail"]
+    assert not any(event["type"] == "done" for event in events)
+    assert quotas.used("quick-test") == 1

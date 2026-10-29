@@ -52,6 +52,8 @@ description: >-
 
 多模块发布或有并发上线时，先读 `references/batch-release-guard.md`，验证完整生产候选和全部哈希。
 
+处理研报首段等待或模拟盘独立页面时，读 `references/research-prefix-preview.md`，区分首个可读摘要与全文耗时，保留缓存与原文覆盖。
+
 发布新闻或文章 AI 解读链路时，读 `references/news-analysis-preflight.md`，验证媒体来源、正文覆盖、质量门槛和三层缓存，避免把图片二进制或空壳摘要当成完整解读。
 
 ---
