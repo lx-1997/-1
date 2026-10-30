@@ -2,6 +2,7 @@
 import pytest
 
 from deepfocus_api import ai_fund
+from deepfocus_api.tests.market_fixture import source_fixture,source_map
 
 MD_UP = {"closes": [90, 91, 92, 93, 95, 96, 97, 98, 99, 100] * 3, "flow5": 3.0e8}  # 上升趋势 + 主力流入
 
@@ -13,7 +14,7 @@ def fund(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_fund.emotion_cycle, 'current_cycle', lambda **kw: {'stage':'neutral','label':'隔离中性'})
     monkeypatch.setattr(ai_fund, "_our_content", lambda name: [])
     monkeypatch.setattr(ai_fund, "_sentiment", lambda items: None)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {code:source_fixture(code) for code in codes})
     monkeypatch.setattr(ai_fund, "_llm_narratives", lambda decisions, mood, cfg=None: {})
     monkeypatch.setattr(ai_fund, "_benchmark", lambda started, navpct: None)  # 不打外网
     monkeypatch.setattr(ai_fund, "_market_regime_now",
@@ -186,7 +187,7 @@ def test_daily_buy_cap_limits_new_positions(fund, monkeypatch):
     }
     _wire(monkeypatch, q)
     monkeypatch.setattr(ai_fund, "_market_data",
-                        lambda codes, priority=None: {"002594": MD_UP, "300750": MD_UP})
+                        lambda codes, priority=None: source_map({"002594": MD_UP, "300750": MD_UP}))
     monkeypatch.setattr(
         ai_fund, "_our_content",
         lambda name: [{"title": f"{name}中标大订单、业绩超预期", "severity": "success",
@@ -204,7 +205,7 @@ def test_bull_playbook_dims_flow_through_tick(fund, monkeypatch):
     ohlc = [{"d": (datetime.now(ai_fund.BJ_TZ)-timedelta(days=250-i)).date().isoformat(), "o": c - 0.2, "h": c + 0.4, "l": c - 0.5, "c": c, "v": 1000} for i,c in enumerate(closes)]
     md = {"002594": {"closes": closes, "ohlc": ohlc, "flow5": 3.0e8,
                      "fundamentals": {"roe": 22.0, "revenue_yoy": 30.0, "profit_yoy": 40.0}}}
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: md)
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map(md))
     q = {"002594": {"latest": closes[-1], "pe_ttm": 24, "pb": 4, "changeRatio": 2.0, "turnoverRatio": 5}}
     _wire(monkeypatch, q)
     monkeypatch.setattr(ai_fund, "_our_content",
@@ -340,7 +341,7 @@ def test_arena_isolation_and_leaderboard(fund, monkeypatch):
     """两个智能体各跑一轮，持仓/快照按 fund_id 隔离；排行榜一次拉全场并排名。"""
     q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96}}
     _wire(monkeypatch, q)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": MD_UP}))
     monkeypatch.setattr(ai_fund, "_our_content",
                         lambda name: [{"title": "比亚迪中标大订单、业绩超预期", "severity": "success",
                                        "age_h": 1, "id": "n", "src": "快讯"}] if name == "比亚迪" else [])
@@ -421,7 +422,7 @@ def test_evidence_pack_is_grounded_json():
 def _byd_catalyst(monkeypatch):
     q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96}}
     _wire(monkeypatch, q)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": MD_UP}))
     monkeypatch.setattr(ai_fund, "_our_content",
                         lambda name: [{"title": "比亚迪中标大订单、业绩超预期", "severity": "success",
                                        "age_h": 1, "id": "n", "src": "快讯"}] if name == "比亚迪" else [])
@@ -499,7 +500,7 @@ def test_buy_includes_why_this_over_that(fund, monkeypatch):
     q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96},
          "300750": {"latest": 200, "pe_ttm": 25, "pb": 4, "changeRatio": 1.0, "turnoverRatio": 4, "high": 202, "low": 196}}
     _wire(monkeypatch, q)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP, "300750": MD_UP})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": MD_UP, "300750": MD_UP}))
     monkeypatch.setattr(ai_fund, "_our_content",
         lambda name: ([{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪"
                       else [{"title": "宁德时代签约合作", "severity": "info", "age_h": 5, "id": "b", "src": "快讯"}] if name == "宁德时代" else []))
@@ -575,7 +576,7 @@ def _byd_strong(monkeypatch, extra_q=None):
     if extra_q:
         q["002594"].update(extra_q)
     _wire(monkeypatch, q)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": MD_UP}))
     monkeypatch.setattr(ai_fund, "_our_content",
         lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
     return q
@@ -621,7 +622,7 @@ def test_t1_blocks_rotation_of_today_position(fund, monkeypatch):
     q = {"002594": {"latest": 100, "changeRatio": 4.0, "pe_ttm": 20, "pb": 3, "turnoverRatio": 5, "high": 101, "low": 96},
          "300750": {"latest": 200, "changeRatio": 0.2, "pe_ttm": 25, "pb": 4, "turnoverRatio": 2, "high": 201, "low": 199}}
     _wire(monkeypatch, q)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP, "300750": {"closes": [200]*30, "flow5": 0.0}})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": MD_UP, "300750": {"closes": [200]*30, "flow5": 0.0}}))
     monkeypatch.setattr(ai_fund, "_our_content",
         lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
     ai_fund.run_tick(cfg=cfg1)
@@ -629,7 +630,7 @@ def test_t1_blocks_rotation_of_today_position(fund, monkeypatch):
         assert "002594" in {r["symbol"] for r in ai_fund._positions(conn, "main")}
     # 同一天：宁德转强、比亚迪转弱 → 换仓欲卖比亚迪，但它当日建仓(T+1)→不可卖
     q["300750"]["changeRatio"] = 5.0
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": {"closes": [100]*30, "flow5": 0.0}, "300750": MD_UP})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": {"closes": [100]*30, "flow5": 0.0}, "300750": MD_UP}))
     monkeypatch.setattr(ai_fund, "_our_content",
         lambda name: [{"title": "宁德时代储能大单、业绩超预期、扩产", "severity": "success", "age_h": 1, "id": "b", "src": "快讯"}] if name == "宁德时代" else [])
     out = ai_fund.run_tick(cfg=cfg1)
@@ -658,7 +659,7 @@ def test_rotation_skips_when_incoming_at_upper_limit(fund, monkeypatch):
     q = {"002594": {"latest": 100, "changeRatio": 9.9, "pe_ttm": 20, "pb": 3, "turnoverRatio": 5, "high": 101, "low": 96},
          "300750": {"latest": 200, "changeRatio": -1.0, "pe_ttm": 25, "pb": 4, "turnoverRatio": 2, "high": 201, "low": 199}}
     _wire(monkeypatch, q)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP, "300750": {"closes": [200]*30, "flow5": 0.0}})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": MD_UP, "300750": {"closes": [200]*30, "flow5": 0.0}}))
     monkeypatch.setattr(ai_fund, "_our_content",
         lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
     out = ai_fund.run_tick(cfg=cfg1)
@@ -672,7 +673,7 @@ def test_holding_period_learning_frozen_pending_validation(fund, monkeypatch):
     """持仓期自适应集成：买入后浮盈，不平仓也会触发每日学习、抬高驱动维度乘子并落每日标记。"""
     q = {"002594": {"latest": 100, "pe_ttm": 20, "pb": 3, "changeRatio": 4.0, "turnoverRatio": 5, "high": 101, "low": 96}}
     _wire(monkeypatch, q)
-    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: {"002594": MD_UP})
+    monkeypatch.setattr(ai_fund, "_market_data", lambda codes, priority=None: source_map({"002594": MD_UP}))
     monkeypatch.setattr(ai_fund, "_our_content",
         lambda name: [{"title": "比亚迪中标大订单、业绩超预期、扩产提价", "severity": "success", "age_h": 1, "id": "a", "src": "快讯"}] if name == "比亚迪" else [])
     ai_fund.run_tick(cfg=ai_fund.MAIN_CFG)                 # 第一次：建仓 002594 @100(浮盈≈0)

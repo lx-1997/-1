@@ -3,6 +3,7 @@ from types import SimpleNamespace as N
 import sqlite3
 import pytest
 from deepfocus_api import ai_fund as af, ai_fund_policy as policy, ai_fund_ledger as ledger
+from deepfocus_api.tests.market_fixture import source_fixture
 
 
 def quote(price=100, **kw):
@@ -130,6 +131,7 @@ def paper(monkeypatch,tmp_path):
                         ('_latest_wire',[]),('_diverse_ammo',[]),('_run_debate',None),('_free_quote',None)]:
         monkeypatch.setattr(af,name,lambda *a,_r=result,**k:_r)
     monkeypatch.setattr(af,'_sentiment',lambda *a:None)
+    monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':source_fixture('002594')})
     monkeypatch.setattr(af,'_in_session',lambda *a:True)
     monkeypatch.setattr(af,'_market_regime_now',lambda:{'regime':'bull'})
     monkeypatch.setattr(af.emotion_cycle,'current_cycle',lambda **kw:{'stage':'neutral'})

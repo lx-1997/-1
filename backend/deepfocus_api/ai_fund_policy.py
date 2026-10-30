@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 import math
 import re
 
-VERSION = 'paper-v2.1'
+VERSION = 'paper-v2.2'
 LEARNING_ACTIVE = False
 ROTATION_ACTIVE = False
 BJ = timezone(timedelta(hours=8))
@@ -190,6 +190,10 @@ def audit_metadata():
             'group_cap': MAX_GROUP, 'drawdown_pause': MAX_DRAWDOWN,
             'drawdown_reset': 'no_automatic_resume_after_historical_breach',
             'quote_ordering': 'exchange_time_monotonic_conflicts_rejected',
+            'daily_market_contract': 'paper-daily-market-v1',
+            'daily_history_basis': 'unadjusted_shares_with_backup_rounding_declared',
+            'unverified_history_new_risk': 'blocked',
+            'missing_history_risk_reduction_cost': 'provisional_floor_not_verified_fillability',
             'learning': 'frozen_pending_out_of_sample_validation',
             'score_rotation': 'disabled_pending_execution_validation',
             'validation': 'not_yet_proven_profitable',

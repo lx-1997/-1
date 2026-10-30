@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime,timedelta,timezone
 import pytest
 from deepfocus_api import ai_fund as af,ai_fund_policy as policy,ai_fund_ledger as ledger
+from deepfocus_api.tests.market_fixture import source_fixture
 
 
 @pytest.fixture
@@ -12,6 +13,7 @@ def simulation(monkeypatch,tmp_path):
                        ('_run_debate',None),('_benchmark',None),('_latest_wire',[]),('_diverse_ammo',[])]:
         monkeypatch.setattr(af,name,lambda *a,_v=value,**k:_v)
     monkeypatch.setattr(af,'_market_regime_now',lambda:{'regime':'bull'})
+    monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':source_fixture('002594')})
     monkeypatch.setattr(af,'_in_session',lambda:True)
     monkeypatch.setattr(af.emotion_cycle,'current_cycle',lambda **kw:{'stage':'neutral'})
     monkeypatch.setattr(af.data_store,'record_confirmed',lambda *a,**k:True)
@@ -143,16 +145,17 @@ def test_completed_history_is_chronological_and_duplicates_fail_closed():
         policy.completed_bars({'ohlc':bars+[bars[0]]},now)
 
 
-def test_impact_uses_last_completed_bar_not_partial_or_future(simulation,monkeypatch):
+def test_impact_uses_last_completed_bar_not_partial_today(simulation,monkeypatch):
     today=datetime.now(policy.BJ).date()
     rows=[dict(d=(today+timedelta(days=offset)).isoformat(),c=100,v=100000)
           for offset in (-2,-1,0,1)]
     seen=[];original=af._impact_cost_bps
-    monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':{'ohlc':rows}})
+    # Future rows now fail at the ingress parser; exercise the surviving partial-today row here.
+    monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':source_fixture('002594',{'ohlc':rows[:3]})})
     def impact(bar,amount):seen.append(bar);return original(bar,amount)
     monkeypatch.setattr(af,'_impact_cost_bps',impact)
     assert af.run_tick(cfg=config())['traded']
-    assert seen==[rows[1]]
+    assert len(seen)==1 and seen[0]['d']==rows[1]['d'] and seen[0]['c']==rows[1]['c']
 
 
 def test_newly_committed_losses_are_rechecked_before_opening_risk(simulation,monkeypatch):
@@ -164,6 +167,6 @@ def test_newly_committed_losses_are_rechecked_before_opening_risk(simulation,mon
                           ('fixture-loss-'+str(i),'main',datetime.now(timezone.utc).isoformat(),'600000','隔离测试',
                            'sell',100,95,9500,-5,'fixture closed loss'))
             c.commit()
-        return {}
+        return {'002594':source_fixture('002594')}
     monkeypatch.setattr(af,'_market_data',meanwhile)
     assert af.run_tick(cfg=config())['traded']==[]

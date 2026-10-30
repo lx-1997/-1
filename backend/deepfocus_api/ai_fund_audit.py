@@ -16,7 +16,7 @@ MAX_RAW_BLOB=4*1024*1024
 MAX_TICK_RAW=12*1024*1024
 MAX_STORED_BYTES=512*1024*1024
 SOURCE_NAMES=('ai_fund.py','ai_fund_policy.py','ai_fund_execution.py','ai_fund_ledger.py',
-              'ai_fund_audit.py','ai_fund_evolve.py','bull_playbook.py','emotion_cycle.py','shared_utils.py')
+              'ai_fund_audit.py','ai_fund_market.py','ai_fund_evolve.py','bull_playbook.py','emotion_cycle.py','shared_utils.py')
 PINNED_SOURCE={'python':platform.python_version(),'files':{
     n:Path(__file__).with_name(n).read_text() for n in SOURCE_NAMES}}
 

@@ -10,6 +10,7 @@ import zlib
 import pytest
 from deepfocus_api import ai_fund as af,ai_fund_audit as audit
 from deepfocus_api.tests.test_ai_fund_execution_guards import simulation,config,hold
+from deepfocus_api.tests.market_fixture import source_fixture,source_map
 
 REAL_ANALYZE=af._analyze
 
@@ -21,7 +22,7 @@ def research(simulation,monkeypatch):
     simulation.update(pe_ttm=20,pb=2,turnoverRatio=5)
     today=datetime.now(af.BJ_TZ).date()
     rows=[dict(d=(today-timedelta(days=40-i)).isoformat(),o=90+i*.2,c=90+i*.2,h=91+i*.2,l=89+i*.2,v=1000000) for i in range(40)]
-    monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':{'ohlc':rows,'flow5':300000000}})
+    monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':source_fixture('002594',{'ohlc':rows,'flow5':300000000})})
     monkeypatch.setattr(af,'_our_content',lambda name:[dict(id='fixture-news',title='比亚迪中标大订单，业绩超预期',age_h=1,src='快讯')] if name=='比亚迪' else [])
     return simulation
 
@@ -187,6 +188,7 @@ def test_observation_only_and_risk_blocked_candidates_have_actual_reasons(resear
 def test_losers_to_rank_and_daily_limit_are_retained(research,monkeypatch):
     source_quote=dict(research)
     monkeypatch.setattr(af,'_quote',lambda code:dict(source_quote))
+    monkeypatch.setattr(af,'_market_data',lambda codes,**k:source_map({s:{} for s in codes}))
     monkeypatch.setattr(af,'_analyze',lambda *a,**k:dict(entry_ok=True,entry_threshold=0,score=.9,confidence=.9,
         thinking=[],scores={},tech={},buy_point='fixture',fresh=False,regime_adapt={}))
     cfg=replace(config(),pool={'002594':'比亚迪','600000':'第二候选'},max_daily_buys=1)
@@ -235,6 +237,7 @@ def test_corrupt_latest_evidence_blocks_further_fills(research,monkeypatch):
         c.execute('DROP TRIGGER aif_audit_blob_update')
         c.execute('UPDATE aif_audit_blob SET body=?',(b'isolated corruption',));c.commit()
     monkeypatch.setattr(af,'_quote',lambda s:dict(research))
+    monkeypatch.setattr(af,'_market_data',lambda codes,**k:source_map({s:{} for s in codes}))
     monkeypatch.setattr(af,'_analyze',lambda *a,**k:dict(entry_ok=True,score=.9,confidence=.9,thinking=[],scores={},
         tech={},buy_point='fixture',fresh=False,regime_adapt={}))
     cfg=replace(config(),pool={'002594':'比亚迪','600000':'第二候选'})

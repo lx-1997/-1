@@ -21,6 +21,7 @@ from . import ai_fund_policy as policy
 from . import ai_fund_ledger as ledger
 from . import ai_fund_execution as execution
 from . import ai_fund_audit as audit
+from . import ai_fund_market as market
 from .ifind_api import cached_single_quote, enabled as ifind_enabled, normalize_a_code
 from .shared_utils import safe_float, utc_now_iso
 
@@ -361,12 +362,10 @@ _IMPACT_CAP_BPS = 300.0
 
 
 def _impact_cost_bps(ohlc_last: Optional[dict], order_amount: float) -> float:
-    """按最近一根已完成日K的收盘×成交量估计成交额，返回该笔订单的冲击滑点(bp)。"""
+    """使用报告成交额或已声明的收盘×量代理；未知单位仅有未核验的下限假设。"""
     if ohlc_last and order_amount > 0:
-        c = safe_float(ohlc_last.get("c"), 0.0)
-        v = safe_float(ohlc_last.get("v"), 0.0)
-        day_amount = c * v
-        if day_amount > 0:
+        day_amount = market.turnover(ohlc_last)
+        if day_amount:
             part = min(1.0, order_amount / day_amount)
             return max(_IMPACT_FLOOR_BPS, min(_IMPACT_CAP_BPS, _IMPACT_K_BPS * math.sqrt(part)))
     return _IMPACT_FLOOR_BPS
@@ -495,7 +494,7 @@ def _secid(code: str) -> str:
     return f"1.{code}" if code and code[0] in ("6", "9") else f"0.{code}"
 
 
-_KLINE_CACHE: dict = {}            # secid -> (ts, [{d,o,h,l,c}])
+_KLINE_CACHE: dict = {}            # secid -> (receipt epoch, versioned snapshot)
 _FLOW_CACHE: dict = {}             # code -> (ts, flow5)
 _KLINE_TTL = 6 * 3600.0
 _EM_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/"}
@@ -508,7 +507,7 @@ def _em_client():
                              transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0", retries=1))
 
 
-async def _sina_kline(code: str, points: int) -> list:
+async def _sina_kline(code: str, points: int):
     """新浪日线 OHLC（主源，IP 信誉独立于东财、稳定）：[{d,o,h,l,c}]。"""
     sym = ("sh" if code and code[0] in ("6", "9") else "sz") + code
     url = (f"https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData"
@@ -517,49 +516,32 @@ async def _sina_kline(code: str, points: int) -> list:
         async with _em_client() as c:
             r = await c.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"})
         if r.status_code == 200:
-            arr = r.json()
-            out = []
-            for k in (arr if isinstance(arr, list) else []):
-                try:
-                    out.append({"d": k["day"], "o": float(k["open"]), "h": float(k["high"]),
-                                "l": float(k["low"]), "c": float(k["close"]), "v": float(k.get("volume") or 0)})
-                except (KeyError, ValueError, TypeError):
-                    pass
-            return out
+            return market.parse(r.content,code,'sina',url)
     except Exception:  # noqa: BLE001
         pass
-    return []
+    return None
 
 
-async def _em_kline(secid: str, points: int) -> list:
-    """东财日线 OHLC（备源，前复权）。强制 IPv4。"""
+async def _em_kline(secid: str, points: int):
+    """东财不复权备源，原始手数/成交额保留并归一化为股。"""
     url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
-           f"&fields1=f1&fields2=f51,f52,f53,f54,f55,f56&klt=101&fqt=1&end=20500101&lmt={points}")
+           f"&fields1=f1&fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=0&end=20500101&lmt={points}")
     try:
         async with _em_client() as c:
             r = await c.get(url, headers=_EM_HEADERS)
         if r.status_code == 200:
-            out = []
-            for line in ((r.json().get("data") or {}).get("klines")) or []:
-                p = line.split(",")
-                if len(p) >= 5:
-                    try:
-                        out.append({"d": p[0], "o": float(p[1]), "c": float(p[2]), "h": float(p[3]), "l": float(p[4]),
-                                    "v": float(p[5]) if len(p) > 5 else 0})
-                    except ValueError:
-                        pass
-            return out
+            return market.parse(r.content,secid.split('.')[-1],'eastmoney',url)
     except Exception:  # noqa: BLE001
         pass
-    return []
+    return None
 
 
-async def _fetch_kline_ohlc(secid: str, points: int = 250) -> list:
-    """个股日线 OHLC：[{d,o,h,l,c}]。新浪主源→东财备源，缓存 6h。失败 []。secid 形如 '1.600111'。
+async def _fetch_kline_ohlc(secid: str, points: int = 250):
+    """带原文指纹的不复权日线快照。新浪主源→东财备源，缓存 6h，跨日不复用。失败 None。
     取 250 点≈一年日线：长线牛股趋势模板(MA60/120/250 + 距年高/年低)需要长历史。"""
     import time as _t
     hit = _KLINE_CACHE.get(secid)
-    if hit and (_t.time() - hit[0]) < _KLINE_TTL:
+    if hit and isinstance(hit[1],dict) and (_t.time() - hit[0]) < _KLINE_TTL and market.fresh(hit[1]):
         return hit[1]
     code = secid.split(".")[-1]
     out = await _sina_kline(code, points)
@@ -643,21 +625,21 @@ async def _gather_md(codes: list[str], priority: Optional[list[str]] = None) -> 
     for c in codes:
         kl = _KLINE_CACHE.get(_secid(c))
         fl = _FLOW_CACHE.get(c)
-        kohlc = kl[1] if (kl and (_t.time() - kl[0]) < _KLINE_TTL) else None
+        snapshot = kl[1] if (kl and isinstance(kl[1],dict) and (_t.time()-kl[0])<_KLINE_TTL and market.fresh(kl[1])) else None
         kflow = fl[1] if (fl and (_t.time() - fl[0]) < _KLINE_TTL) else None
-        if kohlc is not None:
-            out[c] = {"closes": [k["c"] for k in kohlc], "ohlc": kohlc, "flow5": kflow}
+        if snapshot is not None:
+            out[c] = {**market.fields(snapshot),'flow5':kflow}
         else:
             cold.append(c)
     # 冷的：按 priority 排序，限量、顺序、间隔拉
     pr = set(priority or [])
     cold.sort(key=lambda c: 0 if c in pr else 1)
     for c in cold[:MD_FETCH_CAP]:
-        ohlc = await _fetch_kline_ohlc(_secid(c), points=250)
+        snapshot = await _fetch_kline_ohlc(_secid(c), points=250)
         await asyncio.sleep(0.5)
         flow5 = await _fetch_flow5(c)
         await asyncio.sleep(0.5)
-        out[c] = {"closes": [k["c"] for k in ohlc], "ohlc": ohlc, "flow5": flow5}
+        out[c] = {**market.fields(snapshot),'flow5':flow5}
     # 基本面(季报盈利质量)：持仓/催化剂股优先，24h 缓存命中直接挂、未命中限量拉(防风控)
     for c in sorted(out.keys(), key=lambda x: 0 if x in pr else 1):
         cached = _FUND_CACHE.get(c)
@@ -1870,8 +1852,10 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                 blocked(code,'hold','no_exit_signal')
             if reason:
                 # 冲击成本：按上一已完成日成交额估算滑点，卖出按劣化价落袋（盯市仍用实时价，成交记账用有效价）
-                _ohlc = policy.completed_bars(md.get(code))
-                _impact = _impact_cost_bps(_ohlc[-1] if _ohlc else None, float(pos["qty"]) * price)
+                liquidity = market.completed_bar(md.get(code),code,require_fresh=False)
+                _impact = _impact_cost_bps(liquidity,float(pos['qty'])*price)
+                candidates[code]['cost_observation'] = {'basis':liquidity['amount_basis'] if liquidity else 'provisional_floor_no_verified_liquidity',
+                    'reference_date':liquidity['d'] if liquidity else None,'impact_bps':_impact}
                 price_eff = price * (1 - _impact / 10000.0)
                 qty = float(pos["qty"]); amount = qty * price_eff
                 sell_fee = ledger.fee(amount, 'sell'); cash += amount - sell_fee
@@ -1941,6 +1925,9 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
             price = safe_float(quotes[code].get("latest"))
             if not price or code not in execution_quotes:
                 return blocked(code,'buy','quote_clock_or_status_rejected')
+            liquidity = market.completed_bar(md.get(code),code)
+            if liquidity is None:
+                return blocked(code,'buy','market_contract_unverified_or_stale')
             # ⭐A股涨跌停：涨停封板买不进(无人卖出)——不模拟成交，避免「买在涨停板」的笑话
             if _at_upper_limit(code, universe.get(code, code), safe_float(quotes[code].get("changeRatio"))):
                 return blocked(code,'buy','upper_price_limit')
@@ -1961,8 +1948,8 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
             budget = min(cash, target, cap, risk_cap)
             candidates[code]['sizing'] = dict(nav=nav_now,cash=cash,target=target,cap=cap,risk_cap=risk_cap,budget=budget,peak=peak)
             # 冲击成本：按上一已完成日成交额估算滑点，买入按劣化价成交（预算/手数都以有效价计算，保证现金不吃负）
-            _ohlc = policy.completed_bars(md.get(code))
-            _impact = _impact_cost_bps(_ohlc[-1] if _ohlc else None, budget)
+            _impact = _impact_cost_bps(liquidity,budget)
+            candidates[code]['cost_observation'] = {'basis':liquidity['amount_basis'],'reference_date':liquidity['d'],'impact_bps':_impact}
             price_eff = price * (1 + _impact / 10000.0)
             qty = policy.order_quantity(code, budget, price_eff)
             step = 1 if code.startswith(('688','689')) else 100
@@ -2034,8 +2021,10 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                     if q and safe_float(q.get("latest")):
                         wp = safe_float(q.get("latest")); wpos = held[weakest]
                         # 换仓卖出同样计冲击成本：按上一已完成日成交额估算滑点后落袋
-                        _wohlc = policy.completed_bars(md.get(weakest))
-                        _wimpact = _impact_cost_bps(_wohlc[-1] if _wohlc else None, float(wpos["qty"]) * wp)
+                        liquidity = market.completed_bar(md.get(weakest),weakest,require_fresh=False)
+                        _wimpact = _impact_cost_bps(liquidity,float(wpos['qty'])*wp)
+                        candidates[weakest]['cost_observation'] = {'basis':liquidity['amount_basis'] if liquidity else 'provisional_floor_no_verified_liquidity',
+                            'reference_date':liquidity['d'] if liquidity else None,'impact_bps':_wimpact}
                         wpe = wp * (1 - _wimpact / 10000.0)
                         wpnl = (wpe - float(wpos["avg_cost"])) / float(wpos["avg_cost"]) if wpos["avg_cost"] else 0.0
                         sell_fee = ledger.fee(float(wpos["qty"]) * wpe, 'sell')
