@@ -1,0 +1,67 @@
+{
+  "days": 729,
+  "daily_native_records_checked": 5005950,
+  "starting_and_ending_catalogues_equal": true,
+  "catalogue_rows": 9025,
+  "independent_membership_sets_equal_all_days": true,
+  "unique_members": 5328,
+  "counters": {
+    "raw_daily_rows": 5005950,
+    "member_day_rows": 3751786,
+    "suspended_member_days": 8761,
+    "currently_delisted_member_days": 35770,
+    "expired_raw_rows_excluded": 63,
+    "original_six_status_matches": 4374
+  },
+  "IPO_delist_boundary_samples_still_equal": true,
+  "registered_range_unchanged": true,
+  "capture_errors": [],
+  "failed_network_attempts_retained": 3,
+  "initial_failed_capture_and_ten_seed_dates_preserved": true,
+  "full_registered_capture_complete": true,
+  "historical_pit_universe_certified": false,
+  "preopen_knowledge_verified": false,
+  "data_rights_verified": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "strategy_evaluations": 0,
+  "source_pins": {
+    "quant_historical_universe.py": "4ccf08307435057bbb3a32555f4505575ccd19da5c8294ec15ae0c7871e6c465",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2"
+  },
+  "registration": {
+    "scope": "all_729_registered_dates_independent_raw_and_membership_sets_not_strategy",
+    "manifest_sha256": "24ae1f2a8a8aa4ece83abfbfd53ebdbe6ab5d730b4d52963cdc5d2aa43a288ec",
+    "review_sha256": "e5fd0b281781dbade806c26e5e56c2789ff13c10aaa9299e450323a3606c6dab",
+    "source_pins": {
+      "quant_historical_universe.py": "4ccf08307435057bbb3a32555f4505575ccd19da5c8294ec15ae0c7871e6c465",
+      "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+      "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2"
+    },
+    "promotion_allowed": false
+  },
+  "runner_sha256": "1b09531d003a0335fcec9feb99242d8bd20eded41b6e9c8b122d81b8614257d4",
+  "final_seed_retention": {
+    "seed_days": 10,
+    "source_failure_retained": true,
+    "gzip_raw_and_SDK_digests_equal": true,
+    "original_observed_at_preserved": true,
+    "original_failed_manifest_sha256": "ed0ded69679553c95f9d2c74a42ab2844c4a88d0ebfb4893916bd8255674486c",
+    "final_manifest_sha256": "24ae1f2a8a8aa4ece83abfbfd53ebdbe6ab5d730b4d52963cdc5d2aa43a288ec",
+    "source_writes": false
+  },
+  "evidence_sha256": {
+    "resumed-capture/manifest.json": "24ae1f2a8a8aa4ece83abfbfd53ebdbe6ab5d730b4d52963cdc5d2aa43a288ec",
+    "full-universe-review.json": "e5fd0b281781dbade806c26e5e56c2789ff13c10aaa9299e450323a3606c6dab",
+    "full-independent-registration.json": "a7d402687e914858b154365e55188d0de84ec17c465e12497dea80cf2e315ad2",
+    "full-independent-result.json": "ff4212c5f3d0135a2dda99c38701da4f8a1fa1312927d1bd7143172ed308fe0e",
+    "full-independent-panels.json": "93aaae9c3f5e4937f16140d980c9743a11aa2d9842e1a216d14bbd46d4e0b2de",
+    "full-independent-review.py": "1b09531d003a0335fcec9feb99242d8bd20eded41b6e9c8b122d81b8614257d4",
+    "final-seed-retention-proof.json": "05b4a364b72ca4b661b6f85b6803e18da82f9db7c00edc7dd46e4fae0f71c22c"
+  }
+}
