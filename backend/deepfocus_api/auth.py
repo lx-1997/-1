@@ -801,6 +801,9 @@ def authenticate(identifier: str, password: str) -> Optional[AuthUserOut]:
             return None
         if not verify_password(password, user.password_hash):
             return None
+        from .auto_suspension import is_user_suspended
+        if is_user_suspended(user.id):
+            return None
         return _to_out(user)
 
 

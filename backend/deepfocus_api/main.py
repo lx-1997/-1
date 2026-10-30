@@ -82,6 +82,7 @@ from .ownership import current_owner_id
 from .bounded_cache import ByteBoundedTTLCache, get_cache_stats, prune_caches, clear_caches
 from .user_prefs import get_watchlist as get_user_watchlist, set_watchlist as set_user_watchlist, update_watchlist as update_user_watchlist
 from . import support_store
+from .auto_suspension import AutoSuspensionMiddleware, evaluate_pageview
 from . import membership_codes
 from . import payment_config
 from . import community_config
@@ -1710,6 +1711,7 @@ install_platform_assistant(
 # 先加鉴权中间件、后加 CORS，使 CORS 处于最外层——
 # 这样鉴权返回的 401/403 也会带上 CORS 头，浏览器能正确读到状态码而非报跨域。
 app.add_middleware(AuthMiddleware)
+app.add_middleware(AutoSuspensionMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -6817,6 +6819,34 @@ async def api_activity(request: Request) -> dict[str, Any]:
         target=target, ip=_client_ip(request),
         device=("mobile" if _MOBILE_UA_RE.search(ua) else "pc"),
     )
+    if kind == "user" and action == "pageview":
+        claims = current_claims(request)
+        user_id = str((claims or {}).get("sub") or "").strip()
+        if user_id:
+            try:
+                suspension = await asyncio.to_thread(evaluate_pageview, user_id, actor_id)
+            except Exception:  # noqa: BLE001 - enforcement failures must not break the activity endpoint
+                logger.exception("自动高频访问处罚检查失败")
+                suspension = None
+            if suspension:
+                until = datetime.fromisoformat(suspension["suspended_until"])
+                if until.tzinfo is None:
+                    until = until.replace(tzinfo=timezone.utc)
+                until_text = until.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+                notice = (
+                    "【自动封禁通知】系统检测到警告后在滚动 5 分钟内出现 "
+                    f"{suspension['trigger_count']} 次页面访问，已自动封禁账号 1 天，预计北京时间 {until_text} 恢复。"
+                    "封禁期间仍可通过站内私信联系管理员。"
+                )
+                try:
+                    await asyncio.to_thread(support_store.add_message, user_id, name, "admin", notice)
+                except Exception:  # noqa: BLE001
+                    logger.exception("自动封禁通知发送失败")
+                return JSONResponse(
+                    {"detail": f"账号因高频刷新暂时封禁至北京时间 {until_text}。"},
+                    status_code=403,
+                    headers={"Retry-After": str(suspension["ban_seconds"])},
+                )
     return {"ok": True}
 
 
