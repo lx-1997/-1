@@ -1,0 +1,188 @@
+{
+  "scope": "out-of-pool actual financial data-quality sample; not a strategy experiment",
+  "checks": [
+    {
+      "name": "period_end",
+      "clock": "2025-03-31T15:00:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "unavailable",
+      "selected_revision": null,
+      "metrics": null,
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "disclosure_day_conservative",
+      "clock": "2025-04-24T23:59:59+08:00",
+      "mode": "historical_reconstruction",
+      "status": "unavailable",
+      "selected_revision": null,
+      "metrics": null,
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "original_visible",
+      "clock": "2025-04-25T00:00:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "available",
+      "selected_revision": 1,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-95514023.70",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "2025_development_clock",
+      "clock": "2025-06-01T09:30:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "available",
+      "selected_revision": 1,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-95514023.70",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "correction_before",
+      "clock": "2026-04-29T15:00:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "available",
+      "selected_revision": 1,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-95514023.70",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "correction_day_conservative",
+      "clock": "2026-04-30T23:59:59+08:00",
+      "mode": "historical_reconstruction",
+      "status": "available",
+      "selected_revision": 1,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-95514023.70",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "correction_visible",
+      "clock": "2026-05-01T00:00:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "available",
+      "selected_revision": 2,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-118504831.28",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "not_actually_retained_in_2025",
+      "clock": "2025-06-01T09:30:00+08:00",
+      "mode": "as_recorded",
+      "status": "unavailable",
+      "selected_revision": null,
+      "metrics": null,
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "raw_before_fact_recorded",
+      "clock": "2026-10-30T19:40:21.236407+00:00",
+      "mode": "as_recorded",
+      "status": "unavailable",
+      "selected_revision": null,
+      "metrics": null,
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    },
+    {
+      "name": "normalized_record_visible",
+      "clock": "2026-10-30T19:50:57.644375+00:00",
+      "mode": "as_recorded",
+      "status": "available",
+      "selected_revision": 2,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-118504831.28",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "source_pins": {
+        "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+      }
+    }
+  ],
+  "original_experiments": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "reproduced_exactly": true,
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e"
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "reproduced_exactly": true,
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd"
+    }
+  ],
+  "numeric_cells_checked": 6,
+  "official_correction_delta": "-22990807.58",
+  "naive_latest_value_backfill_is_counterfactual_not_existing_price_strategy_behavior": true,
+  "raw_sources_unchanged": true,
+  "manifest_sha256": "e2b8a47cdb2cbf9f726707820e89068994646805776556efee52b1aca88d5be3",
+  "source_pins": {
+    "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+  },
+  "runner_sha256": "cf288d6042fc7805354ee509ae7f749fe99a539ed427b5206e3354ad4f8f3cad",
+  "new_strategy_nominated": false,
+  "production_writes": false,
+  "full_pit_feed_verified": false,
+  "focused_tests_passed": 34,
+  "commercial_ready": false,
+  "promotion_allowed": false
+}
