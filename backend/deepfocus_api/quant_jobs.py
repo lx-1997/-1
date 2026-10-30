@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
@@ -30,11 +31,16 @@ def _db_path():
     return db.data_path('.quant_jobs.sqlite3', 'DEEPFOCUS_QUANT_JOBS_DB_PATH')
 
 
+@contextmanager
 def _connect():
     conn = db.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute('CREATE TABLE IF NOT EXISTS quant_jobs (job_id TEXT PRIMARY KEY, owner TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL)')
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        with conn:
+            conn.execute('CREATE TABLE IF NOT EXISTS quant_jobs (job_id TEXT PRIMARY KEY, owner TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL)')
+            yield conn
+    finally:
+        conn.close()
 
 
 @dataclass
@@ -61,10 +67,26 @@ def _public(job: QuantJob) -> dict[str, Any]:
             'completed_at': _iso(job.completed_at), 'result': job.result, 'error': job.error}
 
 
-def _save(job: QuantJob) -> None:
+def _save(job: QuantJob, *, create: bool = False) -> bool:
+    # A stopped/deleted job must never be resurrected by another worker's late
+    # progress or completion. Serialize before opening the write transaction.
+    payload = json.dumps(_public(job), ensure_ascii=False, allow_nan=False)
     with _connect() as conn:
-        conn.execute('INSERT INTO quant_jobs VALUES (?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at, payload=excluded.payload',
-                     (job.job_id, job.owner, job.status, _iso(job.updated_at), json.dumps(_public(job), ensure_ascii=False)))
+        if create:
+            conn.execute('BEGIN IMMEDIATE')
+            if conn.execute('SELECT COUNT(*) FROM quant_jobs').fetchone()[0] >= _MAX_JOBS:
+                raise RuntimeError('量化任务队列已满，请稍后重试')
+            conn.execute('INSERT INTO quant_jobs VALUES (?, ?, ?, ?, ?)',
+                         (job.job_id, job.owner, job.status, _iso(job.updated_at), payload))
+            return True
+        return conn.execute(
+            "UPDATE quant_jobs SET status=?, updated_at=?, payload=? WHERE job_id=? AND owner=? AND status IN ('pending','running')",
+            (job.status, _iso(job.updated_at), payload, job.job_id, job.owner),
+        ).rowcount == 1
+
+
+class _JobClosed(Exception):
+    pass
 
 
 def _load(row) -> QuantJob:
@@ -111,39 +133,45 @@ def _prune() -> None:
 
 
 async def _execute(job: QuantJob, request: QuantLabRequest) -> None:
-    if job.status == 'cancelled':
+    if job.status in _TERMINAL:
         return
-    job.status = 'running'
-    job.stage = '正在启动量化研究'
-    job.updated_at = _now()
-    _save(job)
 
     def update_progress(progress: int, stage: str) -> None:
-        if job.status == 'cancelled':
-            return
+        if job.status in _TERMINAL:
+            raise _JobClosed()
         job.progress = max(job.progress, min(100, int(progress)))
         job.stage = stage
         job.updated_at = _now()
-        _save(job)
+        if not _save(job):
+            raise _JobClosed()
 
     try:
+        job.status = 'running'
+        job.stage = '正在启动量化研究'
+        job.updated_at = _now()
+        if not _save(job):
+            return
         result = await run_quant_lab(request, progress_callback=update_progress)
-        if job.status != 'cancelled':
-            job.result = result
-            job.status = 'completed'
-            job.progress = 100
-            job.stage = '量化研究已完成'
+        job.result = result
+        job.status = 'completed'
+        job.progress = 100
+        job.stage = '量化研究已完成'
+        job.completed_at = job.updated_at = _now()
+        _save(job)
+        return
+    except _JobClosed:
+        return
     except asyncio.CancelledError:
         job.status = 'cancelled'
         job.stage = '任务已取消'
-    except Exception as exc:
-        if job.status != 'cancelled':
-            job.status = 'failed'
-            job.stage = '量化研究失败'
-            job.error = str(exc) or exc.__class__.__name__
-    finally:
-        job.completed_at = job.updated_at = _now()
-        _save(job)
+    except Exception:
+        job.status = 'failed'
+        job.stage = '量化研究失败，请重试或联系管理员'
+        # Provider exceptions can contain URLs, credentials and raw responses.
+        job.error = 'research_failed'
+    job.result = None
+    job.completed_at = job.updated_at = _now()
+    _save(job)
 
 
 async def create_quant_job(owner: str, request: QuantLabRequest) -> dict[str, Any]:
@@ -152,7 +180,7 @@ async def create_quant_job(owner: str, request: QuantLabRequest) -> dict[str, An
         if conn.execute('SELECT COUNT(*) FROM quant_jobs').fetchone()[0] >= _MAX_JOBS:
             raise RuntimeError('量化任务队列已满，请稍后重试')
     job = QuantJob(job_id=uuid4().hex, owner=owner)
-    _save(job)
+    _save(job, create=True)
     _jobs[job.job_id] = job
     job.task = asyncio.create_task(_execute(job, request.model_copy(deep=True)))
     return _public(job)
@@ -167,16 +195,20 @@ def get_quant_job(owner: str, job_id: str) -> Optional[dict[str, Any]]:
 
 async def cancel_quant_job(owner: str, job_id: str) -> Optional[dict[str, Any]]:
     public = get_quant_job(owner, job_id)
-    if public is None:
-        return None
+    if public is None or public["status"] in _TERMINAL:
+        return public
     job = _jobs.get(job_id)
     if not job:
         with _connect() as conn:
-            job = _load(conn.execute('SELECT * FROM quant_jobs WHERE job_id=? AND owner=?', (job_id, owner)).fetchone())
+            row = conn.execute('SELECT * FROM quant_jobs WHERE job_id=? AND owner=?', (job_id, owner)).fetchone()
+        if row is None:
+            return None
+        job = _load(row)
     if job.status not in _TERMINAL:
         # Set and persist first: a task cancelled before its first await never
         # enters _execute's try/finally, and otherwise stayed pending forever.
         job.status = 'cancelled'
+        job.result = None
         job.stage = '任务已取消'
         job.completed_at = job.updated_at = _now()
         _save(job)

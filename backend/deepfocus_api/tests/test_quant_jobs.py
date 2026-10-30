@@ -1,13 +1,16 @@
 import asyncio
 
 import pytest
+import pytest_asyncio
 
 from deepfocus_api import quant_jobs
 from deepfocus_api.schemas import QuantLabRequest
 
 
-@pytest.fixture(autouse=True)
-async def clean_jobs():
+@pytest_asyncio.fixture(autouse=True)
+async def clean_jobs(monkeypatch, tmp_path):
+    monkeypatch.setattr(quant_jobs, "_db_path", lambda: tmp_path / "jobs.sqlite3")
+    monkeypatch.setattr(quant_jobs, "_jobs", {})
     await quant_jobs.reset_quant_jobs_for_tests()
     yield
     await quant_jobs.reset_quant_jobs_for_tests()
@@ -23,7 +26,7 @@ async def test_job_progress_completion_and_owner_isolation(monkeypatch):
 
     monkeypatch.setattr(quant_jobs, "run_quant_lab", fake_run)
     created = await quant_jobs.create_quant_job("owner-a", QuantLabRequest(name="job", symbols=["AAPL"]))
-    await asyncio.sleep(0.01)
+    await quant_jobs._jobs[created["job_id"]].task
     completed = quant_jobs.get_quant_job("owner-a", created["job_id"])
 
     assert completed is not None
