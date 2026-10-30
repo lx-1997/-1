@@ -1,0 +1,108 @@
+{
+  "schema": "parameter-family-selector-diagnostic-v1",
+  "purpose": "seen_development_diagnostic_no_selection",
+  "registered_at": "2026-10-30T19:24:40.864211+00:00",
+  "rules": {
+    "candidates": [
+      {
+        "lookback": 10,
+        "threshold": 0.0
+      },
+      {
+        "lookback": 10,
+        "threshold": 0.03
+      },
+      {
+        "lookback": 20,
+        "threshold": 0.0
+      },
+      {
+        "lookback": 20,
+        "threshold": 0.03
+      },
+      {
+        "lookback": 40,
+        "threshold": 0.0
+      },
+      {
+        "lookback": 40,
+        "threshold": 0.03
+      }
+    ],
+    "continuous_arms": "frozen_refit_and_all_six_fixed_parameters",
+    "continuous_account": "original_capital_original_535_or_declared_fold_sessions_no_risk_reset",
+    "fold_probe": "fresh_cash_each_original_fold_diagnostic_only_never_stitched",
+    "training": "reuse_all_frozen_six_trial_rows_no_new_fit_or_ranking",
+    "training_score": "original_return_pct_plus_max_drawdown_pct",
+    "labels": "same_shared_event_engine_net_return_each_fresh_fold",
+    "rank_ic": "six_parameters_spearman_average_ties_round_12_decimals",
+    "summary_windows": [
+      "all_original_folds",
+      "folds_entered_before_reference_permanent_pause"
+    ],
+    "oracle": "hindsight_diagnostic_only_not_executable_not_alpha",
+    "missing_constant_correlation": "null_not_zero_no_significance_claim",
+    "holdout": "not_reassessed",
+    "costs_limits_risk": "unchanged",
+    "nomination": "none_no_best_historical_arm_selection",
+    "decision": "report_family_failures_and_ranking_transfer_separately_no_threshold_search"
+  },
+  "promotion_allowed": false,
+  "bindings": {
+    "inputs": {
+      "experiments": [
+        {
+          "id": "31aedd8f544144ad9b7a7d2088e181b0",
+          "request": "8b240e081c8b8ba480644e15888b398db2a1e853e11a8e4036bfe257d53c31f2",
+          "dataset": "afb4e49b0c6b6ab7ec8111048db7758bf05221e1eccfebbef3b67acef30c8778",
+          "result": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+          "schedule": "9f57892076c0b5fbd85d7de016def540c31d64f799ca2eb11b6529edd016af34"
+        },
+        {
+          "id": "0839ee7717d143c7b991bddbfb55f891",
+          "request": "6c13fa06b0051212dcded5a0a60b02f3555a2de2bd1382816c26f7f96c7499a0",
+          "dataset": "1e47ecc4830653f9685be80288b07398e0d6d8d57cf3c213cbc5a9055a28e896",
+          "result": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+          "schedule": "759cad7fddfeb230405222433f0ac568a55022ccde99947159bef43ba905dd94"
+        }
+      ],
+      "events": "63e5560f833ccb65cad9b5db466d8177d613f40f2816c39b4f66998fec61aee2",
+      "rules": "02259df580d585f65f37ebe1c511a4731ad2d3d562180de59b53a20dc41f292f",
+      "assumptions": "2135b280aa043139d6f73de961894c45888c847a44458a5c49537a66f2ec2249",
+      "kernel": "fec7375f1805f2ecd160251116d8274f624347d4e60efc5c2233512231a41d30",
+      "source_pins": {
+        "quant_event_controls.py": "1e721951143f029c2fa3320f6c2e631c5ad6aca39969818b199baecb1a3a1b07",
+        "quant_event_replay.py": "c53b5dc86bf3a7b04b781527836c0a15f49fc8a46c41290a73dd3cbc1db83367",
+        "quant_dividend_book.py": "11039d5d10ef275cbc348f791487870d3fa1235f53360de4e42e5555491c59cf",
+        "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+        "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+        "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+        "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+        "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+        "quant_event_training.py": "7bf374d9804ca3311226493e57021a033b9b801931b2c977e40b952044e33dd9"
+      }
+    },
+    "reference": "47b37a919dd4eac3a238d4f331ab5787a57bc93cd3b5cb0f12c772cbd57010af",
+    "source_pins": {
+      "quant_event_controls.py": "1e721951143f029c2fa3320f6c2e631c5ad6aca39969818b199baecb1a3a1b07",
+      "quant_event_replay.py": "c53b5dc86bf3a7b04b781527836c0a15f49fc8a46c41290a73dd3cbc1db83367",
+      "quant_dividend_book.py": "11039d5d10ef275cbc348f791487870d3fa1235f53360de4e42e5555491c59cf",
+      "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+      "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+      "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+      "quant_event_training.py": "7bf374d9804ca3311226493e57021a033b9b801931b2c977e40b952044e33dd9",
+      "quant_execution_controls.py": "1943d62079b0c7811fdaf429b19ee91501429306f8680b0bc38918795aa31857",
+      "quant_event_policy.py": "95f5f4240bcc05078bb2832f7fe7a8cfb2ddfac3296489370fa0c92908880570",
+      "quant_benchmark.py": "356cd7785008d0fb5808cd9969a568db305958d25f173bb7ead2648afcec08c5",
+      "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+      "quant_training_eligibility.py": "f1786e2be15671d8bd0727d4b57555dfff0fe395c1a0ece9630fe06cdac3d425",
+      "quant_selection_diagnostics.py": "c90a281e9cbe3300c42573cf98f5778fb5382c13d122827865d2379fdaf96333",
+      "quant_signal_diagnostics.py": "37a6684b4538f472eb9e1f480ef9872449f9b5b8c8672e86865c5ffd5f869a0b"
+    },
+    "rules": "a5752464096e4a4a38a8eec8e79175302d910162b7348bed63ffbd8faab06916"
+  },
+  "reference_sha256": "83eedf3c7abe767dce3cff6b5061eb92cfffa9d389f4c5fedc299b94234ac33b",
+  "runner_sha256": "7d5021fb224e14e306e963fd5461450f52b32c525aff027f066b86746ac12a6c"
+}
