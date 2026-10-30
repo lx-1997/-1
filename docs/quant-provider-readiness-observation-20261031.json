@@ -1,0 +1,26 @@
+{
+  "schema": "internal-provider-readiness-observation-v1",
+  "observed_at": "2026-10-30T21:46:40.024686+00:00",
+  "scope": "production_read_only_configuration_no_provider_request",
+  "refresh_token_configuration_present": true,
+  "access_token_configuration_present": true,
+  "financial_statements_override_present": false,
+  "financial_indicator_override_present": false,
+  "token_cache_present_at_inspected_path": false,
+  "dotenv_predates_current_process": true,
+  "client_source_matches_local": true,
+  "ifind_client_sha256": "7476a67972f04d729f8841d891d55c00ac96a11896298c77053848f418510497",
+  "runtime_dotenv_loading_proven": false,
+  "authentication_validity_tested": false,
+  "historical_product_permissions_verified": false,
+  "internal_usage_rights_verified": false,
+  "provider_requests_made": 0,
+  "production_writes": 0,
+  "promotion_allowed": false,
+  "evidence_sha256": {
+    "production-readiness.json": "89123e0b3a47ee1c1b2568f99c8179f9ed4d43624e049ddd97110b7319853052",
+    "config-timing.json": "3482850808dda8dcb96abc01c87424dd50c97e61f687d76683615b9c45936246",
+    "source-contract.json": "92869baa1e96fee2da9f0da0f61021cf3288691200e5a2e8e8377009a86193f3",
+    "probe.py": "cc2a821aed568d0c5ca5da218859f83ed753836e4381487587e77468f20d8e6b"
+  }
+}
