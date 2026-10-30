@@ -1,0 +1,40 @@
+{
+  "scope": "sealed_partial_capture_early_diagnostics_not_full_range_acceptance",
+  "prefix_days": 347,
+  "planned_days": 729,
+  "from": "2023-10-26",
+  "through": "2025-04-01",
+  "starting_catalogue_rows": 9025,
+  "ending_catalogue_comparison": "not_available_until_capture_finishes",
+  "distinct_members": 5198,
+  "counters": {
+    "snapshot_rows": 2296595,
+    "member_day_rows": 1773029,
+    "suspended_member_days": 3931,
+    "currently_delisted_member_days": 27176,
+    "expired_rows_excluded": 59
+  },
+  "inconsistent_days": 0,
+  "all_partial_membership_sets_independently_equal": true,
+  "details": [],
+  "manifest_sha256": "79e629a4228ae8a9b330024da0cc6344f7b5df4c4cb72e5d8d5209b0456db60b",
+  "runner_sha256": "33dcdc85f70d852bb883f9a7a33d27159a6f277f11ca59f7ca06c4841a6da60a",
+  "source_pins": {
+    "quant_historical_universe.py": "4ccf08307435057bbb3a32555f4505575ccd19da5c8294ec15ae0c7871e6c465",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2"
+  },
+  "full_capture_complete": false,
+  "historical_pit_universe_certified": false,
+  "promotion_allowed": false,
+  "source_writes": false,
+  "strategy_evaluations": 0,
+  "evidence_sha256": {
+    "interim-quality-result.json": "7827b239716beb3f97b19013d6f9e455b97e23ab2e9d11ae1de94f5631d9023b",
+    "interim-quality-review.py": "33dcdc85f70d852bb883f9a7a33d27159a6f277f11ca59f7ca06c4841a6da60a",
+    "interim-quality-registration.json": "dbfec48ef10bb6cd19cf212859d8d1a7e1017b7d6bb14a75236b36e1accccfaf",
+    "interim-quality-panels.json": "ebbaff9885354504864db518471a015de650a3fee6fc7ec1ea8a821448d631bc"
+  }
+}
