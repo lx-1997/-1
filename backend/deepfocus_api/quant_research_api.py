@@ -132,7 +132,7 @@ async def refresh(identity: str, uid=Depends(owner)):
     except LookupError as e: raise HTTPException(404, str(e)) from e
     except ValueError as e: raise HTTPException(422, str(e)) from e
     except RuntimeError as e: raise HTTPException(409, str(e)) from e
-    except Exception as e: raise HTTPException(503, '行情源暂不可用，账户未改动') from e
+    except Exception as e: raise HTTPException(503, '未能确认本次同步结果，请刷新查看账户状态后重试') from e
 
 
 @router.post('/paper/{identity}/pause')

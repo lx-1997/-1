@@ -1,5 +1,7 @@
 """Durable, bounded research orchestration and end-of-day paper tracking."""
 import asyncio
+from contextvars import ContextVar
+from threading import Lock
 import hashlib
 import json
 from functools import lru_cache
@@ -11,6 +13,49 @@ from .quant_calendar import CalendarAlignmentError, require_aligned
 
 _tasks = {}
 _refreshing = set()
+_refresh_tasks = {}
+_paper_attempt = ContextVar('paper_refresh_attempt', default=None)
+
+
+class _PaperAttempt:
+    def __init__(self):
+        self.lock = Lock()
+        self.cancelled = False
+        self.commit_admitted = False
+
+    def cancel(self):
+        # The mutex protects only flags; never hold it over SQLite or replay.
+        with self.lock:
+            self.cancelled = True
+
+    def admit_commit(self):
+        with self.lock:
+            if self.cancelled:
+                raise InterruptedError('模拟同步已取消，未进入账户提交阶段')
+            self.commit_admitted = True
+
+
+async def _paper_io(function, *args, **kwargs):
+    """Own the real worker until it drains, even if its caller is cancelled."""
+    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        attempt = _paper_attempt.get()
+        if attempt is not None: attempt.cancel()
+        # Do not free concurrency capacity while a thread still holds/waits for
+        # a database lock or computes a financial replay. Consume its outcome.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if worker.done() and not worker.cancelled():
+            try: worker.result()
+            except Exception: pass
+        raise
 BENCHMARKS = {'000300': '沪深300', '000905': '中证500', '000852': '中证1000'}
 
 
@@ -59,11 +104,13 @@ def quality(dataset, start, end, *, benchmark=None, expected_symbols=None):
 
 
 async def execute(owner, identity, request):
+    async def update(**kwargs):
+        return await _paper_io(store.update, owner, identity, **kwargs)
     try:
-        store.update(owner, identity, progress=8, stage='获取真实不复权日线')
+        await update(progress=8, stage='获取真实不复权日线')
         reference = None
         if request.get('replay_of'):
-            reference = store.get(owner, request['replay_of'])
+            reference = await _paper_io(store.get, owner, request['replay_of'])
             if not reference or reference['status'] != 'completed' or reference['kernel'] != kernel_identity():
                 raise ValueError('原实验或冻结内核不可用于复核')
             dataset = reference['dataset']
@@ -71,7 +118,7 @@ async def execute(owner, identity, request):
             dataset = await fetch_dataset(request['symbols']+[request['benchmark']], request['start_date'], request['end_date'])
         q = quality(dataset, request['start_date'], request['end_date'],
                     benchmark=request['benchmark'], expected_symbols=request['symbols']+[request['benchmark']])
-        if not store.update(owner, identity, progress=30, stage='真实行情已封存，开始训练与滚动验证', extra={'dataset': dataset, 'quality': q}): return
+        if not await update(progress=30, stage='真实行情已封存，开始训练与滚动验证', extra={'dataset': dataset, 'quality': q}): return
         # SQLite callback also observes cancellation; the CPU worker then exits
         # at the next fold, and its terminal result is never written over cancel.
         def progress(value, stage):
@@ -88,10 +135,10 @@ async def execute(owner, identity, request):
             result['gate']['reasons'].extend(coverage_reasons)
         if reference and engine.digest(result) != reference['result_digest']:
             raise ValueError('复核结果与冻结实验不一致，禁止晋级')
-        store.update(owner, identity, status='completed', progress=100, stage='冻结数据复核一致' if reference else '实验完成，研究门槛已核对',
+        await update(status='completed', progress=100, stage='冻结数据复核一致' if reference else '实验完成，研究门槛已核对',
                      extra={'result': result, 'result_digest': engine.digest(result)})
     except asyncio.CancelledError:
-        store.update(owner, identity, status='failed', stage='执行进程关闭，实验已中断')
+        await update(status='failed', stage='执行进程关闭，实验已中断')
         raise
     except InterruptedError:
         pass
@@ -99,11 +146,11 @@ async def execute(owner, identity, request):
         extra = {'error_code': 'calendar_alignment_rejected', 'quality': exc.report}
         if exc.dataset is not None:
             extra['dataset'] = exc.dataset
-        store.update(owner, identity, status='failed', stage=str(exc), extra=extra)
+        await update(status='failed', stage=str(exc), extra=extra)
     except Exception as exc:
         # No provider response bodies, keys or connection strings in public errors.
         message = str(exc) if isinstance(exc, ValueError) else '数据源或计算暂不可用，请稍后重试；失败实验已保留'
-        store.update(owner, identity, status='failed', stage=message, extra={'error_code': type(exc).__name__})
+        await update(status='failed', stage=message, extra={'error_code': type(exc).__name__})
     finally:
         _tasks.pop(identity, None)
 
@@ -151,19 +198,19 @@ def promote(owner, identity):
 
 
 async def _refresh_paper(owner, identity):
-    paper = store.get(owner, identity, True)
+    paper = await _paper_io(store.get, owner, identity, True)
     if not paper: raise LookupError('模拟账户不存在')
     if paper['status'] != 'active': raise ValueError('模拟跟踪已暂停')
     if paper['kernel'] != kernel_identity(): raise ValueError('冻结内核与当前版本不一致，已拒绝执行')
-    parent = store.get(owner, paper['experiment'])
-    calendar = await asyncio.to_thread(_calendar_veto, owner, parent)
+    parent = await _paper_io(store.get, owner, paper['experiment'])
+    calendar = await _paper_io(_calendar_veto, owner, parent)
     if paper.get('experiment_digest') != parent['result_digest'] or paper['request'] != parent['request']:
         raise ValueError('模拟账户与来源实验引用不一致，未更新账户')
     req, old = paper['request'], paper['dataset']
     scope = req['symbols']+[req['benchmark']]
     require_aligned(old, benchmark=req['benchmark'], expected_symbols=scope)
     from .quant_paper_calendar import check_stored
-    await asyncio.to_thread(check_stored, calendar, paper)
+    await _paper_io(check_stored, calendar, paper)
     # Fetch a sufficiently overlapping history and refuse revisions instead of
     # silently rewriting signals or historical fills.
     end = complete_day()
@@ -181,9 +228,9 @@ async def _refresh_paper(owner, identity):
     from .quant_paper_calendar import check_update
     # Check the fresh response independently, before old bars could hide a
     # common provider gap in the merged snapshot. Both must match the plan.
-    fresh_calendar = await asyncio.to_thread(check_update, calendar, fetched, req['start_date'], end)
-    merged_calendar = await asyncio.to_thread(check_update, calendar, merged, req['start_date'], end)
-    result = await asyncio.to_thread(engine.replay, merged, req['symbols'], paper['parameters'], state=paper['state'])
+    fresh_calendar = await _paper_io(check_update, calendar, fetched, req['start_date'], end)
+    merged_calendar = await _paper_io(check_update, calendar, merged, req['start_date'], end)
+    result = await _paper_io(engine.replay, merged, req['symbols'], paper['parameters'], state=paper['state'])
     excluded = {'id','experiment','revision','status','updated'}
     payload = {k: v for k, v in paper.items() if k not in excluded}
     payload.pop('last_error', None)
@@ -194,8 +241,12 @@ async def _refresh_paper(owner, identity):
     if local.strftime('%H:%M') >= '16:30' and engine.validate_dataset(merged)[-1] == local.date().isoformat():
         payload['last_eod_date'] = local.date().isoformat()
     from .quant_paper_calendar import commit_guard
-    return store.save_paper(owner, identity, paper['revision'], payload,
-                            guard=commit_guard(owner, parent['id'], calendar))
+    frozen_guard = commit_guard(owner, parent['id'], calendar)
+    attempt = _paper_attempt.get()
+    def guard(c):
+        frozen_guard(c)
+        if attempt is not None: attempt.admit_commit()
+    return await _paper_io(store.save_paper, owner, identity, paper['revision'], payload, guard=guard)
 
 
 def pause(owner, identity):
@@ -227,11 +278,11 @@ async def scheduler():
                     except Exception:
                         # Preserve cash/fills on failure; persist an owner-visible
                         # attempt separately without advancing the account cursor.
-                        paper=store.get(row['owner'],row['id'],True)
+                        paper=await _paper_io(store.get,row['owner'],row['id'],True)
                         if paper and paper['status']=='active':
                             p={k:v for k,v in paper.items() if k not in {'id','experiment','revision','status','updated'}}
-                            p['last_error']='日线同步失败，账户未改写，等待下次核对'
-                            try: store.save_paper(row['owner'],row['id'],paper['revision'],p)
+                            p['last_error']='未能确认本次同步结果，请核对账户状态后重试'
+                            try: await _paper_io(store.save_paper,row['owner'],row['id'],paper['revision'],p)
                             except RuntimeError: pass
         except asyncio.CancelledError: raise
         except Exception: pass
@@ -253,7 +304,7 @@ def attach_lifespan(app):
             try: yield state
             finally:
                 task.cancel()
-                pending=list(_tasks.values())
+                pending=list(_tasks.values())+list(_refresh_tasks.values())
                 for job in pending: job.cancel()
                 await asyncio.gather(task,*pending,return_exceptions=True)
     app.router.lifespan_context=composed
@@ -273,9 +324,28 @@ async def refresh_paper(owner, identity):
     if key in _refreshing: raise RuntimeError('这个模拟组合正在同步，请稍后刷新')
     if len(_refreshing)>=4 or sum(k[0]==owner for k in _refreshing)>=2:
         raise RuntimeError('同步请求已满，请稍后重试')
+    attempt = _PaperAttempt()
+    async def run():
+        token = _paper_attempt.set(attempt)
+        try: return await _refresh_paper(owner, identity)
+        finally: _paper_attempt.reset(token)
+    def finished(task):
+        if _refresh_tasks.get(key) is task:
+            _refresh_tasks.pop(key, None)
+            _refreshing.discard(key)
+        if not task.cancelled(): task.exception()  # consume abandoned failures
     _refreshing.add(key)
-    try: return await _refresh_paper(owner,identity)
-    finally: _refreshing.discard(key)
+    task = asyncio.create_task(run())
+    _refresh_tasks[key] = task
+    task.add_done_callback(finished)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        attempt.cancel()
+        task.cancel()
+        raise
+    finally:
+        if task.done(): finished(task)
 
 
 # Pin bytes during module import, before traffic or a later source publisher.

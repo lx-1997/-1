@@ -1,0 +1,43 @@
+{
+  "schema": "paper-async-worker-review-v1",
+  "isolated_observations": {
+    "before-reproduction.json": {
+      "environment": "isolated synthetic workflow",
+      "held_write_seconds": 0.35,
+      "event_loop_lag_seconds": 0.415226625,
+      "fills": 6,
+      "production_writes": false
+    },
+    "after-reproduction.json": {
+      "environment": "isolated synthetic workflow",
+      "held_write_seconds": 0.35,
+      "event_loop_lag_seconds": 0.0026532910000000437,
+      "fills": 6,
+      "production_writes": false
+    },
+    "after-financial-parity.json": {
+      "environment": "isolated synthetic workflow",
+      "held_write_seconds": 0.35,
+      "event_loop_lag_seconds": 0.002635874999999996,
+      "fills": 6,
+      "exact_financial_kernel_match": true,
+      "production_writes": false
+    }
+  },
+  "evidence_sha256": {
+    "before-reproduction.json": "beae446df27b65458ae73710177f3c786e2aa1601bca0722708151fa1a9f44b9",
+    "after-reproduction.json": "4521b9156000fc2e6cd90138dae435720f2e873aac3adebd2ededc83212e6c99",
+    "after-financial-parity.json": "62a0af6861fa28545d98faf04a629404876027754dbb4cd98391ddd8cb201ef3"
+  },
+  "source_sha256": {
+    "quant_research.py": "ffeaef484989a180dc9c48366b9b780b345b775df3af7290bf20f77814f61aed",
+    "quant_research_api.py": "8d2bcba3146e6eead61edb711bf67576dd1cc30737373506f15c75e5a85e8a39",
+    "quant_research_store.py": "58711f7615b0a99fc9902ad6d4e0a7100cbac1f29c87f87f8ad8e6e5e25a87b3",
+    "quant_paper_calendar.py": "0bc4126c0e42ff68bb9f5d0f709cdcdf32a624c9273f5e2b03a8e21d5b7d08f1",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+  },
+  "scope": "isolated write-lock observation and cancellation tests, not production SLO",
+  "production_deployed": false,
+  "strategy_profitability_validated": false,
+  "commercial_ready": false
+}
