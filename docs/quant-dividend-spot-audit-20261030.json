@@ -1,0 +1,99 @@
+{
+  "created_at": "2026-10-30T08:22:36.160135+00:00",
+  "event_manifest_digest": "16112a060a5a148d682d98991df14959fe41a41fc1962da36a3c7f26d60e8ba3",
+  "source_pins": {
+    "backend/deepfocus_api/quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "backend/deepfocus_api/quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "backend/deepfocus_api/ai_fund_ledger.py": "55f06f634121fdd5e95cb9c423ab5b1cd647ff5d7ccd661f3b68fa43d36da382",
+    "backend/deepfocus_api/ai_fund_policy.py": "d9adfa8211275e2adf2303824610e3ea47f59d0f052ecca38f5bafdd6446f83a",
+    "scripts/quant-corporate-action-review.py": "8064d01d3f65b7a951798f677334f5e425c0604f316011195b9c63f434bd1f0f"
+  },
+  "mode": "historical_reconstruction",
+  "commercial_ready": false,
+  "promotion_allowed": false,
+  "results": [
+    {
+      "mode": "historical_reconstruction",
+      "entries": [
+        {
+          "event": "600519-2023-final-dividend",
+          "date": "2024-06-19",
+          "kind": "gross_receivable",
+          "amount": "0.00",
+          "record_close_qty": 0
+        },
+        {
+          "event": "600519-2023-final-dividend",
+          "date": "2024-06-19",
+          "kind": "gross_payment",
+          "amount": "0.00"
+        }
+      ],
+      "entitlements": {
+        "600519-2023-final-dividend": {
+          "fingerprint": "91c52316459a3c1564c648a4525d7e40aa9ef068fd423fe31126928764bb3b18",
+          "qty": 0,
+          "amount": "0.00",
+          "paid": true
+        }
+      },
+      "gross_cash_paid": "0.00",
+      "gross_receivable": "0.00",
+      "source_hashes": [
+        "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972",
+        "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34"
+      ],
+      "event_snapshot_digest": "8a03fc17c26f515c746c3f0dea9f4c66d3d0104465287de92c5c8d5876ac3119",
+      "tax_model": "unresolved_not_net_return",
+      "action_coverage_complete": false,
+      "is_strategy_replay": false,
+      "usable_for_gate": false,
+      "promotion_allowed": false,
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "capital": 1000000.0
+    },
+    {
+      "mode": "historical_reconstruction",
+      "entries": [
+        {
+          "event": "000333-2023-final-dividend",
+          "date": "2024-05-15",
+          "kind": "gross_receivable",
+          "amount": "8100.00",
+          "record_close_qty": 2700
+        },
+        {
+          "event": "000333-2023-final-dividend",
+          "date": "2024-05-15",
+          "kind": "gross_payment",
+          "amount": "8100.00"
+        }
+      ],
+      "entitlements": {
+        "000333-2023-final-dividend": {
+          "fingerprint": "c03285400435b1876d2f768d664e0e3525eb0adf5016cc35018d1bc381c661c8",
+          "qty": 2700,
+          "amount": "8100.00",
+          "paid": true
+        }
+      },
+      "gross_cash_paid": "8100.00",
+      "gross_receivable": "0.00",
+      "source_hashes": [
+        "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972",
+        "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34"
+      ],
+      "event_snapshot_digest": "9c627fad3c471cbb1507d3b52370e94ad30d2b7fd9760af854d92e2700107b97",
+      "tax_model": "unresolved_not_net_return",
+      "action_coverage_complete": false,
+      "is_strategy_replay": false,
+      "usable_for_gate": false,
+      "promotion_allowed": false,
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "capital": 1000000.0
+    }
+  ]
+}

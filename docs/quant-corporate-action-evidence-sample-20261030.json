@@ -1,0 +1,44 @@
+{
+  "status": "two_spot_checked_announcements_not_complete_history",
+  "source_files": {
+    "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972": "moutai-2024-dividend.pdf",
+    "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34": "midea-2024-dividend.pdf"
+  },
+  "events": [
+    {
+      "event_id": "600519-2023-final-dividend",
+      "revision": 1,
+      "symbol": "600519",
+      "record_date": "2024-06-18",
+      "ex_date": "2024-06-19",
+      "pay_date": "2024-06-19",
+      "cash_per_share_gross": "30.876",
+      "price_adjustment_per_share": "30.876",
+      "available_at": "2024-06-12T23:59:59+08:00",
+      "observed_at": "2026-10-30T08:20:21.801225+00:00",
+      "source_url": "https://www.moutaichina.com/eportal/attachDir/mtgf/2024/06/2024061210531834730.pdf",
+      "source_sha256": "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972"
+    },
+    {
+      "event_id": "000333-2023-final-dividend",
+      "revision": 1,
+      "symbol": "000333",
+      "record_date": "2024-05-14",
+      "ex_date": "2024-05-15",
+      "pay_date": "2024-05-15",
+      "cash_per_share_gross": "3",
+      "price_adjustment_per_share": "2.9791154",
+      "available_at": "2024-05-09T23:59:59+08:00",
+      "observed_at": "2026-10-30T08:20:21.801225+00:00",
+      "source_url": "https://file.finance.sina.com.cn/211.154.219.97%3A9494/MRGG/CNSESZ_STOCK/2024/2024-5/2024-05-09/10193530.PDF",
+      "source_sha256": "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34"
+    }
+  ],
+  "publication_time_policy": "dated announcement => conservative end of day; no exact intraday timestamp claimed",
+  "rights": "commercial license unverified; internal audit only",
+  "completeness_attested": false,
+  "source_notes": {
+    "600519": "Issuer website original PDF",
+    "000333": "Issuer original filing retained from Sina mirror; official archive provenance still to confirm"
+  }
+}
