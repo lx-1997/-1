@@ -1,0 +1,56 @@
+{
+  "checks": {
+    "original": {
+      "status": "available",
+      "profit": "-95514023.70",
+      "clock": "2025-06-01T09:30:00+08:00"
+    },
+    "corrected": {
+      "status": "available",
+      "profit": "-118504831.28",
+      "clock": "2026-05-02T09:30:00+08:00"
+    },
+    "past_unrecorded": {
+      "status": "unavailable",
+      "profit": null,
+      "clock": "2025-06-01T09:30:00+08:00"
+    },
+    "current_day_conservative": {
+      "status": "unavailable",
+      "profit": null,
+      "clock": "2026-10-30T22:00:27.005183+00:00"
+    }
+  },
+  "retained_source_count": 5,
+  "source_bytes_unchanged": true,
+  "idempotent_import_equal": true,
+  "recovery_financial_tables_equal": true,
+  "source_database_inventory_unchanged": true,
+  "new_paper_accounts": 0,
+  "post_visibility_real_observation_available": false,
+  "post_visibility_test_uses_isolated_clock_fixture_only": true,
+  "promotion_allowed": false,
+  "source_pins": {
+    "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_financial_store.py": "da99b1317c8aa7c81fabbe3ebfa3da4318a2857082be1e353575251c391471cd"
+  },
+  "receipt": {
+    "fingerprint": "5bacb89c8ed544047d346a8a5f4051fa729b1906d4569bd9c691e1771294e58a",
+    "input_digest": "2032a61a3d4b44fb6489c7f30806194f49734726ead44d56332a8f0e118bbc60",
+    "recorded_at": "2026-10-30T22:00:26.938918+00:00",
+    "stored_visible_at": "2026-11-01T00:00:00+08:00",
+    "vintage_count": 2,
+    "source_count": 5,
+    "visibility_policy": "next_beijing_calendar_day_after_transaction_recording",
+    "coverage_verified": false,
+    "externally_attested_time": false,
+    "promotion_allowed": false
+  },
+  "evidence_sha256": {
+    "real-qa-registration.json": "b46d5644f40e1182cc2246464a7ba37233f2370105b80f1759263165d14a09b3",
+    "real-qa-result.json": "2d866dccdcfbdf51b309cd1d05c147dfc1792f8dbc71abdeded771fca5774297",
+    "run-real-qa.py": "f11ec007bc78d45ac5cefb1a1d4a170d2f2ad4f7f7be1030e432f9b5c10dd527"
+  }
+}
