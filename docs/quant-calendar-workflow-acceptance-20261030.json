@@ -1,0 +1,33 @@
+{
+  "version": "lineage_hardened_v3",
+  "actual_browser_creation_export_and_frozen_verification": true,
+  "data": "four_real_sealed_series_729_dates",
+  "notices": 8,
+  "download_sha256": "a6a971e3511830a3ae631a3902a232bdfc3f8a05e57ea307052ee82869e1e8d2",
+  "download_has_no_prices_or_html": true,
+  "mobile": {
+    "requested_width": 390,
+    "requested_height": 844,
+    "clientWidth": 375,
+    "scrollWidth": 375
+  },
+  "other_account_registry_empty": true,
+  "browser_console_errors": [],
+  "cold_backup": {
+    "first_open": "mode=ro_new_process",
+    "notices": 8,
+    "calendar_jobs": 2,
+    "fingerprints_valid": true,
+    "frozen_results_equal": true,
+    "parent_request_and_kernel_bound": true
+  },
+  "source_pins": {
+    "quant_calendar_service.py": "729b11d6e59a8a22eee27a942cc7b29208432d10b8bc2cac1b82112e895505f3",
+    "quant_calendar_store.py": "e5f0383a8a3f01b45e9e46e53b54962b1cd71b549a30647e903c2f6194d8216e",
+    "quant_calendar_ui.py": "3d5393f3ad0feeaafe297a0f8d708be0a389a4f727a8b62e0bba489e85052b16",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+    "quant_research_api.py": "6f6f48da18e017085ac907cbb65fd51b23d77e388389a4d647f08f061491c40c",
+    "quant_research_ui.py": "1a5a78f372d86c6cb3db949b19e5ba6d7d17da9a8a5c50fdecdceb3a335e4b29"
+  },
+  "production_deployed": false
+}

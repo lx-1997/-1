@@ -1,6 +1,7 @@
 """Durable, bounded research orchestration and end-of-day paper tracking."""
 import asyncio
 import hashlib
+import json
 from functools import lru_cache
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -114,15 +115,38 @@ def submit(owner, key, request):
     return {k: v for k, v in job.items() if k not in {'dataset'}}
 
 
+def _calendar_veto(owner, parent):
+    """A recorded date defect on these exact inputs cannot be ignored by paper tracking."""
+    if parent is None:
+        raise ValueError('来源实验不存在，不能继续模拟跟踪')
+    with store.connect() as c:
+        rows = c.execute("SELECT payload FROM qr_experiment WHERE owner=? AND status='completed' AND json_extract(payload,'$.request.kind')='calendar_review' AND json_extract(payload,'$.request.parent_id')=?",
+                         (owner, parent['id'])).fetchall()
+    for row in rows:
+        payload = json.loads(row['payload']); request = payload['request']
+        if (request['parent_digest'] != parent['result_digest']
+                or request['parent_request_digest'] != engine.digest(parent['request'])
+                or request['reference_kernel'] != parent['kernel']):
+            continue
+        result = payload.get('result')
+        if not result or engine.digest(result) != payload.get('result_digest'):
+            raise ValueError('日历核验完整性异常，禁止继续模拟跟踪')
+        if result['quality']['status'] != 'matches_plan':
+            raise ValueError('该封存实验已发现日历差异，禁止晋级或继续模拟；请修正数据并新建实验')
+
+
 def promote(owner, identity):
     job = store.get(owner, identity)
     if not job: raise LookupError('实验不存在')
+    if job['request'].get('kind'):
+        raise ValueError('质量核验或事件研究不能直接晋级模拟账户')
     if job['status'] != 'completed': raise ValueError('实验尚未完成')
     if job['kernel'] != kernel_identity(): raise ValueError('执行内核已升级，请重新验证实验')
     if engine.digest(job['result']) != job['result_digest'] or engine.digest(job['dataset']) != job['result']['dataset_digest']:
         raise ValueError('实验完整性核对失败，禁止晋级')
     require_aligned(job['dataset'], benchmark=job['request']['benchmark'],
                     expected_symbols=job['request']['symbols']+[job['request']['benchmark']])
+    _calendar_veto(owner, job)
     if not job['result']['gate']['passed']: raise ValueError('未通过研究门槛，不能转入模拟跟踪')
     # Start flat after the sealed experiment; never backdate a live paper account.
     today = complete_day()
@@ -138,6 +162,7 @@ async def _refresh_paper(owner, identity):
     if not paper: raise LookupError('模拟账户不存在')
     if paper['status'] != 'active': raise ValueError('模拟跟踪已暂停')
     if paper['kernel'] != kernel_identity(): raise ValueError('冻结内核与当前版本不一致，已拒绝执行')
+    _calendar_veto(owner, store.get(owner, paper['experiment']))
     req, old = paper['request'], paper['dataset']
     scope = req['symbols']+[req['benchmark']]
     require_aligned(old, benchmark=req['benchmark'], expected_symbols=scope)

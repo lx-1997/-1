@@ -17,7 +17,10 @@ p.add_argument('--experiments',type=Path,required=True)
 p.add_argument('--events',type=Path,required=True)
 p.add_argument('--evidence-dir',type=Path,required=True)
 p.add_argument('--port',type=int,default=3038)
+p.add_argument('--calendar',type=Path)
+p.add_argument('--calendar-dir',type=Path)
 a=p.parse_args()
+if bool(a.calendar)!=bool(a.calendar_dir):p.error('日历清单与原文目录须同时指定')
 if not a.workspace.is_absolute() or a.workspace.exists():p.error('须使用全新绝对目录，不能复用任何既有数据库')
 a.workspace.mkdir(parents=True)
 os.environ.update(DEEPFOCUS_DATABASE_URL='sqlite:///'+str(a.workspace/'auth.sqlite3'),
@@ -40,6 +43,15 @@ for sha in {e.source_sha256 for e in events}:
     if root not in file.parents or not file.is_file():raise ValueError('证据路径越界或缺失')
     sources[sha]=file.read_bytes()
 bundle=put(users['a'].id,'真实公告抽样 · 本机验收',events,sources,completeness_attested=m.get('completeness_attested',False))
+calendar_bundle=None
+if a.calendar:
+    from deepfocus_api.quant_calendar_store import put as put_calendar
+    manifest=json.loads(a.calendar.read_text());calendar_root=a.calendar_dir.resolve();notices={}
+    for sha in {r['source_sha256'] for r in manifest['records']}:
+        file=(calendar_root/manifest['source_files'][sha]).resolve()
+        if file.parent!=calendar_root or not file.is_file() or file.stat().st_size>2*1024*1024:raise ValueError('日历原文缺失或越界')
+        notices[sha]=file.read_bytes()
+    calendar_bundle=put_calendar(users['a'].id,'沪深年度休市计划 · 本机验收',manifest,notices)
 parents=[]
 for x in json.loads(a.experiments.read_text()):
     req={**x['request'],'name':'本机验收 · '+x['request']['name']}
@@ -70,7 +82,7 @@ def login(account:str):
 def workspace():return api.workspace()
 
 @app.get('/qa/health')
-def health():return {'ready':True,'isolated':True,'sealed_parents':len(parents),'evidence_bundles':1}
+def health():return {'ready':True,'isolated':True,'sealed_parents':len(parents),'evidence_bundles':1,'calendar_bundles':int(calendar_bundle is not None)}
 
 if __name__=='__main__':
     import uvicorn

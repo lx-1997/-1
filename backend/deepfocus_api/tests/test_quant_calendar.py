@@ -133,12 +133,16 @@ async def test_paper_gap_refuses_without_touching_active_financial_ledger(monkey
     old = {s: {**p, 'bars': copy.deepcopy(p['bars'][:200])} for s, p in data.items()}
     result = engine.replay(old, ['600519'], engine.CANDIDATES[0])
     assert result['fills'] and result['state']['positions']
+    original = engine.walk_forward(data, ['600519'], '000300')
+    source, _ = store.create('owner', 'calendar-gap-source', request(), service.kernel_identity())
+    store.update('owner', source['id'], status='completed', extra={
+        'dataset': copy.deepcopy(data), 'result': original, 'result_digest': engine.digest(original)})
     if where == 'stored':
         old['600519']['bars'].pop(100)
     else:
         # Old history could otherwise mask the fresh provider's omitted day.
         data['000300']['bars'].pop(100)
-    paper = store.create_paper('owner', 'isolated-gap-paper', {
+    paper = store.create_paper('owner', source['id'], {
         'request': request(), 'kernel': service.kernel_identity(), 'dataset': old,
         'state': result['state'], 'parameters': engine.CANDIDATES[0],
         'fills': result['fills'], 'curve': result['curve']})

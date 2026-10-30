@@ -32,3 +32,5 @@ $('toggleForm').addEventListener('click',()=>{const expanded=$('researchForm').c
 
 from .quant_event_ui import enhance
 HTML = enhance(HTML)
+from .quant_calendar_ui import enhance as calendar_enhance
+HTML = calendar_enhance(HTML)

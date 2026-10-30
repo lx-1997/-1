@@ -67,6 +67,9 @@ def visible(item):
     if item.get('request',{}).get('kind')=='event_replay':
         from .quant_event_service import KERNEL
         current=KERNEL
+    elif item.get('request',{}).get('kind')=='calendar_review':
+        from .quant_calendar_service import KERNEL
+        current=KERNEL
     return {**{k: v for k,v in item.items() if k != 'dataset'}, 'kernel_current': item.get('kernel') == current}
 
 
@@ -110,6 +113,8 @@ def promote(identity: str, uid=Depends(owner)):
     item=store.get(uid,identity)
     if item and item.get('request',{}).get('kind')=='event_replay':
         raise HTTPException(422,'事件重放仍为开发研究，禁止直接晋级模拟账户')
+    if item and item.get('request',{}).get('kind')=='calendar_review':
+        raise HTTPException(422,'日历核验不构成策略晋级依据，不能创建模拟账户')
     return visible(call(service.promote, uid, identity))
 
 
@@ -150,6 +155,13 @@ class ReplayRequest(BaseModel):
 @router.post('/experiments/{identity}/replay',status_code=202)
 async def replay(identity:str,payload:ReplayRequest,uid=Depends(owner)):
     item=await asyncio.to_thread(store.get,uid,identity)
+    if item and item.get('request',{}).get('kind')=='calendar_review':
+        from .quant_calendar_service import submit
+        req=item['request']
+        try:return visible(await submit(uid,req['parent_id'],req['bundle_id'],payload.request_id,verification_of=identity))
+        except LookupError as e:raise HTTPException(404,str(e)) from e
+        except ValueError as e:raise HTTPException(422,str(e)) from e
+        except RuntimeError as e:raise HTTPException(429,str(e)) from e
     if item and item.get('request',{}).get('kind')=='event_replay':
         from .quant_event_service import submit
         req=item['request']
@@ -185,6 +197,35 @@ class EventReplayRequest(BaseModel):
 async def event_replay(identity:str,payload:EventReplayRequest,uid=Depends(owner)):
     from .quant_event_service import submit
     try:return visible(await submit(uid,identity,payload.bundle_id,payload.request_id,payload.knowledge_mode))
+    except LookupError as e:raise HTTPException(404,str(e)) from e
+    except ValueError as e:raise HTTPException(422,str(e)) from e
+    except RuntimeError as e:raise HTTPException(429,str(e)) from e
+
+
+@router.get('/calendar-evidence')
+def calendar_evidence_list(uid=Depends(owner)):
+    from .quant_calendar_store import listing
+    return {'items':listing(uid)}
+
+
+@router.get('/calendar-evidence/{identity}')
+def calendar_evidence_detail(identity:str,uid=Depends(owner)):
+    from .quant_calendar_store import summary
+    item=summary(uid,identity)
+    if item is None:raise HTTPException(404,'日历证据包不存在')
+    return item
+
+
+class CalendarReviewRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    request_id:str=Field(default_factory=lambda:uuid.uuid4().hex,min_length=8,max_length=96,pattern=r'^[A-Za-z0-9_-]+$')
+    bundle_id:str=Field(pattern=r'^[0-9a-f]{32}$')
+
+
+@router.post('/experiments/{identity}/calendar-review',status_code=202)
+async def calendar_review(identity:str,payload:CalendarReviewRequest,uid=Depends(owner)):
+    from .quant_calendar_service import submit
+    try:return visible(await submit(uid,identity,payload.bundle_id,payload.request_id))
     except LookupError as e:raise HTTPException(404,str(e)) from e
     except ValueError as e:raise HTTPException(422,str(e)) from e
     except RuntimeError as e:raise HTTPException(429,str(e)) from e
