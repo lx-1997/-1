@@ -17,6 +17,8 @@ from .research_tools_api import router as research_tools_router
 router = APIRouter()
 router.include_router(trade_statement_router)
 router.include_router(research_tools_router)
+from .quant_research_api import router as quant_research_router
+router.include_router(quant_research_router)
 
 def _owner_args(user: dict) -> dict[str, Any]:
     owner = str(user.get("sub") or "").strip()

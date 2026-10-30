@@ -957,7 +957,7 @@ class WeixinChannelManager:
         sync_buf = ""
         backoff = _MIN_BACKOFF
         while self._running:
-            b = bind.get_by_bot(bot_id)
+            b = await asyncio.to_thread(bind.get_by_bot, bot_id)
             if not b or not b.get("active"):
                 break
             try:
@@ -972,7 +972,7 @@ class WeixinChannelManager:
             errcode = resp.get("errcode")
             if errcode == _SESSION_EXPIRED:
                 logger.warning("[weixin] bot %s 会话过期(errcode -14)，标记失效待重扫", bot_id[:8])
-                bind.deactivate(bot_id)
+                await asyncio.to_thread(bind.deactivate, bot_id)
                 break
             if resp.get("ret") not in (0, None):
                 await asyncio.sleep(backoff)
@@ -987,7 +987,7 @@ class WeixinChannelManager:
 
     async def _handle_batch(self, bot_id: str, msgs: List[Dict[str, Any]]) -> None:
         """同一轮里同一用户的连续文本合并为一次问答（对齐 RDK 分组，避免抢 context_token）。"""
-        b = bind.get_by_bot(bot_id)
+        b = await asyncio.to_thread(bind.get_by_bot, bot_id)
         if not b or not b.get("active"):
             return
         texts: List[str] = []
@@ -1012,7 +1012,7 @@ class WeixinChannelManager:
                 saw_nontext = True
         # 刷新缓存 token：优先用户消息的，其次任意事件里捡到的（白捡的保活机会）
         if ctx or any_ctx:
-            bind.update_context_token(bot_id, ctx or any_ctx)
+            await asyncio.to_thread(bind.update_context_token, bot_id, ctx or any_ctx)
         if not texts or not to_user or not ctx:
             # 语音/图片被静默吞掉是聊天机器人最差的失败模式(用户会判定"这个号是死的")→给一句兜底(不计次、不进缓存)
             if saw_nontext and to_user and ctx:

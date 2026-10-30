@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -145,6 +146,15 @@ def _norm_topic(t: Any) -> Optional[dict[str, Any]]:
     }
 
 
+def _normalize_stream_topics(topics: list, stock_limit: int = 0) -> list[dict]:
+    """Keep ontology/share SQLite writes off the request event loop."""
+    items = [it for it in (_norm_topic(t) for t in topics) if it]
+    if stock_limit:
+        items = items[:stock_limit]
+    _persist_share_topics(items)
+    return items
+
+
 async def fetch_stream(
     *, group: str = "", keyword: str = "", limit: int = 20, end_time: str = "", use_cache: bool = True,
     stock_scope: bool = False,
@@ -192,9 +202,7 @@ async def fetch_stream(
             return hit[1]
         raise
 
-    items = [it for it in (_norm_topic(t) for t in (data.get("items") or [])) if it]
-    if stock_scope:
-        items = items[:n]
+    items = await asyncio.to_thread(_normalize_stream_topics, data.get("items") or [], n if stock_scope else 0)
     out: dict[str, Any] = {
         "items": items,
         "group": g,
@@ -208,7 +216,7 @@ async def fetch_stream(
         _CACHE[ckey] = (now, out)
         while len(_CACHE) > _CACHE_MAX:
             _CACHE.pop(min(_CACHE.items(), key=lambda kv: kv[1][0])[0], None)
-    _persist_share_topics(items)  # 只落 id/标题/短导语/日期，供 /note/{id} 分享落地页（不存全文）
+    # The existing minimal share persistence completed in the same worker batch.
     return out
 
 

@@ -1540,7 +1540,7 @@ function renderArena(d){
     '<div class="at-sub">'+sts.length+' 种投资纪律使用同一组稻草财经快讯、文章与研报，在完全公开的规则下进行模拟交易。</div></div>'+
     '<div class="at-right"><div class="at-stat"><span>当前领先</span><strong>'+esc(champ.name)+'<i class="'+((champ.nav_pct||0)>=0?'up':'down')+'">'+champValue+'</i></strong></div>'+
     '<div class="at-stat"><span>市场基准</span><strong>'+esc((bench&&bench.name)||'沪深300')+'<i class="'+(((bench&&bench.nav_pct)||0)>=0?'up':'down')+'">'+benchValue+'</i></strong></div></div>'+
-    '<div class="at-actions"><button type="button" class="arena-share" id="arenaShare">生成今日复盘卡 ↗</button></div></header>';
+    '<div class="at-actions"><a class="arena-share" href="/quant-research" style="text-decoration:none;display:inline-block;margin-right:8px">量化研究 ↗</a><button type="button" class="arena-share" id="arenaShare">生成今日复盘卡 ↗</button></div></header>';
   const showcase=arenaShowcase(d,sts,racing);
   const cards='<section class="arena-portfolios"><div class="arena-section-head"><div><span class="section-kicker">Live portfolios</span><h2>策略表现对比</h2></div>'+
     '<p>按累计收益率排名 · 点策略查看持仓与交易依据</p></div><div class="lbgrid">'+sts.map(s=>lbcard(s,bench,racing)).join('')+'</div></section>';

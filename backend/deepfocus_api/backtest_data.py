@@ -99,7 +99,7 @@ def _valid_date(value: str) -> bool:
 def _clean_bars(rows: list[dict[str, Any]], start_date: str, end_date: str) -> list[dict[str, Any]]:
     deduped: dict[str, dict[str, Any]] = {}
     for row in rows:
-        date = str(row.get("date") or row.get("d") or "")[:10]
+        date = str(row.get("date") or row.get("day") or row.get("d") or "")[:10]
         if not _valid_date(date) or (start_date and date < start_date) or (end_date and date > end_date):
             continue
         open_price = _number(row.get("open", row.get("o")))

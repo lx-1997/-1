@@ -14295,6 +14295,8 @@ async def orchestrator_chat(request: OrchestratorChatRequest, http_request: Requ
 
 
 app.include_router(portfolio_router)
+from .quant_research import attach_lifespan as attach_quant_research_lifespan
+attach_quant_research_lifespan(app)
 attach_research_lifespan(app)
 
 

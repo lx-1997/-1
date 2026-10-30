@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import ssl
+
+import certifi
 from typing import Any, Dict, Optional
 
 import httpx
@@ -28,6 +31,9 @@ _APP_ID = os.getenv("DEEPFOCUS_ILINK_APP_ID", "bot")
 
 LONGPOLL_TIMEOUT_S = 35.0
 DEFAULT_TIMEOUT_S = 15.0
+
+# Same certifi trust roots as httpx verify=True, initialized before hot polling.
+_TLS_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 def _common_headers() -> Dict[str, str]:
@@ -55,13 +61,13 @@ def _auth_headers(token: str, uin: Optional[str] = None) -> Dict[str, str]:
 
 def _client(timeout: float) -> httpx.AsyncClient:
     # trust_env=False：绕开沙箱出网代理直连 ilinkai（外域经代理会 403）。
-    return httpx.AsyncClient(timeout=timeout, trust_env=False)
+    return httpx.AsyncClient(timeout=timeout, trust_env=False, verify=_TLS_CONTEXT)
 
 
 def push_client(timeout: float = DEFAULT_TIMEOUT_S) -> httpx.AsyncClient:
     """批量推送复用的客户端：单连接池（keep-alive），整批 send_text 共用一条，免每条新建连接。"""
     return httpx.AsyncClient(
-        timeout=timeout, trust_env=False,
+        timeout=timeout, trust_env=False, verify=_TLS_CONTEXT,
         limits=httpx.Limits(max_connections=8, max_keepalive_connections=8),
     )
 

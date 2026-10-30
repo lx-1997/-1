@@ -1035,6 +1035,7 @@ PUBLIC_PREFIXES = (
 # "/api/research/wire-file"（研报原文，须登录）与 "/api/research/vision-analyze"（AI 解读，须登录）。
 PUBLIC_EXACT = frozenset(
     {
+        "/api/quant-research/workspace",  # public shell only; data routes require JWT
         "/api/market/quotes",       # 行情报价
         "/api/market/search",       # 标的搜索（命令面板）
         "/api/market/kline",        # 个股日线 K 线（OHLC，终端蜡烛图，免费层）
