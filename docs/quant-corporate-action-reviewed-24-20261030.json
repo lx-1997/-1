@@ -1,0 +1,610 @@
+{
+  "status": "24_manually_reviewed_cash_events_not_complete_history",
+  "source_files": {
+    "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972": "moutai-2024-dividend.pdf",
+    "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34": "midea-2024-dividend.pdf",
+    "7739837887d22cfea7f8768731cb60b59f28e0294a7241b2d2824633bd180fb5": "catl-2023-final.pdf",
+    "78549e6908050e9fde1e5f9a07220032b64ad617dc222157413eeda6838a2301": "catl-2024-special.pdf",
+    "66ccd122ba52d7b6cbd00bc4465ca4cf5e7a65540783ea65688e53eae7dea781": "catl-2024-final.pdf",
+    "0d76cfd6706c8e6faa674ca37e3544605d72a41ee41a8c1fc0ea884158377cb0": "000001-1220273257.pdf",
+    "5686c6d7233f3f94e9be9dfd26bde79b7babe5a7205650599a4a6fc48d9fad91": "000001-1221290895.pdf",
+    "8bf97bef99283c2095f82cb20f55487c7bd1830de471d6f5446ecd2cc6b4bc29": "000001-1223765073.pdf",
+    "97e7ef8fcfa0be1acf203c0409242cff48fbe0d8b58dbbb9c4adfe0ae15a82de": "000001-1224693497.pdf",
+    "8e9d5facebfd8c46e049f0e6b0839e2be31ef292a5e3db903591fc08be9af5b8": "000001-1225352449.pdf",
+    "cf4f9d00ef78fcdc70d69a124709973e78913fc477d87094afb8c0cac3b33457": "000001-1225568476.pdf",
+    "967e9d3dc72e8348417ab3b722174ce3b354b8fd85291a85fc4d2282b3aa42ae": "600036-1220527141.pdf",
+    "83ce0619274beb6fba79a5093722aa19d93f10cb54e2b1ba13926eda1fd152ea": "600036-1224071313.pdf",
+    "2763d93e08cbc703ccfea62a5bbf4d459d87042e779fb6bb229bcc8fd921a37c": "600036-1224927640.pdf",
+    "280660e578682efc2232e3420d270f9faeb167081d636001504ebbddb5eaf7ac": "600036-1225409111.pdf",
+    "c2ae81be30b3feaa191bf8897e94da37ef7392be57c60181bd49f49318ee3a6e": "600519-1222015210.pdf",
+    "8ff3e6e370c75cece700e5474337c8ecf1adb87b01a1a696bae02fd25982af3b": "600519-1223934491.pdf",
+    "ad2f4548490a203bbcada1181341d9dc90b19a64a0ecf14ff1c8e6b9d4b71673": "600519-1224867074.pdf",
+    "6b082b6a00db748f23b6dea166b0296cd69d8c10542d352e23d2e2c344ea516e": "600519-1225379934.pdf",
+    "27a25e95b9ee6bef52fe6bcaa216f6bde1ae13c66a8bf3d544edeef41d79a6bd": "600900-1220602045.pdf",
+    "c5b89335ba6746c90658593a47cf949467fae569fd1cca92f9af7171a04be4f1": "600900-1222342911.pdf",
+    "016ff3a428cd28446b6925b7129ac81ae5766ad100ec99893da4081fd4cfaa8b": "600900-1224131238.pdf",
+    "31e82e6b3f2d33aa21b2b9e94426459ce2b7e3f9d260d9129925e1e31c1a06ba": "600900-1224966232.pdf",
+    "e313badb273b2e50b3a3c24d71103829d36e84b386b1dba8a504a57cd6e9830f": "600900-1225416894.pdf"
+  },
+  "events": [
+    {
+      "event_id": "600519-2023-final-dividend",
+      "revision": 1,
+      "symbol": "600519",
+      "record_date": "2024-06-18",
+      "ex_date": "2024-06-19",
+      "pay_date": "2024-06-19",
+      "cash_per_share_gross": "30.876",
+      "price_adjustment_per_share": "30.876",
+      "available_at": "2024-06-12T23:59:59+08:00",
+      "observed_at": "2026-10-30T08:20:21.801225+00:00",
+      "source_url": "https://www.moutaichina.com/eportal/attachDir/mtgf/2024/06/2024061210531834730.pdf",
+      "source_sha256": "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972"
+    },
+    {
+      "event_id": "000333-2023-final-dividend",
+      "revision": 1,
+      "symbol": "000333",
+      "record_date": "2024-05-14",
+      "ex_date": "2024-05-15",
+      "pay_date": "2024-05-15",
+      "cash_per_share_gross": "3",
+      "price_adjustment_per_share": "2.9791154",
+      "available_at": "2024-05-09T23:59:59+08:00",
+      "observed_at": "2026-10-30T08:20:21.801225+00:00",
+      "source_url": "https://file.finance.sina.com.cn/211.154.219.97%3A9494/MRGG/CNSESZ_STOCK/2024/2024-5/2024-05-09/10193530.PDF",
+      "source_sha256": "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34"
+    },
+    {
+      "event_id": "300750-2023-final-dividend",
+      "revision": 1,
+      "symbol": "300750",
+      "record_date": "2024-04-29",
+      "ex_date": "2024-04-30",
+      "pay_date": "2024-04-30",
+      "cash_per_share_gross": "5.028",
+      "price_adjustment_per_share": "5.0147304",
+      "available_at": "2024-04-23T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:38:24.810088+00:00",
+      "source_url": "https://file.finance.sina.com.cn/211.154.219.97%3A9494/MRGG/CNSESZ_STOCK/2024/2024-4/2024-04-23/10041363.PDF",
+      "source_sha256": "7739837887d22cfea7f8768731cb60b59f28e0294a7241b2d2824633bd180fb5"
+    },
+    {
+      "event_id": "300750-2024-special-dividend",
+      "revision": 1,
+      "symbol": "300750",
+      "record_date": "2025-01-23",
+      "ex_date": "2025-01-24",
+      "pay_date": "2025-01-24",
+      "cash_per_share_gross": "1.23",
+      "price_adjustment_per_share": "1.2255331",
+      "available_at": "2025-01-17T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:38:24.869141+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-01-17/1222366609.PDF",
+      "source_sha256": "78549e6908050e9fde1e5f9a07220032b64ad617dc222157413eeda6838a2301"
+    },
+    {
+      "event_id": "300750-2024-final-dividend",
+      "revision": 1,
+      "symbol": "300750",
+      "record_date": "2025-04-21",
+      "ex_date": "2025-04-22",
+      "pay_date": "2025-04-22",
+      "cash_per_share_gross": "4.553",
+      "price_adjustment_per_share": "4.5364651",
+      "available_at": "2025-04-15T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:38:25.726545+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-04-15/1223099780.PDF",
+      "source_sha256": "66ccd122ba52d7b6cbd00bc4465ca4cf5e7a65540783ea65688e53eae7dea781"
+    },
+    {
+      "event_id": "000001-cash-2024-06-14",
+      "revision": 1,
+      "symbol": "000001",
+      "record_date": "2024-06-13",
+      "ex_date": "2024-06-14",
+      "pay_date": "2024-06-14",
+      "cash_per_share_gross": "0.719",
+      "price_adjustment_per_share": "0.719",
+      "available_at": "2024-06-06T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:52:57.134858+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2024-06-06/1220273257.PDF",
+      "source_sha256": "0d76cfd6706c8e6faa674ca37e3544605d72a41ee41a8c1fc0ea884158377cb0"
+    },
+    {
+      "event_id": "000001-cash-2024-10-10",
+      "revision": 1,
+      "symbol": "000001",
+      "record_date": "2024-10-09",
+      "ex_date": "2024-10-10",
+      "pay_date": "2024-10-10",
+      "cash_per_share_gross": "0.246",
+      "price_adjustment_per_share": "0.246",
+      "available_at": "2024-09-26T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:52:48.770257+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2024-09-26/1221290895.PDF",
+      "source_sha256": "5686c6d7233f3f94e9be9dfd26bde79b7babe5a7205650599a4a6fc48d9fad91"
+    },
+    {
+      "event_id": "000001-cash-2025-06-12",
+      "revision": 1,
+      "symbol": "000001",
+      "record_date": "2025-06-11",
+      "ex_date": "2025-06-12",
+      "pay_date": "2025-06-12",
+      "cash_per_share_gross": "0.362",
+      "price_adjustment_per_share": "0.362",
+      "available_at": "2025-06-05T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:52:44.307743+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-06-05/1223765073.PDF",
+      "source_sha256": "8bf97bef99283c2095f82cb20f55487c7bd1830de471d6f5446ecd2cc6b4bc29"
+    },
+    {
+      "event_id": "000001-cash-2025-10-15",
+      "revision": 1,
+      "symbol": "000001",
+      "record_date": "2025-10-14",
+      "ex_date": "2025-10-15",
+      "pay_date": "2025-10-15",
+      "cash_per_share_gross": "0.236",
+      "price_adjustment_per_share": "0.236",
+      "available_at": "2025-09-30T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:52:36.096835+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-09-30/1224693497.PDF",
+      "source_sha256": "97e7ef8fcfa0be1acf203c0409242cff48fbe0d8b58dbbb9c4adfe0ae15a82de"
+    },
+    {
+      "event_id": "000001-cash-2026-06-12",
+      "revision": 1,
+      "symbol": "000001",
+      "record_date": "2026-06-11",
+      "ex_date": "2026-06-12",
+      "pay_date": "2026-06-12",
+      "cash_per_share_gross": "0.360",
+      "price_adjustment_per_share": "0.360",
+      "available_at": "2026-06-05T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:52:33.460791+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-06-05/1225352449.PDF",
+      "source_sha256": "8e9d5facebfd8c46e049f0e6b0839e2be31ef292a5e3db903591fc08be9af5b8"
+    },
+    {
+      "event_id": "000001-cash-2026-09-24",
+      "revision": 1,
+      "symbol": "000001",
+      "record_date": "2026-09-23",
+      "ex_date": "2026-09-24",
+      "pay_date": "2026-09-24",
+      "cash_per_share_gross": "0.249",
+      "price_adjustment_per_share": "0.249",
+      "available_at": "2026-09-17T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:52:32.698940+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-09-17/1225568476.PDF",
+      "source_sha256": "cf4f9d00ef78fcdc70d69a124709973e78913fc477d87094afb8c0cac3b33457"
+    },
+    {
+      "event_id": "600036-cash-2024-07-11",
+      "revision": 1,
+      "symbol": "600036",
+      "record_date": "2024-07-10",
+      "ex_date": "2024-07-11",
+      "pay_date": "2024-07-11",
+      "cash_per_share_gross": "1.972",
+      "price_adjustment_per_share": "1.972",
+      "available_at": "2024-07-04T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:53:49.635018+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2024-07-04/1220527141.PDF",
+      "source_sha256": "967e9d3dc72e8348417ab3b722174ce3b354b8fd85291a85fc4d2282b3aa42ae"
+    },
+    {
+      "event_id": "600036-cash-2025-07-11",
+      "revision": 1,
+      "symbol": "600036",
+      "record_date": "2025-07-10",
+      "ex_date": "2025-07-11",
+      "pay_date": "2025-07-11",
+      "cash_per_share_gross": "2.000",
+      "price_adjustment_per_share": "2.000",
+      "available_at": "2025-07-04T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:53:41.879784+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-07-04/1224071313.PDF",
+      "source_sha256": "83ce0619274beb6fba79a5093722aa19d93f10cb54e2b1ba13926eda1fd152ea"
+    },
+    {
+      "event_id": "600036-cash-2026-01-16",
+      "revision": 1,
+      "symbol": "600036",
+      "record_date": "2026-01-15",
+      "ex_date": "2026-01-16",
+      "pay_date": "2026-01-16",
+      "cash_per_share_gross": "1.013",
+      "price_adjustment_per_share": "1.013",
+      "available_at": "2026-01-10T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:53:38.173327+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-01-10/1224927640.PDF",
+      "source_sha256": "2763d93e08cbc703ccfea62a5bbf4d459d87042e779fb6bb229bcc8fd921a37c"
+    },
+    {
+      "event_id": "600036-cash-2026-07-10",
+      "revision": 1,
+      "symbol": "600036",
+      "record_date": "2026-07-09",
+      "ex_date": "2026-07-10",
+      "pay_date": "2026-07-10",
+      "cash_per_share_gross": "1.003",
+      "price_adjustment_per_share": "1.003",
+      "available_at": "2026-07-04T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:53:34.992707+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-07-04/1225409111.PDF",
+      "source_sha256": "280660e578682efc2232e3420d270f9faeb167081d636001504ebbddb5eaf7ac"
+    },
+    {
+      "event_id": "600519-cash-2024-12-20",
+      "revision": 1,
+      "symbol": "600519",
+      "record_date": "2024-12-19",
+      "ex_date": "2024-12-20",
+      "pay_date": "2024-12-20",
+      "cash_per_share_gross": "23.882",
+      "price_adjustment_per_share": "23.882",
+      "available_at": "2024-12-14T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:54:03.707658+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2024-12-14/1222015210.PDF",
+      "source_sha256": "c2ae81be30b3feaa191bf8897e94da37ef7392be57c60181bd49f49318ee3a6e"
+    },
+    {
+      "event_id": "600519-cash-2025-06-26",
+      "revision": 1,
+      "symbol": "600519",
+      "record_date": "2025-06-25",
+      "ex_date": "2025-06-26",
+      "pay_date": "2025-06-26",
+      "cash_per_share_gross": "27.673",
+      "price_adjustment_per_share": "27.600",
+      "available_at": "2025-06-20T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:53:56.985207+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-06-20/1223934491.PDF",
+      "source_sha256": "8ff3e6e370c75cece700e5474337c8ecf1adb87b01a1a696bae02fd25982af3b"
+    },
+    {
+      "event_id": "600519-cash-2025-12-19",
+      "revision": 1,
+      "symbol": "600519",
+      "record_date": "2025-12-18",
+      "ex_date": "2025-12-19",
+      "pay_date": "2025-12-19",
+      "cash_per_share_gross": "23.957",
+      "price_adjustment_per_share": "23.957",
+      "available_at": "2025-12-11T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:53:54.773145+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-12-11/1224867074.PDF",
+      "source_sha256": "ad2f4548490a203bbcada1181341d9dc90b19a64a0ecf14ff1c8e6b9d4b71673"
+    },
+    {
+      "event_id": "600519-cash-2026-06-26",
+      "revision": 1,
+      "symbol": "600519",
+      "record_date": "2026-06-25",
+      "ex_date": "2026-06-26",
+      "pay_date": "2026-06-26",
+      "cash_per_share_gross": "28.02423",
+      "price_adjustment_per_share": "28.02423",
+      "available_at": "2026-06-22T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:53:52.434697+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-06-22/1225379934.PDF",
+      "source_sha256": "6b082b6a00db748f23b6dea166b0296cd69d8c10542d352e23d2e2c344ea516e"
+    },
+    {
+      "event_id": "600900-cash-2024-07-19",
+      "revision": 1,
+      "symbol": "600900",
+      "record_date": "2024-07-18",
+      "ex_date": "2024-07-19",
+      "pay_date": "2024-07-19",
+      "cash_per_share_gross": "0.82",
+      "price_adjustment_per_share": "0.82",
+      "available_at": "2024-07-11T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:54:53.023240+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2024-07-11/1220602045.PDF",
+      "source_sha256": "27a25e95b9ee6bef52fe6bcaa216f6bde1ae13c66a8bf3d544edeef41d79a6bd"
+    },
+    {
+      "event_id": "600900-cash-2025-01-24",
+      "revision": 1,
+      "symbol": "600900",
+      "record_date": "2025-01-23",
+      "ex_date": "2025-01-24",
+      "pay_date": "2025-01-24",
+      "cash_per_share_gross": "0.21",
+      "price_adjustment_per_share": "0.21",
+      "available_at": "2025-01-16T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:54:39.403163+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-01-16/1222342911.PDF",
+      "source_sha256": "c5b89335ba6746c90658593a47cf949467fae569fd1cca92f9af7171a04be4f1"
+    },
+    {
+      "event_id": "600900-cash-2025-07-18",
+      "revision": 1,
+      "symbol": "600900",
+      "record_date": "2025-07-17",
+      "ex_date": "2025-07-18",
+      "pay_date": "2025-07-18",
+      "cash_per_share_gross": "0.733",
+      "price_adjustment_per_share": "0.733",
+      "available_at": "2025-07-11T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:54:26.845192+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-07-11/1224131238.PDF",
+      "source_sha256": "016ff3a428cd28446b6925b7129ac81ae5766ad100ec99893da4081fd4cfaa8b"
+    },
+    {
+      "event_id": "600900-cash-2026-02-12",
+      "revision": 1,
+      "symbol": "600900",
+      "record_date": "2026-02-11",
+      "ex_date": "2026-02-12",
+      "pay_date": "2026-02-12",
+      "cash_per_share_gross": "0.21",
+      "price_adjustment_per_share": "0.21",
+      "available_at": "2026-02-05T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:54:24.860511+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-02-05/1224966232.PDF",
+      "source_sha256": "31e82e6b3f2d33aa21b2b9e94426459ce2b7e3f9d260d9129925e1e31c1a06ba"
+    },
+    {
+      "event_id": "600900-cash-2026-07-17",
+      "revision": 1,
+      "symbol": "600900",
+      "record_date": "2026-07-16",
+      "ex_date": "2026-07-17",
+      "pay_date": "2026-07-17",
+      "cash_per_share_gross": "0.79",
+      "price_adjustment_per_share": "0.79",
+      "available_at": "2026-07-10T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:54:22.887711+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-07-10/1225416894.PDF",
+      "source_sha256": "e313badb273b2e50b3a3c24d71103829d36e84b386b1dba8a504a57cd6e9830f"
+    }
+  ],
+  "publication_time_policy": "dated announcement => conservative end of day; no exact intraday timestamp claimed",
+  "rights": "commercial license unverified; internal audit only",
+  "completeness_attested": false,
+  "source_notes": {
+    "600519": "Issuer website original PDF",
+    "000333": "Issuer original filing retained from Sina mirror; official archive provenance still to confirm",
+    "300750": "Three implementation filings manually reviewed on pages 1 and 3. 2023-final initially from Sina mirror; CNINFO 2024-04-23/1219767154.PDF subsequently fetched with identical SHA256, retained separately. 2024-special and 2024-final directly from public CNINFO archive. 2024 half-year report page28 confirms annual20.11 + special30.17 per10, unlike vendor annual-only row. No complete event-history attestation."
+  },
+  "fact_review": "manual_page_1_and_3_review_for_three_added_filings",
+  "additional_provenance": [
+    {
+      "name": "catl-2023-final-cninfo",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-04-23/1219767154.PDF",
+      "observed_at": "2026-10-30T12:47:02.029151+00:00",
+      "sha256": "7739837887d22cfea7f8768731cb60b59f28e0294a7241b2d2824633bd180fb5",
+      "file": "catl-2023-final-cninfo.pdf",
+      "reviewed_pages": [
+        1,
+        3
+      ]
+    },
+    {
+      "name": "catl-2024-halfyear",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-07-27/1220740372.PDF",
+      "observed_at": "2026-10-30T12:47:30.624846+00:00",
+      "sha256": "2a690cb2471c1f0d4539d909a9f068c03710a838ddd35313175790169e85eab1",
+      "file": "catl-2024-halfyear.pdf",
+      "reviewed_pages": [
+        28
+      ]
+    }
+  ],
+  "additional_manual_reviews": [
+    {
+      "filing": "000001:1220273257",
+      "reviewed_pages": [
+        1,
+        2
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.364890+00:00",
+      "source_sha256": "0d76cfd6706c8e6faa674ca37e3544605d72a41ee41a8c1fc0ea884158377cb0"
+    },
+    {
+      "filing": "000001:1221290895",
+      "reviewed_pages": [
+        1,
+        2
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.366103+00:00",
+      "source_sha256": "5686c6d7233f3f94e9be9dfd26bde79b7babe5a7205650599a4a6fc48d9fad91"
+    },
+    {
+      "filing": "000001:1223765073",
+      "reviewed_pages": [
+        1,
+        2
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.367592+00:00",
+      "source_sha256": "8bf97bef99283c2095f82cb20f55487c7bd1830de471d6f5446ecd2cc6b4bc29"
+    },
+    {
+      "filing": "000001:1224693497",
+      "reviewed_pages": [
+        1,
+        2,
+        3
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.369189+00:00",
+      "source_sha256": "97e7ef8fcfa0be1acf203c0409242cff48fbe0d8b58dbbb9c4adfe0ae15a82de"
+    },
+    {
+      "filing": "000001:1225352449",
+      "reviewed_pages": [
+        1,
+        2
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.370806+00:00",
+      "source_sha256": "8e9d5facebfd8c46e049f0e6b0839e2be31ef292a5e3db903591fc08be9af5b8"
+    },
+    {
+      "filing": "000001:1225568476",
+      "reviewed_pages": [
+        1,
+        2,
+        3
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.371884+00:00",
+      "source_sha256": "cf4f9d00ef78fcdc70d69a124709973e78913fc477d87094afb8c0cac3b33457"
+    },
+    {
+      "filing": "600036:1220527141",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.373140+00:00",
+      "source_sha256": "967e9d3dc72e8348417ab3b722174ce3b354b8fd85291a85fc4d2282b3aa42ae"
+    },
+    {
+      "filing": "600036:1224071313",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.373914+00:00",
+      "source_sha256": "83ce0619274beb6fba79a5093722aa19d93f10cb54e2b1ba13926eda1fd152ea"
+    },
+    {
+      "filing": "600036:1224927640",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.374515+00:00",
+      "source_sha256": "2763d93e08cbc703ccfea62a5bbf4d459d87042e779fb6bb229bcc8fd921a37c"
+    },
+    {
+      "filing": "600036:1225409111",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.375245+00:00",
+      "source_sha256": "280660e578682efc2232e3420d270f9faeb167081d636001504ebbddb5eaf7ac"
+    },
+    {
+      "filing": "600519:1222015210",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.376314+00:00",
+      "source_sha256": "c2ae81be30b3feaa191bf8897e94da37ef7392be57c60181bd49f49318ee3a6e"
+    },
+    {
+      "filing": "600519:1223934491",
+      "reviewed_pages": [
+        1,
+        2
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "explicit_differential_formula_page2",
+      "reviewed_at": "2026-10-30T12:59:25.376926+00:00",
+      "source_sha256": "8ff3e6e370c75cece700e5474337c8ecf1adb87b01a1a696bae02fd25982af3b"
+    },
+    {
+      "filing": "600519:1224867074",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.378567+00:00",
+      "source_sha256": "ad2f4548490a203bbcada1181341d9dc90b19a64a0ecf14ff1c8e6b9d4b71673"
+    },
+    {
+      "filing": "600519:1225379934",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.379888+00:00",
+      "source_sha256": "6b082b6a00db748f23b6dea166b0296cd69d8c10542d352e23d2e2c344ea516e"
+    },
+    {
+      "filing": "600900:1220602045",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.382028+00:00",
+      "source_sha256": "27a25e95b9ee6bef52fe6bcaa216f6bde1ae13c66a8bf3d544edeef41d79a6bd"
+    },
+    {
+      "filing": "600900:1222342911",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.384205+00:00",
+      "source_sha256": "c5b89335ba6746c90658593a47cf949467fae569fd1cca92f9af7171a04be4f1"
+    },
+    {
+      "filing": "600900:1224131238",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.385823+00:00",
+      "source_sha256": "016ff3a428cd28446b6925b7129ac81ae5766ad100ec99893da4081fd4cfaa8b"
+    },
+    {
+      "filing": "600900:1224966232",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.387008+00:00",
+      "source_sha256": "31e82e6b3f2d33aa21b2b9e94426459ce2b7e3f9d260d9129925e1e31c1a06ba"
+    },
+    {
+      "filing": "600900:1225416894",
+      "reviewed_pages": [
+        1
+      ],
+      "cash_record_ex_pay_reviewed": true,
+      "reference_adjustment_basis": "standard_cash_only_formula_derived_from_reviewed_no_capital_change_or_no_differential_filing",
+      "reviewed_at": "2026-10-30T12:59:25.387580+00:00",
+      "source_sha256": "e313badb273b2e50b3a3c24d71103829d36e84b386b1dba8a504a57cd6e9830f"
+    }
+  ],
+  "reference_formula_sources": [
+    {
+      "url": "https://www.szse.cn/www/investor/knowledge/t20181017_555756.html",
+      "role": "standard_cash_only_formula; retained HTML"
+    },
+    {
+      "url": "https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf",
+      "role": "2026 rule 4.4.2 page26; historical2023PDF retrieval404 retained as failure"
+    }
+  ]
+}
