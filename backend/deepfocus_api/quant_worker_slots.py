@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sqlite3
 from functools import lru_cache
 
 
@@ -26,28 +27,41 @@ def process_scope():
 
 
 def schema(c):
-    c.execute('CREATE TABLE IF NOT EXISTS qr_worker_slot(experiment TEXT PRIMARY KEY,owner TEXT NOT NULL,pid INTEGER NOT NULL,scope TEXT,phase TEXT NOT NULL,token TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS qr_worker_slot(experiment TEXT PRIMARY KEY,owner TEXT NOT NULL,pid INTEGER NOT NULL,scope TEXT,phase TEXT NOT NULL,token TEXT,child_pid INTEGER,child_scope TEXT)')
+    for name,kind in (('child_pid','INTEGER'),('child_scope','TEXT')):
+        if name not in {row[1] for row in c.execute('PRAGMA table_info(qr_worker_slot)')}:
+            try:c.execute('ALTER TABLE qr_worker_slot ADD COLUMN '+name+' '+kind)
+            except sqlite3.OperationalError:
+                # A simultaneous connection may have completed this additive DDL.
+                if name not in {row[1] for row in c.execute('PRAGMA table_info(qr_worker_slot)')}:raise
     c.execute('CREATE INDEX IF NOT EXISTS qr_worker_owner ON qr_worker_slot(owner)')
 
 
 def reserve(c,owner,identity):
-    c.execute('INSERT INTO qr_worker_slot VALUES(?,?,?,?,?,NULL)',(identity,owner,os.getpid(),process_scope(),'reserved'))
+    c.execute('INSERT INTO qr_worker_slot(experiment,owner,pid,scope,phase,token) VALUES(?,?,?,?,?,NULL)',(identity,owner,os.getpid(),process_scope(),'reserved'))
 
 
 def retire_unclaimed(c):
     c.execute("DELETE FROM qr_worker_slot WHERE phase='reserved' AND NOT EXISTS(SELECT 1 FROM qr_experiment e WHERE e.id=qr_worker_slot.experiment AND e.owner=qr_worker_slot.owner AND e.status='running')")
 
 
+def definitely_dead(pid,scope):
+    if type(pid) is not int or pid<=1 or scope is None or scope!=process_scope():return False
+    try:os.kill(pid,0)
+    except ProcessLookupError:return True
+    except (PermissionError,OSError):pass
+    return False
+
+
 def reap_dead(c,stamp):
     scope=process_scope()
     if scope is None:return
     for row in c.execute('SELECT * FROM qr_worker_slot WHERE scope=?',(scope,)).fetchall():
-        if row['pid']<=0:continue
-        try:os.kill(row['pid'],0)
-        except ProcessLookupError:
+        if definitely_dead(row['pid'],row['scope']):
+            if row['child_pid'] is not None and not definitely_dead(row['child_pid'],row['child_scope']):continue
+            if row['child_pid'] is None and row['child_scope'] is not None:continue
             c.execute("UPDATE qr_experiment SET status='failed',stage='执行工作进程已退出，失败任务保留',updated=? WHERE owner=? AND id=? AND status='running'",(stamp,row['owner'],row['experiment']))
             c.execute('DELETE FROM qr_worker_slot WHERE experiment=? AND owner=? AND pid=? AND scope=?',(row['experiment'],row['owner'],row['pid'],scope))
-        except (PermissionError,OSError):continue
 
 
 def counts(c,owner):
@@ -65,8 +79,29 @@ def claim(c,owner,identity,token):
 
 
 def finish(c,owner,identity,token,stamp):
-    row=c.execute("SELECT 1 FROM qr_worker_slot WHERE experiment=? AND owner=? AND phase='active' AND token=? AND pid=? AND scope IS ?",(identity,owner,token,os.getpid(),process_scope())).fetchone()
+    row=c.execute("SELECT * FROM qr_worker_slot WHERE experiment=? AND owner=? AND phase='active' AND token=? AND pid=? AND scope IS ?",(identity,owner,token,os.getpid(),process_scope())).fetchone()
     if row is None:return False
+    if row['child_pid'] is not None and not definitely_dead(row['child_pid'],row['child_scope']):return False
+    if row['child_pid'] is None and row['child_scope'] is not None:return False
     c.execute("UPDATE qr_experiment SET status='failed',stage='计算已退出但未完成，失败任务保留',updated=? WHERE owner=? AND id=? AND status='running'",(stamp,owner,identity))
     c.execute('DELETE FROM qr_worker_slot WHERE experiment=? AND owner=? AND token=?',(identity,owner,token))
     return True
+
+
+def attach_child(c,owner,identity,token,pid):
+    if type(pid) is not int or pid<=1 or pid==os.getpid() or process_scope() is None:
+        raise ValueError('Explicit owned child PID and known OS scope required')
+    result=c.execute("UPDATE qr_worker_slot SET child_pid=?,child_scope=? WHERE experiment=? AND owner=? AND token=? AND pid=? AND scope IS ? AND phase='active' AND child_pid IS NULL AND child_scope IS NULL AND EXISTS(SELECT 1 FROM qr_experiment WHERE id=? AND owner=? AND status='running')",
+        (pid,process_scope(),identity,owner,token,os.getpid(),process_scope(),identity,owner))
+    if result.rowcount!=1:raise ValueError('CPU child admission is not owned or was cancelled')
+
+
+def clear_exited_child(c,owner,identity,token,pid):
+    """Only the owning supervisor calls this after its Popen.wait() returned.
+
+    PID reuse after wait is possible; the owned Popen handle, not kill(pid,0),
+    supplies normal-exit proof. Dead-parent reclamation uses conservative probes.
+    """
+    result=c.execute("UPDATE qr_worker_slot SET child_pid=NULL,child_scope=NULL WHERE experiment=? AND owner=? AND token=? AND pid=? AND scope IS ? AND child_pid=? AND child_scope IS ?",
+        (identity,owner,token,os.getpid(),process_scope(),pid,process_scope()))
+    if result.rowcount!=1:raise ValueError('CPU child exit belongs to another reservation')

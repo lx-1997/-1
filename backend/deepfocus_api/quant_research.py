@@ -85,8 +85,28 @@ def research_worker(function):
 
 @lru_cache(maxsize=1)
 def kernel_identity():
-    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'quant_calendar.py', 'quant_paper_calendar.py', 'quant_calendar_service.py', 'quant_calendar_store.py', 'quant_exchange_schedule.py', 'quant_research_store.py', 'quant_worker_slots.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
-    return engine.digest({f: hashlib.sha256(Path(__file__).with_name(f).read_bytes()).hexdigest() for f in files})
+    from .quant_cpu_process import pins
+    return engine.digest(pins())
+
+
+async def _compute_price(owner, identity, request, dataset, attempt):
+    from .quant_cpu_process import run
+    return await _wait_price_worker(_paper_io(run, owner, identity, request, dataset, kernel_identity(), attempt))
+
+
+async def _wait_price_worker(coroutine):
+    """Own timeout cancellation too; repeated outer cancel cannot skip drain."""
+    task = asyncio.create_task(coroutine)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task),180)
+    except BaseException:
+        task.cancel()
+        while not task.done():
+            try:await asyncio.shield(task)
+            except asyncio.CancelledError:continue
+            except Exception:break
+        if task.done() and not task.cancelled():task.exception()
+        raise
 
 
 def complete_day():
@@ -147,10 +167,7 @@ async def execute(owner, identity, request):
         # SQLite callback also observes cancellation; the CPU worker then exits
         # at the next fold, and its terminal result is never written over cancel.
         attempt = _paper_attempt.get()
-        def progress(value, stage):
-            if attempt is not None and attempt.cancelled: raise InterruptedError('cancelled computation')
-            if not store.update(owner, identity, progress=value, stage=stage): raise InterruptedError('cancelled')
-        result = await asyncio.wait_for(_paper_io(engine.walk_forward, dataset, request['symbols'], request['benchmark'], request['capital'], progress), 180)
+        result = await _compute_price(owner, identity, request, dataset, attempt)
         coverage_reasons = []
         from datetime import date
         if q['first'] and (date.fromisoformat(q['first'])-date.fromisoformat(request['start_date'])).days > 20:

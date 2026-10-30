@@ -46,7 +46,8 @@ SOURCES = ('auth.py','storage.py','db.py','quant_research.py','quant_research_ap
            'quant_research_store.py','quant_research_engine.py','quant_research_candidates.py',
            'quant_calendar.py','quant_paper_calendar.py','quant_calendar_service.py',
            'quant_calendar_store.py','quant_exchange_schedule.py','quant_worker_slots.py',
-           'backtest_data.py','ai_fund_ledger.py','ai_fund_policy.py')
+           'backtest_data.py','ai_fund_ledger.py','ai_fund_policy.py',
+           'quant_cpu_process.py','quant_cpu_worker.py')
 
 
 def dump(path, value):

@@ -311,9 +311,13 @@ def test_oos_covers_partial_final_window_without_gap():
     assert 'risk_paused' in r['oos']
 
 def test_kernel_pins_protocol_orchestration_and_data_adapter():
-    import inspect
-    source=inspect.getsource(svc.kernel_identity)
-    assert 'quant_research.py' in source and 'backtest_data.py' in source
+    import hashlib
+    from pathlib import Path
+    from deepfocus_api import quant_cpu_process as cpu
+    actual=cpu.pins()
+    assert {'quant_research.py','backtest_data.py','quant_worker_slots.py','quant_cpu_process.py','quant_cpu_worker.py'}<=set(actual)
+    assert all(sha==hashlib.sha256(Path(cpu.__file__).with_name(name).read_bytes()).hexdigest() for name,sha in actual.items())
+    assert svc.kernel_identity()==e.digest(actual)
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,15 @@ from deepfocus_api.tests.test_quant_paper_calendar import source
 async def isolated(tmp_path,monkeypatch):
     monkeypatch.setenv('DEEPFOCUS_QUANT_RESEARCH_DB_PATH',str(tmp_path/'isolated.sqlite3'))
     monkeypatch.setattr(service,'_tasks',{})
+    # These tests deliberately inject threading.Event barriers into Python
+    # callables. Keep that thread-lifecycle unit adapter explicit; real CPU
+    # subprocess ownership and cancellation are tested separately.
+    async def thread_compute(owner,identity,req,data,attempt):
+        def progress(value,stage):
+            if attempt.cancelled or not jobs.update(owner,identity,progress=value,stage=stage):
+                raise InterruptedError('isolated cancelled compute')
+        return await service._wait_price_worker(service._paper_io(service.engine.walk_forward,data,req['symbols'],req['benchmark'],req['capital'],progress))
+    monkeypatch.setattr(service,'_compute_price',thread_compute)
     yield
     pending=list(service._tasks.values())
     for task in pending:task.cancel()

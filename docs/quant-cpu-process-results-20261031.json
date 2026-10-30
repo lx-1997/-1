@@ -1,0 +1,159 @@
+{
+  "scope": "owned_price_CPU_process_and_fixed_short_smoke_not_full_hour_acceptance",
+  "source_pins": {
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_research_candidates.py": "5655a8ce9a60877b1093ddab0d13fa393ec9f9cc0fcc464b2c678072daba72c7",
+    "quant_research.py": "9b30a0cdcb823490c379d8276b24835ea01f79881f73249fadd793e0b5f33ba1",
+    "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+    "quant_paper_calendar.py": "0bc4126c0e42ff68bb9f5d0f709cdcdf32a624c9273f5e2b03a8e21d5b7d08f1",
+    "quant_calendar_service.py": "1f813da8cacc4ae8e6dc5c75fedf38d1c8f9a8e0b97642f9d502a4b6c7ba17e3",
+    "quant_calendar_store.py": "e5f0383a8a3f01b45e9e46e53b54962b1cd71b549a30647e903c2f6194d8216e",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+    "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+    "quant_worker_slots.py": "c21edea563653f6609079c702c97419e3464974c4e557201d7b9b942103138c4",
+    "backtest_data.py": "85a69510e3b8eadda9f9447319fdab948ad4d712832b336684a23452130d5757",
+    "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+    "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+    "quant_cpu_process.py": "b5c2e7cbd6037bf995d39cc62e96cd8f2d32942fe7142c8e50dd1e4f4c9ccabb",
+    "quant_cpu_worker.py": "596f4f2f87527c4ecd976b9a61079bda4e946e16fb325198b554b8f274c01e8f"
+  },
+  "smoke": {
+    "evaluation": {
+      "safety_checks": {
+        "read_p95": true,
+        "read_p99": true,
+        "create_p95": true,
+        "loop_p99": true,
+        "loop_max": true,
+        "rss": true,
+        "disk": true,
+        "worker_caps": true,
+        "four_active_slots_observed": true,
+        "no_unexpected_errors": true,
+        "no_external_connections": true,
+        "all_results_exact": true,
+        "all_drained": true,
+        "no_paper_accounts": true
+      },
+      "full_run_checks": {
+        "mode": false,
+        "duration": false,
+        "completed": false,
+        "cancelled": false,
+        "rounds": false,
+        "reads": false,
+        "heartbeats": true
+      },
+      "engineering_checks_passed": true,
+      "full_soak_passed": false,
+      "latency_ms": {
+        "read_p95": 20.307207999999743,
+        "read_p99": 20.307207999999743,
+        "create_p95": 28.281290999999985,
+        "loop_p99": 9.328875000000245,
+        "loop_max": 75.5531669999996
+      },
+      "promotion_allowed": false,
+      "production_SLO_certified": false
+    },
+    "metrics": {
+      "errors": [],
+      "rounds": 3,
+      "submitted": 12,
+      "completed": 10,
+      "exact_results": 10,
+      "cancelled": 2,
+      "cancel_requested": 2,
+      "cancel_missed": 0,
+      "peak_rss_bytes": 133038080,
+      "peak_qr_disk_bytes": 4829184,
+      "peak_global_slots": 4,
+      "peak_owner_slots": 2,
+      "peak_active_slots": 4,
+      "remaining_slots": 0,
+      "remaining_admissions": 0,
+      "external_connection_attempts": 0,
+      "elapsed_seconds": 10.550917792,
+      "paper_accounts": 0
+    },
+    "sample_counts": {
+      "observer_ms": 11,
+      "create_ms": 12,
+      "loop_ms": 873
+    }
+  },
+  "parent_death": {
+    "actual_financial_progress_observed": true,
+    "parent_killed_and_waited": true,
+    "stopped_live_child_kept_quota": true,
+    "third_owner_job_rejected": true,
+    "child_detected_parent_loss_and_exited": true,
+    "both_dead_then_reaped": true,
+    "remaining_slots": 0,
+    "no_paper_accounts": true,
+    "input_unchanged": true,
+    "source_pins": {
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_research_candidates.py": "5655a8ce9a60877b1093ddab0d13fa393ec9f9cc0fcc464b2c678072daba72c7",
+      "quant_research.py": "9b30a0cdcb823490c379d8276b24835ea01f79881f73249fadd793e0b5f33ba1",
+      "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+      "quant_paper_calendar.py": "0bc4126c0e42ff68bb9f5d0f709cdcdf32a624c9273f5e2b03a8e21d5b7d08f1",
+      "quant_calendar_service.py": "1f813da8cacc4ae8e6dc5c75fedf38d1c8f9a8e0b97642f9d502a4b6c7ba17e3",
+      "quant_calendar_store.py": "e5f0383a8a3f01b45e9e46e53b54962b1cd71b549a30647e903c2f6194d8216e",
+      "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+      "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+      "quant_worker_slots.py": "c21edea563653f6609079c702c97419e3464974c4e557201d7b9b942103138c4",
+      "backtest_data.py": "85a69510e3b8eadda9f9447319fdab948ad4d712832b336684a23452130d5757",
+      "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+      "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+      "quant_cpu_process.py": "b5c2e7cbd6037bf995d39cc62e96cd8f2d32942fe7142c8e50dd1e4f4c9ccabb",
+      "quant_cpu_worker.py": "596f4f2f87527c4ecd976b9a61079bda4e946e16fb325198b554b8f274c01e8f"
+    },
+    "production_writes": 0,
+    "promotion_allowed": false
+  },
+  "original_two_replay": {
+    "checks": [
+      {
+        "original_experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "exact_result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+        "replay_exact": true,
+        "retry_same_record": true,
+        "foreign_owner_404": true,
+        "export_excludes_raw_dataset": true
+      },
+      {
+        "original_experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "exact_result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+        "replay_exact": true,
+        "retry_same_record": true,
+        "foreign_owner_404": true,
+        "export_excludes_raw_dataset": true
+      }
+    ],
+    "provider_requests": 0,
+    "source_unchanged": true,
+    "remaining_worker_slots": 0,
+    "new_paper_accounts": 0,
+    "source_hashes": {
+      "quant_research.py": "9b30a0cdcb823490c379d8276b24835ea01f79881f73249fadd793e0b5f33ba1",
+      "quant_research_api.py": "bfbbd71e82d1fcb1041e5d30bc189594dda1e91656ae3a37736dfac2cb67507a",
+      "quant_event_service.py": "8179056f62b0e295184a90e7f7fb3135c435fda0aa9aa29a7711726320bc67a8",
+      "quant_calendar_service.py": "1f813da8cacc4ae8e6dc5c75fedf38d1c8f9a8e0b97642f9d502a4b6c7ba17e3"
+    },
+    "promotion_allowed": false
+  },
+  "new_tests": 18,
+  "focused_tests": 92,
+  "full_hour_completed": false,
+  "production_deployed": false,
+  "promotion_allowed": false,
+  "evidence_sha256": {
+    "smoke-4/plan.json": "2d139f6094404d5aba17bd02bfa97cdbddadee504ab4a8a67bd72e753db352b4",
+    "smoke-4/result.json": "fdea0644c574ab404c312b99198fd6f8f5e4f04c6d543be5a142f90b5cddf83c",
+    "parent-death-result.json": "ea4ea6a9de086401b7e2d2fedc0a8714b61464334476eda1cfca9fa9008d4f94",
+    "parent-death.py": "53159f6bd0309b168a46eda10bea6d0f2c6bb357a1fd03e01cf34b2bbfba1c3a",
+    "replay-qa-result.json": "7fc66f05030d888187ca110d0ba3f7c50a1735bf3a39228a3a8280f00a3a00ca",
+    "replay-qa.py": "1dfd1e0b2a40326efae5828519b8ea07e8e5dd485bb858c7c6992fb2e4e67042"
+  }
+}
