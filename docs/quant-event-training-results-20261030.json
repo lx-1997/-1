@@ -1,0 +1,233 @@
+{
+  "protocol_digest": "4e6d79936e340b75cb1a2cb02ccd88df3540bf138206ca4c436ead9b9031a4bd",
+  "report_sha256": "83eedf3c7abe767dce3cff6b5061eb92cfffa9d389f4c5fedc299b94234ac33b",
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_reproduced_exactly": true,
+      "frozen_cases_equal_prior_full_results": true,
+      "no_event_refit_max_abs_training_score_delta": 0.0,
+      "changed_folds": [],
+      "cases": {
+        "frozen_no_events": {
+          "metrics": {
+            "return_pct": -6.573664000000001,
+            "max_drawdown_pct": -7.8456714293284495,
+            "observations": 535,
+            "sharpe": -1.6396167613253754
+          },
+          "fills": 58,
+          "fees": 3284.64,
+          "first_pause": "2024-09-10",
+          "paused": true,
+          "paid_gross": "0.00",
+          "tax_assessed": "0.00",
+          "peak": "1014860.82",
+          "result_digest": "dac0386e52448040d41038874b27bebac2439c20dba5522cf6b36c4d57cb099e",
+          "passed": false
+        },
+        "frozen_expanded": {
+          "metrics": {
+            "return_pct": -6.856198999999997,
+            "max_drawdown_pct": -8.034633095326127,
+            "observations": 535,
+            "sharpe": -1.726569384901543
+          },
+          "fills": 59,
+          "fees": 3338.99,
+          "first_pause": "2024-09-02",
+          "paused": true,
+          "paid_gross": "0.00",
+          "tax_assessed": "0.00",
+          "peak": "1014860.82",
+          "result_digest": "048c076a761bfb106a79d9e0f92c6c6f891be871af71c40dcddce9bb07968346",
+          "passed": false
+        },
+        "refit_no_events": {
+          "metrics": {
+            "return_pct": -6.573664000000001,
+            "max_drawdown_pct": -7.8456714293284495,
+            "observations": 535,
+            "sharpe": -1.6396167613253754
+          },
+          "fills": 58,
+          "fees": 3284.64,
+          "first_pause": "2024-09-10",
+          "paused": true,
+          "paid_gross": "0.00",
+          "tax_assessed": "0.00",
+          "peak": "1014860.82",
+          "result_digest": "dac0386e52448040d41038874b27bebac2439c20dba5522cf6b36c4d57cb099e",
+          "passed": false
+        },
+        "refit_expanded": {
+          "metrics": {
+            "return_pct": -6.856198999999997,
+            "max_drawdown_pct": -8.034633095326127,
+            "observations": 535,
+            "sharpe": -1.726569384901543
+          },
+          "fills": 59,
+          "fees": 3338.99,
+          "first_pause": "2024-09-02",
+          "paused": true,
+          "paid_gross": "0.00",
+          "tax_assessed": "0.00",
+          "peak": "1014860.82",
+          "result_digest": "048c076a761bfb106a79d9e0f92c6c6f891be871af71c40dcddce9bb07968346",
+          "passed": false
+        }
+      },
+      "first_financial_fill_difference": null,
+      "json_restore": {
+        "checkpoint": "2024-06-18",
+        "fills_curve_final_state_equal": true
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_reproduced_exactly": true,
+      "frozen_cases_equal_prior_full_results": true,
+      "no_event_refit_max_abs_training_score_delta": 0.0,
+      "changed_folds": [
+        {
+          "fold": 3,
+          "train_end": "2024-09-02",
+          "test_start": "2024-09-10",
+          "original": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "refit": {
+            "lookback": 10,
+            "threshold": 0.0
+          }
+        },
+        {
+          "fold": 8,
+          "train_end": "2025-07-18",
+          "test_start": "2025-07-28",
+          "original": {
+            "lookback": 20,
+            "threshold": 0.0
+          },
+          "refit": {
+            "lookback": 20,
+            "threshold": 0.03
+          }
+        },
+        {
+          "fold": 9,
+          "train_end": "2025-09-16",
+          "test_start": "2025-09-24",
+          "original": {
+            "lookback": 20,
+            "threshold": 0.0
+          },
+          "refit": {
+            "lookback": 10,
+            "threshold": 0.0
+          }
+        }
+      ],
+      "cases": {
+        "frozen_no_events": {
+          "metrics": {
+            "return_pct": -4.892656000000006,
+            "max_drawdown_pct": -7.942676236598101,
+            "observations": 535,
+            "sharpe": -0.4381119290605238
+          },
+          "fills": 120,
+          "fees": 6603.56,
+          "first_pause": "2025-04-03",
+          "paused": true,
+          "paid_gross": "0.00",
+          "tax_assessed": "0.00",
+          "peak": "1049218.44",
+          "result_digest": "d46530a41e621707cf7852503a79775cc8b4a2d9c04181d109aca768141db8f3",
+          "passed": false
+        },
+        "frozen_expanded": {
+          "metrics": {
+            "return_pct": -4.021430000000004,
+            "max_drawdown_pct": -8.048930960445622,
+            "observations": 535,
+            "sharpe": -0.35606557202209715
+          },
+          "fills": 115,
+          "fees": 6422.3,
+          "first_pause": "2025-04-03",
+          "paused": true,
+          "paid_gross": "13430.00",
+          "tax_assessed": "2153.00",
+          "peak": "1060024.17",
+          "result_digest": "a36a80e45d03abc67f6e8db5d1c56da551e36780565041c92b3fdddb1a20560e",
+          "passed": false
+        },
+        "refit_no_events": {
+          "metrics": {
+            "return_pct": -4.892656000000006,
+            "max_drawdown_pct": -7.942676236598101,
+            "observations": 535,
+            "sharpe": -0.4381119290605238
+          },
+          "fills": 120,
+          "fees": 6603.56,
+          "first_pause": "2025-04-03",
+          "paused": true,
+          "paid_gross": "0.00",
+          "tax_assessed": "0.00",
+          "peak": "1049218.44",
+          "result_digest": "d46530a41e621707cf7852503a79775cc8b4a2d9c04181d109aca768141db8f3",
+          "passed": false
+        },
+        "refit_expanded": {
+          "metrics": {
+            "return_pct": 0.2939889999999945,
+            "max_drawdown_pct": -4.940603983701319,
+            "observations": 535,
+            "sharpe": 0.052750617964566454
+          },
+          "fills": 97,
+          "fees": 5628.11,
+          "first_pause": "2024-11-11",
+          "paused": true,
+          "paid_gross": "13430.00",
+          "tax_assessed": "2153.00",
+          "peak": "1091029.76",
+          "result_digest": "d815cfd553780c9ae5ecb7ddc22b3a0f90b67023980775cfc532ffd408c524e7",
+          "passed": false
+        }
+      },
+      "first_financial_fill_difference": {
+        "fill_index": 66,
+        "frozen": {
+          "date": "2024-09-24",
+          "symbol": "000333",
+          "side": "sell",
+          "qty": 100,
+          "price": 67.53,
+          "fee": 8.44,
+          "reason": "momentum_rebalance"
+        },
+        "refit": {
+          "date": "2024-09-20",
+          "symbol": "000333",
+          "side": "sell",
+          "qty": 3000,
+          "price": 64.84,
+          "fee": 147.84,
+          "reason": "momentum_rebalance"
+        }
+      },
+      "json_restore": {
+        "checkpoint": "2024-07-18",
+        "fills_curve_final_state_equal": true
+      }
+    }
+  ],
+  "promotion_allowed": false,
+  "oos_validation": false,
+  "nomination": null
+}
