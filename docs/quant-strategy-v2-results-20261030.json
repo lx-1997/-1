@@ -1,0 +1,1225 @@
+{
+  "study_digest": "b9929eb3acc9176e5dfc5cc18fc48189037c03dc88db49ac191400b78c312197",
+  "generated_at": "2026-10-30T08:03:11.201960+00:00",
+  "protocol_digest": "0d56e20196280de36e9de8b74e00e3bd68ef4233e9969ce2248a8457ac2f82cb",
+  "source_pins": {
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_research_candidates.py": "5655a8ce9a60877b1093ddab0d13fa393ec9f9cc0fcc464b2c678072daba72c7",
+    "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+    "quant_research_study.py": "29557ad609c5a52773ba8045594b5755c66885e1a790e5568682ce09a6641b29",
+    "ai_fund_ledger.py": "55f06f634121fdd5e95cb9c423ab5b1cd647ff5d7ccd661f3b68fa43d36da382",
+    "ai_fund_policy.py": "d9adfa8211275e2adf2303824610e3ea47f59d0f052ecca38f5bafdd6446f83a"
+  },
+  "status": "no_eligible_challenger",
+  "selected_challenger": null,
+  "promotion_allowed": false,
+  "results": [
+    {
+      "basket": "31aedd8f",
+      "profile": "legacy",
+      "oos_net_pct": -6.573664000000001,
+      "oos_max_drawdown_pct": -7.8456714293284495,
+      "oos_excess_pct": -33.315943985551584,
+      "seen_holdout_net_pct": -1.9291449999999988,
+      "seen_holdout_excess_pct": 11.262123005963021,
+      "execution_cost_pct_initial": 1.1101640000000013,
+      "fills": 58,
+      "active_sessions": 54,
+      "first_pause": {
+        "date": "2024-09-10",
+        "phase": "after_close",
+        "drawdown_pct": -8.03154268976508,
+        "nav": 933351.84,
+        "peak": 1014860.82
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e"
+    },
+    {
+      "basket": "31aedd8f",
+      "profile": "recent_train",
+      "oos_net_pct": -6.573664000000001,
+      "oos_max_drawdown_pct": -7.8456714293284495,
+      "oos_excess_pct": -33.315943985551584,
+      "seen_holdout_net_pct": -1.183036999999998,
+      "seen_holdout_excess_pct": 12.008231005963022,
+      "execution_cost_pct_initial": 1.1101640000000013,
+      "fills": 58,
+      "active_sessions": 54,
+      "first_pause": {
+        "date": "2024-09-10",
+        "phase": "after_close",
+        "drawdown_pct": -8.03154268976508,
+        "nav": 933351.84,
+        "peak": 1014860.82
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正",
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "8957576dd748515bcf5c1a5bd6e66c4e8dcb6f0836378ffb0e0fcd2f3d11c1e7"
+    },
+    {
+      "basket": "31aedd8f",
+      "profile": "low_turnover",
+      "oos_net_pct": -2.619595999999924,
+      "oos_max_drawdown_pct": -8.136135004190903,
+      "oos_excess_pct": -29.36187598555151,
+      "seen_holdout_net_pct": -1.5293259999999975,
+      "seen_holdout_excess_pct": 11.661942005963022,
+      "execution_cost_pct_initial": 0.8753959999999993,
+      "fills": 27,
+      "active_sessions": 99,
+      "first_pause": {
+        "date": "2025-01-02",
+        "phase": "after_close",
+        "drawdown_pct": -8.076917112044502,
+        "nav": 974431.78,
+        "peak": 1060051.24
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正",
+          "回撤超过研究门槛",
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "e497b6bbde62078681af8e3b51d6204f6d4af9a5a393638a055274cecd12a489"
+    },
+    {
+      "basket": "31aedd8f",
+      "profile": "trend_guard",
+      "oos_net_pct": 3.0383070000000734,
+      "oos_max_drawdown_pct": -7.528992187929151,
+      "oos_excess_pct": -23.703972985551513,
+      "seen_holdout_net_pct": 0.0,
+      "seen_holdout_excess_pct": 13.19126800596302,
+      "execution_cost_pct_initial": 0.3506930000000018,
+      "fills": 10,
+      "active_sessions": 19,
+      "first_pause": {
+        "date": "2024-10-16",
+        "phase": "before_open_fills",
+        "drawdown_pct": -8.047890814795377,
+        "nav": 1031575.67,
+        "peak": 1121861.89
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "69e2e6e7f1a64465d21aee232208bd12570bef041fb12bf1ef5db13e293c6311"
+    },
+    {
+      "basket": "31aedd8f",
+      "profile": "risk_scaled",
+      "oos_net_pct": 2.0244719999999994,
+      "oos_max_drawdown_pct": -7.461748193900664,
+      "oos_excess_pct": -24.717807985551588,
+      "seen_holdout_net_pct": 0.0,
+      "seen_holdout_excess_pct": 13.19126800596302,
+      "execution_cost_pct_initial": 0.9498279999999945,
+      "fills": 34,
+      "active_sessions": 102,
+      "first_pause": {
+        "date": "2025-05-27",
+        "phase": "after_close",
+        "drawdown_pct": -8.036876731748265,
+        "nav": 1020244.72,
+        "peak": 1109406.34
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "d03afd0e5e48a5662bd0e98c5fdae720fa39ce4407f7a3248dee089b2c813d04"
+    },
+    {
+      "basket": "0839ee77",
+      "profile": "legacy",
+      "oos_net_pct": -4.892655999999884,
+      "oos_max_drawdown_pct": -7.942676236598068,
+      "oos_excess_pct": -31.634935985551472,
+      "seen_holdout_net_pct": 0.1116930000000016,
+      "seen_holdout_excess_pct": 13.30296100596302,
+      "execution_cost_pct_initial": 2.0598559999999813,
+      "fills": 120,
+      "active_sessions": 185,
+      "first_pause": {
+        "date": "2025-04-03",
+        "phase": "after_close",
+        "drawdown_pct": -8.100363733599636,
+        "nav": 964227.93,
+        "peak": 1049218.44
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd"
+    },
+    {
+      "basket": "0839ee77",
+      "profile": "recent_train",
+      "oos_net_pct": -4.892655999999884,
+      "oos_max_drawdown_pct": -7.942676236598068,
+      "oos_excess_pct": -31.634935985551472,
+      "seen_holdout_net_pct": -1.6083040000000048,
+      "seen_holdout_excess_pct": 11.582964005963014,
+      "execution_cost_pct_initial": 2.0598559999999813,
+      "fills": 120,
+      "active_sessions": 185,
+      "first_pause": {
+        "date": "2025-04-03",
+        "phase": "after_close",
+        "drawdown_pct": -8.100363733599636,
+        "nav": 964227.93,
+        "peak": 1049218.44
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正",
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "30207c9bba49c39d5cdc3e85e3170ab0e03476bdab28403a768ac57793f62370"
+    },
+    {
+      "basket": "0839ee77",
+      "profile": "low_turnover",
+      "oos_net_pct": 4.963995000000065,
+      "oos_max_drawdown_pct": -4.425550345837214,
+      "oos_excess_pct": -21.778284985551522,
+      "seen_holdout_net_pct": -2.1160500000000027,
+      "seen_holdout_excess_pct": 11.075218005963016,
+      "execution_cost_pct_initial": 2.8992049999999994,
+      "fills": 89,
+      "active_sessions": 386,
+      "first_pause": null,
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "5a2366aa0039f95c6c91a78e03191c137003238e33371194faa9ab9e1f94fa11"
+    },
+    {
+      "basket": "0839ee77",
+      "profile": "trend_guard",
+      "oos_net_pct": -1.7717960000000699,
+      "oos_max_drawdown_pct": -6.741663704007195,
+      "oos_excess_pct": -28.514075985551656,
+      "seen_holdout_net_pct": 0.0,
+      "seen_holdout_excess_pct": 13.19126800596302,
+      "execution_cost_pct_initial": 2.2468960000000013,
+      "fills": 70,
+      "active_sessions": 151,
+      "first_pause": {
+        "date": "2026-02-13",
+        "phase": "after_close",
+        "drawdown_pct": -8.278099716934694,
+        "nav": 977231.78,
+        "peak": 1065429.06
+      },
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正",
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "09da6d48e2890128ab06f881dcd37fff2c5f71b47e804b28b0d05a36a41e30c6"
+    },
+    {
+      "basket": "0839ee77",
+      "profile": "risk_scaled",
+      "oos_net_pct": -2.1654329999999833,
+      "oos_max_drawdown_pct": -5.4615774959621,
+      "oos_excess_pct": -28.90771298555157,
+      "seen_holdout_net_pct": 0.0,
+      "seen_holdout_excess_pct": 13.19126800596302,
+      "execution_cost_pct_initial": 2.9054330000000057,
+      "fills": 102,
+      "active_sessions": 205,
+      "first_pause": null,
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正",
+          "候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "result_digest": "2b1abb3c9353b6f78b44dca771e3e21c8d726c222963a1fdb39a7ab046b439b5"
+    }
+  ],
+  "baseline_diagnoses": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "symbols": [
+        "600519",
+        "000001",
+        "300750"
+      ],
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "reproduced_exactly": true,
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "oos": {
+        "return_pct": -6.573664000000001,
+        "max_drawdown_pct": -7.8456714293284495,
+        "observations": 535,
+        "sharpe": -1.6396167613253754,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -33.315943985551584,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "holdout": {
+        "return_pct": -1.9291449999999988,
+        "max_drawdown_pct": -3.1140580310403565,
+        "observations": 63,
+        "sharpe": -1.5931182181937933,
+        "benchmark_pct": -13.19126800596302,
+        "excess_pct": 11.262123005963021
+      },
+      "attribution": {
+        "first_risk_pause": {
+          "date": "2024-09-10",
+          "phase": "after_close",
+          "drawdown_pct": -8.03154268976508,
+          "nav": 933351.84,
+          "peak": 1014860.82
+        },
+        "fills": 58,
+        "sell_fills": 25,
+        "losing_sell_fills": 18,
+        "fees_pct_initial": 0.3284640000000001,
+        "slippage_tick_pct_initial": 0.7817000000000012,
+        "fixed_path_cost_addback_pct": 1.1101640000000013,
+        "cost_addback_is_causal_replay": false,
+        "traded_notional_over_initial": 6.281798,
+        "small_fills_under_2pct_nav": 21,
+        "fill_reasons": {
+          "momentum_rebalance": 57,
+          "risk_pause": 1
+        },
+        "blocked_reasons": {
+          "volume_or_cash_or_lot": 57
+        },
+        "active_sessions": 54,
+        "flat_sessions": 481,
+        "post_pause_sessions": 450,
+        "pnl_pct_by_symbol": {
+          "000001": -2.469571000000003,
+          "300750": -2.2356859999999976,
+          "600519": -1.8684070000000066
+        },
+        "pnl_pct_by_month": {
+          "2024-05": -0.32620899999999675,
+          "2024-06": -1.0361229999999981,
+          "2024-07": -1.5209310000000056,
+          "2024-08": -2.3659770000000018,
+          "2024-09": -1.3244239999999992,
+          "2024-10": 0.0,
+          "2024-11": 0.0,
+          "2024-12": 0.0,
+          "2025-01": 0.0,
+          "2025-02": 0.0,
+          "2025-03": 0.0,
+          "2025-04": 0.0,
+          "2025-05": 0.0,
+          "2025-06": 0.0,
+          "2025-07": 0.0,
+          "2025-08": 0.0,
+          "2025-09": 0.0,
+          "2025-10": 0.0,
+          "2025-11": 0.0,
+          "2025-12": 0.0,
+          "2026-01": 0.0,
+          "2026-02": 0.0,
+          "2026-03": 0.0,
+          "2026-04": 0.0,
+          "2026-05": 0.0,
+          "2026-06": 0.0,
+          "2026-07": 0.0
+        },
+        "worst_days": [
+          {
+            "date": "2024-07-23",
+            "pnl": -8675.0,
+            "fees": 0.0,
+            "slippage_and_tick_cost": 0.0,
+            "exposure_pct": 53.987721097022266
+          },
+          {
+            "date": "2024-09-02",
+            "pnl": -8576.03999999992,
+            "fees": 49.04,
+            "slippage_and_tick_cost": 372.0000000000251,
+            "exposure_pct": 54.18243689667861
+          },
+          {
+            "date": "2024-05-24",
+            "pnl": -6449.020000000019,
+            "fees": 5.02,
+            "slippage_and_tick_cost": 4.00000000000027,
+            "exposure_pct": 56.74875666728685
+          },
+          {
+            "date": "2024-08-01",
+            "pnl": -6010.0,
+            "fees": 0.0,
+            "slippage_and_tick_cost": 0.0,
+            "exposure_pct": 18.68089138665542
+          },
+          {
+            "date": "2024-08-06",
+            "pnl": -5954.429999999935,
+            "fees": 46.43,
+            "slippage_and_tick_cost": 180.00000000000682,
+            "exposure_pct": 38.172669117570976
+          }
+        ]
+      },
+      "fold_generalization": [
+        {
+          "start": "2024-05-14",
+          "end": "2024-07-11",
+          "parameters": {
+            "lookback": 20,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 6.989139,
+            "max_drawdown_pct": -2.528531385964028,
+            "observations": 105,
+            "sharpe": 1.65976183841145
+          },
+          "oos": {
+            "return_pct": -1.3623319999999994,
+            "max_drawdown_pct": -2.6102732457588984,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -5.4537548814481145,
+            "excess_pct": 4.091422881448115
+          }
+        },
+        {
+          "start": "2024-07-12",
+          "end": "2024-09-09",
+          "parameters": {
+            "lookback": 20,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 4.57191400000001,
+            "max_drawdown_pct": -2.645822498104178,
+            "observations": 147,
+            "sharpe": 0.8979405647976532
+          },
+          "oos": {
+            "return_pct": -4.95693997956238,
+            "max_drawdown_pct": -5.172214908293215,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -7.935512946456747,
+            "excess_pct": 2.978572966894367
+          }
+        },
+        {
+          "start": "2024-09-10",
+          "end": "2024-11-15",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 1.7873999999999945,
+            "max_drawdown_pct": -4.5461500347408705,
+            "observations": 169,
+            "sharpe": 0.3554450819214441
+          },
+          "oos": {
+            "return_pct": -0.34338984730788447,
+            "max_drawdown_pct": -0.44062045398219896,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 24.29973892498227,
+            "excess_pct": -24.643128772290154
+          }
+        },
+        {
+          "start": "2024-11-18",
+          "end": "2025-01-15",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 211,
+            "sharpe": 1.115000762000162
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -4.354052868464297,
+            "excess_pct": 4.354052868464297
+          }
+        },
+        {
+          "start": "2025-01-16",
+          "end": "2025-03-24",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 253,
+            "sharpe": 1.0182375450224994
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 3.6570613583784883,
+            "excess_pct": -3.6570613583784883
+          }
+        },
+        {
+          "start": "2025-03-25",
+          "end": "2025-05-27",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 295,
+            "sharpe": 0.9429601544105571
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -2.4258110031668334,
+            "excess_pct": 2.4258110031668334
+          }
+        },
+        {
+          "start": "2025-05-28",
+          "end": "2025-07-25",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 337,
+            "sharpe": 0.8822377485969686
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 7.495083212285669,
+            "excess_pct": -7.495083212285669
+          }
+        },
+        {
+          "start": "2025-07-28",
+          "end": "2025-09-23",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 379,
+            "sharpe": 0.8319132756628757
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 9.512951148282745,
+            "excess_pct": -9.512951148282745
+          }
+        },
+        {
+          "start": "2025-09-24",
+          "end": "2025-11-28",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 421,
+            "sharpe": 0.7893221142398132
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 0.15230836558786098,
+            "excess_pct": -0.15230836558786098
+          }
+        },
+        {
+          "start": "2025-12-01",
+          "end": "2026-01-29",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 463,
+            "sharpe": 0.7526670555193947
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 5.019327707701615,
+            "excess_pct": -5.019327707701615
+          }
+        },
+        {
+          "start": "2026-01-30",
+          "end": "2026-04-08",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 505,
+            "sharpe": 0.7206860526896713
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -3.3302130685105014,
+            "excess_pct": 3.3302130685105014
+          }
+        },
+        {
+          "start": "2026-04-09",
+          "end": "2026-06-10",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 547,
+            "sharpe": 0.6924633499912209
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 3.330108478712912,
+            "excess_pct": -3.330108478712912
+          }
+        },
+        {
+          "start": "2026-06-11",
+          "end": "2026-07-24",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 12.657785000000011,
+            "max_drawdown_pct": -6.215661737076051,
+            "observations": 589,
+            "sharpe": 0.6673161728885504
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 31,
+            "sharpe": null,
+            "benchmark_pct": -2.093272680981495,
+            "excess_pct": 2.093272680981495
+          }
+        }
+      ]
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "symbols": [
+        "600036",
+        "600900",
+        "000333"
+      ],
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "reproduced_exactly": true,
+      "gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "oos": {
+        "return_pct": -4.892655999999884,
+        "max_drawdown_pct": -7.942676236598068,
+        "observations": 535,
+        "sharpe": -0.4381119290605238,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -31.634935985551472,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "holdout": {
+        "return_pct": 0.1116930000000016,
+        "max_drawdown_pct": -3.858329440185404,
+        "observations": 63,
+        "sharpe": 0.09718467610791226,
+        "benchmark_pct": -13.19126800596302,
+        "excess_pct": 13.30296100596302
+      },
+      "attribution": {
+        "first_risk_pause": {
+          "date": "2025-04-03",
+          "phase": "after_close",
+          "drawdown_pct": -8.100363733599636,
+          "nav": 964227.93,
+          "peak": 1049218.44
+        },
+        "fills": 120,
+        "sell_fills": 64,
+        "losing_sell_fills": 23,
+        "fees_pct_initial": 0.6603559999999998,
+        "slippage_tick_pct_initial": 1.3994999999999818,
+        "fixed_path_cost_addback_pct": 2.0598559999999813,
+        "cost_addback_is_causal_replay": false,
+        "traded_notional_over_initial": 12.548357,
+        "small_fills_under_2pct_nav": 56,
+        "fill_reasons": {
+          "momentum_rebalance": 117,
+          "stop_loss": 2,
+          "risk_pause": 1
+        },
+        "blocked_reasons": {
+          "volume_or_cash_or_lot": 243
+        },
+        "active_sessions": 185,
+        "flat_sessions": 350,
+        "post_pause_sessions": 317,
+        "pnl_pct_by_symbol": {
+          "000333": -5.474092999999995,
+          "600036": -2.0556799999999966,
+          "600900": 2.637117000000001
+        },
+        "pnl_pct_by_month": {
+          "2024-05": -2.4345719999999975,
+          "2024-06": 0.16483199999999487,
+          "2024-07": -1.128957999999996,
+          "2024-08": -1.2896239999999992,
+          "2024-09": 5.4874659999999915,
+          "2024-10": -1.1334879999999887,
+          "2024-11": -1.038527000000002,
+          "2024-12": -0.5754869999999995,
+          "2025-01": -0.9881369999999995,
+          "2025-02": 0.49094199999999255,
+          "2025-03": 0.15904400000000604,
+          "2025-04": -2.606147000000009,
+          "2025-05": 0.0,
+          "2025-06": 0.0,
+          "2025-07": 0.0,
+          "2025-08": 0.0,
+          "2025-09": 0.0,
+          "2025-10": 0.0,
+          "2025-11": 0.0,
+          "2025-12": 0.0,
+          "2026-01": 0.0,
+          "2026-02": 0.0,
+          "2026-03": 0.0,
+          "2026-04": 0.0,
+          "2026-05": 0.0,
+          "2026-06": 0.0,
+          "2026-07": 0.0
+        },
+        "worst_days": [
+          {
+            "date": "2024-10-09",
+            "pnl": -28717.0,
+            "fees": 0.0,
+            "slippage_and_tick_cost": 0.0,
+            "exposure_pct": 38.20901674333238
+          },
+          {
+            "date": "2025-04-07",
+            "pnl": -13154.490000000107,
+            "fees": 129.49,
+            "slippage_and_tick_cost": 174.99999999998295,
+            "exposure_pct": 0.0
+          },
+          {
+            "date": "2024-10-15",
+            "pnl": -12199.0,
+            "fees": 0.0,
+            "slippage_and_tick_cost": 0.0,
+            "exposure_pct": 39.57943492569354
+          },
+          {
+            "date": "2024-10-17",
+            "pnl": -11092.01000000001,
+            "fees": 7.01,
+            "slippage_and_tick_cost": 3.9999999999999147,
+            "exposure_pct": 39.467459781250035
+          },
+          {
+            "date": "2025-03-26",
+            "pnl": -10825.040000000037,
+            "fees": 5.04,
+            "slippage_and_tick_cost": 4.999999999999716,
+            "exposure_pct": 39.82478075232582
+          }
+        ]
+      },
+      "fold_generalization": [
+        {
+          "start": "2024-05-14",
+          "end": "2024-07-11",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 11.304599999999997,
+            "max_drawdown_pct": -2.639415984654825,
+            "observations": 85,
+            "sharpe": 4.724580277247458
+          },
+          "oos": {
+            "return_pct": -1.9384920000000028,
+            "max_drawdown_pct": -3.146099000000002,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -5.4537548814481145,
+            "excess_pct": 3.5152628814481117
+          }
+        },
+        {
+          "start": "2024-07-12",
+          "end": "2024-09-09",
+          "parameters": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 10.593483999999997,
+            "max_drawdown_pct": -2.1058200175100628,
+            "observations": 157,
+            "sharpe": 2.9762725185672068
+          },
+          "oos": {
+            "return_pct": -3.3189403940228956,
+            "max_drawdown_pct": -3.5328470644018894,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -7.935512946456747,
+            "excess_pct": 4.616572552433851
+          }
+        },
+        {
+          "start": "2024-09-10",
+          "end": "2024-11-15",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 9.975048999999991,
+            "max_drawdown_pct": -2.7342673141391494,
+            "observations": 169,
+            "sharpe": 2.3610420820830136
+          },
+          "oos": {
+            "return_pct": 5.64984269869373,
+            "max_drawdown_pct": -3.5305458379340293,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 24.29973892498227,
+            "excess_pct": -18.64989622628854
+          }
+        },
+        {
+          "start": "2024-11-18",
+          "end": "2025-01-15",
+          "parameters": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 16.28385000000001,
+            "max_drawdown_pct": -3.50741390577497,
+            "observations": 211,
+            "sharpe": 2.184061886032772
+          },
+          "oos": {
+            "return_pct": -2.5244144699399285,
+            "max_drawdown_pct": -3.1597696426794664,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -4.354052868464297,
+            "excess_pct": 1.8296383985243687
+          }
+        },
+        {
+          "start": "2025-01-16",
+          "end": "2025-03-24",
+          "parameters": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "selected_train": {
+            "return_pct": 11.518382000000017,
+            "max_drawdown_pct": -3.5194555423579965,
+            "observations": 273,
+            "sharpe": 1.5007284587084684
+          },
+          "oos": {
+            "return_pct": 0.49988934274340924,
+            "max_drawdown_pct": -1.1560541758003362,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 3.6570613583784883,
+            "excess_pct": -3.157172015635079
+          }
+        },
+        {
+          "start": "2025-03-25",
+          "end": "2025-05-27",
+          "parameters": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "selected_train": {
+            "return_pct": 12.554118999999986,
+            "max_drawdown_pct": -3.5194555423579965,
+            "observations": 315,
+            "sharpe": 1.4828993961879766
+          },
+          "oos": {
+            "return_pct": -3.073218177445558,
+            "max_drawdown_pct": -3.2951636653301475,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -2.4258110031668334,
+            "excess_pct": -0.6474071742787246
+          }
+        },
+        {
+          "start": "2025-05-28",
+          "end": "2025-07-25",
+          "parameters": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "selected_train": {
+            "return_pct": 11.271054000000014,
+            "max_drawdown_pct": -3.732114583326862,
+            "observations": 357,
+            "sharpe": 1.1831632813475008
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 7.495083212285669,
+            "excess_pct": -7.495083212285669
+          }
+        },
+        {
+          "start": "2025-07-28",
+          "end": "2025-09-23",
+          "parameters": {
+            "lookback": 20,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 10.998529999999995,
+            "max_drawdown_pct": -4.326611751593401,
+            "observations": 399,
+            "sharpe": 0.9760394511521607
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 9.512951148282745,
+            "excess_pct": -9.512951148282745
+          }
+        },
+        {
+          "start": "2025-09-24",
+          "end": "2025-11-28",
+          "parameters": {
+            "lookback": 20,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 10.05696399999998,
+            "max_drawdown_pct": -4.326611751593401,
+            "observations": 441,
+            "sharpe": 0.8497792170083344
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 0.15230836558786098,
+            "excess_pct": -0.15230836558786098
+          }
+        },
+        {
+          "start": "2025-12-01",
+          "end": "2026-01-29",
+          "parameters": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 10.737652000000008,
+            "max_drawdown_pct": -5.177561286649279,
+            "observations": 493,
+            "sharpe": 0.9423355650533098
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 5.019327707701615,
+            "excess_pct": -5.019327707701615
+          }
+        },
+        {
+          "start": "2026-01-30",
+          "end": "2026-04-08",
+          "parameters": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 10.737652000000008,
+            "max_drawdown_pct": -5.177561286649279,
+            "observations": 535,
+            "sharpe": 0.9045375752928895
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": -3.3302130685105014,
+            "excess_pct": 3.3302130685105014
+          }
+        },
+        {
+          "start": "2026-04-09",
+          "end": "2026-06-10",
+          "parameters": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 10.737652000000008,
+            "max_drawdown_pct": -5.177561286649279,
+            "observations": 577,
+            "sharpe": 0.8709511267105796
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 42,
+            "sharpe": null,
+            "benchmark_pct": 3.330108478712912,
+            "excess_pct": -3.330108478712912
+          }
+        },
+        {
+          "start": "2026-06-11",
+          "end": "2026-07-24",
+          "parameters": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "selected_train": {
+            "return_pct": 10.737652000000008,
+            "max_drawdown_pct": -5.177561286649279,
+            "observations": 619,
+            "sharpe": 0.8408480516184133
+          },
+          "oos": {
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "observations": 31,
+            "sharpe": null,
+            "benchmark_pct": -2.093272680981495,
+            "excess_pct": 2.093272680981495
+          }
+        }
+      ]
+    }
+  ]
+}

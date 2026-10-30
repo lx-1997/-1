@@ -14,7 +14,7 @@ BENCHMARKS = {'000300': '沪深300', '000905': '中证500', '000852': '中证100
 
 @lru_cache(maxsize=1)
 def kernel_identity():
-    files = ('quant_research_engine.py', 'quant_research.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
+    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
     return engine.digest({f: hashlib.sha256(Path(__file__).with_name(f).read_bytes()).hexdigest() for f in files})
 
 

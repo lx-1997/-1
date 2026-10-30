@@ -79,18 +79,23 @@ def metrics(curve, capital):
             'observations': n, 'sharpe': mean / math.sqrt(variance) * math.sqrt(252) if n >= 60 and variance > 0 else None}
 
 
-def replay(dataset, symbols, params, *, start=None, end=None, state=None, capital=1000000):
+def replay(dataset, symbols, params, *, start=None, end=None, state=None, capital=1000000,
+           profile='legacy', benchmark=None):
     dates = validate_dataset(dataset)
     if set(symbols) - set(dataset) or not symbols or len(symbols) > 5 or len(set(symbols)) != len(symbols):
         raise ValueError('标的集合无效')
     if params not in CANDIDATES:
         raise ValueError('策略参数未登记')
+    if profile != 'legacy':
+        from .quant_research_candidates import PROFILES, decision
+        if profile not in PROFILES or benchmark not in dataset or benchmark in symbols:
+            raise ValueError('研究候选或价格基准未登记')
     state = copy.deepcopy(state if state is not None else initial_state(capital))
     maps = {s: {b['date']: b for b in dataset[s]['bars']} for s in dataset}
     histories = {s: [b for b in dataset[s]['bars']] for s in symbols}
     fills, curve, blocks = [], [], []
     lookback = params['lookback']
-    for d in dates:
+    for session_index, d in enumerate(dates):
         if (start and d < start) or (end and d > end) or d <= state['cursor']:
             continue
         today = {s: maps[s][d] for s in symbols}
@@ -106,6 +111,10 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
         scores = {s: prior[s][-1]['close']/prior[s][-lookback-1]['close']-1 for s in symbols}
         chosen = set(s for s in symbols if scores[s] > params['threshold']) if not state['paused'] else set()
         target = min(ASSUMPTIONS['single_weight'], ASSUMPTIONS['gross_weight']/len(chosen)) if chosen else 0
+        policy = None
+        if profile != 'legacy':
+            policy = decision(profile, prior, [b for b in dataset[benchmark]['bars'] if b['date']<d],
+                              scores, params['threshold'], session_index, ASSUMPTIONS)
         # Sell first; no intraday decision uses the current close/high/low signal.
         touched = set()
         for side in ('sell', 'buy'):
@@ -118,9 +127,20 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
                 stop = pos['qty'] > 0 and prev['close'] / pos['cost'] - 1 <= -ASSUMPTIONS['stop_loss']
                 desired = open_nav*target if s in chosen and not stop else 0
                 current = pos['qty']*bar['open']
+                if policy is not None:
+                    if stop or state['paused'] or policy['market_risk_off']:
+                        desired = 0
+                    elif not policy['rebalance']:
+                        desired = current
+                    else:
+                        desired = open_nav*policy['weights'].get(s,0.)
+                        if desired>0 and abs(desired-current)<open_nav*policy['band']:
+                            desired = current
                 if (side == 'buy' and desired <= current) or (side == 'sell' and desired >= current):
                     continue
                 reason = 'stop_loss' if stop else ('risk_pause' if state['paused'] else 'momentum_rebalance')
+                if policy and policy['market_risk_off'] and not stop and not state['paused']:
+                    reason = 'market_trend_exit'
                 # Conservative open-limit screen for all ordinary main-board names;
                 # unknown ST/IPO limit regimes remain a declared data limitation.
                 limit = .20 if s.startswith(('300', '301', '688', '689')) else .10
@@ -162,7 +182,9 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
                     if qty == pos['qty']: state['positions'].pop(s)
                     else: state['positions'][s] = {**pos, 'qty': pos['qty']-qty}
                 assert state['cash'] >= 0, 'cash invariant'
-                fills.append({'id': digest([VERSION, d, s, side, qty, price]), 'date': d, 'signal_date': prev['date'],
+                fill_key = [VERSION, d, s, side, qty, price]
+                if profile != 'legacy': fill_key += [profile, params]
+                fills.append({'id': digest(fill_key), 'date': d, 'signal_date': prev['date'],
                               'symbol': s, 'side': side, 'qty': qty, 'price': price, 'fee': charge, 'realized_pnl': pnl, 'reason': reason})
         close_nav = round(nav('close'), 2)
         state['peak'] = max(state['peak'], close_nav)
@@ -179,7 +201,7 @@ def benchmark_return(dataset, benchmark, dates):
     return (rows[dates[-1]]['close']/rows[dates[0]]['open']-1)*100
 
 
-def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None):
+def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None, *, profile='legacy'):
     dates = validate_dataset(dataset)
     if len(dates) < 300:
         raise ValueError(f'共同交易日仅 {len(dates)} 天，完整验证至少需要 300 天')
@@ -187,11 +209,18 @@ def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None):
     protocol = {'version': VERSION, 'candidates': list(CANDIDATES), 'train_min': 126, 'test_days': 42,
                 'gap_days': 5, 'holdout_days': 63, 'last_test_window': 'partial_if_needed', 'selection': 'train_return_minus_absolute_drawdown',
                 'universe': 'user_selected_current_universe_not_survivorship_free', 'capital': capital}
+    replay_kwargs = {}
+    if profile != 'legacy':
+        from .quant_research_candidates import PROFILES, RULES
+        if profile not in PROFILES: raise ValueError('研究候选未登记')
+        protocol.update(profile=profile, candidate_rules=RULES, validation_status='development_seen_history')
+        replay_kwargs = {'profile':profile, 'benchmark':benchmark}
     holdout_start = len(dates)-63
     def select(stop):
         trials = []
         for p in CANDIDATES:
-            r = replay(dataset, symbols, p, end=dates[stop-1], capital=capital)
+            train_start = dates[max(0,stop-252)] if profile!='legacy' else None
+            r = replay(dataset, symbols, p, start=train_start, end=dates[stop-1], capital=capital, **replay_kwargs)
             m = r['metrics']
             trials.append({'parameters': p, 'train_end': dates[stop-1], 'metrics': m,
                            'score': m['return_pct']+m['max_drawdown_pct']})
@@ -205,7 +234,7 @@ def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None):
         chosen, trials = select(cursor-5)
         stop = min(cursor+42, holdout_start)
         window_capital = oos_state['cash'] + sum(p['qty'] * next(b['close'] for b in dataset[s]['bars'] if b['date']==oos_state['cursor']) for s,p in oos_state['positions'].items())
-        result = replay(dataset, symbols, chosen, start=dates[cursor], end=dates[stop-1], state=oos_state)
+        result = replay(dataset, symbols, chosen, start=dates[cursor], end=dates[stop-1], state=oos_state, **replay_kwargs)
         oos_state = result['state']
         m = metrics(result['curve'], window_capital)
         base_dates = [r['date'] for r in result['curve']]
@@ -223,7 +252,7 @@ def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None):
         cursor = stop
         if progress: progress(35+int(35*cursor/holdout_start), f'已完成 {len(folds)} 个样本外窗口')
     chosen, trials = select(holdout_start-5)
-    final = replay(dataset, symbols, chosen, start=dates[holdout_start], capital=capital)
+    final = replay(dataset, symbols, chosen, start=dates[holdout_start], capital=capital, **replay_kwargs)
     base = benchmark_return(dataset, benchmark, [r['date'] for r in final['curve']])
     final['metrics'].update(benchmark_pct=base, excess_pct=final['metrics']['return_pct']-base)
     cumulative, oos_curve = capital, []
@@ -238,6 +267,7 @@ def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None):
     if oos['return_pct'] <= 0: reasons.append('滚动样本外成本后收益未为正')
     if final['metrics']['excess_pct'] <= 0: reasons.append('最终留出集未跑赢价格基准')
     if min(oos['max_drawdown_pct'], final['metrics']['max_drawdown_pct']) < -8: reasons.append('回撤超过研究门槛')
+    if profile!='legacy': reasons.append('候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级')
     return {'protocol': protocol, 'parameters': chosen, 'selection_trials': trials, 'folds': folds,
             'oos': {**oos, 'curve': oos_curve, 'capital_resets_per_fold': False, 'risk_paused': oos_state['paused']}, 'holdout': final,
             'gate': {'passed': not reasons, 'reasons': reasons, 'purpose': 'paper_research_only',

@@ -1,0 +1,86 @@
+{
+  "protocol": "quant-development-v2-20261030",
+  "scope": "internal research, no live trading",
+  "baseline_commit": "6f0ac8d",
+  "seen_through": "2026-10-30",
+  "historical_data_status": "all original experiments and their historical holdouts are now development data",
+  "historical_baskets_fixed": [
+    [
+      "600519",
+      "000001",
+      "300750"
+    ],
+    [
+      "600036",
+      "600900",
+      "000333"
+    ]
+  ],
+  "benchmark": "000300",
+  "profiles_in_declared_order": [
+    "legacy",
+    "recent_train",
+    "low_turnover",
+    "trend_guard",
+    "risk_scaled"
+  ],
+  "parameters": {
+    "lookback": [
+      10,
+      20,
+      40
+    ],
+    "threshold": [
+      0.0,
+      0.03
+    ]
+  },
+  "changes": {
+    "recent_train": "limit parameter selection to trailing 252 completed training sessions",
+    "low_turnover": "recent_train + rebalance every 5 common sessions + 2% NAV no-trade band; risk exits remain daily",
+    "trend_guard": "low_turnover + no equity exposure when previous benchmark close is at/below trailing 60-session SMA",
+    "risk_scaled": "trend_guard + downward-only exposure scaling to 8% annualized portfolio volatility, estimated over 20 prior common daily returns"
+  },
+  "unchanged": {
+    "single_weight": 0.2,
+    "gross_weight": 0.8,
+    "stop_loss": 0.08,
+    "permanent_drawdown_pause": 0.08,
+    "gap_sessions": 5,
+    "train_min": 126,
+    "test_sessions": 42,
+    "final_seen_holdout_sessions": 63,
+    "fees": "original ledger assumptions",
+    "slippage_bps": 10,
+    "lots_Tplus1_limits_liquidity": "original execution kernel",
+    "acceptance": "OOS net return positive; holdout excess positive; close NAV max drawdown >= -8%; >=2 folds; source coverage intact"
+  },
+  "diagnostic_ablation": "fixed-path transaction-cost addback only, never a gate or zero-cost causal replay",
+  "selection_for_forward": "highest minimum development OOS excess across both fixed baskets among candidates with lower fixed-path cost in both and no earlier risk pause in either; tie-break declared profile order. This only nominates a research candidate, never grants promotion.",
+  "if_no_eligible_candidate": "freeze no challenger; report failure without adding variants or changing thresholds",
+  "new_validation": {
+    "start_after": "2026-10-30",
+    "minimum_common_completed_sessions": 152,
+    "protocol": "freeze chosen profile, per-basket training-selected parameters, symbols, costs, risk rules and source hashes before collecting future sessions",
+    "baseline": "same per-basket frozen baseline parameters and same execution costs/risk rules",
+    "completion": "evaluate once after 152 new completed common sessions; no interim tuning or risk-pause reset",
+    "additional_strength_checks": "both baskets pass unchanged future OOS/holdout/drawdown gates AND challenger net return over paired baseline >0 in both; >=10 sell fills per basket; paired 5-session moving-block bootstrap 95% mean-return interval lower bound >0",
+    "failure_policy": "insufficient fills, missing data, price revisions, code changes or confidence failure => not validated; no real money or automatic promotion",
+    "future_split": {
+      "oos_sessions": 84,
+      "oos_windows": 2,
+      "gap_sessions": 5,
+      "holdout_sessions": 63,
+      "capital_resets_within_oos": false
+    },
+    "parameter_freeze": "each profile selects its own parameter using only training data ending at the sealed historical cutoff; legacy expanding training versus challenger trailing252; freeze all 6 trials"
+  },
+  "excluded_claims": [
+    "fresh historical OOS",
+    "commercial data license",
+    "survivorship-free universe",
+    "verified total returns",
+    "stable alpha",
+    "backtesting the six news-driven AI accounts"
+  ]
+}
