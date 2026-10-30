@@ -1,0 +1,42 @@
+{
+  "protocol": "event-replay-integration-check-v1",
+  "registered_at": "2026-10-30T08:47:15.461272+00:00",
+  "purpose": "engineering replay comparison on already-seen development history; no selection or gate relaxation",
+  "baseline_commit": "790cd78",
+  "experiments": [
+    {
+      "id": "31aedd8f544144ad9b7a7d2088e181b0",
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e"
+    },
+    {
+      "id": "0839ee7717d143c7b991bddbfb55f891",
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd"
+    }
+  ],
+  "parameter_policy": "use exact original frozen per-fold parameter schedule; do not refit, add candidates or select a winner",
+  "cases": [
+    "new_engine_no_events_control",
+    "new_engine_historical_reconstruction_two_sample_events",
+    "new_engine_as_recorded_two_sample_events"
+  ],
+  "event_input": "docs/quant-corporate-action-evidence-sample-20261030.json",
+  "event_coverage_complete": false,
+  "execution": {
+    "signal": "prior_completed_gross_return_index",
+    "fills": "raw_open_with_10bps_and_cent_rounding",
+    "volume_cap": "previous_shares_1pct",
+    "single_weight": 0.2,
+    "gross_weight": 0.8,
+    "stop_loss": 0.08,
+    "permanent_drawdown": 0.08,
+    "risk_nav": "dividend-tax-reserved",
+    "peak_reset": false
+  },
+  "acceptance": "verify fills, cash and taxes respond to known events; prove no-lookahead and restored/incremental equivalence; never mark promotion allowed",
+  "interpretation": "not a fresh OOS experiment, not full action coverage, not verified net alpha, not commercial authorization",
+  "new_kernel_files": {
+    "quant_event_replay.py": "db081a20fc1bb44695b6a2ecd282767090981ff825b78d77b4c1f09edd11989c",
+    "quant_dividend_book.py": "11039d5d10ef275cbc348f791487870d3fa1235f53360de4e42e5555491c59cf"
+  },
+  "input_digest": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f"
+}

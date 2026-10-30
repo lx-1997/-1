@@ -1,0 +1,314 @@
+{
+  "registered_protocol": {
+    "protocol": "event-replay-integration-check-v1",
+    "registered_at": "2026-10-30T08:47:15.461272+00:00",
+    "purpose": "engineering replay comparison on already-seen development history; no selection or gate relaxation",
+    "baseline_commit": "790cd78",
+    "experiments": [
+      {
+        "id": "31aedd8f544144ad9b7a7d2088e181b0",
+        "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e"
+      },
+      {
+        "id": "0839ee7717d143c7b991bddbfb55f891",
+        "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd"
+      }
+    ],
+    "parameter_policy": "use exact original frozen per-fold parameter schedule; do not refit, add candidates or select a winner",
+    "cases": [
+      "new_engine_no_events_control",
+      "new_engine_historical_reconstruction_two_sample_events",
+      "new_engine_as_recorded_two_sample_events"
+    ],
+    "event_input": "docs/quant-corporate-action-evidence-sample-20261030.json",
+    "event_coverage_complete": false,
+    "execution": {
+      "signal": "prior_completed_gross_return_index",
+      "fills": "raw_open_with_10bps_and_cent_rounding",
+      "volume_cap": "previous_shares_1pct",
+      "single_weight": 0.2,
+      "gross_weight": 0.8,
+      "stop_loss": 0.08,
+      "permanent_drawdown": 0.08,
+      "risk_nav": "dividend-tax-reserved",
+      "peak_reset": false
+    },
+    "acceptance": "verify fills, cash and taxes respond to known events; prove no-lookahead and restored/incremental equivalence; never mark promotion allowed",
+    "interpretation": "not a fresh OOS experiment, not full action coverage, not verified net alpha, not commercial authorization",
+    "new_kernel_files": {
+      "quant_event_replay.py": "db081a20fc1bb44695b6a2ecd282767090981ff825b78d77b4c1f09edd11989c",
+      "quant_dividend_book.py": "11039d5d10ef275cbc348f791487870d3fa1235f53360de4e42e5555491c59cf"
+    },
+    "input_digest": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f"
+  },
+  "protocol_digest": "ecc8f7a481836723b7158681f62f65988825c53053e3567e143c6f487ef26f51",
+  "kernel": "0f4dd75ca6fd5da89d6b90052051571a4def63f08e6fac890216a50bab798f27",
+  "created_at": "2026-10-30T08:51:16.071946+00:00",
+  "event_manifest_digest": "16112a060a5a148d682d98991df14959fe41a41fc1962da36a3c7f26d60e8ba3",
+  "commercial_ready": false,
+  "promotion_allowed": false,
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "symbols": [
+        "600519",
+        "000001",
+        "300750"
+      ],
+      "original_price_only_oos": {
+        "return_pct": -6.573664000000001,
+        "max_drawdown_pct": -7.8456714293284495,
+        "observations": 535,
+        "sharpe": -1.6396167613253754,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -33.315943985551584,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "as_recorded_control_equivalent": true,
+      "restore_check": {
+        "checkpoint": "2024-06-18",
+        "registration_checkpoint_restore_equal": true
+      },
+      "cases": {
+        "new_engine_no_events_control": {
+          "metrics": {
+            "return_pct": -6.573664000000001,
+            "max_drawdown_pct": -7.8456714293284495,
+            "observations": 535,
+            "sharpe": -1.6396167613253754
+          },
+          "cumulative_return_pct": -6.573664000000001,
+          "fills": 58,
+          "risk_paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "tax_settled": "0.00",
+          "final_valuation": {
+            "gross_nav": "934263.36",
+            "nav_after_assessed_dividend_tax": "934263.36",
+            "unrealized_dividend_tax_reserve": "0.00",
+            "conservative_risk_nav": "934263.36",
+            "dividend_receivable": "0.00",
+            "pending_dividend_tax": "0.00",
+            "available_cash": "934263.36"
+          },
+          "first_risk_pause_close": "2024-09-10",
+          "gate": {
+            "passed": false,
+            "reasons": [
+              "已见开发数据",
+              "公司行为覆盖不完整",
+              "价格基准和税务现金时点仍待完整核验"
+            ],
+            "commercial_ready": false,
+            "live_trading_enabled": false
+          },
+          "result_digest": "5bb8840bde3734879b9c29e5af735fceb09dc359e8636ea80d89432ef83467a5"
+        },
+        "new_engine_historical_reconstruction_two_sample_events": {
+          "metrics": {
+            "return_pct": -6.573664000000001,
+            "max_drawdown_pct": -7.8456714293284495,
+            "observations": 535,
+            "sharpe": -1.6396167613253754
+          },
+          "cumulative_return_pct": -6.573664000000001,
+          "fills": 58,
+          "risk_paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "tax_settled": "0.00",
+          "final_valuation": {
+            "gross_nav": "934263.36",
+            "nav_after_assessed_dividend_tax": "934263.36",
+            "unrealized_dividend_tax_reserve": "0.00",
+            "conservative_risk_nav": "934263.36",
+            "dividend_receivable": "0.00",
+            "pending_dividend_tax": "0.00",
+            "available_cash": "934263.36"
+          },
+          "first_risk_pause_close": "2024-09-10",
+          "gate": {
+            "passed": false,
+            "reasons": [
+              "已见开发数据",
+              "公司行为覆盖不完整",
+              "价格基准和税务现金时点仍待完整核验"
+            ],
+            "commercial_ready": false,
+            "live_trading_enabled": false
+          },
+          "result_digest": "2c7d48e9afe2c31e75928da50dc458efdfbee53b742367549a229718ac02dc70"
+        },
+        "new_engine_as_recorded_two_sample_events": {
+          "metrics": {
+            "return_pct": -6.573664000000001,
+            "max_drawdown_pct": -7.8456714293284495,
+            "observations": 535,
+            "sharpe": -1.6396167613253754
+          },
+          "cumulative_return_pct": -6.573664000000001,
+          "fills": 58,
+          "risk_paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "tax_settled": "0.00",
+          "final_valuation": {
+            "gross_nav": "934263.36",
+            "nav_after_assessed_dividend_tax": "934263.36",
+            "unrealized_dividend_tax_reserve": "0.00",
+            "conservative_risk_nav": "934263.36",
+            "dividend_receivable": "0.00",
+            "pending_dividend_tax": "0.00",
+            "available_cash": "934263.36"
+          },
+          "first_risk_pause_close": "2024-09-10",
+          "gate": {
+            "passed": false,
+            "reasons": [
+              "已见开发数据",
+              "公司行为覆盖不完整",
+              "价格基准和税务现金时点仍待完整核验"
+            ],
+            "commercial_ready": false,
+            "live_trading_enabled": false
+          },
+          "result_digest": "35fbe0e2c3b39792fd65689b8d205ae62930bcf1474f801a58df7442d205d1b0"
+        }
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "symbols": [
+        "600036",
+        "600900",
+        "000333"
+      ],
+      "original_price_only_oos": {
+        "return_pct": -4.892655999999884,
+        "max_drawdown_pct": -7.942676236598068,
+        "observations": 535,
+        "sharpe": -0.4381119290605238,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -31.634935985551472,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "as_recorded_control_equivalent": true,
+      "restore_check": {
+        "checkpoint": "2024-05-14",
+        "registration_checkpoint_restore_equal": true
+      },
+      "cases": {
+        "new_engine_no_events_control": {
+          "metrics": {
+            "return_pct": -4.892656000000006,
+            "max_drawdown_pct": -7.942676236598101,
+            "observations": 535,
+            "sharpe": -0.4381119290605238
+          },
+          "cumulative_return_pct": -4.892656000000006,
+          "fills": 120,
+          "risk_paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "tax_settled": "0.00",
+          "final_valuation": {
+            "gross_nav": "951073.44",
+            "nav_after_assessed_dividend_tax": "951073.44",
+            "unrealized_dividend_tax_reserve": "0.00",
+            "conservative_risk_nav": "951073.44",
+            "dividend_receivable": "0.00",
+            "pending_dividend_tax": "0.00",
+            "available_cash": "951073.44"
+          },
+          "first_risk_pause_close": "2025-04-03",
+          "gate": {
+            "passed": false,
+            "reasons": [
+              "已见开发数据",
+              "公司行为覆盖不完整",
+              "价格基准和税务现金时点仍待完整核验"
+            ],
+            "commercial_ready": false,
+            "live_trading_enabled": false
+          },
+          "result_digest": "b3094e4b2dc09d095b763a11a9cb70e053f28bfd215d1a10f3c13b8bb31de830"
+        },
+        "new_engine_historical_reconstruction_two_sample_events": {
+          "metrics": {
+            "return_pct": -4.547360999999994,
+            "max_drawdown_pct": -8.035909341849079,
+            "observations": 535,
+            "sharpe": -0.4069564923552519
+          },
+          "cumulative_return_pct": -4.547360999999994,
+          "fills": 117,
+          "risk_paused": true,
+          "gross_paid": "8100.00",
+          "tax_assessed": "1620.00",
+          "tax_settled": "1620.00",
+          "final_valuation": {
+            "gross_nav": "954526.39",
+            "nav_after_assessed_dividend_tax": "954526.39",
+            "unrealized_dividend_tax_reserve": "0.00",
+            "conservative_risk_nav": "954526.39",
+            "dividend_receivable": "0.00",
+            "pending_dividend_tax": "0.00",
+            "available_cash": "954526.39"
+          },
+          "first_risk_pause_close": "2025-04-03",
+          "gate": {
+            "passed": false,
+            "reasons": [
+              "已见开发数据",
+              "公司行为覆盖不完整",
+              "价格基准和税务现金时点仍待完整核验"
+            ],
+            "commercial_ready": false,
+            "live_trading_enabled": false
+          },
+          "result_digest": "e59ec2d36a82f98d75d75bfedb5215178e8c87c9de85b2c805002509c8b583de"
+        },
+        "new_engine_as_recorded_two_sample_events": {
+          "metrics": {
+            "return_pct": -4.892656000000006,
+            "max_drawdown_pct": -7.942676236598101,
+            "observations": 535,
+            "sharpe": -0.4381119290605238
+          },
+          "cumulative_return_pct": -4.892656000000006,
+          "fills": 120,
+          "risk_paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "tax_settled": "0.00",
+          "final_valuation": {
+            "gross_nav": "951073.44",
+            "nav_after_assessed_dividend_tax": "951073.44",
+            "unrealized_dividend_tax_reserve": "0.00",
+            "conservative_risk_nav": "951073.44",
+            "dividend_receivable": "0.00",
+            "pending_dividend_tax": "0.00",
+            "available_cash": "951073.44"
+          },
+          "first_risk_pause_close": "2025-04-03",
+          "gate": {
+            "passed": false,
+            "reasons": [
+              "已见开发数据",
+              "公司行为覆盖不完整",
+              "价格基准和税务现金时点仍待完整核验"
+            ],
+            "commercial_ready": false,
+            "live_trading_enabled": false
+          },
+          "result_digest": "5a931b522c42494449d3de8404669d2005b9cdd64c9d3002888c6a33965f6bc3"
+        }
+      }
+    }
+  ]
+}

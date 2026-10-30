@@ -15,7 +15,7 @@ from .ai_fund_ledger import fee
 from .quant_corporate_actions import BJ, money, visible_events, validate_evidence
 from .quant_research_engine import digest
 
-VERSION='dividend-fifo-book-v1'
+VERSION='dividend-fifo-book-v2'
 INVESTOR='cn_resident_individual_public_a_share'
 POLICY_REVIEWED_THROUGH='2026-10-30'
 POLICY={
@@ -59,7 +59,7 @@ def initial_book(capital, start_after, *, investor, mode='as_recorded'):
     return {'version':VERSION,'kernel':BOOK_KERNEL,'knowledge_mode':mode,'investor':investor,'initial':str(capital),'cash':str(capital),
             'start_after':start_after,'cursor':start_after,'lots':[],'registrations':{},'claims':{},
             'fill_ids':{},'payables':[],'paid_gross':'0.00','tax_assessed':'0.00','tax_settled':'0.00',
-            'fees':'0.00','prices':{},'events':[],'last_input_digest':None}
+            'fees':'0.00','prices':{},'events':[],'last_input_digest':None,'phase':'closed'}
 
 
 def _pending(book):return sum((Decimal(p['amount']) for p in book['payables'] if not p['paid']),Decimal(0))
@@ -87,27 +87,37 @@ def valuation(book,d):
             'pending_dividend_tax':str(money(_pending(book))),'available_cash':str(available_cash(book,d))}
 
 
-def apply_day(previous, d, fills, close_prices, events, source_bytes, sessions, *, mode='as_recorded'):
-    """Return a new serializable book; any error leaves previous state untouched.
-
-    The narrow daily model rejects opposite directions in the same security/day;
-    it therefore never misuses per-fill FIFO as full intraday tax netting.
-    Payment/tax cash timing is an explicit conservative research assumption.
-    """
+def _check_book(previous, mode):
     if previous['version']!=VERSION or previous['investor']!=INVESTOR or previous.get('kernel')!=BOOK_KERNEL:raise ValueError('冻结账务版本不兼容')
     if mode!=previous['knowledge_mode']:raise ValueError('不能切换冻结账簿的知识可用模式')
+
+
+def _marks(book, prices, d, sessions):
+    if prices and d not in sessions:raise ValueError('非交易日不能注入新的收盘估值')
+    for symbol in {l['symbol'] for l in book['lots']}:
+        if d in sessions and symbol not in prices:raise ValueError('缺少持仓收盘估值，禁止默认为零')
+    for symbol,value in prices.items():
+        price=_decimal(value)
+        if price<=0:raise ValueError('持仓估值须为正')
+        book['prices'][symbol]=str(price)
+
+
+def _context(events,sessions,mode):return digest([[asdict(e) for e in events],sessions,mode])
+
+
+def open_session(previous, d, mark_prices, events, source_bytes, sessions, *, mode='as_recorded'):
+    """Apply pre-open tax settlement and dividend receivables, never pay-day cash."""
+    _check_book(previous,mode)
+    if previous.get('phase')!='closed':raise ValueError('上一交易日尚未收盘')
     day=date.fromisoformat(d)
     if d>POLICY_REVIEWED_THROUGH:raise ValueError('须更新税制核验版本，不能静默推定未来规则')
     if sessions!=sorted(set(sessions)) or any(date.fromisoformat(x).isoformat()!=x for x in sessions):raise ValueError('交易日历须唯一递增')
     validate_evidence(events,source_bytes)
-    visible=visible_events(events,datetime.combine(day,time(23,59,59),BJ).isoformat(),mode=mode)
-    identity=digest([d,fills,close_prices,[asdict(e) for e in visible],mode])
-    if d==previous['cursor'] and identity==previous['last_input_digest']:return copy.deepcopy(previous)
+    visible=visible_events(events,datetime.combine(day,time(9,30),BJ).isoformat(),mode=mode)
     if d<=previous['cursor']:raise ValueError('禁止重复改写已入账交易日')
     if any(previous['cursor']<s<d for s in sessions):raise ValueError('不能跳过交易日或登记快照')
-    if fills and d not in sessions:raise ValueError('非交易日不得成交')
-    if close_prices and d not in sessions:raise ValueError('非交易日不能注入新的收盘估值')
     book=copy.deepcopy(previous);book['cursor']=d
+    book.update(phase='open',session_fills=[],session_directions={},session_context=_context(events,sessions,mode),session_tradeable=d in sessions)
     # Assess tax as a liability on disposal; debit cash in the next actual
     # supplied trading session, preserving a bill if available cash is short.
     for p in book['payables']:
@@ -135,7 +145,17 @@ def apply_day(previous, d, fills, close_prices, events, source_bytes, sessions, 
             book['claims'][key]={'parts':parts,'gross':str(gross),'cash_ps':event.cash_per_share_gross,
                 'record_date':event.record_date,'pay_date':event.pay_date,'paid':False,'tax_exact':'0','fingerprint':event.fingerprint}
             book['events'].append({'date':d,'kind':'dividend_receivable','event':key,'amount':str(gross)})
-    directions={}
+    _marks(book,mark_prices,d,sessions)
+    book['valuation']=valuation(book,d)
+    return book
+
+
+def execute_fills(previous, fills):
+    """Apply fills atomically to an open session; no closing information enters."""
+    _check_book(previous,previous['knowledge_mode'])
+    if previous.get('phase')!='open':raise ValueError('成交须处于已开盘会话')
+    if fills and not previous['session_tradeable']:raise ValueError('非交易日不得成交')
+    book=copy.deepcopy(previous);d=book['cursor'];directions=book['session_directions']
     for f in fills:
         symbol=f['symbol'];side=f['side'];qty=f['qty'];price=_decimal(f['price'])
         if not isinstance(symbol,str) or not re.fullmatch(r'[036][0-9]{5}',symbol):raise ValueError('仅支持沪深 A 股代码')
@@ -149,7 +169,8 @@ def apply_day(previous, d, fills, close_prices, events, source_bytes, sessions, 
         if side=='buy':
             if amount+charge>available_cash(book,d):raise ValueError('可用现金不足或税款已被预留')
             book['cash']=str(money(Decimal(book['cash'])-amount-charge))
-            book['lots'].append({'id':f['id'],'symbol':symbol,'qty':qty,'acquired':d})
+            book['lots'].append({'id':f['id'],'symbol':symbol,'qty':qty,'acquired':d,'cost_total':str(amount+charge)})
+            book['prices'].setdefault(symbol,str(price))
         else:
             settled=sum(l['qty'] for l in book['lots'] if l['symbol']==symbol and l['acquired']<d)
             if qty>settled:raise ValueError('T+1 可卖持仓不足')
@@ -160,7 +181,8 @@ def apply_day(previous, d, fills, close_prices, events, source_bytes, sessions, 
             for lot in book['lots']:
                 if not remaining:break
                 if lot['symbol']!=symbol or lot['acquired']>=d:continue
-                taken=min(remaining,lot['qty']);lot['qty']-=taken;remaining-=taken
+                taken=min(remaining,lot['qty']);old_qty=lot['qty'];lot['qty']-=taken;remaining-=taken
+                lot['cost_total']=str(Decimal(lot['cost_total'])*lot['qty']/old_qty)
                 for key,claim in book['claims'].items():
                     for part in claim['parts']:
                         if part['lot']!=lot['id']:continue
@@ -174,6 +196,22 @@ def apply_day(previous, d, fills, close_prices, events, source_bytes, sessions, 
                             book['events'].append({'date':d,'kind':'dividend_tax_assessment','event':key,'amount':str(tax),'lot':lot['id'],'qty':taxable})
             book['lots']=[l for l in book['lots'] if l['qty']]
         book['fees']=str(money(Decimal(book['fees'])+charge))
+        book['session_fills'].append(copy.deepcopy(f))
+    book['valuation']=valuation(book,d)
+    return book
+
+
+def close_session(previous, close_prices, events, source_bytes, sessions, *, mode='as_recorded'):
+    _check_book(previous,mode)
+    if previous.get('phase')!='open':raise ValueError('收盘须处于已开盘会话')
+    if previous['session_context']!=_context(events,sessions,mode):raise ValueError('开收盘期间输入证据改变')
+    validate_evidence(events,source_bytes)
+    book=copy.deepcopy(previous);d=book['cursor']
+    visible=visible_events(events,datetime.combine(date.fromisoformat(d),time(23,59,59),BJ).isoformat(),mode=mode)
+    for event in visible:
+        for collection in ('registrations','claims'):
+            if event.event_id in book[collection] and book[collection][event.event_id]['fingerprint']!=event.fingerprint:
+                raise ValueError('已登记事件出现修订，须独立重建版本')
     # Registration ownership is captured AFTER today's executions.
     for event in visible:
         if event.record_date==d:
@@ -184,15 +222,25 @@ def apply_day(previous, d, fills, close_prices, events, source_bytes, sessions, 
             claim['paid']=True;amount=Decimal(claim['gross']);book['cash']=str(money(Decimal(book['cash'])+amount))
             book['paid_gross']=str(money(Decimal(book['paid_gross'])+amount))
             book['events'].append({'date':d,'kind':'dividend_payment','event':event.event_id,'amount':str(amount)})
-    for symbol in {l['symbol'] for l in book['lots']}:
-        if d in sessions and symbol not in close_prices:raise ValueError('缺少持仓收盘估值，禁止默认为零')
-        if symbol in close_prices:
-            price=_decimal(close_prices[symbol])
-            if price<=0:raise ValueError('持仓估值须为正')
-            book['prices'][symbol]=str(price)
-    book['valuation']=valuation(book,d);book['last_input_digest']=identity
+    _marks(book,close_prices,d,sessions)
+    book['valuation']=valuation(book,d)
+    book['last_input_digest']=digest([d,book['session_fills'],close_prices,[asdict(e) for e in visible],mode])
+    for key in ('session_fills','session_directions','session_context','session_tradeable'):book.pop(key)
+    book['phase']='closed'
     if Decimal(book['cash'])<0:raise ValueError('现金守恒失败')
     return book
+
+
+def apply_day(previous, d, fills, close_prices, events, source_bytes, sessions, *, mode='as_recorded'):
+    """Atomic compatibility wrapper for known fills; never a strategy decision API."""
+    _check_book(previous,mode)
+    validate_evidence(events,source_bytes)
+    visible=visible_events(events,datetime.combine(date.fromisoformat(d),time(23,59,59),BJ).isoformat(),mode=mode)
+    identity=digest([d,fills,close_prices,[asdict(e) for e in visible],mode])
+    if previous.get('phase')=='closed' and d==previous['cursor'] and identity==previous['last_input_digest']:return copy.deepcopy(previous)
+    opened=open_session(previous,d,close_prices,events,source_bytes,sessions,mode=mode)
+    filled=execute_fills(opened,fills)
+    return close_session(filled,close_prices,events,source_bytes,sessions,mode=mode)
 
 
 # Capture loaded-process scientific identity, not newer bytes reread per request.
