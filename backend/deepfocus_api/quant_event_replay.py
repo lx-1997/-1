@@ -16,7 +16,7 @@ from .quant_research_engine import digest,validate_dataset,metrics,CANDIDATES,AS
 from .ai_fund_ledger import fee
 from .ai_fund_policy import order_quantity
 
-VERSION='event-replay-development-v1'
+VERSION='event-replay-development-v2'
 
 
 def _prefix(dataset,cursor):
@@ -45,7 +45,7 @@ def _stop(previous,s,prior_close,prior_date):
 
 
 def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_recorded',
-           start=None,end=None,state=None,capital=1000000,schedule=None):
+           start=None,end=None,state=None,capital=1000000,schedule=None,progress=None):
     sessions=validate_dataset(dataset);validate_evidence(events,source_bytes)
     if not symbols or len(symbols)>5 or len(set(symbols))!=len(symbols) or set(symbols)-set(dataset):raise ValueError('研究标的无效')
     if set(symbols)&{'000300','000905','000852'}:raise ValueError('价格指数不能作为可交易股票')
@@ -90,7 +90,8 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
                 event_dates.append(d)
     timeline=sorted(set(live+event_dates))
     fills=[];curve=[];blocks=[]
-    for d in timeline:
+    for completed,d in enumerate(timeline,1):
+        if progress and (completed==1 or completed%10==0):progress(completed,len(timeline),d)
         trading=d in live
         opens={s:maps[s][d]['open'] for s in symbols} if trading else {}
         prior_account=account
@@ -163,6 +164,7 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
             if nav/Decimal(state['peak'])-1<=-Decimal(str(ASSUMPTIONS['drawdown_pause'])):state['paused']=True
             curve.append({'date':d,'nav':float(nav),**account['valuation'],'risk_paused':state['paused']})
     state.update(book=account,prefix=_prefix(dataset,account['cursor']),known_events=_known(events,account['cursor'],mode))
+    if progress:progress(len(timeline),len(timeline),account['cursor'])
     return {'state':state,'fills':fills,'curve':curve,'blocked':blocks,'metrics':metrics(curve,period_start),
             'cumulative_return_pct':(float(account.get('valuation',{}).get('conservative_risk_nav',capital))/capital-1)*100,
             'version':VERSION,'signal_basis':'prior_completed_gross_return_index',

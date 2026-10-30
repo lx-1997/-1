@@ -44,6 +44,17 @@ def test_event_replay_has_active_signal_orders_and_cash_receipts():
     assert float(r['state']['book']['cash'])>=0
 
 
+def test_progress_reports_real_dates_without_changing_replay_result():
+    ds,event,days=fixture();observed=[]
+    expected=replay(ds,[event])
+    actual=replay(ds,[event],progress=lambda done,total,d:observed.append((done,total,d)))
+    assert actual==expected
+    sessions=len(expected['curve'])  # warm-up history is not an executed session
+    assert observed[0][0]==1 and observed[-1][:2]==(sessions,sessions)
+    assert observed[-1][2]==days[-1]
+    assert all(d in days for _,_,d in observed)
+
+
 def test_future_prices_and_current_close_cannot_drive_current_fills():
     ds,event,days=fixture();cut=days[50];a=replay(ds,[event],end=cut)
     other=copy.deepcopy(ds)
