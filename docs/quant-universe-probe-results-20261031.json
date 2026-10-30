@@ -1,0 +1,152 @@
+{
+  "sample_review": {
+    "scope": "six actual sampled snapshots; not completion of 729-day capture",
+    "catalogue_rows": 9025,
+    "sampled_snapshot_days": 6,
+    "sampled_snapshot_securities": 40295,
+    "panels": [
+      {
+        "day": "2023-10-26",
+        "raw_rows": 6468,
+        "member_count": 5071,
+        "suspended_members": 1,
+        "currently_delisted_members_retained": 105,
+        "expired_raw_snapshot_members_excluded": 1,
+        "member_codes_digest": "76e83afff23823fda2aaae286bd4a93bc5c8feee5df91b544a580fb57367f08f",
+        "coverage_consistent": true
+      },
+      {
+        "day": "2024-06-04",
+        "raw_rows": 6613,
+        "member_count": 5116,
+        "suspended_members": 25,
+        "currently_delisted_members_retained": 96,
+        "expired_raw_snapshot_members_excluded": 0,
+        "member_codes_digest": "52ab4d269df3da4735b85a75e6301c584302c6a610b2d9db3104c53fc63ab011",
+        "coverage_consistent": true
+      },
+      {
+        "day": "2024-06-05",
+        "raw_rows": 6614,
+        "member_count": 5115,
+        "suspended_members": 19,
+        "currently_delisted_members_retained": 94,
+        "expired_raw_snapshot_members_excluded": 2,
+        "member_codes_digest": "25911ca8ac5361ca1c60698596b6088344773837ea4df13f91e8fda4ce3d0cd4",
+        "coverage_consistent": true
+      },
+      {
+        "day": "2026-10-29",
+        "raw_rows": 7445,
+        "member_count": 5223,
+        "suspended_members": 7,
+        "currently_delisted_members_retained": 0,
+        "expired_raw_snapshot_members_excluded": 0,
+        "member_codes_digest": "20145a0884129cc347877b4753049ba242a0b759034e060bfe9489c9e7d35a7f",
+        "coverage_consistent": true
+      },
+      {
+        "day": "2024-04-01",
+        "raw_rows": 6577,
+        "member_count": 5113,
+        "suspended_members": 2,
+        "currently_delisted_members_retained": 99,
+        "expired_raw_snapshot_members_excluded": 0,
+        "member_codes_digest": "ebfb7e5e07211c66b80a069f7b9b52021c5cfdc6965389c6905ef45a30a4c247",
+        "coverage_consistent": true
+      },
+      {
+        "day": "2024-04-02",
+        "raw_rows": 6578,
+        "member_count": 5114,
+        "suspended_members": 2,
+        "currently_delisted_members_retained": 99,
+        "expired_raw_snapshot_members_excluded": 0,
+        "member_codes_digest": "8294f70bbaac0e2b4c590972c5a82ac9909b86cdd957b7f1a4558e5af53f942d",
+        "coverage_consistent": true
+      }
+    ],
+    "end_list_backfill_counterexample": {
+      "start_members": 5071,
+      "end_members": 5223,
+      "past_members_lost_using_end_list": 105,
+      "later_members_wrongly_backfilled_using_end_list": 257,
+      "not_an_actual_strategy_run": true
+    },
+    "official_samples": {
+      "sources": [
+        {
+          "file": "ipo-001389.pdf",
+          "url": "https://static.cninfo.com.cn/finalpage/2024-04-01/1219474754.PDF",
+          "sha256": "340ce2aeb958a0a1873acc79c061ba0497d5dddab6876be85b094ab602ca41c9",
+          "observed_at": "2026-10-30T21:10:25.908882+00:00"
+        },
+        {
+          "file": "delist-002699.pdf",
+          "url": "https://static.cninfo.com.cn/finalpage/2024-06-04/1220246894.PDF",
+          "sha256": "0f97bae26bfc610bd48a0b515c7ae74a4cdc35177971332137e6f013d3fc9963",
+          "observed_at": "2026-10-30T21:10:26.072274+00:00"
+        }
+      ],
+      "facts_operator_review_required": true
+    },
+    "sdk_name_whitespace_differences_preserved": 6,
+    "source_manifests": [
+      {
+        "manifest": "probe/manifest.json",
+        "sha256": "27f67eddb869ccb883f68a6d229fd2b415838d837f158687f0f65355a4fe8c9f"
+      },
+      {
+        "manifest": "basic-probe/manifest.json",
+        "sha256": "e011e99441589b46b256b1b849c3ac2a64d4cecf9fac10f62cb3b3d8f06a474a"
+      }
+    ],
+    "originals": [
+      {
+        "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+        "reproduced_exactly": true
+      },
+      {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+        "reproduced_exactly": true
+      }
+    ],
+    "source_pins": {
+      "quant_historical_universe.py": "4ccf08307435057bbb3a32555f4505575ccd19da5c8294ec15ae0c7871e6c465",
+      "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+      "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2"
+    },
+    "runner_sha256": "c704e5b12e9a7e57f927fb18b04246506bbff856fea9b7f4cb364fae84cbd8c5",
+    "full_capture_complete": false,
+    "historical_pit_universe_certified": false,
+    "promotion_allowed": false,
+    "production_writes": false
+  },
+  "real_prefix_reuse": {
+    "verified_prefix_days": 110,
+    "full_scope_days": 729,
+    "source_journal_still_contains_exact_sealed_byte_prefix": true,
+    "network_forbidden": true,
+    "original_observation_clocks_preserved": true,
+    "source_writes": false,
+    "full_capture_complete": false,
+    "seed_origin_manifest_sha256": "5715d5a87d5ffd4a16bc1af9d306e80790a6605be3a17e90ceae98471a8b5ab6",
+    "source_pins": {
+      "quant_historical_universe.py": "4ccf08307435057bbb3a32555f4505575ccd19da5c8294ec15ae0c7871e6c465",
+      "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+      "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2"
+    },
+    "sealer_sha256": "b447705196da7b82e4ae64d9fbf93e30c0a48d10a8e7e7fb1ce5315618d0805a",
+    "collector_sha256": "e2d5d2a527db7086de1ad4829be0dd80d271005881b64be7ef8feae1edad173c",
+    "proof_runner_sha256": "fca6cc97be78f49d1c2d9687885eab99151da5ced689b01f4b6ff1ba43d00602"
+  },
+  "focused_tests_passed": 47,
+  "full_capture_complete": false,
+  "commercial_ready": false
+}

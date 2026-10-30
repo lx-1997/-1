@@ -1,0 +1,36 @@
+{
+  "scope": "two operator-reviewed out-of-pool lifecycle boundary samples",
+  "reviewed_at": "2026-10-30T21:36:28.193118+00:00",
+  "sources": [
+    {
+      "file": "ipo-001389.pdf",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-04-01/1219474754.PDF",
+      "sha256": "340ce2aeb958a0a1873acc79c061ba0497d5dddab6876be85b094ab602ca41c9",
+      "observed_at": "2026-10-30T21:10:25.908882+00:00"
+    },
+    {
+      "file": "delist-002699.pdf",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-06-04/1220246894.PDF",
+      "sha256": "0f97bae26bfc610bd48a0b515c7ae74a4cdc35177971332137e6f013d3fc9963",
+      "observed_at": "2026-10-30T21:10:26.072274+00:00"
+    }
+  ],
+  "facts": [
+    {
+      "code": "sz.001389",
+      "event": "IPO_listing",
+      "effective_date": "2024-04-02",
+      "source_file": "ipo-001389.pdf",
+      "page": 1
+    },
+    {
+      "code": "sz.002699",
+      "event": "delisting",
+      "effective_date": "2024-06-05",
+      "source_file": "delist-002699.pdf",
+      "page": 1
+    }
+  ],
+  "full_historical_identity_verified": false,
+  "promotion_allowed": false
+}
