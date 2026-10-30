@@ -11,12 +11,13 @@ import hashlib
 import math
 from pathlib import Path
 from . import quant_dividend_book as ledger
+from . import quant_event_policy as execution
 from .quant_corporate_actions import (BJ,money,visible_events,validate_evidence,ex_reference,gross_return_index)
 from .quant_research_engine import digest,validate_dataset,metrics,CANDIDATES,ASSUMPTIONS
 from .ai_fund_ledger import fee
 from .ai_fund_policy import order_quantity
 
-VERSION='event-replay-development-v2'
+VERSION='event-replay-development-v3'
 
 
 def _prefix(dataset,cursor):
@@ -45,7 +46,8 @@ def _stop(previous,s,prior_close,prior_date):
 
 
 def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_recorded',
-           start=None,end=None,state=None,capital=1000000,schedule=None,progress=None):
+           start=None,end=None,state=None,capital=1000000,schedule=None,progress=None,
+           policy='daily',market_curve=None):
     sessions=validate_dataset(dataset);validate_evidence(events,source_bytes)
     if not symbols or len(symbols)>5 or len(set(symbols))!=len(symbols) or set(symbols)-set(dataset):raise ValueError('研究标的无效')
     if set(symbols)&{'000300','000905','000852'}:raise ValueError('价格指数不能作为可交易股票')
@@ -58,11 +60,12 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
                 raise ValueError('参数窗口冲突、前视或未登记')
             if sum(f['train_end']<d<f['test_start'] for d in sessions)<5:raise ValueError('训练和测试须保留原五日间隔')
             previous_end=f['test_end']
-    plan=digest([params,schedule,investor,mode])
+    plan=digest([params,schedule,investor,mode,policy])
     stop=end or sessions[-1]
     date.fromisoformat(stop)
     if stop>ledger.POLICY_REVIEWED_THROUGH:raise ValueError('超出已核验税务日期范围')
     if stop>sessions[-1]:raise ValueError('研究尾部缺少明确交易日历覆盖')
+    execution.validate(policy,market_curve,sessions,stop)
     maximum=max(p['lookback'] for p in ([f['parameters'] for f in schedule] if schedule else [params]))
     eligible=[d for d in sessions if (not start or d>=start) and d<=stop and
               all(sum(b['date']<d for b in dataset[s]['bars'])>=maximum+1 for s in symbols)]
@@ -71,11 +74,14 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
         first=eligible[0];cursor=(date.fromisoformat(first)-timedelta(days=1)).isoformat()
         account=ledger.initial_book(capital,cursor,investor=investor,mode=mode)
         state={'kernel':KERNEL,'plan':plan,'book':account,'peak':str(money(str(capital))),'paused':False,
-               'prefix':_prefix(dataset,cursor),'known_events':_known(events,cursor,mode)}
+               'prefix':_prefix(dataset,cursor),'known_events':_known(events,cursor,mode),
+               'rebalance_anchor':first,'market_prefix':execution.market_prefix(market_curve,cursor)}
     else:
         state=copy.deepcopy(state);cursor=state['book']['cursor']
         if state['kernel']!=KERNEL or state['plan']!=plan:raise ValueError('冻结内核或研究计划改变')
         if state['prefix']!=_prefix(dataset,cursor) or state['known_events']!=_known(events,cursor,mode):raise ValueError('历史行情或已知公司行为发生修订')
+    if state['market_prefix']!=execution.market_prefix(market_curve,cursor):raise ValueError('历史市场收盘发生修订')
+    if state['rebalance_anchor'] not in sessions:raise ValueError('调仓锚点缺失')
     account=state['book'];capital=float(account['initial'])
     period_start=float(account.get('valuation',{}).get('conservative_risk_nav',capital))
     first=account['cursor'];live=[d for d in eligible if d>first]
@@ -89,7 +95,7 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
             if first<d<=stop and any(v.event_id==e.event_id for v in visible_events(events,d+'T23:59:59+08:00',mode=mode)):
                 event_dates.append(d)
     timeline=sorted(set(live+event_dates))
-    fills=[];curve=[];blocks=[]
+    fills=[];curve=[];blocks=[];policy_audit=[]
     for completed,d in enumerate(timeline,1):
         if progress and (completed==1 or completed%10==0):progress(completed,len(timeline),d)
         trading=d in live
@@ -102,6 +108,8 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
             state['peak']=str(max(Decimal(state['peak']),opening_nav))
             if opening_nav/Decimal(state['peak'])-1<=-Decimal(str(ASSUMPTIONS['drawdown_pause'])):state['paused']=True
         if trading:
+            action=execution.decision(policy,market_curve,sessions,state['rebalance_anchor'],d)
+            policy_audit.append(action)
             p=params
             if schedule:
                 windows=[f for f in schedule if f['test_start']<=d<=f['test_end']]
@@ -111,7 +119,7 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
             signal_rows={s:[b for b in indexes[s] if b['date']<d] for s in symbols}
             scores={s:signal_rows[s][-1]['gross_return_index']/signal_rows[s][-p['lookback']-1]['gross_return_index']-1 for s in symbols}
             if not all(math.isfinite(v) for v in scores.values()):raise ValueError('信号收益出现非有限值')
-            chosen={s for s in symbols if scores[s]>p['threshold']} if not state['paused'] else set()
+            chosen={s for s in symbols if scores[s]>p['threshold']} if not state['paused'] and action['market_on'] else set()
             target=min(ASSUMPTIONS['single_weight'],ASSUMPTIONS['gross_weight']/len(chosen)) if chosen else 0
             touched=set()
             for side in ('sell','buy'):
@@ -119,6 +127,8 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
                     if s in touched:continue
                     bar=maps[s][d];prev=prior[s][-1];q=_qty(opened,s)
                     stopped=_stop(prior_account,s,prev['close'],prev['date'])
+                    mandatory=state['paused'] or stopped or not action['market_on']
+                    if not action['rebalance_due'] and not mandatory:continue
                     desired=opening_nav*Decimal(str(target)) if s in chosen and not stopped else Decimal(0)
                     current=Decimal(str(bar['open']))*q
                     if (side=='buy' and desired<=current) or (side=='sell' and desired>=current):continue
@@ -149,7 +159,7 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
                     if n<=0:
                         blocks.append({'date':d,'symbol':s,'side':side,'reason':'volume_cash_lot_or_Tplus1'});continue
                     if side=='sell' and n*price<Decimal(str(fee(n*price,side))):continue
-                    reason='risk_pause' if state['paused'] else 'stop_loss' if stopped else 'momentum_rebalance'
+                    reason='risk_pause' if state['paused'] else 'stop_loss' if stopped else 'market_filter_exit' if not action['market_on'] else 'momentum_rebalance'
                     f={'id':digest([VERSION,plan,d,s,side,n,str(price)]),'date':d,'signal_date':prev['date'],
                        'symbol':s,'side':side,'qty':int(n),'price':float(price),'fee':fee(n*price,side),
                        'reason':reason,'signal':scores[s],'opening_risk_nav':str(opening_nav),
@@ -163,9 +173,11 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
             state['peak']=str(max(Decimal(state['peak']),nav))
             if nav/Decimal(state['peak'])-1<=-Decimal(str(ASSUMPTIONS['drawdown_pause'])):state['paused']=True
             curve.append({'date':d,'nav':float(nav),**account['valuation'],'risk_paused':state['paused']})
-    state.update(book=account,prefix=_prefix(dataset,account['cursor']),known_events=_known(events,account['cursor'],mode))
+    state.update(book=account,prefix=_prefix(dataset,account['cursor']),known_events=_known(events,account['cursor'],mode),
+                 market_prefix=execution.market_prefix(market_curve,account['cursor']))
     if progress:progress(len(timeline),len(timeline),account['cursor'])
     return {'state':state,'fills':fills,'curve':curve,'blocked':blocks,'metrics':metrics(curve,period_start),
+            'policy':policy,'policy_audit':policy_audit,
             'cumulative_return_pct':(float(account.get('valuation',{}).get('conservative_risk_nav',capital))/capital-1)*100,
             'version':VERSION,'signal_basis':'prior_completed_gross_return_index',
             'execution_basis':'raw_open_and_declared_ex_reference','risk_basis':'dividend_tax_reserved_nav',
@@ -174,5 +186,5 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
 
 
 KERNEL=digest({n:hashlib.sha256(Path(__file__).with_name(n).read_bytes()).hexdigest() for n in (
-    'quant_event_replay.py','quant_dividend_book.py','quant_corporate_actions.py','quant_research_engine.py',
+    'quant_event_replay.py','quant_event_policy.py','quant_dividend_book.py','quant_corporate_actions.py','quant_research_engine.py',
     'ai_fund_ledger.py','ai_fund_policy.py')})
