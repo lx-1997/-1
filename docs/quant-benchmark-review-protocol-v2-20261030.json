@@ -1,0 +1,19 @@
+{
+  "schema": "benchmark-reference-review-v1",
+  "registered_at": "2026-10-30T13:36:26.489166+00:00",
+  "purpose": "diagnostic_no_gate_replacement",
+  "methods": [
+    "prior_close_cash_anchor",
+    "observed_close_to_close"
+  ],
+  "promotion_allowed": false,
+  "source_pins": {
+    "quant-benchmark-review.py": "d2e0a0716f41d3a7e4f33fe4367c36cc9b24536b5ec2de04570b045c9a67b679",
+    "quant_benchmark.py": "356cd7785008d0fb5808cd9969a568db305958d25f173bb7ead2648afcec08c5"
+  },
+  "capture_manifest_digest": "4e80c7d27a1d7ba13d3b51bd804c33da3c8e73d25d435969065abdb6538f82dd",
+  "control_report_sha256": "69f62dbdddf694c4b35fd537e52b8626ce4e028548b1b2c7dc62039be7e8154a",
+  "experiments_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+  "interpretation": "Close-only references do not replace sealed open-to-close gates. H00300 gross reinvestment, N00300 fixed10pct dividend-tax are not personal FIFO/cost/cash-exposure matched. No series chosen by performance.",
+  "engineering_revision": "reject empty scopes and missing registered arms; data, methods, gates and comparison windows unchanged"
+}

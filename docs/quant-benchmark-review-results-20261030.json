@@ -1,0 +1,231 @@
+{
+  "engineering_revision_numeric_outputs_unchanged": true,
+  "original_report_sha256": "951794a826b8fe3ae936ff9864781dadae45a3fe857095eb48f4c6f303ad4c13",
+  "final_report_sha256": "4acf7eff71ade22dee53772978f31d5d0159b5a4c4673dd2fcacd959977db6c8",
+  "protocol_digest": "60f87d0c62ed4215bcd6f48f69ee68cedc5299071a300343d0478d6a8cde1458",
+  "benchmark_series": {
+    "000300": {
+      "code": "000300",
+      "basis": "price",
+      "dividend_tax_assumption": null,
+      "all_ohlc_present": true,
+      "source_sha256": "b14779b72c8b30b1ed8600a2f0d902d633c9733bfa83bea2cfc283f095efab99"
+    },
+    "H00300": {
+      "code": "H00300",
+      "basis": "gross_total_return",
+      "dividend_tax_assumption": "0%",
+      "all_ohlc_present": false,
+      "source_sha256": "d2dbe6a92c0950d96561cdd585fa18fdcac581a0a69e22ed7f94315903b88d24"
+    },
+    "N00300": {
+      "code": "N00300",
+      "basis": "net_total_return",
+      "dividend_tax_assumption": "10%",
+      "all_ohlc_present": true,
+      "source_sha256": "1bbb34578b2975120f813e2a9bc82de116c324fcd57356ddf34a6865afebc2fb"
+    }
+  },
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "expanded_event_reference": {
+        "coverage": {
+          "declared_sessions": 729,
+          "fetched_sessions": 730,
+          "extra_fetched_sessions": [
+            "2026-10-30"
+          ],
+          "no_interpolation": true
+        },
+        "period": {
+          "prior_close": "2024-05-13",
+          "first_session": "2024-05-14",
+          "last_session": "2026-07-24",
+          "strategy_prior_anchor": "declared_initial_cash_no_holdings",
+          "first_observed_close": "2024-05-14"
+        },
+        "strategy_original_start_capital_return_pct": -6.856198999999997,
+        "strategy_observed_close_return_pct": -6.45148473583842,
+        "observed_close_comparison_excludes_first_session_pnl": true,
+        "references": {
+          "000300": {
+            "name": "沪深300指数",
+            "basis": "price",
+            "dividend_tax_assumption": null,
+            "prior_close_to_final_close_pct": 26.86448239823831,
+            "strategy_minus_reference_pp": -33.720681398238305,
+            "observed_close_to_close_pct": 27.129516960391562,
+            "strategy_observed_minus_reference_pp": -33.58100169622998,
+            "source_sha256": "b14779b72c8b30b1ed8600a2f0d902d633c9733bfa83bea2cfc283f095efab99",
+            "investor_tax_matched": false,
+            "tradable": false
+          },
+          "H00300": {
+            "name": "沪深300全收益指数",
+            "basis": "gross_total_return",
+            "dividend_tax_assumption": "0%",
+            "prior_close_to_final_close_pct": 36.21292987240978,
+            "strategy_minus_reference_pp": -43.06912887240978,
+            "observed_close_to_close_pct": 36.482212585177564,
+            "strategy_observed_minus_reference_pp": -42.933697321015984,
+            "source_sha256": "d2dbe6a92c0950d96561cdd585fa18fdcac581a0a69e22ed7f94315903b88d24",
+            "investor_tax_matched": false,
+            "tradable": false
+          },
+          "N00300": {
+            "name": "沪深300净收益指数",
+            "basis": "net_total_return",
+            "dividend_tax_assumption": "10%",
+            "prior_close_to_final_close_pct": 35.23873435017606,
+            "strategy_minus_reference_pp": -42.094933350176056,
+            "observed_close_to_close_pct": 35.50770427259029,
+            "strategy_observed_minus_reference_pp": -41.95918900842871,
+            "source_sha256": "1bbb34578b2975120f813e2a9bc82de116c324fcd57356ddf34a6865afebc2fb",
+            "investor_tax_matched": false,
+            "tradable": false
+          }
+        },
+        "original_gate_modified": false,
+        "promotion_allowed": false,
+        "oos_validation": false,
+        "limitations": [
+          "reference_only_not_executable_or_net_alpha",
+          "index_has_no_execution_fees_or_matching_cash_exposure",
+          "N00300_fixed_10pct_dividend_tax_is_not_personal_FIFO_tax",
+          "current_retrieval_not_historical_point_in_time_data",
+          "missing_open_not_synthesized"
+        ]
+      },
+      "sealed_price_source_comparison": {
+        "nonidentical_ohlc_fields": 2611,
+        "max_abs_level_difference": "0.005",
+        "interpretation": "raw precision differences retained; not an overwrite or historical revision certification"
+      },
+      "original_gate_preserved": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "expanded_event_reference": {
+        "coverage": {
+          "declared_sessions": 729,
+          "fetched_sessions": 730,
+          "extra_fetched_sessions": [
+            "2026-10-30"
+          ],
+          "no_interpolation": true
+        },
+        "period": {
+          "prior_close": "2024-05-13",
+          "first_session": "2024-05-14",
+          "last_session": "2026-07-24",
+          "strategy_prior_anchor": "declared_initial_cash_no_holdings",
+          "first_observed_close": "2024-05-14"
+        },
+        "strategy_original_start_capital_return_pct": -4.021430000000004,
+        "strategy_observed_close_return_pct": -3.1955466786671938,
+        "observed_close_comparison_excludes_first_session_pnl": true,
+        "references": {
+          "000300": {
+            "name": "沪深300指数",
+            "basis": "price",
+            "dividend_tax_assumption": null,
+            "prior_close_to_final_close_pct": 26.86448239823831,
+            "strategy_minus_reference_pp": -30.88591239823831,
+            "observed_close_to_close_pct": 27.129516960391562,
+            "strategy_observed_minus_reference_pp": -30.325063639058754,
+            "source_sha256": "b14779b72c8b30b1ed8600a2f0d902d633c9733bfa83bea2cfc283f095efab99",
+            "investor_tax_matched": false,
+            "tradable": false
+          },
+          "H00300": {
+            "name": "沪深300全收益指数",
+            "basis": "gross_total_return",
+            "dividend_tax_assumption": "0%",
+            "prior_close_to_final_close_pct": 36.21292987240978,
+            "strategy_minus_reference_pp": -40.23435987240978,
+            "observed_close_to_close_pct": 36.482212585177564,
+            "strategy_observed_minus_reference_pp": -39.677759263844756,
+            "source_sha256": "d2dbe6a92c0950d96561cdd585fa18fdcac581a0a69e22ed7f94315903b88d24",
+            "investor_tax_matched": false,
+            "tradable": false
+          },
+          "N00300": {
+            "name": "沪深300净收益指数",
+            "basis": "net_total_return",
+            "dividend_tax_assumption": "10%",
+            "prior_close_to_final_close_pct": 35.23873435017606,
+            "strategy_minus_reference_pp": -39.26016435017606,
+            "observed_close_to_close_pct": 35.50770427259029,
+            "strategy_observed_minus_reference_pp": -38.70325095125748,
+            "source_sha256": "1bbb34578b2975120f813e2a9bc82de116c324fcd57356ddf34a6865afebc2fb",
+            "investor_tax_matched": false,
+            "tradable": false
+          }
+        },
+        "original_gate_modified": false,
+        "promotion_allowed": false,
+        "oos_validation": false,
+        "limitations": [
+          "reference_only_not_executable_or_net_alpha",
+          "index_has_no_execution_fees_or_matching_cash_exposure",
+          "N00300_fixed_10pct_dividend_tax_is_not_personal_FIFO_tax",
+          "current_retrieval_not_historical_point_in_time_data",
+          "missing_open_not_synthesized"
+        ]
+      },
+      "sealed_price_source_comparison": {
+        "nonidentical_ohlc_fields": 2611,
+        "max_abs_level_difference": "0.005",
+        "interpretation": "raw precision differences retained; not an overwrite or historical revision certification"
+      },
+      "original_gate_preserved": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      }
+    }
+  ],
+  "definition_sources": [
+    {
+      "name": "factsheet",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000300factsheet.pdf",
+      "observed_at": "2026-10-30T13:21:07.434870+00:00",
+      "sha256": "38e1d50e5cf0018afc0cfe7b46bf25faa21de839d4d0e269ce4084575cb00bbc"
+    },
+    {
+      "name": "methodology",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000300_Index_Methodology_cn.pdf",
+      "observed_at": "2026-10-30T13:21:10.308305+00:00",
+      "sha256": "de6491e03e5d57ecf1aca104b1412543643a59e387a5343c9bd21ecbbdeba5b6"
+    }
+  ],
+  "original_gates_modified": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "oos_validation": false
+}
