@@ -1,0 +1,83 @@
+{
+  "scope": "public_product_specification_review_not_account_permission_or_legal_licence",
+  "observed_sources": [
+    {
+      "url": "https://quantapi.51ifind.com/gwstatic/static/ds_web/quantapi-web/help-center/permission.html",
+      "final_url": "https://quantapi.51ifind.com/gwstatic/static/ds_web/quantapi-web/help-center/permission.html",
+      "http_status": 200,
+      "observed_at": "2026-10-30T23:44:04.619853+00:00",
+      "file": "ifind-permission.html",
+      "sha256": "b815e4e22f94151700ff98071c630de582a1ed51f351ed29c420b0d74af8e605",
+      "bytes": 19453,
+      "public_page_no_account_credentials": true,
+      "readable_characters": 2443
+    },
+    {
+      "url": "https://quantapi.51ifind.com/gwstatic/static/ds_web/quantapi-web/help-center/faq.html",
+      "final_url": "https://quantapi.51ifind.com/gwstatic/static/ds_web/quantapi-web/help-center/faq.html",
+      "http_status": 200,
+      "observed_at": "2026-10-30T23:44:04.710437+00:00",
+      "file": "ifind-faq.html",
+      "sha256": "15e52472212da28937bfac1864b7cfe722d4d4f05cc78c3de452805207d8ec20",
+      "bytes": 33606,
+      "public_page_no_account_credentials": true,
+      "readable_characters": 5226
+    },
+    {
+      "url": "https://www.baostock.com/",
+      "final_url": "https://www.baostock.com/",
+      "http_status": 200,
+      "observed_at": "2026-10-30T23:44:04.921203+00:00",
+      "file": "baostock-home.html",
+      "sha256": "8806d51df625bdc24066e2e6b2659615ed3d6eeb5fe29dafc434bd938f4c8674",
+      "bytes": 8086,
+      "public_page_no_account_credentials": true,
+      "readable_characters": 189
+    }
+  ],
+  "public_documentation_facts": {
+    "free_history_recent_years": 5,
+    "free_history_value_cell_quota_per_month": 1000000,
+    "free_history_single_request_cell_limit": 50000,
+    "trial_and_formal_market_cells_per_week_public_spec": 150000000,
+    "terminal_and_API_products_distinct": true,
+    "first_disclosure_and_adjusted_consolidation_distinct": true,
+    "first_vs_adjusted_not_full_revision_chain_proof": true,
+    "indicator_commands_require_official_supercommand_validation": true,
+    "access_token_public_valid_days": 7,
+    "refresh_token_follows_account_validity_and_permission_changes_require_new_token": true
+  },
+  "arithmetic_plan_not_vendor_billing": {
+    "value_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "amount"
+    ],
+    "six_stocks": 6,
+    "registered_dates": 729,
+    "six_stock_value_cells": 26244,
+    "scoped_member_day_rows": 3751786,
+    "full_universe_planned_value_cells": 22510716,
+    "full_plan_to_public_free_month_ratio": 22.510716,
+    "excludes_metadata_null_billing_retries_and_other_users": true
+  },
+  "actual_account_type_verified": false,
+  "remaining_quota_verified": false,
+  "historical_indicators_verified": false,
+  "internal_storage_and_backup_rights_verified": false,
+  "Baostock_data_licence_verified": false,
+  "baostock_home_observation": "dynamic shell did not provide a verified data-use grant; not a finding of prohibition",
+  "vendor_data_requests": 0,
+  "vendor_token_requests": 0,
+  "public_document_http_requests": 3,
+  "permission_probe_executed": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "evidence_sha256": {
+    "public-doc-capture.json": "25e1325b402b00c5459f303370f091b18472eb41e541ceb9b7c8d050719cea37",
+    "public-spec-review.json": "5ef04dcd4026c5a16fbbf940fdced9fb70c5fdd274afb49072d65cba296ff62a"
+  }
+}
