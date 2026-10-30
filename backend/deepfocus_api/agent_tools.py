@@ -397,7 +397,7 @@ register_tool(AgentTool(
 ))
 register_tool(AgentTool(
     name="get_dividend_history",
-    description="查询A股个股最近几期分红送转(每10股送X转Y派Z元、股息率、股权登记日/除权除息日、分红进度)。问『XX分红多少/股息率/派息/送转/除权日』时调用；返回公开披露方案，防止编造分红数字。仅A股。",
+    description="查询A股个股最近几期供应商分红送转目录(每10股送X转Y派Z元、股息率、登记日/除息日、进度)。问分红/股息率/送转时调用。目录可能漏特别分红或只列同日部分现金，不是完整实施账簿；回答须说明未核验完整性，以实施公告核对，不据此计算完整年度分红或总回报。仅A股。",
     parameters={"type": "object", "properties": {
         "symbol": {"type": "string", "description": "A股代码(中文名会自动归一)，如 600519"},
         "limit": {"type": "integer", "description": "返回最近几期，默认 6(上限 40)"},

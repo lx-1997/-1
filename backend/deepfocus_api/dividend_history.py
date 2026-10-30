@@ -3,20 +3,22 @@
 直连绕代理（httpx trust_env=False，外部 403/超时多是沙箱代理封的）。仅 A股（6 位数字代码）。
 来源 datacenter-web.eastmoney.com 的 RPT_SHAREBONUS_DET（分红送转明细）。
 
-核心字段（已用 live 真值核对 600519/000858/300750）：
-- IMPL_PLAN_PROFILE  实施/预案方案文案，如「10派280.2423元(含税)」「10转4派5元」——直接给模型当 ground truth，杜绝编造
+核心字段（供应商报告期目录，不是完整实施事件账簿）：
+- IMPL_PLAN_PROFILE  供应商方案文案，如「10派280.2423元(含税)」「10转4派5元」；须以实施公告核对
 - BONUS_RATIO        每10股送股数；IT_RATIO 每10股转增数；PRETAX_BONUS_RMB 每10股税前派现(元)
 - DIVIDENT_RATIO     股息率(小数，×100 = %)
 - EQUITY_RECORD_DATE 股权登记日；EX_DIVIDEND_DATE 除权除息日
 - ASSIGN_PROGRESS    进度（预披露 / 董事会预案 / 股东大会决议通过 / 实施分配 …）
 - REPORT_DATE        对应报告期（分红年度/报告期末）
 
+实样发现目录遗漏特别分红、同日现金总额不同，不能用于直接入账或计算完整总回报。
 缓存 6h。任何失败/无数据 → None（优雅降级，绝不抛异常）。
 """
 from __future__ import annotations
 
 import re
 import time
+import copy
 from typing import Any, Optional
 
 import httpx
@@ -86,7 +88,7 @@ async def fetch_dividend_history(
     cache_key = f"{code}:{n}"
     hit = _CACHE.get(cache_key)
     if hit and (time.time() - hit[0]) < _CACHE_TTL:
-        return hit[1]
+        return copy.deepcopy(hit[1])
 
     result: Optional[list[dict[str, Any]]] = None
     try:
@@ -102,14 +104,16 @@ async def fetch_dividend_history(
             rows: list[dict[str, Any]] = []
             for row in data:
                 if not isinstance(row, dict):
-                    continue
+                    raise ValueError('Invalid dividend catalog row')
+                if row.get('SECURITY_CODE') != code:
+                    raise ValueError('Dividend catalog security mismatch')
                 yield_frac = safe_float(row.get("DIVIDENT_RATIO"))
                 rows.append(
                     {
                         "name": row.get("SECURITY_NAME_ABBR"),
                         "code": code,
                         "report_period": _ymd(row.get("REPORT_DATE")),  # 分红对应报告期
-                        "plan": _build_plan(row),                       # 方案文案(ground truth)
+                        "plan": _build_plan(row),                       # 供应商目录文案，非原文核验
                         "bonus_per_10": safe_float(row.get("BONUS_RATIO"), low=0.0),   # 每10股送股
                         "transfer_per_10": safe_float(row.get("IT_RATIO"), low=0.0),   # 每10股转增
                         "cash_per_10_pretax": safe_float(row.get("PRETAX_BONUS_RMB"), low=0.0),  # 每10股税前派现(元)
@@ -119,6 +123,13 @@ async def fetch_dividend_history(
                         "progress": row.get("ASSIGN_PROGRESS"),  # 进度
                         "notice_date": _ymd(row.get("NOTICE_DATE")),  # 公告日
                         "eps": safe_float(row.get("BASIC_EPS")),  # 对应每股收益(参考)
+                        "data_quality": {
+                            "source": "eastmoney_report_period_catalog",
+                            "complete_event_history_verified": False,
+                            "implementation_filing_verified": False,
+                            "execution_usable": False,
+                            "warning": "报告期目录可能遗漏特别分红或未含同日全部现金；金额、登记日、支付日及除息参考须以实施公告核对，不能据此计算完整分红或总回报。",
+                        },
                     }
                 )
             if rows:
@@ -127,4 +138,4 @@ async def fetch_dividend_history(
         result = None
 
     _CACHE[cache_key] = (time.time(), result)
-    return result
+    return copy.deepcopy(result)

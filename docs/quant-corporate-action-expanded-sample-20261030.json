@@ -1,0 +1,114 @@
+{
+  "status": "five_spot_checked_announcements_not_complete_history",
+  "source_files": {
+    "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972": "moutai-2024-dividend.pdf",
+    "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34": "midea-2024-dividend.pdf",
+    "7739837887d22cfea7f8768731cb60b59f28e0294a7241b2d2824633bd180fb5": "catl-2023-final.pdf",
+    "78549e6908050e9fde1e5f9a07220032b64ad617dc222157413eeda6838a2301": "catl-2024-special.pdf",
+    "66ccd122ba52d7b6cbd00bc4465ca4cf5e7a65540783ea65688e53eae7dea781": "catl-2024-final.pdf"
+  },
+  "events": [
+    {
+      "event_id": "600519-2023-final-dividend",
+      "revision": 1,
+      "symbol": "600519",
+      "record_date": "2024-06-18",
+      "ex_date": "2024-06-19",
+      "pay_date": "2024-06-19",
+      "cash_per_share_gross": "30.876",
+      "price_adjustment_per_share": "30.876",
+      "available_at": "2024-06-12T23:59:59+08:00",
+      "observed_at": "2026-10-30T08:20:21.801225+00:00",
+      "source_url": "https://www.moutaichina.com/eportal/attachDir/mtgf/2024/06/2024061210531834730.pdf",
+      "source_sha256": "626888864d607e51f11f48df3368c496c7dec832f6cdd90244336195b1ef2972"
+    },
+    {
+      "event_id": "000333-2023-final-dividend",
+      "revision": 1,
+      "symbol": "000333",
+      "record_date": "2024-05-14",
+      "ex_date": "2024-05-15",
+      "pay_date": "2024-05-15",
+      "cash_per_share_gross": "3",
+      "price_adjustment_per_share": "2.9791154",
+      "available_at": "2024-05-09T23:59:59+08:00",
+      "observed_at": "2026-10-30T08:20:21.801225+00:00",
+      "source_url": "https://file.finance.sina.com.cn/211.154.219.97%3A9494/MRGG/CNSESZ_STOCK/2024/2024-5/2024-05-09/10193530.PDF",
+      "source_sha256": "c0cab0c355c20c4dbb3510dba55b0645185866696d99a16a87ff3c887a540f34"
+    },
+    {
+      "event_id": "300750-2023-final-dividend",
+      "revision": 1,
+      "symbol": "300750",
+      "record_date": "2024-04-29",
+      "ex_date": "2024-04-30",
+      "pay_date": "2024-04-30",
+      "cash_per_share_gross": "5.028",
+      "price_adjustment_per_share": "5.0147304",
+      "available_at": "2024-04-23T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:38:24.810088+00:00",
+      "source_url": "https://file.finance.sina.com.cn/211.154.219.97%3A9494/MRGG/CNSESZ_STOCK/2024/2024-4/2024-04-23/10041363.PDF",
+      "source_sha256": "7739837887d22cfea7f8768731cb60b59f28e0294a7241b2d2824633bd180fb5"
+    },
+    {
+      "event_id": "300750-2024-special-dividend",
+      "revision": 1,
+      "symbol": "300750",
+      "record_date": "2025-01-23",
+      "ex_date": "2025-01-24",
+      "pay_date": "2025-01-24",
+      "cash_per_share_gross": "1.23",
+      "price_adjustment_per_share": "1.2255331",
+      "available_at": "2025-01-17T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:38:24.869141+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-01-17/1222366609.PDF",
+      "source_sha256": "78549e6908050e9fde1e5f9a07220032b64ad617dc222157413eeda6838a2301"
+    },
+    {
+      "event_id": "300750-2024-final-dividend",
+      "revision": 1,
+      "symbol": "300750",
+      "record_date": "2025-04-21",
+      "ex_date": "2025-04-22",
+      "pay_date": "2025-04-22",
+      "cash_per_share_gross": "4.553",
+      "price_adjustment_per_share": "4.5364651",
+      "available_at": "2025-04-15T23:59:59+08:00",
+      "observed_at": "2026-10-30T12:38:25.726545+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-04-15/1223099780.PDF",
+      "source_sha256": "66ccd122ba52d7b6cbd00bc4465ca4cf5e7a65540783ea65688e53eae7dea781"
+    }
+  ],
+  "publication_time_policy": "dated announcement => conservative end of day; no exact intraday timestamp claimed",
+  "rights": "commercial license unverified; internal audit only",
+  "completeness_attested": false,
+  "source_notes": {
+    "600519": "Issuer website original PDF",
+    "000333": "Issuer original filing retained from Sina mirror; official archive provenance still to confirm",
+    "300750": "Three implementation filings manually reviewed on pages 1 and 3. 2023-final initially from Sina mirror; CNINFO 2024-04-23/1219767154.PDF subsequently fetched with identical SHA256, retained separately. 2024-special and 2024-final directly from public CNINFO archive. 2024 half-year report page28 confirms annual20.11 + special30.17 per10, unlike vendor annual-only row. No complete event-history attestation."
+  },
+  "fact_review": "manual_page_1_and_3_review_for_three_added_filings",
+  "additional_provenance": [
+    {
+      "name": "catl-2023-final-cninfo",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-04-23/1219767154.PDF",
+      "observed_at": "2026-10-30T12:47:02.029151+00:00",
+      "sha256": "7739837887d22cfea7f8768731cb60b59f28e0294a7241b2d2824633bd180fb5",
+      "file": "catl-2023-final-cninfo.pdf",
+      "reviewed_pages": [
+        1,
+        3
+      ]
+    },
+    {
+      "name": "catl-2024-halfyear",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-07-27/1220740372.PDF",
+      "observed_at": "2026-10-30T12:47:30.624846+00:00",
+      "sha256": "2a690cb2471c1f0d4539d909a9f068c03710a838ddd35313175790169e85eab1",
+      "file": "catl-2024-halfyear.pdf",
+      "reviewed_pages": [
+        28
+      ]
+    }
+  ]
+}

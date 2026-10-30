@@ -214,11 +214,14 @@ def test_verdict_datapoint_includes_dims_snapshot(monkeypatch, tmp_path):
 
     captured: dict = {}
 
-    def _rec(kind, sym, payload, *, market=""):
+    async def _rec(kind, sym, payload, *, market=""):
         if kind == "verdict":
             captured["payload"] = payload
+        return True
 
-    monkeypatch.setattr(main_mod, "record_datapoint", _rec)
+    # The producer awaits the async writer. Intercept that seam so this payload
+    # test cannot fall through to a real writer/database after client shutdown.
+    monkeypatch.setattr(main_mod, "async_record_datapoint", _rec)
     asyncio.run(main_mod._build_stock_tear_sheet_core("TSLA", market="US"))
     dims = captured["payload"]["dims"]
     assert isinstance(dims, list) and len(dims) >= 5  # 7–9 维的精简快照
