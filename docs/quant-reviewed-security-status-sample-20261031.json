@@ -1,0 +1,33 @@
+{
+  "scope": "out-of-pool operator-reviewed official state facts; no strategy universe change",
+  "issuer_id": "cninfo:9900002009",
+  "symbol": "002109",
+  "publication_date": "2026-04-30",
+  "source": {
+    "url": "https://static.cninfo.com.cn/finalpage/2026-04-30/1225265687.PDF",
+    "sha256": "3151d0cc3a36e7f73d7b9eea68b37056d9475223735196f6f62306850e283b4d",
+    "observed_at": "2026-10-30T20:07:03.774678+00:00",
+    "reviewed_pages": [
+      1,
+      2
+    ]
+  },
+  "reviewed_at": "2026-10-30T20:20:22.510472+00:00",
+  "records": [
+    {
+      "effective_at": "2026-04-30T09:30:00+08:00",
+      "provider_trading_status": "suspended",
+      "source_page": 2
+    },
+    {
+      "effective_at": "2026-05-06T09:30:00+08:00",
+      "provider_trading_status": "normal",
+      "is_st_by_provider": true,
+      "source_page": 2
+    }
+  ],
+  "coverage_verified": false,
+  "preopen_knowledge_certified": false,
+  "promotion_allowed": false,
+  "automatic_PDF_fact_extraction": false
+}

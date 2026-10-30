@@ -1,0 +1,242 @@
+{
+  "independent_protocol_day_rows": 4382,
+  "original_close_comparisons": 4374,
+  "original_experiments": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "reproduced_exactly": true,
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e"
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "reproduced_exactly": true,
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd"
+    }
+  ],
+  "official_sample": {
+    "source": {
+      "url": "https://static.cninfo.com.cn/finalpage/2026-04-30/1225265687.PDF",
+      "sha256": "3151d0cc3a36e7f73d7b9eea68b37056d9475223735196f6f62306850e283b4d",
+      "observed_at": "2026-10-30T20:07:03.774678+00:00",
+      "reviewed_pages": [
+        1,
+        2
+      ]
+    },
+    "checks": [
+      {
+        "date": "2026-04-30",
+        "provider_trading_status": "suspended"
+      },
+      {
+        "date": "2026-05-06",
+        "provider_trading_status": "normal",
+        "is_st_by_provider": true
+      }
+    ],
+    "provider_rows": 8,
+    "official_fact_fields_checked": 3,
+    "halt_volume_preserved_null": true
+  },
+  "knowledge_checks": {
+    "same_day_preopen_unknown": true,
+    "after_close_retrospective_only": true,
+    "past_as_recorded_unknown": true,
+    "holiday_absence_not_halt": true
+  },
+  "status_review": {
+    "version": "retained-provider-security-status-v1",
+    "capture_digest": "1eb3778dead03a41610619536b3f7f2d2dfe853eb0a234b321919545878e0f8d",
+    "calendar_digest": "1f15ffd3b8b8876d53b7dac9fffaff8569c8e1c6c5ce40519da1ebe003f331bc",
+    "source_pins": {
+      "quant_security_status.py": "2a2ec3dad84d9333895259f07ed65176ca8e91ff5a518bcfb6fde9b40a880cce",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+      "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+      "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996"
+    },
+    "stocks": [
+      {
+        "code": "sh.600519",
+        "expected_original_days": 729,
+        "provider_days": 729,
+        "calendar": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "missing_original_days": [],
+        "extra_days": [],
+        "close_mismatch_dates": [],
+        "provider_suspended_days": 0,
+        "provider_st_days": 0
+      },
+      {
+        "code": "sz.000001",
+        "expected_original_days": 729,
+        "provider_days": 729,
+        "calendar": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "missing_original_days": [],
+        "extra_days": [],
+        "close_mismatch_dates": [],
+        "provider_suspended_days": 0,
+        "provider_st_days": 0
+      },
+      {
+        "code": "sz.300750",
+        "expected_original_days": 729,
+        "provider_days": 729,
+        "calendar": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "missing_original_days": [],
+        "extra_days": [],
+        "close_mismatch_dates": [],
+        "provider_suspended_days": 0,
+        "provider_st_days": 0
+      },
+      {
+        "code": "sh.600036",
+        "expected_original_days": 729,
+        "provider_days": 729,
+        "calendar": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "missing_original_days": [],
+        "extra_days": [],
+        "close_mismatch_dates": [],
+        "provider_suspended_days": 0,
+        "provider_st_days": 0
+      },
+      {
+        "code": "sh.600900",
+        "expected_original_days": 729,
+        "provider_days": 729,
+        "calendar": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "missing_original_days": [],
+        "extra_days": [],
+        "close_mismatch_dates": [],
+        "provider_suspended_days": 0,
+        "provider_st_days": 0
+      },
+      {
+        "code": "sz.000333",
+        "expected_original_days": 729,
+        "provider_days": 729,
+        "calendar": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "missing_original_days": [],
+        "extra_days": [],
+        "close_mismatch_dates": [],
+        "provider_suspended_days": 0,
+        "provider_st_days": 0
+      }
+    ],
+    "original_stock_days": 4374,
+    "coverage_matches_original_and_plan": true,
+    "prices_match_original": true,
+    "historical_security_status_certified": false,
+    "preopen_knowledge_verified": false,
+    "data_rights_verified": false,
+    "promotion_allowed": false,
+    "commercial_ready": false,
+    "limitations": [
+      "post-hoc vendor day labels, not original preopen capture",
+      "ST/*ST subtype, identity lifecycle, IPO/relisting and exact price bands not certified",
+      "six surviving stocks are not a survivorship-free historical universe",
+      "matching annual plan is not actual-exchange-session certification"
+    ]
+  },
+  "source_pins": {
+    "quant_security_status.py": "2a2ec3dad84d9333895259f07ed65176ca8e91ff5a518bcfb6fde9b40a880cce",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996"
+  },
+  "raw_sources_unchanged": true,
+  "capture_manifest_sha256": "0e45fb6e499221cdb1b0b118d25301f4e8cb2d6eda11af7da8748d94a475926b",
+  "collector_sha256": "1558ab57ea4c5d4675a21c9cbe6949b1231b078666728a88b93a6a93c82e2dc4",
+  "independent_runner_sha256": "5d02581d8d78a043d97a7bc09376f3352272eafb9b1b75b38d4b78f8d991b613",
+  "production_writes": false,
+  "new_strategy_nominated": false,
+  "full_pit_certified": false,
+  "focused_tests_passed": 42,
+  "commercial_ready": false,
+  "promotion_allowed": false
+}
