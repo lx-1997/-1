@@ -1,0 +1,183 @@
+{
+  "scope": "failed_fixed_protocol_engineering_smoke_and_compute_root_cause_diagnostic",
+  "protocol": {
+    "schema": "internal-qr-soak-v1",
+    "duration_seconds": 3600,
+    "round_period_seconds": 30,
+    "parallel_lanes": 4,
+    "research_owners": 2,
+    "observer_owners": 1,
+    "cancel_every_nth_job": 5,
+    "cancel_delay_seconds": 0.05,
+    "status_poll_seconds": 0.5,
+    "observer_period_seconds": 1,
+    "heartbeat_period_seconds": 0.01,
+    "max_job_seconds": 180,
+    "read_p95_ms": 500,
+    "read_p99_ms": 1500,
+    "create_p95_ms": 2000,
+    "loop_p99_ms": 250,
+    "loop_max_ms": 2000,
+    "rss_max_bytes": 1073741824,
+    "qr_disk_max_bytes": 536870912,
+    "minimum_completed_jobs": 32,
+    "minimum_cancelled_jobs": 10,
+    "minimum_rounds": 30,
+    "minimum_observer_reads": 600,
+    "minimum_heartbeat_samples": 600,
+    "global_worker_limit": 4,
+    "owner_worker_limit": 2,
+    "source_adapter": "two_original_frozen_729_day_datasets_no_provider_network",
+    "barrier": "four_retained_data_fetches_wait_until_burst_capacity_checks_finish",
+    "scope": "single_local_API_worker_real_JWT_and_loopback_TCP_not_production_SLO",
+    "promotion_allowed": false
+  },
+  "runtime_versions": {
+    "fastapi": "0.111.0",
+    "uvicorn": "0.29.0",
+    "httpx": "0.27.0",
+    "sqlalchemy": "2.0.30"
+  },
+  "smoke": {
+    "evaluation": {
+      "safety_checks": {
+        "read_p95": false,
+        "read_p99": false,
+        "create_p95": true,
+        "loop_p99": false,
+        "loop_max": true,
+        "rss": true,
+        "disk": true,
+        "worker_caps": true,
+        "four_active_slots_observed": true,
+        "no_unexpected_errors": true,
+        "no_external_connections": true,
+        "all_results_exact": true,
+        "all_drained": true,
+        "no_paper_accounts": true
+      },
+      "full_run_checks": {
+        "mode": false,
+        "duration": false,
+        "completed": false,
+        "cancelled": false,
+        "rounds": false,
+        "reads": false,
+        "heartbeats": false
+      },
+      "engineering_checks_passed": false,
+      "full_soak_passed": false,
+      "latency_ms": {
+        "read_p95": 1815.3889579999998,
+        "read_p99": 1815.3889579999998,
+        "create_p95": 25.34879099999998,
+        "loop_p99": 260.17858299999983,
+        "loop_max": 287.61262500000015
+      },
+      "promotion_allowed": false,
+      "production_SLO_certified": false
+    },
+    "metrics": {
+      "errors": [],
+      "rounds": 1,
+      "submitted": 4,
+      "completed": 4,
+      "exact_results": 4,
+      "cancelled": 0,
+      "cancel_requested": 0,
+      "cancel_missed": 0,
+      "peak_rss_bytes": 133447680,
+      "peak_qr_disk_bytes": 5514824,
+      "peak_global_slots": 4,
+      "peak_owner_slots": 2,
+      "peak_active_slots": 4,
+      "remaining_slots": 0,
+      "remaining_admissions": 0,
+      "external_connection_attempts": 0,
+      "elapsed_seconds": 10.541700916,
+      "paper_accounts": 0
+    },
+    "sample_counts": {
+      "observer_ms": 6,
+      "create_ms": 4,
+      "loop_ms": 234
+    },
+    "source_pins": {
+      "auth.py": "9eac0c3a336d3759866092ff46ae85a9d3150fd8a426a36a3ca204ceb354e553",
+      "storage.py": "555704a62b3ff42f75b4acdf0fe2310c629b46c01aa64485af0e3fe9a0b552ed",
+      "db.py": "58cd893736d0b06745bff7ce6981006a08493c86fd5b70b2f6d40d5a999566c9",
+      "quant_research.py": "fdc3f828de9c173d41d462c63edcbc718ac55f341e8d70b1d95c79e4d82ffdc0",
+      "quant_research_api.py": "bfbbd71e82d1fcb1041e5d30bc189594dda1e91656ae3a37736dfac2cb67507a",
+      "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_research_candidates.py": "5655a8ce9a60877b1093ddab0d13fa393ec9f9cc0fcc464b2c678072daba72c7",
+      "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+      "quant_paper_calendar.py": "0bc4126c0e42ff68bb9f5d0f709cdcdf32a624c9273f5e2b03a8e21d5b7d08f1",
+      "quant_calendar_service.py": "1f813da8cacc4ae8e6dc5c75fedf38d1c8f9a8e0b97642f9d502a4b6c7ba17e3",
+      "quant_calendar_store.py": "e5f0383a8a3f01b45e9e46e53b54962b1cd71b549a30647e903c2f6194d8216e",
+      "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+      "quant_worker_slots.py": "60be1e020c4dcafcc3686d52645a9311a8023d0eeb8a05dea0d8257424a6d7c3",
+      "backtest_data.py": "85a69510e3b8eadda9f9447319fdab948ad4d712832b336684a23452130d5757",
+      "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+      "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+      "quant-service-soak.py": "eb1e165447577f6a4cd8bf2b157c3bee3ea0a5792882b308c7abba82afee3baf"
+    }
+  },
+  "owned_cancel_check": {
+    "parent_exit_code": 2,
+    "owned_worker_exited": true,
+    "owned_port_closed": true,
+    "remaining_slots": 0,
+    "remaining_running_jobs": 0,
+    "early_cancel_cannot_pass_full": true,
+    "production_writes": 0,
+    "source_sha256": "eb1e165447577f6a4cd8bf2b157c3bee3ea0a5792882b308c7abba82afee3baf"
+  },
+  "compute_diagnostic": {
+    "registration": {
+      "scope": "four_identical_retained_price_computations_threads_vs_spawn_processes_not_service_SLO",
+      "inputs": [
+        "31aedd8f544144ad9b7a7d2088e181b0",
+        "0839ee7717d143c7b991bddbfb55f891",
+        "31aedd8f544144ad9b7a7d2088e181b0",
+        "0839ee7717d143c7b991bddbfb55f891"
+      ],
+      "experiments_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+      "script_sha256": "f1634b71f91dbcf5378bab9dd8db98106ffba22b84b535c8f8bba29c54318c73",
+      "engine_sha256": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "workers": 4,
+      "promotion_allowed": false
+    },
+    "threads": {
+      "compute_seconds": 9.751061417,
+      "heartbeat_samples": 170,
+      "max_extra_loop_ms": 158.00608299999985,
+      "p99_extra_loop_ms": 140.517958,
+      "all_four_result_digests_equal": true
+    },
+    "processes": {
+      "compute_seconds": 2.721600791,
+      "heartbeat_samples": 1087,
+      "max_extra_loop_ms": 0.7453330000000165,
+      "p99_extra_loop_ms": 0.595791999999264,
+      "all_four_result_digests_equal": true
+    },
+    "service_acceptance_completed": false,
+    "production_deployed": false,
+    "promotion_allowed": false
+  },
+  "full_hour_completed": false,
+  "production_deployed": false,
+  "production_SLO_certified": false,
+  "promotion_allowed": false,
+  "new_regression_tests": 29,
+  "evidence_sha256": {
+    "smoke-1/plan.json": "c2b8674aa93c94ecf53e2d82c0521845ae71b436fb278da1be701e5b2621814e",
+    "smoke-1/result.json": "64977549574bf32d9bb98d9c155de72e0d16e4a7fb2bb821dbbd56ead626caad",
+    "cancel-verification-4.json": "f942a726604931ade9b978b71315aafd9dd61c872403210baff2b2dcd61d6639",
+    "cancel-check-v4.py": "0d18ba02275dbb0cc4e9f48a4f8d30c362466741eaed9f800ceb613d7e048e82",
+    "compute-diagnostic-registration.json": "818a0a41c5c9105642c21dfab5c8cf9f7b01e78371b9a204b48271b2847453f2",
+    "compute-diagnostic-result.json": "d872df0f3da070ff15532a3c474123fe1a3a695e667881cc7a0f3cca52e08276",
+    "compute-diagnostic.py": "f1634b71f91dbcf5378bab9dd8db98106ffba22b84b535c8f8bba29c54318c73"
+  }
+}
