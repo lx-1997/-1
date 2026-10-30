@@ -1,0 +1,328 @@
+{
+  "schema": "paused-training-exclusion-v1",
+  "protocol_digest": "ae0ce79e955b3c7df6f71520890566783501384f92a39fab41fb0389ab7e14a0",
+  "report_sha256": "c49de288580fb93395667c964c6784081e5520c11fceccd1a394a5cc0b3cf5b0",
+  "promotion_allowed": false,
+  "oos_validation": false,
+  "nomination": null,
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_reproduced_exactly": true,
+      "baseline_reproduced_exactly": true,
+      "boundary_fit_reproduced": 4,
+      "full_period_defined": false,
+      "full_period_metrics": null,
+      "defined_period": {
+        "start": "2024-05-14",
+        "end": "2024-11-15",
+        "metrics": {
+          "return_pct": -6.856198999999997,
+          "max_drawdown_pct": -8.034633095326127,
+          "observations": 126,
+          "sharpe": -3.6171826910695652
+        },
+        "fills": 59
+      },
+      "financial_paths_equal_over_defined_period": true,
+      "full_baseline_metrics": {
+        "return_pct": -6.856198999999997,
+        "max_drawdown_pct": -8.034633095326127,
+        "observations": 535,
+        "sharpe": -1.726569384901543
+      },
+      "gate": {
+        "passed": false,
+        "promotion_allowed": false,
+        "reasons": [
+          "seen development data",
+          "no challenger nomination",
+          "no eligible training candidate"
+        ]
+      },
+      "first_no_eligible": {
+        "fold": 4,
+        "train_end": "2024-11-08",
+        "test_start": "2024-11-18",
+        "test_end": "2025-01-15",
+        "baseline": {
+          "lookback": 40,
+          "threshold": 0.0
+        },
+        "baseline_training_paused": true,
+        "selected": null,
+        "eligible_count": 0,
+        "execution_reachable": true
+      },
+      "changed_choices": [
+        {
+          "fold": 4,
+          "train_end": "2024-11-08",
+          "test_start": "2024-11-18",
+          "test_end": "2025-01-15",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": true
+        },
+        {
+          "fold": 5,
+          "train_end": "2025-01-08",
+          "test_start": "2025-01-16",
+          "test_end": "2025-03-24",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 6,
+          "train_end": "2025-03-17",
+          "test_start": "2025-03-25",
+          "test_end": "2025-05-27",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 7,
+          "train_end": "2025-05-20",
+          "test_start": "2025-05-28",
+          "test_end": "2025-07-25",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 8,
+          "train_end": "2025-07-18",
+          "test_start": "2025-07-28",
+          "test_end": "2025-09-23",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 9,
+          "train_end": "2025-09-16",
+          "test_start": "2025-09-24",
+          "test_end": "2025-11-28",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 10,
+          "train_end": "2025-11-21",
+          "test_start": "2025-12-01",
+          "test_end": "2026-01-29",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 11,
+          "train_end": "2026-01-22",
+          "test_start": "2026-01-30",
+          "test_end": "2026-04-08",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 12,
+          "train_end": "2026-03-31",
+          "test_start": "2026-04-09",
+          "test_end": "2026-06-10",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        },
+        {
+          "fold": 13,
+          "train_end": "2026-06-03",
+          "test_start": "2026-06-11",
+          "test_end": "2026-07-24",
+          "baseline": {
+            "lookback": 40,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": null,
+          "eligible_count": 0,
+          "execution_reachable": false
+        }
+      ]
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_reproduced_exactly": true,
+      "baseline_reproduced_exactly": true,
+      "boundary_fit_reproduced": 9,
+      "full_period_defined": true,
+      "full_period_metrics": {
+        "return_pct": 0.2939889999999945,
+        "max_drawdown_pct": -4.940603983701319,
+        "observations": 535,
+        "sharpe": 0.052750617964566454
+      },
+      "defined_period": {
+        "start": "2024-05-14",
+        "end": "2026-07-24",
+        "metrics": {
+          "return_pct": 0.2939889999999945,
+          "max_drawdown_pct": -4.940603983701319,
+          "observations": 535,
+          "sharpe": 0.052750617964566454
+        },
+        "fills": 97
+      },
+      "financial_paths_equal_over_defined_period": true,
+      "full_baseline_metrics": {
+        "return_pct": 0.2939889999999945,
+        "max_drawdown_pct": -4.940603983701319,
+        "observations": 535,
+        "sharpe": 0.052750617964566454
+      },
+      "gate": {
+        "passed": false,
+        "promotion_allowed": false,
+        "reasons": [
+          "seen development data",
+          "no challenger nomination"
+        ]
+      },
+      "first_no_eligible": null,
+      "changed_choices": [
+        {
+          "fold": 9,
+          "train_end": "2025-09-16",
+          "test_start": "2025-09-24",
+          "test_end": "2025-11-28",
+          "baseline": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "eligible_count": 2,
+          "execution_reachable": true
+        },
+        {
+          "fold": 10,
+          "train_end": "2025-11-21",
+          "test_start": "2025-12-01",
+          "test_end": "2026-01-29",
+          "baseline": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "eligible_count": 2,
+          "execution_reachable": true
+        },
+        {
+          "fold": 11,
+          "train_end": "2026-01-22",
+          "test_start": "2026-01-30",
+          "test_end": "2026-04-08",
+          "baseline": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "eligible_count": 2,
+          "execution_reachable": true
+        },
+        {
+          "fold": 12,
+          "train_end": "2026-03-31",
+          "test_start": "2026-04-09",
+          "test_end": "2026-06-10",
+          "baseline": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "eligible_count": 2,
+          "execution_reachable": true
+        },
+        {
+          "fold": 13,
+          "train_end": "2026-06-03",
+          "test_start": "2026-06-11",
+          "test_end": "2026-07-24",
+          "baseline": {
+            "lookback": 10,
+            "threshold": 0.0
+          },
+          "baseline_training_paused": true,
+          "selected": {
+            "lookback": 20,
+            "threshold": 0.03
+          },
+          "eligible_count": 1,
+          "execution_reachable": true
+        }
+      ]
+    }
+  ]
+}
