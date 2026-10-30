@@ -1,0 +1,43 @@
+{
+  "scope": "offline isolated storage recovery, not strategy qualification or production DR",
+  "source_logical_inventory_unchanged": true,
+  "committed_wal_included": true,
+  "originals": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "original_exact": true
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "original_exact": true
+    }
+  ],
+  "pdf_sources": 31,
+  "pdf_bytes": 9478017,
+  "annual_notice_sources": 8,
+  "cash_events": 31,
+  "papers_created": 0,
+  "production_writes": false,
+  "synthetic_slot_states_only": true,
+  "version": "qr-quarantined-recovery-v1",
+  "result": {
+    "verified": true,
+    "quarantine_changes": {
+      "unfinished_jobs": 1,
+      "active_papers": 0,
+      "worker_slots": 2
+    },
+    "database_sha256": "2a623aa59ce2471ac984baa5a45f7f08b001273b653e7b5c37fe57a8bc1f6fe7",
+    "activation_authorized": false
+  },
+  "source_pins": {
+    "quant_recovery.py": "7367e4b8c6ef73b381e914253d482ec86286e592225de705c3d6e39efc36179f",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant-recovery.py": "3621bc95934fd0fa0fe085fb64e095442d6f15164c423af221a64febd92560c9"
+  },
+  "focused_tests_passed": 19,
+  "activation_authorized": false,
+  "overall_acceptance_complete": false
+}
