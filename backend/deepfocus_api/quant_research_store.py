@@ -90,9 +90,10 @@ def cancel(owner, identity):
     return get(owner, identity)
 
 
-def create_paper(owner, experiment, payload):
+def create_paper(owner, experiment, payload, *, guard=None):
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        if guard is not None: guard(c)
         old = c.execute('SELECT * FROM qr_paper WHERE owner=? AND experiment=?', (owner, experiment)).fetchone()
         if old: return public(old)
         if c.execute("SELECT count(*) FROM qr_paper WHERE owner=? AND status='active'", (owner,)).fetchone()[0] >= 5:
@@ -104,9 +105,10 @@ def create_paper(owner, experiment, payload):
         return public(c.execute('SELECT * FROM qr_paper WHERE id=?', (identity,)).fetchone())
 
 
-def save_paper(owner, identity, revision, payload, *, status='active'):
+def save_paper(owner, identity, revision, payload, *, status='active', guard=None):
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        if guard is not None: guard(c)
         result = c.execute('UPDATE qr_paper SET revision=revision+1,status=?,updated=?,payload=? WHERE owner=? AND id=? AND revision=?',
                            (status, now(), json.dumps(payload, ensure_ascii=False, allow_nan=False), owner, identity, revision))
         if result.rowcount != 1: raise RuntimeError('模拟账户已被另一请求更新，请刷新')

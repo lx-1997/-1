@@ -140,12 +140,14 @@ def promote(owner, identity):
         from .quant_paper_calendar import MISSING
         raise ValueError(MISSING)
     # Start flat after the sealed experiment; never backdate a live paper account.
+    from .quant_paper_calendar import commit_guard
+    guard = commit_guard(owner, identity, calendar)
     today = complete_day()
     state = engine.initial_state(job['request']['capital']); state['cursor'] = today
     return store.create_paper(owner, identity, {'request': job['request'], 'parameters': job['result']['parameters'],
                   'kernel': job['kernel'], 'dataset': job['dataset'], 'state': state, 'fills': [], 'curve': [],
                   'started': store.now(), 'start_after': today, 'last_check': None,
-                  'experiment_digest': job['result_digest'], 'calendar_admission': calendar['proof'], 'policy': 'research_only_not_broker_execution'})
+                  'experiment_digest': job['result_digest'], 'calendar_admission': calendar['proof'], 'policy': 'research_only_not_broker_execution'}, guard=guard)
 
 
 async def _refresh_paper(owner, identity):
@@ -191,7 +193,9 @@ async def _refresh_paper(owner, identity):
     local = datetime.now(timezone(timedelta(hours=8)))
     if local.strftime('%H:%M') >= '16:30' and engine.validate_dataset(merged)[-1] == local.date().isoformat():
         payload['last_eod_date'] = local.date().isoformat()
-    return store.save_paper(owner, identity, paper['revision'], payload)
+    from .quant_paper_calendar import commit_guard
+    return store.save_paper(owner, identity, paper['revision'], payload,
+                            guard=commit_guard(owner, parent['id'], calendar))
 
 
 def pause(owner, identity):

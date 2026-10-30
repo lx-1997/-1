@@ -1,0 +1,71 @@
+{
+  "schema": "paper-commit-proof-guard-review-v1",
+  "before": {
+    "environment": "isolated synthetic calendar change, not actual exchange closure",
+    "negative_review_completed_before_save": true,
+    "refresh_still_committed": true,
+    "fills": 6,
+    "revision_before": 0,
+    "revision_after": 1,
+    "production_modified": false
+  },
+  "after": {
+    "environment": "isolated synthetic calendar change, not actual exchange closure",
+    "negative_review_completed_before_save": true,
+    "refresh_still_committed": false,
+    "rejection": "日历核验在处理期间变化，未提交模拟账户；请重新核对",
+    "calculated_uncommitted_fills": 6,
+    "account_exactly_unchanged": true,
+    "fills": 0,
+    "revision_before": 0,
+    "revision_after": 0,
+    "production_modified": false
+  },
+  "real_inputs": {
+    "scope": "isolated real dependency guard test, no strategy account or production write",
+    "rows": [
+      {
+        "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "original_exact": true,
+        "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+        "all_series_sessions": 729,
+        "actual_html_sources": 8,
+        "guard_passed_under_same_transaction": true,
+        "stale_context_after_identical_new_review_rejected": "日历核验在处理期间变化，未提交模拟账户；请重新核对",
+        "fresh_proof_passed": true,
+        "original_strategy_still_rejected": "未通过研究门槛，不能转入模拟跟踪"
+      },
+      {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "original_exact": true,
+        "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+        "all_series_sessions": 729,
+        "actual_html_sources": 8,
+        "guard_passed_under_same_transaction": true,
+        "stale_context_after_identical_new_review_rejected": "日历核验在处理期间变化，未提交模拟账户；请重新核对",
+        "fresh_proof_passed": true,
+        "original_strategy_still_rejected": "未通过研究门槛，不能转入模拟跟踪"
+      }
+    ],
+    "papers_created": 0,
+    "prices_and_notices_unchanged": true,
+    "production_writes": false
+  },
+  "source_sha256": {
+    "quant_research.py": "edcf3f1921cb5cb31149507a5c17da1a28cf285e70927b4573b926e6b3571cde",
+    "quant_research_store.py": "58711f7615b0a99fc9902ad6d4e0a7100cbac1f29c87f87f8ad8e6e5e25a87b3",
+    "quant_paper_calendar.py": "0bc4126c0e42ff68bb9f5d0f709cdcdf32a624c9273f5e2b03a8e21d5b7d08f1",
+    "quant_calendar_service.py": "729b11d6e59a8a22eee27a942cc7b29208432d10b8bc2cac1b82112e895505f3",
+    "quant_calendar_store.py": "e5f0383a8a3f01b45e9e46e53b54962b1cd71b549a30647e903c2f6194d8216e",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+  },
+  "evidence_sha256": {
+    "before-reproduction.json": "2f468e3268faea749da807358d5c74a89f488eb3d1b78492b3158f2603bea6c9",
+    "after-reproduction.json": "e1a1d5249adf19e7338b2f0ed6d95a72bc585f0bdcd7c1bd90e413c051426d3c",
+    "real-proof-check.json": "35504703259ba2dfd187f75f68bdfad3c797cf7f3cd47efcbd0be5ef8a2e4786"
+  },
+  "profitability_validated": false,
+  "commercial_ready": false,
+  "production_deployed": false
+}

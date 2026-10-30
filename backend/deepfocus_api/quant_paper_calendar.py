@@ -4,6 +4,7 @@ This prerequisite is not strategy qualification, actual-session certification,
 PIT security status, or permission for broker orders. Never infer missing bars.
 """
 import json
+import hashlib
 from datetime import date, time, timedelta
 
 from . import quant_research_store as jobs, quant_calendar_store as evidence
@@ -11,6 +12,17 @@ from .quant_exchange_schedule import BJ, check_dataset, stamp
 from .quant_research_engine import digest
 
 MISSING = '缺少当前版本、同一输入的合格日历核验；请先完成该实验的日历核验'
+
+
+def _review_rows(c, owner, parent_id):
+    return c.execute("SELECT id,payload FROM qr_experiment WHERE owner=? AND status='completed' "
+                     "AND json_extract(payload,'$.request.kind')='calendar_review' "
+                     "AND json_extract(payload,'$.request.parent_id')=? ORDER BY created,id",
+                     (owner, parent_id)).fetchall()
+
+
+def _review_set(rows):
+    return digest([{'id': r['id'], 'payload': json.loads(r['payload'])} for r in rows])
 
 
 def review(owner, parent, *, required=True):
@@ -23,10 +35,7 @@ def review(owner, parent, *, required=True):
     # Runtime import avoids lifecycle/service imports during module startup.
     from .quant_calendar_service import KERNEL
     with jobs.connect() as c:
-        rows = c.execute("SELECT id,payload FROM qr_experiment WHERE owner=? AND status='completed' "
-                         "AND json_extract(payload,'$.request.kind')='calendar_review' "
-                         "AND json_extract(payload,'$.request.parent_id')=? ORDER BY created,id",
-                         (owner, parent['id'])).fetchall()
+        rows = _review_rows(c, owner, parent['id'])
     eligible = []
     for row in rows:
         payload = json.loads(row['payload']); request = payload['request']
@@ -63,7 +72,8 @@ def review(owner, parent, *, required=True):
                       'bundle_digest': info['fingerprint'], 'quality_digest': digest(quality),
                       'scope': 'retrospective_annual_plan_only',
                       'actual_exchange_sessions_certified': False, 'security_status_verified': False},
-            'manifest': manifest}
+            'manifest': manifest, 'parent_record_digest': digest(parent),
+            'review_set_digest': _review_set(rows), 'evidence_info': info}
 
 
 def check_update(context, dataset, start, end):
@@ -89,3 +99,29 @@ def check_stored(context, paper):
     expected = previous['quality_digest'] if previous else context['proof']['quality_digest']
     if quality['status'] != 'matches_plan' or digest(quality) != expected:
         raise ValueError('已存行情日历或冻结范围发生变化，未更新模拟账户')
+
+
+def commit_guard(owner, parent_id, context):
+    """Return an internal callback run under the SAME account write transaction.
+
+    No new connections, network, replay or HTML parsing while holding the lock.
+    Parent/reviews/raw evidence are the facts previously checked, not booleans
+    supplied by the caller. Failed checks roll back the whole account write.
+    """
+    # Freeze copies: a caller must not alter the expected proof mid-flight.
+    expected = json.loads(json.dumps(context))
+    def guard(c):
+        current = jobs.get_in(c, owner, parent_id)
+        if current is None or digest(current) != expected['parent_record_digest']:
+            raise ValueError('来源实验在处理期间变化，未提交模拟账户')
+        if _review_set(_review_rows(c, owner, parent_id)) != expected['review_set_digest']:
+            raise ValueError('日历核验在处理期间变化，未提交模拟账户；请重新核对')
+        info = expected['evidence_info']
+        row = c.execute('SELECT * FROM qr_calendar_bundle WHERE owner=? AND id=?', (owner, info['id'])).fetchone()
+        if row is None or evidence._summary(row) != info or json.loads(row['payload'])['calendar'] != expected['manifest']:
+            raise ValueError('日历证据在处理期间变化，未提交模拟账户')
+        for sha in {r['source_sha256'] for r in expected['manifest']['records']}:
+            source = c.execute('SELECT body FROM qr_calendar_source WHERE owner=? AND sha=?', (owner, sha)).fetchone()
+            if source is None or hashlib.sha256(source['body']).hexdigest() != sha:
+                raise ValueError('日历原文在处理期间变化，未提交模拟账户')
+    return guard
