@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import math
+import logging
 import os
 import sqlite3
 import time
 from . import db
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -18,6 +20,7 @@ from . import ai_fund_evolve, bull_playbook, data_store, emotion_cycle
 from . import ai_fund_policy as policy
 from . import ai_fund_ledger as ledger
 from . import ai_fund_execution as execution
+from . import ai_fund_audit as audit
 from .ifind_api import cached_single_quote, enabled as ifind_enabled, normalize_a_code
 from .shared_utils import safe_float, utc_now_iso
 
@@ -280,6 +283,7 @@ def init_ai_fund_db() -> None:
         conn.execute("CREATE TABLE IF NOT EXISTS aif_marks(symbol TEXT PRIMARY KEY,price REAL NOT NULL,ts TEXT NOT NULL)")
         for col, decl in (("policy_version", "TEXT"),):
             _add_col(conn, "aif_trade", col, decl)
+        _add_col(conn, 'aif_trade', 'audit_id', 'TEXT')
         for col, decl in (("confidence", "REAL"), ("catalyst", "TEXT"), ("thinking", "TEXT"),
                           ("narrative", "TEXT"), ("scores", "TEXT"), ("buy_point", "TEXT"),
                           ("catalyst_ref", "TEXT"), ("composite", "REAL")):
@@ -306,6 +310,7 @@ def init_ai_fund_db() -> None:
                              (c.fund_id, c.initial_capital, utc_now_iso(), c.initial_capital))
             _seed_trading_rules(conn, c.fund_id)   # 每个机器人都记着 A股交易规则(铁律)
         ledger.initialize(conn, trading_day_fn=_is_trading_day)
+        audit.initialize(conn)
         conn.commit()
 
 
@@ -704,12 +709,18 @@ def _techstats(closes: list[float], last: float) -> dict:
 # 多维研判（含买点确认）
 # --------------------------------------------------------------------------- #
 
+_SENTIMENT_UNSET = object()
+
+
 def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: AgentConfig = MAIN_CFG,
-             learned_mult: Optional[dict] = None, regime: Optional[str] = None) -> dict:
+             learned_mult: Optional[dict] = None, regime: Optional[str] = None, *,
+             as_of=None, sentiment_override=_SENTIMENT_UNSET) -> dict:
     steps, scores = [], {}
+    as_of = as_of or datetime.now(timezone.utc)
+    sent = None
     catalyst = ""; catalyst_ref = None; fresh = False; msg_dir = 0.0
     last = safe_float(q.get("latest")) or 0.0
-    tech = _techstats(policy.completed_closes(md), last)
+    tech = _techstats(policy.completed_closes(md,as_of), last)
     fresh_h = cfg.fresh_hours
 
     # ① 消息面（主信号）——把催化剂从扁平关键词升级为有类型/强度的事件(第2章 业绩增长关键字)
@@ -743,7 +754,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
         steps.append({"icon": "📰", "label": "消息面",
                       "text": f"本站 {len(fresh_items)} 条相关内容，最新（{age_txt}）{top.get('src', '资讯')}：「{top.get('title', '')[:42]}」，信息面{dtxt}{kinds_txt}。"})
         scores["消息面"] = round(msg_dir, 2)
-        sent = _sentiment(fresh_items)
+        sent = _sentiment(fresh_items) if sentiment_override is _SENTIMENT_UNSET else sentiment_override
         if sent is not None and abs(sent) > 0.15:
             steps.append({"icon": "💬", "label": "情绪", "text": f"站内表态净{('看多' if sent > 0 else '看空')} {abs(sent)*100:.0f}%。"})
             scores["情绪"] = round(max(-1.0, min(1.0, sent)), 2)
@@ -785,10 +796,10 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
         steps.append({"icon": "📈", "label": "技术面", "text": f"日线暂缺，仅当日 {chg:+.2f}%（{'放量上行' if chg > 1 else '横盘' if chg > -1 else '回落'}）。"})
 
     # ②' 长线趋势模板 + 杯柄/利弗莫尔买点(第6、7章)——日线足够长才计入，宁缺毋滥
-    closes_full = policy.completed_closes(md)
+    closes_full = policy.completed_closes(md,as_of)
     tt = bull_playbook.trend_template(closes_full + ([last] if last > 0 else []), last) if closes_full else {"has": False}
     cup = {"detected": False}; piv = {"detected": False}
-    ohlc_full = policy.completed_bars(md)
+    ohlc_full = policy.completed_bars(md,as_of)
     if ohlc_full:
         try:
             cup = bull_playbook.cup_with_handle(ohlc_full)
@@ -875,7 +886,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
             score = max(-1.0, min(1.0, 0.72 * vs["score"] + 0.28 * msg_dir))  # 内在价值为主、催化为辅
             steps.append({"icon": "💎", "label": "内在价值", "text": "、".join(vs["reasons"][:3]) + "。"})
     elif cfg.model == "reversion":
-        rs = ai_fund_evolve.reversion_score(policy.completed_closes(md) + ([last] if last > 0 else []), last, learned_mult)
+        rs = ai_fund_evolve.reversion_score(policy.completed_closes(md,as_of) + ([last] if last > 0 else []), last, learned_mult)
         model_detail = rs
         if rs.get("score") is not None:
             scores.update(rs["scores"])          # 超跌度/回撤空间/企稳
@@ -943,7 +954,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
                + (0.08 if (tt.get("has") and tt.get("stage") == "advancing") else 0.0)
                + (0.06 if pattern_buy else 0.0))
 
-    return {"score": round(score, 3), "confidence": round(conf, 2), "scores": scores,
+    return {"score": round(score, 3), "confidence": round(conf, 2), "scores": scores, 'sentiment_input':sent,
             "thinking": steps, "catalyst": catalyst, "catalyst_ref": catalyst_ref, "fresh": fresh, "tech": tech,
             "entry_ok": entry_ok, "buy_point": buy_point, "msg_dir": round(msg_dir, 2),
             "entry_threshold": round(eff_thr, 3), "catalyst_ok": catalyst_ok, "model_ready": model_ready,
@@ -1700,6 +1711,28 @@ def _compare_step(chosen_code, chosen_an, analyses: dict, exclude: set, universe
 
 
 def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str, Any]:
+    cfg = cfg or MAIN_CFG
+    trace = {'id':uuid.uuid4().hex,'started_at':utc_now_iso(),'sealed':False,'sections':{
+        'configuration':asdict(cfg),'inputs':{},'candidates':{},'requested_trade':bool(trade)}}
+    try:
+        return _run_tick(trade,cfg,trace)
+    except Exception as exc:
+        if not trace['sealed']:
+            try:
+                with _connect() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    # An ambiguous commit acknowledgement must not relabel actual fills as failed.
+                    if not conn.execute('SELECT 1 FROM aif_tick_audit WHERE id=?',(trace['id'],)).fetchone():
+                        audit.append(conn,trace['id'],cfg.fund_id,trace['started_at'],'failed',
+                            {**trace['sections'],'failure':{'exception_type':type(exc).__name__},
+                             'after_rollback':audit.account(conn,cfg.fund_id)})
+                    conn.commit()
+            except Exception:
+                logging.getLogger(__name__).warning('Paper tick audit unavailable; failure type=%s',type(exc).__name__)
+        raise
+
+
+def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
     """跑一轮：取价+日线+资金流→五维研判(含买点确认)→严谨卖出(移动止盈/硬止损/破位/利空/转弱)
     →催化剂确认买入→满仓换强→落库+人设解说。trade=False 只观察+盯市。cfg=某智能体配置(默认主账户)。事务失败回滚。"""
     cfg = cfg or MAIN_CFG
@@ -1707,6 +1740,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     init_ai_fund_db()
     if trade and not _in_session():
         trade = False  # ⭐硬闸门：非交易时段绝不买卖(无论谁调用)，A股收盘/周末只观察盯市
+    trace['sections']['effective_trade'] = bool(trade)
     # iFinD 未配置/配额耗尽不整体熔断：_quote 自动落新浪免费行情继续盯市与交易(2026-10-10 生产实证，
     # 此闸门曾致引擎 34 天静默停摆)；全源失效时下方 no_quotes 兜底退出。
 
@@ -1716,26 +1750,44 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         st0 = _state(conn, fund_id)
         learned_mult = {}  # Frozen baseline: learning is experimental until sample-out validation.
         performance_brake = _performance_brake(_stats(conn, fund_id))
-    md = _market_data(list(universe.keys()), priority=held_syms)
+    inputs = trace['sections']['inputs']
+    candidates = trace['sections']['candidates']
+    inputs.update(universe=dict(universe),quotes={},news={},analysis_at={},analyses={})
+    candidates.update({s:{'name':name,'actions':[]} for s,name in universe.items()})
+    md = copy.deepcopy(_market_data(list(universe.keys()), priority=held_syms))
+    trace['sections']['market_data'] = md
     regime = _market_regime_now()           # 大盘多空(沪深300 vs MA60)——第6.3 依据指数止损/收紧买入；驱动策略动态自适应
     regime_str = regime.get("regime")
     bear = regime_str == "bear"
     cycle = emotion_cycle.current_cycle(holidays=CN_MARKET_HOLIDAYS)   # 情绪周期四阶段(涨停池/梯队/炸板/溢价,进程缓存,失败=neutral 不误杀)
     cycle_gate = emotion_cycle.gate(cfg.style, cycle.get("stage"))     # 阶段×流派 → 买入闸门(禁买/门槛/仓位)
+    inputs.update(regime=copy.deepcopy(regime),cycle=copy.deepcopy(cycle),cycle_gate=dict(cycle_gate),learned_mult=dict(learned_mult))
     quotes, analyses = {}, {}
     scanned: dict[str, dict] = {}  # 本轮检索命中的本站近 24h 内容(按 id 去重)——情报吞吐量看点
     for code, name in universe.items():
-        q = _quote(code)
+        q = copy.deepcopy(_quote(code))
+        inputs['quotes'][code] = q
         if not (q and safe_float(q.get("latest"))):
+            candidates[code]['actions'].append({'side':'observe','reason':'missing_or_zero_quote'})
             continue
-        items = _our_content(name)
+        items = copy.deepcopy(_our_content(name))
+        inputs['news'][code] = items
         for it in items:
             if it.get("id") and float(it.get("age_h", 999.0)) <= 24:
                 scanned.setdefault(it["id"], it)
         quotes[code] = q
-        analyses[code] = _analyze(name, q, items, md.get(code), cfg, learned_mult, regime_str)
+        analysis_at = datetime.now(timezone.utc)
+        inputs['analysis_at'][code] = analysis_at.isoformat()
+        analyses[code] = _analyze(name, q, items, md.get(code), cfg, learned_mult, regime_str,as_of=analysis_at)
+        inputs['analyses'][code] = copy.deepcopy(analyses[code])
     if not quotes:
-        return {"ok": False, "reason": "no_quotes", "traded": [], "data_quality": get_snapshot(fund_id).get("data_quality")}
+        with _connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            proof = audit.append(conn,trace['id'],fund_id,trace['started_at'],'no_quotes',
+                {**trace['sections'],'after':audit.account(conn,fund_id)})
+            conn.commit();trace['sealed']=True
+        return {'ok':False,'reason':'no_quotes','traded':[],'audit':proof,
+                'data_quality':{'level':'degraded','label':'行情不可用','reasons':['no_quotes']}}
 
 
     traded, decisions, watch = [], [], []
@@ -1743,16 +1795,24 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     with _connect() as conn:
         conn.execute('BEGIN IMMEDIATE')  # Serialize state read + fills across threads/processes.
         now = utc_now_iso()  # Timestamp the committed observation after acquiring the write lock.
+        trace['sections']['executed_at'] = now
+        trace['sections']['before'] = audit.account(conn,fund_id)
+        trace['sections']['marks_before'] = {s:dict(r) if r else None for s in universe
+            for r in [conn.execute('SELECT price,ts FROM aif_marks WHERE symbol=?',(s,)).fetchone()]}
         st = _state(conn, fund_id); cash = float(st["cash"])
         # Recheck exchange clocks against marks under the same serialized fill
         # transaction: another worker may have committed a newer mark meanwhile.
         execution_quotes = {code:q for code,q in quotes.items() if execution.accepted_quote(conn,code,q)}
+        inputs['execution_quote_accepted'] = {code:code in execution_quotes for code in quotes}
         for code, q in quotes.items():
             if code in execution_quotes:
                 conn.execute("INSERT INTO aif_marks VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET price=excluded.price,ts=excluded.ts WHERE excluded.ts>=aif_marks.ts", (code, float(q["latest"]), policy.quote_time(q).astimezone(timezone.utc).isoformat()))
         held = {r["symbol"]: dict(r) for r in _positions(conn, fund_id)}
         if any(policy.valuation_price(conn, fund_id, p, quotes.get(code))[0] is None for code, p in held.items()):
-            return {'ok': False, 'reason': 'unpriced_holdings', 'traded': [], 'policy': policy.audit_metadata()}
+            proof = audit.append(conn,trace['id'],fund_id,trace['started_at'],'unpriced_holdings',
+                {**trace['sections'],'after':audit.account(conn,fund_id)})
+            conn.commit();trace['sealed']=True
+            return {'ok':False,'reason':'unpriced_holdings','traded':[],'policy':policy.audit_metadata(),'audit':proof}
         pre_trade_nav = cash + sum(float(p['qty'])*policy.valuation_price(conn,fund_id,p,quotes.get(code))[0]
                                    for code,p in held.items())
         # Preserve a pre-fill peak/breach too; fees and exits must not erase it.
@@ -1766,6 +1826,11 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         reentry_blocked = {r["symbol"] for r in recent_trades
                            if r["side"] == "sell" and _bj_date(r["ts"]) >= cooldown_start}
         daily_buys = sum(1 for r in recent_trades if r["side"] == "buy" and _bj_date(r["ts"]) == today_bj)
+        def blocked(code,side,reason,**facts):
+            candidates[code]['actions'].append({'side':side,'reason':reason,**facts})
+            return False
+        inputs.update(reentry_blocked=sorted(reentry_blocked),daily_buys_before=daily_buys,
+                      risk_control_before=dict(risk_control),recent_trades=[dict(r) for r in recent_trades])
 
         # 更新移动止盈高水位
         for code, pos in held.items():
@@ -1783,12 +1848,15 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             q = execution_quotes.get(code)
             price = safe_float(q.get("latest")) if q else None
             if not price or not policy.executable(q):
+                blocked(code,'sell','quote_clock_or_status_rejected')
                 continue
             # ⭐A股 T+1 铁律：当日买入的，当日不可卖出(含止损)——必须持有到下一交易日
             if _bj_date(pos.get("opened_at", "") or "") == today_bj:
+                blocked(code,'sell','t_plus_one')
                 continue
             # ⭐A股涨跌停：跌停封板卖不出(无人接盘)——含硬止损也只能等下一交易日
             if _at_lower_limit(code, pos.get("name", ""), safe_float(q.get("changeRatio"))):
+                blocked(code,'sell','lower_price_limit')
                 continue
             avg = float(pos["avg_cost"]); pnl = (price - avg) / avg if avg else 0.0
             an = analyses.get(code, {"score": 0.0, "thinking": [], "tech": {}, "scores": {}})
@@ -1798,6 +1866,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             except (ValueError, TypeError):
                 age_days = 0
             reason = policy.exit_reason(cfg, price, avg, hw, an, bear=bear, age_days=age_days)
+            if not reason:
+                blocked(code,'hold','no_exit_signal')
             if reason:
                 # 冲击成本：按上一已完成日成交额估算滑点，卖出按劣化价落袋（盯市仍用实时价，成交记账用有效价）
                 _ohlc = policy.completed_bars(md.get(code))
@@ -1834,35 +1904,46 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         # Fetching data happens outside the write lock. Include both other
         # workers' intervening exits and this round's exits in the loss brake.
         performance_brake = _performance_brake(_stats(conn,fund_id))
-        def _buy_allowed(an):
-            if risk_control['paused'] or not an.get("entry_ok"):
-                return False
+        inputs['performance_brake'] = dict(performance_brake)
+        def _entry_block_reason(an):
+            if risk_control['paused']:
+                return 'historical_drawdown_pause'
+            if not an.get('entry_ok'):
+                return 'entry_not_confirmed'
             # 情绪周期闸门(退潮/恶性分歧直接禁买) + 连亏停手铁律(连续两笔大亏 3 天内停手)
-            if cycle_gate.get("blocked") or performance_brake.get("blocked"):
-                return False
+            if cycle_gate.get('blocked'):
+                return 'cycle_blocked'
+            if performance_brake.get('blocked'):
+                return 'performance_brake'
             if an.get("score", 0) < float(an.get("entry_threshold", cfg.buy_threshold)) + performance_brake["thr_delta"] + cycle_gate.get("thr_delta", 0.0):
-                return False
+                return 'score_below_effective_threshold'
             if bear:
-                return an.get("score", 0) >= 0.30 and (
+                confirmed = an.get("score", 0) >= 0.30 and (
                     an.get("pattern") is not None
                     or (an.get("trend_template") or {}).get("stage") == "advancing"
                     or (an.get("msg_dir", 0) > 0.45 and an.get("fresh")))
-            return True
-        ranked = sorted(((c, analyses[c]) for c in quotes
-                         if c not in held and c not in sold_now and c not in reentry_blocked
-                         and daily_buys < cfg.max_daily_buys and _buy_allowed(analyses[c])),
-                        key=lambda x: x[1]["score"], reverse=True) if trade else []
+                if not confirmed:return 'bear_confirmation_missing'
+            return None
+        eligible = []
+        for code in quotes:
+            reason = ('observation_only' if not trade else 'already_held' if code in held else
+                      'sold_this_tick' if code in sold_now else 'reentry_cooldown' if code in reentry_blocked else
+                      'daily_buy_limit' if daily_buys>=cfg.max_daily_buys else _entry_block_reason(analyses[code]))
+            if reason:blocked(code,'buy',reason)
+            else:eligible.append((code,analyses[code]))
+        ranked = sorted(eligible,key=lambda x:x[1]['score'],reverse=True)
+        inputs['ranked_candidates'] = [c for c,_ in ranked]
 
         def _do_buy(code, an):
             nonlocal cash, daily_buys
             if daily_buys >= cfg.max_daily_buys or code in reentry_blocked:
-                return False
+                return blocked(code,'buy','daily_buy_limit_or_reentry_cooldown')
             price = safe_float(quotes[code].get("latest"))
             if not price or code not in execution_quotes:
-                return False
+                return blocked(code,'buy','quote_clock_or_status_rejected')
             # ⭐A股涨跌停：涨停封板买不进(无人卖出)——不模拟成交，避免「买在涨停板」的笑话
             if _at_upper_limit(code, universe.get(code, code), safe_float(quotes[code].get("changeRatio"))):
-                return False
+                return blocked(code,'buy','upper_price_limit')
             nav_now = cash  # Replaced below by canonical, fully priced portfolio valuation.
             # 单仓大小按流派系数 × 市场态势系数缩放：激进重仓(系数>1)/价值分散(<1)，再叠牛市加仓/熊市减仓；硬上限不超 50%
             size_mult = (cfg.pos_size_mult * (an.get("regime_adapt", {}).get("size_mult") or 1.0)
@@ -1871,13 +1952,14 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             cap = nav_now * min(0.5, 0.33 * size_mult)
             valued = {p["symbol"]: policy.valuation_price(conn, fund_id, p, quotes.get(p["symbol"])) for p in held.values()}
             if any(v[0] is None or v[1] for v in valued.values()):
-                return False  # No new risk against stale/incomplete portfolio valuation.
+                return blocked(code,'buy','stale_or_incomplete_portfolio_valuation')
             prices = {code_: v[0] for code_, v in valued.items()}
             nav_now = cash + sum(float(p["qty"]) * prices[p["symbol"]] for p in held.values())
             peak_row = conn.execute("SELECT peak FROM aif_risk_state WHERE fund_id=?", (fund_id,)).fetchone()
             peak = max(float(st["started_nav"]), float(peak_row["peak"] or 0) if peak_row else 0, nav_now)
             risk_cap = policy.risk_budget(code, nav_now, cash, list(held.values()), prices, cfg.hard_stop, peak)
             budget = min(cash, target, cap, risk_cap)
+            candidates[code]['sizing'] = dict(nav=nav_now,cash=cash,target=target,cap=cap,risk_cap=risk_cap,budget=budget,peak=peak)
             # 冲击成本：按上一已完成日成交额估算滑点，买入按劣化价成交（预算/手数都以有效价计算，保证现金不吃负）
             _ohlc = policy.completed_bars(md.get(code))
             _impact = _impact_cost_bps(_ohlc[-1] if _ohlc else None, budget)
@@ -1887,7 +1969,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             while qty > 0 and qty * price_eff + ledger.fee(qty * price_eff, 'buy') > budget:
                 qty -= step
             if qty <= 0 or (step == 1 and qty < 200):
-                return False
+                return blocked(code,'buy','budget_below_minimum_order',quantity=qty,effective_price=price_eff)
             amount = qty * price_eff; buy_fee = ledger.fee(amount, 'buy'); cash -= amount + buy_fee
             cost_price = (amount + buy_fee) / qty
             name = universe.get(code, code); now2 = utc_now_iso()
@@ -1926,16 +2008,21 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
 
         for code, an in ranked:
             if daily_buys >= cfg.max_daily_buys:
-                break
+                blocked(code,'buy','daily_buy_limit')
+                continue
             if len(held) < cfg.max_positions:
                 _do_buy(code, an)
             else:
+                if not policy.ROTATION_ACTIVE or cfg.model!='multifactor':
+                    blocked(code,'buy','position_limit_rotation_disabled')
+                    continue
                 # ⭐换仓卖出同样守 A股规则：当日新仓(T+1)不可卖、跌停封板卖不出——只在可卖持仓里挑最弱
                 sellable = [c for c in held
                             if _bj_date(held[c].get("opened_at", "") or "") != today_bj
                             and c in execution_quotes
                             and not _at_lower_limit(c, held[c].get("name", ""), safe_float((quotes.get(c) or {}).get("changeRatio")))]
                 if not sellable:
+                    blocked(code,'buy','position_limit_no_sellable_holding')
                     continue
                 weakest = min(sellable, key=lambda c: analyses.get(c, {}).get("score", 0.0))
                 ws = analyses.get(weakest, {}).get("score", 0.0)
@@ -1976,7 +2063,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                         held.pop(weakest, None); _do_buy(code, an)
 
         for decision in decisions:
-            conn.execute("UPDATE aif_trade SET policy_version=? WHERE id=?", (policy.VERSION, decision["tid"]))
+            conn.execute("UPDATE aif_trade SET policy_version=?,audit_id=? WHERE id=?", (policy.VERSION,trace['id'],decision['tid']))
+            candidates[decision['symbol']]['actions'].append({'side':decision['side'],'reason':'filled','trade_id':decision['tid']})
         for event_id, event_symbol, payload in record_events:
             ledger.enqueue(conn, event_id, fund_id, event_symbol, payload)
         # 3) 观察流（有催化剂没动手）
@@ -2105,7 +2193,11 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         ledger.record(conn, fund_id, now, nav, float(st["started_nav"]), trading_day=_is_trading_day())
         risk_control = execution.risk_status(conn,fund_id,nav,float(st['started_nav']))
         conn.execute("DELETE FROM aif_nav WHERE fund_id=? AND ts NOT IN (SELECT ts FROM aif_nav WHERE fund_id=? ORDER BY ts DESC LIMIT ?)", (fund_id, fund_id, NAV_HISTORY_KEEP))
+        proof = audit.append(conn,trace['id'],fund_id,trace['started_at'],'committed' if trade else 'observation_only',
+            {**trace['sections'],'after':audit.account(conn,fund_id),'risk_control_after':risk_control,
+             'fills':[dict(conn.execute('SELECT * FROM aif_trade WHERE id=? AND fund_id=?',(d['tid'],fund_id)).fetchone()) for d in decisions]})
         conn.commit()
+        trace['sealed'] = True
 
     with _connect() as event_conn:
         ledger.flush_events(event_conn, fund_id, data_store.record_confirmed)
@@ -2134,6 +2226,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
     return {"ok": True, "traded": traded, "watch": watch, "nav": nav, "regime": regime.get("regime"),
             "policy": policy.audit_metadata(),
             "risk_control": risk_control,
+            "audit": proof,
             "data_quality": {"level": "live" if trade and any(policy.executable(q) for q in quotes.values()) else "degraded",
                              "label": "实时模拟撮合" if trade and any(policy.executable(q) for q in quotes.values()) else "仅观察估值，未执行成交",
                              "detail": "新成交计入费用与风险预算；陈旧行情仅供估值，不增加新风险。"}}
@@ -2448,6 +2541,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
         item = {"ts": t["ts"], "kind": "trade", "side": t["side"], "symbol": t["symbol"], "name": t["name"] or t["symbol"],
                 "qty": float(t["qty"]), "price": round(float(t["price"]), 3),
                 "fee": t['fee'], "realized_pnl": t['realized_pnl'], "policy_version": t['policy_version'] or 'legacy-v1',
+                'audit_id':t['audit_id'],
                 "pnl_pct": round(float(t["pnl_pct"]), 2) if t["pnl_pct"] is not None else None,
                 "confidence": t["confidence"], "catalyst": t["catalyst"] or "", "buy_point": (t["buy_point"] if "buy_point" in t.keys() else "") or "",
                 "narrative": t["narrative"] or "", "scores": _loadj(t["scores"] if "scores" in t.keys() else "", {}),
@@ -2498,6 +2592,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     with _connect() as risk_conn:
         risk['max_drawdown_pct'] = abs(ledger.drawdown(risk_conn, fund_id, nav, started_nav))
         risk['control'] = execution.risk_status(risk_conn,fund_id,nav,started_nav)
+        audit_coverage = audit.coverage(risk_conn,fund_id)
     risk['drawdown_basis'] = '所有已留存盘中观测，含初始本金；与榜单统一，历史回填起点受原始记录保留范围限制'
     try:
         days_running = (datetime.now(timezone.utc) - datetime.fromisoformat(st["started_at"].replace("Z", "+00:00"))).days + 1
@@ -2536,7 +2631,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
         "history": history, "data_quality": dq,
         "benchmark": (bench or {}).get("series", []), "benchmark_name": (bench or {}).get("name", "沪深300"),
         "alpha_pct": (bench or {}).get("alpha"), "bench_ret": (bench or {}).get("bench_ret"),
-        "risk": risk,
+        "risk": risk, 'audit_coverage':audit_coverage,
         "days_running": days_running, "decisions_total": decisions_total, "scan": scan, "wire": _latest_wire(),
         # 权威交易日/时段状态（前端据此显示开闭市，不再自行按星期推算→节假日不再误显「撮合中」）
         "is_trading_day": _is_trading_day(), "in_session": _in_session(), "phase": _phase()[0], "phase_label": _phase()[1],
@@ -2857,6 +2952,7 @@ def get_arena() -> dict[str, Any]:
                     "reentry_cooldown_days": cfg.reentry_cooldown_days, "daily_buy_cap": cfg.max_daily_buys,
                     "review": review, "valuation_stale": nv.get('valuation_stale', False),
                     "risk_control": nv['risk_control'],
+                    'audit_coverage':audit.coverage(conn,cfg.fund_id),
                     "last_action": last_action, "last_tick_at": nv["last_tick_at"], "is_main": cfg.fund_id == FUND_ID,
                     "performance": account_performance(conn, cfg.fund_id, nv, trading_day=_is_trading_day()),
                     "history": _nav_history(conn, cfg.fund_id, started_nav),   # 归一化净值火花线
