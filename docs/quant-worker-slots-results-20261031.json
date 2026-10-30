@@ -1,0 +1,61 @@
+{
+  "schema": "qr-worker-slot-review-v1",
+  "evidence": {
+    "before-reproduction.json": {
+      "scope": "isolated synthetic worker overlap, no strategy promotion",
+      "configured_global_limit": 4,
+      "configured_owner_limit": 2,
+      "observed_worker_peak": 6,
+      "owner_a_workers_overlapped": 4,
+      "cancelled_first_jobs_remain_cancelled": true,
+      "production_writes": false
+    },
+    "after-reproduction.json": {
+      "scope": "isolated synthetic worker overlap, no strategy promotion",
+      "configured_global_limit": 4,
+      "configured_owner_limit": 2,
+      "observed_worker_peak": 4,
+      "owner_a_workers_overlapped": 2,
+      "replacement_denials": [
+        "研究任务已满，取消后的后台计算退出前仍占用名额",
+        "研究任务已满，取消后的后台计算退出前仍占用名额",
+        "研究任务已满，取消后的后台计算退出前仍占用名额"
+      ],
+      "slots_after_real_exit": 0,
+      "new_submission_after_exit_accepted": true,
+      "cancelled_jobs_not_reopened": true,
+      "production_writes": false
+    },
+    "original-reproduction.json": {
+      "rows": [
+        {
+          "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+          "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+          "reproduced_exactly": true
+        },
+        {
+          "experiment": "0839ee7717d143c7b991bddbfb55f891",
+          "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+          "reproduced_exactly": true
+        }
+      ],
+      "prices_unchanged": true
+    }
+  },
+  "source_sha256": {
+    "quant_research.py": "6842e3063d4dd19943bd1d7f5f554912d8feac01f09e14699a6f9f9035ebf064",
+    "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+    "quant_worker_slots.py": "60be1e020c4dcafcc3686d52645a9311a8023d0eeb8a05dea0d8257424a6d7c3",
+    "quant_event_service.py": "7f334482ccb5eab9adc6821f86b12dae80b27261397ddc36b99fb676542a74e1",
+    "quant_calendar_service.py": "19fe5702850349e6243f9b0ca4eb57c3856f890618a210c038cf04a984709443",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+  },
+  "evidence_sha256": {
+    "before-reproduction.json": "775d3736b0e8dc3a02088f30d47e677b8f169add9c4123658e7488dcaa9e3edc",
+    "after-reproduction.json": "c6088a2a1e25c8ee62d1c5986d60da2e505ea44374a357f60c6422da4c2e81c0",
+    "original-reproduction.json": "5d4ed1bea62768ae9e74fc264b80e69307dfbbe3c875f7560e7cd03221e0642f"
+  },
+  "production_deployed": false,
+  "commercial_ready": false,
+  "profitability_validated": false
+}

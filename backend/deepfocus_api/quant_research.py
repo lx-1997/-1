@@ -1,5 +1,7 @@
 """Durable, bounded research orchestration and end-of-day paper tracking."""
 import asyncio
+from functools import wraps
+import uuid
 from contextvars import ContextVar
 from threading import Lock
 import hashlib
@@ -59,9 +61,27 @@ async def _paper_io(function, *args, **kwargs):
 BENCHMARKS = {'000300': '沪深300', '000905': '中证500', '000852': '中证1000'}
 
 
+def research_worker(function):
+    """Claim once and retain the DB slot until every owned thread has drained."""
+    @wraps(function)
+    async def run(owner,identity,request):
+        attempt = _PaperAttempt()
+        context = _paper_attempt.set(attempt)
+        ticket = uuid.uuid4().hex
+        try:
+            if not await _paper_io(store.claim_worker,owner,identity,ticket): return
+            return await function(owner,identity,request)
+        finally:
+            try: await _paper_io(store.finish_worker,owner,identity,ticket)
+            finally:
+                _paper_attempt.reset(context)
+                if _tasks.get(identity) is asyncio.current_task(): _tasks.pop(identity,None)
+    return run
+
+
 @lru_cache(maxsize=1)
 def kernel_identity():
-    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'quant_calendar.py', 'quant_paper_calendar.py', 'quant_calendar_service.py', 'quant_calendar_store.py', 'quant_exchange_schedule.py', 'quant_research_store.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
+    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'quant_calendar.py', 'quant_paper_calendar.py', 'quant_calendar_service.py', 'quant_calendar_store.py', 'quant_exchange_schedule.py', 'quant_research_store.py', 'quant_worker_slots.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
     return engine.digest({f: hashlib.sha256(Path(__file__).with_name(f).read_bytes()).hexdigest() for f in files})
 
 
@@ -103,11 +123,12 @@ def quality(dataset, start, end, *, benchmark=None, expected_symbols=None):
                          '当前采用不复权价格，收益不含分红；不可与含分红指数直接等同']}
 
 
+@research_worker
 async def execute(owner, identity, request):
     async def update(**kwargs):
         return await _paper_io(store.update, owner, identity, **kwargs)
     try:
-        await update(progress=8, stage='获取真实不复权日线')
+        if not await update(progress=8, stage='获取真实不复权日线'): return
         reference = None
         if request.get('replay_of'):
             reference = await _paper_io(store.get, owner, request['replay_of'])
@@ -121,9 +142,11 @@ async def execute(owner, identity, request):
         if not await update(progress=30, stage='真实行情已封存，开始训练与滚动验证', extra={'dataset': dataset, 'quality': q}): return
         # SQLite callback also observes cancellation; the CPU worker then exits
         # at the next fold, and its terminal result is never written over cancel.
+        attempt = _paper_attempt.get()
         def progress(value, stage):
+            if attempt is not None and attempt.cancelled: raise InterruptedError('cancelled computation')
             if not store.update(owner, identity, progress=value, stage=stage): raise InterruptedError('cancelled')
-        result = await asyncio.wait_for(asyncio.to_thread(engine.walk_forward, dataset, request['symbols'], request['benchmark'], request['capital'], progress), 180)
+        result = await asyncio.wait_for(_paper_io(engine.walk_forward, dataset, request['symbols'], request['benchmark'], request['capital'], progress), 180)
         coverage_reasons = []
         from datetime import date
         if q['first'] and (date.fromisoformat(q['first'])-date.fromisoformat(request['start_date'])).days > 20:
@@ -151,8 +174,6 @@ async def execute(owner, identity, request):
         # No provider response bodies, keys or connection strings in public errors.
         message = str(exc) if isinstance(exc, ValueError) else '数据源或计算暂不可用，请稍后重试；失败实验已保留'
         await update(status='failed', stage=message, extra={'error_code': type(exc).__name__})
-    finally:
-        _tasks.pop(identity, None)
 
 
 def submit(owner, key, request):

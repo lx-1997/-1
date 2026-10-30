@@ -3,7 +3,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from contextlib import contextmanager
-from . import db
+from . import db, quant_worker_slots as slots
 from .quant_research_engine import digest
 
 
@@ -17,6 +17,7 @@ def connect():
     try:
         c.execute('CREATE TABLE IF NOT EXISTS qr_experiment(id TEXT PRIMARY KEY,owner TEXT NOT NULL,request_key TEXT NOT NULL,input_hash TEXT NOT NULL,status TEXT NOT NULL,progress INTEGER NOT NULL,stage TEXT NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(owner,request_key))')
         c.execute('CREATE TABLE IF NOT EXISTS qr_paper(id TEXT PRIMARY KEY,owner TEXT NOT NULL,experiment TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,updated TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(owner,experiment))')
+        slots.schema(c)
         c.execute('CREATE INDEX IF NOT EXISTS qr_owner ON qr_experiment(owner,created)')
         c.execute('CREATE INDEX IF NOT EXISTS qr_running ON qr_experiment(status,updated)')
         c.commit()
@@ -55,17 +56,19 @@ def create(owner, key, request, kernel):
         if old:
             if old['input_hash'] != fingerprint: raise ValueError('同一提交标识对应了不同参数')
             return public(old), False
-        # Interrupted leases are not silently retried. A real in-flight job has
-        # a bounded 5-minute lifetime; callers see its failure after expiry.
+        # Expiry closes the user-visible job, never a still-live worker slot.
+        # Work is not silently retried; callbacks/drain release active slots.
         from datetime import timedelta
         cutoff = (datetime.now(timezone.utc)-timedelta(minutes=5)).isoformat()
         c.execute("UPDATE qr_experiment SET status='failed',stage='执行进程中断或超时，请重新提交',updated=? WHERE status='running' AND updated<?", (now(), cutoff))
-        own = c.execute("SELECT count(*) FROM qr_experiment WHERE owner=? AND status IN ('queued','running')", (owner,)).fetchone()[0]
-        total = c.execute("SELECT count(*) FROM qr_experiment WHERE status IN ('queued','running')").fetchone()[0]
-        if own >= 2 or total >= 4: raise RuntimeError('研究任务已满，请等待当前任务完成')
+        slots.retire_unclaimed(c)
+        slots.reap_dead(c,now())
+        own,total=slots.counts(c,owner)
+        if own >= 2 or total >= 4: raise RuntimeError('研究任务已满，取消后的后台计算退出前仍占用名额')
         identity, stamp = uuid.uuid4().hex, now()
         payload = {'request': request, 'kernel': kernel, 'events': [{'at': stamp, 'stage': '已登记不可变研究参数'}]}
         c.execute('INSERT INTO qr_experiment VALUES(?,?,?,?,?,?,?,?,?,?)', (identity, owner, key, fingerprint, 'running', 1, '等待真实行情', stamp, stamp, json.dumps(payload, ensure_ascii=False)))
+        slots.reserve(c,owner,identity)
         return get_in(c, owner, identity), True
 
 
@@ -82,11 +85,12 @@ def update(owner, identity, *, status='running', progress=0, stage='', extra=Non
         p['events'] = (p.get('events', []) + [{'at': now(), 'stage': stage}])[-100:]
         c.execute('UPDATE qr_experiment SET status=?,progress=?,stage=?,updated=?,payload=? WHERE owner=? AND id=? AND status=?',
                   (status, progress, stage, now(), json.dumps(p, ensure_ascii=False, allow_nan=False), owner, identity, 'running'))
+        if status != 'running': slots.retire_unclaimed(c)
         return True
 
 
 def cancel(owner, identity):
-    update(owner, identity, status='cancelled', stage='已取消，未完成结果不会发布')
+    update(owner, identity, status='cancelled', stage='已取消，未完成结果不会发布；后台计算退出前仍占名额')
     return get(owner, identity)
 
 
@@ -123,4 +127,19 @@ def expire_interrupted():
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc)-timedelta(minutes=5)).isoformat()
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
         c.execute("UPDATE qr_experiment SET status='failed',stage='执行进程中断或超时，请重新提交',updated=? WHERE status='running' AND updated<?", (now(),cutoff))
+        slots.retire_unclaimed(c)
+        slots.reap_dead(c,now())
+
+
+def claim_worker(owner,identity,token):
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        return slots.claim(c,owner,identity,token)
+
+
+def finish_worker(owner,identity,token):
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        return slots.finish(c,owner,identity,token,now())
