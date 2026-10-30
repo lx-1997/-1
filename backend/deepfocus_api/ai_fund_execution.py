@@ -39,3 +39,30 @@ def risk_status(conn, fund_id, nav, initial):
     return {'paused':paused,'peak':peak,'worst_drawdown_pct':worst,
             'reason':'historical_drawdown_limit' if paused else None,
             'reset_policy':'no_automatic_resume'}
+
+
+def fill_id(trace):
+    import uuid
+    number=trace.get('fills_issued',0)+1
+    trace['fills_issued']=number
+    return uuid.uuid5(uuid.NAMESPACE_URL,f"paper-fill:{trace['id']}:{number}").hex
+
+
+def fill_price(price,impact_bps,side):
+    from decimal import Decimal,ROUND_CEILING,ROUND_FLOOR
+    raw=Decimal(str(price))*(1+(1 if side=='buy' else -1)*Decimal(str(impact_bps))/10000)
+    rounded=raw.quantize(Decimal('.01'),rounding=ROUND_CEILING if side=='buy' else ROUND_FLOOR)
+    return float(rounded) if rounded>0 else None
+
+
+def cash_change(cash,amount,fee,side):
+    from decimal import Decimal
+    # Preserve any legacy sub-cent remainder; never reset an existing account.
+    change=Decimal(str(amount))*(1 if side=='sell' else -1)-Decimal(str(fee))
+    return float(Decimal(str(cash))+change)
+
+
+def cost_basis(conn,fund_id,position):
+    from decimal import Decimal
+    row=conn.execute('SELECT amount FROM aif_position_basis WHERE fund_id=? AND symbol=?',(fund_id,position['symbol'])).fetchone()
+    return (Decimal(row['amount']),True) if row else (Decimal(str(position['avg_cost']))*Decimal(str(position['qty'])),False)

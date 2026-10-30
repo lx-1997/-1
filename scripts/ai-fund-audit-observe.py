@@ -27,6 +27,7 @@ os.environ['DEEPFOCUS_DATA_DIR']=str(a.workspace)
 os.environ['DEEPFOCUS_AIFUND_DB_PATH']=str(a.workspace/'paper.sqlite3')
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from deepfocus_api import ai_fund as af,ai_fund_audit as audit
+from deepfocus_api.ai_fund_replay import verify_execution
 
 def no_network(*args,**kwargs):raise RuntimeError('Network is disabled in isolated observation exercise')
 socket.socket.connect=no_network
@@ -73,8 +74,11 @@ for cfg in af.ROSTER:
         record=audit.load(c,cfg.fund_id,result['audit']['id'])
         proof=audit.verify_analysis(record)
         chain=audit.verify_chain(c,cfg.fund_id)
+    financial=verify_execution(record)
+    assert financial['accepted'],financial
     results.append({'fund_id':cfg.fund_id,'audit':result['audit'],'status':record['manifest']['status'],
-                    'candidate_count':len(record['sections']['candidates']),'score_verification':proof,'chain':chain})
+                    'candidate_count':len(record['sections']['candidates']),'score_verification':proof,
+                    'financial_execution_verification':financial,'chain':chain})
 with af._connect() as c:
     assert c.execute('SELECT count(*) FROM aif_trade').fetchone()[0]==0
     assert c.execute('SELECT count(*) FROM aif_trade_outbox').fetchone()[0]==0

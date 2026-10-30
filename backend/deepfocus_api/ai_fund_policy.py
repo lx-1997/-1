@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 import math
 import re
 
-VERSION = 'paper-v2.2'
+VERSION = 'paper-v2.3'
 LEARNING_ACTIVE = False
 ROTATION_ACTIVE = False
 BJ = timezone(timedelta(hours=8))
@@ -165,19 +165,20 @@ def order_quantity(code, budget, price):
     return max(0, math.floor(budget / price / 100) * 100)
 
 
-def valuation_price(conn, fund_id, position, quote):
+def valuation_price(conn, fund_id, position, quote, now=None):
     """Never substitute average cost for a missing quote."""
     price = number((quote or {}).get('latest'))
     stamp = quote_time(quote or {})
     row = conn.execute('SELECT price,ts FROM aif_marks WHERE symbol=?', (position['symbol'],)).fetchone()
     previous_stamp = quote_time({'time': row['ts']}) if row else None
-    if (price and price > 0 and stamp and stamp <= datetime.now(timezone.utc)+timedelta(seconds=5)
+    now = now or datetime.now(timezone.utc)
+    if (price and price > 0 and stamp and stamp <= now+timedelta(seconds=5)
             and (previous_stamp is None or stamp > previous_stamp
                  or (stamp == previous_stamp and price == float(row['price'])))):
-        return price, not executable(quote), 'quote'
+        return price, not executable(quote,now), 'quote'
     if row and number(row['price']) and float(row['price']) > 0:
         return float(row['price']), True, 'last_trusted_mark'
-    row = conn.execute("SELECT price FROM aif_trade WHERE fund_id=? AND symbol=? AND side='buy' ORDER BY ts DESC LIMIT 1",
+    row = conn.execute("SELECT price FROM aif_trade WHERE fund_id=? AND symbol=? AND side='buy' ORDER BY ts DESC,rowid DESC LIMIT 1",
                        (fund_id, position['symbol'])).fetchone()
     if row and number(row['price']) and float(row['price']) > 0:
         return float(row['price']), True, 'last_execution'

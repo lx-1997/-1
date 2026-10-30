@@ -11,13 +11,14 @@ import platform
 import sqlite3
 import zlib
 
-SCHEMA='paper-tick-audit-v1'
+SCHEMA='paper-tick-audit-v2'
 MAX_RAW_BLOB=4*1024*1024
 MAX_TICK_RAW=12*1024*1024
 MAX_STORED_BYTES=512*1024*1024
 SOURCE_NAMES=('ai_fund.py','ai_fund_policy.py','ai_fund_execution.py','ai_fund_ledger.py',
-              'ai_fund_audit.py','ai_fund_market.py','ai_fund_evolve.py','bull_playbook.py','emotion_cycle.py','shared_utils.py')
-PINNED_SOURCE={'python':platform.python_version(),'files':{
+              'ai_fund_audit.py','ai_fund_market.py','ai_fund_replay.py','ai_fund_replay_worker.py',
+              'ai_fund_evolve.py','bull_playbook.py','emotion_cycle.py','shared_utils.py')
+PINNED_SOURCE={'python':platform.python_version(),'sqlite':sqlite3.sqlite_version,'files':{
     n:Path(__file__).with_name(n).read_text() for n in SOURCE_NAMES}}
 
 
@@ -55,13 +56,24 @@ def account(conn,fund_id):
     positions=[dict(p) for p in conn.execute('SELECT * FROM aif_position WHERE fund_id=? ORDER BY symbol',(fund_id,))]
     marks={p['symbol']:dict(r) if r else None for p in positions
            for r in [conn.execute('SELECT price,ts FROM aif_marks WHERE symbol=?',(p['symbol'],)).fetchone()]}
-    return {'state':dict(st) if st else None,'risk':dict(risk) if risk else None,'positions':positions,'marks':marks}
+    bases={p['symbol']:r['amount'] if r else None for p in positions
+           for r in [conn.execute('SELECT amount FROM aif_position_basis WHERE fund_id=? AND symbol=?',(fund_id,p['symbol'])).fetchone()]}
+    return {'state':dict(st) if st else None,'risk':dict(risk) if risk else None,'positions':positions,'marks':marks,'position_basis':bases}
 
 
 def append(conn,identity,fund_id,ts,status,sections):
     """Caller owns BEGIN IMMEDIATE + commit/rollback, including the fills."""
     if not conn.in_transaction:raise AuditError('Tick audit requires the fill transaction')
     if status not in {'committed','observation_only','no_quotes','unpriced_holdings','failed'}:raise AuditError('Unknown audit status')
+    sections=dict(sections)
+    frame=sections.get('execution_history')
+    if frame and 'rows' in frame:
+        names=[]
+        for i in range(0,len(frame['rows']),256):
+            name='_financial_history_'+str(i//256)
+            if name in sections:raise AuditError('Reserved financial history section')
+            sections[name]=frame['rows'][i:i+256];names.append(name)
+        sections['execution_history']={'columns':frame['columns'],'count':len(frame['rows']),'chunks':names}
     packed={k:encode(v) for k,v in {**sections,'source':PINNED_SOURCE}.items()}
     if any(len(b)>MAX_RAW_BLOB for b in packed.values()) or sum(map(len,packed.values()))>MAX_TICK_RAW:
         raise AuditError('Tick audit input exceeds storage limit; fills not committed')
@@ -175,3 +187,45 @@ def storage(conn):
     return {'used_bytes':used,'limit_bytes':MAX_STORED_BYTES,'blobs':blobs['n'],'ticks':manifests['n'],
             'status':'near_capacity' if used>=MAX_STORED_BYTES*.8 else 'ok',
             'capacity_policy':'no_silent_pruning_no_unjournaled_fills'}
+
+
+HISTORY_COLUMNS=('rowid','id','fund_id','ts','symbol','name','side','qty','price','amount',
+                 'pnl_pct','reason','fee','realized_pnl','policy_version','audit_id')
+
+
+def history(conn,fund_id):
+    return {'columns':list(HISTORY_COLUMNS),'rows':[list(r) for r in conn.execute(
+        'SELECT '+','.join(HISTORY_COLUMNS)+' FROM aif_trade WHERE fund_id=? ORDER BY rowid',(fund_id,))]}
+
+
+def history_rows(sections):
+    value=sections.get('execution_history')
+    if not value or value.get('columns')!=list(HISTORY_COLUMNS):raise AuditError('Financial execution history frame missing')
+    rows=[]
+    for name in value['chunks']:
+        block=sections.get(name)
+        if not isinstance(block,list) or any(len(r)!=len(HISTORY_COLUMNS) for r in block):raise AuditError('Financial execution history block missing')
+        rows.extend(block)
+    if len(rows)!=value['count']:raise AuditError('Financial execution history count mismatch')
+    return [dict(zip(HISTORY_COLUMNS,r)) for r in rows]
+
+
+def capture_frame(conn,fund_id,universe,execution_at):
+    from datetime import datetime,timedelta,timezone
+    day=datetime.fromisoformat(execution_at).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    before=account(conn,fund_id)
+    symbols=set(universe)|{p['symbol'] for p in before['positions']}
+    marks={s:dict(r) if r else None for s in sorted(symbols)
+           for r in [conn.execute('SELECT price,ts FROM aif_marks WHERE symbol=?',(s,)).fetchone()]}
+    daily=conn.execute('SELECT * FROM aif_nav_daily WHERE fund_id=? AND date=?',(fund_id,day)).fetchone()
+    return {'executed_at':execution_at,'before':before,'execution_history':history(conn,fund_id),
+            'marks_before':marks,'daily_before':dict(daily) if daily else None}
+
+
+def observations(conn,fund_id,ts,audit_id):
+    from datetime import datetime,timedelta,timezone
+    day=datetime.fromisoformat(ts).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    nav=conn.execute('SELECT * FROM aif_nav WHERE fund_id=? AND ts=?',(fund_id,ts)).fetchone()
+    daily=conn.execute('SELECT * FROM aif_nav_daily WHERE fund_id=? AND date=?',(fund_id,day)).fetchone()
+    outbox=[dict(r) for r in conn.execute('SELECT o.* FROM aif_trade_outbox o JOIN aif_trade t ON o.trade_id=t.id WHERE t.fund_id=? AND t.audit_id=? ORDER BY o.trade_id',(fund_id,audit_id))]
+    return {'nav':dict(nav) if nav else None,'daily':dict(daily) if daily else None,'outbox_at_commit':outbox}

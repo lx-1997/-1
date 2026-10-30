@@ -12,6 +12,7 @@ import time
 from . import db
 import uuid
 from dataclasses import asdict, dataclass, field
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -282,6 +283,7 @@ def init_ai_fund_db() -> None:
             name TEXT, mem_type TEXT NOT NULL, ts TEXT NOT NULL, updated_at TEXT, title TEXT NOT NULL, detail TEXT,
             confidence REAL NOT NULL, weight REAL NOT NULL, pnl_impact REAL, src TEXT, seen_count INTEGER DEFAULT 1)""")
         conn.execute("CREATE TABLE IF NOT EXISTS aif_marks(symbol TEXT PRIMARY KEY,price REAL NOT NULL,ts TEXT NOT NULL)")
+        conn.execute('CREATE TABLE IF NOT EXISTS aif_position_basis(fund_id TEXT,symbol TEXT,amount TEXT NOT NULL,PRIMARY KEY(fund_id,symbol))')
         for col, decl in (("policy_version", "TEXT"),):
             _add_col(conn, "aif_trade", col, decl)
         _add_col(conn, 'aif_trade', 'audit_id', 'TEXT')
@@ -316,7 +318,7 @@ def init_ai_fund_db() -> None:
 
 
 def _state(conn, fund_id: str = FUND_ID): return conn.execute("SELECT * FROM aif_state WHERE fund_id=?", (fund_id,)).fetchone()
-def _positions(conn, fund_id: str = FUND_ID): return conn.execute("SELECT * FROM aif_position WHERE fund_id=?", (fund_id,)).fetchall()
+def _positions(conn, fund_id: str = FUND_ID): return conn.execute("SELECT * FROM aif_position WHERE fund_id=? ORDER BY symbol", (fund_id,)).fetchall()
 
 
 # --------------------------------------------------------------------------- #
@@ -952,7 +954,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
 # --------------------------------------------------------------------------- #
 
 def _stats(conn, fund_id: str = FUND_ID) -> dict:
-    rows = conn.execute("SELECT pnl_pct,ts FROM aif_trade WHERE fund_id=? AND side='sell' AND pnl_pct IS NOT NULL ORDER BY ts ASC",
+    rows = conn.execute("SELECT pnl_pct,ts FROM aif_trade WHERE fund_id=? AND side='sell' AND pnl_pct IS NOT NULL ORDER BY ts ASC,rowid ASC",
                         (fund_id,)).fetchall()
     pnls = [float(r["pnl_pct"]) for r in rows]
     closed = len(pnls); wins = sum(1 for p in pnls if p > 0)
@@ -962,7 +964,7 @@ def _stats(conn, fund_id: str = FUND_ID) -> dict:
             streak += 1
         else:
             break
-    all_rows = conn.execute("SELECT side,symbol,ts FROM aif_trade WHERE fund_id=? ORDER BY ts ASC", (fund_id,)).fetchall()
+    all_rows = conn.execute("SELECT side,symbol,ts FROM aif_trade WHERE fund_id=? ORDER BY ts ASC,rowid ASC", (fund_id,)).fetchall()
     recent = pnls[-12:]
     # 最近一次平仓时间(UTC iso)：连亏停手铁律的计时基准(由 _performance_brake 消费)
     last_sell_iso = max((row["ts"] for row in all_rows if row["side"] == "sell" and row["ts"]), default=None)
@@ -983,7 +985,7 @@ def _stats(conn, fund_id: str = FUND_ID) -> dict:
             "last_sell_ts": last_sell_iso}
 
 
-def _performance_brake(stats: dict) -> dict:
+def _performance_brake(stats: dict, now=None) -> dict:
     """按已平仓战绩自动降档：亏损期提高门槛、缩仓、减少换仓；样本不足时不妄调参数。"""
     closed = int(stats.get("closed") or 0)
     # 铁律：连续两笔大亏(近两笔均值 ≤ -3.5%)→ 直接停手休息 3 天，绝不连续挨打。
@@ -993,7 +995,7 @@ def _performance_brake(stats: dict) -> dict:
     if closed >= 2 and last2 is not None and last2 <= -3.5 and last_ts:
         try:
             lt = datetime.fromisoformat(str(last_ts).replace("Z", "+00:00"))
-            rested_days = (datetime.now(timezone.utc) - lt).total_seconds() / 86400.0
+            rested_days = ((now or datetime.now(timezone.utc)) - lt).total_seconds() / 86400.0
         except Exception:  # noqa: BLE001
             rested_days = 0.0
         if rested_days <= 3.0:
@@ -1720,7 +1722,10 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
     cfg = cfg or MAIN_CFG
     fund_id = cfg.fund_id
     init_ai_fund_db()
-    if trade and not _in_session():
+    entry_at = datetime.now(timezone.utc)
+    trace['sections']['entry_at'] = entry_at.isoformat()
+    trace['sections']['entry_session_allowed'] = _in_session(entry_at.astimezone(BJ_TZ))
+    if trade and not trace['sections']['entry_session_allowed']:
         trade = False  # ⭐硬闸门：非交易时段绝不买卖(无论谁调用)，A股收盘/周末只观察盯市
     trace['sections']['effective_trade'] = bool(trade)
     # iFinD 未配置/配额耗尽不整体熔断：_quote 自动落新浪免费行情继续盯市与交易(2026-10-10 生产实证，
@@ -1734,7 +1739,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
         performance_brake = _performance_brake(_stats(conn, fund_id))
     inputs = trace['sections']['inputs']
     candidates = trace['sections']['candidates']
-    inputs.update(universe=dict(universe),quotes={},news={},analysis_at={},analyses={})
+    inputs.update(universe=dict(universe),universe_order=list(universe),quotes={},news={},analysis_at={},analyses={})
     candidates.update({s:{'name':name,'actions':[]} for s,name in universe.items()})
     md = copy.deepcopy(_market_data(list(universe.keys()), priority=held_syms))
     trace['sections']['market_data'] = md
@@ -1765,6 +1770,8 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
     if not quotes:
         with _connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
+            trace['sections'].update(audit.capture_frame(conn,fund_id,universe,utc_now_iso()))
+            inputs['policy_runtime'] = {'learning':policy.LEARNING_ACTIVE,'rotation':policy.ROTATION_ACTIVE}
             proof = audit.append(conn,trace['id'],fund_id,trace['started_at'],'no_quotes',
                 {**trace['sections'],'after':audit.account(conn,fund_id)})
             conn.commit();trace['sealed']=True
@@ -1777,38 +1784,41 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
     with _connect() as conn:
         conn.execute('BEGIN IMMEDIATE')  # Serialize state read + fills across threads/processes.
         now = utc_now_iso()  # Timestamp the committed observation after acquiring the write lock.
-        trace['sections']['executed_at'] = now
-        trace['sections']['before'] = audit.account(conn,fund_id)
-        trace['sections']['marks_before'] = {s:dict(r) if r else None for s in universe
-            for r in [conn.execute('SELECT price,ts FROM aif_marks WHERE symbol=?',(s,)).fetchone()]}
+        execution_at = datetime.fromisoformat(now)
+        trade = trade and _in_session(execution_at.astimezone(BJ_TZ))
+        trace['sections']['effective_trade'] = bool(trade)
+        trace['sections'].update(audit.capture_frame(conn,fund_id,universe,now))
+        inputs['policy_runtime'] = {'learning':policy.LEARNING_ACTIVE,'rotation':policy.ROTATION_ACTIVE}
+        inputs['execution_trading_day'] = _is_trading_day(execution_at.astimezone(BJ_TZ))
         st = _state(conn, fund_id); cash = float(st["cash"])
         # Recheck exchange clocks against marks under the same serialized fill
         # transaction: another worker may have committed a newer mark meanwhile.
-        execution_quotes = {code:q for code,q in quotes.items() if execution.accepted_quote(conn,code,q)}
+        execution_quotes = {code:q for code,q in quotes.items() if execution.accepted_quote(conn,code,q,execution_at)}
         inputs['execution_quote_accepted'] = {code:code in execution_quotes for code in quotes}
         for code, q in quotes.items():
             if code in execution_quotes:
                 conn.execute("INSERT INTO aif_marks VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET price=excluded.price,ts=excluded.ts WHERE excluded.ts>=aif_marks.ts", (code, float(q["latest"]), policy.quote_time(q).astimezone(timezone.utc).isoformat()))
         held = {r["symbol"]: dict(r) for r in _positions(conn, fund_id)}
-        if any(policy.valuation_price(conn, fund_id, p, quotes.get(code))[0] is None for code, p in held.items()):
+        if any(policy.valuation_price(conn, fund_id, p, quotes.get(code),execution_at)[0] is None for code, p in held.items()):
             proof = audit.append(conn,trace['id'],fund_id,trace['started_at'],'unpriced_holdings',
                 {**trace['sections'],'after':audit.account(conn,fund_id)})
             conn.commit();trace['sealed']=True
             return {'ok':False,'reason':'unpriced_holdings','traded':[],'policy':policy.audit_metadata(),'audit':proof}
-        pre_trade_nav = cash + sum(float(p['qty'])*policy.valuation_price(conn,fund_id,p,quotes.get(code))[0]
+        pre_trade_nav = cash + sum(float(p['qty'])*policy.valuation_price(conn,fund_id,p,quotes.get(code),execution_at)[0]
                                    for code,p in held.items())
         # Preserve a pre-fill peak/breach too; fees and exits must not erase it.
         risk_control = execution.risk_status(conn,fund_id,pre_trade_nav,float(st['started_nav']))
         ledger.record(conn,fund_id,now,pre_trade_nav,float(st['started_nav']),trading_day=False)
-        today_bj = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
-        cooldown_start = (datetime.now(BJ_TZ) - timedelta(days=max(0, cfg.reentry_cooldown_days - 1))).strftime("%Y-%m-%d")
+        today_bj = execution_at.astimezone(BJ_TZ).strftime('%Y-%m-%d')
+        cooldown_start = (execution_at.astimezone(BJ_TZ) - timedelta(days=max(0, cfg.reentry_cooldown_days - 1))).strftime("%Y-%m-%d")
         recent_trades = conn.execute(
-            "SELECT side,symbol,ts FROM aif_trade WHERE fund_id=? ORDER BY ts DESC LIMIT 500",
+            "SELECT side,symbol,ts FROM aif_trade WHERE fund_id=? ORDER BY ts DESC,rowid DESC LIMIT 500",
             (fund_id,)).fetchall()
         reentry_blocked = {r["symbol"] for r in recent_trades
                            if r["side"] == "sell" and _bj_date(r["ts"]) >= cooldown_start}
         daily_buys = sum(1 for r in recent_trades if r["side"] == "buy" and _bj_date(r["ts"]) == today_bj)
         def blocked(code,side,reason,**facts):
+            candidates.setdefault(code,{'name':held.get(code,{}).get('name',code),'actions':[],'late_holding':True})
             candidates[code]['actions'].append({'side':side,'reason':reason,**facts})
             return False
         inputs.update(reentry_blocked=sorted(reentry_blocked),daily_buys_before=daily_buys,
@@ -1829,7 +1839,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
         for code, pos in (list(held.items()) if trade else []):
             q = execution_quotes.get(code)
             price = safe_float(q.get("latest")) if q else None
-            if not price or not policy.executable(q):
+            if not price or not policy.executable(q,execution_at):
                 blocked(code,'sell','quote_clock_or_status_rejected')
                 continue
             # ⭐A股 T+1 铁律：当日买入的，当日不可卖出(含止损)——必须持有到下一交易日
@@ -1844,7 +1854,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
             an = analyses.get(code, {"score": 0.0, "thinking": [], "tech": {}, "scores": {}})
             t = an.get("tech", {}); hw = float(pos.get("high_water") or avg)
             try:
-                age_days = (datetime.now(BJ_TZ).date() - datetime.fromisoformat(pos["opened_at"].replace("Z", "+00:00")).astimezone(BJ_TZ).date()).days
+                age_days = (execution_at.astimezone(BJ_TZ).date() - datetime.fromisoformat(pos["opened_at"].replace("Z", "+00:00")).astimezone(BJ_TZ).date()).days
             except (ValueError, TypeError):
                 age_days = 0
             reason = policy.exit_reason(cfg, price, avg, hw, an, bear=bear, age_days=age_days)
@@ -1852,17 +1862,22 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                 blocked(code,'hold','no_exit_signal')
             if reason:
                 # 冲击成本：按上一已完成日成交额估算滑点，卖出按劣化价落袋（盯市仍用实时价，成交记账用有效价）
-                liquidity = market.completed_bar(md.get(code),code,require_fresh=False)
+                liquidity = market.completed_bar(md.get(code),code,now=execution_at,require_fresh=False)
                 _impact = _impact_cost_bps(liquidity,float(pos['qty'])*price)
                 candidates[code]['cost_observation'] = {'basis':liquidity['amount_basis'] if liquidity else 'provisional_floor_no_verified_liquidity',
                     'reference_date':liquidity['d'] if liquidity else None,'impact_bps':_impact}
-                price_eff = price * (1 - _impact / 10000.0)
-                qty = float(pos["qty"]); amount = qty * price_eff
-                sell_fee = ledger.fee(amount, 'sell'); cash += amount - sell_fee
-                realized_pnl = amount - sell_fee - avg * qty
-                pnl = realized_pnl / (avg * qty) if avg and qty else 0.0
+                price_eff = execution.fill_price(price,_impact,'sell')
+                if price_eff is None:
+                    blocked(code,'sell','no_positive_tick_price');continue
+                qty = float(pos['qty']); amount = float(Decimal(str(qty))*Decimal(str(price_eff)))
+                sell_fee = ledger.fee(amount,'sell');cash=execution.cash_change(cash,amount,sell_fee,'sell')
+                basis,verified_basis=execution.cost_basis(conn,fund_id,pos)
+                realized_pnl=float(Decimal(str(amount))-Decimal(str(sell_fee))-basis)
+                pnl=realized_pnl/float(basis) if basis else 0.
+                candidates[code]['cost_basis_verified']=verified_basis
                 conn.execute("DELETE FROM aif_position WHERE fund_id=? AND symbol=?", (fund_id, code))
-                tid = uuid.uuid4().hex
+                conn.execute('DELETE FROM aif_position_basis WHERE fund_id=? AND symbol=?',(fund_id,code))
+                tid = execution.fill_id(trace)
                 think = an["thinking"] + [{"icon": "🧠", "label": "卖点", "text": reason + "。"}]
                 if _impact >= 10:
                     think.append({"icon": "💧", "label": "成交",
@@ -1887,7 +1902,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
         # 2) 买入：先过研判分，再过买点确认闸门；大盘转空时只做最强的(高分 + 书法买点/上升段)，宁踏空不接飞刀
         # Fetching data happens outside the write lock. Include both other
         # workers' intervening exits and this round's exits in the loss brake.
-        performance_brake = _performance_brake(_stats(conn,fund_id))
+        performance_brake = _performance_brake(_stats(conn,fund_id),execution_at)
         inputs['performance_brake'] = dict(performance_brake)
         def _entry_block_reason(an):
             if risk_control['paused']:
@@ -1925,7 +1940,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
             price = safe_float(quotes[code].get("latest"))
             if not price or code not in execution_quotes:
                 return blocked(code,'buy','quote_clock_or_status_rejected')
-            liquidity = market.completed_bar(md.get(code),code)
+            liquidity = market.completed_bar(md.get(code),code,now=execution_at)
             if liquidity is None:
                 return blocked(code,'buy','market_contract_unverified_or_stale')
             # ⭐A股涨跌停：涨停封板买不进(无人卖出)——不模拟成交，避免「买在涨停板」的笑话
@@ -1937,7 +1952,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                          * performance_brake["size_mult"] * cycle_gate.get("size_mult", 1.0))
             target = nav_now * (0.18 + 0.14 * an["confidence"]) * size_mult
             cap = nav_now * min(0.5, 0.33 * size_mult)
-            valued = {p["symbol"]: policy.valuation_price(conn, fund_id, p, quotes.get(p["symbol"])) for p in held.values()}
+            valued = {p["symbol"]: policy.valuation_price(conn, fund_id, p, quotes.get(p["symbol"]),execution_at) for p in held.values()}
             if any(v[0] is None or v[1] for v in valued.values()):
                 return blocked(code,'buy','stale_or_incomplete_portfolio_valuation')
             prices = {code_: v[0] for code_, v in valued.items()}
@@ -1950,16 +1965,19 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
             # 冲击成本：按上一已完成日成交额估算滑点，买入按劣化价成交（预算/手数都以有效价计算，保证现金不吃负）
             _impact = _impact_cost_bps(liquidity,budget)
             candidates[code]['cost_observation'] = {'basis':liquidity['amount_basis'],'reference_date':liquidity['d'],'impact_bps':_impact}
-            price_eff = price * (1 + _impact / 10000.0)
+            price_eff = execution.fill_price(price,_impact,'buy')
+            if price_eff is None:return blocked(code,'buy','no_positive_tick_price')
             qty = policy.order_quantity(code, budget, price_eff)
             step = 1 if code.startswith(('688','689')) else 100
             while qty > 0 and qty * price_eff + ledger.fee(qty * price_eff, 'buy') > budget:
                 qty -= step
             if qty <= 0 or (step == 1 and qty < 200):
                 return blocked(code,'buy','budget_below_minimum_order',quantity=qty,effective_price=price_eff)
-            amount = qty * price_eff; buy_fee = ledger.fee(amount, 'buy'); cash -= amount + buy_fee
-            cost_price = (amount + buy_fee) / qty
-            name = universe.get(code, code); now2 = utc_now_iso()
+            amount=float(Decimal(str(qty))*Decimal(str(price_eff)));buy_fee=ledger.fee(amount,'buy')
+            cash=execution.cash_change(cash,amount,buy_fee,'buy')
+            basis=Decimal(str(amount))+Decimal(str(buy_fee))
+            cost_price=float(basis/Decimal(str(qty)))
+            name = universe.get(code, code); now2 = now
             think = list(an["thinking"])
             cmp = _compare_step(code, an, analyses, set(held) | {code}, universe)  # 为什么买它不买别的(横向对比)
             if cmp:
@@ -1977,8 +1995,9 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                               "text": f"按上一已完成日成交额估算冲击成本 {_impact:.0f}bp，成交价 {price_eff:.2f}。"})
             conn.execute("INSERT INTO aif_position (fund_id,symbol,name,qty,avg_cost,opened_at,updated_at,high_water) VALUES (?,?,?,?,?,?,?,?)",
                          (fund_id, code, name, qty, cost_price, now2, now2, price_eff))
+            conn.execute('INSERT INTO aif_position_basis VALUES(?,?,?)',(fund_id,code,str(basis)))
             held[code] = {"symbol": code, "name": name, "qty": qty, "avg_cost": cost_price, "high_water": price_eff, "opened_at": now2}
-            tid = uuid.uuid4().hex
+            tid = execution.fill_id(trace)
             conn.execute("INSERT INTO aif_trade (id,fund_id,ts,symbol,name,side,qty,price,amount,pnl_pct,confidence,catalyst,thinking,narrative,scores,buy_point,catalyst_ref,composite,reason)"
                          " VALUES (?,?,?,?,?,'buy',?,?,?,NULL,?,?,?,?,?,?,?,?,?)",
                          (tid, fund_id, now2, code, name, qty, round(price_eff, 3), amount, an.get("confidence"), an.get("catalyst"),
@@ -2021,23 +2040,29 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                     if q and safe_float(q.get("latest")):
                         wp = safe_float(q.get("latest")); wpos = held[weakest]
                         # 换仓卖出同样计冲击成本：按上一已完成日成交额估算滑点后落袋
-                        liquidity = market.completed_bar(md.get(weakest),weakest,require_fresh=False)
+                        liquidity = market.completed_bar(md.get(weakest),weakest,now=execution_at,require_fresh=False)
                         _wimpact = _impact_cost_bps(liquidity,float(wpos['qty'])*wp)
                         candidates[weakest]['cost_observation'] = {'basis':liquidity['amount_basis'] if liquidity else 'provisional_floor_no_verified_liquidity',
                             'reference_date':liquidity['d'] if liquidity else None,'impact_bps':_wimpact}
-                        wpe = wp * (1 - _wimpact / 10000.0)
+                        wpe = execution.fill_price(wp,_wimpact,'sell')
+                        if wpe is None:
+                            blocked(weakest,'sell','no_positive_tick_price');continue
                         wpnl = (wpe - float(wpos["avg_cost"])) / float(wpos["avg_cost"]) if wpos["avg_cost"] else 0.0
-                        sell_fee = ledger.fee(float(wpos["qty"]) * wpe, 'sell')
-                        realized_pnl = float(wpos["qty"]) * (wpe-float(wpos["avg_cost"])) - sell_fee
-                        wpnl = realized_pnl / (float(wpos["qty"]) * float(wpos["avg_cost"])) if wpos["avg_cost"] else 0
-                        cash += float(wpos["qty"]) * wpe - sell_fee
+                        amount=float(Decimal(str(wpos['qty']))*Decimal(str(wpe)))
+                        sell_fee=ledger.fee(amount,'sell')
+                        basis,verified_basis=execution.cost_basis(conn,fund_id,wpos)
+                        realized_pnl=float(Decimal(str(amount))-Decimal(str(sell_fee))-basis)
+                        wpnl=realized_pnl/float(basis) if basis else 0.
+                        candidates[weakest]['cost_basis_verified']=verified_basis
+                        cash=execution.cash_change(cash,amount,sell_fee,'sell')
                         conn.execute("DELETE FROM aif_position WHERE fund_id=? AND symbol=?", (fund_id, weakest))
-                        tid = uuid.uuid4().hex; wan = analyses.get(weakest, {"thinking": [], "scores": {}})
+                        conn.execute('DELETE FROM aif_position_basis WHERE fund_id=? AND symbol=?',(fund_id,weakest))
+                        tid = execution.fill_id(trace); wan = analyses.get(weakest, {"thinking": [], "scores": {}})
                         rtxt = f"换仓：{wpos['name']}（{ws:+.2f}）让位给更强的 {universe.get(code,code)}（{an['score']:+.2f}）"
                         think = wan.get("thinking", []) + [{"icon": "🔄", "label": "换仓", "text": rtxt + "。"}]
                         conn.execute("INSERT INTO aif_trade (id,fund_id,ts,symbol,name,side,qty,price,amount,pnl_pct,confidence,catalyst,thinking,narrative,scores,buy_point,catalyst_ref,composite,reason)"
                                      " VALUES (?,?,?,?,?,'sell',?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                     (tid, fund_id, utc_now_iso(), weakest, wpos["name"], float(wpos["qty"]), round(wpe, 3), float(wpos["qty"])*wpe, wpnl*100,
+                                     (tid, fund_id, now, weakest, wpos["name"], float(wpos["qty"]), round(wpe, 3), amount, wpnl*100,
                                       wan.get("confidence"), wan.get("catalyst"), json.dumps(think, ensure_ascii=False), "",
                                       json.dumps(wan.get("scores", {}), ensure_ascii=False), "",
                                       json.dumps(wan.get("catalyst_ref"), ensure_ascii=False) if wan.get("catalyst_ref") else None,
@@ -2173,17 +2198,18 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
         mkt = 0.0
         for pos in _positions(conn, fund_id):
             q = quotes.get(pos["symbol"])
-            mark, stale, basis = policy.valuation_price(conn, fund_id, pos, q)
+            mark, stale, basis = policy.valuation_price(conn, fund_id, pos, q,execution_at)
             if mark is None:
                 raise RuntimeError('Unpriced paper holding: NAV observation not persisted')
             mkt += float(pos["qty"]) * mark
         nav = cash + mkt
         conn.execute("INSERT OR REPLACE INTO aif_nav (fund_id,ts,nav,cash,market_value) VALUES (?,?,?,?,?)", (fund_id, now, nav, cash, mkt))
-        ledger.record(conn, fund_id, now, nav, float(st["started_nav"]), trading_day=_is_trading_day())
+        ledger.record(conn, fund_id, now, nav, float(st["started_nav"]), trading_day=inputs['execution_trading_day'])
         risk_control = execution.risk_status(conn,fund_id,nav,float(st['started_nav']))
         conn.execute("DELETE FROM aif_nav WHERE fund_id=? AND ts NOT IN (SELECT ts FROM aif_nav WHERE fund_id=? ORDER BY ts DESC LIMIT ?)", (fund_id, fund_id, NAV_HISTORY_KEEP))
         proof = audit.append(conn,trace['id'],fund_id,trace['started_at'],'committed' if trade else 'observation_only',
             {**trace['sections'],'after':audit.account(conn,fund_id),'risk_control_after':risk_control,
+             'execution_observations':audit.observations(conn,fund_id,now,trace['id']),
              'fills':[dict(conn.execute('SELECT * FROM aif_trade WHERE id=? AND fund_id=?',(d['tid'],fund_id)).fetchone()) for d in decisions]})
         conn.commit()
         trace['sealed'] = True

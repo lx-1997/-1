@@ -14,7 +14,7 @@ def simulation(monkeypatch,tmp_path):
         monkeypatch.setattr(af,name,lambda *a,_v=value,**k:_v)
     monkeypatch.setattr(af,'_market_regime_now',lambda:{'regime':'bull'})
     monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':source_fixture('002594')})
-    monkeypatch.setattr(af,'_in_session',lambda:True)
+    monkeypatch.setattr(af,'_in_session',lambda *args:True)
     monkeypatch.setattr(af.emotion_cycle,'current_cycle',lambda **kw:{'stage':'neutral'})
     monkeypatch.setattr(af.data_store,'record_confirmed',lambda *a,**k:True)
     monkeypatch.setattr(af,'_analyze',lambda *a,**k:dict(entry_ok=True,entry_threshold=0,score=.9,confidence=.9,
