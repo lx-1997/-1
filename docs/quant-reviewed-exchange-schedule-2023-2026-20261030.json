@@ -1,0 +1,481 @@
+{
+  "schema": "reviewed-annual-exchange-schedule-v1",
+  "scope": "annual_planned_sessions_only",
+  "years": [
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "records": [
+    {
+      "exchange": "SSE",
+      "year": 2023,
+      "closed_ranges": [
+        [
+          "2022-12-31",
+          "2023-01-02"
+        ],
+        [
+          "2023-01-21",
+          "2023-01-27"
+        ],
+        [
+          "2023-04-05",
+          "2023-04-05"
+        ],
+        [
+          "2023-04-29",
+          "2023-05-03"
+        ],
+        [
+          "2023-06-22",
+          "2023-06-24"
+        ],
+        [
+          "2023-09-29",
+          "2023-10-06"
+        ]
+      ],
+      "resumes_on": [
+        "2023-01-03",
+        "2023-01-30",
+        "2023-04-06",
+        "2023-05-04",
+        "2023-06-26",
+        "2023-10-09"
+      ],
+      "weekend_makeup_days_closed": [
+        "2023-01-28",
+        "2023-01-29",
+        "2023-04-23",
+        "2023-05-06",
+        "2023-06-25",
+        "2023-10-07",
+        "2023-10-08"
+      ],
+      "url": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20221227_5714458.shtml",
+      "available_at": "2022-12-27T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.224532+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "20f8940d0facbfc762ef9d18fe0d755d096d6e9bb323adc8640bf479d93c37f0",
+      "body_sha256": "1dece2596d390f7d6678f7b8e71177c81cc01897c89b91ebd55cd64b75ff504a",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "81965ff717d09f315e054a8353288c657b9c84ff410f5f92033830234acc3322"
+    },
+    {
+      "exchange": "SSE",
+      "year": 2024,
+      "closed_ranges": [
+        [
+          "2023-12-30",
+          "2024-01-01"
+        ],
+        [
+          "2024-02-09",
+          "2024-02-17"
+        ],
+        [
+          "2024-04-04",
+          "2024-04-06"
+        ],
+        [
+          "2024-05-01",
+          "2024-05-05"
+        ],
+        [
+          "2024-06-10",
+          "2024-06-10"
+        ],
+        [
+          "2024-09-15",
+          "2024-09-17"
+        ],
+        [
+          "2024-10-01",
+          "2024-10-07"
+        ]
+      ],
+      "resumes_on": [
+        "2024-01-02",
+        "2024-02-19",
+        "2024-04-08",
+        "2024-05-06",
+        "2024-06-11",
+        "2024-09-18",
+        "2024-10-08"
+      ],
+      "weekend_makeup_days_closed": [
+        "2024-02-04",
+        "2024-02-18",
+        "2024-04-07",
+        "2024-04-28",
+        "2024-05-11",
+        "2024-09-14",
+        "2024-09-29",
+        "2024-10-12"
+      ],
+      "url": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20231226_5733939.shtml",
+      "available_at": "2023-12-26T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.225061+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "f614daa5a6a53916e47ee1ac8e7682d2f15369f0f7d0f90611819a6daad92263",
+      "body_sha256": "dad35709035adb02ac5662ce3a440e357f821afad411ce1b81f977f24bbc6605",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "bd9bdb597f9b33f5bd90e06a624c358b33e4e4ea6eb1a61981679fe41d7b1d23"
+    },
+    {
+      "exchange": "SSE",
+      "year": 2025,
+      "closed_ranges": [
+        [
+          "2025-01-01",
+          "2025-01-01"
+        ],
+        [
+          "2025-01-28",
+          "2025-02-04"
+        ],
+        [
+          "2025-04-04",
+          "2025-04-06"
+        ],
+        [
+          "2025-05-01",
+          "2025-05-05"
+        ],
+        [
+          "2025-05-31",
+          "2025-06-02"
+        ],
+        [
+          "2025-10-01",
+          "2025-10-08"
+        ]
+      ],
+      "resumes_on": [
+        "2025-01-02",
+        "2025-02-05",
+        "2025-04-07",
+        "2025-05-06",
+        "2025-06-03",
+        "2025-10-09"
+      ],
+      "weekend_makeup_days_closed": [
+        "2025-01-26",
+        "2025-02-08",
+        "2025-04-27",
+        "2025-09-28",
+        "2025-10-11"
+      ],
+      "url": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20241223_10767108.shtml",
+      "available_at": "2024-12-23T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.225182+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "d403c40f29bbf1fe7f39b02b7fb93c9a0bfbd71f8f04c6350c3b5050921bf889",
+      "body_sha256": "9022e12e7bd431fc61d08a55b85dbcd51d53fca7977b9a1dc5d5bc4ad5504afb",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "6270b49dd8a137fb6735a16f154eb8cf6664bf2854dce4a34b27526be7b264e1"
+    },
+    {
+      "exchange": "SSE",
+      "year": 2026,
+      "closed_ranges": [
+        [
+          "2026-01-01",
+          "2026-01-03"
+        ],
+        [
+          "2026-02-15",
+          "2026-02-23"
+        ],
+        [
+          "2026-04-04",
+          "2026-04-06"
+        ],
+        [
+          "2026-05-01",
+          "2026-05-05"
+        ],
+        [
+          "2026-06-19",
+          "2026-06-21"
+        ],
+        [
+          "2026-09-25",
+          "2026-09-27"
+        ],
+        [
+          "2026-10-01",
+          "2026-10-07"
+        ]
+      ],
+      "resumes_on": [
+        "2026-01-05",
+        "2026-02-24",
+        "2026-04-07",
+        "2026-05-06",
+        "2026-06-22",
+        "2026-09-28",
+        "2026-10-08"
+      ],
+      "weekend_makeup_days_closed": [
+        "2026-01-04",
+        "2026-02-14",
+        "2026-02-28",
+        "2026-05-09",
+        "2026-09-20",
+        "2026-10-10"
+      ],
+      "url": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20251222_10802507.shtml",
+      "available_at": "2025-12-22T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.225250+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "ff188c710b8904758c185eb955e9eaa2c9bd7c2061af984d4f1d743f899c12a4",
+      "body_sha256": "858159b04d8c1b691b0bb6f3a095673578c03d54cf121d3e056bcec1677fc3af",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "8cfdb2f9fdb899c2849c4c0a56facf247d84de3a9b8449dc143952b64335e231"
+    },
+    {
+      "exchange": "SZSE",
+      "year": 2023,
+      "closed_ranges": [
+        [
+          "2022-12-31",
+          "2023-01-02"
+        ],
+        [
+          "2023-01-21",
+          "2023-01-27"
+        ],
+        [
+          "2023-04-05",
+          "2023-04-05"
+        ],
+        [
+          "2023-04-29",
+          "2023-05-03"
+        ],
+        [
+          "2023-06-22",
+          "2023-06-24"
+        ],
+        [
+          "2023-09-29",
+          "2023-10-06"
+        ]
+      ],
+      "resumes_on": [
+        "2023-01-03",
+        "2023-01-30",
+        "2023-04-06",
+        "2023-05-04",
+        "2023-06-26",
+        "2023-10-09"
+      ],
+      "weekend_makeup_days_closed": [
+        "2023-01-28",
+        "2023-01-29",
+        "2023-04-23",
+        "2023-05-06",
+        "2023-06-25",
+        "2023-10-07",
+        "2023-10-08"
+      ],
+      "url": "https://www.szse.cn/disclosure/notice/general/t20221227_598022.html",
+      "available_at": "2022-12-27T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.683227+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "85e2a05b8968f1a4cadd975184962b648cf2cb2cea0071314f0e81bc17f1df96",
+      "body_sha256": "637bf5013de127271653bca8df2f21eb8c509a7abb4aefc72800931f0f115216",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "6a63413d4e10e0e7e8ca9c20e147eadd79924dec4f9fe613a060db2b8ed972ae"
+    },
+    {
+      "exchange": "SZSE",
+      "year": 2024,
+      "closed_ranges": [
+        [
+          "2023-12-30",
+          "2024-01-01"
+        ],
+        [
+          "2024-02-09",
+          "2024-02-17"
+        ],
+        [
+          "2024-04-04",
+          "2024-04-06"
+        ],
+        [
+          "2024-05-01",
+          "2024-05-05"
+        ],
+        [
+          "2024-06-10",
+          "2024-06-10"
+        ],
+        [
+          "2024-09-15",
+          "2024-09-17"
+        ],
+        [
+          "2024-10-01",
+          "2024-10-07"
+        ]
+      ],
+      "resumes_on": [
+        "2024-01-02",
+        "2024-02-19",
+        "2024-04-08",
+        "2024-05-06",
+        "2024-06-11",
+        "2024-09-18",
+        "2024-10-08"
+      ],
+      "weekend_makeup_days_closed": [
+        "2024-02-04",
+        "2024-02-18",
+        "2024-04-07",
+        "2024-04-28",
+        "2024-05-11",
+        "2024-09-14",
+        "2024-09-29",
+        "2024-10-12"
+      ],
+      "url": "https://www.szse.cn/disclosure/notice/t20231226_605108.html",
+      "available_at": "2023-12-26T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.683339+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "2c9906bac2116f3bc6190f0d0a74e0be40f1e4307f71e34cc12007d411e88b13",
+      "body_sha256": "fb066accea60cac3ff68a851c2ccc054ba82652edcc32f1f20ddb7e94c2f82e8",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "f6c77864d41ebc03a9ddf22ff31edbf190cb9ab59f439be98df29ef7cfac6832"
+    },
+    {
+      "exchange": "SZSE",
+      "year": 2025,
+      "closed_ranges": [
+        [
+          "2025-01-01",
+          "2025-01-01"
+        ],
+        [
+          "2025-01-28",
+          "2025-02-04"
+        ],
+        [
+          "2025-04-04",
+          "2025-04-06"
+        ],
+        [
+          "2025-05-01",
+          "2025-05-05"
+        ],
+        [
+          "2025-05-31",
+          "2025-06-02"
+        ],
+        [
+          "2025-10-01",
+          "2025-10-08"
+        ]
+      ],
+      "resumes_on": [
+        "2025-01-02",
+        "2025-02-05",
+        "2025-04-07",
+        "2025-05-06",
+        "2025-06-03",
+        "2025-10-09"
+      ],
+      "weekend_makeup_days_closed": [
+        "2025-01-26",
+        "2025-02-08",
+        "2025-04-27",
+        "2025-09-28",
+        "2025-10-11"
+      ],
+      "url": "https://www.szse.cn/disclosure/notice/general/t20241223_611283.html",
+      "available_at": "2024-12-23T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.683677+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "1c5da711eadf27308c84f12b5908ef461fa9dc739d1476512da2754249c90c1f",
+      "body_sha256": "33e48f7e5b3e0e041454e21cddbf49a0f3e708abc5ce498ce64a29310ff15ae9",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "4a18036ccf2494dc6d133cadc1cc52bfd494338a1543e90aa519eb96a46ee573"
+    },
+    {
+      "exchange": "SZSE",
+      "year": 2026,
+      "closed_ranges": [
+        [
+          "2026-01-01",
+          "2026-01-03"
+        ],
+        [
+          "2026-02-15",
+          "2026-02-23"
+        ],
+        [
+          "2026-04-04",
+          "2026-04-06"
+        ],
+        [
+          "2026-05-01",
+          "2026-05-05"
+        ],
+        [
+          "2026-06-19",
+          "2026-06-21"
+        ],
+        [
+          "2026-09-25",
+          "2026-09-27"
+        ],
+        [
+          "2026-10-01",
+          "2026-10-07"
+        ]
+      ],
+      "resumes_on": [
+        "2026-01-05",
+        "2026-02-24",
+        "2026-04-07",
+        "2026-05-06",
+        "2026-06-22",
+        "2026-09-28",
+        "2026-10-08"
+      ],
+      "weekend_makeup_days_closed": [
+        "2026-01-04",
+        "2026-02-14",
+        "2026-02-28",
+        "2026-05-09",
+        "2026-09-20",
+        "2026-10-10"
+      ],
+      "url": "https://investor.szse.cn/disclosure/notice/general/t20251222_618087.html",
+      "available_at": "2025-12-22T23:59:59+08:00",
+      "observed_at": "2026-10-30T15:00:01.729104+00:00",
+      "reviewed_at": "2026-10-30T15:06:21.416008+00:00",
+      "source_sha256": "1656d8708d5faed33c7588538639d96128f39fdface02cfa6eb66d796c40f14e",
+      "body_sha256": "858159b04d8c1b691b0bb6f3a095673578c03d54cf121d3e056bcec1677fc3af",
+      "review_method": "assistant_read_notice_body_and_cross_exchange_comparison",
+      "reviewed_facts_digest": "8b39c74b082e74d825bb50ef6070607a0f4160a51034ecd3491114c65109c557"
+    }
+  ],
+  "source_files": {
+    "20f8940d0facbfc762ef9d18fe0d755d096d6e9bb323adc8640bf479d93c37f0": "SSE-2023.html",
+    "f614daa5a6a53916e47ee1ac8e7682d2f15369f0f7d0f90611819a6daad92263": "SSE-2024.html",
+    "d403c40f29bbf1fe7f39b02b7fb93c9a0bfbd71f8f04c6350c3b5050921bf889": "SSE-2025.html",
+    "ff188c710b8904758c185eb955e9eaa2c9bd7c2061af984d4f1d743f899c12a4": "SSE-2026.html",
+    "85e2a05b8968f1a4cadd975184962b648cf2cb2cea0071314f0e81bc17f1df96": "SZSE-2023.html",
+    "2c9906bac2116f3bc6190f0d0a74e0be40f1e4307f71e34cc12007d411e88b13": "SZSE-2024.html",
+    "1c5da711eadf27308c84f12b5908ef461fa9dc739d1476512da2754249c90c1f": "SZSE-2025.html",
+    "1656d8708d5faed33c7588538639d96128f39fdface02cfa6eb66d796c40f14e": "SZSE-2026.html"
+  },
+  "unexpected_closure_search_complete": false,
+  "historical_point_in_time_verified": false,
+  "capture_runner_sha256": "8278340f2b3a419e77f9d2b27866b115555bd8d63c9a8f47dc004be8c3becaa6"
+}

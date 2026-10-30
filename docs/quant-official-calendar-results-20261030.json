@@ -1,0 +1,230 @@
+{
+  "calendar_manifest_digest": "1f15ffd3b8b8876d53b7dac9fffaff8569c8e1c6c5ce40519da1ebe003f331bc",
+  "review_sha256": "2c5fd72d76c41e16db404e17c8e507aad436149e8793f9f7ef39858fd6a2f304",
+  "source_pins": {
+    "quant-exchange-calendar-review.py": "d2cc5dc05a6c4997dd23ce0769fd242fb98e99f7f4c6367eb96dcf008462422c",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca"
+  },
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_reproduced_exactly": true,
+      "original_result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "requested_end": "2026-10-30",
+      "completed_through": "2026-10-29",
+      "status": "matches_plan",
+      "symbols": {
+        "600519": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "000001": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "300750": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "000300": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        }
+      },
+      "common_omission_injection": {
+        "removed_date": "2025-04-28",
+        "status": "rejected",
+        "all_symbols_detected": true
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_reproduced_exactly": true,
+      "original_result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "requested_end": "2026-10-30",
+      "completed_through": "2026-10-29",
+      "status": "matches_plan",
+      "symbols": {
+        "600036": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "600900": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "000333": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        },
+        "000300": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-29",
+          "expected_sessions": 729,
+          "observed_sessions": 729,
+          "expected_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "observed_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        }
+      },
+      "common_omission_injection": {
+        "removed_date": "2025-04-28",
+        "status": "rejected",
+        "all_symbols_detected": true
+      }
+    }
+  ],
+  "official_index_confirmation": {
+    "references": [
+      {
+        "index_code": "000300",
+        "source_sha256": "b14779b72c8b30b1ed8600a2f0d902d633c9733bfa83bea2cfc283f095efab99",
+        "observed_at": "2026-10-30T13:31:08.837089+00:00",
+        "plan_check": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-30",
+          "expected_sessions": 730,
+          "observed_sessions": 730,
+          "expected_dates_digest": "30e8df3d304bdbf536003e69ff4da1b68856fe66bece7618e118c8d46c3dfdea",
+          "observed_dates_digest": "30e8df3d304bdbf536003e69ff4da1b68856fe66bece7618e118c8d46c3dfdea",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        }
+      },
+      {
+        "index_code": "H00300",
+        "source_sha256": "d2dbe6a92c0950d96561cdd585fa18fdcac581a0a69e22ed7f94315903b88d24",
+        "observed_at": "2026-10-30T13:31:08.930377+00:00",
+        "plan_check": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-30",
+          "expected_sessions": 730,
+          "observed_sessions": 730,
+          "expected_dates_digest": "30e8df3d304bdbf536003e69ff4da1b68856fe66bece7618e118c8d46c3dfdea",
+          "observed_dates_digest": "30e8df3d304bdbf536003e69ff4da1b68856fe66bece7618e118c8d46c3dfdea",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        }
+      },
+      {
+        "index_code": "N00300",
+        "source_sha256": "1bbb34578b2975120f813e2a9bc82de116c324fcd57356ddf34a6865afebc2fb",
+        "observed_at": "2026-10-30T13:31:09.045328+00:00",
+        "plan_check": {
+          "status": "matches_plan",
+          "start": "2023-10-26",
+          "end": "2026-10-30",
+          "expected_sessions": 730,
+          "observed_sessions": 730,
+          "expected_dates_digest": "30e8df3d304bdbf536003e69ff4da1b68856fe66bece7618e118c8d46c3dfdea",
+          "observed_dates_digest": "30e8df3d304bdbf536003e69ff4da1b68856fe66bece7618e118c8d46c3dfdea",
+          "missing_planned_sessions": [],
+          "unexpected_sessions": [],
+          "annual_notice_plan_checked": true,
+          "actual_exchange_sessions_certified": false,
+          "security_status_verified": false,
+          "historical_point_in_time_verified": false
+        }
+      }
+    ],
+    "interpretation": "Current official index histories agree with annual planned dates on this interval; not a full exceptional-closure census or historical PIT/security-status certification"
+  },
+  "production_deployed": false,
+  "promotion_allowed": false,
+  "scope": "retrospective_offline_annual_plan_check_not_actual_session_certificate"
+}
