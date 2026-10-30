@@ -18,11 +18,15 @@ def day(ts):
     return datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(BJ).date().isoformat()
 
 
+def _daily(conn, fund_id, ts, nav):
+    conn.execute('INSERT INTO aif_nav_daily(fund_id,date,ts,nav) VALUES(?,?,?,?) '
+                 'ON CONFLICT(fund_id,date) DO UPDATE SET ts=excluded.ts,nav=excluded.nav WHERE excluded.ts>=aif_nav_daily.ts',
+                 (fund_id, day(ts), ts, nav))
+
+
 def record(conn, fund_id, ts, nav, initial, *, trading_day=True):
     if trading_day:
-        conn.execute('INSERT INTO aif_nav_daily(fund_id,date,ts,nav) VALUES(?,?,?,?) '
-                     'ON CONFLICT(fund_id,date) DO UPDATE SET ts=excluded.ts,nav=excluded.nav WHERE excluded.ts>=aif_nav_daily.ts',
-                     (fund_id, day(ts), ts, nav))
+        _daily(conn,fund_id,ts,nav)
     previous = conn.execute('SELECT peak,worst FROM aif_risk_state WHERE fund_id=?', (fund_id,)).fetchone()
     peak = max(initial, nav, float(previous['peak']) if previous else initial)
     worst = min(float(previous['worst']) if previous else 0, (nav/peak-1)*100 if peak else 0)
@@ -42,11 +46,16 @@ def initialize(conn, trading_day_fn=None):
         fund_id = st['fund_id']
         if conn.execute('SELECT 1 FROM aif_policy_epoch WHERE fund_id=? AND version=?', (fund_id, VERSION)).fetchone():
             continue
-        # Seed only once, using remaining original observations, without invented history.
+        # A policy epoch is not a new risk epoch. Rescanning past lows against
+        # an already retained *later* peak would manufacture an out-of-order DD.
+        seed_risk = conn.execute('SELECT 1 FROM aif_risk_state WHERE fund_id=?',(fund_id,)).fetchone() is None
         for row in conn.execute('SELECT ts,nav FROM aif_nav WHERE fund_id=? ORDER BY ts', (fund_id,)).fetchall():
             dt = datetime.fromisoformat(row['ts'].replace('Z', '+00:00')).astimezone(BJ)
             trading = trading_day_fn(dt) if trading_day_fn else dt.weekday() < 5
-            record(conn, fund_id, row['ts'], float(row['nav']), float(st['started_nav']), trading_day=trading)
+            if seed_risk:
+                record(conn, fund_id, row['ts'], float(row['nav']), float(st['started_nav']), trading_day=trading)
+            elif trading:
+                _daily(conn,fund_id,row['ts'],float(row['nav']))
         conn.execute('INSERT INTO aif_policy_epoch VALUES(?,?,?)', (fund_id, VERSION, datetime.now(timezone.utc).isoformat()))
 
 

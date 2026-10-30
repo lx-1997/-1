@@ -17,6 +17,7 @@ from typing import Any, Optional
 from . import ai_fund_evolve, bull_playbook, data_store, emotion_cycle
 from . import ai_fund_policy as policy
 from . import ai_fund_ledger as ledger
+from . import ai_fund_execution as execution
 from .ifind_api import cached_single_quote, enabled as ifind_enabled, normalize_a_code
 from .shared_utils import safe_float, utc_now_iso
 
@@ -346,16 +347,16 @@ def _price_limit_pct(code: str, name: str = "") -> float:
 _LIMIT_EPS = 0.3   # 距离限板 ≤0.3% 视为封板(一字/封死)，成交不了
 
 
-# ── 成交假设真实化：平方根市场冲击模型(订单额/当日成交额 → 滑点bp) ────────────────
+# ── 成交假设真实化：平方根市场冲击模型(订单额/上一已完成日成交额 → 滑点bp) ────────────────
 # 模拟盘此前按实时价零成本成交，收益归因系统性偏乐观。引入 K·√participation 冲击：
-# 参与率1%≈10bp、10%≈32bp；无当日成交额数据时保守取保底 5bp，绝不按零滑点记账。
+# 参与率1%≈10bp、10%≈32bp；无已完成日成交额数据时取显式下限 5bp（不代表流动性已验证），绝不按零滑点记账。
 _IMPACT_K_BPS = 100.0
 _IMPACT_FLOOR_BPS = 5.0
 _IMPACT_CAP_BPS = 300.0
 
 
 def _impact_cost_bps(ohlc_last: Optional[dict], order_amount: float) -> float:
-    """按最近一根日K的收盘×成交量估计当日成交额，返回该笔订单的冲击滑点(bp)。"""
+    """按最近一根已完成日K的收盘×成交量估计成交额，返回该笔订单的冲击滑点(bp)。"""
     if ohlc_last and order_amount > 0:
         c = safe_float(ohlc_last.get("c"), 0.0)
         v = safe_float(ohlc_last.get("v"), 0.0)
@@ -787,7 +788,7 @@ def _analyze(name: str, q: dict, items: list[dict], md: Optional[dict], cfg: Age
     closes_full = policy.completed_closes(md)
     tt = bull_playbook.trend_template(closes_full + ([last] if last > 0 else []), last) if closes_full else {"has": False}
     cup = {"detected": False}; piv = {"detected": False}
-    ohlc_full = (md or {}).get("ohlc") or []
+    ohlc_full = policy.completed_bars(md)
     if ohlc_full:
         try:
             cup = bull_playbook.cup_with_handle(ohlc_full)
@@ -1700,7 +1701,7 @@ def _compare_step(chosen_code, chosen_an, analyses: dict, exclude: set, universe
 
 def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str, Any]:
     """跑一轮：取价+日线+资金流→五维研判(含买点确认)→严谨卖出(移动止盈/硬止损/破位/利空/转弱)
-    →催化剂确认买入→满仓换强→落库+人设解说。trade=False 只观察+盯市。cfg=某智能体配置(默认主账户)。绝不抛出。"""
+    →催化剂确认买入→满仓换强→落库+人设解说。trade=False 只观察+盯市。cfg=某智能体配置(默认主账户)。事务失败回滚。"""
     cfg = cfg or MAIN_CFG
     fund_id = cfg.fund_id
     init_ai_fund_db()
@@ -1739,16 +1740,24 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
 
     traded, decisions, watch = [], [], []
     record_events = []
-    now = utc_now_iso()
     with _connect() as conn:
         conn.execute('BEGIN IMMEDIATE')  # Serialize state read + fills across threads/processes.
+        now = utc_now_iso()  # Timestamp the committed observation after acquiring the write lock.
         st = _state(conn, fund_id); cash = float(st["cash"])
+        # Recheck exchange clocks against marks under the same serialized fill
+        # transaction: another worker may have committed a newer mark meanwhile.
+        execution_quotes = {code:q for code,q in quotes.items() if execution.accepted_quote(conn,code,q)}
         for code, q in quotes.items():
-            if policy.executable(q):
+            if code in execution_quotes:
                 conn.execute("INSERT INTO aif_marks VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET price=excluded.price,ts=excluded.ts WHERE excluded.ts>=aif_marks.ts", (code, float(q["latest"]), policy.quote_time(q).astimezone(timezone.utc).isoformat()))
         held = {r["symbol"]: dict(r) for r in _positions(conn, fund_id)}
         if any(policy.valuation_price(conn, fund_id, p, quotes.get(code))[0] is None for code, p in held.items()):
             return {'ok': False, 'reason': 'unpriced_holdings', 'traded': [], 'policy': policy.audit_metadata()}
+        pre_trade_nav = cash + sum(float(p['qty'])*policy.valuation_price(conn,fund_id,p,quotes.get(code))[0]
+                                   for code,p in held.items())
+        # Preserve a pre-fill peak/breach too; fees and exits must not erase it.
+        risk_control = execution.risk_status(conn,fund_id,pre_trade_nav,float(st['started_nav']))
+        ledger.record(conn,fund_id,now,pre_trade_nav,float(st['started_nav']),trading_day=False)
         today_bj = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
         cooldown_start = (datetime.now(BJ_TZ) - timedelta(days=max(0, cfg.reentry_cooldown_days - 1))).strftime("%Y-%m-%d")
         recent_trades = conn.execute(
@@ -1760,7 +1769,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
 
         # 更新移动止盈高水位
         for code, pos in held.items():
-            q = quotes.get(code)
+            q = execution_quotes.get(code)
             price = safe_float(q.get("latest")) if q else None
             if price:
                 hw = max(float(pos.get("high_water") or pos["avg_cost"]), price)
@@ -1771,7 +1780,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         # 1) 卖出（严谨章法）
         sold_now: set[str] = set()
         for code, pos in (list(held.items()) if trade else []):
-            q = quotes.get(code)
+            q = execution_quotes.get(code)
             price = safe_float(q.get("latest")) if q else None
             if not price or not policy.executable(q):
                 continue
@@ -1790,8 +1799,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 age_days = 0
             reason = policy.exit_reason(cfg, price, avg, hw, an, bear=bear, age_days=age_days)
             if reason:
-                # 冲击成本：按当日成交额估算滑点，卖出按劣化价落袋（盯市仍用实时价，成交记账用有效价）
-                _ohlc = (md.get(code) or {}).get("ohlc") or []
+                # 冲击成本：按上一已完成日成交额估算滑点，卖出按劣化价落袋（盯市仍用实时价，成交记账用有效价）
+                _ohlc = policy.completed_bars(md.get(code))
                 _impact = _impact_cost_bps(_ohlc[-1] if _ohlc else None, float(pos["qty"]) * price)
                 price_eff = price * (1 - _impact / 10000.0)
                 qty = float(pos["qty"]); amount = qty * price_eff
@@ -1803,7 +1812,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 think = an["thinking"] + [{"icon": "🧠", "label": "卖点", "text": reason + "。"}]
                 if _impact >= 10:
                     think.append({"icon": "💧", "label": "成交",
-                                  "text": f"按当日成交额估算冲击成本 {_impact:.0f}bp，实际落袋价 {price_eff:.2f}。"})
+                                  "text": f"按上一已完成日成交额估算冲击成本 {_impact:.0f}bp，实际落袋价 {price_eff:.2f}。"})
                 conn.execute("INSERT INTO aif_trade (id,fund_id,ts,symbol,name,side,qty,price,amount,pnl_pct,confidence,catalyst,thinking,narrative,scores,buy_point,catalyst_ref,composite,reason)"
                              " VALUES (?,?,?,?,?,'sell',?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (tid, fund_id, now, code, pos["name"], qty, round(price_eff, 3), amount, pnl*100, an.get("confidence"),
@@ -1822,8 +1831,11 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 traded.append({"side": "sell", "symbol": code, "name": pos["name"], "qty": qty, "price": price_eff, "reason": reason})
 
         # 2) 买入：先过研判分，再过买点确认闸门；大盘转空时只做最强的(高分 + 书法买点/上升段)，宁踏空不接飞刀
+        # Fetching data happens outside the write lock. Include both other
+        # workers' intervening exits and this round's exits in the loss brake.
+        performance_brake = _performance_brake(_stats(conn,fund_id))
         def _buy_allowed(an):
-            if not an.get("entry_ok"):
+            if risk_control['paused'] or not an.get("entry_ok"):
                 return False
             # 情绪周期闸门(退潮/恶性分歧直接禁买) + 连亏停手铁律(连续两笔大亏 3 天内停手)
             if cycle_gate.get("blocked") or performance_brake.get("blocked"):
@@ -1846,7 +1858,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             if daily_buys >= cfg.max_daily_buys or code in reentry_blocked:
                 return False
             price = safe_float(quotes[code].get("latest"))
-            if not price or not policy.executable(quotes[code]):
+            if not price or code not in execution_quotes:
                 return False
             # ⭐A股涨跌停：涨停封板买不进(无人卖出)——不模拟成交，避免「买在涨停板」的笑话
             if _at_upper_limit(code, universe.get(code, code), safe_float(quotes[code].get("changeRatio"))):
@@ -1866,8 +1878,8 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             peak = max(float(st["started_nav"]), float(peak_row["peak"] or 0) if peak_row else 0, nav_now)
             risk_cap = policy.risk_budget(code, nav_now, cash, list(held.values()), prices, cfg.hard_stop, peak)
             budget = min(cash, target, cap, risk_cap)
-            # 冲击成本：按当日成交额估算滑点，买入按劣化价成交（预算/手数都以有效价计算，保证现金不吃负）
-            _ohlc = (md.get(code) or {}).get("ohlc") or []
+            # 冲击成本：按上一已完成日成交额估算滑点，买入按劣化价成交（预算/手数都以有效价计算，保证现金不吃负）
+            _ohlc = policy.completed_bars(md.get(code))
             _impact = _impact_cost_bps(_ohlc[-1] if _ohlc else None, budget)
             price_eff = price * (1 + _impact / 10000.0)
             qty = policy.order_quantity(code, budget, price_eff)
@@ -1893,7 +1905,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
             think.append({"icon": "🧠", "label": "买点", "text": f"{an['buy_point']}；综合 {an['score']:+.2f}、信心 {an['confidence']*100:.0f}%，出手。"})
             if _impact >= 10:
                 think.append({"icon": "💧", "label": "成交",
-                              "text": f"按当日成交额估算冲击成本 {_impact:.0f}bp，成交价 {price_eff:.2f}。"})
+                              "text": f"按上一已完成日成交额估算冲击成本 {_impact:.0f}bp，成交价 {price_eff:.2f}。"})
             conn.execute("INSERT INTO aif_position (fund_id,symbol,name,qty,avg_cost,opened_at,updated_at,high_water) VALUES (?,?,?,?,?,?,?,?)",
                          (fund_id, code, name, qty, cost_price, now2, now2, price_eff))
             held[code] = {"symbol": code, "name": name, "qty": qty, "avg_cost": cost_price, "high_water": price_eff, "opened_at": now2}
@@ -1921,7 +1933,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 # ⭐换仓卖出同样守 A股规则：当日新仓(T+1)不可卖、跌停封板卖不出——只在可卖持仓里挑最弱
                 sellable = [c for c in held
                             if _bj_date(held[c].get("opened_at", "") or "") != today_bj
-                            and policy.executable(quotes.get(c))
+                            and c in execution_quotes
                             and not _at_lower_limit(c, held[c].get("name", ""), safe_float((quotes.get(c) or {}).get("changeRatio")))]
                 if not sellable:
                     continue
@@ -1930,12 +1942,12 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
                 # 换仓前确认接盘股买得进(没涨停封板)，否则会「卖了最弱却买不进」→ 空仓换仓、现金空置、直播流食言
                 incoming_sealed = _at_upper_limit(code, universe.get(code, code), safe_float((quotes.get(code) or {}).get("changeRatio")))
                 rotate_edge = cfg.rotate_edge * performance_brake["rotate_mult"]
-                if policy.ROTATION_ACTIVE and cfg.model == "multifactor" and code not in held and policy.executable(quotes.get(code)) and not incoming_sealed and an["score"] - ws >= rotate_edge:
+                if policy.ROTATION_ACTIVE and cfg.model == "multifactor" and code not in held and code in execution_quotes and not incoming_sealed and an["score"] - ws >= rotate_edge:
                     q = quotes.get(weakest)
                     if q and safe_float(q.get("latest")):
                         wp = safe_float(q.get("latest")); wpos = held[weakest]
-                        # 换仓卖出同样计冲击成本：按当日成交额估算滑点后落袋
-                        _wohlc = (md.get(weakest) or {}).get("ohlc") or []
+                        # 换仓卖出同样计冲击成本：按上一已完成日成交额估算滑点后落袋
+                        _wohlc = policy.completed_bars(md.get(weakest))
                         _wimpact = _impact_cost_bps(_wohlc[-1] if _wohlc else None, float(wpos["qty"]) * wp)
                         wpe = wp * (1 - _wimpact / 10000.0)
                         wpnl = (wpe - float(wpos["avg_cost"])) / float(wpos["avg_cost"]) if wpos["avg_cost"] else 0.0
@@ -2091,6 +2103,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
         nav = cash + mkt
         conn.execute("INSERT OR REPLACE INTO aif_nav (fund_id,ts,nav,cash,market_value) VALUES (?,?,?,?,?)", (fund_id, now, nav, cash, mkt))
         ledger.record(conn, fund_id, now, nav, float(st["started_nav"]), trading_day=_is_trading_day())
+        risk_control = execution.risk_status(conn,fund_id,nav,float(st['started_nav']))
         conn.execute("DELETE FROM aif_nav WHERE fund_id=? AND ts NOT IN (SELECT ts FROM aif_nav WHERE fund_id=? ORDER BY ts DESC LIMIT ?)", (fund_id, fund_id, NAV_HISTORY_KEEP))
         conn.commit()
 
@@ -2120,6 +2133,7 @@ def run_tick(trade: bool = True, cfg: Optional[AgentConfig] = None) -> dict[str,
 
     return {"ok": True, "traded": traded, "watch": watch, "nav": nav, "regime": regime.get("regime"),
             "policy": policy.audit_metadata(),
+            "risk_control": risk_control,
             "data_quality": {"level": "live" if trade and any(policy.executable(q) for q in quotes.values()) else "degraded",
                              "label": "实时模拟撮合" if trade and any(policy.executable(q) for q in quotes.values()) else "仅观察估值，未执行成交",
                              "detail": "新成交计入费用与风险预算；陈旧行情仅供估值，不增加新风险。"}}
@@ -2483,6 +2497,7 @@ def get_snapshot(fund_id: str = FUND_ID) -> dict[str, Any]:
     risk = _risk_metrics(history, started_nav, (bench or {}).get("series"))
     with _connect() as risk_conn:
         risk['max_drawdown_pct'] = abs(ledger.drawdown(risk_conn, fund_id, nav, started_nav))
+        risk['control'] = execution.risk_status(risk_conn,fund_id,nav,started_nav)
     risk['drawdown_basis'] = '所有已留存盘中观测，含初始本金；与榜单统一，历史回填起点受原始记录保留范围限制'
     try:
         days_running = (datetime.now(timezone.utc) - datetime.fromisoformat(st["started_at"].replace("Z", "+00:00"))).days + 1
@@ -2551,7 +2566,8 @@ def _agent_nav(conn, cfg: AgentConfig):
     max_dd = round(ledger.drawdown(conn, cfg.fund_id, nav, started_nav), 2)
     return {"nav": nav, "started_nav": started_nav, "cash": cash,
             "market_value": mv, "position_count": pc, "started_at": st["started_at"],
-            "last_tick_at": st["last_tick_at"], "max_drawdown_pct": max_dd, "valuation_stale": degraded}
+            "last_tick_at": st["last_tick_at"], "max_drawdown_pct": max_dd, "valuation_stale": degraded,
+            "risk_control": execution.risk_status(conn,cfg.fund_id,nav,started_nav)}
 
 
 # 各流派在排行榜上的主题色（前端卡片描边/高亮用 s.color）
@@ -2840,6 +2856,7 @@ def get_arena() -> dict[str, Any]:
                     "threshold_add": brake["thr_delta"], "size_mult": brake["size_mult"],
                     "reentry_cooldown_days": cfg.reentry_cooldown_days, "daily_buy_cap": cfg.max_daily_buys,
                     "review": review, "valuation_stale": nv.get('valuation_stale', False),
+                    "risk_control": nv['risk_control'],
                     "last_action": last_action, "last_tick_at": nv["last_tick_at"], "is_main": cfg.fund_id == FUND_ID,
                     "performance": account_performance(conn, cfg.fund_id, nv, trading_day=_is_trading_day()),
                     "history": _nav_history(conn, cfg.fund_id, started_nav),   # 归一化净值火花线

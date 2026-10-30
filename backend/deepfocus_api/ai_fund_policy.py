@@ -1,9 +1,9 @@
 """Deterministic safeguards for the paper portfolio; no broker or model calls."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import math
 import re
 
-VERSION = 'paper-v2.0'
+VERSION = 'paper-v2.1'
 LEARNING_ACTIVE = False
 ROTATION_ACTIVE = False
 BJ = timezone(timedelta(hours=8))
@@ -65,14 +65,29 @@ def direct_events(name, items, max_age):
     return result
 
 
+def completed_bars(md, now=None):
+    """One dated completed candle per session, ordered before pattern evaluation."""
+    today = (now or datetime.now(timezone.utc)).astimezone(BJ).date()
+    selected = {}
+    for bar in (md or {}).get('ohlc') or []:
+        stamp = str(bar.get('d') or '')[:10]
+        try:
+            day = date.fromisoformat(stamp)
+        except ValueError:
+            continue
+        if day >= today or (number(bar.get('c')) or 0) <= 0:
+            continue
+        if stamp in selected:
+            raise ValueError('Duplicate completed market bar')
+        selected[stamp] = bar
+    return [selected[d] for d in sorted(selected)]
+
+
 def completed_closes(md, now=None):
     """A cached partial daily bar and the current quote must not become two days."""
-    today = (now or datetime.now(timezone.utc)).astimezone(BJ).date().isoformat()
     bars = (md or {}).get('ohlc') or []
     if bars:
-        return [float(bar['c']) for bar in bars
-                if str(bar.get('d') or '')[:10] < today and str(bar.get('d') or '')[:10]
-                and (number(bar.get('c')) or 0) > 0]
+        return [float(bar['c']) for bar in completed_bars(md,now)]
     return list((md or {}).get('closes') or [])
 
 
@@ -157,7 +172,8 @@ def valuation_price(conn, fund_id, position, quote):
     row = conn.execute('SELECT price,ts FROM aif_marks WHERE symbol=?', (position['symbol'],)).fetchone()
     previous_stamp = quote_time({'time': row['ts']}) if row else None
     if (price and price > 0 and stamp and stamp <= datetime.now(timezone.utc)+timedelta(seconds=5)
-            and (previous_stamp is None or stamp >= previous_stamp)):
+            and (previous_stamp is None or stamp > previous_stamp
+                 or (stamp == previous_stamp and price == float(row['price'])))):
         return price, not executable(quote), 'quote'
     if row and number(row['price']) and float(row['price']) > 0:
         return float(row['price']), True, 'last_trusted_mark'
@@ -172,6 +188,8 @@ def audit_metadata():
     return {'version': VERSION, 'mode': 'paper_only', 'risk_per_trade': RISK_PER_TRADE,
             'single_position_cap': MAX_POSITION, 'gross_cap': MAX_GROSS,
             'group_cap': MAX_GROUP, 'drawdown_pause': MAX_DRAWDOWN,
+            'drawdown_reset': 'no_automatic_resume_after_historical_breach',
+            'quote_ordering': 'exchange_time_monotonic_conflicts_rejected',
             'learning': 'frozen_pending_out_of_sample_validation',
             'score_rotation': 'disabled_pending_execution_validation',
             'validation': 'not_yet_proven_profitable',

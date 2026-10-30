@@ -155,6 +155,7 @@ def test_net_ledger_and_policy_version_on_round_trip(paper):
         c.execute("UPDATE aif_position SET opened_at='2026-10-01T01:00:00+00:00'")
         c.execute("UPDATE aif_state SET learned_weights=?", ('{"消息面":1.5}',));c.commit()
     paper['latest']=88;paper['changeRatio']=-5
+    paper['time']=datetime.now(timezone.utc).isoformat()  # a new exchange observation
     af.run_tick()
     with af._connect() as c:
         sell=c.execute("SELECT * FROM aif_trade WHERE side='sell'").fetchone()
@@ -234,3 +235,19 @@ def test_data_store_ack_matches_durable_write_result(monkeypatch):
     assert data_store.record_confirmed('simulation_trade','002594',{'trade_id':'t'}) is False
     monkeypatch.setattr(data_store,'_record_values',lambda *a:True)
     assert data_store.record_confirmed('simulation_trade','002594',{'trade_id':'t'}) is True
+
+
+def test_policy_upgrade_preserves_chronological_risk_archive():
+    c=database()
+    for stamp,nav in [('2026-10-27T07:00:00+00:00',900000),('2026-10-28T07:00:00+00:00',1100000)]:
+        c.execute('INSERT INTO aif_nav VALUES(?,?,?)',('a',stamp,nav))
+        ledger.record(c,'a',stamp,nav,1000000)
+    before=dict(c.execute('SELECT peak,worst FROM aif_risk_state WHERE fund_id=?',('a',)).fetchone())
+    assert before['worst']==pytest.approx(-10)
+    c.execute('DELETE FROM aif_policy_epoch')
+    c.execute('INSERT INTO aif_policy_epoch VALUES(?,?,?)',('a','paper-v2.0','2026-10-01T00:00:00+00:00'))
+    ledger.initialize(c)
+    assert dict(c.execute('SELECT peak,worst FROM aif_risk_state WHERE fund_id=?',('a',)).fetchone())==before
+    assert c.execute('SELECT count(*) FROM aif_nav_daily').fetchone()[0]==2
+    ledger.initialize(c)
+    assert dict(c.execute('SELECT peak,worst FROM aif_risk_state WHERE fund_id=?',('a',)).fetchone())==before
