@@ -1,0 +1,52 @@
+{
+  "schema": "expanded-cash-event-controls-v1",
+  "registered_at": "2026-10-30T13:10:35.700509+00:00",
+  "purpose": "seen_development_integration_no_selection",
+  "cases": [
+    "no_events",
+    "original_two_events",
+    "expanded_events",
+    "expanded_as_recorded"
+  ],
+  "promotion_allowed": false,
+  "bindings": {
+    "experiments": [
+      {
+        "id": "31aedd8f544144ad9b7a7d2088e181b0",
+        "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+        "request_digest": "8b240e081c8b8ba480644e15888b398db2a1e853e11a8e4036bfe257d53c31f2",
+        "dataset_digest": "afb4e49b0c6b6ab7ec8111048db7758bf05221e1eccfebbef3b67acef30c8778",
+        "schedule_digest": "9f57892076c0b5fbd85d7de016def540c31d64f799ca2eb11b6529edd016af34"
+      },
+      {
+        "id": "0839ee7717d143c7b991bddbfb55f891",
+        "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+        "request_digest": "6c13fa06b0051212dcded5a0a60b02f3555a2de2bd1382816c26f7f96c7499a0",
+        "dataset_digest": "1e47ecc4830653f9685be80288b07398e0d6d8d57cf3c213cbc5a9055a28e896",
+        "schedule_digest": "759cad7fddfeb230405222433f0ac568a55022ccde99947159bef43ba905dd94"
+      }
+    ],
+    "expanded_manifest_digest": "63e5560f833ccb65cad9b5db466d8177d613f40f2816c39b4f66998fec61aee2",
+    "baseline_manifest_digest": "16112a060a5a148d682d98991df14959fe41a41fc1962da36a3c7f26d60e8ba3",
+    "expanded_count": 31,
+    "baseline_count": 2,
+    "assumptions_digest": "2135b280aa043139d6f73de961894c45888c847a44458a5c49537a66f2ec2249",
+    "engine_kernel": "602102ebb4e2a31f3bf9b5d9719f462495dabca3317e50ef88f9add3f1fee6bd",
+    "source_pins": {
+      "quant_event_controls.py": "1e721951143f029c2fa3320f6c2e631c5ad6aca39969818b199baecb1a3a1b07",
+      "quant_event_replay.py": "08331e974621c3fcb8554f0cf31dec82d93609a890f7059c16e4a4ac700dacbf",
+      "quant_dividend_book.py": "11039d5d10ef275cbc348f791487870d3fa1235f53360de4e42e5555491c59cf",
+      "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+      "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+      "ai_fund_policy.py": "c3a42bb5bb9c3bf60902c0abf1d5c21a18ed2b546cb70029488ee3098d14e394"
+    }
+  },
+  "restore_at": {
+    "31aedd8f544144ad9b7a7d2088e181b0": "2024-06-18",
+    "0839ee7717d143c7b991bddbfb55f891": "2024-07-18"
+  },
+  "runner_sha256": "af05118619235081af307c9fccfac9950f0c911de774dac85f1956f25e54d380",
+  "interpretation": "Engineering controls on seen development data. Original raw-price trained per-fold schedule retained without refitting. Partial cash action coverage; no net-alpha, complete benchmark or OOS claim."
+}

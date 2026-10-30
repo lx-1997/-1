@@ -1,0 +1,96 @@
+{
+  "registered_protocol_digest": "fe2e520c4a3da7edb405f71e21f73634709aecc3e8810ae81630376c75600774",
+  "full_report_sha256": "69f62dbdddf694c4b35fd537e52b8626ce4e028548b1b2c7dc62039be7e8154a",
+  "event_count": 31,
+  "oos_validation": false,
+  "commercial_ready": false,
+  "promotion_allowed": false,
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_reproduced_exactly": true,
+      "as_recorded_control_equal": true,
+      "restore": {
+        "checkpoint": "2024-06-18",
+        "fills_curve_final_state_equal": true
+      },
+      "cases": {
+        "no_events": {
+          "return_pct": -6.573664000000001,
+          "fills": 58,
+          "paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "result_digest": "dac0386e52448040d41038874b27bebac2439c20dba5522cf6b36c4d57cb099e"
+        },
+        "original_two_events": {
+          "return_pct": -6.573664000000001,
+          "fills": 58,
+          "paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "result_digest": "9da2311db5d635b23e9ef15c9d162c587e49071060604d0538c78485b085d223"
+        },
+        "expanded_events": {
+          "return_pct": -6.856198999999997,
+          "fills": 59,
+          "paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "result_digest": "048c076a761bfb106a79d9e0f92c6c6f891be871af71c40dcddce9bb07968346"
+        },
+        "expanded_as_recorded": {
+          "return_pct": -6.573664000000001,
+          "fills": 58,
+          "paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "result_digest": "b6320d348eecd3d37962c5256a7678fb1c30db42eace0b45e15b7c6ea8f1a8ad"
+        }
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_reproduced_exactly": true,
+      "as_recorded_control_equal": true,
+      "restore": {
+        "checkpoint": "2024-07-18",
+        "fills_curve_final_state_equal": true
+      },
+      "cases": {
+        "no_events": {
+          "return_pct": -4.892656000000006,
+          "fills": 120,
+          "paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "result_digest": "d46530a41e621707cf7852503a79775cc8b4a2d9c04181d109aca768141db8f3"
+        },
+        "original_two_events": {
+          "return_pct": -4.547360999999994,
+          "fills": 117,
+          "paused": true,
+          "gross_paid": "8100.00",
+          "tax_assessed": "1620.00",
+          "result_digest": "7f4b2c59da96bfe0880b6625918ee68c4182976d75c31b39db97b3db479c07ac"
+        },
+        "expanded_events": {
+          "return_pct": -4.021430000000004,
+          "fills": 115,
+          "paused": true,
+          "gross_paid": "13430.00",
+          "tax_assessed": "2153.00",
+          "result_digest": "a36a80e45d03abc67f6e8db5d1c56da551e36780565041c92b3fdddb1a20560e"
+        },
+        "expanded_as_recorded": {
+          "return_pct": -4.892656000000006,
+          "fills": 120,
+          "paused": true,
+          "gross_paid": "0.00",
+          "tax_assessed": "0.00",
+          "result_digest": "8ca0210a640a224463740ed4e8b93a85789c5bda4c39df2864e38b0d29889252"
+        }
+      }
+    }
+  ]
+}
