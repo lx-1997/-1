@@ -562,7 +562,7 @@ def test_price_limit_by_board_and_seal():
     assert ai_fund._price_limit_pct("300750") == 20.0      # 创业板
     assert ai_fund._price_limit_pct("688981") == 20.0      # 科创板
     assert ai_fund._price_limit_pct("830799") == 30.0      # 北交所
-    assert ai_fund._price_limit_pct("600519", "ST皇庭") == 5.0  # ST
+    assert ai_fund._price_limit_pct("600519", "ST皇庭", at="2024-07-01") == 5.0  # ST
     assert ai_fund._at_upper_limit("600519", "", 9.9) is True   # 主板 +9.9%≈涨停封板
     assert ai_fund._at_upper_limit("600519", "", 8.0) is False
     assert ai_fund._at_upper_limit("300750", "", 9.9) is False  # 创业板 +9.9% 还没到 20%

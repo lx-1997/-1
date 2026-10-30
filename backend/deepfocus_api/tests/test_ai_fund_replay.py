@@ -190,3 +190,20 @@ def test_holding_added_after_initial_pool_capture_is_audited_without_key_error(f
     assert r['sections']['candidates']['600000']['late_holding']
     assert r['sections']['candidates']['600000']['actions'][0]['reason']=='quote_clock_or_status_rejected'
     verify(out)
+
+
+@pytest.mark.parametrize('day,expected_fills',[('2026-07-03',0),('2026-07-06',1)])
+def test_dated_ST_limit_and_quote_name_replay_without_current_wall_clock(frozen,monkeypatch,day,expected_fills):
+    from deepfocus_api.tests.market_fixture import source_fixture
+    q,clock=frozen
+    clock[0]=datetime.fromisoformat(day+'T02:00:00+00:00')
+    q.update(name='*ST synthetic quote',changeRatio=6,time=clock[0].isoformat())
+    today=clock[0].date()
+    rows=[dict(d=(today-timedelta(days=40-i)).isoformat(),o=90+i*.2,c=90+i*.2,
+               h=91+i*.2,l=89+i*.2,v=1000000) for i in range(40)]
+    monkeypatch.setattr(af,'_market_data',lambda *a,**k:{'002594':source_fixture('002594',{'ohlc':rows,'flow5':300000000})})
+    out=af.run_tick(cfg=config())
+    assert len(out['traded'])==expected_fills,out
+    result=verify(out)
+    assert result['fills_reproduced']==expected_fills
+    assert result['financial_checks']['passed']

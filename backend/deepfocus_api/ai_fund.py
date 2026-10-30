@@ -23,6 +23,7 @@ from . import ai_fund_ledger as ledger
 from . import ai_fund_execution as execution
 from . import ai_fund_audit as audit
 from . import ai_fund_market as market
+from . import ai_fund_limits as limits
 from .ifind_api import cached_single_quote, enabled as ifind_enabled, normalize_a_code
 from .shared_utils import safe_float, utc_now_iso
 
@@ -340,19 +341,23 @@ def _bj_date(ca: str) -> str:
 
 
 # ── A股涨跌停规则：按板块/ST 的当日限幅 + 封板成交闸门(涨停买不进·跌停卖不出) ──────
-def _price_limit_pct(code: str, name: str = "") -> float:
-    """A股当日涨跌停幅度%：ST→5；科创688/689·创业板300/301→20；北交所8/4/920→30；其余主板→10。"""
-    if "ST" in (name or "").upper():
-        return 5.0
-    c = code or ""
-    if c.startswith(("688", "689", "300", "301")):
-        return 20.0
-    if c.startswith(("8", "4", "920")):
-        return 30.0
-    return 10.0
+def _price_limit_pct(code: str, name: str = "", *, at=None) -> float:
+    """Standard board limit at the execution date; security status is partial."""
+    return limits.standard_pct(code, name, at=at if at is not None else utc_now_iso())
 
 
-_LIMIT_EPS = 0.3   # 距离限板 ≤0.3% 视为封板(一字/封死)，成交不了
+def _limit_name(quote, fallback):
+    # Accepted current-quote names are preferable to stale pool/position names.
+    name = (quote or {}).get('name')
+    return name.strip() if isinstance(name, str) and name.strip() else fallback
+
+
+def _fill_limit_allowed(code, quote, fallback_name, price_eff, side, *, at):
+    return limits.fill_allowed(quote.get('latest'), quote.get('changeRatio'), price_eff, side,
+        limit_pct=_price_limit_pct(code, _limit_name(quote, fallback_name), at=at), buffer_pct=_LIMIT_EPS)
+
+
+_LIMIT_EPS = 0.3   # 保守邻近限板过滤；未验证实际封单队列或成交可得性。
 
 
 # ── 成交假设真实化：平方根市场冲击模型(订单额/上一已完成日成交额 → 滑点bp) ────────────────
@@ -373,14 +378,14 @@ def _impact_cost_bps(ohlc_last: Optional[dict], order_amount: float) -> float:
     return _IMPACT_FLOOR_BPS
 
 
-def _at_upper_limit(code: str, name: str, chg: Optional[float]) -> bool:
-    """涨停封板：买不进(无人卖出)。"""
-    return chg is not None and chg >= _price_limit_pct(code, name) - _LIMIT_EPS
+def _at_upper_limit(code: str, name: str, chg: Optional[float], *, at=None) -> bool:
+    """保守阻止邻近涨停买入，不声称已核验封单。"""
+    return chg is not None and chg >= _price_limit_pct(code, name, at=at) - _LIMIT_EPS
 
 
-def _at_lower_limit(code: str, name: str, chg: Optional[float]) -> bool:
-    """跌停封板：卖不出(无人接盘)。"""
-    return chg is not None and chg <= -(_price_limit_pct(code, name) - _LIMIT_EPS)
+def _at_lower_limit(code: str, name: str, chg: Optional[float], *, at=None) -> bool:
+    """保守阻止邻近跌停卖出，不声称已核验封单。"""
+    return chg is not None and chg <= -(_price_limit_pct(code, name, at=at) - _LIMIT_EPS)
 
 
 def _our_content(name: str) -> list[dict]:
@@ -468,7 +473,7 @@ def _free_quote(symbol: str) -> Optional[dict]:
         if latest <= 0:
             return None
         chg = round((latest - prev) / prev * 100, 2) if prev else None
-        q = {"latest": round(latest, 3), "changeRatio": chg,
+        q = {"latest": round(latest, 3), "changeRatio": chg, "name": f[0].strip(),
              "open": float(f[1]) or None, "high": float(f[4]) or None, "low": float(f[5]) or None, "_src": "sina",
              "time": (f[30] + "T" + f[31] + "+08:00") if len(f) > 31 else None,
              "amount": safe_float(f[9]) if len(f) > 9 else None}
@@ -1847,7 +1852,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                 blocked(code,'sell','t_plus_one')
                 continue
             # ⭐A股涨跌停：跌停封板卖不出(无人接盘)——含硬止损也只能等下一交易日
-            if _at_lower_limit(code, pos.get("name", ""), safe_float(q.get("changeRatio"))):
+            if _at_lower_limit(code, _limit_name(q, pos.get("name", "")), safe_float(q.get("changeRatio")), at=execution_at):
                 blocked(code,'sell','lower_price_limit')
                 continue
             avg = float(pos["avg_cost"]); pnl = (price - avg) / avg if avg else 0.0
@@ -1869,6 +1874,8 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                 price_eff = execution.fill_price(price,_impact,'sell')
                 if price_eff is None:
                     blocked(code,'sell','no_positive_tick_price');continue
+                if not _fill_limit_allowed(code,q,pos.get('name',''),price_eff,'sell',at=execution_at):
+                    blocked(code,'sell','effective_price_limit_proxy',effective_price=price_eff);continue
                 qty = float(pos['qty']); amount = float(Decimal(str(qty))*Decimal(str(price_eff)))
                 sell_fee = ledger.fee(amount,'sell');cash=execution.cash_change(cash,amount,sell_fee,'sell')
                 basis,verified_basis=execution.cost_basis(conn,fund_id,pos)
@@ -1944,7 +1951,7 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
             if liquidity is None:
                 return blocked(code,'buy','market_contract_unverified_or_stale')
             # ⭐A股涨跌停：涨停封板买不进(无人卖出)——不模拟成交，避免「买在涨停板」的笑话
-            if _at_upper_limit(code, universe.get(code, code), safe_float(quotes[code].get("changeRatio"))):
+            if _at_upper_limit(code, _limit_name(quotes[code], universe.get(code, code)), safe_float(quotes[code].get("changeRatio")), at=execution_at):
                 return blocked(code,'buy','upper_price_limit')
             nav_now = cash  # Replaced below by canonical, fully priced portfolio valuation.
             # 单仓大小按流派系数 × 市场态势系数缩放：激进重仓(系数>1)/价值分散(<1)，再叠牛市加仓/熊市减仓；硬上限不超 50%
@@ -1967,6 +1974,8 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
             candidates[code]['cost_observation'] = {'basis':liquidity['amount_basis'],'reference_date':liquidity['d'],'impact_bps':_impact}
             price_eff = execution.fill_price(price,_impact,'buy')
             if price_eff is None:return blocked(code,'buy','no_positive_tick_price')
+            if not _fill_limit_allowed(code,quotes[code],universe.get(code,code),price_eff,'buy',at=execution_at):
+                return blocked(code,'buy','effective_price_limit_proxy',effective_price=price_eff)
             qty = policy.order_quantity(code, budget, price_eff)
             step = 1 if code.startswith(('688','689')) else 100
             while qty > 0 and qty * price_eff + ledger.fee(qty * price_eff, 'buy') > budget:
@@ -2026,14 +2035,14 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                 sellable = [c for c in held
                             if _bj_date(held[c].get("opened_at", "") or "") != today_bj
                             and c in execution_quotes
-                            and not _at_lower_limit(c, held[c].get("name", ""), safe_float((quotes.get(c) or {}).get("changeRatio")))]
+                            and not _at_lower_limit(c, _limit_name(quotes.get(c), held[c].get("name", "")), safe_float((quotes.get(c) or {}).get("changeRatio")), at=execution_at)]
                 if not sellable:
                     blocked(code,'buy','position_limit_no_sellable_holding')
                     continue
                 weakest = min(sellable, key=lambda c: analyses.get(c, {}).get("score", 0.0))
                 ws = analyses.get(weakest, {}).get("score", 0.0)
                 # 换仓前确认接盘股买得进(没涨停封板)，否则会「卖了最弱却买不进」→ 空仓换仓、现金空置、直播流食言
-                incoming_sealed = _at_upper_limit(code, universe.get(code, code), safe_float((quotes.get(code) or {}).get("changeRatio")))
+                incoming_sealed = _at_upper_limit(code, _limit_name(quotes.get(code), universe.get(code, code)), safe_float((quotes.get(code) or {}).get("changeRatio")), at=execution_at)
                 rotate_edge = cfg.rotate_edge * performance_brake["rotate_mult"]
                 if policy.ROTATION_ACTIVE and cfg.model == "multifactor" and code not in held and code in execution_quotes and not incoming_sealed and an["score"] - ws >= rotate_edge:
                     q = quotes.get(weakest)
@@ -2047,6 +2056,8 @@ def _run_tick(trade: bool, cfg: AgentConfig, trace: dict) -> dict[str, Any]:
                         wpe = execution.fill_price(wp,_wimpact,'sell')
                         if wpe is None:
                             blocked(weakest,'sell','no_positive_tick_price');continue
+                        if not _fill_limit_allowed(weakest,q,wpos.get('name',''),wpe,'sell',at=execution_at):
+                            blocked(weakest,'sell','effective_price_limit_proxy',effective_price=wpe);continue
                         wpnl = (wpe - float(wpos["avg_cost"])) / float(wpos["avg_cost"]) if wpos["avg_cost"] else 0.0
                         amount=float(Decimal(str(wpos['qty']))*Decimal(str(wpe)))
                         sell_fee=ledger.fee(amount,'sell')

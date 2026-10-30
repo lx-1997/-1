@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 import math
 import re
 
-VERSION = 'paper-v2.3'
+VERSION = 'paper-v2.4'
 LEARNING_ACTIVE = False
 ROTATION_ACTIVE = False
 BJ = timezone(timedelta(hours=8))
@@ -191,6 +191,11 @@ def audit_metadata():
             'group_cap': MAX_GROUP, 'drawdown_pause': MAX_DRAWDOWN,
             'drawdown_reset': 'no_automatic_resume_after_historical_breach',
             'quote_ordering': 'exchange_time_monotonic_conflicts_rejected',
+            'standard_price_limit_rules': 'standard-board-limits-20260706-v1',
+            'price_limit_clock': 'serialized_execution_date_beijing',
+            'adverse_fill_recheck': 'same_buffered_quote_change_proxy_not_verified_exchange_bands',
+            'risk_warning_name_basis': 'accepted_quote_name_else_pool_or_position_partial',
+            'historical_security_status_verified': False,
             'daily_market_contract': 'paper-daily-market-v1',
             'daily_history_basis': 'unadjusted_shares_with_backup_rounding_declared',
             'unverified_history_new_risk': 'blocked',
@@ -199,6 +204,7 @@ def audit_metadata():
             'score_rotation': 'disabled_pending_execution_validation',
             'validation': 'not_yet_proven_profitable',
             'live_trading_enabled': False,
-            'unvalidated': ['corporate_actions', 'liquidity_fill_model', 'out_of_sample_alpha'],
+            'unvalidated': ['corporate_actions', 'liquidity_fill_model', 'out_of_sample_alpha',
+                            'IPO_relisting_no_limit_sessions_and_historical_security_status'],
             'fee_assumptions': {'commission': .00025, 'minimum': 5, 'sell_stamp': .0005, 'transfer': .00001},
             'note': '历史成交按原版本保留；新增风险限额为待验证的保守初值，不是已优化的收益参数。'}
