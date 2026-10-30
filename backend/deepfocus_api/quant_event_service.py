@@ -6,10 +6,11 @@ from . import quant_research as lifecycle, quant_research_store as jobs
 from . import quant_evidence_store as evidence, quant_event_replay as engine
 from .quant_research_engine import digest
 from .quant_dividend_book import INVESTOR
+from .quant_calendar import CalendarAlignmentError, require_aligned
 
 
 KERNEL=digest({'execution':engine.KERNEL,**{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-    for name in ('quant_event_service.py','quant_evidence_store.py','quant_research_store.py')}})
+    for name in ('quant_event_service.py','quant_calendar.py','quant_evidence_store.py','quant_research_store.py')}})
 
 
 def reference(owner,parent_id,bundle_id):
@@ -19,6 +20,8 @@ def reference(owner,parent_id,bundle_id):
         raise ValueError('仅支持已完成的原价格研究实验，不递归改写事件研究')
     if digest(parent['result'])!=parent['result_digest'] or digest(parent['dataset'])!=parent['result']['dataset_digest']:
         raise ValueError('原实验完整性核对失败')
+    require_aligned(parent['dataset'], benchmark=parent['request']['benchmark'],
+                    expected_symbols=parent['request']['symbols']+[parent['request']['benchmark']])
     if not parent['result'].get('folds'):raise ValueError('原实验没有冻结参数窗口')
     info=evidence.summary(owner,bundle_id)
     if info is None:raise LookupError('证据包不存在')
@@ -79,6 +82,9 @@ async def execute(owner,identity,request):
         await asyncio.to_thread(update,status='failed',stage='执行进程关闭，事件研究已中断')
         raise
     except InterruptedError:pass
+    except CalendarAlignmentError as exc:
+        await asyncio.to_thread(update,status='failed',stage=str(exc),
+            extra={'error_code':'calendar_alignment_rejected','quality':exc.report})
     except Exception as exc:
         message=str(exc) if isinstance(exc,ValueError) else '证据或计算暂不可用，失败实验已留档'
         await asyncio.to_thread(update,status='failed',stage=message,extra={'error_code':type(exc).__name__})

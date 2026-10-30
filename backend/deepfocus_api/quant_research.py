@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from . import quant_research_engine as engine, quant_research_store as store
 from .backtest_data import _fetch_sina_cn, normalize_market_symbol
+from .quant_calendar import CalendarAlignmentError, require_aligned
 
 _tasks = {}
 _refreshing = set()
@@ -14,7 +15,7 @@ BENCHMARKS = {'000300': '沪深300', '000905': '中证500', '000852': '中证100
 
 @lru_cache(maxsize=1)
 def kernel_identity():
-    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
+    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'quant_calendar.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
     return engine.digest({f: hashlib.sha256(Path(__file__).with_name(f).read_bytes()).hexdigest() for f in files})
 
 
@@ -36,19 +37,23 @@ async def fetch_dataset(symbols, start, end):
         return p
     values = await asyncio.wait_for(asyncio.gather(*(one(s) for s in symbols)), 40)
     dataset = dict(zip(symbols, values))
-    engine.validate_dataset(dataset)
+    anchors = [s for s in symbols if s in BENCHMARKS]
+    require_aligned(dataset, benchmark=anchors[0] if len(anchors) == 1 else None, expected_symbols=symbols)
     return dataset
 
 
-def quality(dataset, start, end):
+def quality(dataset, start, end, *, benchmark=None, expected_symbols=None):
+    calendar = require_aligned(dataset, benchmark=benchmark, expected_symbols=expected_symbols)
     dates = engine.validate_dataset(dataset)
     return {'common_sessions': len(dates), 'first': dates[0] if dates else None, 'last': dates[-1] if dates else None,
-            'requested_start': start, 'requested_end': end, 'calendar': 'intersection_no_forward_fill',
+            'requested_start': start, 'requested_end': end, 'calendar': 'strict_observed_date_alignment',
+            'calendar_contract': calendar,
             'symbols': {s: {'bars': len(p['bars']), 'source': p['source'], 'adjustment': p['adjustment'],
                             'volume_unit': p['volume_unit'], 'fetched_at': p['fetched_at'],
                             'excluded_non_common': len(p['bars'])-len(dates)} for s, p in dataset.items()},
             'warnings': ['公开数据并非历史时点数据仓库，存在选择偏差', '现金分红、除权和特殊交易状态未经完整核验',
-                         '截取共同交易日；停牌和缺失数据期间不模拟成交，不据此宣称完整风险覆盖',
+                         '所有序列日期严格对齐；不裁剪交集、不填充缺价，缺少日线不能推定停牌',
+                         '尚未独立核验完整交易所日历，各序列同时漏日仍可能无法发现',
                          '当前采用不复权价格，收益不含分红；不可与含分红指数直接等同']}
 
 
@@ -63,7 +68,8 @@ async def execute(owner, identity, request):
             dataset = reference['dataset']
         else:
             dataset = await fetch_dataset(request['symbols']+[request['benchmark']], request['start_date'], request['end_date'])
-        q = quality(dataset, request['start_date'], request['end_date'])
+        q = quality(dataset, request['start_date'], request['end_date'],
+                    benchmark=request['benchmark'], expected_symbols=request['symbols']+[request['benchmark']])
         if not store.update(owner, identity, progress=30, stage='真实行情已封存，开始训练与滚动验证', extra={'dataset': dataset, 'quality': q}): return
         # SQLite callback also observes cancellation; the CPU worker then exits
         # at the next fold, and its terminal result is never written over cancel.
@@ -88,6 +94,11 @@ async def execute(owner, identity, request):
         raise
     except InterruptedError:
         pass
+    except CalendarAlignmentError as exc:
+        extra = {'error_code': 'calendar_alignment_rejected', 'quality': exc.report}
+        if exc.dataset is not None:
+            extra['dataset'] = exc.dataset
+        store.update(owner, identity, status='failed', stage=str(exc), extra=extra)
     except Exception as exc:
         # No provider response bodies, keys or connection strings in public errors.
         message = str(exc) if isinstance(exc, ValueError) else '数据源或计算暂不可用，请稍后重试；失败实验已保留'
@@ -110,6 +121,8 @@ def promote(owner, identity):
     if job['kernel'] != kernel_identity(): raise ValueError('执行内核已升级，请重新验证实验')
     if engine.digest(job['result']) != job['result_digest'] or engine.digest(job['dataset']) != job['result']['dataset_digest']:
         raise ValueError('实验完整性核对失败，禁止晋级')
+    require_aligned(job['dataset'], benchmark=job['request']['benchmark'],
+                    expected_symbols=job['request']['symbols']+[job['request']['benchmark']])
     if not job['result']['gate']['passed']: raise ValueError('未通过研究门槛，不能转入模拟跟踪')
     # Start flat after the sealed experiment; never backdate a live paper account.
     today = complete_day()
@@ -126,9 +139,12 @@ async def _refresh_paper(owner, identity):
     if paper['status'] != 'active': raise ValueError('模拟跟踪已暂停')
     if paper['kernel'] != kernel_identity(): raise ValueError('冻结内核与当前版本不一致，已拒绝执行')
     req, old = paper['request'], paper['dataset']
+    scope = req['symbols']+[req['benchmark']]
+    require_aligned(old, benchmark=req['benchmark'], expected_symbols=scope)
     # Fetch a sufficiently overlapping history and refuse revisions instead of
     # silently rewriting signals or historical fills.
     fetched = await fetch_dataset(req['symbols']+[req['benchmark']], req['start_date'], complete_day())
+    require_aligned(fetched, benchmark=req['benchmark'], expected_symbols=scope)
     merged = {}
     for s, p in old.items():
         oldmap = {b['date']: b for b in p['bars']}
@@ -137,6 +153,7 @@ async def _refresh_paper(owner, identity):
                 raise ValueError(f'{s} 历史行情发生修订，需单独复核，未改写模拟账户')
         combined = {**oldmap, **{b['date']: b for b in fetched[s]['bars'] if b['date'] not in oldmap}}
         merged[s] = {**fetched[s], 'bars': [combined[d] for d in sorted(combined)]}
+    require_aligned(merged, benchmark=req['benchmark'], expected_symbols=scope)
     result = await asyncio.to_thread(engine.replay, merged, req['symbols'], paper['parameters'], state=paper['state'])
     excluded = {'id','experiment','revision','status','updated'}
     payload = {k: v for k, v in paper.items() if k not in excluded}

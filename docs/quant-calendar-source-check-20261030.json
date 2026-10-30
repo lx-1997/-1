@@ -1,0 +1,231 @@
+{
+  "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+  "original_input_unchanged": true,
+  "legacy_mathematical_kernel_unchanged": true,
+  "source_pins": {
+    "quant_calendar.py": "04dba24cb1a054491b132df7f23c9289e946a1a5dcbaa7578c090e9ff92eb83b",
+    "quant_research.py": "4d73ccef769338d5c0af0c84c8b89ce1c3ff0f00fe39d37a376cb02ec1b10b53",
+    "quant_event_service.py": "c42a6542bb8521df5ebbfc67f8a57bf2f6679df4648fd26a0cb6a29f671915ea",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+  },
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "original_reproduced_exactly": true,
+      "aligned_source_quality": {
+        "schema": "research-calendar-alignment-v1",
+        "status": "aligned",
+        "exchange_calendar_verified": false,
+        "all_series_missing_same_session_detectable": false,
+        "missing_bar_is_suspension": false,
+        "forward_fill": false,
+        "intersection_trimming": false,
+        "anchor_symbol": "000300",
+        "union_sessions": 729,
+        "common_sessions": 729,
+        "union_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+        "symbols": {
+          "600519": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          },
+          "000001": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          },
+          "300750": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          },
+          "000300": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          }
+        },
+        "reason": "all_observed_series_dates_equal",
+        "first": "2023-10-26",
+        "last": "2026-10-29",
+        "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf"
+      },
+      "fault_injection": {
+        "scope": "isolated_copy_not_actual_vendor_gap",
+        "removed_symbol": "600519",
+        "removed_date": "2024-08-20",
+        "legacy_intersection_sessions": 728,
+        "strict_rejected": true,
+        "report": {
+          "schema": "research-calendar-alignment-v1",
+          "status": "rejected",
+          "exchange_calendar_verified": false,
+          "all_series_missing_same_session_detectable": false,
+          "missing_bar_is_suspension": false,
+          "forward_fill": false,
+          "intersection_trimming": false,
+          "anchor_symbol": "000300",
+          "union_sessions": 729,
+          "common_sessions": 728,
+          "union_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "symbols": {
+            "600519": {
+              "observed_sessions": 728,
+              "dates_digest": "2712abfe06e7154cdd9ae235a863e4ae43b2bdda46d3dddf9f2ccfcc7359495f",
+              "missing_vs_union": [
+                "2024-08-20"
+              ],
+              "missing_vs_anchor": [
+                "2024-08-20"
+              ],
+              "extra_vs_anchor": []
+            },
+            "000001": {
+              "observed_sessions": 729,
+              "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+              "missing_vs_union": [],
+              "missing_vs_anchor": [],
+              "extra_vs_anchor": []
+            },
+            "300750": {
+              "observed_sessions": 729,
+              "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+              "missing_vs_union": [],
+              "missing_vs_anchor": [],
+              "extra_vs_anchor": []
+            },
+            "000300": {
+              "observed_sessions": 729,
+              "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+              "missing_vs_union": [],
+              "missing_vs_anchor": [],
+              "extra_vs_anchor": []
+            }
+          },
+          "reason": "series_dates_differ"
+        }
+      },
+      "dataset_digest": "afb4e49b0c6b6ab7ec8111048db7758bf05221e1eccfebbef3b67acef30c8778"
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "original_reproduced_exactly": true,
+      "aligned_source_quality": {
+        "schema": "research-calendar-alignment-v1",
+        "status": "aligned",
+        "exchange_calendar_verified": false,
+        "all_series_missing_same_session_detectable": false,
+        "missing_bar_is_suspension": false,
+        "forward_fill": false,
+        "intersection_trimming": false,
+        "anchor_symbol": "000300",
+        "union_sessions": 729,
+        "common_sessions": 729,
+        "union_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+        "symbols": {
+          "600036": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          },
+          "600900": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          },
+          "000333": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          },
+          "000300": {
+            "observed_sessions": 729,
+            "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+            "missing_vs_union": [],
+            "missing_vs_anchor": [],
+            "extra_vs_anchor": []
+          }
+        },
+        "reason": "all_observed_series_dates_equal",
+        "first": "2023-10-26",
+        "last": "2026-10-29",
+        "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf"
+      },
+      "fault_injection": {
+        "scope": "isolated_copy_not_actual_vendor_gap",
+        "removed_symbol": "600036",
+        "removed_date": "2024-08-20",
+        "legacy_intersection_sessions": 728,
+        "strict_rejected": true,
+        "report": {
+          "schema": "research-calendar-alignment-v1",
+          "status": "rejected",
+          "exchange_calendar_verified": false,
+          "all_series_missing_same_session_detectable": false,
+          "missing_bar_is_suspension": false,
+          "forward_fill": false,
+          "intersection_trimming": false,
+          "anchor_symbol": "000300",
+          "union_sessions": 729,
+          "common_sessions": 728,
+          "union_dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+          "symbols": {
+            "600036": {
+              "observed_sessions": 728,
+              "dates_digest": "2712abfe06e7154cdd9ae235a863e4ae43b2bdda46d3dddf9f2ccfcc7359495f",
+              "missing_vs_union": [
+                "2024-08-20"
+              ],
+              "missing_vs_anchor": [
+                "2024-08-20"
+              ],
+              "extra_vs_anchor": []
+            },
+            "600900": {
+              "observed_sessions": 729,
+              "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+              "missing_vs_union": [],
+              "missing_vs_anchor": [],
+              "extra_vs_anchor": []
+            },
+            "000333": {
+              "observed_sessions": 729,
+              "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+              "missing_vs_union": [],
+              "missing_vs_anchor": [],
+              "extra_vs_anchor": []
+            },
+            "000300": {
+              "observed_sessions": 729,
+              "dates_digest": "7ee9f7c0fd5a3f49f320cb2a05ab8635a41c13a8dba8be83f9d0ed0f13e4f9bf",
+              "missing_vs_union": [],
+              "missing_vs_anchor": [],
+              "extra_vs_anchor": []
+            }
+          },
+          "reason": "series_dates_differ"
+        }
+      },
+      "dataset_digest": "1e47ecc4830653f9685be80288b07398e0d6d8d57cf3c213cbc5a9055a28e896"
+    }
+  ],
+  "strategy_promoted": false,
+  "production_deployed": false
+}
