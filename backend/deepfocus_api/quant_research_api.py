@@ -76,10 +76,10 @@ def visible(item):
 @router.post('/experiments', status_code=202)
 async def create(payload: ExperimentRequest, uid=Depends(owner)):
     values = payload.model_dump(mode='json'); key = values.pop('request_id')
-    try: return call(service.submit, uid, key, values)
-    except HTTPException as e:
-        if e.status_code == 409: e.status_code = 429
-        raise
+    try: return await service.submit_async(uid, key, values)
+    except LookupError as e: raise HTTPException(404, str(e)) from e
+    except ValueError as e: raise HTTPException(422, str(e)) from e
+    except RuntimeError as e: raise HTTPException(429, str(e)) from e
 
 
 @router.get('/experiments')
@@ -169,7 +169,10 @@ async def replay(identity:str,payload:ReplayRequest,uid=Depends(owner)):
         except LookupError as e:raise HTTPException(404,str(e)) from e
         except ValueError as e:raise HTTPException(422,str(e)) from e
         except RuntimeError as e:raise HTTPException(429,str(e)) from e
-    return visible(call(service.reproduce,uid,identity,payload.request_id))
+    try:return visible(await service.reproduce_async(uid,identity,payload.request_id))
+    except LookupError as e:raise HTTPException(404,str(e)) from e
+    except ValueError as e:raise HTTPException(422,str(e)) from e
+    except RuntimeError as e:raise HTTPException(429,str(e)) from e
 
 
 @router.get('/evidence')

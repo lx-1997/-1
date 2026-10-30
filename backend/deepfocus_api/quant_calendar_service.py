@@ -47,10 +47,7 @@ async def submit(owner, parent_id, bundle_id, key, verification_of=None):
             if original['request'].get(k) != request[k]:
                 raise ValueError('日历核验的冻结引用不一致')
         request.update(verification_of=verification_of, expected_result_digest=original['result_digest'])
-    job, fresh = await lifecycle._paper_io(jobs.create, owner, key, request, KERNEL)
-    if fresh:
-        lifecycle._tasks[job['id']] = asyncio.create_task(execute(owner, job['id'], request))
-    return job
+    return await lifecycle.admit_job(owner,key,request,KERNEL,execute)
 
 
 @lifecycle.research_worker

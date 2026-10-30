@@ -11,6 +11,14 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _quant_admission_test_boundary(request, monkeypatch):
+    """A stopped test app must not close admission for the next isolated app."""
+    if request.module.__name__.split('.')[-1].startswith('test_quant'):
+        from deepfocus_api import quant_research
+        monkeypatch.setattr(quant_research, '_admissions_open', True)
+
+
+@pytest.fixture(autouse=True)
 def _ensure_event_loop():
     try:
         loop = asyncio.get_event_loop()

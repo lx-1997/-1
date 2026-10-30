@@ -45,12 +45,7 @@ async def submit(owner,parent_id,bundle_id,key,mode,verification_of=None):
         for k in ('parent_id','parent_digest','bundle_id','bundle_digest','knowledge_mode'):
             if original['request'].get(k)!=request[k]:raise ValueError('冻结复核引用不一致')
         request.update(verification_of=verification_of,expected_result_digest=original['result_digest'])
-    job,fresh=await lifecycle._paper_io(jobs.create,owner,key,request,KERNEL)
-    if fresh:
-        # The parent lifespan cancels/gathers this registry on shutdown. Pure
-        # CPU work also observes cancellation via the bounded progress callback.
-        lifecycle._tasks[job['id']]=asyncio.create_task(execute(owner,job['id'],request))
-    return job
+    return await lifecycle.admit_job(owner,key,request,KERNEL,execute)
 
 
 @lifecycle.research_worker

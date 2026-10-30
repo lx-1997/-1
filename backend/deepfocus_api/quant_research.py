@@ -16,6 +16,10 @@ from .quant_calendar import CalendarAlignmentError, require_aligned
 _tasks = {}
 _refreshing = set()
 _refresh_tasks = {}
+_admission_tasks = {}
+_admissions_open = True
+MAX_PENDING_ADMISSIONS = 16
+MAX_OWNER_ADMISSIONS = 4
 _paper_attempt = ContextVar('paper_refresh_attempt', default=None)
 
 
@@ -183,6 +187,69 @@ def submit(owner, key, request):
     return {k: v for k, v in job.items() if k not in {'dataset'}}
 
 
+async def admit_job(owner, key, request, kernel, executor):
+    """Own DB admission beyond an HTTP disconnect, bounded until real exit.
+
+    Disconnecting a POST does not cancel a possibly committed job. Explicit
+    DELETE cancels research. A retry with the same key finds the same record.
+    Shutdown, unlike disconnect, cancels/drains admissions before workers.
+    """
+    if (not _admissions_open or len(_admission_tasks) >= MAX_PENDING_ADMISSIONS
+            or sum(value == owner for value in _admission_tasks.values()) >= MAX_OWNER_ADMISSIONS):
+        raise RuntimeError('研究提交队列已满或服务正在关闭，请用相同提交标识重试')
+    request = json.loads(json.dumps(request, allow_nan=False))
+    async def admission():
+        captured = []
+        def reserve():
+            result = store.create(owner, key, request, kernel)
+            captured.append(result)
+            return result
+        try:
+            job, fresh = await _paper_io(reserve)
+            if not _admissions_open:
+                raise asyncio.CancelledError()
+            if fresh:
+                _tasks[job['id']] = asyncio.create_task(executor(owner, job['id'], request))
+            return job
+        except BaseException:
+            # _paper_io has drained the DB thread before raising. Only a fresh
+            # reservation belongs to this admission; never cancel an old retry.
+            if captured and captured[0][1]:
+                try:
+                    await _paper_io(store.cancel, owner, captured[0][0]['id'])
+                except asyncio.CancelledError:
+                    pass  # cleanup thread has also drained
+            raise
+    task = asyncio.create_task(admission())
+    _admission_tasks[task] = owner
+    def finished(done):
+        _admission_tasks.pop(done, None)
+        if not done.cancelled():
+            done.exception()  # consume failures after a disconnected caller
+    task.add_done_callback(finished)
+    return await asyncio.shield(task)
+
+
+async def submit_async(owner, key, request):
+    job = await admit_job(owner, key, request, kernel_identity(), execute)
+    return {k:v for k,v in job.items() if k != 'dataset'}
+
+
+async def _cancel_and_drain(tasks):
+    """Repeated cancellation of shutdown must not abandon owned work."""
+    tasks = list(tasks)
+    for task in tasks: task.cancel()
+    group = asyncio.gather(*tasks, return_exceptions=True)
+    interrupted = False
+    while not group.done():
+        try:
+            await asyncio.shield(group)
+        except asyncio.CancelledError:
+            interrupted = True
+    group.result()
+    if interrupted: raise asyncio.CancelledError()
+
+
 def _calendar_veto(owner, parent, *, required=True):
     from .quant_paper_calendar import review
     return review(owner, parent, required=required)
@@ -316,18 +383,25 @@ def attach_lifespan(app):
     original=app.router.lifespan_context
     @asynccontextmanager
     async def composed(application):
+        global _admissions_open
         async with original(application) as state:
             # Fail startup before the blue/green ready gate if the new ledger is not writable.
             def initialize():
                 with store.connect() as c: c.execute("SELECT count(*) FROM qr_experiment").fetchone()
             await asyncio.to_thread(initialize)
+            _admissions_open = True
             task=asyncio.create_task(scheduler())
             try: yield state
             finally:
+                _admissions_open = False
                 task.cancel()
-                pending=list(_tasks.values())+list(_refresh_tasks.values())
-                for job in pending: job.cancel()
-                await asyncio.gather(task,*pending,return_exceptions=True)
+                admissions = list(_admission_tasks)
+                try:
+                    await _cancel_and_drain(admissions)
+                finally:
+                    # No admission can schedule a worker after this snapshot.
+                    pending=list(_tasks.values())+list(_refresh_tasks.values())
+                    await _cancel_and_drain([task,*pending])
     app.router.lifespan_context=composed
     app._quant_research_attached=True
 
@@ -338,6 +412,14 @@ def reproduce(owner, identity, key):
     if job['status']!='completed': raise ValueError('仅可复核已完成实验')
     if job['kernel']!=kernel_identity(): raise ValueError('执行内核已变化，不能冒充原版本复核')
     return submit(owner,key,{**job['request'],'replay_of':identity})
+
+
+async def reproduce_async(owner, identity, key):
+    job = await _paper_io(store.get, owner, identity)
+    if not job: raise LookupError('实验不存在')
+    if job['status'] != 'completed': raise ValueError('仅可复核已完成实验')
+    if job['kernel'] != kernel_identity(): raise ValueError('执行内核已变化，不能冒充原版本复核')
+    return await submit_async(owner, key, {**job['request'], 'replay_of':identity})
 
 
 async def refresh_paper(owner, identity):
