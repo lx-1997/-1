@@ -1,0 +1,90 @@
+{
+  "scope": "isolated retained-data guard QA; not strategy qualification or production acceptance",
+  "sources_unchanged": true,
+  "production_writes": false,
+  "papers_created": 0,
+  "rows": [
+    {
+      "original_experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "original_result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "original_reproduced_exactly": true,
+      "review": "dca1fbe95a4041a3a37ef7200fb23dce",
+      "review_result_digest": "91757e035748c9e242d0799868a576dfa891d38beb5709ecba3497c8bb119c0f",
+      "observed_sessions_per_series": 729,
+      "official_sources": 8,
+      "annual_plan_matches": true,
+      "stored_snapshot_matches": true,
+      "failed_strategy_rejected": "未通过研究门槛，不能转入模拟跟踪",
+      "in_memory_restamped_clock_only_update_check": {
+        "status": "matches_plan",
+        "completed_through": "2026-10-29",
+        "requested_start": "2023-10-26",
+        "requested_end": "2026-10-29",
+        "calendar_manifest_digest": "1f15ffd3b8b8876d53b7dac9fffaff8569c8e1c6c5ce40519da1ebe003f331bc",
+        "quality_digest": "f0565f4459dfdfc6f9b5aabbc690f7693209552782430cdaaef2f8ff429da27d",
+        "scope": "retrospective_annual_plan_only",
+        "actual_exchange_sessions_certified": false,
+        "security_status_verified": false
+      },
+      "common_gap_rejected": "新增行情与年度日历计划存在差异，未更新模拟账户；请核对缺日或额外日期",
+      "common_gap_day": "2025-04-28",
+      "old_intraday_capture_rejected_as_fresh": "新增行情采集时钟过期，未更新模拟账户"
+    },
+    {
+      "original_experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "original_result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "original_reproduced_exactly": true,
+      "review": "2d221b9aac074d80ba9733da6da802ce",
+      "review_result_digest": "59ccaa27b33cf19d8b13ecb8c61e77d2b8d9292c889c306be0e782ca02702528",
+      "observed_sessions_per_series": 729,
+      "official_sources": 8,
+      "annual_plan_matches": true,
+      "stored_snapshot_matches": true,
+      "failed_strategy_rejected": "未通过研究门槛，不能转入模拟跟踪",
+      "in_memory_restamped_clock_only_update_check": {
+        "status": "matches_plan",
+        "completed_through": "2026-10-29",
+        "requested_start": "2023-10-26",
+        "requested_end": "2026-10-29",
+        "calendar_manifest_digest": "1f15ffd3b8b8876d53b7dac9fffaff8569c8e1c6c5ce40519da1ebe003f331bc",
+        "quality_digest": "a2e1775be38ec2dd9df267e945c517a3a62fbdf148bc238ada5693484f666205",
+        "scope": "retrospective_annual_plan_only",
+        "actual_exchange_sessions_certified": false,
+        "security_status_verified": false
+      },
+      "common_gap_rejected": "新增行情与年度日历计划存在差异，未更新模拟账户；请核对缺日或额外日期",
+      "common_gap_day": "2025-04-28",
+      "old_intraday_capture_rejected_as_fresh": "新增行情采集时钟过期，未更新模拟账户"
+    }
+  ],
+  "source_sha256": {
+    "quant_research.py": "a63577fce34b60d76203ff585875b1ead4cb894627ebbe7f2f5bbf5798c1acab",
+    "quant_paper_calendar.py": "585fa445f8951d0062358017879a645422a61b56701e799c7996a29f62622713",
+    "quant_calendar_service.py": "729b11d6e59a8a22eee27a942cc7b29208432d10b8bc2cac1b82112e895505f3",
+    "quant_calendar_store.py": "e5f0383a8a3f01b45e9e46e53b54962b1cd71b549a30647e903c2f6194d8216e",
+    "quant_exchange_schedule.py": "b58873b9153b233c29a07559996fd8645bf9bb1146d3e72d1f761c8bf64a43f2",
+    "quant_research_store.py": "94b6c45a35d0f202b32a3f09ec2b5e1a7960aa781b0bbfb33ea4efde848fab0b",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+  },
+  "real_check_sha256": "d66e57b3fa20c699a9f215893a9da28c68e94c64fa52522d0ff1a897ad604b91",
+  "cold_backup": {
+    "experiments": 4,
+    "papers": 0,
+    "sources": {
+      "20f8940d0facbfc762ef9d18fe0d755d096d6e9bb323adc8640bf479d93c37f0": "20f8940d0facbfc762ef9d18fe0d755d096d6e9bb323adc8640bf479d93c37f0",
+      "f614daa5a6a53916e47ee1ac8e7682d2f15369f0f7d0f90611819a6daad92263": "f614daa5a6a53916e47ee1ac8e7682d2f15369f0f7d0f90611819a6daad92263",
+      "d403c40f29bbf1fe7f39b02b7fb93c9a0bfbd71f8f04c6350c3b5050921bf889": "d403c40f29bbf1fe7f39b02b7fb93c9a0bfbd71f8f04c6350c3b5050921bf889",
+      "ff188c710b8904758c185eb955e9eaa2c9bd7c2061af984d4f1d743f899c12a4": "ff188c710b8904758c185eb955e9eaa2c9bd7c2061af984d4f1d743f899c12a4",
+      "85e2a05b8968f1a4cadd975184962b648cf2cb2cea0071314f0e81bc17f1df96": "85e2a05b8968f1a4cadd975184962b648cf2cb2cea0071314f0e81bc17f1df96",
+      "2c9906bac2116f3bc6190f0d0a74e0be40f1e4307f71e34cc12007d411e88b13": "2c9906bac2116f3bc6190f0d0a74e0be40f1e4307f71e34cc12007d411e88b13",
+      "1c5da711eadf27308c84f12b5908ef461fa9dc739d1476512da2754249c90c1f": "1c5da711eadf27308c84f12b5908ef461fa9dc739d1476512da2754249c90c1f",
+      "1656d8708d5faed33c7588538639d96128f39fdface02cfa6eb66d796c40f14e": "1656d8708d5faed33c7588538639d96128f39fdface02cfa6eb66d796c40f14e"
+    },
+    "result_digests": [
+      "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "59ccaa27b33cf19d8b13ecb8c61e77d2b8d9292c889c306be0e782ca02702528",
+      "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "91757e035748c9e242d0799868a576dfa891d38beb5709ecba3497c8bb119c0f"
+    ]
+  }
+}

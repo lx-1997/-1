@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from deepfocus_api import quant_research_engine as e, quant_research_store as st, quant_research as svc
 from deepfocus_api import quant_research_api as api
+from deepfocus_api.tests.test_quant_exchange_schedule import reviewed
 
 
 def dataset(count=420, step=.05):
@@ -126,13 +127,16 @@ def test_concurrency_limits_persist_and_paper_cas():
 
 
 @pytest.mark.asyncio
-async def test_worker_runs_kernel_persists_and_promotes(monkeypatch):
-    async def fetch(*_):return dataset()
+async def test_worker_runs_kernel_persists_and_promotes(monkeypatch, reviewed):
+    from deepfocus_api.tests.paper_calendar_fixture import aligned, approve
+    async def fetch(*_):return aligned(reviewed)
     monkeypatch.setattr(svc,'fetch_dataset',fetch)
     job=svc.submit('a','research-job',request());await svc._tasks[job['id']]
     final=st.get('a',job['id']);assert final['status']=='completed'
     assert e.digest(final['result'])==final['result_digest']
     assert final['dataset'] and final['result']['holdout']['fills']
+    with pytest.raises(ValueError,match='日历核验'):svc.promote('a',job['id'])
+    await approve('a',job['id'],reviewed)
     assert svc.promote('a',job['id'])['state']['positions']=={}
 
 
@@ -159,24 +163,34 @@ async def test_api_owner_export_and_validation():
 
 
 @pytest.mark.asyncio
-async def test_paper_refresh_is_incremental(monkeypatch):
-    async def fetch(*_):return dataset()
-    monkeypatch.setattr(svc,'fetch_dataset',fetch);monkeypatch.setattr(svc,'complete_day',lambda:'2024-01-01')
-    job=svc.submit('a','paper-key',request());await svc._tasks[job['id']]
-    p=svc.promote('a',job['id']);assert p['state']['cursor']=='2024-01-01'
+async def test_paper_refresh_is_incremental(monkeypatch, reviewed):
+    from deepfocus_api.tests.paper_calendar_fixture import aligned, approve
+    data=aligned(reviewed);train_end=data['600519']['bars'][299]['date']
+    first=(date.fromisoformat(train_end)+timedelta(days=1)).isoformat()
+    async def fetch(symbols,start,end):
+        return {s:{**p,'bars':[b for b in p['bars'] if start<=b['date']<=end]} for s,p in data.items()}
+    monkeypatch.setattr(svc,'fetch_dataset',fetch);monkeypatch.setattr(svc,'complete_day',lambda:first)
+    job=svc.submit('a','paper-key',{**request(),'end_date':train_end});await svc._tasks[job['id']]
+    await approve('a',job['id'],reviewed)
+    p=svc.promote('a',job['id']);assert p['state']['cursor']==first
+    monkeypatch.setattr(svc,'complete_day',lambda:data['600519']['bars'][-1]['date'])
     r=await svc.refresh_paper('a',p['id']);again=await svc.refresh_paper('a',p['id'])
+    assert r['fills'] and r['state']['positions']
     assert r['fills']==again['fills'] and r['state']==again['state']
-    assert all(f['date']>'2024-01-01' for f in r['fills'])
+    assert all(f['date']>first for f in r['fills'])
+    assert r['calendar_update']['fresh']['status']=='matches_plan'
     svc.pause('a',p['id'])
     with pytest.raises(ValueError,match='暂停'):await svc.refresh_paper('a',p['id'])
 
 
 @pytest.mark.asyncio
-async def test_revisions_and_kernel_drift_cannot_rewrite_paper(monkeypatch):
-    data=dataset()
+async def test_revisions_and_kernel_drift_cannot_rewrite_paper(monkeypatch, reviewed):
+    from deepfocus_api.tests.paper_calendar_fixture import aligned, approve
+    data=aligned(reviewed)
     async def fetch(*_):return data
     monkeypatch.setattr(svc,'fetch_dataset',fetch)
     job=svc.submit('a','revision-key',request());await svc._tasks[job['id']]
+    await approve('a',job['id'],reviewed)
     p=svc.promote('a',job['id']);snapshot=copy.deepcopy(p['state'])
     data['600519']['bars'][2]['volume']+=1
     with pytest.raises(ValueError,match='修订'):await svc.refresh_paper('a',p['id'])
@@ -331,9 +345,10 @@ def test_manual_midday_check_does_not_suppress_evening_sync():
 
 
 @pytest.mark.asyncio
-async def test_api_full_research_to_incremental_paper_and_pause(monkeypatch):
+async def test_api_full_research_to_incremental_paper_and_pause(monkeypatch, reviewed):
     from datetime import datetime
-    all_data=dataset(420)
+    from deepfocus_api.tests.paper_calendar_fixture import aligned, approve
+    all_data=aligned(reviewed)
     train_end=all_data['600519']['bars'][299]['date']
     initial_day=(date.fromisoformat(train_end)+timedelta(days=1)).isoformat()
     monkeypatch.setattr(svc,'complete_day',lambda:initial_day)
@@ -347,14 +362,16 @@ async def test_api_full_research_to_incremental_paper_and_pause(monkeypatch):
         identity=created.json()['id'];await svc._tasks[identity]
         report=(await client.get('/api/quant-research/experiments/'+identity)).json()
         assert report['status']=='completed' and report['result']['gate']['passed']
+        assert (await client.post('/api/quant-research/experiments/'+identity+'/paper')).status_code==422
+        await approve('api-flow-owner',identity,reviewed)
         promoted=await client.post('/api/quant-research/experiments/'+identity+'/paper')
         assert promoted.status_code==201
         paper=promoted.json();assert paper['state']['positions']=={} and paper['fills']==[]
         assert (await client.post('/api/quant-research/experiments/'+identity+'/paper')).json()['id']==paper['id']
-        later=(date.fromisoformat(all_data['600519']['bars'][-1]['date'])+timedelta(days=1)).isoformat()
+        later=all_data['600519']['bars'][-1]['date']
         monkeypatch.setattr(svc,'complete_day',lambda:later)
         refreshed=(await client.post('/api/quant-research/paper/'+paper['id']+'/refresh')).json()
-        assert refreshed['fills'] and all(initial_day<f['date']<later for f in refreshed['fills'])
+        assert refreshed['fills'] and all(initial_day<f['date']<=later for f in refreshed['fills'])
         again=(await client.post('/api/quant-research/paper/'+paper['id']+'/refresh')).json()
         assert again['state']==refreshed['state'] and again['fills']==refreshed['fills']
         assert (await client.post('/api/quant-research/paper/'+paper['id']+'/pause')).json()['status']=='paused'

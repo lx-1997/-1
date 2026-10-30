@@ -16,7 +16,7 @@ BENCHMARKS = {'000300': '沪深300', '000905': '中证500', '000852': '中证100
 
 @lru_cache(maxsize=1)
 def kernel_identity():
-    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'quant_calendar.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
+    files = ('quant_research_engine.py', 'quant_research_candidates.py', 'quant_research.py', 'quant_calendar.py', 'quant_paper_calendar.py', 'quant_calendar_service.py', 'quant_calendar_store.py', 'quant_exchange_schedule.py', 'quant_research_store.py', 'backtest_data.py', 'ai_fund_ledger.py', 'ai_fund_policy.py')
     return engine.digest({f: hashlib.sha256(Path(__file__).with_name(f).read_bytes()).hexdigest() for f in files})
 
 
@@ -115,24 +115,9 @@ def submit(owner, key, request):
     return {k: v for k, v in job.items() if k not in {'dataset'}}
 
 
-def _calendar_veto(owner, parent):
-    """A recorded date defect on these exact inputs cannot be ignored by paper tracking."""
-    if parent is None:
-        raise ValueError('来源实验不存在，不能继续模拟跟踪')
-    with store.connect() as c:
-        rows = c.execute("SELECT payload FROM qr_experiment WHERE owner=? AND status='completed' AND json_extract(payload,'$.request.kind')='calendar_review' AND json_extract(payload,'$.request.parent_id')=?",
-                         (owner, parent['id'])).fetchall()
-    for row in rows:
-        payload = json.loads(row['payload']); request = payload['request']
-        if (request['parent_digest'] != parent['result_digest']
-                or request['parent_request_digest'] != engine.digest(parent['request'])
-                or request['reference_kernel'] != parent['kernel']):
-            continue
-        result = payload.get('result')
-        if not result or engine.digest(result) != payload.get('result_digest'):
-            raise ValueError('日历核验完整性异常，禁止继续模拟跟踪')
-        if result['quality']['status'] != 'matches_plan':
-            raise ValueError('该封存实验已发现日历差异，禁止晋级或继续模拟；请修正数据并新建实验')
+def _calendar_veto(owner, parent, *, required=True):
+    from .quant_paper_calendar import review
+    return review(owner, parent, required=required)
 
 
 def promote(owner, identity):
@@ -146,15 +131,21 @@ def promote(owner, identity):
         raise ValueError('实验完整性核对失败，禁止晋级')
     require_aligned(job['dataset'], benchmark=job['request']['benchmark'],
                     expected_symbols=job['request']['symbols']+[job['request']['benchmark']])
-    _calendar_veto(owner, job)
+    calendar = _calendar_veto(owner, job, required=False)
     if not job['result']['gate']['passed']: raise ValueError('未通过研究门槛，不能转入模拟跟踪')
+    if (job['result'].get('oos', {}).get('risk_paused') is not False
+            or job['result'].get('holdout', {}).get('state', {}).get('paused') is not False):
+        raise ValueError('验证路径已永久暂停或缺少风险状态，不能新建模拟账户绕过暂停')
+    if calendar is None:
+        from .quant_paper_calendar import MISSING
+        raise ValueError(MISSING)
     # Start flat after the sealed experiment; never backdate a live paper account.
     today = complete_day()
     state = engine.initial_state(job['request']['capital']); state['cursor'] = today
     return store.create_paper(owner, identity, {'request': job['request'], 'parameters': job['result']['parameters'],
                   'kernel': job['kernel'], 'dataset': job['dataset'], 'state': state, 'fills': [], 'curve': [],
                   'started': store.now(), 'start_after': today, 'last_check': None,
-                  'experiment_digest': job['result_digest'], 'policy': 'research_only_not_broker_execution'})
+                  'experiment_digest': job['result_digest'], 'calendar_admission': calendar['proof'], 'policy': 'research_only_not_broker_execution'})
 
 
 async def _refresh_paper(owner, identity):
@@ -162,13 +153,19 @@ async def _refresh_paper(owner, identity):
     if not paper: raise LookupError('模拟账户不存在')
     if paper['status'] != 'active': raise ValueError('模拟跟踪已暂停')
     if paper['kernel'] != kernel_identity(): raise ValueError('冻结内核与当前版本不一致，已拒绝执行')
-    _calendar_veto(owner, store.get(owner, paper['experiment']))
+    parent = store.get(owner, paper['experiment'])
+    calendar = await asyncio.to_thread(_calendar_veto, owner, parent)
+    if paper.get('experiment_digest') != parent['result_digest'] or paper['request'] != parent['request']:
+        raise ValueError('模拟账户与来源实验引用不一致，未更新账户')
     req, old = paper['request'], paper['dataset']
     scope = req['symbols']+[req['benchmark']]
     require_aligned(old, benchmark=req['benchmark'], expected_symbols=scope)
+    from .quant_paper_calendar import check_stored
+    await asyncio.to_thread(check_stored, calendar, paper)
     # Fetch a sufficiently overlapping history and refuse revisions instead of
     # silently rewriting signals or historical fills.
-    fetched = await fetch_dataset(req['symbols']+[req['benchmark']], req['start_date'], complete_day())
+    end = complete_day()
+    fetched = await fetch_dataset(req['symbols']+[req['benchmark']], req['start_date'], end)
     require_aligned(fetched, benchmark=req['benchmark'], expected_symbols=scope)
     merged = {}
     for s, p in old.items():
@@ -179,12 +176,18 @@ async def _refresh_paper(owner, identity):
         combined = {**oldmap, **{b['date']: b for b in fetched[s]['bars'] if b['date'] not in oldmap}}
         merged[s] = {**fetched[s], 'bars': [combined[d] for d in sorted(combined)]}
     require_aligned(merged, benchmark=req['benchmark'], expected_symbols=scope)
+    from .quant_paper_calendar import check_update
+    # Check the fresh response independently, before old bars could hide a
+    # common provider gap in the merged snapshot. Both must match the plan.
+    fresh_calendar = await asyncio.to_thread(check_update, calendar, fetched, req['start_date'], end)
+    merged_calendar = await asyncio.to_thread(check_update, calendar, merged, req['start_date'], end)
     result = await asyncio.to_thread(engine.replay, merged, req['symbols'], paper['parameters'], state=paper['state'])
     excluded = {'id','experiment','revision','status','updated'}
     payload = {k: v for k, v in paper.items() if k not in excluded}
     payload.pop('last_error', None)
     payload.update(state=result['state'], dataset=merged, fills=paper['fills']+result['fills'], curve=paper['curve']+result['curve'],
-                   last_check=store.now(), blocked_last_update=result['blocked'])
+                   last_check=store.now(), blocked_last_update=result['blocked'],
+                   calendar_admission=calendar['proof'], calendar_update={'fresh': fresh_calendar, 'merged': merged_calendar})
     local = datetime.now(timezone(timedelta(hours=8)))
     if local.strftime('%H:%M') >= '16:30' and engine.validate_dataset(merged)[-1] == local.date().isoformat():
         payload['last_eod_date'] = local.date().isoformat()

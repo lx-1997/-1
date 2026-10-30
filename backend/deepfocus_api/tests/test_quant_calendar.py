@@ -12,6 +12,7 @@ from deepfocus_api import quant_research as service, quant_research_store as sto
 from deepfocus_api import quant_research_engine as engine, quant_research_api as api
 from deepfocus_api import quant_event_service as event_service
 from deepfocus_api.tests.test_quant_research_loop import dataset, request
+from deepfocus_api.tests.test_quant_exchange_schedule import reviewed
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -128,15 +129,17 @@ async def test_failed_research_keeps_private_gap_snapshot_and_export_has_no_pric
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('where', ['stored', 'fresh'])
-async def test_paper_gap_refuses_without_touching_active_financial_ledger(monkeypatch, where):
-    data = dataset()
-    old = {s: {**p, 'bars': copy.deepcopy(p['bars'][:200])} for s, p in data.items()}
+async def test_paper_gap_refuses_without_touching_active_financial_ledger(monkeypatch, where, reviewed):
+    from deepfocus_api.tests.paper_calendar_fixture import aligned, approve
+    data = aligned(reviewed)
+    old = copy.deepcopy(data)
     result = engine.replay(old, ['600519'], engine.CANDIDATES[0])
     assert result['fills'] and result['state']['positions']
     original = engine.walk_forward(data, ['600519'], '000300')
     source, _ = store.create('owner', 'calendar-gap-source', request(), service.kernel_identity())
     store.update('owner', source['id'], status='completed', extra={
         'dataset': copy.deepcopy(data), 'result': original, 'result_digest': engine.digest(original)})
+    await approve('owner', source['id'], reviewed)
     if where == 'stored':
         old['600519']['bars'].pop(100)
     else:
@@ -144,6 +147,7 @@ async def test_paper_gap_refuses_without_touching_active_financial_ledger(monkey
         data['000300']['bars'].pop(100)
     paper = store.create_paper('owner', source['id'], {
         'request': request(), 'kernel': service.kernel_identity(), 'dataset': old,
+        'experiment_digest': engine.digest(original),
         'state': result['state'], 'parameters': engine.CANDIDATES[0],
         'fills': result['fills'], 'curve': result['curve']})
     before = copy.deepcopy(store.get('owner', paper['id'], True))
