@@ -1,0 +1,248 @@
+{
+  "schema": "exact-model-cost-review-v1",
+  "protocol": {
+    "schema": "exact-model-cost-review-v1",
+    "registered_at": "2026-10-31T05:45:25.021268+00:00",
+    "bindings": {
+      "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+      "source_pins": {
+        "backend/deepfocus_api/quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+        "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+        "backend/deepfocus_api/quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+        "backend/deepfocus_api/ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+        "backend/deepfocus_api/ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+        "scripts/quant-exact-model-cost-review.py": "7be03b2994597511d03080c8217661425c06b2f84a96906b470f472bb20d5ee7"
+      },
+      "rules": {
+        "version": "exact-model-cost-v1",
+        "scope": "fixed_original_seen_path_no_signal_or_order_generation",
+        "basis": "exact_rational_weighted_average_model_basis_not_tax_basis",
+        "realized_rounding": "per_sale_cent_half_even_with_exact_residual_retained",
+        "fee": "original_notional_tariff_cent_half_up_no_fee_base_change",
+        "invariants": "exact_cash_plus_unrealized_plus_realized_conservation_every_day",
+        "legacy": "record_all_differences_never_relabel_v1_as_passed_or_migrate_implicitly",
+        "restore": "JSON_after_first_original_buy_close_with_held_shares_all_outputs_and_state_equal",
+        "promotion_allowed": false,
+        "gates_changed": false
+      },
+      "experiments": [
+        {
+          "id": "31aedd8f544144ad9b7a7d2088e181b0",
+          "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+          "dataset_digest": "afb4e49b0c6b6ab7ec8111048db7758bf05221e1eccfebbef3b67acef30c8778"
+        },
+        {
+          "id": "0839ee7717d143c7b991bddbfb55f891",
+          "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+          "dataset_digest": "1e47ecc4830653f9685be80288b07398e0d6d8d57cf3c213cbc5a9055a28e896"
+        }
+      ]
+    },
+    "promotion_allowed": false,
+    "strategy_searches": 0
+  },
+  "protocol_digest": "cf8b522e72db24997df9734fb99e254bd8339c72919dfc9b3ef58098dd726476",
+  "status": "exact_conservation_verified_legacy_checked_separately",
+  "failure": null,
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "original_reproduced_exactly": true,
+      "original_gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "original_oos_metrics": {
+        "return_pct": -6.573664000000001,
+        "max_drawdown_pct": -7.8456714293284495,
+        "observations": 535,
+        "sharpe": -1.6396167613253754,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -33.315943985551584,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "cost_book": {
+        "version": "exact-model-cost-v1",
+        "state": {
+          "version": "exact-model-cost-v1",
+          "source_sha256": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+          "plan_digest": "1cc610fadee25335acc3be605c200363649b0a7c0eb45bea132c1f9fa0339c36",
+          "scope": "31aedd8f544144ad9b7a7d2088e181b0",
+          "cursor": 534,
+          "cash_cents": 93426336,
+          "positions": {},
+          "realized_exact": [
+            "-1643416",
+            "25"
+          ],
+          "realized_rounded_cents_sum": -6573662,
+          "fills_processed": 58,
+          "fill_prefix_digest": "5cad09f11a472731f3167c9ddc26291be2dd30de92bb5cb00a0bcaaf157e24b4",
+          "state_digest": "bd1fe9db87607f71299d6793cbd2d51ff758f55fb3239e5984d4acb2fc3cc501"
+        },
+        "legacy_differences": [],
+        "exact_conservation_verified": true,
+        "legacy_reconciliation_passed": true,
+        "legacy_receipts_rewritten": false,
+        "promotion_allowed": false,
+        "execution_verified": false,
+        "tax_basis_verified": false,
+        "fills_checked": 58,
+        "daily_points_checked": 535,
+        "final_rounding_residual": [
+          "-1",
+          "50"
+        ]
+      },
+      "restore": {
+        "date": "2024-05-14",
+        "held_shares": 19100,
+        "full_state_and_all_outputs_equal": true
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "original_reproduced_exactly": true,
+      "original_gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "original_oos_metrics": {
+        "return_pct": -4.892655999999884,
+        "max_drawdown_pct": -7.942676236598068,
+        "observations": 535,
+        "sharpe": -0.4381119290605238,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -31.634935985551472,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "cost_book": {
+        "version": "exact-model-cost-v1",
+        "state": {
+          "version": "exact-model-cost-v1",
+          "source_sha256": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+          "plan_digest": "7fa9b44c5cf5370b20cdc7da660ba497d0989f3ce2155ac11638be7fdf7e816e",
+          "scope": "0839ee7717d143c7b991bddbfb55f891",
+          "cursor": 534,
+          "cash_cents": 95107344,
+          "positions": {},
+          "realized_exact": [
+            "-1223164",
+            "25"
+          ],
+          "realized_rounded_cents_sum": -4892663,
+          "fills_processed": 120,
+          "fill_prefix_digest": "6bd9e8e454adf836c21b108e3476afe85e3536eece14f6afb958ab2c021c6034",
+          "state_digest": "02584858d7c8cefbb10def2922cfcac10a9e06f4cf8410de685b7672882e79bd"
+        },
+        "legacy_differences": [
+          {
+            "date": "2025-01-10",
+            "symbol": "000333",
+            "fill_digest": "d2e9a064c1c514367a4be10a741f918677e704ea3273b49b99107b868212652c",
+            "legacy_cents": 21989,
+            "exact_model_rounded_cents": 21988,
+            "legacy_minus_exact_cents": 1
+          },
+          {
+            "date": "2025-01-16",
+            "symbol": "000333",
+            "fill_digest": "cffe6ebd70a25e13eb842f4e7de9cc63db13963f539f00463b563160b640922f",
+            "legacy_cents": -632575,
+            "exact_model_rounded_cents": -632574,
+            "legacy_minus_exact_cents": -1
+          }
+        ],
+        "exact_conservation_verified": true,
+        "legacy_reconciliation_passed": false,
+        "legacy_receipts_rewritten": false,
+        "promotion_allowed": false,
+        "execution_verified": false,
+        "tax_basis_verified": false,
+        "fills_checked": 120,
+        "daily_points_checked": 535,
+        "final_rounding_residual": [
+          "7",
+          "100"
+        ]
+      },
+      "restore": {
+        "date": "2024-05-14",
+        "held_shares": 8200,
+        "full_state_and_all_outputs_equal": true
+      }
+    }
+  ],
+  "strategy_searches": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0,
+  "execution_verified": false,
+  "oos_validation": false,
+  "limitations": [
+    "Seen development data; original raw corporate-action limitations remain",
+    "Provider daily open is a reference, never certified auction execution",
+    "No intraday prints/order book/auction/queue or explicit halt/limit identity verification",
+    "New model receipt identity; all legacy differences retained, old strict v1 remains rejected"
+  ],
+  "artifact_directory": "artifacts/quant-exact-model-cost-20261031",
+  "review_sha256": "3199ff76b65facf3e25c86f95e49adeb8f0fd941ab12af647255e52e3dc522b3",
+  "independent_oracle": {
+    "results": [
+      {
+        "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "independent_unit_average_fills_checked": 58,
+        "daily_pnl_bridges_checked": 535,
+        "oracle": "unit_average_rational_plus_1000digit_decimal_half_even",
+        "legacy_difference_count": 0
+      },
+      {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "independent_unit_average_fills_checked": 120,
+        "daily_pnl_bridges_checked": 535,
+        "oracle": "unit_average_rational_plus_1000digit_decimal_half_even",
+        "legacy_difference_count": 2
+      }
+    ],
+    "status": "new_model_only_verified_legacy_not_upgraded",
+    "review_sha256": "3199ff76b65facf3e25c86f95e49adeb8f0fd941ab12af647255e52e3dc522b3"
+  },
+  "legacy_strict_status": "rejected",
+  "legacy_strict_exit_code": 2,
+  "legacy_strict_report_byte_identical": true,
+  "legacy_strict_report_sha256": "48537c4cbdc0fcadfa3850bf014127da8b3723f5f75801e22eb616c88130f9c2",
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a",
+    "backend/deepfocus_api/quant_execution_cost_book.py": "438911ee0ddbf6486e5e6ee2816f1b83780b40d1348d3a09807e67fcc61da6df"
+  },
+  "new_tests": 36,
+  "production_deployed": false
+}
