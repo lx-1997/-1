@@ -15,7 +15,7 @@ from pathlib import Path
 from . import quant_dividend_book as cash, quant_share_entitlements as shares
 from .quant_corporate_actions import visible_events, money
 
-VERSION='capitalization-composite-research-book-v1'
+VERSION='capitalization-composite-research-book-v2'
 FILES=('quant_capitalization_book.py','quant_share_entitlements.py','quant_dividend_book.py',
        'quant_corporate_actions.py','quant_research_engine.py','ai_fund_ledger.py','ai_fund_policy.py')
 
@@ -45,12 +45,24 @@ def _check(book,scope):
     if book['cash']['phase'] not in ('open','closed') or book['cash']['start_after']!=book['shares']['start_after']:
         raise ValueError('Component boundary mismatch')
     if shares.stamp(book['shares']['clock']).astimezone(shares.BJ).date().isoformat()>book['cash']['cursor']:raise ValueError('Share inventory ahead of cash session')
+    history=book.get('history')
+    if history is None:
+        if book['cash']['cursor']!=book['cash']['start_after'] or book['cash']['phase']!='closed' or book['shares']['actions'] or book['marks']:
+            raise ValueError('Missing composite history')
+    else:
+        if not isinstance(history,dict) or set(history)!={'asof','cash','capitalization','sessions'}:raise ValueError('Invalid composite history')
+        expected=book['cash']['cursor']+('T09:30:00+08:00' if book['cash']['phase']=='open' else 'T23:59:59+08:00')
+        if history['asof']!=expected:raise ValueError('Composite history clock mismatch')
+        _calendar(history['sessions'])
+        for kind in ('cash','capitalization'):
+            if not isinstance(history[kind],dict) or len(history[kind])>1000 or any(not isinstance(fp,str) or len(fp)!=64 or any(c not in '0123456789abcdef' for c in fp) for fp in history[kind].values()):
+                raise ValueError('Invalid composite history fingerprints')
 
 
 def initial(capital,start_after,*,scope,investor,mode):
     return _seal({'schema':VERSION,'scope':scope,'source_pins':LOADED_PINS,
                   'cash':cash.initial_book(capital,start_after,investor=investor,mode=mode),
-                  'shares':shares.initial(scope,start_after,mode=mode),'marks':{},
+                  'shares':shares.initial(scope,start_after,mode=mode),'marks':{},'history':None,
                   'tax_basis_verified':False,'strategy_execution_ready':False,'promotion_allowed':False})
 
 
@@ -85,6 +97,36 @@ def _visible(actions,asof,mode):
 
 def _context(actions,events,sessions,mode):
     return shares.digest([[asdict(e) for e in actions],[asdict(e) for e in events],sessions,mode])
+
+
+def _calendar(sessions):
+    if not isinstance(sessions,list) or not 1<=len(sessions)<=20000:raise ValueError('Bounded composite calendar required')
+    for d in sessions:shares.day(d)
+    if sessions!=sorted(set(sessions)):raise ValueError('Composite calendar must be unique and increasing')
+
+
+def _facts(actions,events,asof,mode):
+    return {'cash':{e.event_id:e.fingerprint for e in visible_events(events,asof,mode=mode)},
+            'capitalization':{e.event_id:e.fingerprint for e in _visible(actions,asof,mode)}}
+
+
+def _check_history(book,actions,events,sessions):
+    _calendar(sessions)
+    if not isinstance(events,list) or len(events)>1000:raise ValueError('Bounded composite cash evidence history required')
+    history=book['history']
+    if history is None:return
+    prior=history['sessions']
+    if len(sessions)<len(prior) or sessions[:len(prior)]!=prior:
+        raise ValueError('Composite calendar history changed; only future append is allowed')
+    facts=_facts(actions,events,history['asof'],book['shares']['mode'])
+    if any(facts[k]!=history[k] for k in ('cash','capitalization')):
+        raise ValueError('Observed composite evidence history removed or revised')
+
+
+def _remember(book,actions,events,sessions,asof):
+    facts=_facts(actions,events,asof,book['shares']['mode'])
+    if any(len(v)>1000 for v in facts.values()):raise ValueError('Composite evidence history quota exceeded')
+    book['history']={'asof':asof,'sessions':list(sessions),**facts}
 
 
 def _existing(book,actions):
@@ -154,6 +196,7 @@ def _valuation(book):
 @shares.exact_context
 def open_session(previous,d,prices,events,actions,sources,sessions,*,scope):
     _check(previous,scope);_inputs(actions,sources);_existing(previous,actions)
+    _check_history(previous,actions,events,sessions)
     mode=previous['shares']['mode'];asof=d+'T09:30:00+08:00';known=_visible(actions,asof,mode)
     for e in known:
         if previous['shares']['start_after']<e.record_date<d and e.event_id not in previous['shares']['actions']:
@@ -167,6 +210,7 @@ def open_session(previous,d,prices,events,actions,sources,sessions,*,scope):
         if e.ex_date==d and e.event_id in book['shares']['actions']:
             book['shares']=shares.recognize(book['shares'],e,sources,asof=asof,scope=scope)
     book['session_context']=_context(actions,events,sessions,mode)
+    _remember(book,actions,events,sessions,asof)
     _mark(book,prices,d);book['valuation']=_valuation(book)
     return _seal(book)
 
@@ -189,6 +233,7 @@ def close_session(previous,prices,events,actions,sources,sessions,*,scope,allotm
     _check(previous,scope);_inputs(actions,sources);_existing(previous,actions)
     mode=previous['shares']['mode'];d=previous['cash']['cursor'];asof=d+'T23:59:59+08:00'
     if previous.get('session_context')!=_context(actions,events,sessions,mode):raise ValueError('Composite session inputs changed')
+    _check_history(previous,actions,events,sessions)
     if allotments is None:allotments={}
     if not isinstance(allotments,dict) or set(allotments)-{e.event_id for e in actions}:raise ValueError('Unknown allotment event')
     if any(not isinstance(value,shares.Allotment) for value in allotments.values()):raise ValueError('Explicit validated allotment required')
@@ -213,5 +258,6 @@ def close_session(previous,prices,events,actions,sources,sessions,*,scope,allotm
     # Validate marks while still in an open session; cash.close removes the flag.
     _mark(book,prices,d)
     book['cash']=cash.close_session(book['cash'],prices,events,sources,sessions,mode=mode)
+    _remember(book,actions,events,sessions,asof)
     book.pop('session_context');book['valuation']=_valuation(book)
     return _seal(book)

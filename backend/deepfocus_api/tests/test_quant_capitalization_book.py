@@ -82,7 +82,8 @@ def test_no_action_composition_matches_existing_cash_ledger_exactly():
         assert b['cash']==legacy and b['valuation']['composite_gross_nav_exact']==legacy['valuation']['gross_nav']
 
 def test_later_cash_registration_on_new_shares_is_rejected_not_dropped():
-    b=step(registered(),DAYS[2],100);later=replace(CASH,event_id='later',record_date=DAYS[3],ex_date=DAYS[4],pay_date=DAYS[4])
+    b=step(registered(),DAYS[2],100);later=replace(CASH,event_id='later',record_date=DAYS[3],ex_date=DAYS[4],pay_date=DAYS[4],
+        available_at=DAYS[3]+'T08:00:00+08:00',observed_at=DAYS[3]+'T08:00:00+08:00')
     with pytest.raises(ValueError,match='inheritance'):step(b,DAYS[3],100,events=[CASH,later])
 
 def test_missing_position_mark_is_rejected_instead_of_zero_valued():
@@ -97,7 +98,7 @@ def test_dividend_or_capitalization_inputs_cannot_change_inside_session():
 def test_skipped_or_late_registration_requires_explicit_rebuild():
     b=step(initial(),DAYS[0],182.52,actions=[])
     b=step(b,DAYS[1],182.52,actions=[])
-    with pytest.raises(ValueError,match='registration'):step(b,DAYS[2],100)
+    with pytest.raises(ValueError,match='history'):step(b,DAYS[2],100)
 
 def test_duplicate_economic_action_cannot_double_entitlements():
     with pytest.raises(ValueError,match='overlapping'):step(initial(),DAYS[0],182.52,actions=[ACTION,replace(ACTION,event_id='renamed')])
