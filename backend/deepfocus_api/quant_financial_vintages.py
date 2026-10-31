@@ -16,6 +16,7 @@ from .quant_research_engine import digest
 VERSION='reviewed-financial-vintages-v1'
 VALIDATION_VERSION='exact-financial-magnitude-v2'
 ISSUER_IDENTITY_VERSION='cninfo-ascii-org-v2'
+SOURCE_URL_VERSION='cninfo-exact-indexed-PDF-or-pdf-v2'
 ISSUER_ID_PATTERN=r'cninfo:[A-Za-z0-9]{5,40}'
 METRICS={'revenue','parent_net_profit','net_operating_cashflow'}
 BOOK_TIME_POLICY='date_only_disclosure_visible_from_next_calendar_day_00_00_beijing'
@@ -83,8 +84,8 @@ def _validate_record(record,sources,now):
     if (type(record.revision) is not int or record.revision<1 or not re.fullmatch(r'\d+',record.document_id)
             or type(record.source_page) is not int or not 1<=record.source_page<=1000):
         raise ValueError('Invalid revision/document/page')
-    expected='https://static.cninfo.com.cn/finalpage/'+record.published_date+'/'+record.document_id+'.PDF'
-    if record.source_url!=expected:raise ValueError('Document identity/date URL mismatch')
+    prefix='https://static.cninfo.com.cn/finalpage/'+record.published_date+'/'+record.document_id+'.'
+    if record.source_url not in {prefix+'PDF',prefix+'pdf'}:raise ValueError('Document identity/date URL mismatch')
     if not isinstance(record.metrics,dict) or not record.metrics or set(record.metrics)-METRICS:
         raise ValueError('Unsupported or empty financial metric panel')
     for value in record.metrics.values():
@@ -158,7 +159,7 @@ def select_panel(manifest,sources,*,issuer_id,symbol,period_end,as_of,mode,requi
     if len({_group(r) for r in candidates})>1:raise ValueError('Ambiguous report period/scope')
     visible=[r for r in candidates if available_at(r)<=clock
              and (mode=='historical_reconstruction' or max(timestamp(r.observed_at),timestamp(r.recorded_at))<=clock)]
-    result={'version':VERSION,'validation_version':VALIDATION_VERSION,'issuer_identity_version':ISSUER_IDENTITY_VERSION,'issuer_id':issuer_id,'symbol':symbol,'period_end':period_end,'as_of':as_of,
+    result={'version':VERSION,'validation_version':VALIDATION_VERSION,'issuer_identity_version':ISSUER_IDENTITY_VERSION,'source_url_version':SOURCE_URL_VERSION,'issuer_id':issuer_id,'symbol':symbol,'period_end':period_end,'as_of':as_of,
             'mode':mode,'availability_policy':BOOK_TIME_POLICY,'manifest_digest':digest(manifest),
             'source_pins':source_pins(),'coverage_verified':False,'historical_pit_feed_certified':False,
             'promotion_allowed':False,'commercial_ready':False,

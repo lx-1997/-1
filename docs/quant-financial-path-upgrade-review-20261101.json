@@ -1,0 +1,119 @@
+{
+  "schema": "exact-indexed-PDF-path-upgrade-review-v1",
+  "base_commit": "50de0556048e6d75a5c02d96f6ec048fc635c731",
+  "tested_tree": "6774cb74cc61d599a6483a3f1a2534b5815db14a",
+  "focused_passed": 356,
+  "focused_warnings": 2,
+  "focused_seconds": 12.54,
+  "new_backend_cases": 16,
+  "focused_test_files": 18,
+  "pytest_exit_code": 0,
+  "real": {
+    "tested_tree": "3acbe3bcd82f58869886d9ca62f37e3a70b75668",
+    "actual_lowercase_annuals": [
+      {
+        "symbol": "002138",
+        "document_id": "1222663234",
+        "exact_URL": "https://static.cninfo.com.cn/finalpage/2025-02-28/1222663234.pdf",
+        "source_sha256": "e6cf0dd596e3938d85ca3c406f80a2e3844b88c5168f7d15d93c380f02966927",
+        "source_code_page": 8,
+        "CNY_amounts": {
+          "group": "950292468.61",
+          "parent": "832084151.71",
+          "minority": "118208316.90"
+        },
+        "manual_source_pages": [
+          90,
+          91,
+          92
+        ],
+        "group_identity_exact": true,
+        "actual_stored_URL_case_preserved": true,
+        "historical_annual_TTM_equal_source_group": true,
+        "actual_recorded_query_unavailable": true,
+        "annual_only_not_complete_Q1_panel": true,
+        "receipt_id": "ad8fa53312d64d7ea9683d240c9fa5a5",
+        "packet_id": "6e3b7233b200414ea2e44b3551508ad0"
+      },
+      {
+        "symbol": "000803",
+        "document_id": "1223222838",
+        "exact_URL": "https://static.cninfo.com.cn/finalpage/2025-04-23/1223222838.pdf",
+        "source_sha256": "9b1d8d5993e0e393a5f52ffa20564f3a68c4eb7ad1dcdab149e44c760ca78878",
+        "source_code_page": 7,
+        "CNY_amounts": {
+          "group": "2612860.99",
+          "parent": "13037644.49",
+          "minority": "-10424783.50"
+        },
+        "manual_source_pages": [
+          118,
+          119,
+          119
+        ],
+        "group_identity_exact": true,
+        "actual_stored_URL_case_preserved": true,
+        "historical_annual_TTM_equal_source_group": true,
+        "actual_recorded_query_unavailable": true,
+        "annual_only_not_complete_Q1_panel": true,
+        "receipt_id": "949a9c5ea59944dfa28866e04c359c3f",
+        "packet_id": "94db82d01a344375b7e5fee3fb3e102b"
+      }
+    ],
+    "new_lowercase_cold_restore_raw_rows_equal": true,
+    "old8_raw_rows_preserved": true,
+    "old8_source_main_sha256_unchanged": true,
+    "old8_panel_and_structure_equal_except_explicit_provenance": true,
+    "allowed_provenance_keys": [
+      "archive_source_current",
+      "archive_source_status",
+      "parent_report_digest",
+      "report_digest",
+      "source_pins",
+      "validated_source_digest",
+      "validator_version"
+    ],
+    "old8_restored_full_JSON_equal": true,
+    "old8_profiles": "known_v2_revalidated",
+    "old_READY_or_original_records_rewritten": false,
+    "new_complete_Q1_companies": 0,
+    "strategy_evaluations": 0,
+    "production_writes": 0
+  },
+  "older_QA": {
+    "old_parent_rows": 1,
+    "old_typed_rows": 2,
+    "known_v1_typed_revalidated": true,
+    "full_previous_result_equal_except_two_current_validator_fields": true,
+    "raw_rows_and_BLOBs_equal_in_new_cold_restore": true,
+    "original_source_main_sha256_unchanged": true,
+    "restored_full_current_result_equal": true,
+    "original_records_or_READY_rewritten": false,
+    "production_writes": 0
+  },
+  "client_VM_exit_code": 0,
+  "initial_real_failure": {
+    "exit_code": 1,
+    "reason": "disk full during old8 backup integrity_check; partial snapshot and FAILED.json retained",
+    "rerun_new_workspace": true,
+    "same_implementation": true
+  },
+  "Git_matched_source_reclaim_MiB": 281.40217113564705,
+  "ended_test_files_gzip_verified_MiB": 40.02081108093262,
+  "original_docs_and_data_not_deleted": true,
+  "legacy_URL_domains_not_broadened": true,
+  "new_uppercase_alias_of_lower_index_accepted": false,
+  "whole_backend_rerun": false,
+  "strategy_or_OOS_thresholds_changed": false,
+  "full_Q1_panel_company_count_still": 8,
+  "commercial_ready": false,
+  "goal_complete": false,
+  "artifact_root": "artifacts/quant-financial-path-upgrade-20261101",
+  "evidence_manifest_sha256": "adc4120bd5bd24b97fcb2b239a6db1bb7277e98db41ed6dc5d38f59aaa86c6b4",
+  "real_probe_source_tree": "3acbe3bcd82f58869886d9ca62f37e3a70b75668",
+  "only_test_strengthened_after_real_probes": [
+    "backend/deepfocus_api/tests/test_quant_financial_path_upgrade.py"
+  ],
+  "implementation_identical_across_both_exports": true,
+  "initial_focused_seconds": 12.79
+}

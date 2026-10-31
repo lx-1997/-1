@@ -16,7 +16,9 @@ VERSION='qr-typed-financial-extraction-v1'
 # Exact typed extraction implementation before the org identity upgrade.
 KNOWN_V1_SOURCE_PINS={**base.KNOWN_V3_SOURCE_PINS,
     'quant_financial_fact_store.py':'9f5f4c27f77179ff66bc1c4085c5da4c8e273923eaf943713aaa01d230f3ce55'}
-VALIDATOR_VERSION='qr-typed-source-validator-v2'
+KNOWN_V2_SOURCE_PINS={**base.KNOWN_V4_SOURCE_PINS,
+    'quant_financial_fact_store.py':'7966de573e89c1e80252843633d9dd62e09269ef99cf67fcc75d818056dbd972'}
+VALIDATOR_VERSION='qr-typed-source-validator-v3'
 FLOW_METRICS={'consolidated_net_profit','minority_net_profit','cashflow_asset_impairment',
  'cashflow_fixed_asset_depreciation','cashflow_right_of_use_depreciation','cashflow_intangible_amortization',
  'cashflow_deferred_expense_amortization','cashflow_long_asset_disposal_loss','cashflow_scrapping_loss',
@@ -47,6 +49,7 @@ def source_profile(value):
     archived=value.get('source_pins')
     if archived==LOADED_PINS:return 'current'
     if archived==KNOWN_V1_SOURCE_PINS:return 'known_v1_revalidated'
+    if archived==KNOWN_V2_SOURCE_PINS:return 'known_v2_revalidated'
     raise ValueError('Typed extraction source identity is unknown')
 
 
@@ -133,9 +136,11 @@ def verify_row(c,row,cache=None):
         or type(row['revision']) is not int or not 1<=row['revision']<=MAX_PACKETS
         or v['revision']!=row['revision'] or timestamp(row['created'])>_now()):raise ValueError('Typed extraction identity/clock/source changed')
     parent=_parent(c,row['owner'],row['parent_id'],cache)
-    if profile!='current' and any(not re.fullmatch(r'cninfo:[0-9]{5,20}',r['issuer_id'])
+    if profile=='known_v1_revalidated' and any(not re.fullmatch(r'cninfo:[0-9]{5,20}',r['issuer_id'])
                                   for r in parent['effective_manifest']['vintages']):
         raise ValueError('Legacy typed source requires numeric issuer identity')
+    if profile!='current' and any(not r['source_url'].endswith('.PDF') for r in parent['effective_manifest']['vintages']):
+        raise ValueError('Legacy typed source requires uppercase PDF URL')
     if v['parent_fingerprint']!=digest(parent) or timestamp(row['created'])<timestamp(parent['recorded_at']):raise ValueError('Parent provenance or clock changed')
     validate_facts(incoming['facts'],parent)
     prior=None;previous_id=incoming['supersedes_packet_id']

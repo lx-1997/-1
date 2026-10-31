@@ -19,7 +19,7 @@ from .quant_corporate_actions import BJ, timestamp
 from .quant_research_engine import digest
 
 VERSION = 'qr-financial-receipt-v1'
-VALIDATOR_VERSION = 'qr-financial-source-validator-v4'
+VALIDATOR_VERSION = 'qr-financial-source-validator-v5'
 # Exact reviewed source identity of the original immutable v1 archive (af7e1a8).
 # This is a data/source whitelist, never permission to execute archived code.
 KNOWN_V1_SOURCE_PINS = {
@@ -39,6 +39,9 @@ KNOWN_V2_SOURCE_PINS = {
 
 # Exact cebde90 source family, with per-metric pages and numeric-only org IDs.
 KNOWN_V3_SOURCE_PINS = {'quant_financial_vintages.py': '3a04a0a6a71489ba81f5836620e136a10044c32d8d0954ab0184b0cbca46e6ce', 'quant_corporate_actions.py': '89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996', 'quant_research_engine.py': 'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5', 'quant_financial_store.py': 'c827e38760fd7815e60f7d234f2fc6416653bcc46709ee5ab05fc40b267ae18b'}
+
+# Exact pre-path-upgrade source: ASCII org IDs, uppercase-only PDF URLs.
+KNOWN_V4_SOURCE_PINS = {'quant_financial_vintages.py': '0eb2193a9a4531264b8b0bdfa9194ac38a5940e40078a0d0da2cd6d4dd994a9b', 'quant_corporate_actions.py': '89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996', 'quant_research_engine.py': 'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5', 'quant_financial_store.py': 'b28cfb10f735fb8a29cb7624c0ee04ac886597c538eb7ff6299ebf8d2baa9998'}
 
 VISIBILITY = 'next_beijing_calendar_day_after_transaction_recording'
 MAX_OWNER_BYTES = 100 * 1024 * 1024
@@ -86,6 +89,7 @@ def source_profile(value):
     if archived==KNOWN_V1_SOURCE_PINS:return 'known_v1_revalidated'
     if archived==KNOWN_V2_SOURCE_PINS:return 'known_v2_revalidated'
     if archived==KNOWN_V3_SOURCE_PINS:return 'known_v3_revalidated'
+    if archived==KNOWN_V4_SOURCE_PINS:return 'known_v4_revalidated'
     raise ValueError('Financial receipt source identity is unknown')
 
 
@@ -100,13 +104,16 @@ def verify_row(c, row):
     incoming, effective = value['input'], value['effective_manifest']
     if digest(incoming) != row['input_hash'] or incoming['label'] != value['label']:
         raise ValueError('Financial input fingerprint changed')
-    if profile!='current':
+    if profile in {'known_v1_revalidated','known_v2_revalidated','known_v3_revalidated'}:
         # Revalidation must not broaden the identity domain accepted by these
         # exact legacy source families. Recognition is not a schema migration.
         import re
         if any(not re.fullmatch(r'cninfo:[0-9]{5,20}',r['issuer_id'])
                for manifest in (incoming['manifest'],effective) for r in manifest['vintages']):
             raise ValueError('Legacy financial source requires numeric issuer identity')
+    if profile!='current' and any(not record['source_url'].endswith('.PDF')
+                                    for manifest in (incoming['manifest'],effective) for record in manifest['vintages']):
+        raise ValueError('Legacy financial source requires uppercase PDF URL')
     created = timestamp(row['created'])
     boundary = datetime.combine(created.astimezone(BJ).date()+timedelta(days=1),time(),BJ)
     if value['recorded_at'] != row['created'] or timestamp(value['stored_visible_at']) != boundary:
