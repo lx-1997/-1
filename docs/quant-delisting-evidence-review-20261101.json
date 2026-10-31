@@ -1,0 +1,79 @@
+{
+  "schema": "delisting-issuer-notice-supplement-review-v1",
+  "reviewed_at": "2026-10-31T20:31:10.547430+00:00",
+  "source_code_changed": false,
+  "issuer_original_content_retained": true,
+  "issuer_original_host_download_still_failed": true,
+  "primary_host_bytes_compared": false,
+  "sina_index_pdf_link_bound": true,
+  "index_original_http_link": "http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2024/2024-7/2024-07-22/10338524.PDF",
+  "download_used_https_same_host_decoded_path": true,
+  "http_and_https_response_bytes_compared": false,
+  "initial_literal_link_equality_rejected_due_to_scheme_difference": true,
+  "exchange_risk_notice_retained": true,
+  "citics_post_event_confirmation_retained": true,
+  "manual_visual_PDF_pages": 6,
+  "local_public_document_requests": 9,
+  "automatic_retries": 0,
+  "original_proxy_failures_retained": true,
+  "direct_source_403_failures_retained": true,
+  "global_proxy_configuration_changed": false,
+  "quality_replay": {
+    "frozen_source_tree": "0f4dd162c1f4d7edffce35c8b84259bed6fabffc",
+    "old_protocol_reused_without_modification": true,
+    "full_quality_JSON_equal_to_old": true,
+    "original_files_sha256_unchanged": {
+      "artifacts/quant-research-sample-20261031/plan.json": "d4867ee6ffb124a2ebbb137be54a145f32beb397c0760f6b7187c73d02b23d03",
+      "artifacts/quant-research-sample-20261031/capture/manifest.json": "1bbc9e7b151d04ae41cd8a55988d42558c3d06cf35bb1a617915f230cc1d99d9",
+      "artifacts/quant-research-sample-20261031/quality-protocol-v2.json": "b74874569f9fe36cde23ec8389f80589c520d52bcf1e56e60ce474f50a7e6247",
+      "artifacts/quant-research-sample-20261031/quality-review-v2.json": "4a7a889919db1039efb8bfa1be10cdb9cfd33cb5518ba256fc732a1ce47730df",
+      "artifacts/quant-research-sample-20261031/boundaries/capture.json": "69441ff9ae7f9479c9654ecab6809520a4f9b4c34e6f550b45e2c6d43cf5df8d",
+      "docs/quant-research-sample-results-20261031.json": "b6f23c8d7692b88a0fc6b94896ea9c404bce6111e3ba83637577aa59afd85dac"
+    },
+    "provider_rows": 45194,
+    "expected_member_rows": 45191,
+    "full_lifecycle_dates_equal": false,
+    "strategy_evaluations": 0,
+    "returns_computed": false,
+    "promotion_allowed": false,
+    "network_socket_connect_denied": true,
+    "pytest_exit_code_not_applicable": true,
+    "review_CLI_exit_code": 0
+  },
+  "outside_member_dates_retained": [
+    {
+      "code": "sz.300282",
+      "outside_member_dates": [
+        "2024-07-18"
+      ]
+    },
+    {
+      "code": "sz.000040",
+      "outside_member_dates": [
+        "2025-04-30"
+      ]
+    },
+    {
+      "code": "sz.300742",
+      "outside_member_dates": [
+        "2024-07-22"
+      ]
+    }
+  ],
+  "synthetic_or_price_rows_added_removed": 0,
+  "supplier_API_calls": 0,
+  "paid_provider_calls": 0,
+  "broker_account_operations": 0,
+  "strategy_evaluations": 0,
+  "fresh_validation_or_promotion_allowed": false,
+  "commercial_ready": false,
+  "evidence_sha256": {
+    "capture.json": "1a224c9b7d768ffd8ddf197d4884675ad0147d5dc9b54f391f2f4fb8f90a29ef",
+    "direct-capture.json": "106eab3ce30f88d82c85043e4f6b848ee5969c425ee5d456f614ab701940a281",
+    "mirror-capture.json": "36e531897c804ddf7812283db57f3ec6f2d34b5b1a2af01c6d0e67b3fce28a7f",
+    "reviewed-facts.json": "19ee0b290c45aff3223a4c35c7a0e47cf6c324fa8fc75d6556ed5c06f325d1be",
+    "quality-replay-receipt.json": "6003d5598915dcf35e814aa5d428303d8b61082bf3565995d79c132cdf2af3ef",
+    "quality-replayed.json": "4a7a889919db1039efb8bfa1be10cdb9cfd33cb5518ba256fc732a1ce47730df",
+    "rendered.json": "9a467fe0d58a458d6c6721b6a06026a0891a5f705cf006cf3652960e062465f4"
+  }
+}
