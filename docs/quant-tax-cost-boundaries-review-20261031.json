@@ -1,0 +1,98 @@
+{
+  "schema": "tax-origin-cost-semantics-primary-review-v1",
+  "reviewed_at": "2026-10-31T04:49:42.135328+00:00",
+  "sources": [
+    {
+      "name": "tax-2026-26.html",
+      "url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5252027/content.html",
+      "started_at": "2026-10-31T04:44:53.049100+00:00",
+      "status": 200,
+      "final_url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5252027/content.html",
+      "retained": true,
+      "sha256": "67c4cb47f1f36035f3a4ac50031b3592de252eb4115198dc3be01c2395e69b62",
+      "bytes": 39598,
+      "observed_at": "2026-10-31T04:44:53.447430+00:00",
+      "elapsed_seconds": 0.398082584
+    },
+    {
+      "name": "tax-2010-70.html",
+      "url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5203604/content.html",
+      "started_at": "2026-10-31T04:44:53.448085+00:00",
+      "status": 200,
+      "final_url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5203604/content.html",
+      "retained": true,
+      "sha256": "1ed3c7dba3925cba3e35fa0280f869113256de8b872fa4388aca77a8dd0c5d20",
+      "bytes": 44341,
+      "observed_at": "2026-10-31T04:44:53.981681+00:00",
+      "elapsed_seconds": 0.533621458
+    },
+    {
+      "name": "broker-cost-modes.pdf",
+      "url": "https://www.xcsc.com/ueditor/jsp/upload/file/20260515/1778836285606071954.pdf",
+      "started_at": "2026-10-31T04:44:53.982359+00:00",
+      "status": 200,
+      "final_url": "https://www.xcsc.com/ueditor/jsp/upload/file/20260515/1778836285606071954.pdf",
+      "retained": true,
+      "sha256": "c68059c30d1b5f62a0cb782c63e0d2ecd96b7ff762c9fc25749ffa4cb005cb9d",
+      "bytes": 591009,
+      "observed_at": "2026-10-31T04:44:54.632925+00:00",
+      "elapsed_seconds": 0.650587959
+    }
+  ],
+  "failed_sources": [
+    {
+      "name": "szse-trading-rules-2023.pdf",
+      "url": "https://docs.static.szse.cn/www/lawrules/rule/trade/W020230217564423808793.pdf",
+      "started_at": "2026-10-31T04:44:54.675645+00:00",
+      "retained": false,
+      "error_type": "HTTPError",
+      "error": "HTTP Error 404: Not Found",
+      "elapsed_seconds": 0.472557291
+    }
+  ],
+  "new_rule": {
+    "document": "MOF-STA-CSRC-2026-26",
+    "publication_date": "2026-08-28",
+    "effective_basis": "publication_day",
+    "historical_reconstruction_conservative_available_at": "2026-08-29T00:00:00+08:00",
+    "unlock_does_not_erase_restricted_origin": true,
+    "post_effective_registration_scope_must_be_checked": true,
+    "missing_basis_pre_withholding_has_initial_registration_transition": true,
+    "new_rule_does_not_prove_ordinary_capitalization_share_holding_period_inheritance": true,
+    "source_is_not_individual_tax_assessment": true
+  },
+  "broker_review": {
+    "pdf_pages_reviewed": [
+      1,
+      2
+    ],
+    "total_pdf_pages": 5,
+    "display_cost_modes": 4,
+    "credit_account_transfer_display_may_use_transfer_day_close": true,
+    "display_cost_is_not_automatically_tax_basis": true,
+    "single_broker_only": true,
+    "publication_date": null,
+    "publication_date_inferred_from_URL": false
+  },
+  "integration_requirements": {
+    "separate_trade_restriction_and_tax_origin": true,
+    "separate_model_cost_and_tax_basis_and_broker_display_cost": true,
+    "unknown_origin_not_ordinary_by_default": true,
+    "not_implemented_tax_or_legal_scope_approval": true
+  },
+  "ordinary_new_share_holding_inheritance_verified": false,
+  "personal_statement_received": false,
+  "runtime_rules_changed": false,
+  "affected_symbol_fill_guard_relaxed": false,
+  "new_strategy_replays": 0,
+  "production_writes": 0,
+  "production_deployed": false,
+  "commercial_ready": false,
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a"
+  },
+  "artifact_review_sha256": "e68f4051dde12e8abc441e4ca305838f8943a60c5c885f7f6b08d8a57daa31b2",
+  "artifact_directory": "artifacts/quant-tax-cost-boundaries-20261031"
+}
