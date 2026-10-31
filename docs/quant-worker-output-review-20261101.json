@@ -1,0 +1,77 @@
+{
+  "schema": "bounded-research-worker-output-review-v1",
+  "base_commit": "29f51d8fd0a107f5ec827f73213b7263a09a6085",
+  "tested_tree": "0f4dd162c1f4d7edffce35c8b84259bed6fabffc",
+  "new_real_child_cases": 12,
+  "runs": {
+    "focused-final": {
+      "summary": "21 passed, 2 warnings in 4.68s",
+      "pytest_exit_code": 0,
+      "timeout": false,
+      "owned_process_group_absent": true,
+      "failed_nodes": [],
+      "external_connect_attempts_denied": 0,
+      "tests_with_external_connect_attempts": 0
+    },
+    "full-final": {
+      "summary": "3 failed, 3940 passed, 22 skipped, 9 warnings in 134.96s (0:02:14)",
+      "pytest_exit_code": 1,
+      "timeout": false,
+      "owned_process_group_absent": true,
+      "failed_nodes": [
+        "backend/deepfocus_api/tests/test_research_assets.py::test_live_disaggregated_value_already_dollars",
+        "backend/deepfocus_api/tests/test_research_assets.py::test_real_edgartools_form4_xml_import",
+        "backend/deepfocus_api/tests/test_research_factors.py::test_real_qlib_lightgbm_metrics_labels_order_and_future_isolation"
+      ],
+      "external_connect_attempts_denied": 115,
+      "tests_with_external_connect_attempts": 23
+    }
+  },
+  "baseline_overflow_probe": {
+    "stdout_over_limit_before_child_exit": true,
+    "observed_error_status": 504,
+    "expected_size_error_status": 422,
+    "detected_before_timeout": false,
+    "elapsed_seconds": 0.30775025,
+    "network_calls": 0,
+    "production_writes": 0
+  },
+  "real_worker_smoke": {
+    "scope": "real domain worker via owned network-denying entry wrapper",
+    "synthetic_fund_input": true,
+    "real_worker_catalog_tools": 7,
+    "fund_report_tool": "funds",
+    "engine": "Disclosed holdings arithmetic",
+    "owned_children_reaped": 2,
+    "vendor_configuration_removed_from_child_env": true,
+    "network_socket_connect_denied_in_child": true,
+    "production_writes": 0,
+    "external_engines_certified": false
+  },
+  "serialized_stdout_limit_bytes": 4194304,
+  "new_stderr_limit_bytes": 1048576,
+  "existing_input_limit_bytes_enforced_at_worker_entry": 3145728,
+  "read_chunk_max_bytes": 65536,
+  "default_worker_timeout_seconds_unchanged": 120,
+  "sigterm_grace_seconds_unchanged": 3,
+  "hard_process_RSS_certified": false,
+  "grandchild_or_global_cancel_all_certified": false,
+  "third_party_research_environment_certified": false,
+  "nonfinite_worker_values_rejected": true,
+  "nonzero_exit_cannot_be_success": true,
+  "socket_guard_not_OS_network_namespace": true,
+  "loopback_allowed_in_full_suite": true,
+  "explicit_vendor_credentials_inherited": false,
+  "strategy_or_oos_thresholds_changed": false,
+  "production_deployed": false,
+  "commercial_ready": false,
+  "evidence_sha256": {
+    "focused-final/full-backend-offline.log": "41a7818c5592cc928d1f62bb741e1b030733ec9a477faf93c725e299f33f971b",
+    "focused-final/full-exit.json": "a74a0510794ee57615aa4d9afd71c165f18e444dbe930e07524966915f7e6437",
+    "full-final/full-backend-offline.log": "fa089c57b0fe4f0af0da92c20b5620db83e087fdee91a1b7ca3396be35d17432",
+    "full-final/full-exit.json": "69c105fa2e18bb857c452a1d4099f468eed474cecbd42af9570e5f5fdb24696d",
+    "full-final/external-connections-denied.jsonl": "d00861bced65234f70c7c453927be553bbffdb4cfe3532a3cd2ce7a3432e6f7e",
+    "baseline-probe.json": "6274781c8964ee4943c322b8eb5c899db6a7ceef8beeb80e5aadd70262a847ac",
+    "real-worker-smoke-receipt.json": "6133c23bcc0356b07a44808f10129f70a7cdb6cf4eea6c1421889deca27719eb"
+  }
+}

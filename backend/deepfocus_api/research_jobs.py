@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -20,6 +21,7 @@ MAX_JOBS = 20
 MAX_PENDING = 6
 MAX_INPUT_BYTES = 3 * 1024 * 1024
 MAX_RESULT_BYTES = 4 * 1024 * 1024
+MAX_STDERR_BYTES = 1024 * 1024
 TERMINAL = {"completed", "failed", "cancelled"}
 
 
@@ -75,9 +77,59 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
+async def _worker_io(process, body: bytes) -> bytes:
+    async def send():
+        try:
+            process.stdin.write(body)
+            await process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            process.stdin.close()
+
+    async def read_bounded(reader, limit, message, status):
+        output = bytearray()
+        while True:
+            chunk = await reader.read(min(65536, limit + 1 - len(output)))
+            if not chunk:
+                return bytes(output)
+            output.extend(chunk)
+            if len(output) > limit:
+                raise ResearchJobError(message, status)
+
+    tasks = [asyncio.create_task(send()),
+             asyncio.create_task(read_bounded(process.stdout, MAX_RESULT_BYTES,
+                 "计算结果超过体积限制，请缩小分析范围", 422)),
+             asyncio.create_task(read_bounded(process.stderr, MAX_STDERR_BYTES,
+                 "研究计算日志超过体积限制，请缩小范围或联系管理员", 503))]
+    try:
+        values = await asyncio.gather(*tasks)
+        await process.wait()
+        return values[1]
+    finally:
+        for task in tasks:
+            if not task.done(): task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _finish_worker_cleanup(task):
+    # A repeated cancellation of the caller must not abandon its real child.
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError()
+
+
 async def run_worker(payload: dict, *, timeout: float = 120) -> dict:
     script = Path(__file__).with_name("research_tools_worker.py")
     body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
+    if len(body) > MAX_INPUT_BYTES:
+        raise ResearchJobError("研究输入超过体积限制，请缩小分析范围")
     with tempfile.TemporaryDirectory(prefix="df-research-") as temporary:
         launch = asyncio.create_task(asyncio.create_subprocess_exec(
             runtime_python(), str(script), stdin=asyncio.subprocess.PIPE,
@@ -85,34 +137,63 @@ async def run_worker(payload: dict, *, timeout: float = 120) -> dict:
             env=worker_environment(temporary), cwd=temporary, start_new_session=True,
         ))
         process = None
+        exchange = None
+
+        async def cleanup():
+            owned = process
+            if owned is None:
+                try:
+                    owned = await asyncio.shield(launch)
+                except Exception:
+                    return  # Spawn failed; no child was acquired.
+            if exchange is not None:
+                if not exchange.done(): exchange.cancel()
+                await asyncio.gather(exchange, return_exceptions=True)
+            # Cancel the normal readers first, then discard during termination.
+            # A paused full PIPE must not prevent Process.wait from completing.
+            async def discard(reader):
+                while await reader.read(65536):
+                    pass
+            drains = [asyncio.create_task(discard(reader)) for reader in (owned.stdout, owned.stderr)]
+            try:
+                await _terminate(owned)
+            finally:
+                if owned.stdin is not None: owned.stdin.close()
+                for task in drains:
+                    if not task.done(): task.cancel()
+                await asyncio.gather(*drains, return_exceptions=True)
+
         try:
             process = await asyncio.shield(launch)
-            output, _errors = await asyncio.wait_for(process.communicate(body), timeout=timeout)
-            if len(output) > MAX_RESULT_BYTES:
-                raise ResearchJobError("计算结果超过体积限制，请缩小分析范围")
+            exchange = asyncio.create_task(_worker_io(process, body))
+            output = await asyncio.wait_for(asyncio.shield(exchange), timeout=timeout)
+            if process.returncode:
+                raise ResearchJobError("研究计算进程异常结束，请重试或联系管理员", 503)
+            def finite_float(value):
+                number = float(value)
+                if not math.isfinite(number): raise ValueError("Nonfinite worker number")
+                return number
+            def reject_constant(value):
+                raise ValueError("Invalid worker constant")
             try:
-                result = json.loads(output)
+                result = json.loads(output, parse_float=finite_float, parse_constant=reject_constant)
             except (ValueError, UnicodeDecodeError):
                 raise ResearchJobError("研究计算进程异常结束，请重试或联系管理员", 503)
-            if not isinstance(result, dict):
+            if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
                 raise ResearchJobError("研究计算结果格式无效", 503)
-            if not result.get("ok"):
+            if not result["ok"]:
                 error = str(result.get("error") or "研究计算失败")[:500]
-                raise ResearchJobError(error, int(result.get("status", 422)))
+                status = result.get("status", 422)
+                if type(status) is not int or status not in {422, 429, 503, 504}:
+                    raise ResearchJobError("研究计算结果格式无效", 503)
+                raise ResearchJobError(error, status)
+            if not isinstance(result.get("result"), dict):
+                raise ResearchJobError("研究计算结果格式无效", 503)
             return result["result"]
         except asyncio.TimeoutError:
-            if process is not None:
-                await _terminate(process)
             raise ResearchJobError("任务达到计算时限，已停止；请缩小范围后重试", 504)
-        except asyncio.CancelledError:
-            # A cancellation during spawn must still acquire and reap the child.
-            if process is None:
-                process = await launch
-            await _terminate(process)
-            raise
         finally:
-            if process is not None and process.returncode is None:
-                await _terminate(process)
+            await _finish_worker_cleanup(asyncio.create_task(cleanup()))
 
 
 @dataclass
