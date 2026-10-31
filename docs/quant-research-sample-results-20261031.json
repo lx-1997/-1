@@ -1,0 +1,78 @@
+{
+  "scope": "outcome-blind historical-start research pilot; not strategy or fresh validation",
+  "plan_sha256": "d4867ee6ffb124a2ebbb137be54a145f32beb397c0760f6b7187c73d02b23d03",
+  "report_sha256": "4a7a889919db1039efb8bfa1be10cdb9cfd33cb5518ba256fc732a1ce47730df",
+  "protocol_sha256": "b74874569f9fe36cde23ec8389f80589c520d52bcf1e56e60ce474f50a7e6247",
+  "registered_at": "2026-10-31T08:20:57.924975+00:00",
+  "rules": {
+    "size": 64,
+    "namespace": "daocaijing-internal-research-universe-v1",
+    "ranking": "sha256(namespace:historical_start:code),then_code",
+    "eligible": "all_members_of_bound_historical_start_snapshot",
+    "current_status_filter": false,
+    "tradestatus_filter": false,
+    "replace_failures": false,
+    "outcome_selection": false,
+    "strategy_evaluations": 0,
+    "promotion_allowed": false,
+    "new_unseen_validation": false,
+    "economic_event_completeness_verified": false
+  },
+  "source_pins": {
+    "scripts/plan-quant-research-sample.py": "855fa2886ac16db2af55e0ac9f573b9be22fae14bef937c8e3ca4090e4121d07",
+    "scripts/capture-quant-research-sample.py": "1c27a445154ccc1706b2e3f5a41dc1f5e49195e38a8a64eb1cf68ae19bd5890e",
+    "backend/deepfocus_api/quant_research_sample.py": "bf1982c5b0ef3dd0a0d95e3f45b2bcceb583bc7764f15b63374153cc2f907c86"
+  },
+  "population": 5071,
+  "selected": 64,
+  "sdk_sends": 66,
+  "sdk_errors": [],
+  "replacements": 0,
+  "totals": {
+    "rows": 45194,
+    "expected": 45191,
+    "missing": 0,
+    "outside": 3,
+    "suspended": 234,
+    "st": 1667,
+    "reference_changes": 164
+  },
+  "boundary_rows": [
+    {
+      "code": "sz.300282",
+      "provider_out_date": "2024-07-18",
+      "outside_dates": [
+        "2024-07-18"
+      ],
+      "all_outside_nontrading": true
+    },
+    {
+      "code": "sz.000040",
+      "provider_out_date": "2025-04-30",
+      "outside_dates": [
+        "2025-04-30"
+      ],
+      "all_outside_nontrading": true
+    },
+    {
+      "code": "sz.300742",
+      "provider_out_date": "2024-07-22",
+      "outside_dates": [
+        "2024-07-22"
+      ],
+      "all_outside_nontrading": true
+    }
+  ],
+  "full_lifecycle_dates_equal": false,
+  "all_reported_panels_independently_equal": true,
+  "primary_boundary_facts_retained": 2,
+  "primary_download_403_retained": 1,
+  "strategy_evaluations": 0,
+  "returns_computed": false,
+  "new_unseen_validation": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "data_rights_verified": false,
+  "original_experiments_changed": false,
+  "new_tests": 40
+}
