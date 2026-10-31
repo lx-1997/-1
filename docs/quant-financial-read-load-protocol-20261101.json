@@ -1,0 +1,56 @@
+{
+  "schema": "registered-financial-read-load-v1",
+  "registered_at_utc": "2026-10-31T16:07:59.906065+00:00",
+  "protocol": {
+    "schema": "internal-financial-read-soak-v1",
+    "duration_seconds": 3600,
+    "round_period_seconds": 30,
+    "smoke_duration_seconds": 12,
+    "smoke_round_period_seconds": 5,
+    "lanes": 4,
+    "owners": 2,
+    "observer_owners": 1,
+    "global_read_limit": 4,
+    "owner_read_limit": 2,
+    "client_cancel_every_nth_read": 5,
+    "barrier_timeout_seconds": 5,
+    "observer_period_seconds": 1,
+    "heartbeat_period_seconds": 0.01,
+    "read_p95_ms": 500,
+    "read_p99_ms": 1500,
+    "loop_p99_ms": 250,
+    "loop_max_ms": 2000,
+    "rss_max_bytes": 1073741824,
+    "qr_disk_max_bytes": 536870912,
+    "http_timeout_seconds": 5,
+    "minimum_full_rounds": 120,
+    "minimum_full_observer_cycles": 3000,
+    "minimum_full_heartbeat_samples": 200000,
+    "minimum_smoke_heartbeat_samples": 500,
+    "memory_scope": "control_parent_peak_plus_one_waited_API_peak_no_API_descendants",
+    "cancel_semantics": "client_wait_cancelled_server_reads_finish_and_retain_slots_until_exit",
+    "observer_barrier_pause": "periodic_monitor_paused_during_registered_quota_probes; controlled_probe_requests_retained",
+    "baseline": "direct_current_read_projection_of_same_immutable_packets; independently_checked_not_alpha",
+    "scope": "single_local_worker_real_JWT_loopback_TCP_not_production_SLO",
+    "promotion_allowed": false
+  },
+  "protocol_sha256": "ce7c7c5fbda6446a1a3243b530d93ae4d62e39ecc82a635382d1781591e7e2d5",
+  "case_matrix": [
+    "A current extraction / corrected historical group NI TTM + exact asset endpoints",
+    "A current extraction / fixed as_recorded clock before actual new storage",
+    "B current extraction / original historical annual group NI + endpoints",
+    "B five-fact extraction / assets missing, no later-snapshot borrowing"
+  ],
+  "extra_controls": [
+    "A missing quarter inventory bridge",
+    "B annual explicitly blank disposal bridge"
+  ],
+  "observer": [
+    "empty own list 200",
+    "foreign metadata 404",
+    "foreign derivation 404"
+  ],
+  "thresholds_changed_after_results": false,
+  "smoke_is_not_full_soak": true,
+  "promotion_allowed": false
+}

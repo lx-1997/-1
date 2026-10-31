@@ -1,0 +1,112 @@
+{
+  "schema": "financial-read-load-readiness-v1",
+  "protocol_sha256": "ce7c7c5fbda6446a1a3243b530d93ae4d62e39ecc82a635382d1781591e7e2d5",
+  "new_tool_tests": 35,
+  "smoke": {
+    "schema": "independent-financial-read-soak-review-v1",
+    "plan_sha256": "c2ba84743810e8c7c46464660e1d113787b98a270138cfb6de7f48822b91cdf6",
+    "mode": "smoke",
+    "engineering_checks_passed": true,
+    "full_soak_passed": false,
+    "rounds": 3,
+    "server_reads_exact": 12,
+    "client_cancelled": 2,
+    "observer_cycles": 9,
+    "latency_ms": {
+      "query_ms": {
+        "p95": 123.87370799999964,
+        "p99": 123.87370799999964
+      },
+      "server_query_ms": {
+        "p95": 124.9614999999995,
+        "p99": 124.9614999999995
+      },
+      "observer_ms": {
+        "p95": 38.03316599999995,
+        "p99": 43.06091700000003
+      }
+    },
+    "whole_tree_rss_upper_bytes": 301826048,
+    "research_disk_peak_bytes": 16584704,
+    "project_modules_imported": false,
+    "production_writes": 0,
+    "promotion_allowed": false
+  },
+  "independent_negative_controls": {
+    "controls_rejected": [
+      "golden_TTM_rehashed",
+      "mean_rounded_rehashed",
+      "blocked_nested_leak_rehashed",
+      "wrong_source_metadata_rehashed",
+      "server_latency_not_raw",
+      "hidden_error",
+      "smoke_as_full",
+      "memory_understated",
+      "live_PID",
+      "client_body_digest",
+      "quota_occupancy",
+      "cancel_released_slots",
+      "server_result_digest"
+    ],
+    "count": 13,
+    "raw_database_unchanged": true,
+    "raw_evidence_files_modified": false,
+    "project_modules_imported": false
+  },
+  "dependency_versions": {
+    "fastapi": "0.111.0",
+    "uvicorn": "0.29.0",
+    "httpx": "0.27.0",
+    "pydantic": "2.7.1",
+    "SQLAlchemy": "2.0.30",
+    "python-jose": "3.4.0",
+    "passlib": "1.7.4",
+    "uvloop": "0.22.1"
+  },
+  "actual_boundary_receipt": {
+    "actual_wall_clock": "2026-10-31T16:02:24.627106+00:00",
+    "stored_boundary": "2026-11-01T00:00:00+08:00",
+    "actual_before_observation_clock": "2026-10-31T14:35:52.018525+00:00",
+    "actual_before_unavailable": true,
+    "actual_after_arithmetic_available": true,
+    "cases": [
+      {
+        "case": "actual-after",
+        "as_of": "2026-10-31T16:02:24.627106+00:00",
+        "status": "arithmetic_available",
+        "actual_observation": true
+      },
+      {
+        "case": "past-boundary-minus-microsecond",
+        "as_of": "2026-10-31T23:59:59.999999+08:00",
+        "status": "unavailable",
+        "actual_observation": false
+      }
+    ],
+    "main_sha256": "197e92b4d350d70af74dc2451d6be26af32a681b99fcbd76f85de3b3ef8666f4",
+    "database_main_unchanged": true,
+    "old_evidence_not_rewritten": true,
+    "usable_for_strategy": false,
+    "commercial_ready": false,
+    "production_writes": 0
+  },
+  "actual_boundary_independent": {
+    "same_actual_receipt_before_and_after": true,
+    "current_source_bytes_verified": true,
+    "raw_parent_and_fact_clock_selection_verified": true,
+    "independent_Fraction_arithmetic_verified": true,
+    "project_modules_imported": false,
+    "source_mapping_omitted_only_for_CLI_projection": true,
+    "database_main_unchanged": true,
+    "usable_for_strategy": false
+  },
+  "full_soak_proven": false,
+  "exact_tree_receipt": "artifacts/quant-financial-load-20261031/final-verification.json",
+  "production_writes": 0,
+  "strategy_evaluations": 0,
+  "commercial_ready": false,
+  "new_frozen_clock_tests": 3,
+  "frozen_clock_focused_tests": 54,
+  "initial_full_gate_failed": true,
+  "full_gate_receipt": "artifacts/quant-financial-load-20261031/final-verification.json"
+}

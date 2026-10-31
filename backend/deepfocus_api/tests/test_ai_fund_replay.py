@@ -21,6 +21,10 @@ def frozen(research,monkeypatch):
     monkeypatch.setattr(af,'datetime',Clock);monkeypatch.setattr(market,'datetime',Clock)
     monkeypatch.setattr(af,'utc_now_iso',lambda:clock[0].isoformat())
     monkeypatch.setattr(af,'_in_session',REAL_SESSION)
+    # The inherited research fixture captured real-wall-date candles before this
+    # frozen clock was installed. Regenerate the synthetic provider frame on each
+    # invocation using the same current simulated clock as its observation.
+    monkeypatch.setattr(af,'_market_data',lambda *a,**k:source_map({'002594':{'closes':[90+i*.2 for i in range(40)],'flow5':300000000}}))
     research.update(latest=100.12,time=clock[0].isoformat())
     return research,clock
 
