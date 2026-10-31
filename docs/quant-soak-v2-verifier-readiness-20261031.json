@@ -1,0 +1,20 @@
+{
+  "version": "v2-independent-verifier-preparation-v1",
+  "test_count": 28,
+  "unit_result": "passed",
+  "unit_log_sha256": "18424aa8dabaa9b3977f285980cd90ee5ef71734d30d143515e1442fc3011967",
+  "unit_elapsed_seconds": 0.538,
+  "registered_plan_sha256": "9f1716973059949800c37f9bcb74c0f8ecceb49cd756f6b73860d099696213e1",
+  "registered_protocol_sha256": "f8dc6aefe74bd71beee3185f2cf9880694b7754cc91cbddee0d66bdb8a35f89d",
+  "approved_source_map_sha256": "48d196f63344dbdb92675e421de091b2555ac752e1c06ba700893066b1c8a8a9",
+  "verifier_sha256": "76bd46f17d9df172823c0877c4d982efe4c526af74d844511c7c7821f5edfbf4",
+  "actual_live_run_refused_as_incomplete": true,
+  "full_run_final_review_completed": false,
+  "internal_capacity_accepted": false,
+  "commercial_ready": false,
+  "promotion_allowed": false,
+  "production_writes": 0,
+  "provider_requests": 0,
+  "application_sources_changed_in_this_phase": 0,
+  "latest_live_refusal_sha256": "c6e7cdbadc1f041c8ff003179ae740c394e283cc9a953286dc55c504d162f1d8"
+}
