@@ -1,0 +1,64 @@
+{
+  "schema": "wire-refresh-and-story-clock-review-v1",
+  "tested_tree": "d52e8b29d5b41d28e0a38ad69b35dbb76afa7e8e",
+  "new_cache_cases": 5,
+  "new_story_boundary_cases": 1,
+  "targeted_tests_passed": 70,
+  "baseline_production_new_cache_tests_failed": 5,
+  "full_backend_profile_equivalent_except_owned_paths": true,
+  "full_backend_completed_without_timeout": true,
+  "full_backend_passed": 3908,
+  "full_backend_failed": 8,
+  "full_backend_skipped": 22,
+  "full_backend_warnings": 9,
+  "elapsed_seconds": 126.42,
+  "pytest_exit_code": 1,
+  "failed_nodes": [
+    "backend/deepfocus_api/tests/test_aif_interact.py::test_summary_shape",
+    "backend/deepfocus_api/tests/test_research_assets.py::test_live_disaggregated_value_already_dollars",
+    "backend/deepfocus_api/tests/test_research_assets.py::test_real_edgartools_form4_xml_import",
+    "backend/deepfocus_api/tests/test_research_factors.py::test_real_qlib_lightgbm_metrics_labels_order_and_future_isolation",
+    "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_valid_canonical_is_ready_without_pdf_or_model",
+    "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_pending_writes_deep_and_compact_before_ack_then_next_cycle_is_empty",
+    "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_fallback_is_not_done_or_cached_and_next_cycle_defers[local-fallback]",
+    "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_fallback_is_not_done_or_cached_and_next_cycle_defers[text-only-fallback]"
+  ],
+  "five_prior_failures_no_longer_present": [
+    "backend/deepfocus_api/tests/test_research_wire_memory_cache.py::test_forced_refresh_keeps_existing_stale_fallback_for_empty_source",
+    "backend/deepfocus_api/tests/test_research_wire_memory_cache.py::test_freshness_stale_grace_and_expiry_are_distinct",
+    "backend/deepfocus_api/tests/test_stories_api.py::test_me_is_personalized_for_login_and_plain_for_anonymous",
+    "backend/deepfocus_api/tests/test_stories_api.py::test_today_is_public_and_returns_stories",
+    "backend/deepfocus_api/tests/test_story_engine.py::test_stories_for_symbol_returns_timeline"
+  ],
+  "blocked_external_socket_connect_attempts": 136,
+  "tests_with_external_connect_attempts": 35,
+  "socket_connect_guard_not_OS_network_namespace": true,
+  "root_pytest_process_group_absent_observed": true,
+  "source_TTL_or_stale_grace_changed": false,
+  "stock_report_pool_page_limit": 20,
+  "stock_request_page_limit": 1,
+  "production_story_window_changed": false,
+  "synthetic_clock_tests_not_real_future_observation": true,
+  "unresolved_metadata_index_probe": {
+    "schema": "retained-unresolved-wire-index-probe-v1",
+    "synthetic_returned_reports": 1,
+    "annotation_calls": 0,
+    "suppressed_name_errors": [
+      "name 'org' is not defined"
+    ],
+    "source_sha256": "17ccc56734a26ee7c611df59f19c831562500df9da8cc5fe859bc34540a4f8b4",
+    "network_requests": 0,
+    "ontology_writes": 0,
+    "metadata_index_defect_still_open": true,
+    "commercial_ready": false
+  },
+  "production_deployed": false,
+  "strategy_changed": false,
+  "commercial_ready": false,
+  "evidence_sha256": {
+    "full-backend-offline.log": "22d3a1620817c7df83edefe8d4d762c6211440be13ece0d709f3236563115d3c",
+    "baseline-new-cases.log": "46632c3119382ade282ae4ff4265228dac86ec8b248df5fe3f9057723d6163e1",
+    "current-targeted.log": "2118b4f806e4afa61076c5889edf171f12f4ecb0bc3f098ac607ee69592f2ec7",
+    "unresolved-index-probe.json": "8d7d95b2cf9eb9eeb569cf4a2446831e6fa818db5ef10125c88d318569d173c7"
+  }
+}

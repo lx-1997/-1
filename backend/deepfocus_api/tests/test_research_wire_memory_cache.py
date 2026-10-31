@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import asyncio
+import inspect
 
 import pytest
+import pytest_asyncio
 
 from deepfocus_api import research_wire as wire
 from deepfocus_api.bounded_cache import ByteBoundedTTLCache
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def isolated_refresh_tasks(monkeypatch):
+    tasks = {}
+    monkeypatch.setattr(wire, "_WIRE_REFRESH_TASKS", tasks)
+    yield
+    remaining = list(tasks.values())
+    for task in remaining:
+        if not task.done(): task.cancel()
+    await asyncio.gather(*remaining, return_exceptions=True)
 
 
 class Clock:
@@ -51,7 +65,8 @@ def _client(monkeypatch, fetch):
         async def __aexit__(self, *args):
             pass
         async def post(self, url, **kwargs):
-            return Response(fetch(kwargs["json"]))
+            value = fetch(kwargs["json"])
+            return Response(await value if inspect.isawaitable(value) else value)
     monkeypatch.setattr(wire.httpx, "AsyncClient", Client)
 
 
@@ -92,9 +107,11 @@ async def test_freshness_stale_grace_and_expiry_are_distinct(monkeypatch):
     clock.now = 601
     stale = await wire.fetch_research_wire_online()
     assert stale["stale"] is True and stale["items"] == live["items"]
+    await asyncio.gather(wire._WIRE_REFRESH_TASKS[""], return_exceptions=True)
     assert len(calls) == 2
     clock.now = 3599
     assert (await wire.fetch_research_wire_online())["stale"] is True
+    await asyncio.gather(wire._WIRE_REFRESH_TASKS[""], return_exceptions=True)
     clock.now = 3600
     with pytest.raises(RuntimeError, match="source down"):
         await wire.fetch_research_wire_online()
@@ -225,3 +242,93 @@ async def test_stock_failure_does_not_borrow_unbounded_query_cache(monkeypatch):
     await wire.fetch_research_wire_online(query="stock:测试公司")
     with pytest.raises(RuntimeError, match="stock query unavailable"):
         await wire.fetch_research_wire_online(query="测试公司", stock_scope=True)
+
+
+@pytest.mark.asyncio
+async def test_forced_failure_preserves_unexpired_success_without_renewal(monkeypatch):
+    cache, clock = _cache(monkeypatch); calls = []
+    def fetch(payload):
+        calls.append(payload)
+        if len(calls)>1: raise RuntimeError("source down")
+        return _rows()
+    _client(monkeypatch, fetch)
+    live = await wire.fetch_research_wire_online(); clock.now = 20
+    result = await wire.fetch_research_wire_online(use_cache=False)
+    assert result['stale'] and result['items']==live['items']
+    assert cache[''][0]==0 and len(calls)==2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_unregister_or_duplicate_shared_refresh(monkeypatch):
+    _cache(monkeypatch); entered, release = asyncio.Event(), asyncio.Event(); calls = []
+    async def fetch(payload):
+        calls.append(payload); entered.set(); await release.wait(); return _rows()
+    _client(monkeypatch, fetch)
+    first = asyncio.create_task(wire.fetch_research_wire_online()); second = shared = None
+    try:
+        await asyncio.wait_for(entered.wait(), 1); shared = wire._WIRE_REFRESH_TASKS['']
+        first.cancel(); await asyncio.gather(first, return_exceptions=True)
+        assert wire._WIRE_REFRESH_TASKS.get('') is shared and not shared.cancelled()
+        second = asyncio.create_task(wire.fetch_research_wire_online())
+        await asyncio.sleep(0)
+        assert wire._WIRE_REFRESH_TASKS[''] is shared and len(calls)==1
+        release.set(); result = await asyncio.wait_for(second, 1)
+        assert len(result['items'])==5 and len(calls)==1
+        await asyncio.sleep(0)
+        assert not wire._WIRE_REFRESH_TASKS
+    finally:
+        release.set()
+        await asyncio.gather(*[t for t in (first, second, shared) if t is not None], return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_fallback_cannot_outlive_absolute_expiry_during_refresh(monkeypatch):
+    cache, clock = _cache(monkeypatch); entered, release = asyncio.Event(), asyncio.Event(); calls = []
+    async def fetch(payload):
+        calls.append(payload)
+        if len(calls)==1: return _rows()
+        entered.set(); await release.wait(); raise RuntimeError('late source down')
+    _client(monkeypatch, fetch)
+    await wire.fetch_research_wire_online(); clock.now=20
+    task = asyncio.create_task(wire.fetch_research_wire_online(use_cache=False))
+    try:
+        await asyncio.wait_for(entered.wait(), 1); clock.now=3600; release.set()
+        with pytest.raises(RuntimeError, match='late source down'): await asyncio.wait_for(task, 1)
+        assert cache.stats()['entries']==0
+    finally:
+        release.set(); await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stale_returns_before_refresh_finishes_and_coalesces_requests(monkeypatch):
+    cache, clock = _cache(monkeypatch); entered, release = asyncio.Event(), asyncio.Event(); calls = []
+    async def fetch(payload):
+        calls.append(payload)
+        if len(calls)==1: return _rows(prefix='old')
+        entered.set(); await release.wait(); return _rows(prefix='new')
+    _client(monkeypatch, fetch)
+    await wire.fetch_research_wire_online(); clock.now=601
+    try:
+        stale = await asyncio.wait_for(wire.fetch_research_wire_online(), 1)
+        assert stale['stale'] and stale['items'][0]['title']=='old0' and not release.is_set()
+        await asyncio.wait_for(entered.wait(), 1); task=wire._WIRE_REFRESH_TASKS['']
+        assert (await wire.fetch_research_wire_online())['stale'] and len(calls)==2
+        release.set(); await asyncio.wait_for(task, 1)
+        result=await wire.fetch_research_wire_online()
+        assert not result['stale'] and result['items'][0]['title']=='new0' and cache[''][0]==601
+    finally:
+        release.set()
+        await asyncio.gather(*list(wire._WIRE_REFRESH_TASKS.values()), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_small_stock_slice_cannot_truncate_later_same_page_requests(monkeypatch):
+    _cache(monkeypatch); calls = []
+    def fetch(payload):
+        calls.append(payload); return _rows(count=payload['resultLimit'])
+    _client(monkeypatch, fetch)
+    first=await wire.fetch_research_wire_online(query='company', limit=1, stock_scope=True)
+    later=await wire.fetch_research_wire_online(query='company', limit=20, stock_scope=True)
+    assert len(first['items'])==1 and first['total']==20
+    assert len(later['items'])==20 and len(calls)==1
+    assert calls[0]['resultLimit']==20 and calls[0]['searchPages']==1

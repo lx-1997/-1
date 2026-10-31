@@ -38,6 +38,7 @@ _WIRE_CACHE = ByteBoundedTTLCache(
 _WIRE_REFRESH_TASKS: dict = {}
 # 一次回源抓取的「池」上限（去重前，交给工作台 resultLimit；搜索非下载、不受 ZSXQ 下载限额影响）
 _WIRE_POOL = int(os.getenv("DEEPFOCUS_WIRE_POOL", "500"))
+_WIRE_STOCK_POOL = 20
 _ANNOTATED_WIRE_IDS: set[str] = set()
 
 from .research_workbench import WORKBENCH_DIR
@@ -176,7 +177,7 @@ async def fetch_research_wire_online(
     """
     want = max(1, min(int(limit or 60), 500))
     if stock_scope:
-        want = min(want, 20)
+        want = min(want, _WIRE_STOCK_POOL)
     kw = (query or "").strip()
     # Stock research has a one-page budget; never cache that partial result as
     # the full feed pool, even for the exact same search keyword.
@@ -197,30 +198,30 @@ async def fetch_research_wire_online(
         # 陈旧但可用：立即返回 + 后台刷新（刷新失败静默，下次请求再试，陈旧池仍在）
         _kick_wire_refresh(cache_key, kw, want, stock_scope)
         return _slice({**hit[1], "stale": True})
-    task = _WIRE_REFRESH_TASKS.get(cache_key)
-    if task is None or task.done():
-        task = asyncio.get_running_loop().create_task(
-            _refresh_wire_pool(cache_key, kw, want, stock_scope)
-        )
-        _WIRE_REFRESH_TASKS[cache_key] = task
+    task = _kick_wire_refresh(cache_key, kw, want, stock_scope)
     try:
         # shield：首个等待者断开（客户端取消）不应取消共享的回源任务
         full = await asyncio.shield(task)
-    finally:
-        if _WIRE_REFRESH_TASKS.get(cache_key) is task:
-            _WIRE_REFRESH_TASKS.pop(cache_key, None)
+    except Exception:
+        # Recheck absolute expiry after waiting; a request-time hit cannot
+        # authorize serving an expired pool after a slow upstream failure.
+        fallback = _WIRE_CACHE.get(cache_key)
+        if fallback:
+            return _slice({**fallback[1], "stale": True})
+        raise
+    if not full.get("items"):
+        fallback = _WIRE_CACHE.get(cache_key)
+        if fallback:
+            return _slice({**fallback[1], "stale": True})
     return _slice(full)
 
 
-def _kick_wire_refresh(cache_key: Any, kw: str, want: int, stock_scope: bool) -> None:
+def _kick_wire_refresh(cache_key: Any, kw: str, want: int, stock_scope: bool) -> "asyncio.Task":
     """后台单飞回源刷新研报池：已有进行中的任务则复用，完成后写回 _WIRE_CACHE。"""
     task = _WIRE_REFRESH_TASKS.get(cache_key)
     if task is not None and not task.done():
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:  # 无事件循环（不应发生于请求路径）：放弃本次刷新
-        return
+        return task
+    loop = asyncio.get_running_loop()
     task = loop.create_task(_refresh_wire_pool(cache_key, kw, want, stock_scope))
     _WIRE_REFRESH_TASKS[cache_key] = task
 
@@ -231,11 +232,12 @@ def _kick_wire_refresh(cache_key: Any, kw: str, want: int, stock_scope: bool) ->
             pass  # 后台刷新失败静默：请求路径已回 stale 池，下次过期请求会再触发
 
     task.add_done_callback(_done)
+    return task
 
 
 async def _refresh_wire_pool(cache_key: Any, kw: str, want: int, stock_scope: bool) -> dict[str, Any]:
     """回源抓「整池」并落缓存（工作台内部 20/页翻到 resultLimit）。失败向上抛。"""
-    payload: dict[str, Any] = {"group": ZSXQ_GROUP, "resultLimit": want if stock_scope else _WIRE_POOL,
+    payload: dict[str, Any] = {"group": ZSXQ_GROUP, "resultLimit": _WIRE_STOCK_POOL if stock_scope else _WIRE_POOL,
                                "searchPages": 1 if stock_scope else 0}
     payload.update(_auth_payload())  # 有热更新 cookie 则用它（优先级高于工作台 env）
     if kw:

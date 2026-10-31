@@ -15,12 +15,14 @@ from fastapi.testclient import TestClient
 from deepfocus_api import story_engine, story_events, storage, user_profile
 from deepfocus_api import stories_api as api
 from deepfocus_api.auth import optional_current_user, require_current_user
+from deepfocus_api.tests.story_fixture import freeze_story_clock
 
 NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture(autouse=True)
 def env(tmp_path, monkeypatch):
+    clock = freeze_story_clock(monkeypatch, NOW)
     monkeypatch.setenv("DEEPFOCUS_DATABASE_URL", f"sqlite:///{tmp_path / 'core.sqlite3'}")
     monkeypatch.setenv("DEEPFOCUS_STORY_DB_PATH", str(tmp_path / "stories.sqlite3"))
     monkeypatch.setenv("DEEPFOCUS_STORY_EVENTS_DB_PATH", str(tmp_path / "events.sqlite3"))
@@ -34,7 +36,7 @@ def env(tmp_path, monkeypatch):
     story_engine.init_story_db()
     story_events.init_events_db()
     securities_master.upsert_securities([("600519", "贵州茅台", "CN"), ("300750", "宁德时代", "CN")])
-    yield
+    yield clock
     storage.reset_engine_for_tests()
 
 
@@ -83,6 +85,15 @@ def test_today_is_public_and_returns_stories(app):
         body = r.json()
         assert body["stories"][0]["story_id"] == "st1"
         assert "brief" in body and "health" in body
+
+
+def test_public_story_expires_at_original_window_without_wall_clock_drift(app, env):
+    _seed_story()
+    with TestClient(app) as client:
+        env['now'] = NOW + timedelta(hours=72)
+        assert client.get('/api/stories/today').json()['stories'][0]['story_id'] == 'st1'
+        env['now'] += timedelta(microseconds=1)
+        assert client.get('/api/stories/today').json()['stories'] == []
 
 
 def test_me_is_personalized_for_login_and_plain_for_anonymous(app):

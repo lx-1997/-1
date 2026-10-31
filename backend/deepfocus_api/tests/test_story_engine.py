@@ -11,6 +11,7 @@ import pytest
 
 from deepfocus_api import securities_master, story_engine
 from deepfocus_api.content_ontology import annotate_content
+from deepfocus_api.tests.story_fixture import freeze_story_clock
 
 NOW = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
 
@@ -23,13 +24,14 @@ SECURITIES = [
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    clock = freeze_story_clock(monkeypatch, NOW)
     monkeypatch.setenv("DEEPFOCUS_CONTENT_ONTOLOGY_DB_PATH", str(tmp_path / "ontology.sqlite3"))
     monkeypatch.setenv("DEEPFOCUS_STORY_DB_PATH", str(tmp_path / "stories.sqlite3"))
     monkeypatch.setattr(securities_master, "DB_PATH", tmp_path / "realtime.sqlite3")
     securities_master._ALIASES = None
     story_engine.reset_caches()
     securities_master.upsert_securities(SECURITIES)
-    yield
+    yield clock
     securities_master._ALIASES = None
     story_engine.reset_caches()
 
