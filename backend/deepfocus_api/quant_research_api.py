@@ -140,8 +140,10 @@ def pause(identity: str, uid=Depends(owner)): return visible(call(service.pause,
 
 
 @router.get('/workspace', response_class=HTMLResponse, include_in_schema=False)
-def workspace(view:Literal['strategies','shares','costs']='strategies'):
-    if view=='shares':
+def workspace(view:Literal['strategies','shares','costs','financials']='strategies'):
+    if view=='financials':
+        from .quant_financial_ui import HTML
+    elif view=='shares':
         from .quant_share_ui import HTML
     elif view=='costs':
         from .quant_model_cost_ui import HTML
@@ -247,3 +249,6 @@ router.include_router(build_share_router(owner))
 
 from .quant_model_cost_api import build_router as build_model_cost_router
 router.include_router(build_model_cost_router(owner))
+
+from .quant_financial_api import build_router as build_financial_router
+router.include_router(build_financial_router(owner))

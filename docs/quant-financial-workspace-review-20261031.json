@@ -1,0 +1,49 @@
+{
+  "schema": "financial-workspace-review-v1",
+  "scope": "internal authenticated read-only research, not deployed",
+  "new_backend_tests": 18,
+  "new_client_suites": 1,
+  "shared_read_limits": {
+    "global": 4,
+    "per_owner": 2,
+    "retained_until_actual_worker_exit": true
+  },
+  "browser": {
+    "desktop": {
+      "controlsOpen": false,
+      "resultTop": 408.3125,
+      "scrollWidth": 1265,
+      "width": 1265
+    },
+    "mobile": {
+      "viewportWidth": 375,
+      "clientWidth": 360,
+      "scrollWidth": 360,
+      "resultTopAfterMobileQuery": 0
+    },
+    "accountBEmpty": true,
+    "returnOldPageEmpty": true,
+    "consoleErrors": 0,
+    "viewportRestored": true,
+    "scriptSHA256": "3104551e672b666f2cf700ac550f83ddccb87706960215aaf56dc8f5e0b2d899",
+    "styleSHA256": "b7aec8793b928bb4603139429424a090955034a99b44e67f0f62b2d80fb5c979"
+  },
+  "download_and_source_review": {
+    "research_main_unchanged": true,
+    "download_values_and_projection_verified": true,
+    "actual_script_and_style_equal_current_sources": true
+  },
+  "cleanup": {
+    "owned_QA_processes_stopped": 3,
+    "owned_loopback_ports_closed": 3,
+    "browser_tab_closed": true,
+    "viewport_restored": true,
+    "production_writes": 0
+  },
+  "delayed_refresh_failure_reproduced_and_fixed": true,
+  "core_ingestion_derived_recovery_sources_unchanged": true,
+  "full_gate_receipt": "artifacts/quant-financial-workspace-20261031/final-verification.json",
+  "production_writes": 0,
+  "new_strategy_evaluations": 0,
+  "commercial_ready": false
+}
