@@ -1,0 +1,102 @@
+{
+  "source_pins": {
+    "quant_model_cost_api.py": "23db9ac1d8df133b9145aaaa334f83ee81676879ae40639e2e7827e754909dc6",
+    "quant_model_cost_read.py": "f2571b14456cab464ac4395643765d0a7bfeb6603622eee8a0894c18e22e5cf0",
+    "quant_model_cost_ui.py": "98666ea655dd424ed6b80edf3a5f9f9ebc1ddd66e132f93b7a5f9a642047dbe7",
+    "quant_share_api.py": "5909a1f7bbeed37abfa7b407668261c56c520e1d89b5a3cda23cf9282190a084",
+    "quant_share_ui.py": "c1a76f3804fa0e13f0b11b71781e824480dd74f2ceab5a70d4e6b0b0a6386952",
+    "quant_research_api.py": "90585846b440942cc600b75810a24f79d44389ca264093021c5df9156cd2d0ee",
+    "quant_research_ui.py": "aa07d96ab6e2ad386106ce8a884650718222bbe6595404b88722fd8d6c9684ad",
+    "quant_model_cost_store.py": "6075685eecefb6b0bc6fc6f3d84db90add4d9e44e656ffd3726c9df5ad347a9c",
+    "quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+    "auth.py": "9eac0c3a336d3759866092ff46ae85a9d3150fd8a426a36a3ca204ceb354e553"
+  },
+  "qa_script_sha256": "7a9cc6ddc8d0319a851fbf38fbba2a5da9faf50d126c117bdff73d94676f2a73",
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a"
+  },
+  "archive_math_store_pins_unchanged": {
+    "quant_model_cost_store.py": "6075685eecefb6b0bc6fc6f3d84db90add4d9e44e656ffd3726c9df5ad347a9c",
+    "quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+    "quant_execution_cost_book.py": "438911ee0ddbf6486e5e6ee2816f1b83780b40d1348d3a09807e67fcc61da6df",
+    "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+    "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+    "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+    "db.py": "58cd893736d0b06745bff7ce6981006a08493c86fd5b70b2f6d40d5a999566c9"
+  },
+  "actual_jwt_api": {
+    "actual_jwt_http": true,
+    "owner_a_archives": 1,
+    "owner_b_archives": 0,
+    "foreign_owner_status": 404,
+    "anonymous_status": 401,
+    "original_strategy_gates": [
+      false,
+      false
+    ],
+    "legacy_differences": [
+      0,
+      2
+    ],
+    "original_return_pct": [
+      -6.573664000000001,
+      -4.892655999999884
+    ],
+    "private_fields_excluded": true,
+    "research_db_main_bytes_unchanged": true,
+    "research_db_sha256": "01483d2eedf95a7d50aa5a517b94262378b1ef8f13bb60e6cb8e2c6f12214438"
+  },
+  "actual_browser": {
+    "actual_browser_login_a": true,
+    "actual_browser_login_b_empty": true,
+    "actual_browser_back_under_b_no_a_content": true,
+    "desktop": {
+      "client_width": 1265,
+      "scroll_width": 1265,
+      "header_height": 52
+    },
+    "mobile": {
+      "requested_width": 390,
+      "requested_height": 844,
+      "client_width": 375,
+      "scroll_width": 375,
+      "header_height": 52,
+      "difference_table_width": 317,
+      "difference_table_scroll_width": 317,
+      "detail_top_after_selection": 0.359375,
+      "scroll_y_after_selection": 315
+    },
+    "console_error_count": 0,
+    "temporary_viewport_reset": true,
+    "research_db_main_bytes_unchanged": true,
+    "private_api_token_file_removed": true,
+    "screenshots": {
+      "desktop.png": "43ddb562a15bcdd55126f41645f371a52e4b586fb455ae53de295c20b40ec9b9",
+      "mobile.png": "24225846db5a851f738e375c7cda503c69e596cfb31fa506c6b729aadbeeb590",
+      "mobile-reading.png": "159333640b2bbf6f467f7301b84153e6d091c9c26a11f68b8cd8dd3912c48dcf",
+      "account-b-empty.png": "c7aef5e56ec0ada6a2158a88b967800048c0683fcbe4cda9b208b4fcca708c6d"
+    },
+    "production_writes": 0
+  },
+  "cleanup": {
+    "owned_pid": 70743,
+    "owned_port": 50682,
+    "process_dead": true,
+    "listener_closed": true,
+    "qa_token_file_absent": true,
+    "research_db_main_sha256": "01483d2eedf95a7d50aa5a517b94262378b1ef8f13bb60e6cb8e2c6f12214438"
+  },
+  "new_backend_tests": 10,
+  "focused_passed": 20,
+  "new_client_suite_passed": true,
+  "provider_requests": 0,
+  "production_writes": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_deployed": false,
+  "artifact_directory": "artifacts/quant-model-cost-workspace-20261031"
+}

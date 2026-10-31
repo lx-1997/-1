@@ -140,9 +140,11 @@ def pause(identity: str, uid=Depends(owner)): return visible(call(service.pause,
 
 
 @router.get('/workspace', response_class=HTMLResponse, include_in_schema=False)
-def workspace(view:Literal['strategies','shares']='strategies'):
+def workspace(view:Literal['strategies','shares','costs']='strategies'):
     if view=='shares':
         from .quant_share_ui import HTML
+    elif view=='costs':
+        from .quant_model_cost_ui import HTML
     else:
         from .quant_research_ui import HTML
     import hashlib,base64
@@ -239,3 +241,6 @@ async def calendar_review(identity:str,payload:CalendarReviewRequest,uid=Depends
 
 from .quant_share_api import build_router as build_share_router
 router.include_router(build_share_router(owner))
+
+from .quant_model_cost_api import build_router as build_model_cost_router
+router.include_router(build_model_cost_router(owner))
