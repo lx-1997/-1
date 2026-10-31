@@ -1,0 +1,15 @@
+{
+  "schema": "reviewed-financial-source-compatibility-v2",
+  "original_implementation_commit": "ddc3fc3",
+  "old_source_pins": {
+    "quant_financial_vintages.py": "4d60703b7c55a429f19c7f30bbfee2c379bdfc00587f21f03b2098d1af1e2bf3",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_financial_store.py": "bef824969eb52e969f9a8ea00e1126177a48a3807dccf3f4dc11edbf0e78edd2"
+  },
+  "recognition": "exact_full_four_source_map",
+  "current_validation": "exact_amount_and_optional_per_metric_pages",
+  "legacy_archive_rewrite": false,
+  "archived_code_execution": false,
+  "unknown_source_profiles_accepted": false
+}

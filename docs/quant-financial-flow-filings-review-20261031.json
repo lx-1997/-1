@@ -1,0 +1,192 @@
+{
+  "schema": "financial-flow-filings-and-real-ttm-review-v1",
+  "scope": "existing out-of-pool issuer 002109, internal historical data quality only",
+  "queries": [
+    {
+      "key": "annual",
+      "total": 4,
+      "collected": 4,
+      "pages": 1,
+      "query_complete": true
+    },
+    {
+      "key": "quarter_short",
+      "total": 1,
+      "collected": 1,
+      "pages": 1,
+      "query_complete": true
+    },
+    {
+      "key": "quarter_long",
+      "total": 0,
+      "collected": 0,
+      "pages": 1,
+      "query_complete": true
+    },
+    {
+      "key": "correction",
+      "total": 3,
+      "collected": 3,
+      "pages": 1,
+      "query_complete": true
+    },
+    {
+      "key": "restatement",
+      "total": 1,
+      "collected": 1,
+      "pages": 1,
+      "query_complete": true
+    }
+  ],
+  "HTTP_requests": 12,
+  "documents_retained": 7,
+  "automatic_retries": 0,
+  "original_failed_UTC_parser_capture_retained": true,
+  "new_metric_cells_visually_reviewed": 9,
+  "new_pages_visually_reviewed": 5,
+  "vintage_panels": 5,
+  "TTM_window": [
+    "2024-04-01",
+    "2025-03-31"
+  ],
+  "TTM_queries": [
+    {
+      "case": "before-original",
+      "as_of": "2025-04-24T23:59:59+08:00",
+      "mode": "historical_reconstruction",
+      "status": "unavailable",
+      "metrics": null,
+      "documents": [
+        null,
+        null,
+        "1219827045"
+      ],
+      "report_sha256": "562083c0bc5aaf7ee7b3f82dbccd4636fa6f5d5a7087724851be9df68861ad77"
+    },
+    {
+      "case": "original-visible",
+      "as_of": "2025-04-25T00:00:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "arithmetic_available",
+      "metrics": {
+        "revenue": "4063026549.64",
+        "parent_net_profit": "-326540620.49",
+        "net_operating_cashflow": "533309063.71"
+      },
+      "documents": [
+        "1223244434",
+        "1223244435",
+        "1219827045"
+      ],
+      "report_sha256": "8f9dcf20ee0c9fcda7c6d4acd1802e0a9a6c57e3cf55b826e83513bc1dcbd267"
+    },
+    {
+      "case": "old-development",
+      "as_of": "2025-06-01T09:30:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "arithmetic_available",
+      "metrics": {
+        "revenue": "4063026549.64",
+        "parent_net_profit": "-326540620.49",
+        "net_operating_cashflow": "533309063.71"
+      },
+      "documents": [
+        "1223244434",
+        "1223244435",
+        "1219827045"
+      ],
+      "report_sha256": "892446edf4f792f3c0ade6fa52b2625b3d27ec6bbb5f7a578a32a9da72677286"
+    },
+    {
+      "case": "correction-day",
+      "as_of": "2026-04-30T23:59:59+08:00",
+      "mode": "historical_reconstruction",
+      "status": "arithmetic_available",
+      "metrics": {
+        "revenue": "4063026549.64",
+        "parent_net_profit": "-326540620.49",
+        "net_operating_cashflow": "533309063.71"
+      },
+      "documents": [
+        "1223244434",
+        "1223244435",
+        "1219827045"
+      ],
+      "report_sha256": "745fcb3e9130f5b66faf3d9632357993398e583cb5b3a55339159b5ab7d5a318"
+    },
+    {
+      "case": "correction-visible",
+      "as_of": "2026-05-01T00:00:00+08:00",
+      "mode": "historical_reconstruction",
+      "status": "arithmetic_available",
+      "metrics": {
+        "revenue": "3993056797.60",
+        "parent_net_profit": "-405137658.66",
+        "net_operating_cashflow": "533309063.71"
+      },
+      "documents": [
+        "1225265727",
+        "1225265729",
+        "1219827045"
+      ],
+      "report_sha256": "77df7c651b7edf4d4c07e43dbfc2dff96cdf6c935c28f29445878dcc4dcbeb20"
+    },
+    {
+      "case": "past-unrecorded",
+      "as_of": "2025-06-01T09:30:00+08:00",
+      "mode": "as_recorded",
+      "status": "unavailable",
+      "metrics": null,
+      "documents": [
+        null,
+        null,
+        null
+      ],
+      "report_sha256": "045ea3d4bba2a8f7877eddbdd3253154804bf26f248e7992d50c037e232e7d96"
+    },
+    {
+      "case": "just-before-facts-recorded",
+      "as_of": "2026-10-31T12:50:53.628039+00:00",
+      "mode": "as_recorded",
+      "status": "unavailable",
+      "metrics": null,
+      "documents": [
+        "1225265727",
+        null,
+        null
+      ],
+      "report_sha256": "b433af860a1cbf9127fe1a0dc83487630901c8258fabe7c08f80c29838edb24e"
+    },
+    {
+      "case": "current-operator-metadata",
+      "as_of": "2026-10-31T12:52:40.737119+00:00",
+      "mode": "as_recorded",
+      "status": "arithmetic_available",
+      "metrics": {
+        "revenue": "3993056797.60",
+        "parent_net_profit": "-405137658.66",
+        "net_operating_cashflow": "533309063.71"
+      },
+      "documents": [
+        "1225265727",
+        "1225265729",
+        "1219827045"
+      ],
+      "report_sha256": "e8338899698ac75b5e39e0e6cf4aee956728a955d5b8fa94aaf1a2c365248df1"
+    }
+  ],
+  "independent_fraction_and_date_checks": 8,
+  "input_manifest_and_sources_unchanged": true,
+  "original_two_panel_manifest_still_unavailable": true,
+  "metric_page_tests_added": 10,
+  "capture_tests_added": 6,
+  "focused_checks": 131,
+  "known_v1_and_v2_archive_cold_restore": true,
+  "full_revision_history_certified": false,
+  "accounting_comparability_certified": false,
+  "historical_pit_certified": false,
+  "usable_for_strategy": false,
+  "strategy_evaluations": 0,
+  "production_writes": 0,
+  "commercial_ready": false
+}

@@ -19,7 +19,7 @@ from .quant_corporate_actions import BJ, timestamp
 from .quant_research_engine import digest
 
 VERSION = 'qr-financial-receipt-v1'
-VALIDATOR_VERSION = 'qr-financial-source-validator-v2'
+VALIDATOR_VERSION = 'qr-financial-source-validator-v3'
 # Exact reviewed source identity of the original immutable v1 archive (af7e1a8).
 # This is a data/source whitelist, never permission to execute archived code.
 KNOWN_V1_SOURCE_PINS = {
@@ -27,6 +27,14 @@ KNOWN_V1_SOURCE_PINS = {
     'quant_corporate_actions.py':'89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996',
     'quant_research_engine.py':'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5',
     'quant_financial_store.py':'da99b1317c8aa7c81fabbe3ebfa3da4318a2857082be1e353575251c391471cd',
+}
+
+# Exact ddc3fc3 source identity: exact numeric bounds, before metric page metadata.
+KNOWN_V2_SOURCE_PINS = {
+    'quant_financial_vintages.py':'4d60703b7c55a429f19c7f30bbfee2c379bdfc00587f21f03b2098d1af1e2bf3',
+    'quant_corporate_actions.py':'89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996',
+    'quant_research_engine.py':'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5',
+    'quant_financial_store.py':'bef824969eb52e969f9a8ea00e1126177a48a3807dccf3f4dc11edbf0e78edd2',
 }
 
 VISIBILITY = 'next_beijing_calendar_day_after_transaction_recording'
@@ -65,13 +73,15 @@ def connect():
 
 
 def _facts(record):
-    return {k:v for k,v in record.items() if k not in {'observed_at','recorded_at','index_sha256'}}
+    return {k:v for k,v in record.items() if k not in {'observed_at','recorded_at','index_sha256'}
+            and not (k=='metric_source_pages' and v is None)}
 
 
 def source_profile(value):
     archived=value.get('source_pins')
     if archived==LOADED_PINS:return 'current'
     if archived==KNOWN_V1_SOURCE_PINS:return 'known_v1_revalidated'
+    if archived==KNOWN_V2_SOURCE_PINS:return 'known_v2_revalidated'
     raise ValueError('Financial receipt source identity is unknown')
 
 

@@ -39,6 +39,7 @@ class Vintage:
     source_page:int
     metrics:dict
     supersedes_document_id:Optional[str]=None
+    metric_source_pages:Optional[dict]=None
 
 
 def _read_source_pins():
@@ -92,6 +93,12 @@ def _validate_record(record,sources,now):
         except InvalidOperation:raise ValueError('Invalid decimal amount') from None
         if not amount.is_finite() or amount.copy_abs()>Decimal('1e18') or amount.as_tuple().exponent < -2:
             raise ValueError('Non-finite, oversized or non-CNY-cent amount')
+    if record.metric_source_pages is not None:
+        pages=record.metric_source_pages
+        if (not isinstance(pages,dict) or set(pages)!=set(record.metrics)
+                or any(type(v) is not int or not 1<=v<=1000 for v in pages.values())
+                or record.source_page!=min(pages.values())):
+            raise ValueError('Complete per-metric page references and earliest anchor required')
     if record.source_sha256 not in sources or not sources[record.source_sha256].startswith(b'%PDF-'):
         raise ValueError('Retained report PDF missing')
     if record.index_sha256 not in sources:raise ValueError('Retained disclosure index missing')
@@ -153,6 +160,7 @@ def select_panel(manifest,sources,*,issuer_id,symbol,period_end,as_of,mode,requi
             'mode':mode,'availability_policy':BOOK_TIME_POLICY,'manifest_digest':digest(manifest),
             'source_pins':source_pins(),'coverage_verified':False,'historical_pit_feed_certified':False,
             'promotion_allowed':False,'commercial_ready':False,
+            'page_reference_version':'per_metric_pages_v1_legacy_anchor_retained',
             'fact_review':'operator_reviewed_sample_not_automatic_PDF_fact_verification'}
     if not visible:return {**result,'status':'unavailable','panel':None,'metrics':None,'missing_metrics':list(required_metrics)}
     chosen=max(visible,key=lambda r:r.revision)

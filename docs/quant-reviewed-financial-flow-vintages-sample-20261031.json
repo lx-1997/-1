@@ -1,0 +1,174 @@
+{
+  "schema": "reviewed-financial-vintages-v1",
+  "coverage_kind": "reviewed_sample",
+  "coverage_verified": false,
+  "usage": "internal_research",
+  "source_files": {
+    "acfc7249aaa133365d2f27bc9cc0d405df0726953fa0e2760a1972f8a1487224": "original.pdf",
+    "fb56338e349e10432264d15a2373bb3a1f34bc7cb6b49d8b4206f6fe670fde73": "original-index.json",
+    "09b8834d1025bdb0686e725f0f7c15472ea880a00e3865a77742f560d3ec5d39": "corrected.pdf",
+    "a0cf4982a4a83325e5fd8c65826df0cbb95c566d4a38d540d503c31a87f3d9f5": "corrected-index.json",
+    "06aaa548d14135af73a1eb4786f371c642f6e7eae4ca02c627a1fa53b978b3e1": "correction-notice.pdf",
+    "7bd97abb8fe708dc4a8bd2026b43336a67ea697e7784cc4f5ca6ada783da2ea8": "1223244435.pdf",
+    "577ce5f66698d92b15147561e0e117ae5fcba3ed1ccb2f8a0ea4e1df2f3bb749": "index-annual-1.json",
+    "e0e8dbc34f28d4979da342ffaeb211e5a555f4b006a3bc5e139c3308b9ff1768": "1225265729.pdf",
+    "a1db754e6e273c9b9e8df3018178915bc12c739e0f2a1e9105cfb6b762ecd9a1": "1219827045.pdf",
+    "37ea0e44d0b2befb694b70ba04c566de562889d71a308a9e79685815fa5f8ae9": "index-quarter_short-1.json"
+  },
+  "vintages": [
+    {
+      "issuer_id": "cninfo:9900002009",
+      "symbol": "002109",
+      "period_start": "2025-01-01",
+      "period_end": "2025-03-31",
+      "scope": "consolidated",
+      "basis": "year_to_date",
+      "currency": "CNY",
+      "revision": 1,
+      "document_id": "1223244434",
+      "published_date": "2025-04-24",
+      "observed_at": "2026-10-30T19:42:34.679845+00:00",
+      "recorded_at": "2026-10-30T19:50:56.644375+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-04-24/1223244434.PDF",
+      "source_sha256": "acfc7249aaa133365d2f27bc9cc0d405df0726953fa0e2760a1972f8a1487224",
+      "index_sha256": "fb56338e349e10432264d15a2373bb3a1f34bc7cb6b49d8b4206f6fe670fde73",
+      "source_page": 2,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-95514023.70",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "supersedes_document_id": null
+    },
+    {
+      "issuer_id": "cninfo:9900002009",
+      "symbol": "002109",
+      "period_start": "2025-01-01",
+      "period_end": "2025-03-31",
+      "scope": "consolidated",
+      "basis": "year_to_date",
+      "currency": "CNY",
+      "revision": 2,
+      "document_id": "1225265727",
+      "published_date": "2026-04-30",
+      "observed_at": "2026-10-30T19:40:21.236407+00:00",
+      "recorded_at": "2026-10-30T19:50:56.644375+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-04-30/1225265727.PDF",
+      "source_sha256": "09b8834d1025bdb0686e725f0f7c15472ea880a00e3865a77742f560d3ec5d39",
+      "index_sha256": "a0cf4982a4a83325e5fd8c65826df0cbb95c566d4a38d540d503c31a87f3d9f5",
+      "source_page": 1,
+      "metrics": {
+        "revenue": "839505582.23",
+        "parent_net_profit": "-118504831.28",
+        "net_operating_cashflow": "23848856.23"
+      },
+      "supersedes_document_id": "1223244434"
+    },
+    {
+      "issuer_id": "cninfo:9900002009",
+      "symbol": "002109",
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "scope": "consolidated",
+      "basis": "year_to_date",
+      "currency": "CNY",
+      "revision": 1,
+      "document_id": "1223244435",
+      "published_date": "2025-04-24",
+      "observed_at": "2026-10-31T12:39:04.783961+00:00",
+      "recorded_at": "2026-10-31T12:50:54.628039+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2025-04-24/1223244435.PDF",
+      "source_sha256": "7bd97abb8fe708dc4a8bd2026b43336a67ea697e7784cc4f5ca6ada783da2ea8",
+      "index_sha256": "577ce5f66698d92b15147561e0e117ae5fcba3ed1ccb2f8a0ea4e1df2f3bb749",
+      "source_page": 7,
+      "metrics": {
+        "revenue": "4131421668.07",
+        "parent_net_profit": "-379851079.27",
+        "net_operating_cashflow": "567742746.36"
+      },
+      "supersedes_document_id": null,
+      "metric_source_pages": {
+        "revenue": 7,
+        "parent_net_profit": 7,
+        "net_operating_cashflow": 8
+      }
+    },
+    {
+      "issuer_id": "cninfo:9900002009",
+      "symbol": "002109",
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "scope": "consolidated",
+      "basis": "year_to_date",
+      "currency": "CNY",
+      "revision": 2,
+      "document_id": "1225265729",
+      "published_date": "2026-04-30",
+      "observed_at": "2026-10-31T12:39:09.199594+00:00",
+      "recorded_at": "2026-10-31T12:50:54.628039+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2026-04-30/1225265729.PDF",
+      "source_sha256": "e0e8dbc34f28d4979da342ffaeb211e5a555f4b006a3bc5e139c3308b9ff1768",
+      "index_sha256": "577ce5f66698d92b15147561e0e117ae5fcba3ed1ccb2f8a0ea4e1df2f3bb749",
+      "source_page": 7,
+      "metrics": {
+        "revenue": "4061451916.03",
+        "parent_net_profit": "-435457309.86",
+        "net_operating_cashflow": "567742746.36"
+      },
+      "supersedes_document_id": "1223244435",
+      "metric_source_pages": {
+        "revenue": 7,
+        "parent_net_profit": 8,
+        "net_operating_cashflow": 8
+      }
+    },
+    {
+      "issuer_id": "cninfo:9900002009",
+      "symbol": "002109",
+      "period_start": "2024-01-01",
+      "period_end": "2024-03-31",
+      "scope": "consolidated",
+      "basis": "year_to_date",
+      "currency": "CNY",
+      "revision": 1,
+      "document_id": "1219827045",
+      "published_date": "2024-04-26",
+      "observed_at": "2026-10-31T12:39:10.710205+00:00",
+      "recorded_at": "2026-10-31T12:50:54.628039+00:00",
+      "source_url": "https://static.cninfo.com.cn/finalpage/2024-04-26/1219827045.PDF",
+      "source_sha256": "a1db754e6e273c9b9e8df3018178915bc12c739e0f2a1e9105cfb6b762ecd9a1",
+      "index_sha256": "37ea0e44d0b2befb694b70ba04c566de562889d71a308a9e79685815fa5f8ae9",
+      "source_page": 2,
+      "metrics": {
+        "revenue": "907900700.66",
+        "parent_net_profit": "-148824482.48",
+        "net_operating_cashflow": "58282538.88"
+      },
+      "supersedes_document_id": null,
+      "metric_source_pages": {
+        "revenue": 2,
+        "parent_net_profit": 2,
+        "net_operating_cashflow": 2
+      }
+    }
+  ],
+  "review": {
+    "recorded_at": "2026-10-30T19:50:56.644375+00:00",
+    "sample_role": "out_of_pool_data_quality_only_no_strategy_universe_change",
+    "original_reviewed_page": 2,
+    "corrected_reviewed_page": 1,
+    "correction_notice_reviewed_pages": [
+      1,
+      5
+    ],
+    "correction_notice_sha256": "06aaa548d14135af73a1eb4786f371c642f6e7eae4ca02c627a1fa53b978b3e1",
+    "all_financial_history_complete": false,
+    "disclosure_minute_verified": false,
+    "original_index_pagination_complete": false,
+    "source_pins": {
+      "quant_financial_vintages.py": "5b5c1d8326ce29bd14f48afefac3c8bc992442debdc8653ed80dbf25a1d287c9",
+      "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+      "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5"
+    }
+  }
+}
