@@ -1,0 +1,29 @@
+{
+  "schema": "public-provider-rights-browser-observation-v1",
+  "observed_at": "2026-10-31T17:08:19.613556+00:00",
+  "sources": [
+    {
+      "url": "https://www.baostock.com/mainContent?file=home.md",
+      "kind": "actual_visible_browser_DOM",
+      "local_analysis_function_described": true
+    },
+    {
+      "url": "https://www.baostock.com/disclaimer",
+      "kind": "actual_visible_browser_DOM",
+      "website_content_written_permission_restriction_present": true
+    }
+  ],
+  "evidence_sha256": {
+    "disclaimer.png": "90ba63b90ccb4d62ad3a33143fb364de3d783c2bcefc8ced90c3c39dc7c278d6",
+    "disclaimer-dom.txt": "5a47dc282a22428349cc800f65994e93110ffe9749867cc73a8c97392cb0a374",
+    "platform-dom.txt": "972a450372acbb011c374d93992357b469b866d5870b7538265d5318fbb9e58c"
+  },
+  "API_data_licence_scope_resolved": false,
+  "internal_backup_and_derived_research_rights_verified": false,
+  "website_content_rule_not_automatically_extended_to_every_API_field": true,
+  "account_login_or_terms_acceptance": false,
+  "vendor_data_requests": 0,
+  "provider_messages_sent": 0,
+  "production_writes": 0,
+  "commercial_ready": false
+}
