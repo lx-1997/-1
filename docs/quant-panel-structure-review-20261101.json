@@ -1,0 +1,73 @@
+{
+  "schema": "profitability-panel-structure-review-v1",
+  "base_commit": "9f2a75058e7fa3cbd647c146615d63a7e7c8a8f8",
+  "tested_tree": "3a45f9705fc7df65bf782a93c352a87bd0775082",
+  "focused_passed": 116,
+  "focused_warnings": 2,
+  "focused_seconds": 3.46,
+  "new_backend_cases": 11,
+  "focused_exit_code": 0,
+  "initial_prototype": {
+    "passed": 110,
+    "fixture_setup_errors": 6,
+    "reason": "new test module imported clock but omitted its dependent ledger fixture; corrected import only; original log and source tree retained"
+  },
+  "real": {
+    "tested_tree": "3a45f9705fc7df65bf782a93c352a87bd0775082",
+    "cases": [
+      {
+        "case": "historical-with-missing",
+        "exit_code": 0,
+        "parent_report_digest_equal": true,
+        "original_plan_and_report_bytes_unchanged": true,
+        "declared_cells": 4,
+        "distinct_issuers": 1,
+        "distinct_issuer_period_units": 1,
+        "distinct_knowledge_clocks": 4,
+        "additional_clock_or_packet_cells": 3,
+        "missing_mask_equal": true,
+        "output_sha256": "922151b40da6bb2e15322921e52d0699a4315337d50d0b8fd0ae775c5f0f94ed"
+      },
+      {
+        "case": "recorded-boundary",
+        "exit_code": 0,
+        "parent_report_digest_equal": true,
+        "original_plan_and_report_bytes_unchanged": true,
+        "declared_cells": 2,
+        "distinct_issuers": 1,
+        "distinct_issuer_period_units": 1,
+        "distinct_knowledge_clocks": 2,
+        "additional_clock_or_packet_cells": 1,
+        "missing_mask_equal": true,
+        "output_sha256": "ec3bba18805feae33da28162fc5597587ca68525354d84ecf07575ad81c8b501"
+      },
+      {
+        "case": "128-cells",
+        "exit_code": 0,
+        "parent_report_digest_equal": true,
+        "original_plan_and_report_bytes_unchanged": true,
+        "declared_cells": 128,
+        "distinct_issuers": 1,
+        "distinct_issuer_period_units": 1,
+        "distinct_knowledge_clocks": 128,
+        "additional_clock_or_packet_cells": 127,
+        "missing_mask_equal": true,
+        "output_sha256": "0798cdf96e96dc5b2df6763255cf64178ab5a280c4ea38a19c502296e386cf10"
+      }
+    ],
+    "original_database_main_sha256_unchanged": true,
+    "cold_database_main_sha256_unchanged": true,
+    "all_socket_connect_denied_in_CLI_children": true,
+    "independent_set_oracle_passed": true,
+    "new_data_or_strategy_evaluations": 0,
+    "production_writes": 0
+  },
+  "counts_are_not_independent_sample_size": true,
+  "no_selection_threshold_added": true,
+  "original_financial_core_or_strategy_changed": false,
+  "full_backend_rerun": false,
+  "goal_complete": false,
+  "commercial_ready": false,
+  "artifact_root": "artifacts/quant-panel-structure-20261101",
+  "evidence_manifest_sha256": "1085ec2d48694687cb6358f06d27401de2772a87b841ef9bba029b2f2da4d3fe"
+}
