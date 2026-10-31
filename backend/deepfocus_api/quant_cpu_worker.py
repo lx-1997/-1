@@ -3,6 +3,17 @@ import json
 import os
 import sys
 import time
+
+
+def reject_external_io(event,args):
+    # The fixed numerical worker needs neither a network nor descendants.
+    # Denying creation also makes the final waited-child RSS bound complete.
+    if event in {'socket.connect','subprocess.Popen','os.fork','os.forkpty','os.posix_spawn','os.exec','os.system'}:
+        raise PermissionError('Numerical worker cannot create processes or connect sockets')
+
+
+if __name__=='__main__':sys.addaudithook(reject_external_io)
+
 from . import quant_cpu_process as supervisor, quant_research_store as jobs
 from . import quant_worker_slots as slots, quant_research_engine as engine
 

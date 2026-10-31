@@ -27,13 +27,18 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = {
-    'schema':'internal-qr-soak-v1','duration_seconds':3600,'round_period_seconds':30,
+    'schema':'internal-qr-soak-v2','duration_seconds':3600,'round_period_seconds':30,
     'parallel_lanes':4,'research_owners':2,'observer_owners':1,
     'cancel_every_nth_job':5,'cancel_delay_seconds':.05,'status_poll_seconds':.5,
     'observer_period_seconds':1,'heartbeat_period_seconds':.01,
     'max_job_seconds':180,'read_p95_ms':500,'read_p99_ms':1500,
     'create_p95_ms':2000,'loop_p99_ms':250,'loop_max_ms':2000,
     'rss_max_bytes':1024**3,'qr_disk_max_bytes':512*1024**2,
+    'rss_scope':'API_lifetime_peak_plus_4_times_largest_waited_child_lifetime_peak',
+    'rss_descendant_limit':4,'rss_requires_all_children_waited':True,
+    'whole_owned_tree_rss_scope':'control_parent_peak_plus_5_times_largest_waited_descendant_peak_after_API_exit',
+    'whole_owned_tree_descendant_limit':5,
+    'CPU_descendants_and_socket_connections':'denied_by_fixed_private_entrypoint',
     'minimum_completed_jobs':32,'minimum_cancelled_jobs':10,
     'minimum_rounds':30,'minimum_observer_reads':600,'minimum_heartbeat_samples':600,
     'global_worker_limit':4,'owner_worker_limit':2,
@@ -76,6 +81,7 @@ def evaluate(metrics, mode):
         'loop_p99':under(percentile(loop,.99),PROTOCOL['loop_p99_ms']),
         'loop_max':under(max(loop) if loop else None,PROTOCOL['loop_max_ms']),
         'rss':under(metrics['peak_rss_bytes'],PROTOCOL['rss_max_bytes']),
+        'rss_tree':memory_ok(metrics),
         'disk':under(metrics['peak_qr_disk_bytes'],PROTOCOL['qr_disk_max_bytes']),
         'worker_caps':metrics['peak_global_slots']<=4 and metrics['peak_owner_slots']<=2,
         'four_active_slots_observed':metrics['peak_active_slots']==4,
@@ -111,6 +117,51 @@ def rss():
     return value if sys.platform=='darwin' else value*1024
 
 
+def memory_snapshot():
+    if sys.platform!='darwin' and not sys.platform.startswith('linux'):
+        raise ValueError('Uncalibrated RSS platform')
+    value=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    child=value if sys.platform=='darwin' else value*1024
+    own=rss()
+    return {'api_lifetime_peak_bytes':own,'largest_waited_child_peak_bytes':child,
+            'descendant_limit':4,'tree_peak_upper_bound_bytes':own+4*child}
+
+
+def no_children_left():
+    # Only in this owned isolated worker after service shutdown/drain. A live
+    # child or an unexpectedly unreaped zombie refuses acceptance.
+    try:os.waitpid(-1,os.WNOHANG)
+    except ChildProcessError:return True
+    return False
+
+
+def memory_ok(metrics):
+    m=metrics.get('memory',{})
+    own=m.get('api_lifetime_peak_bytes');child=m.get('largest_waited_child_peak_bytes')
+    if not all(type(x) is int and x>0 for x in (own,child)):return False
+    return (m.get('descendant_limit')==4 and m.get('all_children_waited') is True
+            and m.get('SIGCHLD_not_ignored') is True and m.get('forbidden_spawn_attempts')==0
+            and type(m.get('CPU_spawn_attempts')) is int and 0<m['CPU_spawn_attempts']<=metrics.get('submitted',0)
+            and m.get('tree_peak_upper_bound_bytes')==own+4*child
+            and own+4*child<=PROTOCOL['rss_max_bytes'])
+
+
+def parent_memory_receipt():
+    """After the owned API exits, its final peak and reaped CPU peaks roll up.
+
+    At most five descendants coexist (one API plus four numerical children).
+    This deliberately overcounts shared pages and non-simultaneous peaks; it
+    is an upper bound, never a sampled instantaneous sum or a measured peak.
+    """
+    m=memory_snapshot();own=m['api_lifetime_peak_bytes'];largest=m['largest_waited_child_peak_bytes']
+    absent=no_children_left();sig=signal.getsignal(signal.SIGCHLD)!=signal.SIG_IGN
+    bound=own+5*largest
+    return {'control_parent_peak_bytes':own,'largest_waited_descendant_peak_bytes':largest,
+            'descendant_limit':5,'whole_tree_peak_upper_bound_bytes':bound,
+            'all_children_waited':absent,'SIGCHLD_not_ignored':sig,
+            'accepted':absent and sig and largest>0 and bound<=PROTOCOL['rss_max_bytes']}
+
+
 async def run_worker(workspace, plan):
     # Environment is bound before importing auth/storage or any application module.
     os.environ.update(DEEPFOCUS_DATABASE_URL='sqlite:///'+str(workspace/'auth.sqlite3'),
@@ -138,7 +189,16 @@ async def run_worker(workspace, plan):
              'completed':0,'exact_results':0,'cancelled':0,'cancel_requested':0,'cancel_missed':0,
              'peak_rss_bytes':rss(),'peak_qr_disk_bytes':0,'peak_global_slots':0,'peak_owner_slots':0,'peak_active_slots':0,
              'remaining_slots':None,'remaining_admissions':None,'external_connection_attempts':0}
+    spawn={'CPU_spawn_attempts':0,'forbidden_spawn_attempts':0}
     def audit(event,args):
+        if event=='subprocess.Popen':
+            if args[0]!=sys.executable or args[1]!=[sys.executable,'-B','-m','deepfocus_api.quant_cpu_worker']:
+                spawn['forbidden_spawn_attempts']+=1
+                raise PermissionError('Only fixed numerical children allowed in isolated API worker')
+            spawn['CPU_spawn_attempts']+=1
+        elif event in {'os.fork','os.forkpty','os.posix_spawn','os.exec','os.system'}:
+            spawn['forbidden_spawn_attempts']+=1
+            raise PermissionError('Unregistered process creation denied in isolated API worker')
         if event=='socket.connect':
             address=args[1]
             try:allowed=isinstance(address,tuple) and ipaddress.ip_address(address[0]).is_loopback
@@ -208,6 +268,8 @@ async def run_worker(workspace, plan):
         if total>4 or own>2:raise AssertionError('Worker capacity violated')
         if metrics['peak_qr_disk_bytes']>PROTOCOL['qr_disk_max_bytes'] or rss()>PROTOCOL['rss_max_bytes']:
             raise AssertionError('Resource safety budget exceeded')
+        if memory_snapshot()['tree_peak_upper_bound_bytes']>PROTOCOL['rss_max_bytes']:
+            raise AssertionError('Waited-child memory upper bound exceeds fixed budget')
     try:
         for _ in range(100):
             if server.started:break
@@ -305,6 +367,9 @@ async def run_worker(workspace, plan):
     with sqlite3.connect((workspace/'research.sqlite3').as_uri()+'?mode=ro',uri=True) as c:
         metrics['paper_accounts']=c.execute('SELECT count(*) FROM qr_paper').fetchone()[0]
     metrics['peak_qr_disk_bytes']=max(metrics['peak_qr_disk_bytes'],qr_disk(workspace))
+    metrics['peak_rss_bytes']=max(metrics['peak_rss_bytes'],rss())
+    metrics['memory']={**memory_snapshot(),**spawn,'all_children_waited':no_children_left(),
+                       'SIGCHLD_not_ignored':signal.getsignal(signal.SIGCHLD)!=signal.SIG_IGN}
     if source_pins()!=plan['source_pins']:metrics['errors'].append({'type':'SourceChangedAtEnd'})
     if hashlib.sha256(Path(plan['experiments']).read_bytes()).hexdigest()!=plan['experiments_sha256']:
         metrics['errors'].append({'type':'InputChangedAtEnd'})
@@ -347,10 +412,15 @@ def main():
         dump(workspace/'owned-parent.json',{'pid':os.getpid(),'worker_pid':child.pid,'workspace':str(workspace),
              'command':command,'script_sha256':plan['source_pins']['quant-service-soak.py']})
         code=child.wait(timeout=plan['wall_budget_seconds'])
+        memory=parent_memory_receipt()
+        full_passed=args.mode=='full' and code==0 and memory['accepted']
         dump(workspace/'parent-exit.json',{'worker_exit_code':code,'owned_worker_exited':True,
+             'owned_tree_memory':memory,
+             'full_soak_passed':full_passed,
              'finished_at':datetime.now(timezone.utc).isoformat(),
              'result_sha256':hashlib.sha256((workspace/'result.json').read_bytes()).hexdigest() if (workspace/'result.json').exists() else None})
-        return code
+        print(json.dumps({'owned_tree_memory_accepted':memory['accepted'],'full_soak_passed':full_passed}),flush=True)
+        return code if memory['accepted'] else 2
     except BaseException as exc:
         if child is not None and child.poll() is None:
             child.terminate()

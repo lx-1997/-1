@@ -18,7 +18,11 @@ def metrics():
             'peak_global_slots':4,'peak_owner_slots':2,'peak_active_slots':4,
             'errors':[],'external_connection_attempts':0,'completed':32,'exact_results':32,
             'remaining_slots':0,'remaining_admissions':0,'paper_accounts':0,
-            'elapsed_seconds':3600,'cancelled':10,'rounds':30}
+            'elapsed_seconds':3600,'cancelled':10,'rounds':30,'submitted':120,
+            'memory':{'api_lifetime_peak_bytes':100*1024**2,'largest_waited_child_peak_bytes':50*1024**2,
+                      'descendant_limit':4,'tree_peak_upper_bound_bytes':300*1024**2,
+                      'all_children_waited':True,'SIGCHLD_not_ignored':True,
+                      'CPU_spawn_attempts':100,'forbidden_spawn_attempts':0}}
 
 
 def test_smoke_can_never_certify_full_soak_even_with_inflated_counts():

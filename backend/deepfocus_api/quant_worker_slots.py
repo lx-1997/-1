@@ -4,12 +4,30 @@ No timer may reclaim a live/unknown process. Unknown or foreign boot/PID scopes
 stay reserved; controlled migration/recovery is separate from this local fence.
 """
 import hashlib
+import ctypes
 import os
 from pathlib import Path
-import subprocess
 import sys
 import sqlite3
 from functools import lru_cache
+
+
+def _darwin_boot_uuid():
+    """Read the fixed boot identity without creating an orphanable helper."""
+    call=ctypes.CDLL(None,use_errno=True).sysctlbyname
+    call.argtypes=[ctypes.c_char_p,ctypes.c_void_p,ctypes.POINTER(ctypes.c_size_t),ctypes.c_void_p,ctypes.c_size_t]
+    call.restype=ctypes.c_int
+    size=ctypes.c_size_t()
+    key=b'kern.bootsessionuuid'
+    if call(key,None,ctypes.byref(size),None,0)!=0:raise OSError(ctypes.get_errno(),'Boot identity unavailable')
+    if not 2<=size.value<=128:raise ValueError('Invalid boot identity size')
+    buffer=ctypes.create_string_buffer(size.value)
+    if call(key,buffer,ctypes.byref(size),None,0)!=0:raise OSError(ctypes.get_errno(),'Boot identity unavailable')
+    if not 2<=size.value<=len(buffer) or buffer.raw[size.value-1]!=0:raise ValueError('Invalid boot identity response')
+    boot=buffer.raw[:size.value-1].decode('ascii')
+    import uuid
+    if str(uuid.UUID(boot))!=boot.lower():raise ValueError('Invalid boot UUID')
+    return boot
 
 
 @lru_cache(maxsize=1)
@@ -19,11 +37,11 @@ def process_scope():
             boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
             namespace=os.readlink('/proc/self/ns/pid')
         elif sys.platform=='darwin':
-            boot=subprocess.check_output(['/usr/sbin/sysctl','-n','kern.bootsessionuuid'],timeout=1,text=True).strip()
+            boot=_darwin_boot_uuid()
             namespace='host-pid-namespace'
         else:return None
         return hashlib.sha256((sys.platform+'|'+boot+'|'+namespace).encode()).hexdigest() if boot else None
-    except (OSError,subprocess.SubprocessError):return None
+    except (OSError,ValueError,AttributeError):return None
 
 
 def schema(c):
