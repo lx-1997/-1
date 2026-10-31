@@ -34,12 +34,12 @@ def enhance(html):
             raise ValueError('Calendar research UI anchor changed')
         html = html.replace(needle, replacement, 1)
     once("function render(job){renderCore(job);if(job.status==='completed'&&job.request.kind!=='event_replay')renderEvidenceForm(job)}",
-         SCRIPT+"\nfunction render(job){renderCore(job);if(job.status==='completed'&&!job.request.kind){renderEvidenceForm(job);renderCalendarForm(job)}}")
+         SCRIPT+"\nfunction render(job){renderCore(job);if(job.status==='failed'&&job.request.kind==='event_replay'&&job.quality?.annual_plan)renderEventCalendarFailure(job);if(job.status==='completed'&&!job.request.kind){renderEvidenceForm(job);renderCalendarForm(job)}}")
     once("if(job.request.kind==='event_replay'){renderEvent(job);return}",
          "if(job.request.kind==='calendar_review'){renderCalendar(job);return}if(job.request.kind==='event_replay'){renderEvent(job);return}")
     once("const [data,papers,proof]=await Promise.all([api('/experiments'),api('/paper'),api('/evidence').then(d=>({...d,ok:true})).catch(e=>({items:[],ok:false,message:e.message}))]);evidenceItems=proof.items;evidenceError=proof.ok?'':proof.message;",
          "const [data,papers,proof,calendarProof]=await Promise.all([api('/experiments'),api('/paper'),api('/evidence').then(d=>({...d,ok:true})).catch(e=>({items:[],ok:false,message:e.message})),api('/calendar-evidence').then(d=>({...d,ok:true})).catch(e=>({items:[],ok:false,message:e.message}))]);evidenceItems=proof.items;evidenceError=proof.ok?'':proof.message;calendarItems=calendarProof.items;calendarError=calendarProof.ok?'':calendarProof.message;")
     once("if(b.dataset.event){await startEventReplay(b);return}",
          "if(b.dataset.calendar){await startCalendarReview(b);return}if(b.dataset.event){await startEventReplay(b);return}")
-    once("function reset(){", "function reset(){calendarItems=[];calendarError='';sessionStorage.removeItem('quant_calendar_pending');")
+    once("function reset(){", "function reset(){calendarItems=[];calendarError='';evidenceItems=[];evidenceError='';sessionStorage.removeItem('quant_calendar_pending');")
     return html

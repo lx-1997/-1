@@ -1,0 +1,87 @@
+{
+  "schema": "event-annual-calendar-admission-review-v1",
+  "scope": "internal event-task admission, not actual-session or strategy certification",
+  "service_kernel": "bb2c4400fae6d99eb915d7d245709fc253e7a4ca78818b276666f7e5d2911c51",
+  "prechange_base": "f2f247270058b800684eb22ac92538c4af748a93",
+  "before": {
+    "common_omission_accepted": true,
+    "event_task_status": "completed",
+    "event_observations": 534,
+    "strategy_gate_passed": false
+  },
+  "after": {
+    "calendar_binding_required": true,
+    "real_series_omission_rejected": true,
+    "missing_date": "2024-05-20",
+    "series": 4,
+    "failed_quality_exported_without_dataset": true
+  },
+  "positive_real_cases": 2,
+  "positive_real_daily_points": 1070,
+  "current_core_result_all_fields_equal": true,
+  "frozen_verifications_equal": 2,
+  "duplicate_posts_same_id": true,
+  "original_parent_records_unchanged": true,
+  "new_backend_tests": 9,
+  "focused_backend_tests": 43,
+  "frontend_checks": [
+    "mandatory selected calendar in request signature",
+    "missing/failed calendar disables event start",
+    "expanded failure dates escaped",
+    "accepted POST recovery uses existing ID",
+    "legacy event result remains readable, verification disabled",
+    "reset clears account-owned calendar and cash lists"
+  ],
+  "browser": {
+    "desktop": {
+      "clientWidth": 1265,
+      "scrollWidth": 1265,
+      "officialCalendarVisible": true,
+      "frozenVerificationVisible": true
+    },
+    "mobile": {
+      "requestedWidth": 390,
+      "requestedHeight": 844,
+      "clientWidth": 375,
+      "scrollWidth": 375,
+      "expandedMissingDate": "2024-05-20",
+      "allFourSeries": true
+    },
+    "accountBBack": {
+      "oldAccountResultVisible": false,
+      "empty": true
+    },
+    "consoleErrorCount": 0,
+    "screenshots": [
+      "desktop-success.png",
+      "mobile-proof.png",
+      "mobile-failure.png"
+    ],
+    "testEnvironment": "loopback isolated QA, not production"
+  },
+  "download_sha256": "8e9a3b6a7c96005b463a3dcd62b840734d33de6119bd90ea4a1ee9b7d40d56ee",
+  "cleanup": {
+    "owned_process_gone": true,
+    "listener_closed": true,
+    "global_worker_slots": 0,
+    "job_status_counts": {
+      "completed": 9,
+      "failed": 1
+    },
+    "browser_tab_closed": true,
+    "temporary_viewport_reset": true,
+    "production_touched": false
+  },
+  "evidence_sha256": {
+    "real-api-receipt.json": "e30d0f833da13ec6f1e3179b71113061303de48d8e5d6e2368389f90a6045d03",
+    "before-service-proof.json": "453a3528d29046daba98b225c513949850500fe8a2c1b5db49197481fcc5b32c",
+    "browser-receipt.json": "ab4b753d5ef96f6fee34d714dffacb8330bc5e666d29983dd6039d81b2f5d0ea",
+    "download-proof.json": "3f6ce8b661327ad6017945e0d0873077a81135c58082ca2b38ea2da8895b4147",
+    "cleanup.json": "2847c38176e8b2975550123af28ee5cd187d3f2071ab9ad2f028a9845f04e1ca"
+  },
+  "original_strategy_gates_changed": false,
+  "new_strategy_evaluations": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0
+}

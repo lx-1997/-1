@@ -170,7 +170,8 @@ async def replay(identity:str,payload:ReplayRequest,uid=Depends(owner)):
     if item and item.get('request',{}).get('kind')=='event_replay':
         from .quant_event_service import submit
         req=item['request']
-        try:return visible(await submit(uid,req['parent_id'],req['bundle_id'],payload.request_id,req['knowledge_mode'],verification_of=identity))
+        try:return visible(await submit(uid,req['parent_id'],req['bundle_id'],payload.request_id,req['knowledge_mode'],verification_of=identity,
+                                      calendar_bundle_id=req.get('calendar_bundle_id')))
         except LookupError as e:raise HTTPException(404,str(e)) from e
         except ValueError as e:raise HTTPException(422,str(e)) from e
         except RuntimeError as e:raise HTTPException(429,str(e)) from e
@@ -198,13 +199,15 @@ class EventReplayRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     request_id:str=Field(default_factory=lambda:uuid.uuid4().hex,min_length=8,max_length=96,pattern=r'^[A-Za-z0-9_-]+$')
     bundle_id:str=Field(pattern=r'^[0-9a-f]{32}$')
+    calendar_bundle_id:str=Field(pattern=r'^[0-9a-f]{32}$')
     knowledge_mode:Literal['as_recorded','historical_reconstruction']='as_recorded'
 
 
 @router.post('/experiments/{identity}/event-replay',status_code=202)
 async def event_replay(identity:str,payload:EventReplayRequest,uid=Depends(owner)):
     from .quant_event_service import submit
-    try:return visible(await submit(uid,identity,payload.bundle_id,payload.request_id,payload.knowledge_mode))
+    try:return visible(await submit(uid,identity,payload.bundle_id,payload.request_id,payload.knowledge_mode,
+                                   calendar_bundle_id=payload.calendar_bundle_id))
     except LookupError as e:raise HTTPException(404,str(e)) from e
     except ValueError as e:raise HTTPException(422,str(e)) from e
     except RuntimeError as e:raise HTTPException(429,str(e)) from e

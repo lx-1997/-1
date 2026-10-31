@@ -7,13 +7,16 @@ from . import quant_evidence_store as evidence, quant_event_replay as engine
 from .quant_research_engine import digest
 from .quant_dividend_book import INVESTOR
 from .quant_calendar import CalendarAlignmentError, require_aligned
+from . import quant_calendar_store as calendars
+from .quant_exchange_schedule import check_dataset
 
 
 KERNEL=digest({'execution':engine.KERNEL,**{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-    for name in ('quant_event_service.py','quant_calendar.py','quant_evidence_store.py','quant_research_store.py','quant_worker_slots.py')}})
+    for name in ('quant_event_service.py','quant_calendar.py','quant_calendar_store.py','quant_exchange_schedule.py',
+                 'quant_evidence_store.py','quant_research_store.py','quant_worker_slots.py')}})
 
 
-def reference(owner,parent_id,bundle_id):
+def reference(owner,parent_id,bundle_id,calendar_bundle_id=None):
     parent=jobs.get(owner,parent_id)
     if parent is None:raise LookupError('原实验不存在')
     if parent['status']!='completed' or parent['request'].get('kind'):
@@ -26,23 +29,32 @@ def reference(owner,parent_id,bundle_id):
     info=evidence.summary(owner,bundle_id)
     if info is None:raise LookupError('证据包不存在')
     if not set(parent['request']['symbols'])&set(info['symbols']):raise ValueError('证据包与原研究股票无交集')
-    return parent,info
+    if not calendar_bundle_id:raise ValueError('事件重放须绑定覆盖研究年份的官方日历证据')
+    calendar=calendars.summary(owner,calendar_bundle_id)
+    if calendar is None:raise LookupError('日历证据包不存在')
+    start,end=parent['request']['start_date'],parent['request']['end_date']
+    if any(y not in calendar['years'] for y in range(int(start[:4]),int(end[:4])+1)):
+        raise ValueError('日历证据未覆盖完整研究年份')
+    return parent,info,calendar
 
 
-async def submit(owner,parent_id,bundle_id,key,mode,verification_of=None):
+async def submit(owner,parent_id,bundle_id,key,mode,verification_of=None,*,calendar_bundle_id=None):
     if mode not in ('as_recorded','historical_reconstruction'):raise ValueError('知识可用模式未登记')
-    parent,info=await lifecycle._paper_io(reference,owner,parent_id,bundle_id)
+    parent,info,calendar=await lifecycle._paper_io(reference,owner,parent_id,bundle_id,calendar_bundle_id)
     request={**{k:v for k,v in parent['request'].items() if k not in ('replay_of','request_id')},
         'kind':'event_replay','name':parent['request']['name']+' · 事件重放',
         'parent_id':parent_id,'parent_digest':parent['result_digest'],'reference_kernel':parent['kernel'],
         'bundle_id':bundle_id,'bundle_digest':info['fingerprint'],'knowledge_mode':mode,
+        'parent_request_digest':digest(parent['request']),
+        'calendar_bundle_id':calendar_bundle_id,'calendar_bundle_digest':calendar['fingerprint'],
         'investor_scenario':INVESTOR,'parameter_policy':'original_frozen_oos_schedule_no_refit'}
     if verification_of:
         original=await lifecycle._paper_io(jobs.get,owner,verification_of)
         if original is None:raise LookupError('原事件研究不存在')
         if original['status']!='completed' or original['kernel']!=KERNEL or digest(original['result'])!=original['result_digest']:
             raise ValueError('原事件研究或冻结版本不能用于复核')
-        for k in ('parent_id','parent_digest','bundle_id','bundle_digest','knowledge_mode'):
+        for k in ('parent_id','parent_digest','parent_request_digest','bundle_id','bundle_digest','knowledge_mode',
+                  'calendar_bundle_id','calendar_bundle_digest'):
             if original['request'].get(k)!=request[k]:raise ValueError('冻结复核引用不一致')
         request.update(verification_of=verification_of,expected_result_digest=original['result_digest'])
     return await lifecycle.admit_job(owner,key,request,KERNEL,execute)
@@ -53,9 +65,21 @@ async def execute(owner,identity,request):
     def update(**kw):return jobs.update(owner,identity,**kw)
     try:
         if not await lifecycle._paper_io(update,progress=10,stage='核对原实验与证据指纹'):return
-        parent,info=await lifecycle._paper_io(reference,owner,request['parent_id'],request['bundle_id'])
-        if parent['result_digest']!=request['parent_digest'] or info['fingerprint']!=request['bundle_digest']:
+        parent,info,calendar=await lifecycle._paper_io(reference,owner,request['parent_id'],request['bundle_id'],request['calendar_bundle_id'])
+        if (parent['result_digest']!=request['parent_digest'] or info['fingerprint']!=request['bundle_digest']
+                or digest(parent['request'])!=request['parent_request_digest']
+                or parent['kernel']!=request['reference_kernel']
+                or calendar['fingerprint']!=request['calendar_bundle_digest']):
             raise ValueError('冻结引用已改变，禁止继续')
+        if not await lifecycle._paper_io(update,progress=18,stage='先用官方年度计划核对全部封存交易日期'):return
+        calendar,manifest,calendar_sources=await lifecycle._paper_io(calendars.load,owner,request['calendar_bundle_id'])
+        if calendar['fingerprint']!=request['calendar_bundle_digest']:raise ValueError('冻结日历证据已变化')
+        req=parent['request']
+        quality=await lifecycle._paper_io(check_dataset,manifest,parent['dataset'],req['start_date'],req['end_date'],as_of=jobs.now())
+        if quality['status']!='matches_plan':
+            raise CalendarAlignmentError({'schema':'event-annual-calendar-admission-v1','reason':'annual_plan_dates_differ',
+                'annual_plan':quality,'intersection_trimming':False,'forward_fill':False,
+                'promotion_allowed':False})
         info,events,sources=await lifecycle._paper_io(evidence.load,owner,request['bundle_id'])
         selected=[e for e in events if e.symbol in parent['request']['symbols']]
         schedule=[{k:f[k] for k in ('train_end','test_start','test_end','parameters')} for f in parent['result']['folds']]
@@ -71,6 +95,7 @@ async def execute(owner,identity,request):
             schedule=schedule,progress=progress),180)
         result.update(parent_oos={k:v for k,v in parent['result']['oos'].items() if k!='curve'},
             evidence=info,source_dataset_digest=parent['result']['dataset_digest'],
+            calendar_evidence=calendar,calendar_quality=quality,
             validation_status='seen_history_development_only',holdout_replayed=False)
         if request.get('expected_result_digest') and digest(result)!=request['expected_result_digest']:
             raise ValueError('事件复核结果与冻结研究不一致，禁止发布')

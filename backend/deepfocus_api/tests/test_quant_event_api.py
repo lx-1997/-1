@@ -4,12 +4,16 @@ from datetime import date,timedelta
 import hashlib
 import json
 import sqlite3
+from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient,ASGITransport
 from deepfocus_api import quant_research_api as api,quant_research_store as jobs
 from deepfocus_api import quant_evidence_store as evidence,quant_event_service as service
 from deepfocus_api import quant_research_engine as legacy
+from deepfocus_api import quant_calendar_store as calendars
+from deepfocus_api.quant_exchange_schedule import planned_sessions
+from deepfocus_api.tests.test_quant_exchange_schedule import reviewed
 
 PDF=b'%PDF-unit-test-only';SHA=hashlib.sha256(PDF).hexdigest()
 
@@ -23,21 +27,27 @@ def sample():
 
 
 def dataset():
-    bars=[];d=date(2024,1,2)
-    while len(bars)<330:
-        if d.weekday()<5:
-            p=100+len(bars)*.1;bars.append(dict(date=d.isoformat(),open=p,close=p+.05,high=p+1,low=p-1,volume=10_000_000))
-        d+=timedelta(days=1)
-    def payload(rows):return dict(source='unit_test_fixture',fetched_at='2026-01-01',adjustment='none',volume_unit='shares',is_synthetic=False,bars=rows)
+    manifest=json.loads((Path(__file__).resolve().parents[3]/'docs/quant-reviewed-exchange-schedule-2023-2026-20261030.json').read_text())
+    bars=[]
+    for day in planned_sessions(manifest,'2024-01-02','2025-12-31')[:330]:
+        p=100+len(bars)*.1;bars.append(dict(date=day,open=p,close=p+.05,high=p+1,low=p-1,volume=10_000_000))
+    def payload(rows):return dict(source='unit_test_fixture',fetched_at='2026-01-01T00:00:00+00:00',adjustment='none',volume_unit='shares',is_synthetic=False,bars=rows)
     return {'000333':payload(bars),'000300':payload([{**b,'open':100.,'close':100.,'high':101.,'low':99.} for b in bars])}
 
 
 @pytest.fixture(autouse=True)
-def isolated(tmp_path,monkeypatch):monkeypatch.setenv('DEEPFOCUS_QUANT_RESEARCH_DB_PATH',str(tmp_path/'qr.sqlite3'))
+def isolated(tmp_path,monkeypatch,reviewed):
+    monkeypatch.setenv('DEEPFOCUS_QUANT_RESEARCH_DB_PATH',str(tmp_path/'qr.sqlite3'))
+    calendars.put('a','isolated official-calendar fixture',*reviewed)
 
 
-def parent(owner='a'):
-    ds=dataset();req=dict(name='fixture',symbols=['000333'],benchmark='000300',capital=1000000,start_date='2024-01-02',end_date='2025-04-06')
+def parent(owner='a',*,missing_index=None,extra_day=None):
+    ds=dataset();req=dict(name='fixture',symbols=['000333'],benchmark='000300',capital=1000000,start_date='2024-01-02',end_date=ds['000333']['bars'][-1]['date'])
+    for payload in ds.values():
+        if missing_index is not None:del payload['bars'][missing_index]
+        if extra_day:
+            payload['bars'].append({**payload['bars'][0],'date':extra_day})
+            payload['bars'].sort(key=lambda b:b['date'])
     result=legacy.walk_forward(ds,req['symbols'],req['benchmark'])
     item,_=jobs.create(owner,'parent-key',req,'sealed-legacy-fixture')
     jobs.update(owner,item['id'],status='completed',extra=dict(dataset=ds,result=result,result_digest=legacy.digest(result)))
@@ -65,7 +75,7 @@ async def test_real_api_event_job_is_owned_bounded_progress_and_cannot_promote()
     async with AsyncClient(transport=ASGITransport(app=app),base_url='http://fixture') as c:
         listing=await c.get('/api/quant-research/evidence');assert listing.status_code==200 and listing.headers['cache-control']=='no-store'
         route=f"/api/quant-research/experiments/{p['id']}/event-replay"
-        payload={'bundle_id':bundle['id'],'request_id':'event-key','knowledge_mode':'historical_reconstruction'}
+        payload={'bundle_id':bundle['id'],'calendar_bundle_id':calendars.listing('a')[0]['id'],'request_id':'event-key','knowledge_mode':'historical_reconstruction'}
         r=await c.post(route,json=payload);assert r.status_code==202;r=r.json();identity=r['id']
         retry=await c.post(route,json=payload);assert retry.json()['id']==identity
         task=service.lifecycle._tasks.get(identity)
@@ -74,6 +84,8 @@ async def test_real_api_event_job_is_owned_bounded_progress_and_cannot_promote()
         assert row['status']=='completed' and row['kernel_current'] and row['progress']==100
         assert row['request']['kind']=='event_replay' and row['request']['parent_id']==p['id']
         assert row['result']['evidence']['coverage_verified'] is False and not row['result']['gate']['passed']
+        assert row['result']['calendar_quality']['status']=='matches_plan'
+        assert row['result']['calendar_evidence']['id']==payload['calendar_bundle_id']
         assert any('已重放' in e['stage'] for e in row['events'])
         assert 'dataset' not in row and 'body' not in row['result']['evidence']
         before=jobs.get('a',p['id'])
@@ -114,10 +126,81 @@ async def test_cancel_never_publishes_partial_event_result(monkeypatch):
         jobs.cancel('a',running['id'])
         return original(*args,**kwargs)
     monkeypatch.setattr(service.engine,'replay',cancel_in_worker)
-    r=await service.submit('a',p['id'],bundle['id'],'cancel-key','historical_reconstruction')
+    r=await service.submit('a',p['id'],bundle['id'],'cancel-key','historical_reconstruction',calendar_bundle_id=calendars.listing('a')[0]['id'])
     task=service.lifecycle._tasks.get(r['id'])
     if task:await task
     row=jobs.get('a',r['id']);assert row['status']=='cancelled' and 'result' not in row
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('missing_index,extra_day',[(0,None),(180,None),(-1,None),(None,'2024-01-06')])
+async def test_common_date_gap_or_unplanned_date_is_saved_before_any_orders(monkeypatch,missing_index,extra_day):
+    p=parent(missing_index=missing_index,extra_day=extra_day);before=jobs.get('a',p['id'])
+    bundle=evidence.put('a','fixture',[sample()],{SHA:PDF});called=[]
+    def forbidden(*args,**kwargs):called.append(True);raise AssertionError('Calendar must reject before event orders')
+    monkeypatch.setattr(service.engine,'replay',forbidden)
+    app=FastAPI();app.include_router(api.router);app.dependency_overrides[api.owner]=lambda:'a'
+    async with AsyncClient(transport=ASGITransport(app=app),base_url='http://fixture') as c:
+        reply=await c.post(f"/api/quant-research/experiments/{p['id']}/event-replay",json={
+            'bundle_id':bundle['id'],'calendar_bundle_id':calendars.listing('a')[0]['id'],'request_id':'calendar-reject'})
+        assert reply.status_code==202;identity=reply.json()['id']
+        task=service.lifecycle._tasks.get(identity)
+        if task:await task
+        row=jobs.get('a',identity)
+        assert row['status']=='failed' and row['error_code']=='calendar_alignment_rejected' and 'result' not in row
+        assert not called and row['quality']['annual_plan']['status']=='rejected'
+        comparisons=list(row['quality']['annual_plan']['symbols'].values())
+        assert len(comparisons)==2 and all(v['status']=='rejected' for v in comparisons)
+        assert all(v['unexpected_sessions']==['2024-01-06'] for v in comparisons) if extra_day else all(len(v['missing_planned_sessions'])==1 for v in comparisons)
+        export=await c.get('/api/quant-research/experiments/'+identity+'/export')
+        assert export.status_code==200 and export.json()['quality']==row['quality']
+        assert 'dataset' not in export.json() and 'body' not in export.text
+        assert jobs.get('a',p['id'])==before and jobs.list_records('a',True)==[]
+
+
+@pytest.mark.asyncio
+async def test_calendar_is_mandatory_and_other_owner_calendar_is_not_visible(reviewed):
+    p=parent();bundle=evidence.put('a','fixture',[sample()],{SHA:PDF});foreign=calendars.put('b','private calendar',*reviewed)
+    app=FastAPI();app.include_router(api.router);app.dependency_overrides[api.owner]=lambda:'a'
+    async with AsyncClient(transport=ASGITransport(app=app),base_url='http://fixture') as c:
+        path=f"/api/quant-research/experiments/{p['id']}/event-replay"
+        payload={'bundle_id':bundle['id'],'request_id':'mandatory-calendar'}
+        assert (await c.post(path,json=payload)).status_code==422
+        response=await c.post(path,json={**payload,'calendar_bundle_id':foreign['id']})
+        assert response.status_code==404 and 'private calendar' not in response.text
+        assert len(jobs.list_records('a'))==1
+
+
+@pytest.mark.asyncio
+async def test_same_request_cannot_silently_switch_bound_calendar(reviewed):
+    p=parent();bundle=evidence.put('a','fixture',[sample()],{SHA:PDF})
+    first=calendars.listing('a')[0];second=calendars.put('a','another immutable calendar label',*reviewed)
+    created=await service.submit('a',p['id'],bundle['id'],'same-calendar-key','historical_reconstruction',calendar_bundle_id=first['id'])
+    task=service.lifecycle._tasks.get(created['id'])
+    if task:await task
+    before=jobs.get('a',created['id'])
+    with pytest.raises(ValueError,match='同一提交标识'):
+        await service.submit('a',p['id'],bundle['id'],'same-calendar-key','historical_reconstruction',calendar_bundle_id=second['id'])
+    assert jobs.get('a',created['id'])==before and len(jobs.list_records('a'))==2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tamper',['calendar','parent_request'])
+async def test_worker_rechecks_frozen_calendar_and_parent_request_before_orders(monkeypatch,tamper):
+    p=parent();bundle=evidence.put('a','fixture',[sample()],{SHA:PDF});original=service.reference;calls=[];orders=[]
+    def changed(*args):
+        values=list(original(*args));calls.append(True)
+        if len(calls)>1:
+            if tamper=='calendar':values[2]={**values[2],'fingerprint':'changed'}
+            else:values[0]={**values[0],'request':{**values[0]['request'],'name':'changed after admission'}}
+        return tuple(values)
+    def forbidden(*args,**kwargs):orders.append(True);raise AssertionError('No orders with changed frozen input')
+    monkeypatch.setattr(service,'reference',changed);monkeypatch.setattr(service.engine,'replay',forbidden)
+    created=await service.submit('a',p['id'],bundle['id'],'bound-calendar-'+tamper,'historical_reconstruction',calendar_bundle_id=calendars.listing('a')[0]['id'])
+    task=service.lifecycle._tasks.get(created['id'])
+    if task:await task
+    row=jobs.get('a',created['id'])
+    assert row['status']=='failed' and '冻结引用' in row['stage'] and not orders and 'result' not in row
 
 
 def test_registry_backup_restore_retains_sources_and_scope(tmp_path):

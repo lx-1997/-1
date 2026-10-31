@@ -45,7 +45,7 @@ async def wait(event):assert await asyncio.wait_for(asyncio.to_thread(event.wait
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind',['price','event','calendar'])
+@pytest.mark.parametrize('kind',['price','event','event_calendar','calendar'])
 async def test_each_actual_service_retains_cancelled_worker_slot_until_thread_exits(monkeypatch,reviewed,kind):
     entered,release=threading.Event(),threading.Event()
     if kind=='price':
@@ -53,14 +53,16 @@ async def test_each_actual_service_retains_cancelled_worker_slot_until_thread_ex
         monkeypatch.setattr(service,'fetch_dataset',fetch)
         module,name=service.engine,'walk_forward'
     elif kind=='event':module,name=event.engine,'replay'
+    elif kind=='event_calendar':module,name=event,'check_dataset'
     else:module,name=calendar,'check_dataset'
     actual=getattr(module,name)
     def blocked(*a,**k):entered.set();release.wait(3);return actual(*a,**k)
     monkeypatch.setattr(module,name,blocked)
     if kind=='price':created=service.submit('a','blocked-price',request())
-    elif kind=='event':
+    elif kind in ('event','event_calendar'):
         p=event_parent();bundle=event_evidence.put('a','event fixture',[sample()],{SHA:PDF})
-        created=await event.submit('a',p['id'],bundle['id'],'blocked-event','historical_reconstruction')
+        annual=calendar_evidence.put('a','annual fixture',*reviewed)
+        created=await event.submit('a',p['id'],bundle['id'],'blocked-event','historical_reconstruction',calendar_bundle_id=annual['id'])
     else:
         p=source(reviewed);bundle=calendar_evidence.put('a','annual fixture',*reviewed)
         created=await calendar.submit('a',p['id'],bundle['id'],'blocked-calendar')
