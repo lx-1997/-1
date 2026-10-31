@@ -1,0 +1,118 @@
+{
+  "schema": "profitability-readonly-workspace-review-v1",
+  "base_commit": "80ce78a95e45d246dadf1b83757fad2ae2ce98e5",
+  "tested_tree": "80f3314fd64702b624bdec634ae49eb9ca73406b",
+  "implementation_and_test_paths": [
+    "backend/deepfocus_api/quant_financial_read.py",
+    "backend/deepfocus_api/quant_financial_api.py",
+    "backend/deepfocus_api/quant_financial_ui.py",
+    "backend/deepfocus_api/tests/test_quant_profitability_api.py",
+    "scripts/tests/quant-financial-client.cjs"
+  ],
+  "focused_passed": 105,
+  "focused_warnings": 2,
+  "focused_seconds": 3.87,
+  "focused_exit_code": 0,
+  "new_backend_cases": 7,
+  "client_VM_passed": true,
+  "full_backend_rerun_this_change": false,
+  "latest_complete_before_change": {
+    "passed": 3984,
+    "failed": 3,
+    "skipped": 22,
+    "commit": "64481b2806b74d9ac1918fb19dc781467b6de4e6"
+  },
+  "browser": {
+    "tabId": "10",
+    "origin": "http://127.0.0.1:65305",
+    "desktop": {
+      "innerWidth": 1280,
+      "clientWidth": 1265,
+      "scrollWidth": 1265,
+      "resultTop": 408.3125,
+      "controlsOpen": false
+    },
+    "mobile": {
+      "innerWidth": 375,
+      "clientWidth": 360,
+      "scrollWidth": 360,
+      "resultTop": -0.203125,
+      "controlsOpen": false
+    },
+    "actualVisiblePercent": "-4.386857%",
+    "oldPacketWithoutAssetsDisabled": true,
+    "accountBAndBack": {
+      "metadataText": "暂无财报档案。",
+      "previousAmountVisible": false,
+      "previousCompanyVisible": false,
+      "restoredInnerWidth": 1280,
+      "resultText": ""
+    },
+    "downloadPath": "/Users/d-robotics/Downloads/financial-research (1).json",
+    "viewportReset": true,
+    "productionWrites": 0
+  },
+  "http": {
+    "tested_tree": "80f3314fd64702b624bdec634ae49eb9ca73406b",
+    "real_HTTP_JWT_checks": [
+      {
+        "role": "a",
+        "status": 200,
+        "no_store": true
+      },
+      {
+        "role": "b",
+        "status": 404,
+        "no_store": true
+      },
+      {
+        "role": "anonymous",
+        "status": 401,
+        "no_store": false
+      },
+      {
+        "role": "b-list",
+        "status": 200,
+        "empty": true
+      }
+    ],
+    "browser_download_full_JSON_equal_to_actual_authenticated_GET": true,
+    "download_sha256": "c92290c832ffe0f03ca351cd71cbcafce0d7a36b287f90a19cc51f7a6120ea6f",
+    "served_HTML_exact_bytes_equal_to_expected": true,
+    "served_HTML_sha256": "a59bdef7bb32abe27680b607a961c903e122c80b90d4461c671ca485b03de069",
+    "CSP_actual_script_hash_matches": true,
+    "source_paired_QA_main_files_unchanged": true,
+    "identity_mapping_reused_without_research_owner_changes": true,
+    "production_identity_recovery_certified": false,
+    "production_writes": 0,
+    "tokens_retained_in_receipt": false
+  },
+  "cleanup": {
+    "qa_child_absent": true,
+    "qa_controller_absent": true,
+    "focused_pytest_root_absent": true,
+    "loopback_port_closed": true,
+    "source_pair_main_sha256_unchanged": true,
+    "owned_research_copy_SQL_dump_equals_source": true,
+    "logical_dump_sha256": "d30a48dba2f73af6de8a000cab42672bf3f1b52457dd397fc2cd0c97b9aa6404",
+    "copy_main_sha256": "3e3752970cc425b51b2ae9df2553135e2af9e03ea01ac3428839274bb833c107",
+    "copy_main_byte_equal_to_source": false,
+    "copy_header_difference": "SQLite backup and explicit journal_mode DELETE; original source header WAL. Final logical SQL equal; no initial-copy hash was recorded, so no copy byte-immutability claim.",
+    "source_and_index_and_test_export_byte_equal": true,
+    "server_exit": {
+      "exit_code": -15,
+      "owned_server_waited": true
+    },
+    "termination": "explicit SIGTERM; child waited, exit -15; no claim of exit 0",
+    "browser_owned_tab_closed": true,
+    "viewport_reset": true,
+    "initial_cleanup_assertion_failed": "Compared backup DELETE-header bytes against source WAL-header bytes; preserved as harness assertion failure, final source byte checks and source/copy SQL equality independently pass."
+  },
+  "artifact_root": "artifacts/quant-profitability-workspace-20261101",
+  "evidence_manifest_sha256": "5122be8cb3f3b6e037541217dc5f0d61dabc4a8603f6241ef0ef6d059e957cd2",
+  "production_writes": 0,
+  "strategy_evaluations": 0,
+  "OOS_thresholds_changed": false,
+  "commercial_quality_certified": false,
+  "goal_complete": false
+}

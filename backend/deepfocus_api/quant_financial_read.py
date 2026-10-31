@@ -75,3 +75,15 @@ def query(owner,identity,**kwargs):
         if c is None:raise LookupError('Financial extraction not found')
     value=derived.review(owner,identity,**kwargs)
     return {k:v for k,v in value.items() if k!='source_pins'}
+
+
+def profitability(owner,identity,**kwargs):
+    _owner(owner)
+    with opened() as c:
+        if c is None:raise LookupError('Financial extraction not found')
+    from .quant_profitability_feature import review
+    value=review(owner,identity,**kwargs)
+    # Keep the exact underlying derivation from this same query, without code
+    # identities or source payloads crossing the authenticated read boundary.
+    return {**{k:v for k,v in value.items() if k not in {'source_pins','inputs'}},
+            'inputs':{k:v for k,v in value['inputs'].items() if k!='source_pins'}}

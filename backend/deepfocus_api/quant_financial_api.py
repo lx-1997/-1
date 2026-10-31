@@ -39,4 +39,14 @@ def build_router(owner):
         end_report_period_end:Optional[str]=Query(default=None,max_length=10),end_column:Optional[str]=Query(default=None,max_length=32),uid=Depends(owner)):
         args=parameters(issuer_id,symbol,period_end,metric,as_of,mode,begin_report_period_end,begin_column,end_report_period_end,end_column)
         return await read(uid,archive.query,identity,**args)
+    @router.get('/financial-extractions/{identity}/profitability')
+    async def profitability(identity:str,issuer_id:str=Query(pattern=r'^cninfo:\d{5,20}$'),symbol:str=Query(pattern=r'^\d{6}$'),
+        period_end:str=Query(max_length=10),as_of:str=Query(max_length=64),
+        begin_report_period_end:str=Query(max_length=10),begin_column:str=Query(max_length=32),
+        end_report_period_end:str=Query(max_length=10),end_column:str=Query(max_length=32),
+        metric:Literal['consolidated_net_profit']='consolidated_net_profit',
+        mode:Literal['as_recorded','historical_reconstruction']='as_recorded',uid=Depends(owner)):
+        args=parameters(issuer_id,symbol,period_end,metric,as_of,mode,begin_report_period_end,begin_column,end_report_period_end,end_column)
+        args.pop('metric')
+        return await read(uid,archive.profitability,identity,**args)
     return router
