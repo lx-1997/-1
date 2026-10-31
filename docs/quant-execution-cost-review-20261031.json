@@ -1,0 +1,229 @@
+{
+  "schema": "execution-cost-reconciliation-v1",
+  "protocol": {
+    "schema": "execution-cost-reconciliation-v1",
+    "registered_at": "2026-10-31T05:31:24.638943+00:00",
+    "bindings": {
+      "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+      "source_pins": {
+        "backend/deepfocus_api/quant_execution_cost_book.py": "438911ee0ddbf6486e5e6ee2816f1b83780b40d1348d3a09807e67fcc61da6df",
+        "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+        "backend/deepfocus_api/quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+        "backend/deepfocus_api/ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+        "backend/deepfocus_api/ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+        "scripts/quant-execution-cost-review.py": "0bb16541fdeb104c22f577507778759665af503c2682c42bcf3f1581fc1145e1"
+      },
+      "rules": {
+        "path": "all_original_oos_fills_no_refit_or_new_orders",
+        "reference_price": "retained_provider_daily_open_not_verified_execution",
+        "cashflow_price": "original_adverse_10bps_and_cent_tick_model_price",
+        "decomposition": "reference_notional_minus_adverse_slippage_minus_tick_cost_minus_original_fee",
+        "fee_basis": "original_model_cashflow_notional_not_reference_notional",
+        "position_basis": "legacy_weighted_average_model_cost_not_FIFO_or_tax_basis",
+        "money_rounding": "cent_half_even_no_reconciliation_tolerance",
+        "comparison": "every_daily_cash_and_nav_every_realized_pnl_final_quantities",
+        "price_clipping": "never",
+        "gate_changes": "none",
+        "selection": "none"
+      },
+      "experiments": [
+        {
+          "id": "31aedd8f544144ad9b7a7d2088e181b0",
+          "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+          "dataset_digest": "afb4e49b0c6b6ab7ec8111048db7758bf05221e1eccfebbef3b67acef30c8778"
+        },
+        {
+          "id": "0839ee7717d143c7b991bddbfb55f891",
+          "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+          "dataset_digest": "1e47ecc4830653f9685be80288b07398e0d6d8d57cf3c213cbc5a9055a28e896"
+        }
+      ]
+    },
+    "promotion_allowed": false,
+    "strategy_searches": 0
+  },
+  "protocol_digest": "0cfb9031fcedb32fba9bdba9be2619f698be26a8ed8488c07e1d5ebce6545cfc",
+  "status": "rejected",
+  "failure": {
+    "experiment": "0839ee7717d143c7b991bddbfb55f891",
+    "stage": "cost_book_reconcile",
+    "error_type": "ReconciliationError",
+    "error": "Realized model profit differs after explicit cost split",
+    "details": {
+      "date": "2025-01-10",
+      "symbol": "000333",
+      "fill_digest": "d2e9a064c1c514367a4be10a741f918677e704ea3273b49b99107b868212652c",
+      "allocated_model_basis": "7636.105",
+      "unrounded_decimal_pnl": "219.885",
+      "decimal_half_even_pnl": "219.88",
+      "original_reported_pnl": "219.89"
+    }
+  },
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "original_reproduced_exactly": true,
+      "original_gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "original_oos_metrics": {
+        "return_pct": -6.573664000000001,
+        "max_drawdown_pct": -7.8456714293284495,
+        "observations": 535,
+        "sharpe": -1.6396167613253754,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -33.315943985551584,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "cost_book": {
+        "schema": "fixed-path-cost-book-v1",
+        "fills_reconciled": 58,
+        "daily_phases_reconciled": 535,
+        "all_cash_nav_realized_pnl_and_quantities_equal": true,
+        "total_costs": {
+          "adverse_slippage_cost": "6281.37700",
+          "adverse_tick_cost": "1535.62300",
+          "original_fee": "3284.64"
+        },
+        "final_cash": "934263.36",
+        "final_model_positions": {},
+        "reference_is_execution_price": false,
+        "execution_verified": false,
+        "promotion_allowed": false,
+        "tax_basis_verified": false,
+        "order_sizes_or_risk_path_changed": false
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "original_reproduced_exactly": true,
+      "original_gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "original_oos_metrics": {
+        "return_pct": -4.892655999999884,
+        "max_drawdown_pct": -7.942676236598068,
+        "observations": 535,
+        "sharpe": -0.4381119290605238,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -31.634935985551472,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "cost_book": null,
+      "failure": {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "stage": "cost_book_reconcile",
+        "error_type": "ReconciliationError",
+        "error": "Realized model profit differs after explicit cost split",
+        "details": {
+          "date": "2025-01-10",
+          "symbol": "000333",
+          "fill_digest": "d2e9a064c1c514367a4be10a741f918677e704ea3273b49b99107b868212652c",
+          "allocated_model_basis": "7636.105",
+          "unrounded_decimal_pnl": "219.885",
+          "decimal_half_even_pnl": "219.88",
+          "original_reported_pnl": "219.89"
+        }
+      }
+    }
+  ],
+  "strategy_searches": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0,
+  "execution_verified": false,
+  "oos_validation": false,
+  "limitations": [
+    "Seen development data; original raw corporate-action limitations remain",
+    "Provider daily open is a reference, never certified auction execution",
+    "No intraday prints/order book/auction/queue or explicit halt/limit identity verification",
+    "Fixed original quantities/costs/cash; no zero-cost causal replay or new execution model qualification"
+  ],
+  "artifact_directory": "artifacts/quant-execution-cost-20261031",
+  "strict_review_sha256": "48537c4cbdc0fcadfa3850bf014127da8b3723f5f75801e22eb616c88130f9c2",
+  "independent_cash_nav": {
+    "status": "cash_nav_equal_realized_pnl_not_certified",
+    "results": [
+      {
+        "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "fill_cash_identities_checked": 58,
+        "daily_cash_nav_checked": 535,
+        "final_quantities_equal": true,
+        "slippage_cost": "6281.377",
+        "tick_cost": "1535.623",
+        "original_fees": "3284.64",
+        "total_friction_and_fees": "11101.640"
+      },
+      {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "fill_cash_identities_checked": 120,
+        "daily_cash_nav_checked": 535,
+        "final_quantities_equal": true,
+        "slippage_cost": "12548.268",
+        "tick_cost": "1446.732",
+        "original_fees": "6603.56",
+        "total_friction_and_fees": "20598.560"
+      }
+    ]
+  },
+  "realized_differences": [
+    {
+      "prior_qty": 2600,
+      "prior_basis": "198538.73",
+      "allocated_basis": "7636.105",
+      "unrounded_decimal_pnl": "219.885",
+      "decimal_pnl": "219.88",
+      "legacy_pnl": "219.89",
+      "legacy_minus_decimal": "0.01",
+      "date": "2025-01-10",
+      "symbol": "000333"
+    },
+    {
+      "prior_qty": 2600,
+      "prior_basis": "198345.695",
+      "allocated_basis": "198345.695",
+      "unrounded_decimal_pnl": "-6325.745",
+      "decimal_pnl": "-6325.74",
+      "legacy_pnl": "-6325.75",
+      "legacy_minus_decimal": "-0.01",
+      "date": "2025-01-16",
+      "symbol": "000333"
+    }
+  ],
+  "rules_unchanged_after_failure": true,
+  "new_tests": 27,
+  "production_deployed": false,
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a"
+  }
+}
