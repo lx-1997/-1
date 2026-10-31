@@ -1,0 +1,214 @@
+{
+  "schema": "declared-price-band-review-v1",
+  "protocol": {
+    "schema": "declared-price-band-review-v1",
+    "registered_at": "2026-10-31T07:29:53.314659+00:00",
+    "bindings": {
+      "rule_evidence": {
+        "url": "https://www.sse.com.cn/lawandrules/sselawsrules2025/repeal/rules/c/c_20250612_10824490.shtml",
+        "retained_docx_sha256": "7aa2319f6dcf597be1e86b3b69d7c2ad0e6acb2a5d0cc6be48a01af602fded40",
+        "clauses": [
+          "3.3.11",
+          "3.3.17"
+        ],
+        "scope": "arithmetic_review_only_not_full_historical_applicability"
+      },
+      "scenario": {
+        "tick": "0.01",
+        "percentages": {
+          "600519": "10",
+          "000001": "10",
+          "300750": "20",
+          "600036": "10",
+          "600900": "10",
+          "000333": "10"
+        },
+        "reference": "prior_raw_close_assumption_not_exchange_certified"
+      },
+      "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+      "source_pins": {
+        "backend/deepfocus_api/quant_price_band.py": "605ee56b69e91a1cde4686cf598ee4946212916fe3a7963b5909fd69593131fc",
+        "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+        "backend/deepfocus_api/quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+        "backend/deepfocus_api/ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+        "backend/deepfocus_api/ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+        "scripts/quant-price-band-review.py": "59f509f7735b887ff3e9f2a7caa426448c5ae8239aed1bcf21e06d5a0a0cd5b8"
+      },
+      "rules": {
+        "reference": "explicit_positive_tick_aligned_decimal_string",
+        "percentage": "explicit_decimal_percent_strictly_between_0_and_100",
+        "rounding": "positive_half_up_to_declared_tick",
+        "minimum_distance": "at_least_one_tick_from_reference_before_minimum_price_floor",
+        "minimum_price": "one_tick",
+        "no_limit_or_unknown_regime": "not_supported_never_inferred_as_standard",
+        "interpretation": "arithmetic_only_not_exchange_band_or_execution_certification",
+        "promotion_allowed": false
+      },
+      "experiments": [
+        {
+          "id": "31aedd8f544144ad9b7a7d2088e181b0",
+          "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+          "dataset_digest": "afb4e49b0c6b6ab7ec8111048db7758bf05221e1eccfebbef3b67acef30c8778"
+        },
+        {
+          "id": "0839ee7717d143c7b991bddbfb55f891",
+          "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+          "dataset_digest": "1e47ecc4830653f9685be80288b07398e0d6d8d57cf3c213cbc5a9055a28e896"
+        }
+      ]
+    },
+    "promotion_allowed": false,
+    "strategy_searches": 0
+  },
+  "protocol_digest": "a01b8f82bd87eb5504f6f85a510f760c5614668512073c5e895db859f99e2197",
+  "results": [
+    {
+      "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+      "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+      "original_reproduced_exactly": true,
+      "original_gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "original_oos_metrics": {
+        "return_pct": -6.573664000000001,
+        "max_drawdown_pct": -7.8456714293284495,
+        "observations": 535,
+        "sharpe": -1.6396167613253754,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -33.315943985551584,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "band_audit": {
+        "transitions": 2184,
+        "quote_fields_checked": 8736,
+        "quote_outside_fields": {},
+        "fill_count": 58,
+        "model_prices_outside_declared_band": 0,
+        "naive_float_control_differences": 50,
+        "naive_control_is_existing_execution_code": false,
+        "security_status_and_exchange_reference_verified": false,
+        "execution_verified": false,
+        "promotion_allowed": false
+      }
+    },
+    {
+      "experiment": "0839ee7717d143c7b991bddbfb55f891",
+      "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+      "original_reproduced_exactly": true,
+      "original_gate": {
+        "passed": false,
+        "reasons": [
+          "滚动样本外成本后收益未为正"
+        ],
+        "purpose": "paper_research_only",
+        "commercial_data_licensed": false,
+        "live_trading_enabled": false,
+        "unresolved": [
+          "公司行为未核验",
+          "ST/IPO/退市历史池未覆盖",
+          "公开行情商用授权未确认",
+          "日线撮合无法证明盘口可成交"
+        ]
+      },
+      "original_oos_metrics": {
+        "return_pct": -4.892655999999884,
+        "max_drawdown_pct": -7.942676236598068,
+        "observations": 535,
+        "sharpe": -0.4381119290605238,
+        "benchmark_pct": 26.742279985551587,
+        "excess_pct": -31.634935985551472,
+        "capital_resets_per_fold": false,
+        "risk_paused": true
+      },
+      "band_audit": {
+        "transitions": 2184,
+        "quote_fields_checked": 8736,
+        "quote_outside_fields": {},
+        "fill_count": 120,
+        "model_prices_outside_declared_band": 0,
+        "naive_float_control_differences": 104,
+        "naive_control_is_existing_execution_code": false,
+        "security_status_and_exchange_reference_verified": false,
+        "execution_verified": false,
+        "promotion_allowed": false
+      }
+    }
+  ],
+  "strategy_searches": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0,
+  "execution_verified": false,
+  "oos_validation": false,
+  "limitations": [
+    "Seen development data; original raw corporate-action limitations remain",
+    "Declared ordinary scenario and prior raw close only; ex-date exchange reference not certified",
+    "No intraday prints/order book/auction/queue or explicit halt/limit identity verification",
+    "Naive Python round control is not asserted to be the existing execution implementation; no return correction"
+  ],
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a"
+  },
+  "primary_rule_check": {
+    "retained_sources": [
+      {
+        "filename": "SSE-2023.docx",
+        "sha256": "7aa2319f6dcf597be1e86b3b69d7c2ad0e6acb2a5d0cc6be48a01af602fded40",
+        "bytes": 51948,
+        "tick_rounding_and_minimum_move_clauses_independently_read": true
+      },
+      {
+        "filename": "SSE-2026.docx",
+        "sha256": "fc922c433438b2636cb631eab25cca405209712acbb6aaded768c45456ff8888",
+        "bytes": 65302,
+        "tick_rounding_and_minimum_move_clauses_independently_read": true
+      }
+    ],
+    "latest_web_fetch": "2026_SSE_open_timed_out_retained_as_failure_no_retry",
+    "full_historical_rule_applicability_verified": false
+  },
+  "independent_check": {
+    "status": "declared_arithmetic_verified_only",
+    "results": [
+      {
+        "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "decimal_oracle_bands_checked": 2184,
+        "original_fills_checked": 58,
+        "original_blocked_reasons": {
+          "volume_or_cash_or_lot": 57
+        },
+        "new_strategy_or_execution_certificate": false
+      },
+      {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "decimal_oracle_bands_checked": 2184,
+        "original_fills_checked": 120,
+        "original_blocked_reasons": {
+          "volume_or_cash_or_lot": 243
+        },
+        "new_strategy_or_execution_certificate": false
+      }
+    ],
+    "review_sha256": "3057d71ae692ce35625999e9140ad0f657541d3f914663cfe23b2301baa85fb2",
+    "oracle": "80digit_decimal_half_up_independent_of_fraction_implementation"
+  },
+  "review_sha256": "3057d71ae692ce35625999e9140ad0f657541d3f914663cfe23b2301baa85fb2",
+  "new_tests": 31,
+  "production_deployed": false,
+  "artifact_directory": "artifacts/quant-price-band-20261031"
+}
