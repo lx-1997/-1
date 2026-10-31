@@ -278,29 +278,11 @@ async def _refresh_wire_pool(cache_key: Any, kw: str, want: int, stock_scope: bo
             "download_count": int(it.get("downloadCount") or 0),
             "file_id": fid,
         })
-        # Every discovered report receives a stable ontology index entry even
-        # when no user has opened it yet.  This keeps the recent-content bundle
-        # and per-stock research on the same searchable identity graph.
-        try:
-            stable_id = fid or hashlib.sha1(name.encode("utf-8")).hexdigest()[:20]
-            if stable_id not in _ANNOTATED_WIRE_IDS:
-                from .content_ontology import annotate_content
-                annotate_content(
-                    content_id=f"wire:{stable_id}",
-                    content_type="research",
-                    title=title,
-                    text=f"{org} {disp_date}",
-                    source_name="海外投行研报",
-                    published_at=topic_time or created or disp_date,
-                    persist=True,
-                )
-                _ANNOTATED_WIRE_IDS.add(stable_id)
-                if len(_ANNOTATED_WIRE_IDS) > 5000:
-                    _ANNOTATED_WIRE_IDS.pop()
-        except Exception:  # noqa: BLE001 - indexing must not break the source list
-            pass
+    from .research_wire_index import index_wire_metadata
+    observed_at = datetime.now(timezone.utc).isoformat()
+    indexing = await index_wire_metadata(items, observed_at=observed_at, seen=_ANNOTATED_WIRE_IDS)
     full = {"items": items, "total": len(items), "exists": True, "online": True,
-            "stale": False, "fetched_at": datetime.now(timezone.utc).isoformat()}
+            "stale": False, "fetched_at": observed_at, "indexing": indexing}
     if items:  # 仅缓存成功的非空结果，避免缓存住偶发空响应
         try:
             if cache_key:

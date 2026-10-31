@@ -19,6 +19,9 @@ import json
 import os
 import re
 import sqlite3
+import math
+import time
+from contextlib import closing
 from . import db
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -121,89 +124,96 @@ def _db_path() -> Path:
     return db.data_path('.content_ontology.sqlite3', 'DEEPFOCUS_CONTENT_ONTOLOGY_DB_PATH')
 
 
-def _connect() -> sqlite3.Connection:
-    path = _db_path()
+def _connect(*, path: Optional[Path] = None, timeout: float = 5.0) -> sqlite3.Connection:
+    path = path if path is not None else _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = db.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn = db.connect(path, timeout=timeout)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA journal_mode=WAL")
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
 def init_content_ontology_db() -> None:
-    with _connect() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS content_objects (
-                id TEXT PRIMARY KEY,
-                content_type TEXT NOT NULL,
-                title TEXT NOT NULL,
-                summary TEXT NOT NULL DEFAULT '',
-                source_name TEXT NOT NULL DEFAULT '',
-                symbol TEXT NOT NULL DEFAULT '',
-                url TEXT NOT NULL DEFAULT '',
-                published_at TEXT NOT NULL DEFAULT '',
-                content_hash TEXT NOT NULL,
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS ontology_tags (
-                id TEXT PRIMARY KEY,
-                facet TEXT NOT NULL,
-                code TEXT NOT NULL,
-                label TEXT NOT NULL,
-                color TEXT NOT NULL,
-                parent_id TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(facet, code)
-            );
-            CREATE TABLE IF NOT EXISTS content_tag_links (
-                content_id TEXT NOT NULL,
-                tag_id TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                annotation_source TEXT NOT NULL,
-                review_status TEXT NOT NULL DEFAULT 'auto',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY(content_id, tag_id),
-                FOREIGN KEY(content_id) REFERENCES content_objects(id) ON DELETE CASCADE,
-                FOREIGN KEY(tag_id) REFERENCES ontology_tags(id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS ontology_entities (
-                id TEXT PRIMARY KEY,
-                entity_type TEXT NOT NULL,
-                canonical_key TEXT NOT NULL,
-                label TEXT NOT NULL,
-                market TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS content_entity_links (
-                content_id TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                annotation_source TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY(content_id, entity_id, role),
-                FOREIGN KEY(content_id) REFERENCES content_objects(id) ON DELETE CASCADE,
-                FOREIGN KEY(entity_id) REFERENCES ontology_entities(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_content_type ON content_objects(content_type);
-            CREATE INDEX IF NOT EXISTS idx_content_symbol ON content_objects(symbol);
-            CREATE INDEX IF NOT EXISTS idx_content_type_published ON content_objects(content_type, published_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_content_source_published ON content_objects(source_name, published_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_tag_facet ON ontology_tags(facet);
-            CREATE INDEX IF NOT EXISTS idx_tag_link_tag ON content_tag_links(tag_id);
-            CREATE INDEX IF NOT EXISTS idx_entity_link_entity ON content_entity_links(entity_id);
-            """
-        )
-        conn.commit()
+    with closing(_connect()) as conn:
+        _init_content_ontology_schema(conn)
+
+
+def _init_content_ontology_schema(conn) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS content_objects (
+            id TEXT PRIMARY KEY,
+            content_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            source_name TEXT NOT NULL DEFAULT '',
+            symbol TEXT NOT NULL DEFAULT '',
+            url TEXT NOT NULL DEFAULT '',
+            published_at TEXT NOT NULL DEFAULT '',
+            content_hash TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ontology_tags (
+            id TEXT PRIMARY KEY,
+            facet TEXT NOT NULL,
+            code TEXT NOT NULL,
+            label TEXT NOT NULL,
+            color TEXT NOT NULL,
+            parent_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(facet, code)
+        );
+        CREATE TABLE IF NOT EXISTS content_tag_links (
+            content_id TEXT NOT NULL,
+            tag_id TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            annotation_source TEXT NOT NULL,
+            review_status TEXT NOT NULL DEFAULT 'auto',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(content_id, tag_id),
+            FOREIGN KEY(content_id) REFERENCES content_objects(id) ON DELETE CASCADE,
+            FOREIGN KEY(tag_id) REFERENCES ontology_tags(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS ontology_entities (
+            id TEXT PRIMARY KEY,
+            entity_type TEXT NOT NULL,
+            canonical_key TEXT NOT NULL,
+            label TEXT NOT NULL,
+            market TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS content_entity_links (
+            content_id TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            annotation_source TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(content_id, entity_id, role),
+            FOREIGN KEY(content_id) REFERENCES content_objects(id) ON DELETE CASCADE,
+            FOREIGN KEY(entity_id) REFERENCES ontology_entities(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_content_type ON content_objects(content_type);
+        CREATE INDEX IF NOT EXISTS idx_content_symbol ON content_objects(symbol);
+        CREATE INDEX IF NOT EXISTS idx_content_type_published ON content_objects(content_type, published_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_content_source_published ON content_objects(source_name, published_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_tag_facet ON ontology_tags(facet);
+        CREATE INDEX IF NOT EXISTS idx_tag_link_tag ON content_tag_links(tag_id);
+        CREATE INDEX IF NOT EXISTS idx_entity_link_entity ON content_entity_links(entity_id);
+        """
+    )
+    conn.commit()
 
 
 def _slug(value: str) -> str:
@@ -423,7 +433,54 @@ def annotate_content(
 
 def persist_annotation(annotation: dict[str, Any]) -> None:
     init_content_ontology_db()
-    now = utc_now_iso()
+    with closing(_connect()) as conn:
+        with conn:
+            _persist_annotation_record(conn, annotation, utc_now_iso())
+
+
+def persist_annotations(annotations: list[dict[str, Any]], *, database_path: Optional[Path] = None,
+                        timeout: float = 2.0, deadline: Optional[float] = None,
+                        insert_only: bool = False) -> list[str]:
+    """One bounded transaction; insert-only metadata cannot overwrite content.
+
+    Schema initialization is idempotent and precedes the data transaction.
+    The deadline is cooperative; SQLite busy waiting is separately bounded.
+    """
+    if not isinstance(annotations, list) or len(annotations)>500:
+        raise ValueError('At most 500 annotations per transaction')
+    if not math.isfinite(timeout) or not 0<=timeout<=5:
+        raise ValueError('Bounded SQLite busy timeout required')
+    ids = [a['id'] for a in annotations]
+    if any(not isinstance(i,str) or not 1<=len(i)<=200 for i in ids) or len(set(ids))!=len(ids):
+        raise ValueError('Unique bounded annotation identities required')
+    if len(json.dumps(annotations,ensure_ascii=False,allow_nan=False).encode())>2*1024**2:
+        raise ValueError('Annotation batch exceeds 2MiB')
+    def check_deadline():
+        if deadline is not None and time.monotonic()>=deadline:
+            raise TimeoutError('Metadata indexing deadline exceeded')
+    check_deadline()
+    if not annotations: return []
+    with closing(_connect(path=database_path, timeout=timeout)) as conn:
+        conn.set_progress_handler(lambda: int(deadline is not None and time.monotonic()>=deadline), 1000)
+        _init_content_ontology_schema(conn)
+        check_deadline()
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            now = utc_now_iso()
+            for annotation in annotations:
+                check_deadline()
+                if insert_only:
+                    old = conn.execute('SELECT content_type FROM content_objects WHERE id=?',(annotation['id'],)).fetchone()
+                    if old is not None:
+                        if old['content_type']!=annotation['content_type']:
+                            raise ValueError('Existing content identity has another type')
+                        continue
+                _persist_annotation_record(conn, annotation, now)
+            check_deadline()
+    return ids
+
+
+def _persist_annotation_record(conn, annotation, now) -> None:
     content_hash = hashlib.sha1(
         f"{annotation.get('title', '')}\n{annotation.get('summary', '')}".encode("utf-8")
     ).hexdigest()
@@ -453,91 +510,89 @@ def persist_annotation(annotation: dict[str, Any]) -> None:
         now,
         now,
     )
-    with _connect() as conn:
+    conn.execute(
+        """
+        INSERT INTO content_objects (
+            id, content_type, title, summary, source_name, symbol, url,
+            published_at, content_hash, metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            content_type=excluded.content_type,
+            title=excluded.title,
+            summary=excluded.summary,
+            source_name=excluded.source_name,
+            symbol=excluded.symbol,
+            url=excluded.url,
+            published_at=excluded.published_at,
+            content_hash=excluded.content_hash,
+            metadata_json=excluded.metadata_json,
+            updated_at=excluded.updated_at
+        """,
+        content_record,
+    )
+    for tag in annotation.get("tags") or []:
         conn.execute(
             """
-            INSERT INTO content_objects (
-                id, content_type, title, summary, source_name, symbol, url,
-                published_at, content_hash, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO ontology_tags (
+                id, facet, code, label, color, parent_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-                content_type=excluded.content_type,
-                title=excluded.title,
-                summary=excluded.summary,
-                source_name=excluded.source_name,
-                symbol=excluded.symbol,
-                url=excluded.url,
-                published_at=excluded.published_at,
-                content_hash=excluded.content_hash,
-                metadata_json=excluded.metadata_json,
+                label=excluded.label, color=excluded.color, updated_at=excluded.updated_at
+            """,
+            (
+                tag["id"], tag["facet"], tag["code"], tag["label"],
+                tag["color"], now, now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO content_tag_links (
+                content_id, tag_id, confidence, annotation_source,
+                review_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'auto', ?, ?)
+            ON CONFLICT(content_id, tag_id) DO UPDATE SET
+                confidence=excluded.confidence,
+                annotation_source=excluded.annotation_source,
                 updated_at=excluded.updated_at
             """,
-            content_record,
+            (
+                annotation["id"], tag["id"], tag["confidence"],
+                tag["annotation_source"], now, now,
+            ),
         )
-        for tag in annotation.get("tags") or []:
-            conn.execute(
-                """
-                INSERT INTO ontology_tags (
-                    id, facet, code, label, color, parent_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    label=excluded.label, color=excluded.color, updated_at=excluded.updated_at
-                """,
-                (
-                    tag["id"], tag["facet"], tag["code"], tag["label"],
-                    tag["color"], now, now,
-                ),
-            )
-            conn.execute(
-                """
-                INSERT INTO content_tag_links (
-                    content_id, tag_id, confidence, annotation_source,
-                    review_status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'auto', ?, ?)
-                ON CONFLICT(content_id, tag_id) DO UPDATE SET
-                    confidence=excluded.confidence,
-                    annotation_source=excluded.annotation_source,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    annotation["id"], tag["id"], tag["confidence"],
-                    tag["annotation_source"], now, now,
-                ),
-            )
-        for entity in annotation.get("entities") or []:
-            conn.execute(
-                """
-                INSERT INTO ontology_entities (
-                    id, entity_type, canonical_key, label, market, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    canonical_key=excluded.canonical_key,
-                    label=excluded.label,
-                    market=excluded.market,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    entity["id"], entity["type"], entity["canonical_key"],
-                    entity["label"], entity.get("market") or "", now, now,
-                ),
-            )
-            conn.execute(
-                """
-                INSERT INTO content_entity_links (
-                    content_id, entity_id, role, confidence, annotation_source,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(content_id, entity_id, role) DO UPDATE SET
-                    confidence=excluded.confidence,
-                    annotation_source=excluded.annotation_source,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    annotation["id"], entity["id"], entity["role"],
-                    entity["confidence"], entity["annotation_source"], now, now,
-                ),
-            )
-        conn.commit()
+    for entity in annotation.get("entities") or []:
+        conn.execute(
+            """
+            INSERT INTO ontology_entities (
+                id, entity_type, canonical_key, label, market, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                canonical_key=excluded.canonical_key,
+                label=excluded.label,
+                market=excluded.market,
+                updated_at=excluded.updated_at
+            """,
+            (
+                entity["id"], entity["type"], entity["canonical_key"],
+                entity["label"], entity.get("market") or "", now, now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO content_entity_links (
+                content_id, entity_id, role, confidence, annotation_source,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(content_id, entity_id, role) DO UPDATE SET
+                confidence=excluded.confidence,
+                annotation_source=excluded.annotation_source,
+                updated_at=excluded.updated_at
+            """,
+            (
+                annotation["id"], entity["id"], entity["role"],
+                entity["confidence"], entity["annotation_source"], now, now,
+            ),
+        )
 
 
 def _content_type_from_topic(topic: str) -> str:
