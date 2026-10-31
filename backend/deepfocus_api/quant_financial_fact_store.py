@@ -13,6 +13,10 @@ from .quant_corporate_actions import BJ,timestamp
 from .quant_research_engine import digest
 
 VERSION='qr-typed-financial-extraction-v1'
+# Exact typed extraction implementation before the org identity upgrade.
+KNOWN_V1_SOURCE_PINS={**base.KNOWN_V3_SOURCE_PINS,
+    'quant_financial_fact_store.py':'9f5f4c27f77179ff66bc1c4085c5da4c8e273923eaf943713aaa01d230f3ce55'}
+VALIDATOR_VERSION='qr-typed-source-validator-v2'
 FLOW_METRICS={'consolidated_net_profit','minority_net_profit','cashflow_asset_impairment',
  'cashflow_fixed_asset_depreciation','cashflow_right_of_use_depreciation','cashflow_intangible_amortization',
  'cashflow_deferred_expense_amortization','cashflow_long_asset_disposal_loss','cashflow_scrapping_loss',
@@ -37,6 +41,13 @@ LOADED_PINS=_pins()
 def require_current_source():
     base.require_current_source()
     if _pins()!=LOADED_PINS:raise ValueError('Loaded typed financial source changed')
+
+
+def source_profile(value):
+    archived=value.get('source_pins')
+    if archived==LOADED_PINS:return 'current'
+    if archived==KNOWN_V1_SOURCE_PINS:return 'known_v1_revalidated'
+    raise ValueError('Typed extraction source identity is unknown')
 
 
 def _now():return datetime.now(timezone.utc)
@@ -115,12 +126,16 @@ def verify_row(c,row,cache=None):
     key=('packet',row['owner'],row['id'])
     if key in cache:return cache[key]
     v=json.loads(row['payload']);incoming=v['input']
-    if (v.get('schema')!=VERSION or v.get('source_pins')!=LOADED_PINS or digest(v)!=row['fingerprint']
+    profile=source_profile(v)
+    if (v.get('schema')!=VERSION or digest(v)!=row['fingerprint']
         or digest(incoming)!=row['input_hash'] or incoming['parent_id']!=row['parent_id']
         or v['recorded_at']!=row['created'] or v['stored_visible_at']!=_boundary(row['created'])
         or type(row['revision']) is not int or not 1<=row['revision']<=MAX_PACKETS
         or v['revision']!=row['revision'] or timestamp(row['created'])>_now()):raise ValueError('Typed extraction identity/clock/source changed')
     parent=_parent(c,row['owner'],row['parent_id'],cache)
+    if profile!='current' and any(not re.fullmatch(r'cninfo:[0-9]{5,20}',r['issuer_id'])
+                                  for r in parent['effective_manifest']['vintages']):
+        raise ValueError('Legacy typed source requires numeric issuer identity')
     if v['parent_fingerprint']!=digest(parent) or timestamp(row['created'])<timestamp(parent['recorded_at']):raise ValueError('Parent provenance or clock changed')
     validate_facts(incoming['facts'],parent)
     prior=None;previous_id=incoming['supersedes_packet_id']
@@ -142,7 +157,10 @@ def _summary(row,v):
             'recorded_at':row['created'],'stored_visible_at':v['stored_visible_at'],
             'fingerprint':row['fingerprint'],'parent_fingerprint':v['parent_fingerprint'],
             'supersedes_packet_id':v['input']['supersedes_packet_id'],'archive_rewritten':False,
-            'parent_rewritten':False,'externally_attested_time':False,'promotion_allowed':False}
+            'parent_rewritten':False,'externally_attested_time':False,'promotion_allowed':False,
+            'validator_version':VALIDATOR_VERSION,'archive_source_status':source_profile(v),
+            'archive_source_current':v['source_pins']==LOADED_PINS,
+            'archive_source_digest':digest(v['source_pins']),'validated_source_digest':digest(LOADED_PINS)}
 
 
 def put(owner,parent_id,label,facts,*,supersedes_packet_id=None,correction_notes=None):

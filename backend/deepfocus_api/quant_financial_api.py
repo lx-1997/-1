@@ -2,7 +2,7 @@
 from datetime import date,datetime,timedelta,timezone
 from typing import Optional,Literal
 from fastapi import APIRouter,Depends,HTTPException,Query
-from . import quant_financial_read as archive,quant_financial_fact_store as facts,quant_financial_fact_derived as derived
+from . import quant_financial_read as archive,quant_financial_fact_store as facts,quant_financial_fact_derived as derived,quant_financial_vintages as vintages
 from .quant_share_api import read
 from .quant_corporate_actions import timestamp
 
@@ -32,7 +32,7 @@ def build_router(owner):
     async def detail(identity:str,uid=Depends(owner)):
         return await read(uid,archive.detail,identity)
     @router.get('/financial-extractions/{identity}/derive')
-    async def query(identity:str,issuer_id:str=Query(pattern=r'^cninfo:\d{5,20}$'),symbol:str=Query(pattern=r'^\d{6}$'),
+    async def query(identity:str,issuer_id:str=Query(pattern='^'+vintages.ISSUER_ID_PATTERN+'$'),symbol:str=Query(pattern=r'^\d{6}$'),
         period_end:str=Query(max_length=10),metric:str=Query(max_length=64),as_of:str=Query(max_length=64),
         mode:Literal['as_recorded','historical_reconstruction']='as_recorded',
         begin_report_period_end:Optional[str]=Query(default=None,max_length=10),begin_column:Optional[str]=Query(default=None,max_length=32),
@@ -40,7 +40,7 @@ def build_router(owner):
         args=parameters(issuer_id,symbol,period_end,metric,as_of,mode,begin_report_period_end,begin_column,end_report_period_end,end_column)
         return await read(uid,archive.query,identity,**args)
     @router.get('/financial-extractions/{identity}/profitability')
-    async def profitability(identity:str,issuer_id:str=Query(pattern=r'^cninfo:\d{5,20}$'),symbol:str=Query(pattern=r'^\d{6}$'),
+    async def profitability(identity:str,issuer_id:str=Query(pattern='^'+vintages.ISSUER_ID_PATTERN+'$'),symbol:str=Query(pattern=r'^\d{6}$'),
         period_end:str=Query(max_length=10),as_of:str=Query(max_length=64),
         begin_report_period_end:str=Query(max_length=10),begin_column:str=Query(max_length=32),
         end_report_period_end:str=Query(max_length=10),end_column:str=Query(max_length=32),

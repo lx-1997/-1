@@ -19,7 +19,7 @@ from .quant_corporate_actions import BJ, timestamp
 from .quant_research_engine import digest
 
 VERSION = 'qr-financial-receipt-v1'
-VALIDATOR_VERSION = 'qr-financial-source-validator-v3'
+VALIDATOR_VERSION = 'qr-financial-source-validator-v4'
 # Exact reviewed source identity of the original immutable v1 archive (af7e1a8).
 # This is a data/source whitelist, never permission to execute archived code.
 KNOWN_V1_SOURCE_PINS = {
@@ -36,6 +36,9 @@ KNOWN_V2_SOURCE_PINS = {
     'quant_research_engine.py':'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5',
     'quant_financial_store.py':'bef824969eb52e969f9a8ea00e1126177a48a3807dccf3f4dc11edbf0e78edd2',
 }
+
+# Exact cebde90 source family, with per-metric pages and numeric-only org IDs.
+KNOWN_V3_SOURCE_PINS = {'quant_financial_vintages.py': '3a04a0a6a71489ba81f5836620e136a10044c32d8d0954ab0184b0cbca46e6ce', 'quant_corporate_actions.py': '89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996', 'quant_research_engine.py': 'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5', 'quant_financial_store.py': 'c827e38760fd7815e60f7d234f2fc6416653bcc46709ee5ab05fc40b267ae18b'}
 
 VISIBILITY = 'next_beijing_calendar_day_after_transaction_recording'
 MAX_OWNER_BYTES = 100 * 1024 * 1024
@@ -82,6 +85,7 @@ def source_profile(value):
     if archived==LOADED_PINS:return 'current'
     if archived==KNOWN_V1_SOURCE_PINS:return 'known_v1_revalidated'
     if archived==KNOWN_V2_SOURCE_PINS:return 'known_v2_revalidated'
+    if archived==KNOWN_V3_SOURCE_PINS:return 'known_v3_revalidated'
     raise ValueError('Financial receipt source identity is unknown')
 
 
@@ -92,10 +96,17 @@ def verify_row(c, row):
     if (digest(value) != row['fingerprint'] or value.get('schema') != VERSION
             or value.get('visibility_policy') != VISIBILITY):
         raise ValueError('Financial receipt identity changed')
-    source_profile(value)
+    profile=source_profile(value)
     incoming, effective = value['input'], value['effective_manifest']
     if digest(incoming) != row['input_hash'] or incoming['label'] != value['label']:
         raise ValueError('Financial input fingerprint changed')
+    if profile!='current':
+        # Revalidation must not broaden the identity domain accepted by these
+        # exact legacy source families. Recognition is not a schema migration.
+        import re
+        if any(not re.fullmatch(r'cninfo:[0-9]{5,20}',r['issuer_id'])
+               for manifest in (incoming['manifest'],effective) for r in manifest['vintages']):
+            raise ValueError('Legacy financial source requires numeric issuer identity')
     created = timestamp(row['created'])
     boundary = datetime.combine(created.astimezone(BJ).date()+timedelta(days=1),time(),BJ)
     if value['recorded_at'] != row['created'] or timestamp(value['stored_visible_at']) != boundary:

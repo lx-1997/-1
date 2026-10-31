@@ -15,6 +15,8 @@ from .quant_research_engine import digest
 
 VERSION='reviewed-financial-vintages-v1'
 VALIDATION_VERSION='exact-financial-magnitude-v2'
+ISSUER_IDENTITY_VERSION='cninfo-ascii-org-v2'
+ISSUER_ID_PATTERN=r'cninfo:[A-Za-z0-9]{5,40}'
 METRICS={'revenue','parent_net_profit','net_operating_cashflow'}
 BOOK_TIME_POLICY='date_only_disclosure_visible_from_next_calendar_day_00_00_beijing'
 
@@ -67,7 +69,7 @@ def _group(record):
 
 
 def _validate_record(record,sources,now):
-    if not re.fullmatch(r'cninfo:\d{5,20}',record.issuer_id) or not re.fullmatch(r'\d{6}',record.symbol):
+    if not re.fullmatch(ISSUER_ID_PATTERN,record.issuer_id) or not re.fullmatch(r'\d{6}',record.symbol):
         raise ValueError('Unsupported issuer or symbol')
     start,end,published=map(date.fromisoformat,(record.period_start,record.period_end,record.published_date))
     if (record.period_start!=str(end.year)+'-01-01' or start>end or end>=published
@@ -146,7 +148,7 @@ def validate_manifest(manifest,sources,*,now=None):
 def select_panel(manifest,sources,*,issuer_id,symbol,period_end,as_of,mode,required_metrics):
     records=validate_manifest(manifest,sources);clock=timestamp(as_of)
     if clock>datetime.now(timezone.utc):raise ValueError('Future knowledge clock is not an observed snapshot')
-    if not re.fullmatch(r'cninfo:\d{5,20}',issuer_id) or not re.fullmatch(r'\d{6}',symbol):
+    if not re.fullmatch(ISSUER_ID_PATTERN,issuer_id) or not re.fullmatch(r'\d{6}',symbol):
         raise ValueError('Explicit supported issuer identity and symbol required')
     if mode not in {'historical_reconstruction','as_recorded'}:raise ValueError('Explicit knowledge mode required')
     if (not isinstance(required_metrics,list) or not required_metrics or len(set(required_metrics))!=len(required_metrics)
@@ -156,7 +158,7 @@ def select_panel(manifest,sources,*,issuer_id,symbol,period_end,as_of,mode,requi
     if len({_group(r) for r in candidates})>1:raise ValueError('Ambiguous report period/scope')
     visible=[r for r in candidates if available_at(r)<=clock
              and (mode=='historical_reconstruction' or max(timestamp(r.observed_at),timestamp(r.recorded_at))<=clock)]
-    result={'version':VERSION,'validation_version':VALIDATION_VERSION,'issuer_id':issuer_id,'symbol':symbol,'period_end':period_end,'as_of':as_of,
+    result={'version':VERSION,'validation_version':VALIDATION_VERSION,'issuer_identity_version':ISSUER_IDENTITY_VERSION,'issuer_id':issuer_id,'symbol':symbol,'period_end':period_end,'as_of':as_of,
             'mode':mode,'availability_policy':BOOK_TIME_POLICY,'manifest_digest':digest(manifest),
             'source_pins':source_pins(),'coverage_verified':False,'historical_pit_feed_certified':False,
             'promotion_allowed':False,'commercial_ready':False,

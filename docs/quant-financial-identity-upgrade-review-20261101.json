@@ -1,0 +1,88 @@
+{
+  "schema": "financial-org-identity-upgrade-review-v1",
+  "base_commit": "cebde9091e48e96a0c2f4660c27c6177cbdd34e6",
+  "tested_tree": "4fd10170f7b7b241b99507030879211dae3ce63c",
+  "focused_passed": 340,
+  "new_backend_cases": 23,
+  "focused_warnings": 2,
+  "focused_seconds": 12.45,
+  "focused_exit_code": 0,
+  "test_files": 17,
+  "initial_disk_invalid_run": {
+    "passed": 330,
+    "errors": 10,
+    "reason": "sqlite OperationalError database or disk is full",
+    "exit_code": 1,
+    "same_tested_source": true,
+    "logs_retained": true
+  },
+  "real": {
+    "tested_tree": "4fd10170f7b7b241b99507030879211dae3ce63c",
+    "old_parent_rows": 1,
+    "old_typed_rows": 2,
+    "all_old_packet_profiles": [
+      "known_v1_revalidated",
+      "known_v1_revalidated"
+    ],
+    "full_old_browser_download_JSON_equal_except_explicit_added_provenance": true,
+    "added_receipt_keys": [
+      "archive_source_current",
+      "archive_source_digest",
+      "archive_source_status",
+      "validated_source_digest",
+      "validator_version"
+    ],
+    "display_percent": "-4.386857",
+    "old_and_restored_raw_financial_rows_equal": true,
+    "new_cold_restore_verified": true,
+    "old_original_source_main_sha256_unchanged": true,
+    "owned_copy_main_sha256_unchanged": true,
+    "foreign_owner_rejected": true,
+    "all_socket_connect_denied": true,
+    "old_READY_or_records_rewritten": false,
+    "financial_values_changed": false,
+    "production_writes": 0,
+    "activation_authorized": false
+  },
+  "active_alpha_synthetic": {
+    "tested_tree": "4fd10170f7b7b241b99507030879211dae3ce63c",
+    "cases": [
+      {
+        "org_id": "gfbj0835710",
+        "synthetic_only": true,
+        "full_typed_TTM_and_assets_arithmetic_available": true,
+        "direct_and_two_real_route_JSON_equal": true,
+        "route_statuses": [
+          200,
+          200
+        ],
+        "synthetic_display_percent": "-0.376190",
+        "identity_via_test_dependency_not_real_JWT": true
+      },
+      {
+        "org_id": "nssc1000172",
+        "synthetic_only": true,
+        "full_typed_TTM_and_assets_arithmetic_available": true,
+        "direct_and_two_real_route_JSON_equal": true,
+        "route_statuses": [
+          200,
+          200
+        ],
+        "synthetic_display_percent": "-0.376190",
+        "identity_via_test_dependency_not_real_JWT": true
+      }
+    ],
+    "public_filings_or_real_facts_imported": false,
+    "network_denied": true
+  },
+  "HTML_VM_exit_code": 0,
+  "legacy_numeric_identity_still_required": true,
+  "old_source_execution": false,
+  "full_backend_rerun": false,
+  "production_writes": 0,
+  "financial_facts_imported_from_new_8_cohort": false,
+  "goal_complete": false,
+  "commercial_ready": false,
+  "artifacts": "artifacts/quant-financial-identity-upgrade-20261101",
+  "evidence_manifest_sha256": "f611cd6a771c3bdf5f8a83f3313c2b96786b536eaf602f4dcd868565dcd54570"
+}

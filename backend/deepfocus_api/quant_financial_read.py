@@ -26,7 +26,9 @@ def opened():
 def project(row,v):
     return {'id':row['id'],'label':v['input']['label'],'revision':row['revision'],'recorded_at':row['created'],
             'stored_visible_at':v['stored_visible_at'],'supersedes_packet_id':v['input']['supersedes_packet_id'],
-            'fact_count':len(v['input']['facts']),'promotion_allowed':False,'commercial_ready':False}
+            'fact_count':len(v['input']['facts']),
+            'archive_source_status':facts.source_profile(v),'archive_source_current':v['source_pins']==facts.LOADED_PINS,
+            'promotion_allowed':False,'commercial_ready':False}
 
 
 def listing(owner,*,cursor=None,limit=5):
