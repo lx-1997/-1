@@ -1,0 +1,22 @@
+{
+  "schema": "reference-price-coverage-protocol-v1",
+  "hypothesis": "Retrospective provider preclose changes can locate coverage or convention gaps; they do not prove economic-event completeness or Alpha.",
+  "scope": "original six stocks and sealed dates only",
+  "comparison_order": [
+    "require original close and full dates equality before reference audit",
+    "compare each preclose with previous frozen raw close; first day unknown",
+    "report every changed reference and every supplied cash event date",
+    "cash exact expectation = previous frozen raw close minus declared price_adjustment_per_share",
+    "auxiliary cent reference uses positive half-up; report both, never fit tolerance"
+  ],
+  "numeric_policy": "Exact rational decimal comparison; no tolerance, no rounding inputs; mark non-cent references",
+  "failure_policy": "Invalid binding/clock/protocol/rows or close mismatch refuses reference conclusions; retain failure. Unknown changes stay unknown; never auto-create facts.",
+  "strategy_changes": 0,
+  "promotion_allowed": false,
+  "exchange_certified": false,
+  "preopen_verified": false,
+  "registered_at": "2026-10-31T07:54:38.245895+00:00",
+  "experiments_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+  "cash_facts_sha256": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a",
+  "capture_sha256": "b8b65fbecfd9da1dc5b605932d70c60d517393394177e7c357f65faddd3a34f0"
+}

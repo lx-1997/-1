@@ -1,0 +1,49 @@
+{
+  "version": "retained-reference-coverage-v1",
+  "capture_digest": "a8ae90ab6670c06f11425d409fd0d38475cc0ff96d38bd0b616df782fab3b177",
+  "original_stock_days": 4374,
+  "transitions": 4368,
+  "counts": {
+    "changed_without_supplied_cash_fact": 0,
+    "unchanged_without_supplied_cash_fact": 4337,
+    "supplied_cash_reference_match": 31,
+    "supplied_cash_reference_conflict": 0
+  },
+  "reference_changes": 31,
+  "non_cent_references": 0,
+  "cash_facts_without_comparable_prior_day": [],
+  "original_closes_and_dates_match": true,
+  "economic_event_completeness_verified": false,
+  "exchange_reference_certified": false,
+  "preopen_knowledge_verified": false,
+  "strategy_replays": 0,
+  "strategy_changes": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0,
+  "cash_exact_matches": 7,
+  "cash_cent_only_matches": 24,
+  "unknown_first_day_count": 6,
+  "sdk_requests": 8,
+  "sdk_errors": [],
+  "experiment_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+  "cash_facts_sha256": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a",
+  "raw_report_sha256": "d69f67182d84eb6543ef9617f3bbafe8b83fbe6877f7f767fa894acbb316ffee",
+  "independent_check": {
+    "independent_decimal_precision": 80,
+    "rows_close_and_dates_equal": 4374,
+    "transition_comparisons": 4368,
+    "reference_changes": 31,
+    "cash_exact_matches": 7,
+    "cash_cent_matches": 31,
+    "report_flags_equal": true,
+    "report_sha256": "d69f67182d84eb6543ef9617f3bbafe8b83fbe6877f7f767fa894acbb316ffee",
+    "exchange_reference_certified": false,
+    "review_component_identical_to_independently_checked_v2": true
+  },
+  "limitations": [
+    "Retrospective supplier field, not certified exchange/preopen reference",
+    "Seen data; no strategy change, new OOS, or promotion",
+    "No independent upstream-source proof, complete economic-event certification, or data-rights approval"
+  ]
+}
