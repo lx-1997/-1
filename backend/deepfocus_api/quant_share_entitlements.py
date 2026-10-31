@@ -48,6 +48,7 @@ def quantity(value,*,zero=True):
 
 
 def pdf_source(sha,sources):
+    if not isinstance(sources,dict):raise ValueError('Explicit source map required')
     if not isinstance(sha,str) or not re.fullmatch(r'[0-9a-f]{64}',sha):raise ValueError('Missing original SHA256')
     raw=sources.get(sha)
     if not isinstance(raw,bytes) or not raw.startswith(b'%PDF-') or len(raw)>10*1024**2 or hashlib.sha256(raw).hexdigest()!=sha:
@@ -92,6 +93,7 @@ class Capitalization:
                 or not 0<Decimal(self.new_shares_per_old_share)<=10):raise ValueError('Exact positive bounded share ratio required')
         published,observed=stamp(self.available_at),stamp(self.observed_at)
         if observed<published or published.astimezone(BJ).date().isoformat()>self.record_date:raise ValueError('Invalid or late implementation disclosure')
+        if not isinstance(self.source_url,str):raise ValueError('HTTPS original must be a string')
         parsed=urlsplit(self.source_url)
         if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password:raise ValueError('Credential-free HTTPS original required')
         if not isinstance(self.source_sha256,str) or not re.fullmatch(r'[0-9a-f]{64}',self.source_sha256):raise ValueError('Original SHA256 required')
@@ -163,7 +165,8 @@ def initial(scope,start_after,*,mode):
 
 
 def restore(raw,*,scope):
-    if not isinstance(raw,(str,bytes)) or len(raw)>MAX_STATE:raise ValueError('Bounded JSON state required')
+    if not isinstance(raw,(str,bytes)) or len(raw)>MAX_STATE or isinstance(raw,str) and len(raw.encode())>MAX_STATE:
+        raise ValueError('Bounded JSON state required')
     def pairs(items):
         obj={}
         for key,value in items:
@@ -171,7 +174,8 @@ def restore(raw,*,scope):
             obj[key]=value
         return obj
     def invalid(value):raise ValueError('Non-finite JSON')
-    book=json.loads(raw,object_pairs_hook=pairs,parse_constant=invalid)
+    try:book=json.loads(raw,object_pairs_hook=pairs,parse_constant=invalid)
+    except RecursionError as exc:raise ValueError('State nesting exceeds parser budget') from exc
     _check(book,scope);return book
 
 
@@ -210,7 +214,7 @@ def register(previous,event,closing_lots,sources,*,asof,scope):
     if not isinstance(closing_lots,list) or len(closing_lots)>10000:raise ValueError('Bounded closing lots required')
     lots=[];ids=set();totals={'unrestricted':0,'restricted':0}
     for lot in closing_lots:
-        if set(lot)!={'id','symbol','qty','restriction'} or lot['symbol']!=event.symbol:raise ValueError('Ambiguous/mismatched record lot schema')
+        if not isinstance(lot,dict) or set(lot)!={'id','symbol','qty','restriction'} or lot['symbol']!=event.symbol:raise ValueError('Ambiguous/mismatched record lot schema')
         identity=identifier(lot['id']);qty=quantity(lot['qty'],zero=False);restriction=lot['restriction']
         if identity in ids or restriction not in totals:raise ValueError('Duplicate lot or unknown restriction')
         ids.add(identity);totals[restriction]+=qty;quantity(totals[restriction]);lots.append(dict(lot))
@@ -275,7 +279,7 @@ def credit(previous,event,sources,*,asof,scope,allotment=None):
 
 def available(previous,event_id,*,asof,scope):
     """New unrestricted inventory only; NOT permission to place an order."""
-    _check(previous,scope);now=stamp(asof);item=previous['actions'].get(event_id)
+    _check(previous,scope);identifier(event_id);now=stamp(asof);item=previous['actions'].get(event_id)
     if item is None:return 0
     event=item['event'];trade=event['unrestricted_trade_date']
     if item['status']!='credited' or now<stamp(item['credited_asof']) or trade is None or now.astimezone(BJ).date().isoformat()<trade:return 0

@@ -166,5 +166,16 @@ class ShareTests(unittest.TestCase):
   self.assertEqual(v.available(b,e.event_id,asof=CREDIT,scope=SCOPE),80)
   b=v.consume(b,e.event_id,80,'same-listing-day',asof=CREDIT,scope=SCOPE)
   self.assertEqual(v.available(b,e.event_id,asof=CREDIT,scope=SCOPE),0)
+ def test_malformed_source_values_fail_with_domain_error(self):
+  for url in (5,True,None,[],{}):
+   with self.subTest(url=url):
+    with self.assertRaises(ValueError):event(source_url=url)
+  with self.assertRaises(ValueError):v.pdf_source(SHA,[SHA])
+  with self.assertRaises(ValueError):v.available(self.b,[],asof=REG,scope=SCOPE)
+ def test_deep_or_multibyte_oversized_state_refuses_before_use(self):
+  with self.assertRaises(ValueError):v.restore('['*1100+'0'+']'*1100,scope=SCOPE)
+  from unittest.mock import patch
+  with patch.object(v,'MAX_STATE',10):
+   with self.assertRaises(ValueError):v.restore('"'+'\u4e00'*4+'"',scope=SCOPE)
 
 if __name__=='__main__':unittest.main()

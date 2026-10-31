@@ -1,0 +1,34 @@
+{
+  "schema": "share-input-hardening-review-v1",
+  "original_bad_URL_probe_exit": 1,
+  "original_bad_URL_probe_result_missing": true,
+  "fixed_bad_URL_probe_exit": 2,
+  "fixed_bad_URL_result_retained": true,
+  "fixed_bad_URL_result_sha256": "a8853d76ac786426107b97242c6917f1d4113cac1111cac934db85a70ae54618",
+  "tests_passed": 35,
+  "new_tests": 6,
+  "real_document_regression": [
+    {
+      "case": "whole",
+      "exit_code": 0,
+      "result_sha256": "304748c1978745e2caec4f1ca5332c53682067a50bddcca1a70c3a71b5a523ff",
+      "module_sha256": "9fcc9160854c20bc349ca494f00862ad3423cfa7c37e34b726057d408bad1292",
+      "reviewer_sha256": "11e899d53f8ed5c6773321061e1059c6bd3b8dd8b4292722ccf499e4cc27565b",
+      "real_account": false
+    },
+    {
+      "case": "fraction",
+      "exit_code": 2,
+      "result_sha256": "9aef572666ddee59523a6b26b157a62ac26824e4a299f67fdef7d897fbd1a009",
+      "module_sha256": "9fcc9160854c20bc349ca494f00862ad3423cfa7c37e34b726057d408bad1292",
+      "reviewer_sha256": "11e899d53f8ed5c6773321061e1059c6bd3b8dd8b4292722ccf499e4cc27565b",
+      "real_account": false
+    }
+  ],
+  "whole_model_action_inventory_unchanged": true,
+  "old_source_checkpoint_rejected_not_silently_migrated": true,
+  "primary_facts_or_original_experiments_changed": false,
+  "actual_broker_allotment_obtained": false,
+  "commercial_ready": false,
+  "promotion_allowed": false
+}

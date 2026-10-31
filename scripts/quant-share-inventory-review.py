@@ -7,6 +7,7 @@ Unresolved fractions retain a receivable checkpoint and return 2, never rounded.
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -23,7 +24,22 @@ def load(raw):
             d[k]=v
         return d
     def invalid(value):raise ValueError('Non-finite plan value')
-    return json.loads(raw,object_pairs_hook=pairs,parse_constant=invalid)
+    def integer(value):
+        if len(value)>30:raise ValueError('Plan integer exceeds precision budget')
+        return int(value)
+    def floating(value):
+        if len(value)>64:raise ValueError('Plan floating value exceeds precision budget')
+        result=float(value)
+        if not math.isfinite(result):raise ValueError('Non-finite plan value')
+        return result
+    try:return json.loads(raw,object_pairs_hook=pairs,parse_constant=invalid,parse_int=integer,parse_float=floating)
+    except RecursionError as exc:raise ValueError('Plan nesting exceeds parser budget') from exc
+
+
+def bounded_read(path,maximum):
+    with path.open('rb') as source:raw=source.read(maximum+1)
+    if len(raw)>maximum:raise ValueError('Input grew beyond byte budget')
+    return raw
 
 
 def dump(path,value):
@@ -35,9 +51,11 @@ def main():
     parser.add_argument('--plan',type=Path,required=True)
     parser.add_argument('--workspace',type=Path,required=True)
     args=parser.parse_args();w=args.workspace
-    if not args.plan.is_absolute() or not args.plan.is_file() or args.plan.stat().st_size>2*1024**2 or not w.is_absolute() or w.exists():
+    if not args.plan.is_absolute() or not args.plan.is_file() or args.plan.stat().st_size>2*1024**2 or not w.is_absolute() or w.exists() or not w.parent.is_dir():
         parser.error('Bounded absolute input plan and NEW absolute workspace required')
-    w.mkdir(mode=0o700);stage='plan'
+    try:w.mkdir(mode=0o700)
+    except OSError:parser.error('Cannot create isolated workspace')
+    stage='plan'
     report={'schema':'capitalization-quantity-review-v1','status':'failed',
             'promotion_allowed':False,'commercial_ready':False,'strategy_execution_ready':False,
             'tax_basis_verified':False,'broker_statement_automatically_authenticated':False,
@@ -45,8 +63,9 @@ def main():
             'network_requests':0,'new_paper_accounts':0,'module_sha256':shares.SOURCE_SHA,
             'reviewer_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     try:
-        raw=args.plan.read_bytes();(w/'input-plan.json').write_bytes(raw);plan=load(raw)
+        raw=bounded_read(args.plan,2*1024**2);(w/'input-plan.json').write_bytes(raw);plan=load(raw)
         report['plan_sha256']=hashlib.sha256(raw).hexdigest()
+        if not isinstance(plan,dict):raise ValueError('Plan must be a JSON object')
         if plan['position_role'] not in ('counterfactual_model','operator_supplied_account_close'):
             raise ValueError('Explicit position provenance required')
         report['position_role']=plan['position_role']
@@ -54,13 +73,13 @@ def main():
         event=shares.Capitalization(**plan['action'])
         allotment=shares.Allotment(**plan['allotment']) if plan.get('allotment') is not None else None
         required={event.source_sha256}|({allotment.source_sha256} if allotment else set())
-        if set(plan['sources'])!=required:raise ValueError('Evidence paths must exactly match declared action/allotment')
+        if not isinstance(plan['sources'],dict) or set(plan['sources'])!=required:raise ValueError('Evidence paths must exactly match declared action/allotment')
         stage='evidence';sources={};(w/'evidence').mkdir()
         for sha,path in plan['sources'].items():
             source=Path(path)
             if not source.is_absolute() or not source.is_file() or source.stat().st_size>10*1024**2:
                 raise ValueError('Bounded absolute PDF original required')
-            sources[sha]=source.read_bytes();shares.pdf_source(sha,sources)
+            sources[sha]=bounded_read(source,10*1024**2);shares.pdf_source(sha,sources)
             if sum(map(len,sources.values()))>25*1024**2:raise ValueError('Evidence bundle byte budget exceeded')
             (w/'evidence'/(sha+'.pdf')).write_bytes(sources[sha])
         (w/'module-source-archive.py').write_bytes((ROOT/'backend/deepfocus_api/quant_share_entitlements.py').read_bytes())
