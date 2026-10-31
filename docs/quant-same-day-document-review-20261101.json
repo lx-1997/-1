@@ -1,0 +1,146 @@
+{
+  "schema": "same-day-candidate-body-review-v1",
+  "base_commit": "f399e8ab7d7abd69d80f37c64f659b9e79687225",
+  "tested_tree": "f80165738c6a2def456ad8c82319d4350ed35086",
+  "new_inspector_cases": 17,
+  "related_passed": 52,
+  "warnings": 5,
+  "elapsed_seconds": 0.49,
+  "actual_HTTP_PDF_requests": 4,
+  "automatic_retries": 0,
+  "actual_inspector_exit_code": 0,
+  "actual_pages": 257,
+  "comparisons": [
+    {
+      "symbol": "600611",
+      "period": "2024-12-31",
+      "published_date": "2025-03-29",
+      "document_ids": [
+        "1222950307",
+        "1222950303"
+      ],
+      "PDF_bytes_equal": false,
+      "page_counts_equal": false,
+      "exact_extracted_text_equal": false,
+      "whitespace_removed_text_equal": false,
+      "all_RGB72_pages_equal": false,
+      "any_summary_marker_on_cover": true,
+      "manual_content_review_required": true,
+      "automatic_canonical_selection": false,
+      "revision_order_inferred": false
+    },
+    {
+      "symbol": "000852",
+      "period": "2024-03-31",
+      "published_date": "2024-04-26",
+      "document_ids": [
+        "1219832410",
+        "1219832396"
+      ],
+      "PDF_bytes_equal": false,
+      "page_counts_equal": true,
+      "exact_extracted_text_equal": false,
+      "whitespace_removed_text_equal": true,
+      "all_RGB72_pages_equal": false,
+      "any_summary_marker_on_cover": false,
+      "manual_content_review_required": true,
+      "automatic_canonical_selection": false,
+      "revision_order_inferred": false
+    }
+  ],
+  "independent_engine": {
+    "tested_tree": "f80165738c6a2def456ad8c82319d4350ed35086",
+    "pypdf_version": "6.10.2",
+    "independent_PDF_engine": [
+      {
+        "symbol": "600611",
+        "document_id": "1222950307",
+        "pypdf_pages": 226,
+        "pypdf_first_page_summary_marker": false,
+        "source_bytes_SHA_equal": true
+      },
+      {
+        "symbol": "600611",
+        "document_id": "1222950303",
+        "pypdf_pages": 11,
+        "pypdf_first_page_summary_marker": true,
+        "source_bytes_SHA_equal": true
+      },
+      {
+        "symbol": "000852",
+        "document_id": "1219832410",
+        "pypdf_pages": 10,
+        "pypdf_first_page_summary_marker": false,
+        "source_bytes_SHA_equal": true
+      },
+      {
+        "symbol": "000852",
+        "document_id": "1219832396",
+        "pypdf_pages": 10,
+        "pypdf_first_page_summary_marker": false,
+        "source_bytes_SHA_equal": true
+      }
+    ],
+    "second_engine_quarter_full_text_without_whitespace_equal": true,
+    "original_source_bytes_unchanged": true,
+    "original_inventory_SHA_unchanged": true,
+    "report_digest_recomputed": true,
+    "source_worktree_index_export_equal": true,
+    "owned_inspector_process_group_absent": true,
+    "production_writes": 0
+  },
+  "existing_revision_guard": {
+    "scope": "deliberately invalid hypothetical ordering using the two real indexed files and manually checked parent profit; no DB or revision created",
+    "core_source_sha256": "16481fb39bd8ec6a49b7109b3aa85f50e189db8e93a5969aceaab1091ab43c7c",
+    "exact_actual_rejection": "Same-day ordering unknown or revision publication reversed",
+    "gate_unchanged": true,
+    "quarter_values_manually_compared": {
+      "group": "30966172.35",
+      "parent": "25305398.79",
+      "minority": "5660773.56"
+    },
+    "no_canonical_or_revision_selected": true,
+    "production_writes": 0
+  },
+  "annotations": {
+    "schema": "financial-candidate-body-review-annotations-v1",
+    "original_inventory_sha256": "12f91eb6d2648690baa11e47d34522b97bf0a187d5a16bc860f031b2bb178220",
+    "original_index_candidates_preserved": 185,
+    "original_inventory_or_capture_rewritten": false,
+    "body_reviewed_candidates": 4,
+    "confirmed_summary_document_ids": [
+      "600611:1222950303"
+    ],
+    "not_yet_rejected_is_not_verified": true,
+    "annotations": [
+      {
+        "symbol": "600611",
+        "period": "2024-12-31",
+        "full_cover_document": "1222950307",
+        "summary_cover_document": "1222950303",
+        "assessment": "index title of 0303 lacks summary marker; actual PDF summary. Not a chronological revision pair. Keep both sources; summary unsuitable for required full-report extraction."
+      },
+      {
+        "symbol": "000852",
+        "period": "2024-03-31",
+        "document_ids": [
+          "1219832410",
+          "1219832396"
+        ],
+        "assessment": "same issuer/period/notice number 2024-035; full extracted text excluding whitespace equal in two engines; bytes and RGB72 differ. Retain both sources, never count as two independent observations or infer revision/canonical alias."
+      }
+    ],
+    "financial_manifest_or_data_imported": false,
+    "complete_Q1_panel_company_count_still": 8,
+    "strategy_evaluations": 0,
+    "promotion_allowed": false
+  },
+  "financial_core_or_strategy_changed": false,
+  "whole_backend_rerun": false,
+  "automatic_full_report_import_guard_added": false,
+  "complete_Q1_panel_company_count_still": 8,
+  "commercial_ready": false,
+  "goal_complete": false,
+  "artifact_root": "artifacts/quant-same-day-documents-20261101",
+  "evidence_manifest_sha256": "e4c24bdfca1397c1c54b4bc11fdb212159022cd7f7126d441b8b5bbde5e3b8ff"
+}
