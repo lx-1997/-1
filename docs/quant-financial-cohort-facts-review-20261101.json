@@ -1,0 +1,156 @@
+{
+  "schema": "real-eight-company-profitability-panel-review-v1",
+  "source_commit": "e86933246be280d60d161b7082bc4a793deb7110",
+  "source_implementation_changed": false,
+  "documents": 24,
+  "independently_reconciled_current_amounts": 96,
+  "group_equals_parent_plus_minority": 24,
+  "comparison_checks": 24,
+  "panel": {
+    "source_commit": "e86933246be280d60d161b7082bc4a793deb7110",
+    "source_tested_tree": "4fd10170f7b7b241b99507030879211dae3ce63c",
+    "new_parent_receipts": 8,
+    "new_typed_packets": 8,
+    "typed_facts": 72,
+    "parent_profit_facts": 24,
+    "historical_mask": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "recorded_mask": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "as_recorded_query_actual_UTC": "2026-10-31T22:33:25.345139+00:00",
+    "structure_summary": {
+      "companies": 8,
+      "issuer_period_units": 8,
+      "knowledge_clocks": 1
+    },
+    "independent_oracle": [
+      {
+        "symbol": "601886",
+        "display_percent": "2.705418",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      },
+      {
+        "symbol": "300587",
+        "display_percent": "0.113188",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      },
+      {
+        "symbol": "688077",
+        "display_percent": "1.049446",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      },
+      {
+        "symbol": "301030",
+        "display_percent": "-8.652882",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      },
+      {
+        "symbol": "300266",
+        "display_percent": "-3.719480",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      },
+      {
+        "symbol": "605507",
+        "display_percent": "7.401738",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      },
+      {
+        "symbol": "605056",
+        "display_percent": "9.365810",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      },
+      {
+        "symbol": "301105",
+        "display_percent": "-1.069557",
+        "exact_ratio_independent_integer_crossmultiply": true,
+        "Decimal90_display_equal": true
+      }
+    ],
+    "source_captures_unchanged": true,
+    "raw_financial_rows_preserved_in_cold_restore": true,
+    "restored_full_panel_and_structure_JSON_equal": true,
+    "foreign_owner_rejected": true,
+    "recorded_gate_not_reset_or_advanced": true,
+    "new_strategy_or_training": false,
+    "PIT_or_full_revision_completeness_certified": false,
+    "production_writes": 0,
+    "commercial_ready": false
+  },
+  "negative_controls": {
+    "cases": [
+      {
+        "case": "group-parent-swap",
+        "rejected": true
+      },
+      {
+        "case": "one-cent",
+        "rejected": true
+      },
+      {
+        "case": "scale-10000",
+        "rejected": true
+      },
+      {
+        "case": "drop-negative",
+        "rejected": true
+      },
+      {
+        "case": "wrong-page",
+        "rejected": true
+      },
+      {
+        "case": "wrong-issuer",
+        "rejected": true
+      },
+      {
+        "case": "wrong-source",
+        "rejected": true
+      },
+      {
+        "case": "drop-member",
+        "rejected": true
+      }
+    ],
+    "scope": "independent reviewed-extraction evidence validator, not a new production entrypoint",
+    "original_records_unchanged": true
+  },
+  "actual_as_recorded_null_checks": {
+    "actual_recorded_rows": 8,
+    "all_exact_and_display_ratios_null": true,
+    "all_underlying_result_and_TTM_null": true,
+    "clock_not_advanced": true
+  },
+  "original_oos_and_engine_unchanged": true,
+  "all_revision_history_or_accounting_comparability_certified": false,
+  "remaining_original_sample_companies": 56,
+  "independent_sample_size_not_claimed": true,
+  "statistical_factor_effectiveness_evaluated": false,
+  "backend_suite_rerun": false,
+  "full_goal_achieved": false,
+  "commercial_ready": false,
+  "artifact_root": "artifacts/quant-financial-cohort-facts-20261101",
+  "evidence_manifest_sha256": "b0093402d517555ea637399e760145a9d1ae54a6317e04e31fea1ab1205fc3ae"
+}
