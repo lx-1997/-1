@@ -1,0 +1,133 @@
+{
+  "schema": "explicit-profitability-feature-panel-review-v1",
+  "base": "b07de4f0a4b4d4067a1140daaec8bd59be17dda6",
+  "tested_tree": "9ba2cfa2705add60a526ff1e5b5cc065c3fa77fd",
+  "added_source_paths": [
+    "backend/deepfocus_api/quant_feature_panel.py",
+    "scripts/quant-feature-panel-review.py",
+    "backend/deepfocus_api/tests/test_quant_feature_panel.py"
+  ],
+  "new_cases": 25,
+  "runs": {
+    "focused": {
+      "summary": "103 passed, 2 warnings in 3.56s",
+      "exit_code": 0,
+      "owned_group_absent": true,
+      "external_connect_attempts_in_parent": 0
+    },
+    "focused-final": {
+      "summary": "105 passed, 2 warnings in 3.46s",
+      "exit_code": 0,
+      "owned_group_absent": true,
+      "external_connect_attempts_in_parent": 0
+    }
+  },
+  "real_review": {
+    "tested_tree": "9ba2cfa2705add60a526ff1e5b5cc065c3fa77fd",
+    "cases": [
+      {
+        "case": "historical-with-missing",
+        "exit_code": 2,
+        "declared_cells": 4,
+        "missing_mask": [
+          false,
+          false,
+          false,
+          true
+        ],
+        "checked_existing_observations_full_JSON_equal": true,
+        "checked_observation_indices": [
+          0,
+          1,
+          2
+        ],
+        "report_digest_recomputed": true,
+        "refuses_overwrite": true
+      },
+      {
+        "case": "recorded-boundary",
+        "exit_code": 2,
+        "declared_cells": 2,
+        "missing_mask": [
+          true,
+          false
+        ],
+        "checked_existing_observations_full_JSON_equal": true,
+        "checked_observation_indices": [
+          0,
+          1
+        ],
+        "report_digest_recomputed": true,
+        "refuses_overwrite": true
+      },
+      {
+        "case": "duplicate-version",
+        "exit_code": 1,
+        "no_partial_output": true
+      },
+      {
+        "case": "other-owner",
+        "exit_code": 1,
+        "no_partial_output": true
+      },
+      {
+        "case": "future-clock",
+        "exit_code": 1,
+        "no_partial_output": true
+      }
+    ],
+    "original_main_sha256_unchanged": "9d35668bbe24cad85656851768ab564d991a18d6c509c5cea9e6a3a44a0dc275",
+    "owned_cold_main_sha256_unchanged": "9d35668bbe24cad85656851768ab564d991a18d6c509c5cea9e6a3a44a0dc275",
+    "cell_count_and_order_preserved": true,
+    "existing_observations_reused_not_new_unseen_data": true,
+    "global_snapshot_certified": false,
+    "network_socket_connect_denied_in_children": true,
+    "provider_calls": 0,
+    "production_writes": 0,
+    "strategy_evaluations": 0,
+    "training_runs": 0
+  },
+  "prototype_final_panel_complete_bytes_equal": [
+    "historical-with-missing",
+    "recorded-boundary"
+  ],
+  "all_declared_cells_retained": true,
+  "canonical_timezone_duplicates_rejected": true,
+  "mixed_modes_and_response_provenance_mismatch_rejected": true,
+  "same_directory_fsync_then_atomic_noclobber_hardlink_publication": true,
+  "flush_failure_and_late_writer_fault_injection_passed": true,
+  "power_loss_directory_durability_certified": false,
+  "full_panel_global_database_snapshot": false,
+  "component_readonly_snapshots_with_explicit_immutable_packets": true,
+  "limits": {
+    "cells": 128,
+    "plan_bytes": 262144,
+    "result_bytes": 4194304,
+    "cooperative_seconds": 12
+  },
+  "existing_feature_derivation_store_or_price_source_changed": false,
+  "definition_registered_before_first_panel_computation": true,
+  "single_cell_results_already_seen_before_definition": true,
+  "public_API_UI_or_training_added": false,
+  "full_backend_rerun_this_change": false,
+  "prior_three_environment_failures_unresolved": true,
+  "socket_guard_not_OS_network_namespace": true,
+  "production_deployed": false,
+  "training_runs": 0,
+  "strategy_evaluations": 0,
+  "gates_changed": false,
+  "commercial_ready": false,
+  "evidence_sha256": {
+    "definition-registration.json": "2ff7b84dde64efb1237489019775db502e259e0d5b3eda7598a8529db195633e",
+    "final-selected-tree.json": "365f31edf2a0902c337d7bc4ff07182940e46f058a7dbf3cc9692c2f5e95a426",
+    "focused/full-backend-offline.log": "1b7d550a12bd7358e32174cf47aa6223c75706353bf1ebe64dcc6f69686751e2",
+    "focused-final/full-backend-offline.log": "1475253547d4b4988f518ace074d9befd34aaad6e5a2451e38d87fbd900474b0",
+    "final-real/real-plan-registration.json": "844892c16a4d12c748095cc388bca0b27986153ee6d4dab08b46a1cd9d491f34",
+    "final-real/real-review-receipt.json": "e145b293b1e602e0119d5fd11ebbf5f6cce1de5e3e6343567e3dd02b53a911bd"
+  },
+  "actual_final_output_modes_octal": {
+    "historical-with-missing.json": "0o600",
+    "recorded-boundary.json": "0o600"
+  },
+  "owned_staging_files_absent_after_publication": true
+}
