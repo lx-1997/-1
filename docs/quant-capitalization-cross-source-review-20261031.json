@@ -1,0 +1,72 @@
+{
+  "schema": "capitalization-cross-source-review-v1",
+  "status": "cross_source_accounting_equal",
+  "reader_source_pins": {
+    "cross_reader": "cce0655a7f8b738d521fbd2a9f8474b02490c267805cf9cbdbe505d89c229207",
+    "raw_price_reader": "278f2f9cc7f8a9f00a1f8a6a6be5fdaa919dc24668fb86739a5b6cbe73d63c88",
+    "protocol_reader": "2a2ec3dad84d9333895259f07ed65176ca8e91ff5a518bcfb6fde9b40a880cce",
+    "sina_parser": "47f537d648bcf1223f0be61aa76b1792dacb90f9aaf7866f83690424575d58c5",
+    "primary_reviewer": "e643e0edd2e5c8c4463416495448f6be66c38d1a95929dd9cb482c9b45a2863f",
+    "ledger_reviewer": "893e68db47ee9f4fddb748fd0c5f7af7b5a8d875289be8b38384aa4225820f39",
+    "input_reader": "2f3624ee9db1cf24eb04c263f933396a7e2b9e19f3819e08635f6f551578c68c"
+  },
+  "source_pins": {
+    "quant_capitalization_book.py": "536113e3fa6c2605435712db549751a882eea9d0253df67a80a3726e5571cb1e",
+    "quant_share_entitlements.py": "cb4a96b92fb64e92785160b0c4d38fc66ff03d449d74425178b333eb8ed3699c",
+    "quant_dividend_book.py": "11039d5d10ef275cbc348f791487870d3fa1235f53360de4e42e5555491c59cf",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+    "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649"
+  },
+  "reviewer_sha256": "70fe69627d909cfece10770e921e3b44abf37682218bea7c5781d95c17044bfc",
+  "network_requests": 0,
+  "strategy_replays": 0,
+  "accounting_replays": 2,
+  "production_writes": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "model_positions_and_fills": true,
+  "broker_clearing_verified": false,
+  "data_rights_verified": false,
+  "upstream_feed_independence_verified": false,
+  "input_sha256": {
+    "sina-manifest": "8587459d9a3650681647630d8cd9a19a37ba2da43d431161784b9cdc11fb3031",
+    "bao-manifest": "4bf57d2895ac78b55a174cb4df574b325c2296696aa99af13627ec5dfb0105df",
+    "prior-review": "3cb0e173df636c715939c5dc54c8ca8975a929dcd214e78f6cd45900d1a8e415"
+  },
+  "compared_cells": 25,
+  "mismatch_count": 0,
+  "secondary_response_sha256": "77debe720e5447fcb842597db8503e48804a7ce642a4dfd5e85167421820d52b",
+  "five_day_prices_and_volume_exact": true,
+  "valuation_phases_equal": 10,
+  "final_checkpoint_equal": true,
+  "final_checkpoint_digest": "249ed136a6a4f56ad421544ad78660b49c8e8719254d0d2dd15d17d88a91058e",
+  "tolerances": {
+    "price": "0",
+    "share_volume": "0"
+  },
+  "source_selection_performed": false,
+  "unit_conversion_fitted": false,
+  "uncompared": [
+    "provider_ex_reference",
+    "reported_amount",
+    "preopen_status",
+    "complete_calendar",
+    "personal_allotment"
+  ],
+  "capture_manifest_sha256": "8587459d9a3650681647630d8cd9a19a37ba2da43d431161784b9cdc11fb3031",
+  "capture_collector_sha256": "2f50012b44b13816aa914f6afd3eeb23b63c7fb2e3db85562ef61b90b2bb8e60",
+  "capture_response_bytes": 111452,
+  "capture_observed_at": "2026-10-31T04:23:17.445125+00:00",
+  "retained_rows": 1023,
+  "compared_days": 5,
+  "accounting_review_sha256": "fd5556d7cbe3c0149d7da1b459a1f0580daf335874981a674f7d41c619b33546",
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a"
+  },
+  "focused_tests_passed": 15,
+  "artifact_directory": "artifacts/quant-capitalization-cross-source-20261031"
+}
