@@ -1,0 +1,253 @@
+{
+  "schema": "financial-comparability-real-sample-review-v1",
+  "scope": "002109 out-of-pool data-quality only; not strategy universe",
+  "input_manifest_sha256": "82a17fb882260f2d55cab3b4e8699f67250e90f5d526173e2a624c1b813e650e",
+  "reviewed_source_count": 7,
+  "visually_reviewed_physical_pages": 17,
+  "sources": [
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/corrected.pdf",
+      "sha256": "09b8834d1025bdb0686e725f0f7c15472ea880a00e3865a77742f560d3ec5d39",
+      "physical_pages": [
+        1
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/original.pdf",
+      "sha256": "acfc7249aaa133365d2f27bc9cc0d405df0726953fa0e2760a1972f8a1487224",
+      "physical_pages": [
+        2,
+        8
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/1219827045.pdf",
+      "sha256": "a1db754e6e273c9b9e8df3018178915bc12c739e0f2a1e9105cfb6b762ecd9a1",
+      "physical_pages": [
+        2,
+        10
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/correction-notice.pdf",
+      "sha256": "06aaa548d14135af73a1eb4786f371c642f6e7eae4ca02c627a1fa53b978b3e1",
+      "physical_pages": [
+        2,
+        4,
+        5
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/1223244435.pdf",
+      "sha256": "7bd97abb8fe708dc4a8bd2026b43336a67ea697e7784cc4f5ca6ada783da2ea8",
+      "physical_pages": [
+        24,
+        97
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/1225265729.pdf",
+      "sha256": "e0e8dbc34f28d4979da342ffaeb211e5a555f4b006a3bc5e139c3308b9ff1768",
+      "physical_pages": [
+        25,
+        67
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/capture-v2/1225265732.pdf",
+      "sha256": "4cdd9a9ec5932fd050859a8778c00c1fec8e21f22f441d17c456309cb0993cbc",
+      "physical_pages": [
+        1,
+        5,
+        6,
+        20,
+        21
+      ]
+    }
+  ],
+  "profit_attribution_facts": [
+    {
+      "document_id": "1223244434",
+      "period_end": "2025-03-31",
+      "total_net_profit": "-129469840.96",
+      "parent_net_profit": "-95514023.70",
+      "minority_profit": "-33955817.26",
+      "source_file": "original.pdf",
+      "physical_page": 8,
+      "column": "current_period",
+      "identity_exact_to_cent": true,
+      "source_sha256": "acfc7249aaa133365d2f27bc9cc0d405df0726953fa0e2760a1972f8a1487224"
+    },
+    {
+      "document_id": "1225265727",
+      "period_end": "2025-03-31",
+      "total_net_profit": "-174549855.81",
+      "parent_net_profit": "-118504831.28",
+      "minority_profit": "-56045024.53",
+      "source_file": "1225265732.pdf",
+      "physical_page": 21,
+      "column": "current_period",
+      "identity_exact_to_cent": true,
+      "source_sha256": "4cdd9a9ec5932fd050859a8778c00c1fec8e21f22f441d17c456309cb0993cbc"
+    },
+    {
+      "document_id": "1223244435",
+      "period_end": "2024-12-31",
+      "total_net_profit": "-368773355.37",
+      "parent_net_profit": "-379851079.27",
+      "minority_profit": "11077723.90",
+      "source_file": "1223244435.pdf",
+      "physical_page": 97,
+      "column": "current_period",
+      "identity_exact_to_cent": true,
+      "source_sha256": "7bd97abb8fe708dc4a8bd2026b43336a67ea697e7784cc4f5ca6ada783da2ea8"
+    },
+    {
+      "document_id": "1225265729",
+      "period_end": "2024-12-31",
+      "total_net_profit": "-477805180.07",
+      "parent_net_profit": "-435457309.86",
+      "minority_profit": "-42347870.21",
+      "source_file": "1225265732.pdf",
+      "physical_page": 5,
+      "column": "current_period",
+      "identity_exact_to_cent": true,
+      "source_sha256": "4cdd9a9ec5932fd050859a8778c00c1fec8e21f22f441d17c456309cb0993cbc"
+    },
+    {
+      "document_id": "1219827045",
+      "period_end": "2024-03-31",
+      "total_net_profit": "-150664323.32",
+      "parent_net_profit": "-148824482.48",
+      "minority_profit": "-1839840.84",
+      "source_file": "1219827045.pdf",
+      "physical_page": 10,
+      "column": "current_period",
+      "identity_exact_to_cent": true,
+      "source_sha256": "a1db754e6e273c9b9e8df3018178915bc12c739e0f2a1e9105cfb6b762ecd9a1"
+    }
+  ],
+  "same_period_comparatives": [
+    {
+      "document_id": "1223244434",
+      "physical_page": 2,
+      "column": "previous_same_period_2024Q1",
+      "metrics": {
+        "revenue": "907900700.66",
+        "parent_net_profit": "-148824482.48",
+        "net_operating_cashflow": "58282538.88"
+      }
+    },
+    {
+      "document_id": "1225265727",
+      "physical_page": 1,
+      "column": "previous_same_period_2024Q1",
+      "metrics": {
+        "revenue": "907900700.66",
+        "parent_net_profit": "-148824482.48",
+        "net_operating_cashflow": "58282538.88"
+      }
+    }
+  ],
+  "revision_bridges": [
+    {
+      "metric": "revenue",
+      "annual_revision_delta": "-69969752.04",
+      "current_quarter_revision_delta": "0.00",
+      "prior_quarter_selected_delta": "0.00",
+      "TTM_delta": "-69969752.04"
+    },
+    {
+      "metric": "parent_net_profit",
+      "annual_revision_delta": "-55606230.59",
+      "current_quarter_revision_delta": "-22990807.58",
+      "prior_quarter_selected_delta": "0.00",
+      "TTM_delta": "-78597038.17"
+    },
+    {
+      "metric": "net_operating_cashflow",
+      "annual_revision_delta": "0.00",
+      "current_quarter_revision_delta": "0.00",
+      "prior_quarter_selected_delta": "0.00",
+      "TTM_delta": "0.00"
+    }
+  ],
+  "TTM_scope_diagnostics": [
+    {
+      "view": "original",
+      "current_document": "1223244434",
+      "annual_document": "1223244435",
+      "prior_quarter_document": "1219827045",
+      "arithmetic_only": true,
+      "total_net_profit": "-347578873.01",
+      "parent_net_profit": "-326540620.49",
+      "minority_profit": "-21038252.52",
+      "net_operating_cashflow": "533309063.71",
+      "CFO_minus_group_net_profit": "880887936.72",
+      "CFO_minus_parent_profit_wrong_scope": "859849684.20",
+      "wrong_scope_minus_group_gap": "-21038252.52"
+    },
+    {
+      "view": "corrected",
+      "current_document": "1225265727",
+      "annual_document": "1225265729",
+      "prior_quarter_document": "1219827045",
+      "arithmetic_only": true,
+      "total_net_profit": "-501690712.56",
+      "parent_net_profit": "-405137658.66",
+      "minority_profit": "-96553053.90",
+      "net_operating_cashflow": "533309063.71",
+      "CFO_minus_group_net_profit": "1034999776.27",
+      "CFO_minus_parent_profit_wrong_scope": "938446722.37",
+      "wrong_scope_minus_group_gap": "-96553053.90"
+    }
+  ],
+  "cashflow_revision_no_effect_explicit_pages": {
+    "1225265732": [
+      6,
+      21
+    ]
+  },
+  "common_control_review": {
+    "quarter_2024_page": 2,
+    "annual_corrected_page": 25,
+    "current_2024Q1_column_already_includes_merger": true,
+    "prior_2023_adjusted_column_is_not_2024Q1": true
+  },
+  "narrative_caution": {
+    "document": "1225265729",
+    "physical_page": 67,
+    "text_says_no_major_error_correction_during_reporting_period": true,
+    "must_not_infer_no_later_restatements": true,
+    "issuer_misstatement_proven": false
+  },
+  "new_total_profit_values_added_to_product": false,
+  "automatic_pdf_cell_validation": false,
+  "exact_fraction_checks_passed": true,
+  "full_revision_history_verified": false,
+  "accounting_comparability_verified": false,
+  "historical_pit_feed_certified": false,
+  "usable_for_strategy": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0,
+  "strategy_evaluations": 0,
+  "independent_verification": {
+    "report_sha256": "8a1d7fd5d99003ea5f090eabc4b4a3fe60f70bc705646d7d277f968c47db8589",
+    "method": "integer cents independent of Fraction builder",
+    "project_imports": false,
+    "arithmetic_and_source_binding_passed": true,
+    "negative_controls_rejected": [
+      "profit_attribution",
+      "TTM",
+      "scope_gap",
+      "revision_bridge",
+      "same_period_column",
+      "strategy_claim",
+      "pdf_page",
+      "input_identity"
+    ],
+    "visual_review_not_automated": true,
+    "production_writes": 0
+  }
+}
