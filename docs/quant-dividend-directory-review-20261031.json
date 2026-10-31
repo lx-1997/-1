@@ -1,0 +1,119 @@
+{
+  "queries": 24,
+  "raw_rows": 35,
+  "in_interval_rows": 29,
+  "outside_interval_rows": 6,
+  "manual_in_interval_events": 31,
+  "outcome_counts": {
+    "cash_and_record_ex_pay_match": 28,
+    "cash_conflict": 1
+  },
+  "manual_events_absent_from_provider_directory": [
+    {
+      "event_id": "300750-2024-special-dividend",
+      "symbol": "300750",
+      "ex_date": "2025-01-24",
+      "source_sha256": "78549e6908050e9fde1e5f9a07220032b64ad617dc222157413eeda6838a2301"
+    },
+    {
+      "event_id": "600519-cash-2023-12-20",
+      "symbol": "600519",
+      "ex_date": "2023-12-20",
+      "source_sha256": "6d17512b6f5a0000d53d8053201ef8a3f934714fdca31e8220ef6f1a9bb67f14"
+    }
+  ],
+  "in_interval_unknown_reserve_ratio_rows": 29,
+  "non_single_numeric_after_tax_rows": 35,
+  "SDK_whitespace_changed_rows_preserved": 0,
+  "native_binding_CRC_fields_and_SDK_projection_verified": true,
+  "discovery_is_not_complete_implementation_history": true,
+  "empty_was_not_imputed_zero": true,
+  "generated_execution_events": 0,
+  "economic_event_coverage_verified": false,
+  "data_rights_verified": false,
+  "promotion_allowed": false,
+  "manual_manifest_unchanged": true,
+  "capture_unchanged": true,
+  "registration": {
+    "purpose": "provider_dividend_discovery_compare_not_complete_event_history",
+    "manifest_sha256": "9ab1e1088136723ef9807bc338419fbc4f3b67d71326f017d8e6d55d2af4ce4a",
+    "manual_manifest_sha256": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a",
+    "interval": [
+      "2023-10-26",
+      "2026-10-29"
+    ],
+    "automatic_event_generation": false,
+    "reader_sha256": "6c1af8475728fc01160048ece53cbab32bd5c135a5c123e030eb1c8e4a198108"
+  },
+  "positive_noncash_discovery_rows": [
+    {
+      "code": "sz.300750",
+      "ex_date": "2023-04-26",
+      "inside": false,
+      "source_sha256": "0b82284727b761ea4e42bc75c3aaafae0c5888c6cd5389c713c3488082ad2c80"
+    }
+  ],
+  "cash_conflict": {
+    "symbol": "300750",
+    "ex_date": "2024-04-30",
+    "provider_gross_per_share": "2.011",
+    "reviewed_filing_gross_per_share": "5.028",
+    "no_automatic_override": true
+  },
+  "primary_notice_rechecks": [
+    {
+      "event_id": "300750-2023-final-dividend",
+      "primary_url": "https://static.cninfo.com.cn/finalpage/2024-04-23/1219767154.PDF",
+      "retained_pdf_sha256": "7739837887d22cfea7f8768731cb60b59f28e0294a7241b2d2824633bd180fb5",
+      "rendering_sha256": "bbe7c086b77fe8b05309d396c13f10c16682a1cad5c29933b88f7ffd978e6093",
+      "visual_rechecked_at": "2026-10-31T00:07:22.261111+00:00",
+      "original_source_observed_at": "2026-10-30T12:38:24.810088+00:00",
+      "review_is_not_new_original_acquisition_time": true
+    },
+    {
+      "event_id": "300750-2024-special-dividend",
+      "primary_url": "https://static.cninfo.com.cn/finalpage/2025-01-17/1222366609.PDF",
+      "retained_pdf_sha256": "78549e6908050e9fde1e5f9a07220032b64ad617dc222157413eeda6838a2301",
+      "rendering_sha256": "5790c979cabcb6bfa4f5b25f62b74a4ff5d3d2e99f62779ec974d49bf9d89859",
+      "visual_rechecked_at": "2026-10-31T00:07:22.262376+00:00",
+      "original_source_observed_at": "2026-10-30T12:38:24.869141+00:00",
+      "review_is_not_new_original_acquisition_time": true
+    },
+    {
+      "event_id": "600519-cash-2023-12-20",
+      "primary_url": "https://static.cninfo.com.cn/finalpage/2023-12-14/1218606528.PDF",
+      "retained_pdf_sha256": "6d17512b6f5a0000d53d8053201ef8a3f934714fdca31e8220ef6f1a9bb67f14",
+      "rendering_sha256": "292410b62937f17432f7df3698c66cf3ec6c6c5db82bda1de330240e6f43513f",
+      "visual_rechecked_at": "2026-10-31T00:07:22.264216+00:00",
+      "original_source_observed_at": "2026-10-30T13:00:07.930505+00:00",
+      "review_is_not_new_original_acquisition_time": true
+    }
+  ],
+  "query_count": 24,
+  "source_interval": [
+    "2023-10-26",
+    "2026-10-29"
+  ],
+  "yearType": "operate",
+  "SDK_docstring_defines_operate_as_ex_year": true,
+  "collector_sha256": "b2557dd22884496c6941d4ff416b3450260e36d1b9d398c286e13fb0b279fd9d",
+  "full_directory_is_not_complete_implementation_history": true,
+  "no_new_strategy_or_account": true,
+  "vendor_is_anonymous_existing_SDK_not_ifind_account": true,
+  "source_archive_never_executed": true,
+  "evidence_sha256": {
+    "capture-1/plan.json": "763dfb7d131993f5b48574443693ddbd5f9194633dd35c42c59ddd36ed8c8fe3",
+    "capture-1/manifest.json": "9ab1e1088136723ef9807bc338419fbc4f3b67d71326f017d8e6d55d2af4ce4a",
+    "capture-1/parent-exit.json": "4c33d226f3700000358a3acbc857fb8fffcb567a9dcb7f403bad31ecf0faede3",
+    "review-registration.json": "e7145657a181950c4f5468ae87a1febb008dd7af8fcc44875bfaa1f65c4bdf39",
+    "review-result.json": "bd739c15125589b5cd1d093a0045122bac202518e9bda6e19a3ce8cab340e855",
+    "native-rows.json": "9719fd1c13a09ac2565d0572f180ea786b7a2485af6141e3d9fb99a72fd16c83",
+    "primary-recheck.json": "9da72d89d4f7ccbbe2ac0b8e2d8707f0ce926e7c46c3defac09aeb9c83418e21",
+    "unusable-web-read.json": "645aeaedebc73bd0095d0f8530ba72bf80d2ea0bf77436bc066d2b6f65957e1e",
+    "evidence-assembly-attempt-1.json": "ff35ff0f520008f02a1219b3726ed9b9050553e328c933f2f021916626011c62",
+    "capture.py": "b2557dd22884496c6941d4ff416b3450260e36d1b9d398c286e13fb0b279fd9d",
+    "review.py": "6c1af8475728fc01160048ece53cbab32bd5c135a5c123e030eb1c8e4a198108"
+  },
+  "after_tax_choice_string_rows": 35,
+  "raw_tax_strings_used_as_personal_net_cash": false
+}
