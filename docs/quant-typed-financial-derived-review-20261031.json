@@ -1,0 +1,134 @@
+{
+  "schema": "typed-financial-derived-review-v1",
+  "scope": "internal operator CLI arithmetic only",
+  "new_tests": 29,
+  "focused_tests": 108,
+  "JSON_unsafe_integer_failure_reproduced_and_fixed": true,
+  "rational_parts_encoded_as_decimal_strings": true,
+  "real_workflow": {
+    "actual_query_clock": "2026-10-31T14:35:52.018525+00:00",
+    "stored_visible_at": "2026-11-01T00:00:00+08:00",
+    "actual_boundary_observed": false,
+    "real_queries": [
+      {
+        "case": "original-TTM-assets",
+        "status": "arithmetic_available",
+        "ttm_value": "-347578873.01",
+        "endpoint_average_assets_exact": "11495781239.325",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "corrected-TTM-assets",
+        "status": "arithmetic_available",
+        "ttm_value": "-501690712.56",
+        "endpoint_average_assets_exact": "11436221498.125",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "correction-day-old",
+        "status": "arithmetic_available",
+        "ttm_value": "-347578873.01",
+        "endpoint_average_assets_exact": "11495781239.325",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "original-annual-assets",
+        "status": "arithmetic_available",
+        "ttm_value": "-368773355.37",
+        "endpoint_average_assets_exact": "11835991251.510",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "corrected-annual-assets",
+        "status": "arithmetic_available",
+        "ttm_value": "-477805180.07",
+        "endpoint_average_assets_exact": "11824675514.150",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "old-extraction-no-assets",
+        "status": "unavailable",
+        "ttm_value": null,
+        "endpoint_average_assets_exact": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "old-extraction-profit-only",
+        "status": "arithmetic_available",
+        "ttm_value": "-501690712.56",
+        "endpoint_average_assets_exact": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "quarter-bridge-missing",
+        "status": "unavailable",
+        "ttm_value": null,
+        "endpoint_average_assets_exact": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "annual-blank",
+        "status": "unavailable",
+        "ttm_value": null,
+        "endpoint_average_assets_exact": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "past-recorded",
+        "status": "unavailable",
+        "ttm_value": null,
+        "endpoint_average_assets_exact": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "actual-current-recorded",
+        "status": "unavailable",
+        "ttm_value": null,
+        "endpoint_average_assets_exact": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "annual-inventory-only",
+        "status": "arithmetic_available",
+        "ttm_value": "105455122.95",
+        "endpoint_average_assets_exact": null,
+        "foreign_owner_rejected": true
+      }
+    ],
+    "original_archives_and_source_main_unchanged": true,
+    "prior_v6_cold_query_full_JSON_equal": true,
+    "database_writes": 0,
+    "production_writes": 0,
+    "strategy_evaluations": 0
+  },
+  "independent_review": {
+    "schema": "independent-typed-financial-derived-review-v1",
+    "project_imports": false,
+    "query_cases_verified": [
+      "original-TTM-assets",
+      "corrected-TTM-assets",
+      "correction-day-old",
+      "original-annual-assets",
+      "corrected-annual-assets",
+      "old-extraction-no-assets",
+      "old-extraction-profit-only",
+      "quarter-bridge-missing",
+      "annual-blank",
+      "past-recorded",
+      "actual-current-recorded",
+      "annual-inventory-only"
+    ],
+    "independent_fraction_arithmetic": true,
+    "packet_parent_owner_hashes_verified": true,
+    "selected_revision_and_same_clock_verified": true,
+    "asset_endpoint_dates_and_string_rationals_verified": true,
+    "missing_or_blank_not_filled": true,
+    "source_main_unchanged": true,
+    "actual_boundary_observed": false,
+    "production_writes": 0
+  },
+  "original_extraction_and_recovery_sources_unchanged": true,
+  "full_exact_tree_receipt": "artifacts/quant-typed-financial-derived-20261031/final-verification.json",
+  "ratios_or_scores_generated": false,
+  "commercial_ready": false
+}

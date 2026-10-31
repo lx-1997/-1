@@ -12,6 +12,12 @@ def main():
     get=sub.add_parser('review')
     for key in ('id','issuer-id','symbol','report-period-end','metric','column','as-of'):get.add_argument('--'+key,required=True)
     get.add_argument('--mode',choices=['as_recorded','historical_reconstruction'],required=True)
+    for name in ('ttm','ttm-assets'):
+        derive=sub.add_parser(name)
+        for key in ('id','issuer-id','symbol','period-end','metric','as-of'):derive.add_argument('--'+key,required=True)
+        derive.add_argument('--mode',choices=['as_recorded','historical_reconstruction'],required=True)
+        if name=='ttm-assets':
+            for key in ('begin-report-period-end','begin-column','end-report-period-end','end-column'):derive.add_argument('--'+key,required=True)
     a=p.parse_args()
     if not a.db.is_absolute() or not a.db.is_file():p.error('Explicit existing absolute QR database path required')
     os.environ['DEEPFOCUS_QUANT_RESEARCH_DB_PATH']=str(a.db);sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
@@ -23,10 +29,19 @@ def main():
             if set(value)!={'facts','correction_notes'}:raise ValueError('Explicit fact snapshot and correction notes required')
             if a.input.read_bytes()!=raw:raise ValueError('Extraction input changed during read')
             result=store.put(a.owner,a.parent_id,a.label,value['facts'],supersedes_packet_id=a.supersedes_packet_id,correction_notes=value['correction_notes'])
+        elif a.command in ('ttm','ttm-assets'):
+            from deepfocus_api.quant_financial_fact_derived import review as derive
+            endpoints=None if a.command=='ttm' else {
+                'beginning':{'report_period_end':a.begin_report_period_end,'column':a.begin_column},
+                'ending':{'report_period_end':a.end_report_period_end,'column':a.end_column}}
+            result=derive(a.owner,a.id,issuer_id=a.issuer_id,symbol=a.symbol,period_end=a.period_end,metric=a.metric,
+                          as_of=a.as_of,mode=a.mode,asset_endpoints=endpoints)
         else:
             result=store.review(a.owner,a.id,issuer_id=a.issuer_id,symbol=a.symbol,report_period_end=a.report_period_end,
                               metric=a.metric,column=a.column,as_of=a.as_of,mode=a.mode)
-        print(json.dumps(result,ensure_ascii=False,allow_nan=False));return 2 if a.command=='review' and result['status']!='available' else 0
+        print(json.dumps(result,ensure_ascii=False,allow_nan=False))
+        expected='arithmetic_available' if a.command in ('ttm','ttm-assets') else 'available'
+        return 2 if a.command!='put' and result['status']!=expected else 0
     except (ValueError,TypeError,KeyError,LookupError,OSError,RuntimeError,sqlite3.DatabaseError) as exc:
         print(json.dumps({'ok':False,'error_type':type(exc).__name__,'promotion_allowed':False}));return 1
 
