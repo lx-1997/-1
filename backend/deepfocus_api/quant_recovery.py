@@ -15,8 +15,8 @@ import time
 from datetime import datetime,timezone
 from .quant_research_engine import digest
 
-VERSION='qr-quarantined-recovery-v2'
-TABLES={'qr_experiment','qr_paper','qr_worker_slot','qr_evidence_source','qr_evidence_bundle','qr_calendar_source','qr_calendar_bundle','qr_financial_source','qr_financial_bundle'}
+VERSION='qr-quarantined-recovery-v3'
+TABLES={'qr_experiment','qr_paper','qr_worker_slot','qr_evidence_source','qr_evidence_bundle','qr_calendar_source','qr_calendar_bundle','qr_financial_source','qr_financial_bundle','qr_share_source','qr_share_bundle','qr_share_review'}
 MESSAGE='恢复副本中的未完成任务已隔离，禁止自动重跑'
 
 
@@ -29,6 +29,7 @@ def pins():
     root=Path(__file__).resolve()
     paths=[root,root.with_name('quant_research_engine.py'),root.with_name('quant_financial_store.py'),
            root.with_name('quant_financial_vintages.py'),root.with_name('quant_corporate_actions.py'),
+           root.with_name('quant_share_store.py'),root.with_name('quant_share_entitlements.py'),
            root.parents[2]/'scripts/quant-recovery.py']
     return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
@@ -56,7 +57,7 @@ def schema(c):
     for name in tables:
         info=c.execute('PRAGMA table_info('+name+')').fetchall()
         if not any(r['pk'] for r in info):raise ValueError('Recovery tables need stable primary keys')
-    for name,column in (('qr_experiment','payload'),('qr_paper','payload'),('qr_evidence_source','body'),('qr_calendar_source','body'),('qr_financial_source','body'),('qr_financial_bundle','payload')):
+    for name,column in (('qr_experiment','payload'),('qr_paper','payload'),('qr_evidence_source','body'),('qr_calendar_source','body'),('qr_financial_source','body'),('qr_financial_bundle','payload'),('qr_share_source','body'),('qr_share_bundle','payload'),('qr_share_review','payload')):
         if name in tables and c.execute('SELECT max(length(CAST('+column+' AS BLOB))) FROM '+name).fetchone()[0] is not None:
             if c.execute('SELECT max(length(CAST('+column+' AS BLOB))) FROM '+name).fetchone()[0]>32*1024*1024:
                 raise ValueError('Recovery record exceeds supported 32MiB budget')
@@ -94,13 +95,21 @@ def validate_row(c,table,row,tables):
             raise ValueError('Invalid paper cash frame')
         if row['status'] not in {'active','paused'} or type(row['revision']) is not int or row['revision']<0:
             raise ValueError('Invalid paper operational state')
-    elif table in {'qr_calendar_source','qr_evidence_source','qr_financial_source'}:
+    elif table in {'qr_calendar_source','qr_evidence_source','qr_financial_source','qr_share_source'}:
         if not isinstance(row['body'],bytes) or hashlib.sha256(row['body']).hexdigest()!=row['sha']:
             raise ValueError('Retained evidence blob mismatch')
     elif table=='qr_financial_bundle':
         if 'qr_financial_source' not in tables:raise ValueError('Financial source table missing')
         from .quant_financial_store import verify_row
         verify_row(c,row)
+    elif table=='qr_share_bundle':
+        if 'qr_share_source' not in tables:raise ValueError('Share evidence source table missing')
+        from .quant_share_store import verify_row
+        verify_row(c,row)
+    elif table=='qr_share_review':
+        if not {'qr_share_source','qr_share_bundle'}<=set(tables):raise ValueError('Share review provenance tables missing')
+        from .quant_share_store import verify_review_row
+        verify_review_row(c,row)
     elif table in {'qr_calendar_bundle','qr_evidence_bundle'}:
         value=load_json(row['payload'] if table=='qr_calendar_bundle' else row['manifest'])
         if digest(value)!=row['fingerprint']:raise ValueError('Evidence manifest fingerprint mismatch')

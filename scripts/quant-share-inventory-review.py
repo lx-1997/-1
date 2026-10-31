@@ -95,6 +95,8 @@ def main():
         dump(w/'credited.json',book)
         report.update(status='quantity_model_completed',final_state_digest=book['state_digest'],
                       available_new_unrestricted_shares=shares.available(book,event.event_id,asof=plan['credit_asof'],scope=plan['scope']))
+    except shares.PendingAllotment as exc:
+        report.update(status='awaiting_allotment',failed_stage=stage,error_type=type(exc).__name__,error=str(exc))
     except (ValueError,TypeError,KeyError,OSError) as exc:
         report.update(failed_stage=stage,error_type=type(exc).__name__,error=str(exc))
     dump(w/'result.json',report)

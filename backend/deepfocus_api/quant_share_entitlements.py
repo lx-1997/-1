@@ -21,6 +21,10 @@ BJ=timezone(timedelta(hours=8))
 MAX_STATE=16*1024**2
 
 
+class PendingAllotment(ValueError):
+    """Valid fractional rights exist but no account allotment was supplied."""
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
 
@@ -261,7 +265,7 @@ def credit(previous,event,sources,*,asof,scope,allotment=None):
     if item is None or item['status']!='receivable':raise ValueError('Unrecognized share entitlement')
     exact={k:Decimal(v) for k,v in item['exact_new_shares'].items()}
     if allotment is None:
-        if any(v!=v.to_integral_value() for v in exact.values()):raise ValueError('Fractional allotment unresolved; never round FIFO lots')
+        if any(v!=v.to_integral_value() for v in exact.values()):raise PendingAllotment('Fractional allotment unresolved; never round FIFO lots')
         credited={k:int(v) for k,v in exact.items()};basis='scheduled_exact_ratio_model_not_broker_confirmation'
     else:
         credited={'unrestricted':allotment.unrestricted_shares,'restricted':allotment.restricted_shares}

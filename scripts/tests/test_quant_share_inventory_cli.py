@@ -25,6 +25,7 @@ class CliTests(unittest.TestCase):
   self.plan['closing_lots'][0]['qty']=1;run,w=self.run_plan()
   self.assertEqual(run.returncode,2);self.assertTrue((w/'receivable.json').exists());self.assertFalse((w/'credited.json').exists())
   self.assertEqual(json.loads((w/'result.json').read_text())['failed_stage'],'credit')
+  self.assertEqual(json.loads((w/'result.json').read_text())['status'],'awaiting_allotment')
  def test_existing_workspace_is_never_overwritten(self):
   run,w=self.run_plan();before=(w/'result.json').read_bytes();run2,w=self.run_plan()
   self.assertEqual(run2.returncode,2);self.assertEqual((w/'result.json').read_bytes(),before)

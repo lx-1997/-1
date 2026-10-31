@@ -1,0 +1,54 @@
+{
+  "schema": "share-receipt-real-source-QA-v1",
+  "recorded_at": "2026-10-31T02:27:47.715004+00:00",
+  "stored_visible_at": "2026-11-01T00:00:00+08:00",
+  "component_visibility": {
+    "action": "2026-11-01T00:00:00+08:00",
+    "position_snapshot": "2026-11-01T00:00:00+08:00"
+  },
+  "input_sha256": "428cd3bcffcbbd4997d59aed0c8f1060feea03e715f8b8617661635cfdc86551",
+  "source_pins": {
+    "quant_share_store.py": "6a57938968c150e61b0e59b91bea5196cfb1fddf3f888eeaa132dc0b076bc5f9",
+    "quant_share_entitlements.py": "cb4a96b92fb64e92785160b0c4d38fc66ff03d449d74425178b333eb8ed3699c",
+    "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+    "db.py": "58cd893736d0b06745bff7ce6981006a08493c86fd5b70b2f6d40d5a999566c9"
+  },
+  "real_issuer_PDF_with_explicit_counterfactual_positions": true,
+  "actual_historical_account": false,
+  "actual_allotment_obtained": false,
+  "duplicate_import_same_receipt_and_recorded_clock": true,
+  "historical_model_available_new_shares": 80,
+  "as_recorded_2023_status": "not_available_as_recorded",
+  "future_real_visibility_boundary_observed": false,
+  "foreign_owner_read_refused": true,
+  "source_database_sha256": "dd5a5b7ccce868c77abe894c410ddb4ae43e4c1d423c52fab5fbadacdd906491",
+  "source_database_bytes_unchanged_by_recovery": true,
+  "recovery_tables": {
+    "qr_share_source": {
+      "rows": 1,
+      "digest": "2b73ec13c2f6ff4d7c4cbb94d876ca6be443ff71225704768a37f8ec4f9d84ab",
+      "expected_digest": "2b73ec13c2f6ff4d7c4cbb94d876ca6be443ff71225704768a37f8ec4f9d84ab",
+      "expected_rows": 1
+    },
+    "qr_share_bundle": {
+      "rows": 1,
+      "digest": "b571f9f41bf18bbd1095075ff1e058118bffd5ccdf334926708e5dedd1c19a8c",
+      "expected_digest": "b571f9f41bf18bbd1095075ff1e058118bffd5ccdf334926708e5dedd1c19a8c",
+      "expected_rows": 1
+    },
+    "qr_share_review": {
+      "rows": 2,
+      "digest": "2bfb4ded119ea6795212a55ba0e1c29042a6290e611d9252ff1445bef114423d",
+      "expected_digest": "2bfb4ded119ea6795212a55ba0e1c29042a6290e611d9252ff1445bef114423d",
+      "expected_rows": 2
+    }
+  },
+  "recovery_version": "qr-quarantined-recovery-v3",
+  "quarantined_recovery_verified": true,
+  "activation_authorized": false,
+  "source_SQL_mutations_by_recovery": false,
+  "network_requests": 0,
+  "production_writes": 0,
+  "promotion_allowed": false,
+  "commercial_ready": false
+}
