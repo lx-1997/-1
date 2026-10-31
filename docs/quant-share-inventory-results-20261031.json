@@ -1,0 +1,42 @@
+{
+  "component": "capitalization-share-inventory-v1",
+  "unit_test_count": 29,
+  "unit_elapsed_seconds": 0.27,
+  "unit_log_sha256": "559ae73856e46112f18b749d0da7d6c7a44d29e4d71f3f5ba71a6e276e7d9e1b",
+  "module_sha256": "809402cfa77dfccc4358dde87b681abd90669a57f8c8c81c98152404d5d67af6",
+  "reviewer_sha256": "16fcb833af91c13958ae0076ecafc972bdbd54c58e6048cd35cfb631a7742bf7",
+  "real_issuer_source_with_counterfactual_positions": true,
+  "real_source_model_result_sha256": "ab47edd58a3d606cf2d89e4f9afd1ca3aea1c6aff523d40b9da97f8576b774bd",
+  "real_document_CLI_review": {
+    "cases": [
+      {
+        "case": "whole",
+        "exit_code": 0,
+        "result_sha256": "ff3b13d6203c3fcbd5b44bd9ba13c00077f3499d65e2e4369a21821f8bc53c5d",
+        "status": "quantity_model_completed",
+        "is_real_account": false
+      },
+      {
+        "case": "fraction",
+        "exit_code": 2,
+        "result_sha256": "4a2710fe4267a386f7115f615a0e3e6d81fa5a9c060e4bfd06546992563d3b54",
+        "status": "failed",
+        "is_real_account": false
+      }
+    ],
+    "source_pdf_sha256": "8063ac7204c79d9f856b7a2e21887aa650bc5e2b2c1bbbecb81ab54473d0939b",
+    "actual_broker_allotment_obtained": false,
+    "all_positions_counterfactual": true,
+    "new_production_accounts": 0
+  },
+  "source_pdf_sha256": "8063ac7204c79d9f856b7a2e21887aa650bc5e2b2c1bbbecb81ab54473d0939b",
+  "old_two_strategy_replays_performed": false,
+  "original_experiments_changed": false,
+  "cash_tax_NAV_order_engine_integrated": false,
+  "live_price_soak_covers_this_new_component": false,
+  "actual_broker_allotment_obtained": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0,
+  "new_paper_accounts": 0
+}

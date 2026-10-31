@@ -1,0 +1,52 @@
+{
+  "schema": "capitalization-real-document-model-QA-v1",
+  "source_sha256": "8063ac7204c79d9f856b7a2e21887aa650bc5e2b2c1bbbecb81ab54473d0939b",
+  "source_fact_review_sha256": "6770f982dfe95ccd19860d51836033f0fb03855cac78c5bcc9ace45397ac3e24",
+  "module_sha256": "809402cfa77dfccc4358dde87b681abd90669a57f8c8c81c98152404d5d67af6",
+  "cases": [
+    {
+      "case": "whole-100",
+      "model_unrestricted_available": 80,
+      "state_digest": "dd7e24bd9f3935275394a77a21b175a0d05308eabfb51136de5fbc8817e9543d",
+      "credit_basis": "scheduled_exact_ratio_model_not_broker_confirmation",
+      "JSON_resume_equal": true,
+      "broker_allotment_obtained": false
+    },
+    {
+      "case": "five-one-share-lots",
+      "model_unrestricted_available": 4,
+      "state_digest": "eeb24560ae30536bd7fcd2461ffef87c0a6906bf76ed0251c8f9a58b58a0cfcb",
+      "credit_basis": "scheduled_exact_ratio_model_not_broker_confirmation",
+      "JSON_resume_equal": true,
+      "broker_allotment_obtained": false
+    },
+    {
+      "case": "restricted-100",
+      "model_unrestricted_available": 0,
+      "state_digest": "4ac330975a4aa3e7dd8397497f9c0bbef4f2f5116493ee4d2bb9a280d51ce978",
+      "credit_basis": "scheduled_exact_ratio_model_not_broker_confirmation",
+      "JSON_resume_equal": true,
+      "broker_allotment_obtained": false
+    },
+    {
+      "case": "unresolved-fraction",
+      "refused": true,
+      "reason": "Fractional allotment unresolved; never round FIFO lots",
+      "pending_exact_shares": {
+        "unrestricted": "0.8",
+        "restricted": "0.0"
+      },
+      "no_mutation_on_failure": true
+    }
+  ],
+  "as_recorded_2023_rejected_actual_2026_observation": true,
+  "is_real_historical_account": false,
+  "holdings_are_explicit_counterfactual_model_inputs": true,
+  "cash_tax_NAV_order_engine_integrated": false,
+  "full_economic_coverage_verified": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "requests": 0,
+  "production_writes": 0,
+  "strategy_replays": 0
+}
