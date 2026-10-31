@@ -1,0 +1,41 @@
+{
+  "schema": "financial-flow-arithmetic-review-v1",
+  "scope": "offline internal derived calendar-year flow amounts, not a factor or trading qualification",
+  "formula": "current_ytd + previous_annual - previous_comparable_ytd; annual endpoint uses current annual only",
+  "arithmetic": "signed integer CNY cents; private source snapshot, one knowledge clock and mode",
+  "new_backend_tests": 31,
+  "focused_backend_tests": 89,
+  "real_cli_queries": 7,
+  "real_arithmetic_available": 0,
+  "real_missing_data_reports_retained": 7,
+  "independent_document_and_clock_checks": 7,
+  "source_panels_needed": [
+    "2024-12-31 annual with known correction chain",
+    "2024-03-31 comparable YTD and comparability evidence"
+  ],
+  "annual_and_comparability_proof_incomplete": true,
+  "always_usable_for_strategy": false,
+  "accounting_comparability_verified": false,
+  "pit_certified": false,
+  "source_files": {
+    "primary_YTD_faq": {
+      "status": "retained",
+      "url": "https://www.mof.gov.cn/bd/mhwzzxly/hjs/202301/t20230129_3864201.htm",
+      "sha256": "66b70072d0ff1a5501e106499f8cb97b5af5e97cd40c114b101fa3e4829b93e9",
+      "bytes": 11468,
+      "observed_at": "2026-10-31T11:36:37.177460+00:00"
+    }
+  },
+  "price_event_and_panel_reader_sources_changed": false,
+  "existing_reviewed_manifest_changed": false,
+  "strategy_evaluations": 0,
+  "production_writes": 0,
+  "commercial_ready": false,
+  "open_legacy_reader_context_issue": {
+    "reproduced_with_synthetic_fixture": true,
+    "raw_reader_low_precision_overbound_acceptance": true,
+    "new_flow_layer_rejects": true,
+    "raw_reader_not_fixed": true,
+    "receipt_history_compatibility_required": true
+  }
+}
