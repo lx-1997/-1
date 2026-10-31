@@ -17,14 +17,15 @@ def main():
     ingest.add_argument('--manifest',type=Path,required=True)
     ingest.add_argument('--evidence-dir',type=Path,required=True)
     ingest.add_argument('--label',required=True)
-    review=sub.add_parser('review')
-    for key in ('id','issuer-id','symbol','period-end','as-of'):
-        review.add_argument('--'+key,required=True)
-    review.add_argument('--mode',choices=['as_recorded','historical_reconstruction'],required=True)
-    review.add_argument('--metrics',nargs='+',required=True)
+    for command in ('review','ttm'):
+        review=sub.add_parser(command)
+        for key in ('id','issuer-id','symbol','period-end','as-of'):
+            review.add_argument('--'+key,required=True)
+        review.add_argument('--mode',choices=['as_recorded','historical_reconstruction'],required=True)
+        review.add_argument('--metrics',nargs='+',required=True)
     a=p.parse_args()
     if not a.db.is_absolute():p.error('Explicit absolute QR database path required')
-    if a.command=='review' and not a.db.is_file():p.error('Existing QR database required')
+    if a.command in ('review','ttm') and not a.db.is_file():p.error('Existing QR database required')
     os.environ['DEEPFOCUS_QUANT_RESEARCH_DB_PATH']=str(a.db)
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
     from deepfocus_api import quant_financial_store as store
@@ -42,9 +43,13 @@ def main():
                 raise ValueError('Financial input changed during import')
             result=store.put(a.owner,a.label,manifest,sources)
         else:
-            result=store.review(a.owner,a.id,issuer_id=a.issuer_id,symbol=a.symbol,period_end=a.period_end,
+            if a.command=='ttm':
+                from deepfocus_api.quant_financial_ttm_store import review as query
+            else:query=store.review
+            result=query(a.owner,a.id,issuer_id=a.issuer_id,symbol=a.symbol,period_end=a.period_end,
                                 as_of=a.as_of,mode=a.mode,required_metrics=a.metrics)
-        print(json.dumps(result,ensure_ascii=False,allow_nan=False));return 0
+        print(json.dumps(result,ensure_ascii=False,allow_nan=False))
+        return 2 if a.command=='ttm' and result['status']!='arithmetic_available' else 0
     except (ValueError,TypeError,KeyError,OSError,LookupError,RuntimeError,sqlite3.DatabaseError) as exc:
         print(json.dumps({'ok':False,'error_type':type(exc).__name__,'promotion_allowed':False}));return 1
 

@@ -1,0 +1,68 @@
+{
+  "schema": "owned-financial-ttm-review-v1",
+  "scope": "internal research quality only",
+  "new_tests": 16,
+  "focused_tests_passed": 141,
+  "real_workflow": {
+    "scope": "real five-vintage public sample in new isolated owned database; no production",
+    "new_receipt_recorded_at": "2026-10-31T13:31:35.980276+00:00",
+    "stored_visible_at": "2026-11-01T00:00:00+08:00",
+    "actual_query_clock": "2026-10-31T13:31:36.154079+00:00",
+    "actual_stored_boundary_observed": false,
+    "idempotent_import_same_receipt": true,
+    "cases": [
+      {
+        "case": "original",
+        "status": "arithmetic_available",
+        "exit_code": 0,
+        "metrics": {
+          "revenue": "4063026549.64",
+          "parent_net_profit": "-326540620.49",
+          "net_operating_cashflow": "533309063.71"
+        },
+        "nested_result_suppressed": false
+      },
+      {
+        "case": "corrected",
+        "status": "arithmetic_available",
+        "exit_code": 0,
+        "metrics": {
+          "revenue": "3993056797.60",
+          "parent_net_profit": "-405137658.66",
+          "net_operating_cashflow": "533309063.71"
+        },
+        "nested_result_suppressed": false
+      },
+      {
+        "case": "past-recorded",
+        "status": "unavailable",
+        "exit_code": 2,
+        "metrics": null,
+        "nested_result_suppressed": true
+      },
+      {
+        "case": "actual-current-recorded",
+        "status": "unavailable",
+        "exit_code": 2,
+        "metrics": null,
+        "nested_result_suppressed": true
+      }
+    ],
+    "foreign_owner_rejected_in_all_cases": true,
+    "previous_two_archives_unchanged": true,
+    "three_rows_cold_restored_exact": true,
+    "recovered_historical_query_full_JSON_equal": true,
+    "original_source_main_and_rows_unchanged": true,
+    "archived_code_executed": false,
+    "activation_authorized": false,
+    "production_writes": 0,
+    "strategy_evaluations": 0
+  },
+  "independent_clock_fraction_check": true,
+  "base_ingestion_and_flow_sources_unchanged": true,
+  "source_identity_separate_from_derived_query": true,
+  "full_gate_receipt": "artifacts/quant-owned-financial-ttm-20261031/final-verification.json",
+  "production_deployed": false,
+  "strategy_strength_proven": false,
+  "commercial_ready": false
+}
