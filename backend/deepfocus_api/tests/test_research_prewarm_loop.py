@@ -19,6 +19,8 @@ from deepfocus_api.analysis_limiter import AnalysisLimiter
 from deepfocus_api.research_cache import deep_draft_cache_key, is_valid_deep_draft_cache
 
 
+REAL_WAIT_ARRIVAL = research_prewarm_signal.wait_research_arrival
+
 REAL_QUEUE_API = {name: getattr(research_archive, name) for name in (
     "observe_prewarm_feed", "list_prewarm_pending", "mark_prewarm_done",
 )}
@@ -43,6 +45,23 @@ def canonical(fid):
     return deep_draft_cache_key(SimpleNamespace(file_id=fid))
 
 
+def queue_snapshots(output):
+    rows=[]
+    for line in output.splitlines():
+        if not line.startswith("[prewarm] 增量队列 "):continue
+        row={}
+        for field in line.split()[2:]:
+            key,value=field.split("=",1)
+            row[key]=tuple(map(int,value.split("/"))) if "/" in value else int(value)
+        rows.append(row)
+    return rows
+
+
+def queue_counts(eligible,excluded,ready,pending,hot,tier1,batch,downloads):
+    return dict(eligible=eligible,excluded=excluded,ready=ready,pending=pending,
+                hot=hot,tier1=tier1,batch=batch,downloads=(downloads,40))
+
+
 @pytest.fixture
 def loop_harness(monkeypatch):
     real_sleep = asyncio.sleep
@@ -52,7 +71,8 @@ def loop_harness(monkeypatch):
         wire_error=None, pdf_errors={}, model_overrides={}, rounds=1, waits=[],
         block_model=False, model_started=None, model_closed=None, limiter=None,
         initialized=True, seen=set(), queue={}, marks=[], mark_snapshots=[],
-        wire_snapshots=None, stop_at=1,
+        wire_snapshots=None, stop_at=1, hot_names=frozenset(), tier1_names=frozenset(),
+        hot_calls=0, arrival_hook=None,
     )
     for key, value in {
         "DEEPFOCUS_RESEARCH_PREWARM": "1",
@@ -133,12 +153,20 @@ def loop_harness(monkeypatch):
         state.used += 1
         state.increments.append(key)
 
+    async def hot_keys():
+        # Scheduler inputs are controlled; no implicit real popularity DB/API.
+        state.hot_calls += 1
+        return state.hot_names, state.tier1_names
+
     async def wait_arrival(delay):
         state.waits.append(delay)
         if len(state.waits) >= state.stop_at:
             raise asyncio.CancelledError()
+        if state.arrival_hook is not None:
+            return await state.arrival_hook(delay)
         return False
 
+    monkeypatch.setattr(research_prewarm, "_hot_keys", hot_keys)
     monkeypatch.setattr(research_prewarm.asyncio, "sleep", sleep)
     def should_not_scan_archive():
         raise AssertionError("incremental scheduler must never scan/requeue the old archive")
@@ -190,7 +218,7 @@ async def test_valid_canonical_is_ready_without_pdf_or_model(loop_harness, capsy
     assert state.increments == []
     assert state.marks == [("ready", "done")]
     assert state.queue == {}
-    assert "eligible=1 excluded=0 ready=1 pending=0 batch=0" in capsys.readouterr().out
+    assert queue_snapshots(capsys.readouterr().out)==[queue_counts(1,0,1,0,0,0,0,0)]
 
 
 @pytest.mark.asyncio
@@ -209,10 +237,10 @@ async def test_pending_writes_deep_and_compact_before_ack_then_next_cycle_is_emp
     assert len(compact["logic_lines"]) == 1
     assert state.marks == [("new", "done")] and state.queue == {}
     assert {canonical("new"), research_multi_agent.analysis_cache_key("new"), "new"} <= state.mark_snapshots[0][2]
-    assert state.waits == [30.0, 60.0]
+    assert state.waits == [240.0, 60.0]
     output = capsys.readouterr().out
     assert output.count("深度缓存完成 fid=new") == 1
-    assert "eligible=0 excluded=0 ready=0 pending=0 batch=0" in output
+    assert queue_snapshots(output)==[queue_counts(1,0,0,1,0,0,1,0),queue_counts(0,0,0,0,0,0,0,1)]
 
 
 @pytest.mark.asyncio
@@ -230,7 +258,7 @@ async def test_fallback_is_not_done_or_cached_and_next_cycle_defers(loop_harness
     assert state.waits == [60.0, 60.0]
     output = capsys.readouterr().out
     assert "深度缓存完成" not in output
-    assert "ready=0 pending=1 batch=0" in output
+    assert queue_snapshots(output)==[queue_counts(1,0,0,1,0,0,1,0),queue_counts(1,0,0,1,0,0,0,1)]
 
 
 @pytest.mark.asyncio
@@ -379,3 +407,36 @@ async def test_real_sqlite_boundary_filters_arrivals_and_survives_restart(loop_h
     state.rounds = 1
     await state.run_cycles()
     assert len(state.model_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_hot_then_tier1_then_other_preserves_arrival_order_and_success_pacing(loop_harness,capsys):
+    state=loop_harness
+    state.hot_names=frozenset({"热门"});state.tier1_names=frozenset({"次级"})
+    state.wire=[report(fid) for fid in ("普通甲","次级甲","热门甲","热门乙","次级乙")]
+    await state.run_cycles()
+    assert state.model_calls==["热门甲","热门乙","次级甲","次级乙","普通甲"]
+    assert state.hot_calls==1 and state.waits==[240.0]
+    assert state.used==5 and not state.queue
+    assert queue_snapshots(capsys.readouterr().out)==[queue_counts(5,0,0,5,2,2,5,0)]
+
+
+@pytest.mark.asyncio
+async def test_arrival_pulse_interrupts_wait_and_processes_only_new_report(loop_harness,monkeypatch):
+    state=loop_harness;state.rounds=2;state.wire=[report("first")]
+    # Exercise the real arrival helper with a fresh event owned by this test.
+    real_wait=REAL_WAIT_ARRIVAL
+    monkeypatch.setattr(research_prewarm_signal,"_event",None)
+    research_prewarm_signal.notify_research_arrived()
+    async def arrival(delay):
+        assert delay==240.0
+        signaled=await real_wait(delay)
+        assert signaled is True
+        state.wire.append(report("arrived"))
+        return signaled
+    state.arrival_hook=arrival
+    await asyncio.wait_for(state.run_cycles(),1.0)
+    assert state.model_calls==["first","arrived"]
+    assert state.waits==[240.0,240.0] and not state.queue
+    assert state.used==2 and state.wire_calls==2
+    assert not research_prewarm_signal._event.is_set()

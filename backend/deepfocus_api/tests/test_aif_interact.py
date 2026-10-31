@@ -1,5 +1,7 @@
 """AI 模拟盘互动层：竞猜窗口/结算/连胜 与 关注/时间线。纯 sqlite 单测(临时库,控制时钟)。"""
 import sqlite3
+from contextlib import closing
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from deepfocus_api import aif_interact as ai
@@ -123,9 +125,28 @@ def test_follow_cap_toggle_and_feed():
     assert all(f["fund_id"] in {"mammoth", "falcon", "tide"} for f in feed)
 
 
-def test_summary_shape():
+def test_summary_shape(monkeypatch):
+    monkeypatch.setattr(ai, "bj_now", lambda: _d(2026, 10, 27, 10, 0))
     c = _conn()
     ai.set_guess(c, "u1", "mammoth", now=_d(2026, 10, 27, 10, 0), holidays=HOLIDAYS)
     s = ai.guess_summary(c, "u1")
     assert s["my_pick"] == "mammoth" and s["distribution"] == {"mammoth": 1}
     assert s["window_open"] is True and s["recent"] == []
+
+
+@pytest.mark.parametrize("now,pick,distribution,window", [
+    (_d(2026, 10, 27, 23, 59), "mammoth", {"mammoth": 1, "tide": 1}, False),
+    (_d(2026, 10, 28, 0, 0), "rock", {"rock": 1}, True),
+    (_d(2026, 10, 31, 10, 0), None, {}, False),
+])
+def test_summary_uses_current_beijing_day_without_previous_pick_leak(monkeypatch,now,pick,distribution,window):
+    with closing(_conn()) as c:
+        ai.set_guess(c,"u1","mammoth",now=_d(2026,10,27),holidays=HOLIDAYS)
+        ai.set_guess(c,"u2","tide",now=_d(2026,10,27),holidays=HOLIDAYS)
+        ai.set_guess(c,"u1","rock",now=_d(2026,10,28),holidays=HOLIDAYS)
+        monkeypatch.setattr(ai,"bj_now",lambda:now)
+        summary=ai.guess_summary(c,"u1")
+        assert summary["day"]==now.strftime("%Y-%m-%d")
+        assert summary["my_pick"]==pick and summary["distribution"]==distribution
+        assert summary["guessers"]==sum(distribution.values())
+        assert summary["window_open"] is window

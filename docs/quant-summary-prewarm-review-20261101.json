@@ -1,0 +1,74 @@
+{
+  "schema": "summary-day-and-prewarm-contract-review-v1",
+  "base_commit": "bae377ade1583f05e758ebd463df0d22564ce7e5",
+  "tested_tree": "12d6ee3d15bae06973be7df234ac3b1d80accabc",
+  "only_test_files_changed_from_baseline": [
+    "backend/deepfocus_api/tests/test_aif_interact.py",
+    "backend/deepfocus_api/tests/test_research_prewarm_loop.py"
+  ],
+  "production_source_bytes_changed": false,
+  "new_clock_cases": 3,
+  "new_scheduler_cases": 2,
+  "real_pending_wait_notification_tested": false,
+  "preset_arrival_pulse_consumed_tested": true,
+  "successful_batch_wait_seconds_unchanged": 240,
+  "original_baseline_failures_preserved": true,
+  "runs": {
+    "baseline": {
+      "summary": "5 failed, 13 passed, 7 warnings in 1.52s",
+      "pytest_exit_code": 1,
+      "timeout": false,
+      "owned_process_group_absent": true,
+      "failed_nodes": [
+        "backend/deepfocus_api/tests/test_aif_interact.py::test_summary_shape",
+        "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_valid_canonical_is_ready_without_pdf_or_model",
+        "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_pending_writes_deep_and_compact_before_ack_then_next_cycle_is_empty",
+        "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_fallback_is_not_done_or_cached_and_next_cycle_defers[local-fallback]",
+        "backend/deepfocus_api/tests/test_research_prewarm_loop.py::test_fallback_is_not_done_or_cached_and_next_cycle_defers[text-only-fallback]"
+      ],
+      "external_connect_attempts_denied": 21,
+      "tests_with_external_connect_attempts": 12
+    },
+    "focused": {
+      "summary": "23 passed, 7 warnings in 1.38s",
+      "pytest_exit_code": 0,
+      "timeout": false,
+      "owned_process_group_absent": true,
+      "failed_nodes": [],
+      "external_connect_attempts_denied": 0,
+      "tests_with_external_connect_attempts": 0
+    },
+    "full": {
+      "summary": "3 failed, 3928 passed, 22 skipped, 9 warnings in 131.11s (0:02:11)",
+      "pytest_exit_code": 1,
+      "timeout": false,
+      "owned_process_group_absent": true,
+      "failed_nodes": [
+        "backend/deepfocus_api/tests/test_research_assets.py::test_live_disaggregated_value_already_dollars",
+        "backend/deepfocus_api/tests/test_research_assets.py::test_real_edgartools_form4_xml_import",
+        "backend/deepfocus_api/tests/test_research_factors.py::test_real_qlib_lightgbm_metrics_labels_order_and_future_isolation"
+      ],
+      "external_connect_attempts_denied": 115,
+      "tests_with_external_connect_attempts": 23
+    }
+  },
+  "dependency_failures_not_skipped_or_replaced": true,
+  "requirements_research_declares_separate_worker_environment": true,
+  "research_environment_dependencies_installed": false,
+  "socket_guard_not_OS_network_namespace": true,
+  "loopback_allowed": true,
+  "explicit_vendor_credentials_inherited": false,
+  "strategy_or_oos_thresholds_changed": false,
+  "production_deployed": false,
+  "commercial_ready": false,
+  "evidence_sha256": {
+    "baseline/full-backend-offline.log": "b417477c92f072d3645845c84799fe8533314442257e59b40c842f05cedb07d0",
+    "baseline/full-exit.json": "a77c4fad90312df325178ed67b4858716f61f4aedfcd11cb8e5e3aa34e198f11",
+    "baseline/external-connections-denied.jsonl": "cbd81f6c2fdb87afec169d368fd6cf6f06e7c0fc6e1b6470aa4eb9193a5482f2",
+    "focused/full-backend-offline.log": "29ea25155dc71e7450a3e23c8f65d3911b23d03471b9bf1cf3e6a7338daaaa60",
+    "focused/full-exit.json": "a74a0510794ee57615aa4d9afd71c165f18e444dbe930e07524966915f7e6437",
+    "full/full-backend-offline.log": "8b2e931911c87c6eb3f965f1f7cd82b912ca1de4685bc70233e5945536997bc1",
+    "full/full-exit.json": "69c105fa2e18bb857c452a1d4099f468eed474cecbd42af9570e5f5fdb24696d",
+    "full/external-connections-denied.jsonl": "d00861bced65234f70c7c453927be553bbffdb4cfe3532a3cd2ce7a3432e6f7e"
+  }
+}
