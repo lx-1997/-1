@@ -1,0 +1,118 @@
+{
+  "schema": "consolidated-profitability-feature-review-v1",
+  "base": "3d5ec0f9ee074aad36eaa970df2d01a09af3c124",
+  "tested_tree": "e73234f92d099bcb3459e4f14e813021297d564d",
+  "added_implementation_and_test_paths": [
+    "backend/deepfocus_api/quant_profitability_feature.py",
+    "scripts/quant-profitability-feature-review.py",
+    "backend/deepfocus_api/tests/test_quant_profitability_feature.py"
+  ],
+  "existing_derivation_or_store_source_changed": false,
+  "new_cases": 19,
+  "runs": {
+    "focused": {
+      "summary": "1 failed, 79 passed, 2 warnings in 2.73s",
+      "exit_code": 1,
+      "owned_group_absent": true,
+      "external_connect_attempts_denied": 0
+    },
+    "focused-final": {
+      "summary": "80 passed, 2 warnings in 2.73s",
+      "exit_code": 0,
+      "owned_group_absent": true,
+      "external_connect_attempts_denied": 0
+    }
+  },
+  "initial_negative_asset_test_rejected_at_existing_stricter_storage_boundary": true,
+  "negative_asset_guard_was_not_relaxed": true,
+  "feature_definition_registered_before_first_calculation": true,
+  "base_inputs_already_seen_not_new_validation": true,
+  "real_review": {
+    "tested_tree": "e73234f92d099bcb3459e4f14e813021297d564d",
+    "actual_wall_clock_query": "2026-10-31T20:50:31.280960+00:00",
+    "recording_boundary_before_case_retrospective_only": true,
+    "cases": [
+      {
+        "case": "original",
+        "exit_code": 0,
+        "retrospective_boundary_not_live_observation": false,
+        "display_percent": "-3.023534",
+        "independent_integer_and_decimal_equal": true,
+        "full_underlying_JSON_equal": true,
+        "status": "arithmetic_available"
+      },
+      {
+        "case": "corrected",
+        "exit_code": 0,
+        "retrospective_boundary_not_live_observation": false,
+        "display_percent": "-4.386857",
+        "independent_integer_and_decimal_equal": true,
+        "full_underlying_JSON_equal": true,
+        "status": "arithmetic_available"
+      },
+      {
+        "case": "before-correction",
+        "exit_code": 0,
+        "retrospective_boundary_not_live_observation": false,
+        "display_percent": "-3.023534",
+        "independent_integer_and_decimal_equal": true,
+        "status": "arithmetic_available"
+      },
+      {
+        "case": "before-recording",
+        "exit_code": 2,
+        "retrospective_boundary_not_live_observation": true,
+        "status": "unavailable"
+      },
+      {
+        "case": "actual-now",
+        "exit_code": 0,
+        "retrospective_boundary_not_live_observation": false,
+        "display_percent": "-4.386857",
+        "independent_integer_and_decimal_equal": true,
+        "status": "arithmetic_available"
+      },
+      {
+        "case": "old-packet",
+        "exit_code": 2,
+        "retrospective_boundary_not_live_observation": false,
+        "status": "unavailable"
+      },
+      {
+        "case": "other-owner",
+        "exit_code": 1,
+        "retrospective_boundary_not_live_observation": false
+      },
+      {
+        "case": "future-clock",
+        "exit_code": 1,
+        "retrospective_boundary_not_live_observation": false
+      }
+    ],
+    "original_main_sha256_unchanged": "197e92b4d350d70af74dc2451d6be26af32a681b99fcbd76f85de3b3ef8666f4",
+    "owned_cold_main_sha256_unchanged": "9d35668bbe24cad85656851768ab564d991a18d6c509c5cea9e6a3a44a0dc275",
+    "existing_core_derivation_JSON_preserved": true,
+    "network_socket_connect_denied": true,
+    "source_new_financial_data_or_provider_calls": 0,
+    "production_writes": 0,
+    "strategy_evaluations": 0,
+    "fresh_validation": false
+  },
+  "public_API_or_UI_added": false,
+  "full_backend_rerun_this_change": false,
+  "latest_prior_full_backend_still_has_three_dependency_failures": true,
+  "socket_guard_not_OS_network_namespace": true,
+  "loopback_permitted_in_pytest_profile": true,
+  "production_deployed": false,
+  "strategy_evaluations": 0,
+  "gates_changed": false,
+  "commercial_ready": false,
+  "evidence_sha256": {
+    "definition-registration.json": "84eff5767829d727d43cad1845e567ed56660801795547a0bd481a54ea1fe813",
+    "final-selected-tree.json": "36a1d0cff642b0be66e310868bb59138de75fb820cee155e5c72da4eef0c7cfa",
+    "real-review-receipt.json": "31441cf9d16c750ef15e019981fd77210c342ce0c564e1b0b93ac93935688a1a",
+    "focused/full-backend-offline.log": "30637cc6aaa9b9371965d4f7cad64983c08b994a73180129c4ed149d51d94264",
+    "focused-final/full-backend-offline.log": "1e62be57a7648a66aecf78e96581d055e87d12ea89f9d3b2cd19992d4f68189e",
+    "focused-final/full-exit.json": "a74a0510794ee57615aa4d9afd71c165f18e444dbe930e07524966915f7e6437"
+  }
+}
