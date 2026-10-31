@@ -1,0 +1,21 @@
+{
+  "schema": "fixed-path-direction-allocation-attribution-v1",
+  "registered_at": "2026-10-31T16:47:34.137446+00:00",
+  "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+  "scope": "two original failed experiments, original OOS fills and curve only; all history already seen",
+  "formula": {
+    "overnight_actual": "sum(previous_quantity * (open - previous_close))",
+    "intraday_actual": "sum(post_fill_quantity * (close - open))",
+    "overnight_reference": "previous_gross_close_notional * arithmetic_mean(open / previous_close - 1) across original basket",
+    "intraday_reference": "post_fill_gross_open_notional * arithmetic_mean(close / open - 1) across original basket",
+    "allocation_residual": "actual overnight+intraday minus same-exposure equal-weight references",
+    "cost": "sum(fee + signed_quantity * (fill_price - open))",
+    "nav_rounding_residual": "actual NAV change minus overnight_actual minus intraday_actual plus cost"
+  },
+  "semantics": "exact rational decomposition of a fixed realized model path, not executable equal-weight strategy or causal replay; intraday reference uses realized post-fill notional, not a predictive signal",
+  "no_parameter_search": true,
+  "no_candidate_nomination": true,
+  "thresholds_changed": false,
+  "price_only_not_total_return": true,
+  "promotion_allowed": false
+}
