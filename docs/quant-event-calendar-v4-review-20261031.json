@@ -1,0 +1,98 @@
+{
+  "scope": "v4 event calendar admission and issuer liquidation-period evidence; internal only",
+  "source_capture": [
+    {
+      "name": "300742-final",
+      "url": "https://file.finance.sina.com.cn/211.154.219.97%3A9494/MRGG/CNSESZ_STOCK/2024/2024-7/2024-07-22/10338524.PDF",
+      "request_started_at": "2026-10-31T08:49:32.914909+00:00",
+      "file": "300742-final.pdf",
+      "sha256": "424fb17f7d988e1c5ef331bd94ce2b226be9e70302ba67724a3af2992aa940e0",
+      "bytes": 149542,
+      "observed_at": "2026-10-31T08:49:33.644343+00:00"
+    },
+    {
+      "name": "300282-decision",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-06-20/1220402212.PDF",
+      "request_started_at": "2026-10-31T08:49:33.644373+00:00",
+      "file": "300282-decision.pdf",
+      "sha256": "1b25dc74f7835421746c13cba973aa1a2d1abb9bbe5630e1beab6374363f004a",
+      "bytes": 90730,
+      "observed_at": "2026-10-31T08:49:34.024644+00:00"
+    },
+    {
+      "name": "300742-decision",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-06-21/1220427943.PDF",
+      "request_started_at": "2026-10-31T08:49:34.024657+00:00",
+      "file": "300742-decision.pdf",
+      "sha256": "a7aa68530476fd89e3f437456eca3ab37f26f9704a23e4927329b797e641430f",
+      "bytes": 179172,
+      "observed_at": "2026-10-31T08:49:34.406706+00:00"
+    }
+  ],
+  "guard_report_sha256": "f418413ce913dfcf6e5856b6838e4a130934b81fc961034d5e57c5a6db269c96",
+  "guard_protocol_sha256": "b9fccba1cd9b1ef19e093b2ed2f78d89b14c912e5bb56252fd8b93b80bf86443",
+  "period_report_sha256": "dc2415898cfe0a8ff829f376f79219676fe34feb08e734fdc71f2cf6adb71bb3",
+  "prechange_base": "9625e2fcf19c3d7ca12e8475c6af4240d12a08e2",
+  "real_compatibility_cases": 8,
+  "aligned_real_days": 4280,
+  "active_restore_cases": 8,
+  "old_checkpoints_refused": 8,
+  "fault_injections_refused": [
+    {
+      "case": "equity_tail",
+      "rejected": true,
+      "reason": "series_dates_differ",
+      "input_unchanged": true
+    },
+    {
+      "case": "benchmark_tail",
+      "rejected": true,
+      "reason": "series_dates_differ",
+      "input_unchanged": true
+    },
+    {
+      "case": "equity_middle",
+      "rejected": true,
+      "reason": "series_dates_differ",
+      "input_unchanged": true
+    }
+  ],
+  "new_tests": 15,
+  "focused_guard_tests": 79,
+  "real_financial_comparison": "same current-base v3 sources; fill fingerprints checked and identifiers/FIFO refs canonicalized, version and root kernel metadata excluded, plan and other root outputs explicitly compared",
+  "negative_financial_changes_refused": 7,
+  "periods": [
+    {
+      "code": "sz.300282",
+      "sessions": 15,
+      "first_day_no_limit": true,
+      "first_day_counterfactual20_outside_fields": [
+        "open",
+        "high",
+        "low",
+        "close"
+      ],
+      "subsequent_fields": 56,
+      "subsequent_outside_fields": 0
+    },
+    {
+      "code": "sz.300742",
+      "sessions": 15,
+      "first_day_no_limit": true,
+      "first_day_counterfactual20_outside_fields": [
+        "open",
+        "high",
+        "low",
+        "close"
+      ],
+      "subsequent_fields": 56,
+      "subsequent_outside_fields": 0
+    }
+  ],
+  "prior_sample_date_failure_preserved": true,
+  "new_strategy_evaluations": 0,
+  "strategy_returns_improved_claim": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0
+}

@@ -14,10 +14,11 @@ from . import quant_dividend_book as ledger
 from . import quant_event_policy as execution
 from .quant_corporate_actions import (BJ,money,visible_events,validate_evidence,ex_reference,gross_return_index)
 from .quant_research_engine import digest,validate_dataset,metrics,CANDIDATES,ASSUMPTIONS
+from .quant_calendar import require_aligned
 from .ai_fund_ledger import fee
 from .ai_fund_policy import order_quantity
 
-VERSION='event-replay-development-v3'
+VERSION='event-replay-development-v4'
 
 
 def _prefix(dataset,cursor):
@@ -48,6 +49,9 @@ def _stop(previous,s,prior_close,prior_date):
 def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_recorded',
            start=None,end=None,state=None,capital=1000000,schedule=None,progress=None,
            policy='daily',market_curve=None):
+    # A missing/delisted series must not shorten every other security's
+    # evaluation or skip a held position's risk observation via intersection.
+    require_aligned(dataset)
     sessions=validate_dataset(dataset);validate_evidence(events,source_bytes)
     if not symbols or len(symbols)>5 or len(set(symbols))!=len(symbols) or set(symbols)-set(dataset):raise ValueError('研究标的无效')
     if set(symbols)&{'000300','000905','000852'}:raise ValueError('价格指数不能作为可交易股票')
@@ -187,4 +191,4 @@ def replay(dataset,symbols,params,events,source_bytes,*,investor,mode='as_record
 
 KERNEL=digest({n:hashlib.sha256(Path(__file__).with_name(n).read_bytes()).hexdigest() for n in (
     'quant_event_replay.py','quant_event_policy.py','quant_dividend_book.py','quant_corporate_actions.py','quant_research_engine.py',
-    'ai_fund_ledger.py','ai_fund_policy.py')})
+    'ai_fund_ledger.py','ai_fund_policy.py','quant_calendar.py')})

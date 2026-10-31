@@ -16,7 +16,7 @@ from .quant_research_analysis import diagnose
 CASES=('no_events','original_two_events','expanded_events','expanded_as_recorded')
 FILES=('quant_event_controls.py','quant_event_replay.py','quant_dividend_book.py',
        'quant_corporate_actions.py','quant_research_engine.py','quant_research_analysis.py',
-       'ai_fund_ledger.py','ai_fund_policy.py')
+       'ai_fund_ledger.py','ai_fund_policy.py','quant_calendar.py')
 
 
 def source_pins():
