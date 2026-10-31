@@ -15,6 +15,7 @@ import uuid
 
 from . import quant_research_store as jobs,quant_research_engine as engine
 from . import quant_exact_model_cost as exact,quant_execution_cost_book as legacy
+from . import quant_model_cost_integrity as integrity
 from .quant_research_analysis import replay_oos
 
 VERSION='qr-exact-model-archive-v1'
@@ -24,7 +25,7 @@ MAX_OWNER_BYTES=128*1024**2;MAX_GLOBAL_BYTES=512*1024**2;MAX_ARCHIVES=50
 
 def pins():
     names=['quant_model_cost_store.py','quant_exact_model_cost.py','quant_execution_cost_book.py',
-           'quant_research_analysis.py','quant_research_engine.py','ai_fund_ledger.py','ai_fund_policy.py','quant_research_store.py','db.py']
+           'quant_research_analysis.py','quant_research_engine.py','ai_fund_ledger.py','ai_fund_policy.py','quant_research_store.py','db.py','quant_model_cost_integrity.py']
     return {n:hashlib.sha256(Path(__file__).with_name(n).read_bytes()).hexdigest() for n in names}
 
 
@@ -32,7 +33,8 @@ LOADED_PINS=pins()
 
 
 def require_source():
-    if pins()!=LOADED_PINS or exact.LOADED_SHA!=LOADED_PINS['quant_exact_model_cost.py']:raise ValueError('Loaded model archive source changed')
+    if (pins()!=LOADED_PINS or exact.LOADED_SHA!=LOADED_PINS['quant_exact_model_cost.py']
+            or integrity.LOADED_SHA!=LOADED_PINS['quant_model_cost_integrity.py']):raise ValueError('Loaded model archive source changed')
 
 
 def owner_id(owner):
@@ -117,22 +119,9 @@ def connect_ro():
 
 
 def verify_row(c,row):
-    require_source();raw=row['payload']
-    if len(raw.encode())>MAX_REPORT:raise ValueError('Model archive payload exceeds quota')
-    value=json.loads(raw)
-    if (engine.digest(value)!=row['fingerprint'] or value.get('version')!=VERSION or value.get('source_pins')!=LOADED_PINS
-            or value.get('recorded_at')!=row['created'] or value.get('input_sha256')!=row['input_sha']
-            or value.get('request_hash')!=row['input_hash']):raise ValueError('Archive identity/source/fingerprint changed')
-    source=c.execute('SELECT body FROM qr_model_cost_input WHERE owner=? AND sha=?',(row['owner'],row['input_sha'])).fetchone()
-    if source is None or hashlib.sha256(source['body']).hexdigest()!=row['input_sha']:raise ValueError('Owner-bound original model snapshot missing/corrupt')
-    experiments=parse(source['body'])
-    if value['request_hash']!=engine.digest({'label':value['label'],'input_sha':row['input_sha'],'source_pins':LOADED_PINS}):raise ValueError('Archive request differs')
-    report=value['report']
-    if report.get('source_pins')!=LOADED_PINS or report.get('version')!=VERSION or report.get('promotion_allowed')is not False or report.get('commercial_ready')is not False:raise ValueError('Archive report scope changed')
-    if len(report['results'])!=len(experiments):raise ValueError('Archive experiment inventory differs')
-    for e,result in zip(experiments,report['results']):
-        if result['experiment']!=e['id'] or result['original_result_digest']!=e['result_digest'] or engine.digest(e['result'])!=e['result_digest'] or engine.digest(e['dataset'])!=e['result']['dataset_digest']:raise ValueError('Archive original experiment linkage changed')
-    return value,source['body']
+    require_source();value,body=integrity.verify_row(c,row)
+    if value['source_pins']!=LOADED_PINS:raise ValueError('Historical source requires metadata/storage review, not current replay')
+    return value,body
 
 
 def summary(row,value):

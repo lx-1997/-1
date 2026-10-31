@@ -15,9 +15,11 @@ import time
 from datetime import datetime,timezone
 from .quant_research_engine import digest
 
-VERSION='qr-quarantined-recovery-v4'
+VERSION='qr-quarantined-recovery-v5'
 TABLES={'qr_experiment','qr_paper','qr_worker_slot','qr_evidence_source','qr_evidence_bundle','qr_calendar_source','qr_calendar_bundle','qr_financial_source','qr_financial_bundle','qr_share_source','qr_share_bundle','qr_share_review','qr_model_cost_input','qr_model_cost_archive'}
 MESSAGE='恢复副本中的未完成任务已隔离，禁止自动重跑'
+MODEL_COST_SCOPE={'schema':'qr-exact-model-archive-v1','verification':'stored_bytes_owner_inputs_and_recorded_graph',
+                  'stored_source_current_required':False,'mathematical_replay_performed':False}
 
 
 def load_json(value):
@@ -31,6 +33,7 @@ def pins():
            root.with_name('quant_financial_vintages.py'),root.with_name('quant_corporate_actions.py'),
            root.with_name('quant_share_store.py'),root.with_name('quant_share_entitlements.py'),
            root.with_name('quant_model_cost_store.py'),root.with_name('quant_exact_model_cost.py'),
+           root.with_name('quant_model_cost_integrity.py'),
            root.parents[2]/'scripts/quant-recovery.py']
     return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
@@ -99,6 +102,7 @@ def validate_row(c,table,row,tables):
     elif table in {'qr_calendar_source','qr_evidence_source','qr_financial_source','qr_share_source','qr_model_cost_input'}:
         if not isinstance(row['body'],bytes) or hashlib.sha256(row['body']).hexdigest()!=row['sha']:
             raise ValueError('Retained evidence blob mismatch')
+        if table=='qr_model_cost_input' and len(row['body'])>16*1024**2:raise ValueError('Model snapshot exceeds v1 storage budget')
     elif table=='qr_financial_bundle':
         if 'qr_financial_source' not in tables:raise ValueError('Financial source table missing')
         from .quant_financial_store import verify_row
@@ -113,7 +117,7 @@ def validate_row(c,table,row,tables):
         verify_review_row(c,row)
     elif table=='qr_model_cost_archive':
         if 'qr_model_cost_input' not in tables:raise ValueError('Model cost original snapshot table missing')
-        from .quant_model_cost_store import verify_row
+        from .quant_model_cost_integrity import verify_row
         verify_row(c,row)
     elif table in {'qr_calendar_bundle','qr_evidence_bundle'}:
         value=load_json(row['payload'] if table=='qr_calendar_bundle' else row['manifest'])
@@ -172,6 +176,8 @@ def verify(workspace):
     try:
         if [r[0] for r in c.execute('PRAGMA integrity_check')]!=['ok']:raise ValueError('Recovery integrity check failed')
         current=inventory(c)
+        model_scope=dict(MODEL_COST_SCOPE) if 'qr_model_cost_archive' in current['tables'] else None
+        if receipt.get('model_cost_validation_scope')!=model_scope:raise ValueError('Recovery validation scope changed')
         if current['schema_digest']!=receipt['baseline']['schema_digest']:raise ValueError('Recovery schema changed')
         for name,old in receipt['baseline']['tables'].items():
             got=current['tables'][name]
@@ -183,7 +189,7 @@ def verify(workspace):
     if before!=file_hash(db):raise ValueError('Recovery database changed during verification')
     return {'verified':True,'database_sha256':before,'receipt_sha256':hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
             'tables':{n:{'rows':r['rows'],'digest':r['digest']} for n,r in current['tables'].items()},
-            'quarantined':True,'activation_authorized':False,'source_pins':pins()}
+            'quarantined':True,'activation_authorized':False,'source_pins':pins(),'model_cost_validation_scope':model_scope}
 
 
 def prepare(source,workspace,*,max_bytes=1024*1024*1024,timeout=60):
@@ -219,7 +225,8 @@ def prepare(source,workspace,*,max_bytes=1024*1024*1024,timeout=60):
         receipt={'version':VERSION,'created_at':stamp,'source_open_mode':'ro','source_sql_mutations':False,
                  'source_snapshot_not_claimed_current_after_backup':True,'baseline':baseline,
                  'database_sha256':file_hash(target),'source_pins':frozen,
-                 'state':'quarantined_snapshot','activation_authorized':False}
+                 'state':'quarantined_snapshot','activation_authorized':False,
+                 'model_cost_validation_scope':dict(MODEL_COST_SCOPE) if 'qr_model_cost_archive' in baseline['tables'] else None}
         with (workspace/'receipt.json').open('x') as f:json.dump(receipt,f,ensure_ascii=False,indent=2)
         # Its first independent SQLite reader is a NEW read-only process.
         command=[sys.executable,str(Path(__file__).resolve().parents[2]/'scripts/quant-recovery.py'),'verify','--workspace',str(workspace)]
@@ -233,7 +240,7 @@ def prepare(source,workspace,*,max_bytes=1024*1024*1024,timeout=60):
                'quarantined_for_review_only':True,'activation_authorized':False}
         with (workspace/'READY.json').open('x') as f:json.dump(ready,f,indent=2)
         return {'verified':True,'quarantine_changes':baseline['quarantine_changes'],'database_sha256':proof['database_sha256'],
-                'activation_authorized':False}
+                'activation_authorized':False,'model_cost_validation_scope':proof['model_cost_validation_scope']}
     except BaseException as exc:
         with (workspace/'FAILED.json').open('x') as f:json.dump({'version':VERSION,'error_type':type(exc).__name__,'activation_authorized':False},f)
         raise

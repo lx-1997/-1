@@ -1,7 +1,5 @@
 """Owner-only bounded projections; no math replay, schema write or raw quotes."""
 from contextlib import contextmanager
-from datetime import datetime
-import json
 from . import quant_model_cost_store as store
 from .quant_share_read import _cursor
 
@@ -20,21 +18,10 @@ def opened():
 
 
 def value(c,row):
-    if len(row['payload'].encode())>store.MAX_REPORT:raise ValueError('Archive exceeds view budget')
-    result=json.loads(row['payload'])
-    if (store.engine.digest(result)!=row['fingerprint'] or result.get('version')!=store.VERSION
-            or result.get('recorded_at')!=row['created'] or result.get('input_sha256')!=row['input_sha']
-            or result.get('request_hash')!=row['input_hash']):raise ValueError('Archive metadata changed')
-    datetime.fromisoformat(row['created'])
+    result,body=store.integrity.verify_row(c,row)
     pins=result['source_pins']
-    if row['input_hash']!=store.engine.digest({'label':result['label'],'input_sha':row['input_sha'],'source_pins':pins}):raise ValueError('Archive source-bound request changed')
-    size=c.execute('SELECT length(body) FROM qr_model_cost_input WHERE owner=? AND sha=?',(row['owner'],row['input_sha'])).fetchone()
-    if size is None or not 0<size[0]<=store.MAX_INPUT:raise ValueError('Owner-bound snapshot missing/oversized')
-    source=c.execute('SELECT body FROM qr_model_cost_input WHERE owner=? AND sha=?',(row['owner'],row['input_sha'])).fetchone()
-    if source is None or store.hashlib.sha256(source['body']).hexdigest()!=row['input_sha']:raise ValueError('Owner-bound snapshot missing/corrupt')
     current=pins==store.LOADED_PINS and store.pins()==store.LOADED_PINS
     if current:result,body=store.verify_row(c,row)
-    else:body=source['body']
     return result,current,body
 
 

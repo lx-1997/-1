@@ -1,0 +1,86 @@
+{
+  "storage_validator": "model-cost-storage-integrity-v1",
+  "recovery_version": "qr-quarantined-recovery-v5",
+  "source_pins": {
+    "quant_recovery.py": "dabdc68b1ce2f69d087e6268bc4e90cbc6f0cf3fb3221c2513614ccf7796c174",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_financial_store.py": "da99b1317c8aa7c81fabbe3ebfa3da4318a2857082be1e353575251c391471cd",
+    "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_share_store.py": "6a57938968c150e61b0e59b91bea5196cfb1fddf3f888eeaa132dc0b076bc5f9",
+    "quant_share_entitlements.py": "cb4a96b92fb64e92785160b0c4d38fc66ff03d449d74425178b333eb8ed3699c",
+    "quant_model_cost_store.py": "69c7aa9ea59b78d8548de5dfd196a40354c0fc4a8949a3d883fa68a65324d510",
+    "quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+    "quant_model_cost_integrity.py": "b849e62ce7f88c6e6809ccb5606724d0c26448bb731c72bb1c794b46657832cf",
+    "quant-recovery.py": "3621bc95934fd0fa0fe085fb64e095442d6f15164c423af221a64febd92560c9"
+  },
+  "current_archive_source_pins": {
+    "quant_model_cost_store.py": "69c7aa9ea59b78d8548de5dfd196a40354c0fc4a8949a3d883fa68a65324d510",
+    "quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+    "quant_execution_cost_book.py": "438911ee0ddbf6486e5e6ee2816f1b83780b40d1348d3a09807e67fcc61da6df",
+    "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+    "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+    "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+    "db.py": "58cd893736d0b06745bff7ce6981006a08493c86fd5b70b2f6d40d5a999566c9",
+    "quant_model_cost_integrity.py": "b849e62ce7f88c6e6809ccb5606724d0c26448bb731c72bb1c794b46657832cf"
+  },
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a"
+  },
+  "prior_math_dependencies_unchanged": {
+    "quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+    "quant_execution_cost_book.py": "438911ee0ddbf6486e5e6ee2816f1b83780b40d1348d3a09807e67fcc61da6df",
+    "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+    "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+    "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+    "db.py": "58cd893736d0b06745bff7ce6981006a08493c86fd5b70b2f6d40d5a999566c9"
+  },
+  "before_v4": {
+    "expected_v4_upgrade_failure": true,
+    "message": "Historical source requires metadata/storage review, not current replay",
+    "source_database_main_unchanged": true,
+    "source_sha256": "5bc2e6b942e6359167ae4edf568e5d976193148a4fd3f409c6d8411b7ac3053e",
+    "verifier_version": "qr-quarantined-recovery-v4",
+    "store_source_sha256": "69c7aa9ea59b78d8548de5dfd196a40354c0fc4a8949a3d883fa68a65324d510"
+  },
+  "final_acceptance": {
+    "recovery_version": "qr-quarantined-recovery-v5",
+    "old_archives_preserved": 2,
+    "mixed_archives_preserved": 3,
+    "explicit_revalidation_only": true,
+    "fresh_book_and_old_gate_and_legacy_values_equal": true,
+    "historical_current_replay_refused": true,
+    "historical_read_metadata_only": true,
+    "scope": {
+      "schema": "qr-exact-model-archive-v1",
+      "verification": "stored_bytes_owner_inputs_and_recorded_graph",
+      "stored_source_current_required": false,
+      "mathematical_replay_performed": false
+    },
+    "source_main_databases_unchanged": true,
+    "activation_authorized": false,
+    "original_database_sha256": "5bc2e6b942e6359167ae4edf568e5d976193148a4fd3f409c6d8411b7ac3053e",
+    "working_database_sha256": "356bfd1516ff50581f13dadd5c695696f726fa5df430336c13d1e52c7d088f87"
+  },
+  "new_tests": 14,
+  "focused_passed": 68,
+  "mathematical_replay_performed_by_recovery": false,
+  "strategy_gates_changed": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_deployed": false,
+  "artifact_directory": "artifacts/quant-model-cost-upgrade-20261031",
+  "evidence_sha256": {
+    "before-v4.json": "37648deb654e8ead724124bd430b0cca7c74b0f00946294640e5babe83cf207f",
+    "plan.json": "91c9f09e60b6a21256047aee2ffe80aea3f91a06ee84075ffdc008c729b06d3e",
+    "final-plan.json": "e8bf57f52e6c63ab5543e4fe9c72212ede9004363fff61d77494bb9f5a34de87",
+    "acceptance.json": "0c12ea4ea05b7770b64d6b849cddd213c5ea1824cfd7891a442593cf7664f127",
+    "final-acceptance.json": "756eecf68368ee7a212ca01d4a10bd3137253a8fe94a30914115b10878864bb0"
+  }
+}
