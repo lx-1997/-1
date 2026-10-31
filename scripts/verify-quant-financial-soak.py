@@ -52,6 +52,23 @@ def url(g):
  return '/api/quant-research/financial-extractions/'+g['id']+'/derive?'+urlencode(args)
 
 
+def validate_http_matrix(golden,observations,metrics,rounds):
+ """Bind every completed HTTP request to its registered owner, route and role."""
+ expected=Counter()
+ def add(category,who,route,status,count):expected[(category,who,route,status)]+=count
+ listing='/api/quant-research/financial-extractions'
+ for lane,g in enumerate(golden[:4]):
+  cancelled=sum((i*4+lane+1)%5==0 for i in range(rounds))
+  add('lane',g['who'],url(g),200,rounds-cancelled)
+ for g in golden[4:]:add('extra',g['who'],url(g),200,rounds)
+ for who,status in [('a',429),('observer',200),('observer',429),('b',429)]:add('probe',who,listing,status,rounds)
+ cycles=metrics['observer_cycles']
+ check(type(cycles) is int and cycles>=0,'Invalid observer cycles')
+ for route,status in [(listing,200),(listing+'/'+golden[0]['id'],404),(url(golden[0]),404)]:add('observer','observer',route,status,cycles)
+ actual=Counter((e['category'],e['who'],e['route'],e['status']) for e in observations if e['kind']=='http')
+ check(actual==expected,'Registered HTTP request matrix differs')
+
+
 def validate_golden(g,packets,parents):
  r=g['result'];request=g['request'];row=packets[g['id']];p=row['parsed'];parent=parents[row['parent_id']]['parsed'];clock=datetime.fromisoformat(request['as_of']);end=date.fromisoformat(request['period_end'])
  check(r['request']==request and r['receipt']['id']==g['id'] and digest(r)==g['digest'],'Golden request or output identity')
@@ -136,6 +153,7 @@ def review(w,anchor):
  for i,e in enumerate(cancels):check(e['round']==i and e['reads_held_after']==4 and e['lanes']==[j for j in range(4) if (i*4+j+1)%5==0],'Cancellation freed slots or differs')
  quota=[e for e in observations if e['kind']=='quota-refusal'];check(Counter((e['round'],e['phase']) for e in quota)==Counter((i,p) for i in range(n) for p in ['owner','global','after_client_cancel']),'Quota probes incomplete')
  for e in quota:check((e['global']==2 and e['same_owner']==2) if e['phase']=='owner' else e['global']==4,'Wrong quota occupancy')
+ validate_http_matrix(golden,observations,m,n)
  http=[e for e in observations if e['kind']=='http'];empty=digest({'items':[],'next_cursor':None});notfound=digest({'detail':'档案不存在'});busy=digest({'detail':'档案读取繁忙，请稍后重试'})
  expected={(g['who'],url(g)):g['digest'] for g in golden}
  for e in http:

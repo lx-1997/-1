@@ -53,3 +53,36 @@ def test_nonfinite_or_duplicate_json_refused(raw):
 def test_external_anchor_required_before_reviewing_archive(tmp_path):
     (tmp_path/'plan.json').write_text('{}')
     with pytest.raises(ValueError,match='anchor'):v.review(tmp_path,'0'*64)
+
+
+def http_fixture():
+    base=fixture()[0];golden=[]
+    for i in range(6):
+        g=copy.deepcopy(base);g.update(id='packet-'+str(i),who='a' if i in (0,1,4) else 'b');golden.append(g)
+    events=[];listing='/api/quant-research/financial-extractions'
+    def add(category,who,route,status,count):
+        events.extend(dict(kind='http',category=category,who=who,route=route,status=status) for _ in range(count))
+    # Two rounds: only the fifth client wait (lane zero, round two) cancels.
+    for i,g in enumerate(golden):add('lane' if i<4 else 'extra',g['who'],v.url(g),200,1 if i==0 else 2)
+    for who,status in [('a',429),('observer',200),('observer',429),('b',429)]:add('probe',who,listing,status,2)
+    for route,status in [(listing,200),(listing+'/packet-0',404),(v.url(golden[0]),404)]:add('observer','observer',route,status,3)
+    return golden,events,{'observer_cycles':3},2
+
+
+def test_registered_request_matrix_accepts_all_roles_and_cancellation_counts():
+    v.validate_http_matrix(*http_fixture())
+
+
+@pytest.mark.parametrize('damage',['route','owner','category','status','missing','duplicate','cycles','cancelled_response'])
+def test_request_matrix_refuses_missing_or_substituted_coverage(damage):
+    golden,events,m,n=http_fixture()
+    target=next(e for e in events if e['category']=='observer' and e['status']==404)
+    if damage=='route':target.update(route='/api/quant-research/financial-extractions',status=200)
+    elif damage=='owner':target['who']='a'
+    elif damage=='category':target['category']='probe'
+    elif damage=='status':target['status']=200
+    elif damage=='missing':events.remove(target)
+    elif damage=='duplicate':events.append(dict(target))
+    elif damage=='cycles':m['observer_cycles']=4
+    else:events.append(dict(events[0]))
+    with pytest.raises(ValueError,match='matrix'):v.validate_http_matrix(golden,events,m,n)
