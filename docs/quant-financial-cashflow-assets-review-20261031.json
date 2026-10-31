@@ -1,0 +1,519 @@
+{
+  "schema": "reviewed-cashflow-stock-diagnostic-v1",
+  "scope": "002109 out-of-pool reviewed sample only",
+  "extracted_at": "2026-10-31T14:05:58.477260+00:00",
+  "new_extraction_is_not_old_system_observation": true,
+  "source_manifest_sha256": "82a17fb882260f2d55cab3b4e8699f67250e90f5d526173e2a624c1b813e650e",
+  "sources": [
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/1223244435.pdf",
+      "sha256": "7bd97abb8fe708dc4a8bd2026b43336a67ea697e7784cc4f5ca6ada783da2ea8",
+      "physical_pages": [
+        170,
+        171
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/1225265729.pdf",
+      "sha256": "e0e8dbc34f28d4979da342ffaeb211e5a555f4b006a3bc5e139c3308b9ff1768",
+      "physical_pages": [
+        175
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/capture-v2/1225265732.pdf",
+      "sha256": "4cdd9a9ec5932fd050859a8778c00c1fec8e21f22f441d17c456309cb0993cbc",
+      "physical_pages": [
+        15,
+        16
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/original.pdf",
+      "sha256": "acfc7249aaa133365d2f27bc9cc0d405df0726953fa0e2760a1972f8a1487224",
+      "physical_pages": [
+        2
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/corrected.pdf",
+      "sha256": "09b8834d1025bdb0686e725f0f7c15472ea880a00e3865a77742f560d3ec5d39",
+      "physical_pages": [
+        1
+      ]
+    },
+    {
+      "path": "artifacts/quant-financial-flow-filings-20261031/reviewed-evidence/1219827045.pdf",
+      "sha256": "a1db754e6e273c9b9e8df3018178915bc12c739e0f2a1e9105cfb6b762ecd9a1",
+      "physical_pages": [
+        2
+      ]
+    }
+  ],
+  "visually_reviewed_pages": 8,
+  "annual_cashflow_bridges": [
+    {
+      "view": "original",
+      "document_id": "1223244435",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "basis": "year_to_date",
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "column": "current_period",
+      "rows": [
+        {
+          "metric": "group_net_profit",
+          "value": "-368773355.37",
+          "cell_state": "reported_numeric",
+          "physical_page": 170
+        },
+        {
+          "metric": "asset_impairment",
+          "value": "161629029.59",
+          "cell_state": "reported_numeric",
+          "physical_page": 170
+        },
+        {
+          "metric": "fixed_asset_depreciation",
+          "value": "528002051.85",
+          "cell_state": "reported_numeric",
+          "physical_page": 170
+        },
+        {
+          "metric": "right_of_use_depreciation",
+          "value": "604689.00",
+          "cell_state": "reported_numeric",
+          "physical_page": 170
+        },
+        {
+          "metric": "intangible_amortization",
+          "value": "19972156.99",
+          "cell_state": "reported_numeric",
+          "physical_page": 170
+        },
+        {
+          "metric": "deferred_expense_amortization",
+          "value": "48142654.71",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "long_asset_disposal_loss",
+          "value": null,
+          "cell_state": "blank",
+          "physical_page": 171
+        },
+        {
+          "metric": "scrapping_loss",
+          "value": "-30857.92",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "fair_value_loss",
+          "value": "4712687.47",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "finance_expense",
+          "value": "148823088.54",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "investment_loss",
+          "value": "-45408.65",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "deferred_tax_asset_decrease",
+          "value": "-14671352.86",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "deferred_tax_liability_increase",
+          "value": "31597.84",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "inventory_decrease",
+          "value": "82823648.23",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "operating_receivable_decrease",
+          "value": "271095098.35",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "operating_payable_increase",
+          "value": "-30009975.88",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        },
+        {
+          "metric": "other",
+          "value": "-284563005.53",
+          "cell_state": "reported_numeric",
+          "physical_page": 171
+        }
+      ],
+      "reported_CFO": "567742746.36",
+      "disclosed_numeric_subtotal": "567742746.36",
+      "residual_reported_CFO_minus_disclosed_subtotal": "0.00",
+      "blank_cells_imputed": false,
+      "all_cells_known": false,
+      "diagnostic_groups": {
+        "group_net_profit": "-368773355.37",
+        "asset_impairment": "161629029.59",
+        "depreciation_amortization": "596721552.55",
+        "three_working_capital_lines": "323908770.70",
+        "remaining_disclosed_numeric_adjustments": "-145743251.11"
+      }
+    },
+    {
+      "view": "corrected",
+      "document_id": "1225265729",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "basis": "year_to_date",
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "column": "current_period",
+      "rows": [
+        {
+          "metric": "group_net_profit",
+          "value": "-477805180.07",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "asset_impairment",
+          "value": "161629029.59",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "fixed_asset_depreciation",
+          "value": "528002051.85",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "right_of_use_depreciation",
+          "value": "604689.00",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "intangible_amortization",
+          "value": "19972156.99",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "deferred_expense_amortization",
+          "value": "48142654.71",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "long_asset_disposal_loss",
+          "value": null,
+          "cell_state": "blank",
+          "physical_page": 175
+        },
+        {
+          "metric": "scrapping_loss",
+          "value": "-30857.92",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "fair_value_loss",
+          "value": "4712687.47",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "finance_expense",
+          "value": "148823088.54",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "investment_loss",
+          "value": "-45408.65",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "deferred_tax_asset_decrease",
+          "value": "-14671352.86",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "deferred_tax_liability_increase",
+          "value": "31597.84",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "inventory_decrease",
+          "value": "105455122.95",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "operating_receivable_decrease",
+          "value": "300622417.67",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "operating_payable_increase",
+          "value": "27002994.28",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        },
+        {
+          "metric": "other",
+          "value": "-284702945.03",
+          "cell_state": "reported_numeric",
+          "physical_page": 175
+        }
+      ],
+      "reported_CFO": "567742746.36",
+      "disclosed_numeric_subtotal": "567742746.36",
+      "residual_reported_CFO_minus_disclosed_subtotal": "0.00",
+      "blank_cells_imputed": false,
+      "all_cells_known": false,
+      "diagnostic_groups": {
+        "group_net_profit": "-477805180.07",
+        "asset_impairment": "161629029.59",
+        "depreciation_amortization": "596721552.55",
+        "three_working_capital_lines": "433080534.90",
+        "remaining_disclosed_numeric_adjustments": "-145883190.61"
+      }
+    }
+  ],
+  "revision_changes_by_line": {
+    "group_net_profit": "-109031824.70",
+    "asset_impairment": "0.00",
+    "fixed_asset_depreciation": "0.00",
+    "right_of_use_depreciation": "0.00",
+    "intangible_amortization": "0.00",
+    "deferred_expense_amortization": "0.00",
+    "long_asset_disposal_loss": null,
+    "scrapping_loss": "0.00",
+    "fair_value_loss": "0.00",
+    "finance_expense": "0.00",
+    "investment_loss": "0.00",
+    "deferred_tax_asset_decrease": "0.00",
+    "deferred_tax_liability_increase": "0.00",
+    "inventory_decrease": "22631474.72",
+    "operating_receivable_decrease": "29527319.32",
+    "operating_payable_increase": "57012970.16",
+    "other": "-139939.50"
+  },
+  "same_revision_standalone_packet_crosscheck": {
+    "document_id": "1225265732",
+    "pages": [
+      15,
+      16
+    ],
+    "group_net_profit": "-477805180.07",
+    "inventory_decrease": "105455122.95",
+    "operating_receivable_decrease": "300622417.67",
+    "operating_payable_increase": "27002994.28",
+    "other": "-284702945.03",
+    "reported_CFO": "567742746.36"
+  },
+  "asset_stock_facts": [
+    {
+      "fact_id": "annual_beginning_adjusted",
+      "document_id": "1219827045",
+      "physical_page": 2,
+      "as_of_date": "2023-12-31",
+      "basis": "point_in_time_stock",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "column": "previous_year_end_adjusted",
+      "total_assets": "12396122009.41"
+    },
+    {
+      "fact_id": "TTM_beginning",
+      "document_id": "1219827045",
+      "physical_page": 2,
+      "as_of_date": "2024-03-31",
+      "basis": "point_in_time_stock",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "column": "current_period_end",
+      "total_assets": "11791754217.34"
+    },
+    {
+      "fact_id": "annual_end_original",
+      "document_id": "1223244434",
+      "physical_page": 2,
+      "as_of_date": "2024-12-31",
+      "basis": "point_in_time_stock",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "column": "previous_year_end",
+      "total_assets": "11275860493.61"
+    },
+    {
+      "fact_id": "annual_end_corrected",
+      "document_id": "1225265727",
+      "physical_page": 1,
+      "as_of_date": "2024-12-31",
+      "basis": "point_in_time_stock",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "column": "previous_year_end",
+      "total_assets": "11253229018.89"
+    },
+    {
+      "fact_id": "TTM_end_original",
+      "document_id": "1223244434",
+      "physical_page": 2,
+      "as_of_date": "2025-03-31",
+      "basis": "point_in_time_stock",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "column": "current_period_end",
+      "total_assets": "11199808261.31"
+    },
+    {
+      "fact_id": "TTM_end_corrected",
+      "document_id": "1225265727",
+      "physical_page": 1,
+      "as_of_date": "2025-03-31",
+      "basis": "point_in_time_stock",
+      "scope": "consolidated",
+      "currency": "CNY",
+      "column": "current_period_end",
+      "total_assets": "11080688778.91"
+    }
+  ],
+  "endpoint_average_asset_diagnostics": [
+    {
+      "view": "original_annual",
+      "flow_window": "2024-01-01/2024-12-31",
+      "beginning_fact": "annual_beginning_adjusted",
+      "ending_fact": "annual_end_original",
+      "endpoint_average_assets_exact_yuan": "11835991251.510",
+      "fraction_yuan": {
+        "numerator": 1183599125151,
+        "denominator": 100
+      },
+      "half_cent_present": false,
+      "ratio_or_factor_computed": false
+    },
+    {
+      "view": "corrected_annual",
+      "flow_window": "2024-01-01/2024-12-31",
+      "beginning_fact": "annual_beginning_adjusted",
+      "ending_fact": "annual_end_corrected",
+      "endpoint_average_assets_exact_yuan": "11824675514.150",
+      "fraction_yuan": {
+        "numerator": 236493510283,
+        "denominator": 20
+      },
+      "half_cent_present": false,
+      "ratio_or_factor_computed": false
+    },
+    {
+      "view": "original_TTM",
+      "flow_window": "2024-04-01/2025-03-31",
+      "beginning_fact": "TTM_beginning",
+      "ending_fact": "TTM_end_original",
+      "endpoint_average_assets_exact_yuan": "11495781239.325",
+      "fraction_yuan": {
+        "numerator": 459831249573,
+        "denominator": 40
+      },
+      "half_cent_present": true,
+      "ratio_or_factor_computed": false
+    },
+    {
+      "view": "corrected_TTM",
+      "flow_window": "2024-04-01/2025-03-31",
+      "beginning_fact": "TTM_beginning",
+      "ending_fact": "TTM_end_corrected",
+      "endpoint_average_assets_exact_yuan": "11436221498.125",
+      "fraction_yuan": {
+        "numerator": 91489771985,
+        "denominator": 8
+      },
+      "half_cent_present": true,
+      "ratio_or_factor_computed": false
+    }
+  ],
+  "retained_quarter_supplement_search": [
+    {
+      "document_id": "1223244434",
+      "retained_file": "original.pdf",
+      "search_terms_found": [],
+      "supplementary_bridge_extracted": false
+    },
+    {
+      "document_id": "1225265727",
+      "retained_file": "corrected.pdf",
+      "search_terms_found": [],
+      "supplementary_bridge_extracted": false
+    },
+    {
+      "document_id": "1219827045",
+      "retained_file": "1219827045.pdf",
+      "search_terms_found": [],
+      "supplementary_bridge_extracted": false
+    }
+  ],
+  "TTM_cashflow_bridge_available": false,
+  "TTM_bridge_missing_periods": [
+    "2024Q1",
+    "2025Q1 original",
+    "2025Q1 corrected"
+  ],
+  "quarter_notes_absent_globally_proven": false,
+  "asset_flow_TTM_formula_used": false,
+  "full_accounting_comparability_verified": false,
+  "product_ingestion_supported": false,
+  "usable_for_strategy": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_writes": 0,
+  "strategy_evaluations": 0,
+  "independent_verification": {
+    "report_sha256": "e2f6be5a634585cc0879fe4c7ee513c260477494f814399fdbd20e6f64b536cd",
+    "independent_method": "integer cents and exact integer milliyuan; no Fraction/project imports",
+    "cashflow_panels_checked": 2,
+    "stock_facts_checked": 6,
+    "endpoint_means_checked": 4,
+    "negative_controls_rejected": [
+      "cashflow_value",
+      "blank_to_zero",
+      "revision_line",
+      "wrong_group",
+      "stock_as_flow",
+      "wrong_endpoint",
+      "half_cent_rounded",
+      "TTM_claim",
+      "strategy_claim",
+      "source_identity"
+    ],
+    "pdf_semantics_checked_by_manual_visual_review_not_code": true,
+    "source_bytes_unchanged": true,
+    "production_writes": 0
+  }
+}
