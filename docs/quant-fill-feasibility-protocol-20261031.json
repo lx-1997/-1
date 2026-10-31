@@ -1,0 +1,40 @@
+{
+  "schema": "fill-feasibility-audit-v1",
+  "registered_at": "2026-10-31T05:14:37.005955+00:00",
+  "bindings": {
+    "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "source_pins": {
+      "backend/deepfocus_api/quant_fill_feasibility.py": "c7b303d72f0c1af07f23873c43b0d0c8227e36b5d5e783eb6c9820ef921135e2",
+      "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+      "backend/deepfocus_api/quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+      "backend/deepfocus_api/ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+      "backend/deepfocus_api/ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+      "scripts/quant-fill-feasibility-review.py": "190c75e56c29e88c6f6b24394a2eea135492188db07fc87f2c3fc1c50b999c68"
+    },
+    "rules": {
+      "scope": "all_original_oos_fills_seen_development_only",
+      "path": "exact_original_frozen_parameters_no_refit_no_counterfactual_fills",
+      "prior_volume_cap": "floor_previous_session_shares_times_original_participation",
+      "daily_aggregation": "all_sides_sum_by_symbol_and_date",
+      "range": "inclusive_daily_low_high_zero_tolerance",
+      "today_range_volume": "ex_post_diagnostic_only_never_order_inputs",
+      "outside_range": "modeled_fill_not_supported_as_observed_print_not_alpha_loss_estimate",
+      "capacity": "daily_volume_upper_bound_not_open_auction_or_order_book_capacity",
+      "selection": "none_all_results_retained_original_gates_unchanged"
+    },
+    "experiments": [
+      {
+        "id": "31aedd8f544144ad9b7a7d2088e181b0",
+        "result_digest": "9ee4efbf59a5766128a552bdc27c598147bfd3903aa63ec9a497da0d7b8ad18e",
+        "dataset_digest": "afb4e49b0c6b6ab7ec8111048db7758bf05221e1eccfebbef3b67acef30c8778"
+      },
+      {
+        "id": "0839ee7717d143c7b991bddbfb55f891",
+        "result_digest": "aafd4d724bdfb673222374e6a9502fa26b72145ae275f6bd1ab672ce797c4ebd",
+        "dataset_digest": "1e47ecc4830653f9685be80288b07398e0d6d8d57cf3c213cbc5a9055a28e896"
+      }
+    ]
+  },
+  "promotion_allowed": false,
+  "strategy_searches": 0
+}
