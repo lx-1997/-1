@@ -15,8 +15,8 @@ import time
 from datetime import datetime,timezone
 from .quant_research_engine import digest
 
-VERSION='qr-quarantined-recovery-v5'
-TABLES={'qr_experiment','qr_paper','qr_worker_slot','qr_evidence_source','qr_evidence_bundle','qr_calendar_source','qr_calendar_bundle','qr_financial_source','qr_financial_bundle','qr_share_source','qr_share_bundle','qr_share_review','qr_model_cost_input','qr_model_cost_archive'}
+VERSION='qr-quarantined-recovery-v6'
+TABLES={'qr_experiment','qr_paper','qr_worker_slot','qr_evidence_source','qr_evidence_bundle','qr_calendar_source','qr_calendar_bundle','qr_financial_source','qr_financial_bundle','qr_financial_fact_packet','qr_share_source','qr_share_bundle','qr_share_review','qr_model_cost_input','qr_model_cost_archive'}
 MESSAGE='恢复副本中的未完成任务已隔离，禁止自动重跑'
 MODEL_COST_SCOPE={'schema':'qr-exact-model-archive-v1','verification':'stored_bytes_owner_inputs_and_recorded_graph',
                   'stored_source_current_required':False,'mathematical_replay_performed':False}
@@ -30,7 +30,7 @@ def load_json(value):
 def pins():
     root=Path(__file__).resolve()
     paths=[root,root.with_name('quant_research_engine.py'),root.with_name('quant_financial_store.py'),
-           root.with_name('quant_financial_vintages.py'),root.with_name('quant_corporate_actions.py'),
+           root.with_name('quant_financial_vintages.py'),root.with_name('quant_financial_fact_store.py'),root.with_name('quant_corporate_actions.py'),
            root.with_name('quant_share_store.py'),root.with_name('quant_share_entitlements.py'),
            root.with_name('quant_model_cost_store.py'),root.with_name('quant_exact_model_cost.py'),
            root.with_name('quant_model_cost_integrity.py'),
@@ -61,7 +61,7 @@ def schema(c):
     for name in tables:
         info=c.execute('PRAGMA table_info('+name+')').fetchall()
         if not any(r['pk'] for r in info):raise ValueError('Recovery tables need stable primary keys')
-    for name,column in (('qr_experiment','payload'),('qr_paper','payload'),('qr_evidence_source','body'),('qr_calendar_source','body'),('qr_financial_source','body'),('qr_financial_bundle','payload'),('qr_share_source','body'),('qr_share_bundle','payload'),('qr_share_review','payload'),('qr_model_cost_input','body'),('qr_model_cost_archive','payload')):
+    for name,column in (('qr_experiment','payload'),('qr_paper','payload'),('qr_evidence_source','body'),('qr_calendar_source','body'),('qr_financial_source','body'),('qr_financial_bundle','payload'),('qr_financial_fact_packet','payload'),('qr_share_source','body'),('qr_share_bundle','payload'),('qr_share_review','payload'),('qr_model_cost_input','body'),('qr_model_cost_archive','payload')):
         if name in tables and c.execute('SELECT max(length(CAST('+column+' AS BLOB))) FROM '+name).fetchone()[0] is not None:
             if c.execute('SELECT max(length(CAST('+column+' AS BLOB))) FROM '+name).fetchone()[0]>32*1024*1024:
                 raise ValueError('Recovery record exceeds supported 32MiB budget')
@@ -106,6 +106,10 @@ def validate_row(c,table,row,tables):
     elif table=='qr_financial_bundle':
         if 'qr_financial_source' not in tables:raise ValueError('Financial source table missing')
         from .quant_financial_store import verify_row
+        verify_row(c,row)
+    elif table=='qr_financial_fact_packet':
+        if not {'qr_financial_source','qr_financial_bundle'}<=set(tables):raise ValueError('Typed financial parent tables missing')
+        from .quant_financial_fact_store import verify_row
         verify_row(c,row)
     elif table=='qr_share_bundle':
         if 'qr_share_source' not in tables:raise ValueError('Share evidence source table missing')

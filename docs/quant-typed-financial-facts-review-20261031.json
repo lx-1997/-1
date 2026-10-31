@@ -1,0 +1,103 @@
+{
+  "schema": "typed-financial-facts-product-review-v1",
+  "scope": "internal research operator CLI only",
+  "new_tests": 32,
+  "focused_tests_passed": 91,
+  "sample_input_sha256": "6f115b6fe4a06048e90adc0c7c0156e3a896471471fe28be908ce088b58eca70",
+  "real_workflow": {
+    "scope": "new isolated owned copy, no production",
+    "actual_query_clock": "2026-10-31T14:18:45.663138+00:00",
+    "first_recorded_at": "2026-10-31T14:18:45.505195+00:00",
+    "second_recorded_at": "2026-10-31T14:18:45.599384+00:00",
+    "stored_visible_at": "2026-11-01T00:00:00+08:00",
+    "actual_boundary_observed": false,
+    "original_parent_archives_preserved": 3,
+    "supplemental_extraction_versions": 2,
+    "root_facts": 5,
+    "full_facts": 43,
+    "explicit_blank_facts": 2,
+    "idempotent_reimports": 2,
+    "queries": [
+      {
+        "case": "original-profit",
+        "status": "available",
+        "value": "-129469840.96",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "corrected-profit",
+        "status": "available",
+        "value": "-174549855.81",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "asset-stock",
+        "status": "available",
+        "value": "11253229018.89",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "old-packet-no-new-assets",
+        "status": "unavailable",
+        "value": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "revised-inventory",
+        "status": "available",
+        "value": "105455122.95",
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "explicit-blank",
+        "status": "unavailable",
+        "value": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "past-recorded",
+        "status": "unavailable",
+        "value": null,
+        "foreign_owner_rejected": true
+      },
+      {
+        "case": "actual-current-recorded",
+        "status": "unavailable",
+        "value": null,
+        "foreign_owner_rejected": true
+      }
+    ],
+    "unnoted_correction_rejected": true,
+    "cold_restore_exact": true,
+    "source_main_and_parent_rows_unchanged": true,
+    "activation_authorized": false,
+    "production_writes": 0,
+    "strategy_evaluations": 0
+  },
+  "independent_review": {
+    "schema": "independent-typed-fact-review-v1",
+    "project_imports": false,
+    "packet_hashes_and_owner_parent_binding_verified": 2,
+    "typed_fact_count": 43,
+    "source_bytes_verified": true,
+    "query_cases_exact": [
+      "original-profit",
+      "corrected-profit",
+      "asset-stock",
+      "old-packet-no-new-assets",
+      "revised-inventory",
+      "explicit-blank",
+      "past-recorded",
+      "actual-current-recorded"
+    ],
+    "source_main_unchanged": true,
+    "actual_boundary_observed": false,
+    "production_writes": 0
+  },
+  "prior_v5_READY_retained": true,
+  "recovery_version": "qr-quarantined-recovery-v6",
+  "exact_tree_final_receipt": "artifacts/quant-typed-financial-facts-20261031/final-verification.json",
+  "production_deployed": false,
+  "strategy_evaluations": 0,
+  "commercial_ready": false
+}
