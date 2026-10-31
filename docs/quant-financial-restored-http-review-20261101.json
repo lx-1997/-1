@@ -1,0 +1,22 @@
+{
+  "schema": "restored-financial-JWT-HTTP-acceptance-v1",
+  "http_requests": 51,
+  "derived_cases_full_JSON_equal": 14,
+  "original_cold_and_working_main_unchanged": true,
+  "synthetic_auth_owner_mapping_only": true,
+  "restored_research_owner_rewritten": false,
+  "foreign_owner_all_details_and_derives_404": true,
+  "anonymous_requests_401": true,
+  "shared_read_slots_drained": true,
+  "external_connections": 0,
+  "original_restore_activated": false,
+  "whole_service_RPO_RTO_measured": false,
+  "production_writes": 0,
+  "promotion_allowed": false,
+  "process_exit_observed": true,
+  "loopback_port_closed_observed": true,
+  "source_tree": "ad2c08f1cd5bc82dca2a20b9e1df5d29d3a132d6",
+  "evidence_sha256": {
+    "check.py": "2636e87b3d4ab46f5febd9a30a71326f7c95643cc43fecccf3af5d44518844b3"
+  }
+}
