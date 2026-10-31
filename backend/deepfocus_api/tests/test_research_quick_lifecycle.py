@@ -417,26 +417,63 @@ async def test_cache_lookup_wait_emits_elapsed_heartbeats(monkeypatch):
 @pytest.mark.asyncio
 async def test_overflowing_model_delta_queue_does_not_fail_deep(monkeypatch):
     finish = asyncio.Event()
+    writes = []
+    monkeypatch.setattr(main, "metrics_set_ai_cache", lambda *args: writes.append(args))
 
     async def deep(request, documents, progress):
-        for index in range(1000):
-            progress("llm_delta", f"fragment {index};")
+        progress("llm_delta", '{"sections":[{"paragraphs":["')
+        for _ in range(1000):
+            progress("llm_delta", "x")
         progress("llm_delta", "latest fragment")
+        progress("llm_delta", '"]}]}')
         await finish.wait()
         return DEEP
 
     monkeypatch.setattr(research_stream, "generate_deep_draft", deep)
+    prior = set(asyncio.all_tasks())
     response = await _response()
-    try:
-        events = []
-        async for chunk in response.body_iterator:
-            events.append(_event(chunk))
-            if events[-1]["type"] == "thought":
-                assert "latest fragment" in events[-1]["delta"]
-                finish.set()
-        assert events[-1]["type"] == "done"
-    finally:
-        await response.body_iterator.aclose()
+    events = []
+    async def consume():
+        try:
+            async for chunk in response.body_iterator:
+                events.append(_event(chunk))
+                if events[-1]["type"] == "body":
+                    assert not finish.is_set() and writes == []
+                    text = events[-1]["data"]["sections"][0]["paragraphs"][0]
+                    assert text == "x" * 1000 + "latest fragment"
+                    finish.set()
+        finally:
+            await response.body_iterator.aclose()
+    await asyncio.wait_for(consume(), 2)
+    assert events[-1]["type"] == "done" and finish.is_set()
+    assert not any(e["type"] == "thought" for e in events)
+    assert quotas.used("quick-test") == 1
+    _no_owned_tasks(prior)
+
+
+@pytest.mark.asyncio
+async def test_unstructured_overflow_is_not_exposed_as_prose_or_thought(monkeypatch):
+    started, finish = asyncio.Event(), asyncio.Event()
+    async def deep(request, documents, progress):
+        started.set()
+        for _ in range(1000): progress("llm_delta", "RAW_NON_JSON_FRAGMENT")
+        await finish.wait()
+        return DEEP
+    monkeypatch.setattr(research_stream, "generate_deep_draft", deep)
+    prior = set(asyncio.all_tasks()); response = await _response(); events = []
+    async def consume():
+        try:
+            async for chunk in response.body_iterator:
+                events.append(_event(chunk))
+                if events[-1]["type"] == "tick" and started.is_set(): finish.set()
+        finally:
+            await response.body_iterator.aclose()
+    await asyncio.wait_for(consume(), 2)
+    assert finish.is_set() and events[-1]["type"] == "done"
+    assert not any(e["type"] in {"thought", "body"} for e in events)
+    assert "RAW_NON_JSON_FRAGMENT" not in json.dumps(events)
+    assert quotas.used("quick-test") == 1
+    _no_owned_tasks(prior)
 
 
 @pytest.mark.asyncio
