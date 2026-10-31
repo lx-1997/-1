@@ -1,0 +1,53 @@
+{
+  "version": "independent-qr-soak-review-v1",
+  "registered_protocol_passed": true,
+  "retained_gate_calculation_equal": true,
+  "internal_capacity_accepted": false,
+  "memory_scope_complete": false,
+  "acceptance_gap": "v1 retained API RUSAGE_SELF only; CPU-child RSS not covered by the aggregate budget",
+  "elapsed_seconds": 3600.001124125,
+  "rounds": 120,
+  "completed": 384,
+  "cancelled": 96,
+  "all_completed_results_match_both_originals": true,
+  "quantiles_recomputed": {
+    "read_p95": 55.390375000115455,
+    "read_p99": 59.25912500015329,
+    "create_p95": 80.96858299995802,
+    "loop_p99": 2.450374999843916,
+    "loop_max": 101.15304100030698
+  },
+  "observed_HTTP_status_counts": {
+    "('GET', 401)": 1,
+    "('GET', 200)": 6307,
+    "('POST', 202)": 600,
+    "('POST', 429)": 120,
+    "('GET', 404)": 120,
+    "('DELETE', 200)": 96
+  },
+  "database_sha256": "0e014a7becf9eaf0f07326ff275e4437cd91f36904b0c2d6429cb4ac14a630de",
+  "input_sha256": {
+    "plan.json": "3f211f0089578dfb9b5d69c5109254a76f2ab19b99d97d8c71d6d26aa919ace1",
+    "result.json": "40d56ccf5459276684e4a5fb668ea4011a95d1ed5fa6a62a2b7488bb29b4a616",
+    "parent-exit.json": "b9a297a0b8456a1c48c406fd4f8872ef132883e55e9efb12f06d8017166646cd",
+    "owned-parent.json": "2847705406be80f0177dfbafddd2151fab5d56cb80c4ca44974f66e388742623",
+    "owned-worker.json": "b1cd48d47e7bf284cf0db980060a098700e78c2dc578cf535240fd955d8e136a",
+    "observations.jsonl": "949172ca37b72b4bb942c890202c2994167872478eb04021d57c2f6362586d0e"
+  },
+  "plan_sha256": "3f211f0089578dfb9b5d69c5109254a76f2ab19b99d97d8c71d6d26aa919ace1",
+  "source_archive_sha_verified": true,
+  "source_SQL_mutations": false,
+  "source_bytes_unchanged": true,
+  "owned_parent_and_worker_PIDs_absent": true,
+  "owned_port_closed": true,
+  "actual_slots_and_papers_zero": true,
+  "externally_attested_time": false,
+  "all_historical_child_PIDs_independently_audited": false,
+  "observer_actor_not_separately_logged": true,
+  "resource_peak_secondary_log_is_sampled_not_complete": true,
+  "promotion_allowed": false,
+  "production_SLO_certified": false,
+  "commercial_ready": false,
+  "verifier_sha256": "661e9f2f6feffdcf43dc51bf09c9e6777429b4fbd79b7049c7d1f1df6afe6097",
+  "reviewed_at": "2026-10-31T00:36:23.153732+00:00"
+}
