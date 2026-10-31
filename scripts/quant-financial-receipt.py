@@ -8,6 +8,12 @@ from pathlib import Path
 import sys
 
 
+def bounded(path,limit):
+    with path.open('rb') as stream:raw=stream.read(limit+1)
+    if len(raw)>limit:raise ValueError('Financial input exceeds byte budget')
+    return raw
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--db',type=Path,required=True)
@@ -32,16 +38,22 @@ def main():
     try:
         if a.command=='import':
             if a.manifest.stat().st_size>2*1024*1024:raise ValueError('Financial metadata exceeds 2MiB')
-            raw=a.manifest.read_bytes();manifest=json.loads(raw);root=a.evidence_dir.resolve();sources={};paths={}
+            raw=bounded(a.manifest,2*1024*1024);manifest=json.loads(raw);root=a.evidence_dir.resolve();sources={};paths={};used=0
             for sha,name in manifest['source_files'].items():
                 target=(root/name).resolve()
                 if target.parent!=root or not target.is_file() or target.stat().st_size>10*1024*1024:
                     raise ValueError('Missing or out-of-scope financial source')
-                sources[sha]=target.read_bytes();paths[sha]=target
+                amount=bounded(target,min(10*1024*1024,25*1024*1024-used));used+=len(amount)
+                sources[sha]=amount;paths[sha]=target
             if sum(map(len,sources.values()))>25*1024*1024:raise ValueError('Financial sources exceed 25MiB')
-            if raw!=a.manifest.read_bytes() or any(paths[h].read_bytes()!=b for h,b in sources.items()):
+            if raw!=bounded(a.manifest,2*1024*1024) or any(bounded(paths[h],10*1024*1024)!=b for h,b in sources.items()):
                 raise ValueError('Financial input changed during import')
-            result=store.put(a.owner,a.label,manifest,sources)
+            from deepfocus_api import quant_financial_import_review as body_review
+            body=body_review.review(manifest,sources)
+            # Parsing may take time: do not import if operator files changed.
+            if raw!=bounded(a.manifest,2*1024*1024) or any(bounded(paths[h],10*1024*1024)!=b for h,b in sources.items()):
+                raise ValueError('Financial input changed during body preflight')
+            result={**store.put(a.owner,a.label,manifest,sources),'import_body_preflight':body}
         else:
             if a.command=='ttm':
                 from deepfocus_api.quant_financial_ttm_store import review as query
@@ -50,8 +62,11 @@ def main():
                                 as_of=a.as_of,mode=a.mode,required_metrics=a.metrics)
         print(json.dumps(result,ensure_ascii=False,allow_nan=False))
         return 2 if a.command=='ttm' and result['status']!='arithmetic_available' else 0
-    except (ValueError,TypeError,KeyError,OSError,LookupError,RuntimeError,sqlite3.DatabaseError) as exc:
-        print(json.dumps({'ok':False,'error_type':type(exc).__name__,'promotion_allowed':False}));return 1
+    except (ValueError,TypeError,KeyError,OSError,LookupError,RuntimeError,ImportError,sqlite3.DatabaseError) as exc:
+        rejected={'ok':False,'error_type':type(exc).__name__,'promotion_allowed':False}
+        if hasattr(exc,'preflight_code'):
+            rejected['body_preflight_rejection']={'code':exc.preflight_code,'document_ids':list(exc.document_ids)}
+        print(json.dumps(rejected));return 1
 
 
 if __name__=='__main__':raise SystemExit(main())

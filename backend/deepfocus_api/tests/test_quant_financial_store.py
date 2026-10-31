@@ -170,7 +170,8 @@ def test_loaded_source_guard_does_not_accept_a_different_current_file_identity(l
 
 
 def test_actual_cli_import_review_isolated_database_and_no_cross_owner_output(ledger,tmp_path):
-    m,s=fixture();e=tmp_path/'evidence';e.mkdir()
+    from deepfocus_api.tests.financial_pdf_fixture import readable
+    m,s=readable(*fixture());e=tmp_path/'evidence';e.mkdir()
     for sha,name in m['source_files'].items():(e/name).write_bytes(s[sha])
     p=tmp_path/'manifest.json';p.write_text(json.dumps(m))
     script=Path(__file__).resolve().parents[3]/'scripts/quant-financial-receipt.py'
@@ -178,6 +179,8 @@ def test_actual_cli_import_review_isolated_database_and_no_cross_owner_output(le
     run=subprocess.run(base+['import','--manifest',str(p),'--evidence-dir',str(e),'--label','CLI sample'],capture_output=True,text=True)
     assert run.returncode==0,run.stdout+run.stderr
     receipt=json.loads(run.stdout)
+    assert receipt['import_body_preflight']['schema']=='financial-import-cover-preflight-v1'
+    assert receipt['import_body_preflight']['full_report_or_financial_facts_certified'] is False
     args=['review','--id',receipt['id'],'--issuer-id','cninfo:9900002009','--symbol','002109','--period-end','2025-03-31',
           '--as-of','2025-06-01T12:00:00+08:00','--mode','as_recorded','--metrics','parent_net_profit']
     out=subprocess.run(base+args,capture_output=True,text=True);assert out.returncode==0
