@@ -1,0 +1,56 @@
+{
+  "schema": "owned-stopped-QA-recovery-identity-real-cases-v1",
+  "original_QA_main_files_unchanged": true,
+  "same_original_QA_auth_ids_preserved_without_mapping": true,
+  "source_QA_port_closed_before_capture": true,
+  "cases": [
+    {
+      "case": "original",
+      "exit_code": 0,
+      "correspondence_check_passed": true,
+      "missing_count": 0,
+      "inactive_count": 0
+    },
+    {
+      "case": "missing",
+      "exit_code": 2,
+      "correspondence_check_passed": false,
+      "missing_count": 1,
+      "inactive_count": 0
+    },
+    {
+      "case": "disabled",
+      "exit_code": 2,
+      "correspondence_check_passed": false,
+      "missing_count": 0,
+      "inactive_count": 1
+    },
+    {
+      "case": "same-name-replacement",
+      "exit_code": 2,
+      "correspondence_check_passed": false,
+      "missing_count": 1,
+      "inactive_count": 0
+    }
+  ],
+  "source_QA_not_production": true,
+  "atomic_cross_database_backup_proven": false,
+  "JWT_secret_or_session_recovery_proven": false,
+  "production_writes": 0,
+  "activation_authorized": false,
+  "commercial_ready": false,
+  "new_identity_tests": 16,
+  "broad_backend_gate_passed": false,
+  "broad_backend_observed_failures": 16,
+  "broad_backend_observed_passes": 2995,
+  "broad_backend_skips": 22,
+  "broad_backend_interrupted": true,
+  "three_cache_failures_already_in_baseline": true,
+  "original_quant_gate_scope": "test_quant*.py + test_ai_fund*.py + agent_tools_data_wiring + stock_panel_endpoints + dividend_catalog_quality",
+  "module_sha256": "37939aadf442e63909bdd7bfc6eea1efdfe12db113aa2f54ef3e89f5b3298b8e",
+  "quant_and_fund_regressions": 1516,
+  "tool_regressions": 153,
+  "client_suites": 7,
+  "tested_runtime_tree": "0b2d50972e79d20b24ec83aee48d202f5119005f",
+  "scope_is_not_all_backend": true
+}
