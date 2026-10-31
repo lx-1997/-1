@@ -1,0 +1,52 @@
+{
+  "schema": "research-workspace-isolation-review-v1",
+  "scope": "internal research, commercial-grade quality target",
+  "before_client_failures": 6,
+  "after_client_controls_pass": 6,
+  "positive_api_chain": "current price frozen replay -> event replay -> frozen event verification, real CPU and no fetch",
+  "new_backend_tests": 1,
+  "browser": {
+    "environment": "owned loopback QA, real sealed prices and original API, no production",
+    "desktop": {
+      "clientWidth": 1265,
+      "scrollWidth": 1265,
+      "experimentSelection": true
+    },
+    "mobile": {
+      "requestedWidth": 390,
+      "requestedHeight": 844,
+      "clientWidth": 375,
+      "scrollWidth": 375,
+      "eventCompleted": true
+    },
+    "accountBAndBack": {
+      "oldAccountContentVisible": false,
+      "resultEmpty": true
+    },
+    "consoleErrors": 0,
+    "limitations": "Deterministic delayed transport covered by VM; browser normal flow and history observations do not certify every async race"
+  },
+  "cleanup": {
+    "owned_pid_gone": true,
+    "listener_closed": true,
+    "worker_slots": 0,
+    "job_status_counts": {
+      "completed": 3
+    },
+    "browser_tab_closed": true,
+    "viewport_reset": true,
+    "production_touched": false
+  },
+  "unchanged": [
+    "original price/event kernels",
+    "strategy parameters and gates",
+    "sealed original experiments",
+    "31 cash facts"
+  ],
+  "limitations": [
+    "not every async action race certified",
+    "no new strategy or unseen sample tested",
+    "not deployed",
+    "commercial readiness incomplete"
+  ]
+}

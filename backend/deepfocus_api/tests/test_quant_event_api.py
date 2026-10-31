@@ -211,3 +211,53 @@ def test_registry_backup_restore_retains_sources_and_scope(tmp_path):
         assert c.execute('SELECT fingerprint FROM qr_evidence_bundle WHERE id=? AND owner=?',(b['id'],'a')).fetchone()[0]==b['fingerprint']
         assert hashlib.sha256(c.execute('SELECT body FROM qr_evidence_source WHERE owner=? AND sha=?',('a',SHA)).fetchone()[0]).hexdigest()==SHA
         assert c.execute('SELECT count(*) FROM qr_evidence_bundle WHERE owner=?',('b',)).fetchone()[0]==0
+
+
+@pytest.mark.asyncio
+async def test_price_frozen_verification_can_feed_event_and_event_frozen_verification(monkeypatch):
+    """The real CPU price replay must remain a usable event parent, offline."""
+    from deepfocus_api import quant_research as price
+    source=parent()
+    # Generate a separate current-kernel fixture; never change a legacy job's identity.
+    p,_=jobs.create('a','current-price-parent',source['request'],price.kernel_identity())
+    jobs.update('a',p['id'],status='completed',extra={k:source[k] for k in ('dataset','result','result_digest')})
+    before=jobs.get('a',p['id'])
+    async def forbidden_fetch(*args,**kwargs):
+        raise AssertionError('Frozen workflow must not fetch revised prices')
+    monkeypatch.setattr(price,'fetch_dataset',forbidden_fetch)
+    bundle=evidence.put('a','fixture',[sample()],{SHA:PDF})
+    app=FastAPI();app.include_router(api.router);app.dependency_overrides[api.owner]=lambda:'a'
+    async with AsyncClient(transport=ASGITransport(app=app),base_url='http://fixture') as c:
+        replay=await c.post(f"/api/quant-research/experiments/{p['id']}/replay",json={'request_id':'price-first'})
+        assert replay.status_code==202,replay.text
+        replay_id=replay.json()['id']
+        task=price._tasks.get(replay_id)
+        if task:await task
+        frozen=jobs.get('a',replay_id)
+        assert frozen['status']=='completed',frozen
+        assert frozen['result_digest']==before['result_digest']
+        assert frozen['request']['replay_of']==p['id']
+        event=await c.post(f"/api/quant-research/experiments/{replay_id}/event-replay",json={
+            'bundle_id':bundle['id'],'calendar_bundle_id':calendars.listing('a')[0]['id'],
+            'request_id':'event-after-price','knowledge_mode':'historical_reconstruction'})
+        assert event.status_code==202
+        event_id=event.json()['id']
+        task=service.lifecycle._tasks.get(event_id)
+        if task:await task
+        row=jobs.get('a',event_id)
+        assert row['status']=='completed',row
+        assert 'replay_of' not in row['request'] and 'expected_result_digest' not in row['request']
+        assert row['request']['parent_id']==replay_id
+        verify=await c.post(f"/api/quant-research/experiments/{event_id}/replay",json={'request_id':'event-after-price-verify'})
+        assert verify.status_code==202
+        verify_id=verify.json()['id']
+        task=service.lifecycle._tasks.get(verify_id)
+        if task:await task
+        verified=jobs.get('a',verify_id)
+        assert verified['status']=='completed',verified
+        assert verified['result_digest']==row['result_digest']
+        assert (await c.post(f"/api/quant-research/experiments/{event_id}/paper")).status_code==422
+    assert jobs.get('a',p['id'])==before
+    assert jobs.get('a',replay_id)==frozen
+    assert jobs.get('a',event_id)==row
+    assert jobs.list_records('a',True)==[]

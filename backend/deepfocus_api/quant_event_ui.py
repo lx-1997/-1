@@ -44,8 +44,8 @@ def enhance(html):
         html=html.replace(needle,replacement,1)
     once('function render(job){',SCRIPT+'\nfunction renderCore(job){')
     once("const r=job.result,m=chartMode===","if(job.request.kind==='event_replay'){renderEvent(job);return}\nconst r=job.result,m=chartMode===")
-    once("const [data,papers]=await Promise.all([api('/experiments'),api('/paper')]);",
-         "const [data,papers,proof]=await Promise.all([api('/experiments'),api('/paper'),api('/evidence').then(d=>({...d,ok:true})).catch(e=>({items:[],ok:false,message:e.message}))]);evidenceItems=proof.items;evidenceError=proof.ok?'':proof.message;")
+    once("const [data,papers]=await Promise.all([api('/experiments'),api('/paper')]);if(loadGeneration!==generation||loadToken!==token())return;",
+         "const [data,papers,proof]=await Promise.all([api('/experiments'),api('/paper'),api('/evidence').then(d=>({...d,ok:true})).catch(e=>({items:[],ok:false,message:e.message}))]);if(loadGeneration!==generation||loadToken!==token())return;evidenceItems=proof.items;evidenceError=proof.ok?'':proof.message;")
     once('await renderPapers(papers.items)}',"await renderPapers(papers.items);if(selected?.status==='completed')render(selected)}")
     once("if(b.dataset.replay){b.disabled=true;","if(b.dataset.event){await startEventReplay(b);return}if(b.dataset.replay){b.disabled=true;")
     once("if(pending?.job_id===id)sessionStorage.removeItem('quant_research_pending')",
