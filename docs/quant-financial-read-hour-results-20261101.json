@@ -1,0 +1,63 @@
+{
+  "schema": "financial-fixed-hour-terminal-evidence-v1",
+  "observed_at": "2026-10-31T17:33:06.626939+00:00",
+  "session_id": 23729,
+  "tool_terminal_exit_code": 0,
+  "both_owned_pids_absent": true,
+  "loopback_port_closed": true,
+  "plan_sha256": "328f6394580ff3db4a9b91349fd6a9196344929e3b7357b340a43407944c578b",
+  "runner_commit": "a1c833b82ba2f8809060a85e300edc417a58d2fd",
+  "runner_tree": "ad2c08f1cd5bc82dca2a20b9e1df5d29d3a132d6",
+  "supplemental_verifier_commit": "16fdfff2abc0f8289d3fabe6ca4f2ed61045a544",
+  "dual_independent_reviews_equal": true,
+  "negative_controls_rejected": 14,
+  "negative_control_label_note": "observer_route_substitution changed first completed HTTP route (owner quota probe); the label does not mean this specific control mutated an observer request. Coherent observer route substitution is separately retained from smoke-v5.",
+  "duration_seconds": 3600.001377709,
+  "registered_rounds": 120,
+  "registered_server_reads_completed_exact": 480,
+  "registered_client_responses_completed": 384,
+  "registered_client_waits_cancelled_server_reads_finished": 96,
+  "periodic_observer_cycles": 3577,
+  "quota_probes": 360,
+  "loop_samples": 308608,
+  "loop_p99_ms": 2.343708000003062,
+  "loop_max_ms": 75.69320800006608,
+  "independent_review": {
+    "schema": "independent-financial-read-soak-review-v1",
+    "plan_sha256": "328f6394580ff3db4a9b91349fd6a9196344929e3b7357b340a43407944c578b",
+    "mode": "full",
+    "engineering_checks_passed": true,
+    "full_soak_passed": true,
+    "rounds": 120,
+    "server_reads_exact": 480,
+    "client_cancelled": 96,
+    "observer_cycles": 3577,
+    "latency_ms": {
+      "query_ms": {
+        "p95": 119.23691699985284,
+        "p99": 143.17133399993054
+      },
+      "server_query_ms": {
+        "p95": 112.27179200022874,
+        "p99": 128.4258749997207
+      },
+      "observer_ms": {
+        "p95": 45.035542000050555,
+        "p99": 56.167624999943655
+      }
+    },
+    "whole_tree_rss_upper_bytes": 247201792,
+    "research_disk_peak_bytes": 16584704,
+    "project_modules_imported": false,
+    "production_writes": 0,
+    "promotion_allowed": false
+  },
+  "full_local_registered_load_passed": true,
+  "production_SLO_proven": false,
+  "full_platform_capacity_proven": false,
+  "new_strategy_evaluations": 0,
+  "production_writes": 0,
+  "commercial_ready": false,
+  "terminal_seal_sha256": "749b7962e4d219caf50c87f9554be84e065e879dfa2f3a117628529c7e3886ce",
+  "sealed_file_count": 768
+}
