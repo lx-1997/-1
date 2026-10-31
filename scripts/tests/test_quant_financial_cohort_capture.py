@@ -107,3 +107,64 @@ def test_capture_preserves_all_failed_queries_without_retries_or_pdfs(tmp_path,m
     assert len(r['plan']['issuers'])==8 and all(not q['complete'] for q in r['queries'])
     assert all((out/c['file']).read_bytes()==b'forbidden' for c in r['captures'])
     assert json.loads((out/'manifest.json').read_text())==r
+
+
+def test_index_only_remaining_slice_preserves_all_56_in_original_order():
+    p,d=inputs();r=m.register(json.dumps(p).encode(),json.dumps(d).encode(),offset=8,count=56,index_only=True)
+    assert r['schema']=='blind-cohort-financial-index-v2' and r['sample_slice']=={'offset':8,'count':56}
+    assert [i['code'] for i in r['issuers']]==[q['code'] for q in p['requests'][8:]]
+    assert r['index_only'] and r['limits']['pdf_bytes']==0 and r['limits']['requests']==400
+    assert r['limits']['total_bytes']==32*1024**2
+
+
+@pytest.mark.parametrize('offset,count,index_only',[(-1,8,True),(8,57,True),(0,0,True),(True,8,True),(0,64,False)])
+def test_invalid_slice_and_large_pdf_batch_rejected(offset,count,index_only):
+    p,d=inputs()
+    with pytest.raises(ValueError,match='sample slice'):m.register(json.dumps(p).encode(),json.dumps(d).encode(),offset=offset,count=count,index_only=index_only)
+
+
+def test_index_only_finds_56_documents_without_any_pdf_GET_or_download(tmp_path,monkeypatch):
+    p,d=inputs();a=tmp_path/'sample.json';a.write_text(json.dumps(p));b=tmp_path/'directory.json';b.write_text(json.dumps(d));calls=[]
+    class Client:
+        def __init__(self,**kwargs):assert kwargs['trust_env'] is False
+        def __enter__(self):return self
+        def __exit__(self,*args):return False
+        def stream(self,method,url,**kwargs):
+            assert method=='POST' and url==m.INDEX;form=kwargs['data'];calls.append(form)
+            code,org=form['stock'].split(',');r={**row(),'secCode':code,'orgId':org,'announcementId':code,'adjunctUrl':'finalpage/2025-04-20/'+code+'.PDF'}
+            rows=[r] if form['searchkey']=='2024年年度报告' else []
+            return Response(200,[json.dumps({'totalAnnouncement':len(rows),'announcements':rows}).encode()])
+    import httpx
+    monkeypatch.setattr(httpx,'Client',Client)
+    out=tmp_path/'inventory';r=m.capture(a,b,out,offset=8,count=56,index_only=True)
+    assert len(calls)==280 and len(r['filings'])==56 and r['query_inventory_complete']
+    assert len(r['PDFs_not_requested'])==56 and r['PDFs_not_retained']==[] and r['errors']==[]
+    assert all('capture' not in f for f in r['filings'].values()) and not list(out.glob('*.pdf'))
+    assert all(c['request_form'] is not None for c in r['captures'])
+
+
+def test_index_budget_stops_without_turning_unattempted_queries_into_empty_history(tmp_path,monkeypatch):
+    p,d=inputs();a=tmp_path/'sample.json';a.write_text(json.dumps(p));b=tmp_path/'directory.json';b.write_text(json.dumps(d));calls=[]
+    class Client:
+        def __init__(self,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):return False
+        def stream(self,*args,**kwargs):calls.append(1);return Response(200,[b'{"totalAnnouncement":0,"announcements":[]}'])
+    import httpx
+    monkeypatch.setattr(httpx,'Client',Client);monkeypatch.setitem(m.INDEX_LIMITS,'requests',2)
+    r=m.capture(a,b,tmp_path/'limited',offset=8,count=56,index_only=True)
+    assert len(calls)==2 and len(r['queries'])==2 and r['not_started_queries']==278
+    assert not r['query_inventory_complete'] and len(r['plan']['issuers'])==56
+
+
+@pytest.mark.parametrize('extension',['PDF','pdf'])
+def test_actual_upper_or_lower_pdf_extension_preserves_exact_index_URL(extension):
+    r=row();r['adjunctUrl']='finalpage/2025-04-20/123.'+extension
+    total,rows=m.index_page({'totalAnnouncement':1,'announcements':[r]},1,{'symbol':'600001','org_id':'abc001'})
+    assert total==1 and rows[0]['adjunctUrl']==r['adjunctUrl']
+
+
+@pytest.mark.parametrize('path',['finalpage/2025-04-20/123.PdF','finalpage/2025-04-20/123.pdf?x=1','finalpage/2025-04-20/124.pdf','finalpage/2025-04-19/123.pdf'])
+def test_extension_support_does_not_loosen_path_document_or_date_binding(path):
+    r={**row(),'adjunctUrl':path}
+    with pytest.raises(ValueError):m.index_page({'totalAnnouncement':1,'announcements':[r]},1,{'symbol':'600001','org_id':'abc001'})

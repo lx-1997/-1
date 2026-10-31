@@ -1,0 +1,101 @@
+{
+  "schema": "blind64-financial-index-review-v1",
+  "base_commit": "f1c93df7cdc31af0d029873d32db128a74a7711a",
+  "capture_tested_tree": "9585ff0d661fe8b80ff63f2005c5cfd8e6505973",
+  "final_tested_tree": "bde24b665fd7a7c4f963a2fb5388294360ec2d8d",
+  "initial_focused_passed": 29,
+  "final_focused_passed": 35,
+  "new_this_change_cases": 14,
+  "final_focused_seconds": 0.16,
+  "actual_remaining_companies": 56,
+  "actual_HTTP_index_requests": 280,
+  "PDF_downloads": 0,
+  "original_capture_exit_code": 2,
+  "original_capture_errors_preserved": 2,
+  "replay_network_requests": 0,
+  "combined_original_sample_companies": 64,
+  "combined_keyword_queries": 320,
+  "candidate_documents": 185,
+  "target_slots_present": 183,
+  "nominal_target_slots": 192,
+  "missing_target_slots": 9,
+  "companies_with_all_three_candidate_periods": 60,
+  "not_PDF_or_financial_coverage": true,
+  "missing_companies": [
+    {
+      "code": "sz.300282",
+      "missing_indexed_target_periods": [
+        "2024-03-31",
+        "2024-12-31",
+        "2025-03-31"
+      ]
+    },
+    {
+      "code": "sh.600845",
+      "missing_indexed_target_periods": [
+        "2024-12-31"
+      ]
+    },
+    {
+      "code": "sz.000040",
+      "missing_indexed_target_periods": [
+        "2024-12-31",
+        "2025-03-31"
+      ]
+    },
+    {
+      "code": "sz.300742",
+      "missing_indexed_target_periods": [
+        "2024-03-31",
+        "2024-12-31",
+        "2025-03-31"
+      ]
+    }
+  ],
+  "multiple_same_day_document_cases": [
+    {
+      "code": "sh.600611",
+      "periods": [
+        "2024-12-31"
+      ]
+    },
+    {
+      "code": "sz.000852",
+      "periods": [
+        "2024-03-31"
+      ]
+    }
+  ],
+  "multiple_documents_not_assumed_revisions": true,
+  "downstream_URL_gap": {
+    "source_sha256": "0eb2193a9a4531264b8b0bdfa9194ac38a5940e40078a0d0da2cd6d4dd994a9b",
+    "cases": [
+      {
+        "symbol": "002138",
+        "document_id": "1222663234",
+        "exact_indexed_path": "finalpage/2025-02-28/1222663234.pdf",
+        "actual_URL_guard_rejection": "Document identity/date URL mismatch",
+        "scope": "partial metadata-only guard probe; no metrics, PDF or packet import"
+      },
+      {
+        "symbol": "000803",
+        "document_id": "1223222838",
+        "exact_indexed_path": "finalpage/2025-04-23/1223222838.pdf",
+        "actual_URL_guard_rejection": "Document identity/date URL mismatch",
+        "scope": "partial metadata-only guard probe; no metrics, PDF or packet import"
+      }
+    ],
+    "financial_core_changed": false,
+    "path_case_not_rewritten": true
+  },
+  "space_issue": "279 MiB shared local disk; only9 MiB other mounted data volume; requested >=10 GB research directory/test host; no answer treated as approval",
+  "prior_ended_test_files_verified_gzip_MiB": 39.11040115356445,
+  "financial_core_or_strategy_changed": false,
+  "original_OOS_thresholds_changed": false,
+  "full_backend_rerun": false,
+  "production_writes": 0,
+  "goal_complete": false,
+  "commercial_ready": false,
+  "artifact_root": "artifacts/quant-financial-index56-20261101",
+  "evidence_manifest_sha256": "bf74224d7c13b584be5ab4e6d5691c6d7211388df087f638f7f8d52d17389011"
+}
