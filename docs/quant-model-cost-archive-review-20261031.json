@@ -1,0 +1,134 @@
+{
+  "version": "qr-exact-model-archive-v1",
+  "source_pins": {
+    "quant_model_cost_store.py": "6075685eecefb6b0bc6fc6f3d84db90add4d9e44e656ffd3726c9df5ad347a9c",
+    "quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+    "quant_execution_cost_book.py": "438911ee0ddbf6486e5e6ee2816f1b83780b40d1348d3a09807e67fcc61da6df",
+    "quant_research_analysis.py": "6fa078d82e5b5ba795c8ad7426ac4b448f7442c9c565320855698e5a7988aeca",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "ai_fund_ledger.py": "109ec057252813aed3fbe66dd9500b1f219c9482e1108cc092f90d0f8fa7417c",
+    "ai_fund_policy.py": "3a1ea2be797d08624791e36c4dab7cdfe03800e1253cdd6d90a408087aefe649",
+    "quant_research_store.py": "e14d5b277be88366548a652117eb7e67e2b2ae855a8ca9d6437e9c9f0304845a",
+    "db.py": "58cd893736d0b06745bff7ce6981006a08493c86fd5b70b2f6d40d5a999566c9"
+  },
+  "recovery_version": "qr-quarantined-recovery-v4",
+  "recovery_source_pins": {
+    "quant_recovery.py": "99a6c69ed7e1ca8012927c02e6887e3be6e2e29ce9894fa1b58d82122635ea76",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_financial_store.py": "da99b1317c8aa7c81fabbe3ebfa3da4318a2857082be1e353575251c391471cd",
+    "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_share_store.py": "6a57938968c150e61b0e59b91bea5196cfb1fddf3f888eeaa132dc0b076bc5f9",
+    "quant_share_entitlements.py": "cb4a96b92fb64e92785160b0c4d38fc66ff03d449d74425178b333eb8ed3699c",
+    "quant_model_cost_store.py": "6075685eecefb6b0bc6fc6f3d84db90add4d9e44e656ffd3726c9df5ad347a9c",
+    "quant_exact_model_cost.py": "70c1c6cbc5ef9a4e0018c7152516e8c2e47fb7ae27049f08c62b7420482090de",
+    "quant-recovery.py": "3621bc95934fd0fa0fe085fb64e095442d6f15164c423af221a64febd92560c9"
+  },
+  "qa_owner_a": {
+    "id": "5487ab7ce8d84109a25258d7f62ea2dd",
+    "fingerprint": "f33c8c078c126c7f04f2da924a103ac40074ad6e4a815a3f291ed4b57c7e128c",
+    "label": "original two OOS fixed paths",
+    "recorded_at": "2026-10-31T06:02:57.819320+00:00",
+    "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "model_version": "exact-model-cost-v1",
+    "promotion_allowed": false,
+    "commercial_ready": false,
+    "external_clock_attestation": false,
+    "results": [
+      {
+        "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "fills": 58,
+        "days": 535,
+        "legacy_difference_count": 0,
+        "original_strategy_gate_passed": false,
+        "legacy_strict_status": "strictly_reconciled",
+        "exact_conservation_verified": true
+      },
+      {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "fills": 120,
+        "days": 535,
+        "legacy_difference_count": 2,
+        "original_strategy_gate_passed": false,
+        "legacy_strict_status": "rejected",
+        "exact_conservation_verified": true
+      }
+    ]
+  },
+  "qa_owner_b": {
+    "id": "1beb281b50ec4e489653d223ebaffb78",
+    "fingerprint": "389b762f691f20559eda436d4ddade92f1e65e3044364298df6db6a8dae8458c",
+    "label": "original two OOS fixed paths",
+    "recorded_at": "2026-10-31T06:03:08.424331+00:00",
+    "input_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "model_version": "exact-model-cost-v1",
+    "promotion_allowed": false,
+    "commercial_ready": false,
+    "external_clock_attestation": false,
+    "results": [
+      {
+        "experiment": "31aedd8f544144ad9b7a7d2088e181b0",
+        "fills": 58,
+        "days": 535,
+        "legacy_difference_count": 0,
+        "original_strategy_gate_passed": false,
+        "legacy_strict_status": "strictly_reconciled",
+        "exact_conservation_verified": true
+      },
+      {
+        "experiment": "0839ee7717d143c7b991bddbfb55f891",
+        "fills": 120,
+        "days": 535,
+        "legacy_difference_count": 2,
+        "original_strategy_gate_passed": false,
+        "legacy_strict_status": "rejected",
+        "exact_conservation_verified": true
+      }
+    ]
+  },
+  "repeat_import_identical": true,
+  "second_owner_initially_empty": true,
+  "foreign_owner_denied": true,
+  "fresh_replay_on_original_identical": true,
+  "cold_recovery": {
+    "recovery_version": "qr-quarantined-recovery-v4",
+    "verified": true,
+    "source_database_bytes_unchanged": true,
+    "source_database_sha256": "5bc2e6b942e6359167ae4edf568e5d976193148a4fd3f409c6d8411b7ac3053e",
+    "snapshot_database_sha256": "caa8325b46003a7b7ebc7d95f96f414b9f1ecf9a39a7cc6be9827b91e844fd0e",
+    "input_rows": 2,
+    "archive_rows": 2,
+    "fresh_replay_on_recovered_copy_identical": true,
+    "activation_authorized": false,
+    "source_sql_mutations": false,
+    "cold_verification_proof_sha256": "33718f656ebad33a9aba3b21392b2ef25654d86be5a0547523e90e0c96b6ee53"
+  },
+  "cross_check": {
+    "both_owner_reports_match_prior_exact_book_bytes_semantically": true,
+    "archive_rows": 2,
+    "paper_accounts": 0,
+    "research_jobs": 0,
+    "wal_bytes": 0
+  },
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a",
+    "backend/deepfocus_api/quant_execution_cost_book.py": "438911ee0ddbf6486e5e6ee2816f1b83780b40d1348d3a09807e67fcc61da6df"
+  },
+  "new_tests": 25,
+  "focused_passed": 44,
+  "operator_entry_only": true,
+  "http_auth_or_ui_verified": false,
+  "promotion_allowed": false,
+  "commercial_ready": false,
+  "production_deployed": false,
+  "artifact_directory": "artifacts/quant-model-cost-archive-20261031",
+  "evidence_sha256": {
+    "plan.json": "68818bef33c94a6e61a6148d2766f5695f54f72a49bb9975a6c6bc19cb48a0b9",
+    "acceptance.json": "23e38b1df985d1cd272af01153dccf3e0a37b3c6e5af44258a791e5ca121ffce",
+    "recovery-plan.json": "897e6c1fb70237e131fd22f151e3d7fa623dc1a508ff29cdf95a7b34d9a29c82",
+    "recovery-acceptance.json": "a0f7a8a3ec07ecde36b42ff5b5b653a7bb4b824959d8913b5445270df5ec50d3",
+    "cross-check.json": "14266c59e0ae3c459a661ebcfcf21f484ca5b4f87946231670c078ae4e535aa7"
+  }
+}
