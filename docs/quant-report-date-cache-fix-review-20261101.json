@@ -1,0 +1,28 @@
+{
+  "schema": "archive-report-date-cache-fix-review-v1",
+  "baseline_commit_with_three_reproduced_failures": "f1786d7ebda477f281c13062d96cde27509083c4",
+  "new_tests": 6,
+  "focused_tests_passed": 55,
+  "cache_ttl_seconds": 600,
+  "cache_entries": 2048,
+  "cache_bytes": 524288,
+  "cache_item_bytes": 4096,
+  "sqlite_busy_timeout_seconds": 2,
+  "readonly_connection": true,
+  "missing_database_not_created_tested": true,
+  "loaded_runtime_tree": "a4d921fec8f496d934c6bac00ef69af27abb4dca",
+  "source_pins": {
+    "backend/deepfocus_api/main.py": "65cac8ff4a24dcc5fc71554cd1c189ba7e1773080e7470b17d875459d71da2b8",
+    "backend/deepfocus_api/tests/test_archive_report_date.py": "d5448860bf2d049c38d3da9a34c684d629cc26e7ab5e3be411e0f86e7c6e644a"
+  },
+  "entire_backend_passed": false,
+  "production_deployed": false,
+  "strategy_changed": false,
+  "commercial_ready": false,
+  "scoped_backend_passed": 1571,
+  "scoped_backend_warnings": 9,
+  "tool_tests_passed": 153,
+  "client_suites_passed": 7,
+  "old_three_cache_failure_paths_fixed": true,
+  "other_broad_backend_failures_still_open": true
+}

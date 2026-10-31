@@ -9335,6 +9335,19 @@ def _check_ai_quota(user: Optional[dict], kind: str, request: Optional[Request] 
 
 _LEGACY_FREE_HOURS = 48.0  # 研报发布超过该小时数后，已生成的解读（缓存命中）免费开放
 
+_ARCHIVE_DATE_CACHE = ByteBoundedTTLCache(
+    name="archive_report_dates", max_entries=2048, max_bytes=512 * 1024,
+    max_item_bytes=4096, ttl_seconds=600.0,
+)
+
+
+def _archive_date_connection():
+    import sqlite3
+    from . import research_archive
+    return sqlite3.connect(
+        research_archive.DB_PATH.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0,
+    )
+
 
 def _archive_report_date(file_id: str) -> str:
     """研报发布日期（payload.date）：预热台账 PK 优先、研究档案兜底，10 分钟进程内缓存。
@@ -9344,17 +9357,13 @@ def _archive_report_date(file_id: str) -> str:
     if not fid:
         return ""
     hit = _ARCHIVE_DATE_CACHE.get(fid)
-    if hit and time.time() - hit[0] < _ARCHIVE_DATE_TTL:
-        return hit[1]
+    if hit is not None:
+        return hit
     value = ""
     try:
         from contextlib import closing
-        from . import research_archive as _ra
-        with closing(_ra._connect()) as conn:
-            try:
-                conn.execute("PRAGMA busy_timeout=2000")
-            except Exception:  # noqa: BLE001
-                pass
+        with closing(_archive_date_connection()) as conn:
+            conn.execute("PRAGMA query_only=ON")
             row = conn.execute(
                 "SELECT json_extract(payload,'$.date') FROM research_prewarm_seen "
                 "WHERE file_id=? AND payload IS NOT NULL "
@@ -9367,7 +9376,7 @@ def _archive_report_date(file_id: str) -> str:
     except Exception:  # noqa: BLE001
         return ""  # 锁忙等失败：不缓存、按未知日期处理（不放行）
     if value:
-        _ARCHIVE_DATE_CACHE[fid] = (time.time(), value)
+        _ARCHIVE_DATE_CACHE[fid] = value
     return value
 
 
