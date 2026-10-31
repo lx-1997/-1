@@ -1,0 +1,75 @@
+{
+  "fact": {
+    "schema": "operator_reviewed_noncash_implementation_sample_v1",
+    "symbol": "300750",
+    "announcement_number": "2023-037",
+    "announcement_date": "2023-04-18",
+    "available_at_conservative": "2023-04-19T00:00:00+08:00",
+    "available_at_basis": "unknown_publication_intraday_announcement_date_plus_one_BJ_calendar_day",
+    "observed_at": "2026-10-31T01:15:33.898947+00:00",
+    "reviewed_at": "2026-10-31T01:17:33.280969+00:00",
+    "source_url": "https://static.cninfo.com.cn/finalpage/2023-04-18/1216457838.PDF",
+    "source_sha256": "8063ac7204c79d9f856b7a2e21887aa650bc5e2b2c1bbbecb81ab54473d0939b",
+    "reviewed_pdf_pages": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "event_kind": "capital_reserve_capitalization",
+    "record_date": "2023-04-25",
+    "ex_date": "2023-04-26",
+    "unrestricted_new_shares_first_trade_date": "2023-04-26",
+    "gross_cash_per_old_share": "2.52",
+    "new_shares_per_old_share": "0.8",
+    "bonus_shares_per_old_share": "0",
+    "scope_of_tradable_date": "unrestricted_shares_only",
+    "fractional_allocation_policy": "account_level_remainder_rank_descending_random_ties_subject_to_CSDC_actual_allotment",
+    "per_lot_rounding_verified": false,
+    "fractional_allocation_reconstructible_from_one_account_holdings": false,
+    "broker_allocation_receipt_obtained": false,
+    "share_tax_basis_and_holding_period_policy_verified": false,
+    "exchange_reference_price_rule_verified": false,
+    "independent_action_universe_completeness_verified": false,
+    "in_original_experiment_interval": false,
+    "original_event_set_changed": false,
+    "execution_event_generated": false,
+    "promotion_allowed": false,
+    "data_rights_verified": false,
+    "share_credit_date": "2023-04-26",
+    "cash_pay_date": "2023-04-26"
+  },
+  "directory_comparison": {
+    "raw_response_sha256": "0b82284727b761ea4e42bc75c3aaafae0c5888c6cd5389c713c3488082ad2c80",
+    "raw_response_observed_at": "2026-10-30T23:55:32.129091+00:00",
+    "matched_cash_ratio_and_dates": true,
+    "original_sdk_observed_at_unchanged": true,
+    "native_rows_sha256": "9719fd1c13a09ac2565d0572f180ea786b7a2485af6141e3d9fb99a72fd16c83"
+  },
+  "company_table_arithmetic": {
+    "company_shares_before": 2442384964,
+    "published_new_shares": 1953907971,
+    "company_shares_after": 4396292935,
+    "ratio_times_old_shares_exact": "1953907971.2",
+    "published_new_minus_theoretical": "-0.2",
+    "source_table_pages": [
+      3,
+      4
+    ],
+    "no_inference_of_individual_account_allotment": true
+  },
+  "evidence_files": {
+    "page-1.png": "b6271ae593c73668b1c10803e275003fe8e82d9e8bd682218268a51093ec62d2",
+    "page-3.png": "484fdb77477468d4c45166cb5ce83c411be8bf4b0bcd57567f04e0284964463f",
+    "page-2.png": "792c0bccaa987d0c6679b2e7e4c3cffeecb4dd00f6fbb1089674de1f1b1e477a",
+    "page-4.png": "8ce2a9483c27bf489bc7f68505542cd0de6d0de43060dfcfec7ec9e6169e8fd7"
+  },
+  "original_experiments_sha256": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+  "original_31_event_manifest_sha256": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a",
+  "requests": 1,
+  "generated_execution_events": 0,
+  "commercial_ready": false,
+  "review_revision": 2,
+  "previous_review_sha256": "f399579215a2252876bb14f56ddaac6f72f76166accac3f83558b5ff79841e35",
+  "review_revision_reason": "Separate share credit from cash payment timestamps; add page 1 visual confirmation of no bonus shares"
+}
