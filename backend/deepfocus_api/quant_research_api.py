@@ -140,8 +140,11 @@ def pause(identity: str, uid=Depends(owner)): return visible(call(service.pause,
 
 
 @router.get('/workspace', response_class=HTMLResponse, include_in_schema=False)
-def workspace():
-    from .quant_research_ui import HTML
+def workspace(view:Literal['strategies','shares']='strategies'):
+    if view=='shares':
+        from .quant_share_ui import HTML
+    else:
+        from .quant_research_ui import HTML
     import hashlib,base64
     script=HTML.split('<script>')[1].split('</script>')[0]
     sha=base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
@@ -232,3 +235,7 @@ async def calendar_review(identity:str,payload:CalendarReviewRequest,uid=Depends
     except LookupError as e:raise HTTPException(404,str(e)) from e
     except ValueError as e:raise HTTPException(422,str(e)) from e
     except RuntimeError as e:raise HTTPException(429,str(e)) from e
+
+
+from .quant_share_api import build_router as build_share_router
+router.include_router(build_share_router(owner))
