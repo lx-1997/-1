@@ -55,7 +55,7 @@ def test_index_identity_beijing_day_complete_pages_and_empty_scope():
 
 
 @pytest.mark.parametrize('title,expected',[
- ('江河集团2024年年度报告全文',True),('2024年年度报告（更正后）',True),('2025年一季度报告',True),
+ ('江河集团2024年年度报告全文',True),('2024年度报告全文',True),('2024年度报告（更正后）',True),('2024年度报告摘要',False),('2024年度内部控制评价报告',False),('2025年度报告全文',False),('2024年年度报告（更正后）',True),('2025年一季度报告',True),
  ('2024年第一季度报告',True),('2025年第一季度报告（修订版）',True),
  ('2024年年度报告摘要',False),('关于2024年年度报告',False),('2025年年度报告',False),('2025年一季度报告（英文版）',False)])
 def test_only_declared_full_reports_not_summaries_or_explanations(title,expected):
@@ -102,7 +102,7 @@ def test_capture_preserves_all_failed_queries_without_retries_or_pdfs(tmp_path,m
     import httpx
     monkeypatch.setattr(httpx,'Client',Client)
     out=tmp_path/'capture';r=m.capture(a,b,out)
-    assert len(calls)==40 and len(r['captures'])==40 and len(r['errors'])==40
+    assert len(calls)==48 and len(r['captures'])==48 and len(r['errors'])==48
     assert not r['query_inventory_complete'] and r['not_started_queries']==0 and not r['filings']
     assert len(r['plan']['issuers'])==8 and all(not q['complete'] for q in r['queries'])
     assert all((out/c['file']).read_bytes()==b'forbidden' for c in r['captures'])
@@ -137,7 +137,7 @@ def test_index_only_finds_56_documents_without_any_pdf_GET_or_download(tmp_path,
     import httpx
     monkeypatch.setattr(httpx,'Client',Client)
     out=tmp_path/'inventory';r=m.capture(a,b,out,offset=8,count=56,index_only=True)
-    assert len(calls)==280 and len(r['filings'])==56 and r['query_inventory_complete']
+    assert len(calls)==336 and len(r['filings'])==56 and r['query_inventory_complete']
     assert len(r['PDFs_not_requested'])==56 and r['PDFs_not_retained']==[] and r['errors']==[]
     assert all('capture' not in f for f in r['filings'].values()) and not list(out.glob('*.pdf'))
     assert all(c['request_form'] is not None for c in r['captures'])
@@ -153,7 +153,7 @@ def test_index_budget_stops_without_turning_unattempted_queries_into_empty_histo
     import httpx
     monkeypatch.setattr(httpx,'Client',Client);monkeypatch.setitem(m.INDEX_LIMITS,'requests',2)
     r=m.capture(a,b,tmp_path/'limited',offset=8,count=56,index_only=True)
-    assert len(calls)==2 and len(r['queries'])==2 and r['not_started_queries']==278
+    assert len(calls)==2 and len(r['queries'])==2 and r['not_started_queries']==334
     assert not r['query_inventory_complete'] and len(r['plan']['issuers'])==56
 
 
@@ -168,3 +168,30 @@ def test_actual_upper_or_lower_pdf_extension_preserves_exact_index_URL(extension
 def test_extension_support_does_not_loosen_path_document_or_date_binding(path):
     r={**row(),'adjunctUrl':path}
     with pytest.raises(ValueError):m.index_page({'totalAnnouncement':1,'announcements':[r]},1,{'symbol':'600001','org_id':'abc001'})
+
+
+def test_registered_title_variants_are_fixed_and_fit_first_page_budget():
+    p,d=inputs();r=m.register(json.dumps(p).encode(),json.dumps(d).encode(),count=64,index_only=True)
+    assert r['queries']==[['annual-2024','2024年年度报告'],['annual-2024-compact','2024年度报告'],['q1-2024-short','2024年一季度报告'],['q1-2024-long','2024年第一季度报告'],['q1-2025-short','2025年一季度报告'],['q1-2025-long','2025年第一季度报告']]
+    assert len(r['issuers'])*len(r['queries'])==384 < r['limits']['requests']==400
+    # Pagination still consumes the original bound; this is not a completeness guarantee.
+    assert r['limits']['retries']==0 and not r['full_revision_history_certified']
+
+
+def test_both_title_queries_preserve_one_document_not_duplicate_filing(tmp_path,monkeypatch):
+    p,d=inputs();a=tmp_path/'sample.json';a.write_text(json.dumps(p));b=tmp_path/'directory.json';b.write_text(json.dumps(d))
+    class Client:
+        def __init__(self,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):return False
+        def stream(self,method,url,**kwargs):
+            form=kwargs['data'];code,org=form['stock'].split(',')
+            r={**row(),'secCode':code,'orgId':org,'announcementTitle':'2024年度报告全文'}
+            rows=[r] if form['searchkey'] in ('2024年年度报告','2024年度报告') else []
+            return Response(200,[json.dumps({'totalAnnouncement':len(rows),'announcements':rows}).encode()])
+    import httpx
+    monkeypatch.setattr(httpx,'Client',Client)
+    result=m.capture(a,b,tmp_path/'capture',count=1,index_only=True)
+    assert len(result['captures'])==6 and len(result['filings'])==1
+    assert result['query_inventory_complete'] and result['errors']==[]
+    assert result['queries'][0]['document_ids']==result['queries'][1]['document_ids']==['123']

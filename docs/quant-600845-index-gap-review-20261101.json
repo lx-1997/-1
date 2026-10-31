@@ -1,0 +1,78 @@
+{
+  "scope": "内部研究，达到商业级质量；不对外出售数据或信号",
+  "root_cause": "original keyword 2024年年度报告 does not return the indexed 2024年度报告全文; old selected() also rejected that title",
+  "original_index_sha256": "440646b57fd85b51d49f6e0c8854474bbc858c1581dea41e09bc46a1254d1ac5",
+  "controlled_2x2_totals": [
+    2,
+    2,
+    0,
+    0
+  ],
+  "fixed_day_totals": {
+    "A_no_keyword": 25,
+    "company_name": 25,
+    "A_old_annual_keyword": 0
+  },
+  "document": {
+    "symbol": "600845",
+    "org_id": "gssh0600845",
+    "announcement_id": "1222971488",
+    "title": "2024年度报告全文",
+    "url": "https://static.cninfo.com.cn/finalpage/2025-04-01/1222971488.PDF",
+    "PDF_sha256": "0e024d98b4006f3bfa2e422fab99b93cfca7afcac696ac5e3a777f0f41066807",
+    "pages": 224
+  },
+  "fix": "fixed sixth query 2024年度报告 for every explicitly selected member; permit only this annual title variant, retain summary rejection, identity/path/date/total guards and budgets",
+  "tested_tree": "d41bb377821220f6833880d807ce8f49feaa3e38",
+  "tests": {
+    "passed": 53,
+    "warnings": 5,
+    "seconds": 0.43,
+    "scope": "cohort capture and document inspection only; no full backend rerun"
+  },
+  "actual_fixed_capture": {
+    "original_sample_offset": 10,
+    "count": 1,
+    "queries": 6,
+    "candidates": 3,
+    "errors": 0,
+    "not_started": 0,
+    "PDF_downloads": 0
+  },
+  "all_current_HTTP": {
+    "index": 13,
+    "PDF": 1,
+    "errors": 0,
+    "retries": 0
+  },
+  "remaining": {
+    "original_missing_issuers_not_yet_diagnosed": [
+      "300282",
+      "000040",
+      "300742"
+    ],
+    "full_financial_Q1_panel_companies": 8,
+    "all_64_six_keyword_recapture": false,
+    "financial_facts_reviewed_this_round": false,
+    "historical_PIT_certified": false,
+    "revision_history_certified": false,
+    "unseen_validation_complete": false,
+    "commercial_grade_complete": false
+  },
+  "strategy_evaluations": 0,
+  "deployment": false,
+  "original_OOS_results_and_gates_unchanged": true,
+  "artifacts": "artifacts/quant-600845-index-gap-20261101",
+  "evidence_files_sha256": {
+    "fixed-collector.log": "ac3a9875215712c0ab9e645d8b718ef7584df6071dcfbc15780b10f6adfd4f2d",
+    "fixed-collector-absolute.log": "d67b93c372a9dab6633b2199b35c40e9819a5da2e3a81d3f973fc332b051b41b",
+    "tests-final.log": "64ed169a9f1b6e4ea97eef89744c5df9a79708f2e35c46aac3caf9cde6dbbb9f",
+    "verification.json": "421bbcac84ad6043b606082f1b5cfe6a0f0ca1c22a9c4adde491583d2968a92a",
+    "capture/plan.json": "b483fc7b1d3eb95720766ce8c3f656278e4cc83f8d47729b81df6531eee6ad22",
+    "capture/manifest.json": "19a0f44b2d29b7b9046cc75026ef5e10fa3ade9e48ccedfb1ed0e197820d1237",
+    "fixed-collector/plan.json": "530088b60114aa4747829c72866eaa33b0365846d60a7f43dc5033e1ece595fe",
+    "fixed-collector/manifest.json": "b0bbedc58c070df057c4f3ebde6cd7bc7d47671cbce5f70fe8566663b32f4030",
+    "day-diagnostic/plan.json": "f4569ac21a9e3504dde8737c1a9b07b80ebbf14104c008ef7a39391c1eb00a7d",
+    "day-diagnostic/manifest.json": "4a262f4c150ae5ddb3b70b0c4ee80e8a960c3d8aad2ff582f49ff6fba02e654b"
+  }
+}

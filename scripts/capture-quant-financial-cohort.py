@@ -19,7 +19,7 @@ sys.path.insert(0,str(ROOT/'backend'))
 from deepfocus_api import quant_research_sample as sample
 
 INDEX='https://www.cninfo.com.cn/new/hisAnnouncement/query'
-QUERIES=[('annual-2024','2024年年度报告'),('q1-2024-short','2024年一季度报告'),
+QUERIES=[('annual-2024','2024年年度报告'),('annual-2024-compact','2024年度报告'),('q1-2024-short','2024年一季度报告'),
          ('q1-2024-long','2024年第一季度报告'),('q1-2025-short','2025年一季度报告'),
          ('q1-2025-long','2025年第一季度报告')]
 LIMITS={'stocks':8,'requests':112,'wall_seconds':240,'request_seconds':12,
@@ -80,7 +80,7 @@ def index_page(data,page,issuer,total_seen=None):
 def selected(row):
     text=re.sub(r'\s+','',re.sub(r'<[^>]+>','',row['announcementTitle']))
     if any(s in text for s in ('摘要','说明会','提示性','取消','英文','审议','关于')):return False
-    return bool(re.search(r'(?:2024年年度报告(?:全文)?|202[45]年(?:第?一|1)季度报告)(?:[（(](?:更正后|修订版|更新后)[）)])?$',text))
+    return bool(re.search(r'(?:2024年?年度报告(?:全文)?|202[45]年(?:第?一|1)季度报告)(?:[（(](?:更正后|修订版|更新后)[）)])?$',text))
 
 
 class Retainer:
