@@ -1,0 +1,96 @@
+{
+  "schema": "capitalization-tax-primary-review-v1",
+  "reviewed_at": "2026-10-31T03:45:39.365382+00:00",
+  "scope": "internal_cn_individual_public_A_share_research",
+  "sources": [
+    {
+      "name": "tax-2015-101.html",
+      "url": "https://www.chinatax.gov.cn/chinatax/n810341/n810765/n1465977/n1466017/c1967339/content.html",
+      "sha256": "f9f696f0a6d265dc325df5d993ae2fd661d533e288efc1a0c88f9ce5de55f043",
+      "bytes": 27038,
+      "observed_at": "2026-10-31T03:42:22.276239+00:00"
+    },
+    {
+      "name": "tax-2015-80.html",
+      "url": "https://fgk.chinatax.gov.cn/zcfgk/c100012/c5194588/content.html",
+      "sha256": "4d376eae4e40a00f33773268bff002c0a94371e769d490121336a914fd429542",
+      "bytes": 39457,
+      "observed_at": "2026-10-31T03:42:22.974386+00:00"
+    },
+    {
+      "name": "tax-2014-67.html",
+      "url": "https://www.chinatax.gov.cn/n810341/n810765/n812141/n812222/c1520568/content.html",
+      "sha256": "2712756cdd93e9554ed4940f054a458f186c1bb49fb27303cdb1f95e5db7ba13",
+      "bytes": 37446,
+      "observed_at": "2026-10-31T03:42:23.224429+00:00"
+    },
+    {
+      "name": "beijing-premium-guidance.html",
+      "url": "https://www.beijing.gov.cn/fuwu/lqfw/gggs/tzxx/202412/t20241210_3961768.html",
+      "sha256": "c62c0ffe1fe08db69ac9bc25b6c8884ca254cb3d19aa9b0cebf6fdff4c3b8501",
+      "bytes": 19189,
+      "observed_at": "2026-10-31T03:42:23.561701+00:00"
+    },
+    {
+      "name": "catl-2023-annual.pdf",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-03-16/1219313047.PDF",
+      "sha256": "6081f0377617dddb82f900569d6458c278a7ab26697b34c87684188eac083471",
+      "bytes": 5986207,
+      "observed_at": "2026-10-31T03:42:25.407607+00:00"
+    }
+  ],
+  "policy_findings": {
+    "capital_reserve_is_not_uniformly_tax_exempt": true,
+    "share_issue_premium_exception_requires_source_identity": true,
+    "other_capital_reserve_listed_share_treatment": "differentiated_dividend_policy_not_automatic_20_percent",
+    "2015_101_supersedes_old_over_one_year_rate": true,
+    "2014_67_general_equity_basis_does_not_apply_to_public_market_listed_shares": true,
+    "specific_new_share_holding_period_inheritance_proven": false,
+    "personal_allotment_and_clearing_received": false
+  },
+  "originals_unchanged": {
+    "backend/deepfocus_api/quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "artifacts/quant-strategy-20261030/frozen-experiments.json": "25cb54bea8b6795443cbd4d1b0ae56cfab5bfe0921fc780c6a5fcf2da210566f",
+    "artifacts/quant-expanded-control-20261030/evidence/events.json": "5abba78765feb8445055b792112ceef11496f726266ea8bd2fb2680343634b4a"
+  },
+  "cash_share_kernel_changed": false,
+  "affected_symbol_fill_guard_relaxed": false,
+  "full_after_tax_NAV_enabled": false,
+  "new_strategy_replays": 0,
+  "production_writes": 0,
+  "production_deployed": false,
+  "strategy_qualified": false,
+  "commercial_ready": false,
+  "issuer_review": {
+    "pdf_sha256": "6081f0377617dddb82f900569d6458c278a7ab26697b34c87684188eac083471",
+    "pdf_pages_reviewed": [
+      193,
+      194
+    ],
+    "printed_pages": [
+      192,
+      193
+    ],
+    "public_date": "2024-03-16",
+    "conservative_available_at": "2024-03-17T00:00:00+08:00",
+    "observed_at": "2026-10-31T03:42:25.407607+00:00",
+    "role": "posthoc_accounting_corroboration_not_personal_tax_ruling_or_2023_knowledge",
+    "annual_capitalization_units": "ten_thousand_shares_rounded_to_0.01",
+    "annual_report_amount": "195390.80",
+    "implementation_shares": 1953907971,
+    "rounding_difference_shares": "29.00",
+    "within_half_reporting_unit": true,
+    "premium_reduction_link_supported": true,
+    "all_capitalization_tax_exempt_proven": false,
+    "account_tax_basis_proven": false
+  },
+  "captures": {
+    "proxy_failure_log": "capture.json",
+    "direct_result_log": "direct-capture.json",
+    "csdc_2020_guide_raw_retained": false,
+    "csdc_direct_status": 404,
+    "global_proxy_configuration_changed": false
+  },
+  "artifact_review_sha256": "c0f5bf125aa65bf28e3eff5975390698aee06c77d3c27b3d8937ec4da151ca44",
+  "evidence_directory": "artifacts/quant-share-tax-evidence-20261031"
+}
