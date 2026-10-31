@@ -1,0 +1,46 @@
+{
+  "schema": "financial-magnitude-and-source-upgrade-review-v1",
+  "scope": "internal reviewed financial data validation and immutable source provenance",
+  "before_tests": {
+    "failed": 11,
+    "passed": 2
+  },
+  "amount_bound_CNY": "1000000000000000000",
+  "bound_unchanged": true,
+  "validation_version": "exact-financial-magnitude-v2",
+  "source_profiles": [
+    "current",
+    "known_v1_revalidated"
+  ],
+  "unsafe_legacy_values_accepted": false,
+  "unknown_source_profiles_accepted": false,
+  "new_tests": 26,
+  "focused_tests": 115,
+  "real_upgrade": {
+    "scope": "real previously retained isolated financial QA; no production or external calls",
+    "initial_working_backup_RO_failure_retained": true,
+    "working_copy_journal_prepared_before_first_RO": true,
+    "original_rows": 1,
+    "source_documents": 5,
+    "legacy_read_idempotent_and_unchanged": true,
+    "separate_current_receipt_created": true,
+    "new_receipt_clock_not_backdated": true,
+    "old_and_new_classified_separately": true,
+    "mixed_archive_cold_restored_exact": true,
+    "prior_v1_backup_read_and_new_cold_restore_exact": true,
+    "first_cold_read_independent_process": true,
+    "original_main_sha256": "1942948a69847ff30ce2c0a843d2faeb46737218ab58ff71033c8f6b25c2d42b",
+    "prior_backup_main_sha256": "4f71496fe1fefa4a016595c7abfcfffacb857e91960b7b45bf0aa9214034d220",
+    "original_archives_main_and_rows_unchanged": true,
+    "current_rows": 2,
+    "future_stored_visibility_actually_observed": false,
+    "archived_code_executed": false,
+    "activation_authorized": false,
+    "production_writes": 0,
+    "strategy_evaluations": 0
+  },
+  "strategy_parameters_or_gates_changed": false,
+  "production_writes": 0,
+  "new_strategy_evaluations": 0,
+  "commercial_ready": false
+}

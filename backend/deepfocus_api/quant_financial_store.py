@@ -19,6 +19,16 @@ from .quant_corporate_actions import BJ, timestamp
 from .quant_research_engine import digest
 
 VERSION = 'qr-financial-receipt-v1'
+VALIDATOR_VERSION = 'qr-financial-source-validator-v2'
+# Exact reviewed source identity of the original immutable v1 archive (af7e1a8).
+# This is a data/source whitelist, never permission to execute archived code.
+KNOWN_V1_SOURCE_PINS = {
+    'quant_financial_vintages.py':'7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278',
+    'quant_corporate_actions.py':'89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996',
+    'quant_research_engine.py':'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5',
+    'quant_financial_store.py':'da99b1317c8aa7c81fabbe3ebfa3da4318a2857082be1e353575251c391471cd',
+}
+
 VISIBILITY = 'next_beijing_calendar_day_after_transaction_recording'
 MAX_OWNER_BYTES = 100 * 1024 * 1024
 MAX_BUNDLES = 100
@@ -58,14 +68,21 @@ def _facts(record):
     return {k:v for k,v in record.items() if k not in {'observed_at','recorded_at','index_sha256'}}
 
 
+def source_profile(value):
+    archived=value.get('source_pins')
+    if archived==LOADED_PINS:return 'current'
+    if archived==KNOWN_V1_SOURCE_PINS:return 'known_v1_revalidated'
+    raise ValueError('Financial receipt source identity is unknown')
+
+
 def verify_row(c, row):
     """Read and validate a receipt and owner-bound sources; no schema/write calls."""
     require_current_source()
     value = json.loads(row['payload'])
     if (digest(value) != row['fingerprint'] or value.get('schema') != VERSION
-            or value.get('source_pins') != LOADED_PINS
             or value.get('visibility_policy') != VISIBILITY):
         raise ValueError('Financial receipt identity changed')
+    source_profile(value)
     incoming, effective = value['input'], value['effective_manifest']
     if digest(incoming) != row['input_hash'] or incoming['label'] != value['label']:
         raise ValueError('Financial input fingerprint changed')
@@ -85,6 +102,8 @@ def verify_row(c, row):
             raise ValueError('Owner-bound financial evidence missing')
         sources[sha] = found['body']
     # Original declared clocks remain auditable, but do not establish storage time.
+    # Revalidate every recognized source version with the current exact bounds;
+    # recognizing old provenance never exempts a stored value from validation.
     vintages.validate_manifest(incoming['manifest'],sources,now=row['created'])
     vintages.validate_manifest(effective,sources)
     return value, sources
@@ -96,7 +115,11 @@ def _summary(row, value):
             'label':value['label'],'vintage_count':len(value['effective_manifest']['vintages']),
             'source_count':len(value['effective_manifest']['source_files']),
             'visibility_policy':VISIBILITY,'coverage_verified':False,
-            'externally_attested_time':False,'promotion_allowed':False}
+            'externally_attested_time':False,'promotion_allowed':False,
+            'validator_version':VALIDATOR_VERSION,'archive_source_status':source_profile(value),
+            'archive_source_current':value['source_pins']==LOADED_PINS,
+            'archive_source_digest':digest(value['source_pins']),
+            'validated_source_digest':digest(LOADED_PINS),'archive_rewritten':False}
 
 
 def put(owner, label, manifest, sources):

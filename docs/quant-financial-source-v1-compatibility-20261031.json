@@ -1,0 +1,17 @@
+{
+  "schema": "reviewed-financial-source-compatibility-v1",
+  "original_implementation_commit": "af7e1a8",
+  "old_source_pins": {
+    "quant_financial_vintages.py": "7977ab0af0dde49cd0688d838e3d7090e98357a1e7295d439dffb7f2b0ee9278",
+    "quant_corporate_actions.py": "89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996",
+    "quant_research_engine.py": "b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5",
+    "quant_financial_store.py": "da99b1317c8aa7c81fabbe3ebfa3da4318a2857082be1e353575251c391471cd"
+  },
+  "input_manifest_schema": "reviewed-financial-vintages-v1",
+  "receipt_schema": "qr-financial-receipt-v1",
+  "recognition": "exact_full_source_pin_map_only",
+  "validation": "all_facts_sources_and_clocks_revalidated_by_current_exact_validator",
+  "archive_rewrite": false,
+  "archived_code_execution": false,
+  "unknown_versions_accepted": false
+}

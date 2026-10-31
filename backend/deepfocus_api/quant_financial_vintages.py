@@ -14,6 +14,7 @@ from .quant_corporate_actions import BJ,timestamp
 from .quant_research_engine import digest
 
 VERSION='reviewed-financial-vintages-v1'
+VALIDATION_VERSION='exact-financial-magnitude-v2'
 METRICS={'revenue','parent_net_profit','net_operating_cashflow'}
 BOOK_TIME_POLICY='date_only_disclosure_visible_from_next_calendar_day_00_00_beijing'
 
@@ -89,7 +90,7 @@ def _validate_record(record,sources,now):
             raise ValueError('Financial values require plain CNY decimal strings or explicit null')
         try:amount=Decimal(value)
         except InvalidOperation:raise ValueError('Invalid decimal amount') from None
-        if not amount.is_finite() or abs(amount)>Decimal('1e18') or amount.as_tuple().exponent < -2:
+        if not amount.is_finite() or amount.copy_abs()>Decimal('1e18') or amount.as_tuple().exponent < -2:
             raise ValueError('Non-finite, oversized or non-CNY-cent amount')
     if record.source_sha256 not in sources or not sources[record.source_sha256].startswith(b'%PDF-'):
         raise ValueError('Retained report PDF missing')
@@ -148,7 +149,7 @@ def select_panel(manifest,sources,*,issuer_id,symbol,period_end,as_of,mode,requi
     if len({_group(r) for r in candidates})>1:raise ValueError('Ambiguous report period/scope')
     visible=[r for r in candidates if available_at(r)<=clock
              and (mode=='historical_reconstruction' or max(timestamp(r.observed_at),timestamp(r.recorded_at))<=clock)]
-    result={'version':VERSION,'issuer_id':issuer_id,'symbol':symbol,'period_end':period_end,'as_of':as_of,
+    result={'version':VERSION,'validation_version':VALIDATION_VERSION,'issuer_id':issuer_id,'symbol':symbol,'period_end':period_end,'as_of':as_of,
             'mode':mode,'availability_policy':BOOK_TIME_POLICY,'manifest_digest':digest(manifest),
             'source_pins':source_pins(),'coverage_verified':False,'historical_pit_feed_certified':False,
             'promotion_allowed':False,'commercial_ready':False,
