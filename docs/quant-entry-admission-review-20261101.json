@@ -1,0 +1,25 @@
+{
+  "schema": "membership-admission-and-quota-contract-review-v1",
+  "baseline_obsolete_anonymous_tests_failed": 5,
+  "native_anonymous_status": 403,
+  "native_ordinary_status": 402,
+  "native_premium_lifetime_admin_unlimited": true,
+  "finite_quota_is_test_seam_after_native_admission": true,
+  "production_main_AST_unchanged": true,
+  "canonical_AST_sha256": "0e53585ef4481d1d5bea1b79c6a97b50c5f055cd63209d179965896c252972a2",
+  "new_parameterized_cases": 12,
+  "updated_original_cases": 5,
+  "targeted_tests_passed": 78,
+  "targeted_warnings": 9,
+  "tested_runtime_tree": "ae3a0949a442030165600ed42910db1808f8ccaf",
+  "source_pins": {
+    "backend/deepfocus_api/main.py": "504ed7b5b9754cfcd94cb04a4ea59132615aa38403be49929fbeebee5c56159b",
+    "backend/deepfocus_api/tests/test_research_entry_quotas.py": "afb8b10821dc5f4856409e423f6f1fd25f9525646b4c4e4d9408c0020a559027"
+  },
+  "real_JWT_membership_acceptance_claimed": false,
+  "real_model_calls": 0,
+  "production_deployed": false,
+  "entire_backend_passed": false,
+  "strategy_changed": false,
+  "commercial_ready": false
+}

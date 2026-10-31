@@ -9407,8 +9407,8 @@ def _upgrade_hint() -> str:
     return "点击「💎 开通会员」即可办理。"
 
 
-# AI 投研问答（tool-research）每日额度护栏：前端已对「所有登录用户」放开入口（让非会员也能尝到旗舰「哇时刻」），
-# 这里是后端真正的成本闸——会员/管理员无限，登录非会员每天 _AGENT_FREE_QA 次，匿名兜底防开放端点被滥用。
+# AI 投研问答当前由下方会员闸控制：会员/管理员无限，普通账号和匿名拒绝。
+# 以下免费次数常量仅为旧额度展示/兼容代码保留，不代表当前存在免费通行。
 _AGENT_FREE_QA = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA", "10") or 10)  # 宽入口养习惯(问财免费200句/天)，深能力收费；env 可调回
 _AGENT_FREE_QA_ANON = int(os.getenv("DEEPFOCUS_FREE_AGENT_QA_ANON", "1") or 1)
 
@@ -9451,8 +9451,7 @@ def _record_agent_chain(*, mode: str, route: str, message: str, trace: list, ela
         logger.debug("answer-metrics-log failed", exc_info=True)
 
 
-# AI 对话里的「深度研判」是回答模式，不再单独做成会员专属入口：会员/管理员不限次，
-# 非会员每天体验 1 次；匿名按 IP 计数，登录后按账号计数。只在成功返回圆桌答案后扣次。
+# 深度研判同样由下方会员闸控制；旧免费次数常量不改变当前准入规则。
 _DULUS_DEEP_FREE = int(os.getenv("DEEPFOCUS_FREE_DEEP_ANSWER", "1") or 1)
 
 
