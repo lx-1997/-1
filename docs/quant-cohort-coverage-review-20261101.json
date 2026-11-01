@@ -1,0 +1,51 @@
+{
+  "tested_tree": "b5af4efef7b399617ab1da1a066d80bb31f9d91e",
+  "original64_sample_file_sha256": "d4867ee6ffb124a2ebbb137be54a145f32beb397c0760f6b7187c73d02b23d03",
+  "original9_source_main_sha256_unchanged": "5497857f160124d7b1e31da72cbf6890aa03a31ed189bc0ae4c98d44943e65e5",
+  "raw_three_tables_unchanged": true,
+  "old9_full_panel_and_structure_JSON_equal": true,
+  "all_input_declarations_unchanged": true,
+  "historical_fraction": {
+    "numerator": 9,
+    "denominator": 64
+  },
+  "historical_missing_members": 55,
+  "as_recorded_fraction": {
+    "numerator": 0,
+    "denominator": 64
+  },
+  "as_recorded_declared_but_unavailable": 9,
+  "not_declared_in_either_mode": 55,
+  "both_modes_foreign_owner_rejected": true,
+  "both_modes_overwrite_rejected": true,
+  "only_explicit_frozen_clocks_used": true,
+  "complete_factor_sample_or_history_certified": false,
+  "strategy_evaluations": 0,
+  "production_writes": 0,
+  "commercial_grade_complete": false,
+  "scope": "internal research to commercial-grade quality; not data/signal sales",
+  "tests_passed": 91,
+  "test_warnings": 2,
+  "test_seconds": 2.47,
+  "test_scope": "cohort coverage, feature panel, panel structure, research sample and sample quality",
+  "full_backend_rerun": false,
+  "artifact_root": "artifacts/quant-cohort-coverage-20261101",
+  "all_guarded_processes_terminal": 20,
+  "app_changes": "additive owner-bound cohort coverage build and offline atomic CLI; no old financial contract or strategy modification",
+  "historical_fraction_is_coverage_not_investment_return": true,
+  "snapshot_scope": "recomputed explicit immutable packet panel; not a global database snapshot",
+  "original64_missing_members_never_dropped": true,
+  "source_files_sha256": {
+    "backend/deepfocus_api/quant_cohort_coverage.py": "ecdcf20cbf45b0dd76efe9dd7d6dbdd2e7ccbb74eb9eaf192f3db9904d5f2023",
+    "backend/deepfocus_api/tests/test_quant_cohort_coverage.py": "fa1ea79f361a85a7c2cdbba4f7fb729e0de35f367d1546e1a9f16dc055c7a88a",
+    "scripts/quant-cohort-coverage-review.py": "e1e6bf81d85b42cbe33af081bfe0cbe532deaca78794d0d584b64c2eb9a4c6b1"
+  },
+  "evidence_files_sha256": {
+    "selected-tree.json": "afd7a73896ba95a928dc3a529df6ad55510ab31e90ae9a17a9fd079f7bfa0fc3",
+    "tests.log": "0cbc54a9c0fa5d916427cdf154b3f77a606bc81e578399254a0549c042580404",
+    "historical_reconstruction.json": "385214241c899ec3264c0cd49bde8796f72c980d01e05b9223536029d3fdbf85",
+    "as_recorded.json": "97739919d6b5492d48bf050bb36f167f9ea49795104e4c1f15cc2bd62a9d23a2",
+    "real-review-receipt.json": "37fefcd6a6989d13a2f2193809512ca2edc2ab6bef9ec47aec42e70590779121",
+    "guard-terminal.json": "d5b431d156d6f27ee4c440ee5e700ecc65ce95c46c74da0f2aa63ebf55a407a1"
+  }
+}
