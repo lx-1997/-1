@@ -1,0 +1,218 @@
+{
+  "collector_source_sha256": "35037eacca8cecd8888c57fa4087b439d1c977e1072d8f79fa7fcf71f168b14a",
+  "review_script_sha256": "207fd4d86e1e24e488d9444b292d797e3f2149ce14a0800720f1decd78b2b9ef",
+  "new_HTTP_index_requests": 64,
+  "new_query_groups": 64,
+  "new_errors": 0,
+  "new_retries": 0,
+  "old_index_queries_replayed": 320,
+  "combined_query_groups": 384,
+  "old_candidates_current_parser": 185,
+  "combined_candidates": 186,
+  "new_key_relative_to_original320": "600845:1222971488",
+  "new_key_already_known_from_prior_individual_review": true,
+  "no_additional_issuer_title_variant_gaps_discovered": true,
+  "conflicting_metadata_keys": [],
+  "candidate_period_slots": 184,
+  "nominal_slots": 192,
+  "unfilled_candidate_slots": 8,
+  "issuers_with_all3_candidate_slots": 61,
+  "not_PDF_or_fact_coverage": true,
+  "actual_financial_panel_companies_still": 9,
+  "known_body_annotations": {
+    "file": "artifacts/quant-same-day-documents-20261101/body-review-annotations.json",
+    "sha256": "9bbc0e3ff45e8ddcfa4dbcef8a17f00d28b8de77747bc2eb717d1d1c26f69431",
+    "role": "diagnostics retain actual600611 summary and000852 same-day comparison; not automatic canonicalization or removal"
+  },
+  "original_inputs_manifests_and_errors_preserved": true,
+  "PDF_downloads": 0,
+  "financial_imports": 0,
+  "strategy_evaluations": 0,
+  "production_writes": 0,
+  "commercial_grade_complete": false,
+  "source_commit": "c27ce4fdf65566b1a8dfcfb6edc3b8904d21ee43",
+  "artifact_root": "artifacts/quant-annual-alias64-20261101",
+  "capacity_plan": {
+    "role": "capacity planning, not download authorization/result or exact provider-size contract",
+    "inventory_sha256": "7fbef83e067d6f4b716ae7fadb0b3c8f7bd8237686c8ff9688281da3312d12b9",
+    "current_financial_store_sha256": "d387866948aa5e82180aec2f1ffd409d789d63aaebe53400f53d48cbb35cde8f",
+    "current_owner_source_quota_bytes": 104857600,
+    "current_owner_source_rows": 54,
+    "current_owner_retained_bytes": 37971630,
+    "current_owner_available_source_quota_bytes": 66885970,
+    "all186_candidate_advertised_size_x1024_bytes": 275490816,
+    "advertised_size_unit_empirical_only": {
+      "actual_old_PDF_pairs": 24,
+      "hint_x1024_minus_actual_bytes_min": 608,
+      "hint_x1024_minus_actual_bytes_max": 1467,
+      "exact_ceil_KiB_contract_certified": false,
+      "all_unfetched_sizes_verified": false
+    },
+    "next_original_slice": {
+      "offset": 8,
+      "count": 8,
+      "members": [
+        {
+          "code": "sz.301172",
+          "candidate_ids": [
+            "301172:1223216352",
+            "301172:1219665579",
+            "301172:1223301733"
+          ],
+          "candidate_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ],
+          "missing_target_periods": []
+        },
+        {
+          "code": "sz.300282",
+          "candidate_ids": [],
+          "candidate_periods": [],
+          "missing_target_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ]
+        },
+        {
+          "code": "sh.600845",
+          "candidate_ids": [
+            "600845:1219773405",
+            "600845:1223304441",
+            "600845:1222971488"
+          ],
+          "candidate_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ],
+          "missing_target_periods": []
+        },
+        {
+          "code": "sz.301263",
+          "candidate_ids": [
+            "301263:1223317221",
+            "301263:1219740974",
+            "301263:1223317249"
+          ],
+          "candidate_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ],
+          "missing_target_periods": []
+        },
+        {
+          "code": "sz.300895",
+          "candidate_ids": [
+            "300895:1223221093",
+            "300895:1219866810",
+            "300895:1223221083"
+          ],
+          "candidate_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ],
+          "missing_target_periods": []
+        },
+        {
+          "code": "sz.300046",
+          "candidate_ids": [
+            "300046:1222991226",
+            "300046:1219635920",
+            "300046:1223246623"
+          ],
+          "candidate_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ],
+          "missing_target_periods": []
+        },
+        {
+          "code": "sh.600657",
+          "candidate_ids": [
+            "600657:1223073009",
+            "600657:1219876361",
+            "600657:1223304423"
+          ],
+          "candidate_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ],
+          "missing_target_periods": []
+        },
+        {
+          "code": "sh.600828",
+          "candidate_ids": [
+            "600828:1222913586",
+            "600828:1219877287",
+            "600828:1223346710"
+          ],
+          "candidate_periods": [
+            "2024-03-31",
+            "2024-12-31",
+            "2025-03-31"
+          ],
+          "missing_target_periods": []
+        }
+      ],
+      "reused_reviewed_member": "sh.600845",
+      "unfilled_member_not_replaced": "sz.300282",
+      "new_candidate_keys": [
+        "301172:1223216352",
+        "301172:1219665579",
+        "301172:1223301733",
+        "301263:1223317221",
+        "301263:1219740974",
+        "301263:1223317249",
+        "300895:1223221093",
+        "300895:1219866810",
+        "300895:1223221083",
+        "300046:1222991226",
+        "300046:1219635920",
+        "300046:1223246623",
+        "600657:1223073009",
+        "600657:1219876361",
+        "600657:1223304423",
+        "600828:1222913586",
+        "600828:1219877287",
+        "600828:1223346710"
+      ],
+      "new_candidate_PDF_count": 18,
+      "new_PDF_advertised_size_x1024_bytes": 23242752,
+      "no_downloads_started": true
+    },
+    "implications": [
+      "shared near-full disk requires larger research directory before batch download, import and independent backup",
+      "full candidate source-size estimate exceeds current100MiB per-owner allowance; plan and test an explicit capacity upgrade, never split fake owners to evade quota",
+      "candidate total includes known summary/multiple-doc diagnostics, so this is not exact final fact-store size",
+      "no risk, OOS, cost, PIT or source-identity gate changed"
+    ],
+    "research_directory_requested_free_bytes_at_least": 10737418240,
+    "financial_imports": 0,
+    "production_writes": 0
+  },
+  "app_or_strategy_implementation_changed": false,
+  "full_backend_tests_rerun": false,
+  "application_owner_quota_unchanged": true,
+  "research_storage_request_pending": true,
+  "current_scope": "internal research to commercial-grade quality; not data/signal sales",
+  "evidence_files_sha256": {
+    "capture/plan.json": "2c5a5228325274cc3eebde5612fd1379ac8cf6d8773124bda63c168ded7c7d74",
+    "capture/manifest.json": "f6041a75fcf8abb167a69a2f399bf5afc5b4325810f51b2d6d8c40a1ffe18095",
+    "old320-current-parser-replay.json": "5aa6400d71f7109faa8ff3dec6267f0ac85d62e327fe8b09f4d7daebb802eeae",
+    "merged-inventory.json": "7fbef83e067d6f4b716ae7fadb0b3c8f7bd8237686c8ff9688281da3312d12b9",
+    "verification.json": "ef80b093a421e465ed9b4a637854338405775f216a233dfae64844848c24a82b",
+    "capacity-plan.json": "46c3354281bb2d1f7fe5867e6d6a80774b3143796676f7444760ddd54b124a47",
+    "review.py": "207fd4d86e1e24e488d9444b292d797e3f2149ce14a0800720f1decd78b2b9ef",
+    "verify.py": "845e1e8d6570065a72a57560e23b85d15ad2335a4177eaade89741d9cc5af5c1",
+    "review.log": "ae4eacd0b11a241876435769f35ad50ab6464ca5a22dc53a14c9cf7fb35279da"
+  },
+  "cleanup_receipt_sha256": "5c0b49f20ab154fe8f928269e67dd996585704671e90c2970cd7ec81cbfc4448",
+  "documentation_initially_blocked_by_ENOSPC": true
+}
