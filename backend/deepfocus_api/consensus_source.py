@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -62,7 +63,10 @@ async def fetch_analyst_consensus(symbol: str, market: Optional[str] = None) -> 
         return None
 
     if result.get("target_price") or result.get("rating"):
-        result["provider"] = "nasdaq"
+        result["currency"] = "USD"
+        result["fetched_at"] = datetime.now(timezone.utc).isoformat()
+        result["source_url"] = f"https://api.nasdaq.com/api/analyst/{sym}/ratings" if result.get("rating") else f"https://stockanalysis.com/stocks/{sym.lower()}/forecast/"
+        result["provider"] = "nasdaq" if result.get("rating") else "stockanalysis"
         _CACHE[key] = (time.time(), result)
         return result
     _CACHE[key] = (time.time(), None)

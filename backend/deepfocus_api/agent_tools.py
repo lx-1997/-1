@@ -213,7 +213,7 @@ async def execute_tool(
     finally:
         _IFIND_GRADE.reset(_tok)  # 任何 return/异常都复位，灰度位绝不残留
     if data is None or (isinstance(data, (list, dict)) and not data):
-        return {"ok": True, "data": None, "note": "该数据源对此标的暂无可用数据（已优雅降级）。"}
+        return {"ok": True, "data": None, "data_status": "no_data", "note": "该数据源对此标的暂无可用数据（已优雅降级）。"}
     return {"ok": True, "data": data}
 
 
@@ -241,6 +241,9 @@ async def _tool_get_market_quote(symbol: str, market: Optional[str] = None) -> A
 
 
 async def _tool_get_financials(symbol: str, market: Optional[str] = None) -> Any:
+    if (market or "").upper() == "US" or (not market and _re.fullmatch(r"[A-Za-z][A-Za-z0-9.\-]{0,9}", symbol or "")):
+        from .us_financials import fetch_us_earnings
+        return await fetch_us_earnings(symbol, market)
     return await fetch_eastmoney_earnings(symbol, market)
 
 
@@ -363,7 +366,7 @@ register_tool(AgentTool(
 ))
 register_tool(AgentTool(
     name="get_financials",
-    description="获取最新季报盈利质量：净利/营收同比、EPS、ROE。仅 A股/港股有覆盖。",
+    description="获取最新财报盈利质量：净利/营收同比、EPS、ROE；美/A/港股。必须按返回的报告期间、单季或累计口径及披露日期引用。",
     parameters=_SYMBOL_MARKET_SCHEMA,
     handler=_tool_get_financials,
 ))
@@ -376,7 +379,7 @@ register_tool(AgentTool(
 register_tool(AgentTool(
     name="get_valuation",
     description="获取市值与估值（总市值/流通市值、市盈率 TTM 即 pe_ratio 与动态即 pe_dynamic 双口径、PB/PS/PEG、美股远期PE/股息率/beta）。"
-                "A/港股为公开行情页口径；market_cap 单位为元、另附 market_cap_yi(亿元)直接展示。美/A/港股通用。",
+                "A/港股为公开行情页口径；market_cap 单位为元、另附 market_cap_yi(亿元)直接展示。美/A/港股通用。pe_basis=provider_unspecified时不可称TTM或远期PE。",
     parameters=_SYMBOL_MARKET_SCHEMA,
     handler=_tool_get_valuation,
 ))
@@ -507,7 +510,7 @@ async def _snapshot_component(name: str, awaitable) -> dict[str, Any]:
     # wait_for cancels and joins the owned coroutine; caller cancellation propagates.
     try:
         value = await asyncio.wait_for(awaitable, timeout=_SNAPSHOT_SOURCE_TIMEOUTS[name])
-        return {"value": value, "status": "completed"}
+        return {"value": value, "status": "completed" if value else "no_data"}
     except asyncio.TimeoutError:
         return {"value": None, "status": "timeout"}
     except Exception:
@@ -560,9 +563,9 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
             gaps.append("估值暂不可用")
         if frow is None:
             gaps.append("最新财报暂不可用")
-        financial_projection = _compact_fields(frow, ("report_date", "revenue_yoy", "profit_yoy", "roe", "gross_margin", "eps"))
+        financial_projection = _compact_fields(frow, ("report_date", "revenue_yoy", "profit_yoy", "roe", "gross_margin", "eps", "revenue", "net_income", "net_income_basis", "currency", "period_start", "period_basis", "period_key", "report_type", "published_date", "fetched_at", "source_url"))
         if financial_projection:
-            period_key = _financial_period_key(financial_projection.get("report_date"))
+            period_key = financial_projection.get("period_key") or _financial_period_key(financial_projection.get("report_date"))
             if period_key:
                 financial_projection["period_key"] = period_key
                 financial_projection["period_label"] = period_key.replace("-", " ")
@@ -573,9 +576,9 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
                 "price", "change_percent", "currency", "market_time", "fetched_at", "is_realtime",
                 "pe_ttm", "wk52_high", "wk52_low", "market_cap",
             )),
-            "valuation": _compact_fields(vrow, ("market_cap_yi", "pe_ratio", "pe_dynamic", "pb_ratio", "ps_ratio", "peg", "currency")),
+            "valuation": _compact_fields(vrow, ("market_cap", "market_cap_yi", "pe_ratio", "pe_basis", "pe_dynamic", "forward_pe", "pb_ratio", "ps_ratio", "peg", "currency", "source_url", "fetched_at", "data_quality")),
             "financials": financial_projection,
-            "consensus": _compact_fields(crow, ("consensus_rating", "rating_summary", "report_count", "period", "avg_target_price", "target_price_low", "target_price_high", "currency")),
+            "consensus": _compact_fields(crow, ("consensus_rating", "rating_summary", "report_count", "period", "avg_target_price", "target_price_low", "target_price_high", "currency", "rating", "analyst_count", "target_price", "upside_pct", "fetched_at", "source_url")),
             "data_gaps": gaps,
             "source_status": source_status,
         }

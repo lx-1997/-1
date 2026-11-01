@@ -59,15 +59,17 @@ async def fetch_stock_news(
     返回 list[{title, date, summary, url, source}]，每项已去高亮标签、清洗。
     无数据/任何失败 → []（绝不抛异常）。
     """
-    code = re.sub(r"\D", "", symbol or "")
-    if not code:
+    raw = re.sub(r"\.US$", "", str(symbol or "").upper().strip())
+    is_us = (market or "").upper() == "US" or (not market and bool(re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", raw)))
+    code = raw if is_us else re.sub(r"\D", "", raw)
+    if not code or (is_us and not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", code)):
         return []
     try:
         limit = max(1, min(int(limit), 30))
     except (TypeError, ValueError):
         limit = 8
 
-    cache_key = f"{code}:{limit}"
+    cache_key = f"{'US' if is_us else 'CN_HK'}:{code}:{limit}"
     hit = _CACHE.get(cache_key)
     if hit and (time.time() - hit[0]) < _CACHE_TTL:
         return hit[1]

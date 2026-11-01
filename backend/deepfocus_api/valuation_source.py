@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import re
+import asyncio
+from datetime import datetime, timezone
 import time
 from typing import Optional
 
@@ -69,6 +71,49 @@ async def _fetch_em_realtime(client: "httpx.AsyncClient", secid: Optional[str]) 
     }
 
 
+async def _fetch_stockanalysis_us(client, sym):
+    r = await client.get(
+        f"https://stockanalysis.com/api/symbol/s/{sym}/overview",
+        headers={"User-Agent": _UA, "Accept": "application/json"},
+    )
+    if r.status_code == 200:
+        d = (r.json().get("data") or {})
+        mc = _num(d.get("marketCap"))
+        if mc:
+            return {
+                "market_cap": mc,
+                "pe_ratio": _num(d.get("peRatio")),
+                "pb_ratio": None,
+                "forward_pe": _num(d.get("forwardPE")),
+                "beta": _num(d.get("beta")),
+                "dividend_yield": _pct(d.get("dividend")),
+                "currency": "USD",  # 美股市值/PE是美元口径
+                "provider": "stockanalysis",
+            }
+    return None
+
+
+async def _fetch_nasdaq_us(client, sym):
+    response = await client.get(f"https://api.nasdaq.com/api/quote/{sym}/summary",
+                                params={"assetclass": "stocks"},
+                                headers={"User-Agent": _UA, "Accept": "application/json"})
+    if response.status_code != 200:
+        return None
+    data = response.json().get("data") or {}
+    if str(data.get("symbol") or "").upper() != sym:
+        return None
+    summary = data.get("summaryData") or {}
+    cap = summary.get("MarketCap") or {}
+    value = _num(cap.get("value")) if cap.get("label") == "Market Cap" else None
+    if value is None or value <= 0:
+        return None
+    # The source may provide market cap without PE. Never derive PE from one quarter.
+    return {"market_cap": value, "currency": "USD", "provider": "nasdaq",
+            "source_url": f"https://api.nasdaq.com/api/quote/{sym}/summary?assetclass=stocks",
+            "fetched_at": datetime.now(timezone.utc).isoformat(), "is_realtime": False,
+            "data_quality": "public_snapshot_partial_valuation"}
+
+
 async def fetch_valuation(symbol: str, market: Optional[str] = None) -> Optional[dict]:
     """市值 + PE/PB（live）。美股→stockanalysis、A股/港股→东财实时行情(市值/PB/动态PE) + 估值表(PE_TTM/PS/PEG)。失败 None。"""
     sym = (symbol or "").upper().strip()
@@ -79,13 +124,13 @@ async def fetch_valuation(symbol: str, market: Optional[str] = None) -> Optional
 
     key = f"val:{sym}:{mkt}"
     hit = _CACHE.get(key)
-    if hit and (time.time() - hit[0]) < _CACHE_TTL:
+    if hit and (time.time() - hit[0]) < (_CACHE_TTL if hit[1] else 15.0):
         return hit[1]
 
     result: Optional[dict] = None
     try:
         from .eastmoney_data import _em_stock_secid
-        async with httpx.AsyncClient(trust_env=False, timeout=12.0) as client:
+        async with httpx.AsyncClient(trust_env=False, timeout=12.0 if (is_a or is_hk) else 4.0) as client:
             if is_a or is_hk:
                 # ① 实时快照(与行情页同源)：市值/流通市值/动态PE/PB —— 用户最常对照的口径，优先用它
                 rt = await _fetch_em_realtime(client, _em_stock_secid(code, "CN" if is_a else "HK"))
@@ -137,27 +182,25 @@ async def fetch_valuation(symbol: str, market: Optional[str] = None) -> Optional
                         "provider": "eastmoney",
                     }
             else:
-                # 美股 stockanalysis JSON（data.marketCap='4.57T' / data.peRatio='37.73'）
-                r = await client.get(
-                    f"https://stockanalysis.com/api/symbol/s/{sym}/overview",
-                    headers={"User-Agent": _UA, "Accept": "application/json"},
-                )
-                if r.status_code == 200:
-                    d = (r.json().get("data") or {})
-                    mc = _num(d.get("marketCap"))
-                    if mc:
-                        result = {
-                            "market_cap": mc,
-                            "pe_ratio": _num(d.get("peRatio")),
-                            "pb_ratio": None,
-                            "forward_pe": _num(d.get("forwardPE")),
-                            "beta": _num(d.get("beta")),
-                            "dividend_yield": _pct(d.get("dividend")),
-                            "currency": "USD",  # 美股市值/PE是美元口径
-                            "provider": "stockanalysis",
-                        }
+                alternatives = await asyncio.gather(_fetch_stockanalysis_us(client, sym),
+                                                    _fetch_nasdaq_us(client, sym), return_exceptions=True)
+                result = next((x for x in alternatives if isinstance(x, dict) and x), None)
     except Exception:
         result = None
+
+    # Reuse a bounded live fallback already used by quotes; missing PE stays missing.
+    if not result and not (is_a or is_hk):
+        try:
+            from .google_finance import fetch_google_finance_quote
+            quote = await asyncio.wait_for(fetch_google_finance_quote(sym, "US"), timeout=3.0)
+            if quote and quote.get("currency") == "USD" and any(quote.get(k) is not None for k in ("market_cap", "pe_ratio")):
+                result = {"market_cap": quote.get("market_cap"), "pe_ratio": quote.get("pe_ratio"),
+                          "pe_basis": "provider_unspecified", "currency": "USD", "provider": "google-finance",
+                          "data_quality": "delayed_public_page", "is_realtime": False,
+                          "source_url": f"https://www.google.com/finance/quote/{sym}:{quote.get('exchange') or 'NASDAQ'}",
+                          "fetched_at": datetime.now(timezone.utc).isoformat()}
+        except Exception:
+            pass
 
     # A股/港股市值换算成「亿元」便于展示（数据单位是元，避免模型把 1.46e12 元说成 1.46 亿）
     if result and (is_a or is_hk) and result.get("market_cap"):
