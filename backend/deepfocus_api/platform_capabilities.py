@@ -49,8 +49,6 @@ GET /api/referral/campaign | 查看邀请活动
 POST /api/me/referral/redeem | 兑换我的邀请奖励 | confirm
 POST /api/membership/claim-trial | 领取我的体验会员 | write
 POST /api/membership/redeem | 用兑换码开通我的会员 | confirm
-POST /api/checkin | 每日签到 | write
-GET /api/checkin/me | 查看我的签到记录
 GET /api/payment-config | 查看会员套餐价格
 GET /api/community/group | 查看交流群入口
 GET /api/support/thread | 查看我的客服会话
@@ -122,10 +120,6 @@ GET /api/research/search | 搜索个股券商研报
 POST /api/research/vision-analyze | 解读选定研报
 POST /api/research/deep-draft | 撰写选定研报的深度解读
 POST /api/news/ai-analyze | 解读选定资讯
-GET /api/review/today | 查看今日 A 股复盘
-GET /api/review/list | 查看历史复盘列表
-GET /api/review/{date_str} | 查看指定日期复盘
-GET /api/track-record | 查看平台和我的战绩
 GET /api/glossary/index | 查阅财经术语
 GET /api/search/universal | 统一搜索平台内容
 """)

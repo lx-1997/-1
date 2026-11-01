@@ -594,7 +594,6 @@ async def run_dulus_roundtable(
             "get_supply_chain_context": "上下游线索",
             "get_market_structure": "大盘结构硬数据（指数/成交额/涨跌家数/涨停梯队）",
             "get_market_data": "全球行情快照",
-            "get_daily_review": "稻草财经复盘",
             "compare_stocks": "多股同口径对比",
         }
         for trace in packet.get("traces") or []:
@@ -1901,8 +1900,6 @@ def _research_facts(request: DulusRoundtableRequest) -> dict[str, Any]:
     gap_items = [item.strip(" ;；") for item in raw_gaps.split(";") if item.strip(" ;；")]
     gap_labels = []
     for item in gap_items:
-        if item.startswith("get_daily_review"):
-            continue
         label = _format_research_gap(item)
         if "本次未引用" in label or "不影响估值初筛" in label:
             continue
@@ -1985,8 +1982,6 @@ def _format_research_gap(gap: str) -> str:
         return "名人观点暂无命中，本次未引用该模块"
     if text.startswith("get_fund_flow"):
         return "资金流暂不可用，不影响估值初筛"
-    if text.startswith("get_daily_review"):
-        return "今日复盘暂不可用，本次未引用该模块"
     if text.startswith("get_stock_news"):
         return "个股新闻暂不可用，本次未引用该模块"
     if text.startswith("get_analyst_consensus"):

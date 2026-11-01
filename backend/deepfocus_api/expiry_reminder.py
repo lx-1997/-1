@@ -105,7 +105,7 @@ def _build_email(username: str, days_left: int) -> tuple[str, str]:
         f"你的 DeepFocus 尊享会员将于{when}到期。到期后将无法继续使用：\n"
         f"· AI 研报 / 快讯多模态解读（买方观点、评级、目标价）\n"
         f"· 资讯原文与深度内容\n"
-        f"· 每个交易日 15:35 的 A股收盘复盘（含「我们提前发现的资讯」对照）\n\n"
+        f"\n"
         f"现在续费即可无缝衔接、不中断：{app}\n\n"
         f"（已是付费会员可忽略本提醒。）\n\n"
         "—————————————————————\n"
@@ -157,7 +157,7 @@ def run_expiry_reminder_once(limit: Optional[int] = None) -> dict:
     config = _email_smtp_config()
     if config is None:
         # SMTP 未配置：本轮整体跳过、不逐人落库（到期提醒按 expiry_day 去重、下周期会自愈，
-        # 但仍不写 skipped 行以免污染统计、并与 t1_recall 保持一致）。
+        # 但仍不写 skipped 行以免污染统计。
         summary["skipped"] = len(cands) + len(renewals)
         summary["detail"].append(f"SMTP 未配置，{len(cands) + len(renewals)} 名候选本轮跳过（不落库）")
         return summary

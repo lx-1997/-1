@@ -18,25 +18,25 @@ from .recall_subscriptions import (
 from .shared_utils import utc_now_iso
 
 """
-自动营销引擎：现有孤立召回零件（t1_recall / expiry_reminder / weixin_schedule）之上补一层「编排」。
+自动营销引擎：在会员到期提醒与微信触达之上补一层「编排」。
 
-做的事 = 通用分群 → 确定性文案（复用当日复盘/权益，v1 零 LLM）→ 邮件触达（复用现成 SMTP 链路）
+做的事 = 通用分群 → 确定性文案（复用会员权益，v1 零 LLM）→ 邮件触达（复用现成 SMTP 链路）
 → 统一频控/抑制 → 点击 + 回访归因 → 运营看板可见。
 
 分群（本引擎主动触达，均需留邮箱）：
 - d7_slipping：注册 4~14 天、回访过至少一天、但最近 72h 没再来（习惯断挡，最陡流失斜坡）
 - dormant   ：注册 >14 天、历史活跃 ≥3 天、最近 14 天没来（沉睡老用户唤回）
 - power_free：非会员、近 7 天活跃 ≥4 天（转化种子，最该请他升级）
-只读分群（本引擎不发，由 t1_recall / expiry_reminder 承接，看板只展示规模防重复触达）：
-- new_no_return（T+1 未回访，t1 窗口）/ expiring（7 天内到期，expiry 窗口）
+只读分群（本引擎不发，由 expiry_reminder 承接，看板只展示规模防重复触达）：
+- expiring（7 天内到期，expiry 窗口）
 
 铁律：
 - 安全模式 DEEPFOCUS_MARKETING_MODE 默认 off：off/shadow 任何调用强制 dry_run；pilot 仅允许白名单 campaign、每轮 2 人、每日 5 人；on 才按常规上限运行。
 - 兼容旧的 DEEPFOCUS_MARKETING_ENABLED（未设置 MODE 时 1→on、其它→off），升级不会意外打开出站。
 - 频控：suppression 名单 / 每用户 N 天冷却 / 同 campaign M 天不重发 / 每 campaign 日上限 / 全引擎日总量上限。
-- SMTP 未配置：整轮 skipped 且【绝不落 sent】（学 t1_recall 血泪教训，防毒化频控）。
+- SMTP 未配置：整轮 skipped 且【绝不落 sent】，防止污染频控。
 - 出站：品牌只用 DeepFocus、结尾免责 + 退订 footer、过 compliance.neutralize_text、严禁荐股/买卖措辞。
-- 表落在 recall 库（与 t1/expiry 同库），连接带 busy_timeout（学 weixin_schedule），并发写不炸。
+- 表落在 recall 库（与 expiry 同库），连接带 busy_timeout，并发写不炸。
 """
 
 BJ_TZ = timezone(timedelta(hours=8))
@@ -426,43 +426,24 @@ def _neutralize(text: str) -> str:
         return text
 
 
-def _review_hook() -> tuple[str, str]:
-    """(one_liner, edges_line)：复用当日 A股复盘做内容钩子，取不到返回空串。"""
-    try:
-        from . import ashare_review
-        review = ashare_review.latest_review()
-        if not review:
-            return "", ""
-        nar = review.get("narrative") or {}
-        one = (nar.get("one_liner") or "").strip()
-        edges = review.get("our_edge") or []
-        edge_line = (
-            f"其中有 {len(edges)} 条本站提前于盘面发布的资讯与当日走势形成对照。" if edges else ""
-        )
-        return one, edge_line
-    except Exception:  # noqa: BLE001
-        return "", ""
-
-
 def build_email(segment: str, username: str) -> tuple[str, str]:
     """按分群生成 (subject, body)。主链接由调用方替换 {LINK} 占位为带追踪的点击 URL。"""
-    one, edge_line = _review_hook()
     if segment == "d7_slipping":
-        subject = "【DeepFocus】这几天的 A股复盘，你还没看"
-        lead = f"最近的 A股收盘复盘：{one}" if one else "每个交易日 15:35，DeepFocus 自动生成当日 A股收盘复盘。"
+        subject = "【DeepFocus】回来看看你关注的市场动态"
+        lead = "你关注的市场动态与个股资讯持续更新。"
         body = (
             f"{username}，您好：\n\n"
-            f"{lead}\n{edge_line}\n\n"
-            "今天回来看一眼复盘，顺手就完成签到——连续签到到里程碑还能领会员：{LINK}\n\n"
+            f"{lead}\n\n"
+            "回来继续跟进市场快讯与自选股：{LINK}\n\n"
             f"{_EMAIL_FOOTER}"
         )
     elif segment == "dormant":
-        subject = "【DeepFocus】最近两周，A股主线换了"
-        lead = f"最新一期复盘的一句话：{one}" if one else "大盘与板块主线这两周有明显变化。"
+        subject = "【DeepFocus】最近两周，市场动态有更新"
+        lead = "你关注的市场动态与个股资讯持续更新。"
         body = (
             f"{username}，您好：\n\n"
-            f"有一阵没见你了。{lead}\n{edge_line}\n\n"
-            "回来看看这两周错过了什么——大盘 / 板块 / 个股主线，每个交易日都在更新：{LINK}\n\n"
+            f"有一阵没见你了。{lead}\n\n"
+            "回来看看最新快讯、研报和自选股变化：{LINK}\n\n"
             f"{_EMAIL_FOOTER}"
         )
     else:  # power_free
@@ -471,9 +452,8 @@ def build_email(segment: str, username: str) -> tuple[str, str]:
             f"{username}，您好：\n\n"
             "这段时间你几乎每个交易日都在用 DeepFocus——谢谢。\n"
             "升级尊享会员后，这些每天都会用到的能力不再受限：\n"
-            "· AI 投研问答不限次（自动调行情/估值 + 检索我们的快讯·研报·复盘）\n"
+            "· AI 投研问答不限次（自动调行情/估值 + 检索我们的快讯·研报）\n"
             "· 资讯与研报原文、多模态 AI 解读\n"
-            "· 每个交易日 15:35 的 A股收盘复盘全量内容\n\n"
             "看看会员权益：{LINK}\n\n"
             f"{_EMAIL_FOOTER}"
         )
@@ -613,7 +593,7 @@ def run_marketing_once(dry_run: bool = False, limit: Optional[int] = None) -> di
     config = _email_smtp_config()
     smtp_ok = config is not None
     if not smtp_ok and not effective_dry:
-        # SMTP 未配置：整轮 skipped 且不落库（学 t1_recall，防毒化频控/去重）
+        # SMTP 未配置：整轮 skipped 且不落库，防止污染频控/去重
         summary["skipped"] = sum(len(segs.get(c["segment"], [])) for c in campaigns)
         summary["detail"].append("SMTP 未配置，本轮整体跳过（不落库，配置后自动续发）")
         return summary

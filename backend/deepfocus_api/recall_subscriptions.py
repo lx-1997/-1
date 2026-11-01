@@ -240,11 +240,10 @@ def delete_recall_subscription(subscription_id: str, user_id: Optional[str] = No
 
 def subscription_matches(subscription: RecallSubscriptionRecord, message: RealtimeMessageRecord) -> bool:
     """与前端 signalRecall.shouldRecall 同义：级别命中 + 范围/标的匹配。
-    例外：每日复盘/投研晨报是一日一次的策划摘要，对所有开了盯盘的人都是高价值「每日回访钩子」
-    → 全员送达（不受 scope=watchlist / severities 收窄）。这是把流失用户拉回来的核心信号。"""
+    每日投研晨报对所有开了盯盘的人送达；普通消息按级别和范围匹配。"""
     if subscription.channel == "fcm":
         return _fcm_subscription_matches(subscription, message)
-    if (getattr(message, "topic", "") or "") in ("复盘", "晨报"):
+    if (getattr(message, "topic", "") or "") == "晨报":
         return True
     if message.severity not in subscription.severities:
         return False

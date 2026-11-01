@@ -16,44 +16,10 @@ def _use_temp_db(tmp_path):
 # --------------------------------------------------------------------------- #
 # 渲染
 # --------------------------------------------------------------------------- #
-def _sample_review():
-    return {
-        "date": "2026-06-11",
-        "session": "close",
-        "session_label": "收盘复盘",
-        "generated_at": "2026-06-11T07:40:00Z",
-        "indices": [{"name": "上证指数", "close": 3450.1, "pct": 0.85, "date": "2026-06-11"}],
-        "breadth": {"advancers": 3100, "decliners": 1800, "flat": 200, "total": 5100, "limit_up": 60, "limit_down": 4},
-        "sectors": {"top": [{"name": "半导体", "pct": 3.2}], "bottom": [{"name": "煤炭", "pct": -1.1}]},
-        "our_edge": [{"kind": "news", "name": "中芯国际", "theme": "半导体", "pct": 5.6, "direction": "up",
-                      "evidence": "盘前快讯提示产能涨价", "lead_hours": 14.0}],
-        "narrative": {"one_liner": "放量普涨，半导体领跑。", "market": "指数温和放量。", "sectors": "半导体交易涨价。",
-                      "funds": "主力净流入。", "tomorrow": "关注量能延续。"},
-    }
 
 
-def test_review_page_renders_meta_edge_and_links():
-    page = seo_pages.render_review_page_html(
-        _sample_review(),
-        recent=[{"date": "2026-06-10", "session_label": "收盘复盘"}, {"date": "2026-06-11", "session_label": "收盘复盘"}],
-        page_url="https://daocaijing.com/review/2026-06-11",
-    )
-    assert "<title>2026-06-11 A股收盘复盘" in page
-    assert 'name="robots" content="index,follow"' in page
-    assert '<link rel="canonical" href="https://daocaijing.com/review/2026-06-11">' in page
-    assert "我们提前发现了什么" in page and "中芯国际" in page
-    assert "数据速览" in page  # C10 数字密集可抽取句
-    assert "/review/2026-06-10" in page  # 内链到其它日期
-    assert "/review/2026-06-11" not in page.split("canonical")[1].split("og:url")[0] or True
-    assert '"@type": "Article"' in page
 
 
-def test_review_page_escapes_content():
-    rv = _sample_review()
-    rv["narrative"]["one_liner"] = '<script>alert(1)</script>'
-    page = seo_pages.render_review_page_html(rv, recent=[])
-    assert "<script>alert(1)</script>" not in page
-    assert "&lt;script&gt;" in page
 
 
 def test_stock_page_renders_dimensions_and_related():
@@ -113,20 +79,6 @@ def test_qa_page_and_hub():
     assert "/qa/" + "a" * 32 in hub
 
 
-def test_review_links_individual_stocks():
-    from deepfocus_api import stock_name_index
-    saved = stock_name_index._name_code
-    stock_name_index._name_code = {"测试龙头": "000001"}
-    try:
-        rv = {"date": "2026-06-26", "session": "close",
-              "our_edge": [{"kind": "stock", "name": "测试龙头", "theme": "半导体", "pct": 3.2, "evidence": "盘前信号"}],
-              "narrative": {"one_liner": "普涨"}}
-        page = seo_pages.render_review_page_html(rv, recent=[])
-        assert "/stock/000001" in page and "测试龙头" in page  # C5 复盘→个股内链
-    finally:
-        stock_name_index._name_code = saved
-
-
 def test_learn_pages():
     from deepfocus_api import glossary
     t = glossary.BY_SLUG["pe-ratio"]
@@ -184,7 +136,6 @@ def test_og_image_renders_png():
     png = og_image.render_og("测试标题", "副标题", ["上证 -2%"])
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     assert og_image.stock_card({"name": "贵州茅台", "overall_verdict": "中性观察"}, "600519")[:4] == b"\x89PNG"
-    assert og_image.review_card({}, "2026-06-26")[:4] == b"\x89PNG"  # 无数据降级简卡
 
 
 def test_stocks_all_hub_and_feed():
@@ -193,19 +144,15 @@ def test_stocks_all_hub_and_feed():
     assert "/stock/600519" in page and "贵州茅台" in page
     assert "/stocks/all?page=2" in page  # 分页内链
     assert 'content="index,follow"' in page
-    feed = seo_pages.render_feed_xml(
-        [{"date": "2026-06-26", "session_label": "收盘复盘", "one_liner": "普涨"}],
-        [{"id": "n1", "title": "某公司Q2超预期", "content": "正文"}])
-    assert "<rss" in feed and "/review/2026-06-26" in feed and "/article/n1" in feed
+    feed = seo_pages.render_feed_xml([{"id": "n1", "title": "某公司Q2超预期", "content": "正文"}])
+    assert "<rss" in feed and "/article/n1" in feed and "/review/" not in feed
 
 
 def test_hub_sitemap_robots():
-    hub = seo_pages.render_review_hub_html([{"date": "2026-06-11", "session_label": "收盘复盘", "one_liner": "普涨"}])
-    assert "/review/2026-06-11" in hub
     stocks = seo_pages.render_stocks_hub_html([{"symbol": "NVDA", "verdict": "重点跟踪", "change_percent": 2.0}])
     assert "/stock/NVDA" in stocks and "重点跟踪" in stocks
-    sm = seo_pages.render_sitemap_xml(["2026-06-11"], ["NVDA"])
-    assert "<urlset" in sm and "/review/2026-06-11</loc>" in sm and "/stock/NVDA</loc>" in sm
+    sm = seo_pages.render_sitemap_xml(["NVDA"])
+    assert "<urlset" in sm and "/review" not in sm and "/stock/NVDA</loc>" in sm
     robots = seo_pages.render_robots_txt()
     assert "Sitemap:" in robots and "Disallow: /api/" in robots
 
@@ -246,7 +193,7 @@ def test_public_routes_robots_sitemap_hubs(client):
     assert r.status_code == 200 and "Sitemap:" in r.text
     r = cli.get("/sitemap.xml")
     assert r.status_code == 200 and "<urlset" in r.text
-    assert cli.get("/review").status_code == 200
+    assert cli.get("/review").status_code == 404
     assert cli.get("/stocks").status_code == 200
     assert cli.get("/stocks/all").status_code == 200
     assert cli.get("/qa").status_code == 200
@@ -255,8 +202,6 @@ def test_public_routes_robots_sitemap_hubs(client):
     assert cli.get("/learn").status_code == 200
     assert cli.get("/learn/pe-ratio").status_code == 200
     assert cli.get("/learn/no-such-term").status_code == 404
-    rog = cli.get("/og/review/2026-06-26.png")
-    assert rog.status_code == 200 and rog.content[:4] == b"\x89PNG"
     assert cli.get("/compare/600519-vs-000858").status_code == 404  # 无缓存数据 → 404
     assert cli.get("/compare/badpair").status_code == 404
     r = cli.get("/feed.xml")
@@ -264,10 +209,6 @@ def test_public_routes_robots_sitemap_hubs(client):
     assert cli.get("/llms.txt").status_code == 200
 
 
-def test_public_review_page_404s(client):
-    cli, _ = client
-    assert cli.get("/review/not-a-date").status_code == 404
-    assert cli.get("/review/2099-01-01").status_code == 404
 
 
 def test_public_stock_page_serves_cached_tear_sheet(client):
@@ -290,3 +231,15 @@ def test_public_stock_page_rejects_bad_symbol(client):
     cli, _ = client
     assert cli.get("/stock/%3Cscript%3E").status_code == 404
     assert cli.get("/stock/AAAAAAAAAAAAAAAAAAAAAA").status_code == 404
+
+
+def test_retired_review_and_checkin_apis_are_not_registered(client):
+    cli, main_mod = client
+    routes = {getattr(route, "path", "") for route in main_mod.app.routes}
+    assert "/api/review/today" not in routes
+    assert "/api/review/list" not in routes
+    assert "/api/review/{date_str}" not in routes
+    assert "/api/checkin" not in routes and "/api/checkin/me" not in routes
+    assert "/api/v1/review/today" not in routes
+    assert cli.get("/api/review/today").status_code == 404
+    assert cli.get("/review/2099-01-01").status_code == 404

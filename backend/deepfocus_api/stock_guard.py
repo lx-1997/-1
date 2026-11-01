@@ -39,7 +39,7 @@ _NOISE_RE = re.compile(
 _TOOLS_NEVER_REWRITE = frozenset({
     "resolve_symbol", "compare_stocks", "get_my_watchlist", "get_market_structure",
     "get_limit_up_ladder", "get_cn_calendar", "get_site_fast_news", "get_site_articles",
-    "get_recent_content_digest", "get_market_data", "get_daily_review",
+    "get_recent_content_digest", "get_market_data",
     "get_dragon_tiger", "get_industry_context", "get_theme_stocks",
 })
 

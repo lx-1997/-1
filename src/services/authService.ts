@@ -256,11 +256,6 @@ export async function fetchCallSummary(): Promise<CallSummary | null> {
 }
 
 // ===== 「我们提前发现的」量化战绩 =====
-export interface TrackHit { date: string; name: string; kind: 'sector' | 'stock'; pct?: number; lead_hours?: number; evidence?: number; reason?: string; signals?: Array<{ id?: string; url?: string; title?: string; topic?: string; lead?: string }>; }
-export interface TrackRecord { hit_count: number; avg_lead_hours: number; max_lead_hours: number; sector_hits: number; stock_hits: number; days_covered: number; days: number; recent: TrackHit[]; personal?: { hit_count: number; avg_lead_hours?: number; matched: TrackHit[] }; }
-export async function fetchTrackRecord(): Promise<TrackRecord | null> {
-  try { return await apiGet<TrackRecord>('/api/track-record'); } catch { return null; }
-}
 export async function fetchReferralLeaderboard(): Promise<ReferralLeaderRow[]> {
   try { const r = await apiGet<{ items: ReferralLeaderRow[] }>('/api/referral/leaderboard'); return r.items || []; } catch { return []; }
 }
@@ -304,16 +299,6 @@ export async function fetchIfindQuote(codes: string): Promise<IfindQuoteResult> 
   catch (e: any) { return { ok: false, rows: [], error: e?.response?.data?.detail || e?.message || '请求失败' }; }
 }
 
-// 连续看复盘签到：打开当日复盘即记一次（幂等）。返回连续/累计 + 本次新达成的里程碑奖励。
-export interface CheckinMilestone { days: number; reward_days: number; membership?: Membership | null; }
-export interface CheckinResult { ok: boolean; date?: string; first_today?: boolean; streak: number; total: number; longest: number; milestone?: CheckinMilestone | null; }
-export async function checkin(): Promise<CheckinResult | null> {
-  try { return await apiPost<CheckinResult>('/api/checkin', {}); } catch { return null; }
-}
-export interface CheckinStatus { checked_today: boolean; streak: number; total: number; longest: number; next_milestone: number | null; days_to_next: number | null; next_reward_days?: number | null; milestones: { days: number; reward_days: number; reached: boolean }[]; }
-export async function fetchCheckinStatus(): Promise<CheckinStatus | null> {
-  try { return await apiGet<CheckinStatus>('/api/checkin/me'); } catch { return null; }
-}
 
 // 购买/收款配置（套餐价格 + 收款码是否就绪）
 export interface PayPackage { key: string; label: string; days: number; price: number; orig?: number; }

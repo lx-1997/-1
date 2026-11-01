@@ -1283,7 +1283,7 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
 .bbt-doc-img { display: block; width: 100%; height: auto; }
 .bbt-doc--img .bbt-doc-src { padding: 12px 16px; margin: 0; }
 
-/* ===== A股收盘复盘 ===== */
+/* ===== 顶栏快捷入口 ===== */
 .bbt-review-entry {
   display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--cyan); cursor: pointer;
   font-size: 12px; font-weight: 700; color: var(--cyan); padding: 4px 11px; border-radius: 14px; white-space: nowrap;
@@ -1296,7 +1296,7 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
 /* 顶部工具栏防溢出：仅在【真正窄】(≤960px)时才把入口按钮收成图标——常见笔记本宽度(>960)保留文字标签，
    让用户看得懂每个按钮干啥；各按钮给独立图标，避免收起后图标撞成一样。 */
 @media (max-width: 960px) {
-  /* 大众入口（复盘 / AI 模拟盘）保留文字标签——看得懂；只把【管理员专属】AI问答 收成图标省地方(iFinD 已挪进账号菜单，不再是顶栏项) */
+  /* AI 模拟盘保留文字标签；只把管理员专属 AI 问答收成图标省地方。 */
   .bbt-review-entry { font-size: 14px; padding: 5px 10px; }
   .bbt-aiqa-entry { font-size: 0; gap: 0; padding: 6px 9px; }
   .bbt-aiqa-entry::before   { font-size: 14px; content: "✨"; }   /* AI 问答（✨ 与交流群💬区分） */
@@ -1965,10 +1965,7 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
     flex-direction: column; width: auto; min-width: 36px; height: 44px;
     padding: 3px 5px 2px; box-sizing: border-box; gap: 2px;
   }
-  /* ⚠️与下面 aifund/ifind/aiqa/... 同款写法：等特异性(2 个类选择器)靠源码顺序覆盖，切勿给本行加 :not()——
-     那样特异性会反超后面所有同层级规则，导致本该各自独立的图标全部被"📊 复盘"吞掉(真实踩过的坑)。 */
-  .bbt-cmd-right .bbt-review-entry::before { content: "📊"; font-size: 16px; }   /* 复盘 */
-  .bbt-cmd-right .bbt-checkin-entry::before { content: attr(data-ico); font-size: 16px; }   /* 连续签到：图标随"今天是否已看"变化，不与复盘撞图标 */
+  /* 不同入口使用各自图标，避免窄屏规则串样式。 */
   .bbt-cmd-right .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }   /* AI 模拟盘 */
   .bbt-cmd-right .bbt-ontology-entry::before { content: "🧬"; font-size: 16px; }   /* 投资本体 */
   .bbt-cmd-right .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }  /* 名人观点 */
@@ -1986,8 +1983,6 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
     font-size: 9px; line-height: 1.1; font-weight: 600; letter-spacing: 0;
     color: var(--mute2); text-align: center; white-space: nowrap;
   }
-  .bbt-cmd-right .bbt-review-entry::after { content: "复盘"; }
-  .bbt-cmd-right .bbt-checkin-entry::after { content: attr(data-label); }   /* 连续签到天数，不再被"复盘"字样吞掉 */
   .bbt-cmd-right .bbt-aifund-entry::after { content: "模拟盘"; }
   .bbt-cmd-right .bbt-ontology-entry::after { content: "本体"; }
   .bbt-cmd-right .bbt-celebrity-entry::after { content: "名人"; }
@@ -2610,7 +2605,7 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
 .bbt-buy-qr span { display: block; font-size: 12px; color: var(--text-soft); margin-top: 7px; }
 .bbt-buy-noqr { text-align: center; font-size: 12px; color: var(--mute); padding: 14px; background: var(--panel-2); border-radius: 10px; margin-bottom: 12px; }
 .bbt-buy-note { font-size: 12px; line-height: 1.6; color: var(--text-soft); margin-bottom: 12px; }
-/* 体验会员逃生口 + 信任背书：把「询价即走」的人转成体验用户 / 复盘读者 */
+/* 体验会员入口 + 信任背书：把「询价即走」的人转成体验用户 */
 .bbt-buy-trial { display: block; width: 100%; margin-top: 10px; padding: 9px 12px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 12px; color: var(--text); background: rgba(46, 204, 113, .08); border: 1px dashed rgba(46, 204, 113, .45); }
 .bbt-buy-trial:hover { background: rgba(46, 204, 113, .14); }
 .bbt-buy-trial b { color: #2ecc71; }
@@ -2693,7 +2688,7 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
   .bbt-tts-btn { display: none; }                       /* 快讯语音播报：移动端隐藏(niche) */
 
   /* —— 降营销感(用户反馈手机端"太花太营销")：会员/邀请 CTA 从高饱和渐变+发光 → 克制扁平暖色边框，
-     圆角 14→8 收紧、去光晕；仍是醒目暖色、不弱化功能，只是不再"喊"。复盘/AI模拟盘同步收圆角。 —— */
+     圆角 14→8 收紧、去光晕；仍是醒目暖色、不弱化功能，只是不再"喊"。AI模拟盘同步收圆角。 —— */
   .bbt-buy-cta {
     background: rgba(255,176,46,.16); color: var(--amber-2, #ffce72);
     border: 1px solid rgba(255,176,46,.46); box-shadow: none; border-radius: 8px; font-weight: 700;
@@ -2705,13 +2700,11 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
   .bbt-review-entry { border-radius: 8px; }
   .bbt-trial-banner { box-shadow: none; }
 
-  /* 顶栏再压一档(用户要求图标化)：复盘/AI模拟盘/邀请得会员 收成「图标+9px 标签」两行小钮(标签规则在 ≤820 分支),
-     只保留 开通会员(主付费 CTA)+登录 文字 → 大众入口一行排开、更短更齐，不再"又大又乱"。
+  /* 顶栏再压一档(用户要求图标化)：AI模拟盘/邀请得会员 收成「图标+9px 标签」两行小钮(标签规则在 ≤820 分支),
+     只保留 开通会员(主付费 CTA)+登录 文字 → 大众入口一行排开，更短更齐。
      ⚠️尺寸须与 ≤820 分支两行排布一致(44px 高、宽度自适应),不可再压回 32px 方块——否则标签溢出。 */
   .bbt-review-entry:not(.bbt-aiqa-entry),
   .bbt-ref-entry { font-size: 0; gap: 2px; width: auto; min-width: 36px; height: 44px; min-height: 44px; padding: 3px 5px 2px; box-sizing: border-box; justify-content: center; }
-  .bbt-review-entry:not(.bbt-aifund-entry):not(.bbt-ontology-entry):not(.bbt-aiqa-entry):not(.bbt-group-entry):not(.bbt-celebrity-entry):not(.bbt-checkin-entry)::before { content: "📊"; font-size: 16px; }
-  .bbt-checkin-entry::before { content: attr(data-ico); font-size: 16px; }
   .bbt-aifund-entry::before { content: "🤖"; font-size: 16px; }
   .bbt-ontology-entry::before { content: "🧬"; font-size: 16px; }
   .bbt-celebrity-entry::before { content: "🗣️"; font-size: 16px; }
@@ -3572,59 +3565,6 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
      右栏列 minmax 收尾吸收剩余宽度（纯 clamp 会留右侧空洞，实测踩坑） */
   .bbt-side-stocks .bbt-grid.bbt-grid--rail { grid-template-columns: var(--eqw, minmax(200px, 0.42fr)) 6px minmax(clamp(232px, 17vw, 300px), 1fr); }
   .bbt-side-stocks .bbt-grid.bbt-grid--rail > .bbt-rail { grid-column: 3; }
-}
-
-/* 每日复盘是独立信息模块，不再作为资讯列表末尾的一张附加卡片。 */
-.bbt-side-review .bbt-hero,
-.bbt-side-review .bbt-investor-compass,
-.bbt-side-review .bbt-simple-start,
-.bbt-side-review .bbt-support-banner,
-.bbt-side-review .bbt-trial-banner,
-.bbt-side-review .bbt-expiry-banner,
-.bbt-side-review .bbt-ticker,
-.bbt-side-review .bbt-macro,
-.bbt-side-review .bbt-detail,
-.bbt-side-review .bbt-kline,
-.bbt-side-review .bbt-stockcols,
-.bbt-side-review .bbt-grid,
-.bbt-side-review .bbt-footer,
-.bbt-side-review .bbt-ai-workspace,
-.bbt-side-review .bbt-tool-workspace { display: none !important; }
-.bbt-review-workspace {
-  display: flex; flex-direction: column; gap: 20px; min-height: calc(100vh - 58px);
-  padding: 26px clamp(22px, 3.5vw, 52px) 34px; color: #dce8f7;
-  background: linear-gradient(180deg, #0b1421 0%, #0a121d 52%, #09111b 100%);
-  scroll-margin-top: 68px;
-}
-.bbt-review-workspace-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.bbt-review-workspace-eyebrow { color: #6e9ac4; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 10px; font-weight: 800; letter-spacing: .16em; }
-.bbt-review-workspace-head h1 { margin: 5px 0 5px; color: #f1f6fc; font-family: ui-sans-serif, system-ui, sans-serif; font-size: clamp(24px, 2.5vw, 32px); letter-spacing: -.02em; }
-.bbt-review-workspace-head p { max-width: 640px; margin: 0; color: #8095ae; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; line-height: 1.65; }
-.bbt-review-workspace-open { min-height: 34px; padding: 0 13px; border: 1px solid rgba(80,164,255,.48); border-radius: 8px; color: #d7edff; background: linear-gradient(135deg, rgba(40,126,232,.65), rgba(42,91,166,.52)); cursor: pointer; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 700; }
-.bbt-review-workspace-open:hover { border-color: rgba(120,195,255,.75); background: linear-gradient(135deg, rgba(51,142,244,.78), rgba(48,106,184,.64)); }
-.bbt-review-workspace-card { max-width: 980px; padding: 24px 26px 18px; border: 1px solid rgba(79,208,230,.28); border-radius: 16px; background: linear-gradient(135deg, rgba(21,48,70,.88), rgba(11,25,41,.96)); box-shadow: 0 22px 60px rgba(0,0,0,.22); cursor: pointer; }
-.bbt-review-workspace-card:hover { border-color: rgba(79,208,230,.58); box-shadow: 0 26px 70px rgba(0,0,0,.3); }
-.bbt-review-workspace-card-top { display: flex; align-items: flex-start; gap: 15px; }
-.bbt-review-workspace-card-ico { display: grid; flex: 0 0 42px; width: 42px; height: 42px; place-items: center; border: 1px solid rgba(79,208,230,.38); border-radius: 12px; background: rgba(79,208,230,.14); font-size: 22px; }
-.bbt-review-workspace-card-main { min-width: 0; flex: 1 1 auto; }
-.bbt-review-workspace-card-meta { color: #74d8ea; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 800; letter-spacing: .04em; }
-.bbt-review-workspace-card-main h2 { margin: 8px 0 5px; color: #f1f6fc; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 19px; line-height: 1.45; }
-.bbt-review-workspace-card-main p { max-width: 780px; margin: 0; color: #9eb2c7; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; line-height: 1.7; }
-.bbt-review-workspace-card-go { flex: 0 0 auto; padding-top: 3px; color: #65d8ef; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 800; white-space: nowrap; }
-.bbt-review-workspace-edge { margin-top: 20px; padding: 11px 13px; border: 1px solid rgba(79,208,230,.25); border-radius: 9px; color: #9be8f2; background: rgba(79,208,230,.09); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 700; }
-.bbt-review-workspace-card-foot { margin-top: 17px; padding-top: 12px; border-top: 1px solid rgba(112,149,190,.15); color: #6c849e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 10px; }
-.bbt-review-workspace-empty { display: grid; max-width: 720px; min-height: 250px; place-items: center; align-content: center; gap: 7px; padding: 30px; border: 1px dashed rgba(112,149,190,.26); border-radius: 16px; color: #8095ae; background: rgba(12,24,39,.66); text-align: center; }
-.bbt-review-workspace-empty span { font-size: 28px; }
-.bbt-review-workspace-empty h2 { margin: 0; color: #dce8f7; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 18px; }
-.bbt-review-workspace-empty p { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; }
-@media (max-width: 820px) {
-  .bbt-review-workspace { min-height: 0; padding: 18px 10px 24px; }
-  .bbt-review-workspace-head { align-items: flex-start; flex-direction: column; gap: 12px; }
-  .bbt-review-workspace-card { padding: 18px 16px 15px; }
-  .bbt-review-workspace-card-top { gap: 10px; }
-  .bbt-review-workspace-card-go { display: none; }
-  .bbt-review-workspace-card-main h2 { font-size: 16px; }
-  .bbt-review-workspace-card-main p { font-size: 12px; }
 }
 
 /* A focused destination owns the canvas below the command bar. Keep global
@@ -4734,7 +4674,6 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
   border-color: rgba(var(--shell-accent-rgb), .3);
   background: rgba(var(--shell-accent-rgb), .12);
 }
-.bbt-review-workspace,
 .bbt-side-ai .bbt-ai-workspace {
   background: linear-gradient(180deg, var(--shell-panel-2) 0%, var(--shell-bg) 52%, color-mix(in srgb, var(--shell-bg) 94%, #000) 100%);
 }

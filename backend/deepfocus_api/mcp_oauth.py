@@ -351,7 +351,7 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--tex
 <h1>稻草财经 MCP <span class="sub">授权请求</span></h1>
 <p class="sub">以下应用请求通过 MCP 访问你的稻草财经账号数据。</p>
 <div class="app"><b id="appName">MCP 客户端</b> 想要：<ul>
-<li>读取行情 / A股复盘 / 个股速判卡 / 资讯 / 研报元数据 / 题材</li>
+<li>读取行情 / 个股速判卡 / 资讯 / 研报元数据 / 题材</li>
 <li>使用 AI 投研问答（配额与会员权益同网页端）</li>
 </ul></div>
 <div id="loginBox" class="hide">

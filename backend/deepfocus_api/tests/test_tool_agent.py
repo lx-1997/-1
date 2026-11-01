@@ -663,22 +663,6 @@ def test_publish_audit_can_remove_unsupported_claims(monkeypatch):
     assert not llm._test_client.chat.completions.calls[2].get("tools")
 
 
-def test_empty_daily_review_automatically_falls_back_to_market_snapshot(monkeypatch):
-    script = [
-        _FakeResponse(_FakeMessage(tool_calls=[_FakeToolCall("c1", "get_daily_review", "{}")])),
-        _FakeResponse(_FakeMessage(content="复盘未更新，无法回答。", tool_calls=None)),
-        _FakeResponse(_FakeMessage(content="今天A股上证下跌0.6%。", tool_calls=None)),
-    ]
-    execute = _recording_execute(results={
-        "get_daily_review": {"ok": True, "data": None},
-        "get_market_data": {"ok": True, "data": {"quotes": [{"name": "上证指数", "change_pct": -0.6}]}},
-    })
-    llm = _make_llm(monkeypatch, script=script, fake_execute=execute)
-
-    result = asyncio.run(llm.run_tool_agent(question="今天A股怎么样？"))
-
-    assert [item["tool"] for item in result["tool_trace"]] == ["get_daily_review", "get_market_data"]
-    assert "上证" in result["answer"]
 
 
 def test_max_rounds_truncates_with_final_synthesis(monkeypatch):

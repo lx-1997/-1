@@ -119,7 +119,7 @@ async def feed_themes() -> Response:
 @router.get("/feed", response_class=HTMLResponse)
 async def feed_index() -> HTMLResponse:
     rows = [
-        ("/feed.xml", "综合订阅", "A股收盘复盘 + 资讯快讯（已有主 feed）"),
+        ("/feed.xml", "财经资讯", "资讯快讯（已有主 feed）"),
         ("/feed/research.xml", "研报流", "海外投行研报标题/机构/日期（元数据）"),
         ("/feed/themes.xml", "题材热点", "当日概念板块涨幅榜 + 领涨股"),
     ]
@@ -147,7 +147,7 @@ _OPENAPI: dict[str, Any] = {
     "openapi": "3.0.3",
     "info": {
         "title": "稻草财经 Open API",
-        "description": "稻草财经（daocaijing.com）面向合作方/开发者的只读内容 API：A股复盘、个股速判卡、资讯流、研报元数据、定时摘要。鉴权：Header `X-API-Key`。内容仅供研究参考，不构成投资建议。",
+        "description": "稻草财经（daocaijing.com）面向合作方/开发者的只读内容 API：个股速判卡、资讯流、研报元数据、定时摘要。鉴权：Header `X-API-Key`。内容仅供研究参考，不构成投资建议。",
         "version": "1.0.0",
     },
     "servers": [{"url": "https://daocaijing.com"}],
@@ -159,21 +159,6 @@ _OPENAPI: dict[str, Any] = {
     },
     "security": [{"ApiKeyAuth": []}],
     "paths": {
-        "/api/v1/review/today": {
-            "get": {"operationId": "getReviewToday", "summary": "最新一期A股复盘（盘中=午盘版，收盘后=收盘版）",
-                    "responses": {"200": {"description": "复盘 JSON（exists=false 表示暂无）"}}}
-        },
-        "/api/v1/review/{date}": {
-            "get": {"operationId": "getReviewByDate", "summary": "指定日期(YYYY-MM-DD)的完整复盘",
-                    "parameters": [{"name": "date", "in": "path", "required": True,
-                                    "schema": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"}}],
-                    "responses": {"200": {"description": "复盘 JSON"}, "404": {"description": "该日期暂无复盘"}}}
-        },
-        "/api/v1/reviews": {
-            "get": {"operationId": "listReviews", "summary": "历史复盘列表（轻量摘要）",
-                    "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer", "default": 30, "maximum": 120}}],
-                    "responses": {"200": {"description": "复盘列表"}}}
-        },
         "/api/v1/stock/{symbol}/verdict": {
             "get": {"operationId": "getStockVerdict", "summary": "个股证据速判卡（确定性引擎：多维证据+信号灯+可信度）",
                     "parameters": [
@@ -240,13 +225,13 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 a{color:var(--blue)}
 </style></head><body><div class="wrap">
 <h1>稻草财经 · 开发者平台</h1>
-<p class="sub">把稻草财经的 A股复盘、个股速判卡、资讯、研报与 AI 投研问答，接入你的 AI 客户端、自动化工作流、机器人或网站。内容仅供研究参考，不构成投资建议。完整用法与最佳实践见 <a href="https://daocaijing.com/developers/guide">《开发者接入指南》</a>。</p>
+<p class="sub">把稻草财经的个股速判卡、资讯、研报与 AI 投研问答，接入你的 AI 客户端、自动化工作流、机器人或网站。内容仅供研究参考，不构成投资建议。完整用法与最佳实践见 <a href="https://daocaijing.com/developers/guide">《开发者接入指南》</a>。</p>
 
 <h2>① MCP —— 让任意 AI 软件「长出」稻草财经能力（推荐）</h2>
 <div class="panel"><p class="sub">Claude Desktop / Claude Code / Cursor / Cherry Studio 等任何支持 MCP 的客户端，添加远程服务器：</p>
 <pre>https://daocaijing.com/api/mcp</pre>
 <p class="sub">首次连接会自动跳转浏览器完成<b>登录 + 授权</b>（无需手工令牌）。也可以在
-<a href="/api/mcp/setup">MCP 接入控制台</a> 创建个人令牌（Bearer 方式）。12 个工具：行情/复盘/速判卡/资讯/研报元数据/题材双向/AI 问答。</p></div>
+<a href="/api/mcp/setup">MCP 接入控制台</a> 创建个人令牌（Bearer 方式）。12 个工具：行情/速判卡/资讯/研报元数据/题材双向/AI 问答。</p></div>
 
 <h2>② Webhook 事件推送 —— 平台主动推进你的系统</h2>
 <div class="panel">
@@ -267,7 +252,7 @@ assert hmac.compare_digest(expect, sig['v1'])   # 校验失败 = 非稻草财经
 <h2>③ Open API —— 服务端只读内容接口</h2>
 <div class="panel"><p class="sub">Header 传 <code>X-API-Key</code> 调用 <code>/api/v1/*</code>（合作方密钥，<a href="/api/v1/docs">完整文档</a>）。扣子(Coze)/Dify/GPTs 插件可直接导入策展规范：</p>
 <pre>https://daocaijing.com/api/v1/openapi.json</pre>
-<p class="sub">端点：复盘（今日/指定/历史）、个股速判卡、资讯流、研报流、定时聚合摘要。</p></div>
+<p class="sub">端点：个股速判卡、资讯流、研报流、定时聚合摘要。</p></div>
 
 <h2>④ 机器人 —— 群里直接问 / 定时播报</h2>
 <div class="panel"><p class="sub">飞书 / 钉钉 / 企业微信群机器人，三步接入定时播报：</p>
@@ -279,7 +264,7 @@ assert hmac.compare_digest(expect, sig['v1'])   # 校验失败 = 非稻草财经
 <p class="sub">要在群里 @机器人 问答？用 MCP：把 <code>/api/mcp</code> 接进你的机器人框架（OpenClaw / Dify Agent / Coze Agent 均原生支持 MCP）。</p></div>
 
 <h2>⑤ RSS —— 被动订阅</h2>
-<div class="panel"><p class="sub">综合（复盘+快讯）<code>/feed.xml</code>；研报 <code>/feed/research.xml</code>；题材热点 <code>/feed/themes.xml</code>。索引页：<a href="/feed">/feed</a></p></div>
+<div class="panel"><p class="sub">财经资讯<code>/feed.xml</code>；研报 <code>/feed/research.xml</code>；题材热点 <code>/feed/themes.xml</code>。索引页：<a href="/feed">/feed</a></p></div>
 
 <p class="ft">© 稻草财经 · daocaijing.com · 内容仅供研究参考，不构成投资建议</p>
 </div>

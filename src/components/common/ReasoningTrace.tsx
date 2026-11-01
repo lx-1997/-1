@@ -40,7 +40,6 @@ const TOOL_LABELS: Record<string, string> = {
   get_site_fast_news: '稻草财经快讯',
   get_site_articles: '稻草财经文章',
   get_recent_research: '稻草财经投行研报',
-  get_daily_review: '稻草财经每日复盘',
   get_stock_news: '公开财经资讯',
   get_stock_announcements: '上市公司公告',
   get_market_snapshot: '市场全景快照',

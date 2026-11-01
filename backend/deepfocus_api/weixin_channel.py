@@ -52,7 +52,7 @@ _FALLBACK_REPLY = (
     "我是 DeepFocus 投研助手 🤖\n"
     "试试问我：\n"
     "· 某只股票怎么样（发名称或代码，如 贵州茅台 / 600519）\n"
-    "· 今天大盘 / 收盘复盘\n"
+    "· 今天大盘怎么样\n"
     "· 某条快讯/事件怎么解读"
 )
 # 纯寒暄词：直接友好引导，不触发研究 agent（省 token、不答非所问）
@@ -76,7 +76,7 @@ _WX_THINKING_DELAY = float(os.getenv("DEEPFOCUS_WEIXIN_THINKING_DELAY", "4.5") o
 _WX_CTX_TTL = float(os.getenv("DEEPFOCUS_WEIXIN_CTX_TTL", "600") or 600)             # 会话上下文窗口(秒)，默认 10min；超时即视作新对话
 _WX_CTX_TURNS = int(os.getenv("DEEPFOCUS_WEIXIN_CTX_TURNS", "3") or 3)               # 记忆最近几轮(问+答)
 _RECOMMEND_LIST = (
-    "· 今天大盘怎么样 / 收盘复盘\n"
+    "· 今天大盘怎么样\n"
     "· 某只股票怎么样（发名称或代码，如 贵州茅台 / 600519）\n"
     "· 某条快讯 / 事件怎么解读\n"
     "· 某个行业 / 板块前景如何"
@@ -108,7 +108,7 @@ _PUBLIC_SITE = (os.getenv("DEEPFOCUS_PUBLIC_BASE_URL", "https://daocaijing.com")
 _WX_FREE_QA = int(os.getenv("DEEPFOCUS_WEIXIN_FREE_QA", "2") or 2)
 _NONMEMBER_QUOTA_REPLY = (
     f"今天的免费 AI 问答（{_WX_FREE_QA} 次/天）用完啦 🙏\n"
-    f"开通会员：AI 问答不限次 + 全量快讯推送 + 每日复盘\n"
+    f"开通会员：AI 问答不限次 + 全量快讯推送\n"
     f"👉 {_PUBLIC_SITE}（支持自助下单、秒级开通）"
 )
 _NONTEXT_REPLY = (
@@ -434,7 +434,7 @@ def _qa_cache_ttl(question: str) -> float:
 
 
 def _format_daily(m: Any) -> str:
-    """晨报/复盘的微信推送文本：标题+正文+深链。内容生成侧已带 AI 标识与中性化。"""
+    """晨报的微信推送文本：标题+正文+深链。内容生成侧已带 AI 标识与中性化。"""
     title = (getattr(m, "title", "") or "").strip()
     content = (getattr(m, "content", "") or "").strip()
     url = (getattr(m, "url", "") or "").strip()
@@ -554,54 +554,6 @@ def _split_for_wechat(text: str, limit: int = 0) -> list[str]:
         chunks.append(cur)
     return chunks
 
-
-# 大盘/复盘类高频问:命中且"今日复盘已生成"→直出我们已算好的复盘(0 LLM、秒回、用自有差异化内容);
-# 否则落到实时 agent(防盘前/周末返回隔夜数据)。短问 + 不含代码,避免误伤夹个股的长问。
-_MARKET_Q_KEYS = ("大盘", "复盘", "盘面", "收盘", "今日行情", "今天行情", "今天股市", "今日股市", "晨报", "今天行情如何")
-# ⚠️只对"给我大盘概况"这种纯泛问直出;带【因果/分析/预测/事件/操作】意图的具体问题必须交给真 agent
-# (否则"今天大盘为啥暴跌"会被关键词「大盘」截成甩一份复盘=伪 AI,既不答"为什么"也不纠正前提)。
-_MARKET_Q_EXCLUDE = (
-    "为什么", "为啥", "为何", "原因", "怎么回事", "啥情况", "咋", "怎么搞",
-    "分析", "解读", "怎么看", "如何看", "怎样看", "点评", "看法",
-    "会不会", "能不能", "要不要", "该不该", "可不可以", "是不是",
-    "预测", "后市", "明天", "明日", "接下来", "未来", "下周", "后面", "之后", "走势",
-    "暴跌", "暴涨", "大跌", "大涨", "跳水", "闪崩", "崩盘", "重挫", "跳空",
-    "影响", "利好", "利空", "买", "卖", "加仓", "减仓", "操作", "建议", "机会",
-)
-
-
-def _is_market_overview_q(question: str) -> bool:
-    s = (question or "").strip()
-    if not s or len(s) > 14 or any(c.isdigit() for c in s):  # 太长或含代码→可能夹个股,不直出
-        return False
-    if any(k in s for k in _MARKET_Q_EXCLUDE):  # 有因果/分析/预测/事件/操作意图 → 不直出,交给真 agent
-        return False
-    return any(k in s for k in _MARKET_Q_KEYS)
-
-
-def _market_overview_reply() -> Optional[str]:
-    """今日复盘已生成 → 渲染成微信答案(0 LLM);未生成/非当日 → None(让实时 agent 接管,防隔夜数据)。"""
-    try:
-        from . import ashare_review
-        rv = ashare_review.latest_review()
-        if not rv or rv.get("date") != ashare_review.cn_today_str():
-            return None
-        nar = rv.get("narrative") or {}
-        lines = [f"📊 {rv.get('session_label') or '大盘复盘'}（{rv.get('date')}）"]
-        if (nar.get("one_liner") or "").strip():
-            lines.append(nar["one_liner"].strip()[:160])
-        for label, key in (("大盘", "market"), ("板块", "sectors"), ("资金", "funds")):
-            v = (nar.get(key) or "").strip()
-            if v:
-                lines.append(f"· {label}：{v[:140]}")
-        edges = [(e.get("title") or e.get("name") or "").strip()
-                 for e in (rv.get("our_edge") or [])[:5]
-                 if isinstance(e, dict) and (e.get("title") or e.get("name"))]
-        if edges:
-            lines.append("🔎 我们提前发现：" + "；".join(edges))
-        return "\n".join(lines)
-    except Exception:  # noqa: BLE001  复盘读取失败 → None 落到实时 agent
-        return None
 
 
 def _is_controversial_stock_q(question: str) -> bool:
@@ -806,8 +758,7 @@ class WeixinChannelManager:
         """扫一次新消息→按各绑定订阅匹配→错峰批量推。返回推进后的 cursor。
 
         覆盖三类 topic：快讯（会员、按订阅范围）、晨报（全体绑定含非会员——非会员试吃层的每日一条）、
-        复盘（会员）。晨报/复盘是一日一次的策划摘要，"每天早 8:30 / 下午 3:35 准时见"的仪式感是
-        微信通道从碎片快讯升级成每日回访钩子的关键，内容已生成、零边际成本。"""
+        晨报（绑定用户可见），以及会员订阅的异动提醒。"""
         from .realtime_messages import list_realtime_messages
         opened = [b for b in bind.list_active() if (b.get("push_scope") or "off") != "off"]
         if not opened:
@@ -820,8 +771,8 @@ class WeixinChannelManager:
         actives = [b for b in opened if _member_can_push(b)]
         msgs = list_realtime_messages(topic="快讯", since=cursor, limit=50)
         new_msgs = [m for m in msgs if getattr(m, "created_at", "") > cursor]
-        specials: List[Any] = []  # 晨报/复盘/异动（低频，每 topic 最多几条）
-        for _topic in ("晨报", "复盘", "异动"):
+        specials: List[Any] = []  # 晨报/异动（低频，每 topic 最多几条）
+        for _topic in ("晨报", "异动"):
             try:
                 for m in list_realtime_messages(topic=_topic, since=cursor, limit=3):
                     if getattr(m, "created_at", "") > cursor:
@@ -860,10 +811,10 @@ class WeixinChannelManager:
                     matched = [m for m in new_msgs if _matches_binding(m, scope, b.get("push_symbols") or [])]
                     if matched:
                         jobs.append((b, to, ctx, _format_push(matched)))
-            # ② 晨报（全体绑定，非会员也推——试吃层的每日价值锚）/ 复盘·异动（会员）
+            # ② 晨报（非会员也推——试吃层的每日价值锚）/ 异动（会员）
             for m in specials:
                 topic = getattr(m, "topic", "") or ""
-                if topic in ("复盘", "异动") and not is_member:
+                if topic == "异动" and not is_member:
                     continue
                 jobs.append((b, to, ctx, _format_daily(m)))
 
@@ -1095,15 +1046,6 @@ class WeixinChannelManager:
         cid = (b.get("username") or "").strip().lower() or bot_id
         recent_turns = _load_ctx(cid)
         has_ctx = bool(recent_turns)
-
-        # ③.5 大盘/复盘高频问:今日复盘已生成→直出已算结论(0 token、秒回、用自有复盘);未生成→落到实时 agent
-        if _is_market_overview_q(question):
-            ov = _market_overview_reply()
-            if ov:
-                metrics_store.incr("wxqa:overview_hit")  # 观测:大盘直出命中(0 token)
-                await _reply(_clean(ov))
-                _remember(cid, question, ov)  # 记进会话,后续"为啥跌"等追问能接上
-                return
 
         # ④ 答案缓存跨用户复用：命中即秒回，0 token、不计次（同一问题跨用户安全共享，见 _qa_fingerprint）
         # ⚠️仅【无会话上下文】才用共享缓存：多轮追问的答案跟个人上文相关,不能给别人(也不该被别人的缓存覆盖)。

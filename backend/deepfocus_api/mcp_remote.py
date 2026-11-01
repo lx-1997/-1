@@ -5,7 +5,7 @@ Claude Code、Cherry Studio 等）。与内部端点（/mcp，mcp_local）的区
 - 鉴权：个人接入令牌（dfm_，mcp_tokens 签发），优先 Authorization: Bearer，
   兼容 ?token=（部分客户端自定义连接器无法携带 Header；令牌会进访问日志，文档中已提示风险）。
 - 会员墙：AI 问答配额与网页端同一闸（_check_agent_quota：会员/管理员无限，非会员每天 10 次）。
-- 版权红线与合作方 API（/api/v1）一致：只开放自有内容——复盘/速判卡/资讯流/研报元数据/题材；
+- 版权红线与合作方 API（/api/v1）一致：只开放自有内容——速判卡/资讯流/研报元数据/题材；
   第三方版权内容（投行研报原文、聚合文章全文）绝不在此暴露，速判卡硬编码 use_ifind=False。
 
 main 的符号一律在调用时懒导入：本模块在 main 启动期被导入，顶层 import 会成环。
@@ -67,33 +67,6 @@ TOOLS: list[dict[str, Any]] = [
                             "description": "标的代码列表，例如 [\"AAPL\", \"600519.SH\"]"}
             },
             "required": ["symbols"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "name": "get_review_today",
-        "title": "今日复盘",
-        "description": "最新一期稻草财经 A股复盘（盘中=午盘版，收盘后=收盘版；一句话盘面/板块/明日展望）。自有内容。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "get_review",
-        "title": "指定日期复盘",
-        "description": "某一天（YYYY-MM-DD）的完整 A股复盘。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"date": {"type": "string", "description": "日期，格式 YYYY-MM-DD"}},
-            "required": ["date"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "name": "list_reviews",
-        "title": "历史复盘列表",
-        "description": "历史 A股复盘列表（轻量摘要，新→旧）。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"limit": {"type": "integer", "description": "条数，默认 30，上限 120"}},
             "additionalProperties": False,
         },
     },
@@ -297,12 +270,6 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
-        "name": "get_track_record",
-        "title": "平台战绩",
-        "description": "「我们提前发现的」平台战绩：近 30 天经 AI 判定验证的命中汇总与近期明细。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
         "name": "get_ai_fund_snapshot",
         "title": "AI 模拟盘快照",
         "description": "AI 模拟盘全貌（净值/收益/持仓盯市/近期交易理由/净值曲线）；strategy 可选竞技场选手 id。",
@@ -448,35 +415,10 @@ async def _tool_quotes(args: dict) -> Any:
     return await fetch_market_quotes([str(s) for s in symbols[:30]])
 
 
-async def _tool_review_today() -> Any:
-    from . import ashare_review
-
-    rv = ashare_review.latest_review()
-    return {"exists": bool(rv), "review": rv} if rv else {"exists": False}
 
 
-async def _tool_review(args: dict) -> Any:
-    import re
-
-    from . import ashare_review
-
-    date = str(args.get("date") or "").strip()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
-        raise ValueError("date 须为 YYYY-MM-DD")
-    rv = ashare_review.review_for_date(date)
-    if not rv:
-        return {"exists": False, "detail": "该日期暂无复盘"}
-    return {"exists": True, "review": rv}
 
 
-async def _tool_reviews(args: dict) -> Any:
-    from . import ashare_review
-
-    try:
-        limit = max(1, min(int(args.get("limit") or 30), 120))
-    except (TypeError, ValueError):
-        limit = 30
-    return {"items": ashare_review.list_reviews(limit=limit)}
 
 
 async def _tool_verdict(args: dict) -> Any:
@@ -730,11 +672,6 @@ async def _tool_headlines() -> Any:
             "generated_at": hl.get("generated_at") or ""}
 
 
-async def _tool_track_record() -> Any:
-    from . import track_record
-
-    hits = track_record._collect_hits(30)
-    return {**track_record._summarize(hits), "days": 30, "recent": hits[:12]}
 
 
 async def _tool_aifund(args: dict) -> Any:
@@ -880,7 +817,7 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                 "instructions": (
-                    "稻草财经（daocaijing.com）投研 MCP：A股复盘/个股速判卡/资讯/研报元数据/题材/行情等只读工具，"
+                    "稻草财经（daocaijing.com）投研 MCP：个股速判卡/资讯/研报元数据/题材/行情等只读工具，"
                     "以及 ask_ai 投研问答（会员配额与网页端一致）。内容仅供研究参考，不构成投资建议。"
                 ),
             },
@@ -906,12 +843,6 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
                 value = await _tool_search_symbols(arguments)
             elif tool_name == "get_market_quotes":
                 value = await _tool_quotes(arguments)
-            elif tool_name == "get_review_today":
-                value = await _tool_review_today()
-            elif tool_name == "get_review":
-                value = await _tool_review(arguments)
-            elif tool_name == "list_reviews":
-                value = await _tool_reviews(arguments)
             elif tool_name == "get_stock_verdict":
                 value = await _tool_verdict(arguments)
             elif tool_name == "search_news":
@@ -940,8 +871,6 @@ async def handle_remote_mcp_request(request: Request) -> JSONResponse:
                 value = await _tool_usearch(arguments)
             elif tool_name == "get_headlines":
                 value = await _tool_headlines()
-            elif tool_name == "get_track_record":
-                value = await _tool_track_record()
             elif tool_name == "get_ai_fund_snapshot":
                 value = await _tool_aifund(arguments)
             elif tool_name == "search_stock_reports":
@@ -997,7 +926,7 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 .tag{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:0 8px;font-size:12px;color:var(--mute);margin-left:6px}
 </style></head><body><div class="wrap">
 <h1>稻草财经 MCP 接入控制台</h1>
-<p class="sub">把稻草财经（daocaijing.com）的 A股复盘、个股速判卡、资讯、研报与 AI 投研问答，接入你自己的 AI 客户端（Claude Desktop、Claude Code、Cursor、Cherry Studio 等任何支持 MCP 的软件）。</p>
+<p class="sub">把稻草财经（daocaijing.com）的 个股速判卡、资讯、研报与 AI 投研问答，接入你自己的 AI 客户端（Claude Desktop、Claude Code、Cursor、Cherry Studio 等任何支持 MCP 的软件）。</p>
 <div class="note">接入地址（MCP URL）：<code>__MCP_URL__</code>，传输方式 Streamable HTTP。需要你的<b>个人接入令牌</b>（下方创建），内容权限与会员权益同你的网页端账号。</div>
 
 <h2>第一步 · 创建接入令牌</h2>
@@ -1027,17 +956,16 @@ input{background:#0c1018;border:1px solid var(--line);border-radius:7px;color:va
 <div class="panel"><h3>curl 直连验证</h3>
 <pre id="cfgCurl">curl -s __MCP_URL__ -H "Authorization: Bearer &lt;你的令牌&gt;" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre></div>
 
-<h2>可用工具（26 个）</h2>
+<h2>可用工具（22 个）</h2>
 <table><tr><th>工具</th><th>说明</th></tr>
 <tr><td><code>ping</code></td><td>连通探针，返回账号与会员状态</td></tr>
 <tr><td><code>search_market_symbols</code> / <code>get_market_quotes</code></td><td>标的搜索 / 行情快照（A/H/美）</td></tr>
-<tr><td><code>get_review_today</code> / <code>get_review</code> / <code>list_reviews</code></td><td>A股复盘（今日 / 指定日期 / 历史列表）</td></tr>
 <tr><td><code>get_stock_verdict</code></td><td>个股证据速判卡（确定性引擎）</td></tr>
 <tr><td><code>search_news</code> / <code>search_research</code> / <code>search_stock_reports</code></td><td>资讯流 / 投行研报元数据 / 个股券商研报（近两年，标题机构评级）</td></tr>
 <tr><td><code>search_minutes</code> / <code>get_minutes_sentiment</code></td><td>机构纪要检索（含正文）/ 当日纪要多空统计</td></tr>
 <tr><td><code>get_theme_stocks</code> / <code>get_stock_themes</code> / <code>get_theme_boards</code> / <code>get_limit_up_ladder</code></td><td>题材→受益股 / 题材反查 / 板块涨幅榜 / 涨停天梯</td></tr>
 <tr><td><code>get_kline</code> / <code>get_market_dashboard</code> / <code>get_risk_radar</code> / <code>get_dragon_tiger</code> / <code>get_market_calendar</code></td><td>K线分时 / 大盘指标盘 / 风险雷达 / 龙虎榜 / A股日历</td></tr>
-<tr><td><code>universal_search</code> / <code>get_headlines</code> / <code>get_track_record</code> / <code>get_ai_fund_snapshot</code></td><td>统一搜索 / AI头条 / 平台战绩 / AI模拟盘</td></tr>
+<tr><td><code>universal_search</code> / <code>get_headlines</code> / <code>get_ai_fund_snapshot</code></td><td>统一搜索 / AI头条 / AI模拟盘</td></tr>
 <tr><td><code>ask_ai</code></td><td>AI 投研问答（取真数再回答；会员/管理员不限次，非会员每天 10 次，与网页端同一配额）</td></tr>
 </table>
 

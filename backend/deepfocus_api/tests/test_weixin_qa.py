@@ -243,44 +243,6 @@ def test_weixin_orchestrator_agent_fn(monkeypatch):
     assert captured["ctx"] == history_hint              # 历史只作 LLM 上下文
 
 
-# ---------- 大盘/复盘高频问：今日复盘直出(0 token)，隔夜则落实时 agent ----------
-
-def test_market_overview_direct_render(env, monkeypatch):
-    from deepfocus_api import ashare_review
-    monkeypatch.setattr(ashare_review, "cn_today_str", lambda: "2026-06-22")
-    monkeypatch.setattr(ashare_review, "latest_review", lambda: {
-        "date": "2026-06-22", "session_label": "收盘复盘",
-        "narrative": {"one_liner": "放量长阳", "market": "沪指+1.8%", "sectors": "AI领涨", "funds": "主力净流入"},
-        "our_edge": [{"title": "我们提前覆盖AI电力"}],
-    })
-    calls: list = []
-    mgr = _mgr(answer="不该被调用", calls=calls)
-    asyncio.run(mgr._handle_batch("bot-alice", [_msg("今天大盘怎么样")]))
-    assert calls == []                                       # 没调 agent → 0 token
-    assert metrics_store.get_daily("q:wxqa:alice") == 0      # 不计现算配额
-    sent = env["sent"][-1]
-    assert "收盘复盘" in sent and "放量长阳" in sent and "我们提前覆盖AI电力" in sent
-
-
-def test_market_overview_falls_through_when_stale(env, monkeypatch):
-    from deepfocus_api import ashare_review
-    monkeypatch.setattr(ashare_review, "cn_today_str", lambda: "2026-06-22")
-    monkeypatch.setattr(ashare_review, "latest_review", lambda: {"date": "2026-06-20", "narrative": {}})
-    calls: list = []
-    mgr = _mgr(answer="实时agent答案", calls=calls)
-    asyncio.run(mgr._handle_batch("bot-alice", [_msg("今天大盘怎么样")]))
-    assert calls == ["今天大盘怎么样"]                        # 隔夜复盘 → 落到实时 agent
-    assert env["sent"][-1].startswith("实时agent答案")
-
-
-def test_is_market_overview_q_heuristic():
-    assert wc._is_market_overview_q("今天大盘怎么样")
-    assert wc._is_market_overview_q("复盘")
-    assert not wc._is_market_overview_q("贵州茅台今天怎么样")        # 个股,不直出
-    assert not wc._is_market_overview_q("600519 大盘里表现如何")    # 含代码
-    assert not wc._is_market_overview_q("分析今天大盘对消费和半导体板块的影响到底多大")  # 太长
-
-
 def test_conversation_context_carries_across_turns(env):
     # ⭐多轮上下文:第1轮反问→第2轮用户补答,第2轮必须带着第1轮问答喂给 agent(否则接不上=伪AI)
     seen: list = []
@@ -309,16 +271,6 @@ def test_followup_bypasses_cross_user_cache(env):
     asyncio.run(mgr._handle_batch("bot-alice", [_msg("贵州茅台怎么样")]))   # 第1轮:独立问,写缓存
     asyncio.run(mgr._handle_batch("bot-alice", [_msg("那它估值贵吗")]))     # 第2轮:追问,有上下文→绕开缓存→照常调 agent
     assert len(calls) == 2  # 两轮都真调了 agent(第2轮没被缓存短路)
-
-
-def test_market_overview_excludes_analytical_questions():
-    # ⭐带因果/分析/预测/事件/操作意图的"大盘"问题不能被复盘直出截走(否则=伪AI),要交给真 agent
-    for q in ("今天大盘为啥暴跌", "今天为什么大跌", "大盘怎么回事", "大盘后市怎么看",
-              "大盘会不会跌", "分析下今天大盘", "今天该加仓吗", "大盘明天走势"):
-        assert not wc._is_market_overview_q(q), q
-    # 纯泛问仍走直出(秒回省 token)
-    for q in ("今天大盘", "今天大盘怎么样", "收盘复盘", "盘面如何", "今天行情"):
-        assert wc._is_market_overview_q(q), q
 
 
 # ---------- 出口护栏：答案里的数据源/工具名被剥掉再发出 ----------

@@ -5,7 +5,6 @@
   统一 {"data": …} 契约、任何数据源异常 → {"data": null} 绝不 500、一致预期恒带免责 note；
 - /api/stock/risk-check：确定性风险体检字段齐全 + 免责措辞 + 数据不齐 → data=null；
 - verdict 落库 payload 新增 dims 证据快照（仅 key+signal 精简）；
-- /track-record 公开 HTML 页：措辞铁律（只事实表述，无命中率/准确率/收益归因）+ sitemap 收录。
 
 全部 mock 外部取数（monkeypatch 源模块函数），不触外网、不触真实库。
 """
@@ -226,39 +225,3 @@ def test_verdict_datapoint_includes_dims_snapshot(monkeypatch, tmp_path):
     dims = captured["payload"]["dims"]
     assert isinstance(dims, list) and len(dims) >= 5  # 7–9 维的精简快照
     assert all(set(d.keys()) == {"key", "signal"} for d in dims)  # 只存 key+signal，不带重字段
-
-
-# --------------------------------------------------------------------------- #
-# 战绩公开页 /track-record
-# --------------------------------------------------------------------------- #
-def _seed_review_with_edge():
-    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
-    data_store.record("ashare_review", "DAILY", {
-        "date": today,
-        "our_edge": [{
-            "kind": "stock", "name": "中芯国际", "pct": 5.6, "lead_hours": 14.0,
-            "reason": "盘前快讯提示产能涨价", "evidence": 2,
-            "signals": [{"id": "n1", "url": "https://daocaijing.com/article/n1",
-                         "title": "产能涨价快讯", "topic": "快讯", "lead": 14}],
-        }],
-    })
-
-
-def test_track_record_page_facts_only_and_public(client):
-    cli, _ = client
-    _seed_review_with_edge()
-    r = cli.get("/track-record")  # 匿名可看（非 /api 路径，中间件放行）
-    assert r.status_code == 200
-    page = r.text
-    assert "提前覆盖" in page and "中芯国际" in page
-    assert "提前 14 小时" in page and "产能涨价快讯" in page  # 明细：领先小时 + 佐证链接
-    assert "不构成" in page  # 页脚/口径免责
-    # ⚠️措辞铁律：无命中率/准确率/收益归因（变相宣传预测能力 = 投顾红线）
-    for banned in ("命中率", "准确率", "帮你抓住", "%涨幅", "5.6"):
-        assert banned not in page, banned
-
-
-def test_track_record_in_sitemap(client):
-    cli, _ = client
-    r = cli.get("/sitemap.xml")
-    assert r.status_code == 200 and "/track-record</loc>" in r.text

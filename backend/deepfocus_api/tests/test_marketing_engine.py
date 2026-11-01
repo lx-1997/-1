@@ -1,6 +1,6 @@
 """自动营销引擎：分群口径 + 频控闸门 + dry_run/主闸 + SMTP 降级 + 文案护栏 + 归因回填。
 
-隔离方式(照 test_t1_recall)：monkeypatch RECALL_DB_PATH / METRICS_DB_PATH 到 tmp，
+隔离方式：monkeypatch RECALL_DB_PATH / METRICS_DB_PATH 到 tmp，
 自建一个含 activity_log 的 metrics 库喂行为画像，list_users 打桩喂用户。
 """
 import sqlite3
@@ -44,7 +44,6 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(me, "RECALL_DB_PATH", tmp_path / "recall.sqlite3")
     monkeypatch.setattr(me, "METRICS_DB_PATH", tmp_path / "metrics.sqlite3")
     monkeypatch.setattr(me, "users_expiring_within", lambda hours=48, paid=False: [])
-    monkeypatch.setattr(me, "_review_hook", lambda: ("测试一句话", ""))
     me.init_marketing_db()
     return tmp_path
 
@@ -229,6 +228,7 @@ def test_copy_has_disclaimer_and_no_forbidden_brand(isolated):
         assert "张三" in body
         assert "退订" in body and "不构成投资建议" in body
         assert "道财经" not in subject and "道财经" not in body
+        assert "收盘复盘" not in body
         assert "{LINK}" in body  # 占位待替换成追踪链接
 
 

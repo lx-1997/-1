@@ -399,7 +399,7 @@ const DEEP_SOURCE_LABEL: Record<string, string> = {
   get_dividend_history: '分红历史', get_site_fast_news: '稻草财经快讯',
   get_site_articles: '稻草财经文章', get_stock_research: '公开研报库',
   get_recent_research: '稻草财经投行研报', get_institution_notes: '稻草财经机构纪要',
-  get_celebrity_views: '名人观点', get_daily_review: '稻草财经复盘', evidence_rag: '站内证据库',
+  get_celebrity_views: '名人观点', evidence_rag: '站内证据库',
 };
 const humanizeDeepWarning = (warning: string): string => {
   let text = String(warning || '');
@@ -467,7 +467,7 @@ const TOOL_LABEL: Record<string, string> = {
   get_verdict_history: '历史判定', get_price_history: '价格走势', get_macro_environment: '宏观',
   get_options_signal: '期权情绪', search_our_content: '检索快讯/文章', get_site_fast_news: '稻草财经快讯',
   get_site_articles: '稻草财经文章', get_stock_research: '检索券商研报', get_recent_research: '投行研报',
-  get_institution_notes: '机构纪要', get_celebrity_views: '名人观点', get_daily_review: '今日复盘',
+  get_institution_notes: '机构纪要', get_celebrity_views: '名人观点',
   get_industry_context: '行业扫描', get_peer_comparison: '同行候选', get_supply_chain_context: '上下游线索',
   get_stock_news: '公司动态', get_stock_announcements: '公司公告', get_my_watchlist: '我的自选',
   research_harness: '统一研究取数', 'deepseek-harness': '站内研究助手', agent_evidence: '证据专家', agent_research: '研究专家',
@@ -1235,15 +1235,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   useEffect(() => {  // 挂载即拉群配置（公开、轻量）：决定「更多」里是否显示入口
     apiGet<any>('/api/community/group').then(setGroupCfg).catch(() => { /* 失败静默：入口不显示 */ });
   }, []);
-  // A股收盘复盘
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [reviewData, setReviewData] = useState<any>(null);       // 当前展示的复盘
-  const [reviewList, setReviewList] = useState<any[]>([]);       // 历史复盘摘要
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewError, setReviewError] = useState(false);   // 复盘加载失败(网络/500) → 显重试，区别于「今日尚未生成」
-  const reviewRetryRef = useRef<string | undefined>(undefined);  // 失败时记住该重试哪一天
-  const [reviewToday, setReviewToday] = useState<any>(null);     // 首页置顶卡片用（今日复盘）
-  const [trackRecord, setTrackRecord] = useState<authService.TrackRecord | null>(null);  // 「我们提前发现的」量化战绩
+
+
+    // 「我们提前发现的」量化战绩
   // Day-1 激活：引导新用户「选自选 + 开盯盘」，建立回访触发器(留存核心)。
   // ⭐已开盯盘→永不再显;否则「稍后」只是软关闭、下次再提示,累计 3 次才彻底不显(点一次就永久消失=白白流失订阅)。
   const [activateDone, setActivateDone] = useState<boolean>(() => {
@@ -1251,10 +1245,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   });
   // 加自选后的「开盯盘」上下文提示——高意向时刻顺势捕获推送订阅;每会话至多一次,不打扰。
   const authNudgeAtRef = useRef<Map<string, number>>(new Map());  // 登录弹窗按 reason 的会话级冷却
-  // 连续看复盘签到：打开复盘即签到（登录用户），连续天数到里程碑送会员。
-  // 类型放宽为 Partial<CheckinStatus>：页面加载即拉全量状态（头部常驻火焰徽章），签到 POST 只回三个字段。
-  const [checkin, setCheckin] = useState<(Partial<authService.CheckinStatus> & { streak: number }) | null>(null);
-  const checkinDayRef = useRef('');  // 本会话今天已签过（避免每次开弹层都重复 POST）
   const [refAvail, setRefAvail] = useState(0);  // 可兑换奖励卡总数（醒目角标）
   // 轻互动：收藏（看多/看空表态已下线——AI 情绪标签替代）
   const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
@@ -1383,12 +1373,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const [interestSignals, setInterestSignals] = useState<Partial<Record<InterestKey, number>>>(() => LS.read('bbt.personal.signals.v1', {}));
   const [categorySelections, setCategorySelections] = useState<Record<string, ContentSelection>>({});
   const [watchMarket, setWatchMarket] = useState('all');
-  const [reviewCategory, setReviewCategory] = useState('all');
+
   const [aiTaskCategory, setAiTaskCategory] = useState('all');
   const contentSelection = categorySelections[feedFilter] || ALL_CONTENT;
   const classificationActive = hasContentSelection(contentSelection);
   const changeContentSelection = (next: ContentSelection) => setCategorySelections(previous => ({ ...previous, [feedFilter]: next }));
-  useEffect(() => { setCategorySelections({}); setWatchMarket('all'); setReviewCategory('all'); setAiTaskCategory('all'); }, [session.revision]);
+  useEffect(() => { setCategorySelections({}); setWatchMarket('all'); setAiTaskCategory('all'); }, [session.revision]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [flash, setFlash] = useState<Record<string, 'up' | 'down'>>({});
   const [active, setActive] = useState<string | null>(null);
@@ -1416,7 +1406,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const gridRef = useRef<HTMLDivElement>(null);
   const aiWorkspaceRef = useRef<HTMLElement>(null);
   const toolWorkspaceRef = useRef<HTMLElement>(null);
-  const reviewWorkspaceRef = useRef<HTMLElement>(null);
+
   // PDF 内的来源跳转统一落到 ?tab=research：自动打开研报栏目并把它滚进视野。
   useEffect(() => {
     try {
@@ -1834,7 +1824,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     let src = '';
     try {
       const q = new URLSearchParams(window.location.search);
-      // 短参 utm=（微信推送 CTA 用 ?review=1&utm=wxsettle，链接越短点击越高）与标准 utm_* 同链路归因
       const utm = ['utm_source', 'utm_medium', 'utm_campaign', 'utm'].map(k => q.get(k)).filter(Boolean).join('/');
       const ref = document.referrer && !document.referrer.includes(window.location.hostname) ? new URL(document.referrer).hostname : '';
       src = [utm, ref].filter(Boolean).join(' · ');
@@ -2055,7 +2044,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     for (const key of plan.staleHistoryKeys) removeAiTaskHistory(key);
     if (aiTasksRef.current.size > 0) setAiTasksVersion(v => v + 1);
   }, [authUser]);
-  const refreshMembershipRef = useRef<(() => void) | null>(null);
+
   const inviteCodeRef = useRef<string>('');
   const membership = session.account?.membership ?? null;
   const isAdmin = session.account?.role === 'admin';
@@ -2086,7 +2075,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setIfindBusy(false);
   }, []);
   const openIfind = useCallback(() => { setIfindOpen(true); logAct('tab', 'ifind'); runIfind(ifindInput); }, [ifindInput, runIfind, logAct]);
-  // AI 对话（tool-use agent：行情/估值/iFinD + 搜我们的快讯/研报/复盘）。灰度白名单账号。
+  // AI 对话调用行情/估值/iFinD 与站内快讯、研报搜索。灰度白名单账号。
   const [aiOpen, setAiOpen] = useState(false);
   const [aiInput, setAiInput] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
@@ -2810,53 +2799,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const applySupportUnread = useCallback((n: number) => {
     setSupportUnread(n);
   }, []);
-  // A股复盘：打开弹层（拉今日 + 历史），以及首页置顶卡片的今日复盘
-  const openReview = useCallback(async (date?: string) => {
-    setReviewOpen(true); setReviewLoading(true); setReviewError(false); reviewRetryRef.current = date;
-    authService.fetchTrackRecord().then(tr => setTrackRecord(tr)).catch(() => {});  // 「我们提前发现的」战绩
-    try {
-      if (date) {
-        const r = await apiGet<{ review: any }>(`/api/review/${date}`);
-        setReviewData(r.review);
-      } else {
-        const [t, l] = await Promise.all([
-          apiGet<{ exists: boolean; review?: any }>('/api/review/today'),
-          apiGet<{ items: any[] }>('/api/review/list', { params: { limit: 30 } }),
-        ]);
-        setReviewData(t.exists ? t.review : null);
-        setReviewList(l.items || []);
-      }
-      logAct('open_review', date || 'today');
-    } catch {
-      setReviewError(true);  // 区分「加载失败」与「今日尚未生成」：失败给重试，不误导成没复盘
-    } finally { setReviewLoading(false); }
-    try {
-      // 连续看复盘签到：登录用户打开复盘即签到（每天一次，里程碑送会员）
-      const todayKey = new Date().toDateString();
-      if (authUserRef.current && checkinDayRef.current !== todayKey) {
-        checkinDayRef.current = todayKey;
-        const r = await authService.checkin();
-        if (r?.ok) {
-          setCheckin(prev => ({ ...(prev || {}), streak: r.streak, total: r.total, longest: r.longest, checked_today: true }));
-          const ms = r.milestone;
-          if (ms) {  // milestone 非空 = 服务端本次新发的里程碑（已去重），无论是否今日首签都要庆祝
-            if (ms.reward_days > 0) {
-              showToast(`🎉 连续看盘 ${ms.days} 天！已送你 ${ms.reward_days} 天尊享会员`);
-              refreshMembershipRef.current?.();
-            } else {
-              showToast(`🔥 已连续看盘 ${ms.days} 天，继续保持解锁会员奖励！`);
-            }
-          } else if (r.first_today && r.streak > 1) {  // 普通连续仅今日首签提示，避免重复开弹层刷屏
-            showToast(`🔥 连续看盘第 ${r.streak} 天，已签到`);
-          }
-        }
-      }
-    } catch { /* 签到失败静默，不影响复盘展示 */ }
-  }, [logAct, showToast]);
-  useEffect(() => {  // 首页置顶卡片：进页面拉一次今日复盘
-    apiGet<{ exists: boolean; review?: any }>('/api/review/today')
-      .then(r => { if (r.exists) setReviewToday(r.review); }).catch(() => {});
-  }, []);
   const refreshMembership = useCallback(() => {
     const revision = getAuthSnapshot().revision;
     void session.refresh();
@@ -2865,7 +2807,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       authService.fetchReferral().then(d => { if (isAuthRevisionCurrent(revision)) setRefAvail((d.available.month || 0) + (d.available.quarter || 0) + (d.available.year || 0)); }).catch(() => {});
     }
   }, [session.refresh, applySupportUnread]);
-  refreshMembershipRef.current = refreshMembership;  // 供 openReview 等先定义的回调延迟调用
   const openSupport = useCallback(async () => {
     const revision = getAuthSnapshot().revision;
     setAcctOpen(false); setSupportOpen(true);
@@ -3018,13 +2959,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 登录非会员每日 10 次，会员/管理员不限，所以入口不再提前用登录墙截断首次体验。
   // 组件级会员真值（账号弹层里的 isVip 是块级作用域，别处引用会 TS2304）
   const isMemberVip = membership?.tier === 'premium' || membership?.tier === 'lifetime';
-  // 签到 streak：页面加载即拉全量状态（此前 fetchCheckinStatus 全前端零调用点，头部火焰徽章白建）
-  useEffect(() => {
-    if (!authUser) { setCheckin(null); return; }
-    let dead = false;
-    (async () => { const s = await authService.fetchCheckinStatus(); if (!dead && s) setCheckin(s); })();
-    return () => { dead = true; };
-  }, [authUser]);
   // 研报「原文」PDF 入口：仅指定账号可见；后端仍做同口径硬门校验，避免手动拼链接绕过前端。
   const canViewResearchOriginal = (authUser || '').trim().toLowerCase() === 'lx199710';
   const [authOpen, setAuthOpen] = useState(false);
@@ -3246,12 +3180,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const next = pendingActionRef.current;
     pendingActionRef.current = null;
     if (next) { next(); if (isNew) logAct('signup', '注册(带意图直达)'); return; }
-    if (isNew) {  // T+0 激活：新用户注册即喂一口「今天就能用」的内容——当日 A 股收盘复盘
-      logAct('signup', '注册→推送今日复盘');
-      showToast('🎉 注册成功！先看看今天的 A 股收盘复盘');
-      openReview();
-    }
-  }, [refreshMembership, logAct, showToast, openReview]);
+    if (isNew) { logAct('signup', '注册'); showToast('🎉 注册成功！欢迎来到稻草财经'); }
+  }, [refreshMembership, logAct, showToast]);
 
   // 文章分享深链：?article={id} → 拉取该文章并打开站内阅读器。只跑一次：抓到参数即清掉 URL，避免重复触发。
   // ⭐先展示后要账：分享回流的最后一米——先打开阅读器（后端已把非会员可见正文裁成导语），参数清理挪到内容展示之后。
@@ -3342,23 +3272,6 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       } catch { /* 晨报拉取失败就落在首页，与旧行为一致 */ }
     })();
   }, []);
-  // 复盘深链 ?review=1（或 ?review=YYYY-MM-DD）：微信兑现回访 CTA（?review=1&utm=wxsettle）落地——
-  // 自动开复盘弹层；openReview 内已含「打开复盘=签到」，一条推送同时驱动召回 + 签到两个回路。
-  // 参数在 pageview 归因（上方 effect 先跑）读走后再清，刷新不重弹。
-  const reviewDeepDone = useRef(false);
-  useEffect(() => {
-    if (reviewDeepDone.current) return;
-    let rv = '';
-    try { rv = new URLSearchParams(window.location.search).get('review') || ''; } catch { /* */ }
-    if (!rv) return;
-    reviewDeepDone.current = true;
-    try {
-      const url = new URL(window.location.href);
-      ['review', 'utm'].forEach(k => url.searchParams.delete(k));
-      window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : '') + url.hash);
-    } catch { /* */ }
-    void openReview(/^\d{4}-\d{2}-\d{2}$/.test(rv) ? rv : undefined);
-  }, [openReview]);
   // 领取「登录送 3 天体验会员」：未登录先弹登录，登录后自动领取；每账号仅一次
   const onClaimTrial = useCallback(() => {
     requireLogin(async () => {
@@ -3702,7 +3615,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setRedeemOpen(false); setRedeemBusy(false); redeemBusyRef.current = false; setTrialClaiming(false); setBuyOpen(false); setAcctOpen(false); setUpgradeOpen(false); setInviteOpen(false); setInviteData(null);
     setBookmarks(new Set()); setBookmarksOpen(false); setBookmarkList([]);
     setCallsOpen(false); setCallsList([]); setCallsSummary(null); setCallsUnseen(0);
-    setCheckin(null); checkinDayRef.current = ''; setRefAvail(0);
+    setRefAvail(0);
     setNewsPreview(null); setArticleOriginal(null); setArticleTextError('');
     setDeepAnswerBusy(false); setAiAttachmentBusy(false); setAiQuotaLeft(null);
     aiTasksRef.current.clear(); aiInterpretCacheRef.current.clear(); aiViewingTaskRef.current = '';
@@ -4354,143 +4267,18 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     setShareImgNote(coarse ? '👇 长按下方图片，选择「存储图像 / 保存到相册」或「分享」' : '右键图片选择「图片另存为」，或点下方「下载图片」');
   }, [showToast]);
 
-  // 复盘 → 分享长图（站点二维码 + 品牌水印，自带网站宣传）
-  const [reviewImgBusy, setReviewImgBusy] = useState(false);
-  const drawReviewCard = useCallback(async (): Promise<Blob | null> => {
-    const r = reviewData; if (!r) return null;
-    const nar = r.narrative || {};
-    const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-    let qr: { size: number; matrix: number[][] } | null = null;
-    try { qr = await apiGet<{ size: number; matrix: number[][] }>('/api/qr', { params: { data: qrShareTarget(site) } }); } catch { qr = null; }
-    const cv = document.createElement('canvas'); const ctx = cv.getContext('2d'); if (!ctx) return null;
-    const SC = 2, W = 760, PAD = 40, maxW = W - PAD * 2;
-    const F = (s: number, w = '400') => `${w} ${s}px "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif`;
-    const wrap = (text: string, font: string, mw: number): string[] => {
-      ctx.font = font; const out: string[] = []; let line = '';
-      for (const ch of String(text || '')) { if (ch === '\n') { out.push(line); line = ''; continue; } if (line && ctx.measureText(line + ch).width > mw) { out.push(line); line = ch; } else line += ch; }
-      if (line) out.push(line); return out;
-    };
-    type Block = { lines: string[]; font: string; lh: number; color: string; mt: number; bullet?: string };
-    const items: Block[] = []; let h = PAD;
-    const push = (lines: string[], font: string, lh: number, color: string, mt = 0, bullet?: string) => { items.push({ lines, font, lh, color, mt, bullet }); h += mt + lines.length * lh; };
-    const sess = r.session_label || '收盘复盘';
-    push([`稻草财经 金融终端 · A股${sess}`], F(15, '700'), 24, '#ffb000');
-    push([`🗓 ${r.date || ''}${r.session === 'midday' ? ' · 盘中半日' : ' · 全天定稿'}`], F(13, '400'), 20, '#8a8463', 4);
-    if (nar.one_liner) push(wrap('「' + nar.one_liner + '」', F(19, '700'), maxW), F(19, '700'), 29, '#ffd980', 12);
-    // 指数行
-    const idxTxt = (r.indices || []).filter((i: any) => typeof i.pct === 'number').map((i: any) => `${i.name} ${i.close}(${i.pct > 0 ? '+' : ''}${i.pct.toFixed(2)}%)`).join('　');
-    if (idxTxt) push(wrap(idxTxt, F(13, '700'), maxW), F(13, '700'), 22, '#9fc0ff', 12);
-    const sec = (label: string, txt: string, color: string, head: string) => { if (!txt) return; push([head], F(14, '700'), 23, color, 16); push(wrap(txt, F(15), maxW), F(15), 25, '#e2e5ea', 3); };
-    sec('plain', nar.plain, '#6ab0ff', '💡 导读');
-    sec('market', nar.market, '#5fe39a', '📈 大盘');
-    sec('sectors', nar.sectors, '#c4b5fd', '🧩 板块');
-    sec('funds', nar.funds, '#9fc0ff', '💰 资金面');
-    // ⭐ 我们提前发现的
-    if (nar.our_value || (r.our_edge || []).length) {
-      push(['⭐ 稻草财经 提前发现'], F(15, '800'), 25, '#ffb000', 18);
-      if (nar.our_value) push(wrap(nar.our_value, F(15), maxW), F(15), 25, '#f0e3c8', 3);
-      (r.our_edge || []).slice(0, 5).forEach((e: any) => {
-        const lead = (typeof e.lead_hours === 'number' && e.lead_hours >= 1) ? (e.lead_hours >= 24 ? `领先约${(e.lead_hours / 24).toFixed(0)}天` : `领先约${e.lead_hours.toFixed(0)}小时`) : '同日捕捉';
-        const tag = e.kind === 'stock' ? '个股' : '板块';
-        const pct = typeof e.pct === 'number' ? `${e.pct > 0 ? '+' : ''}${e.pct.toFixed(2)}%` : '';
-        push(wrap(`${tag} ${e.name} ${pct}　⚡${lead}　${e.evidence || ''}条佐证`, F(13.5, '700'), maxW - 18), F(13.5, '700'), 22, '#ffcf72', 6, '◆');
-      });
-    }
-    if (nar.tomorrow) sec('tomorrow', nar.tomorrow, '#9fc0ff', '🔭 下一交易日');
-    const footTop = h + 18; const qrSize = qr ? 100 : 0; h = footTop + Math.max(qrSize, 80) + PAD;
-    cv.width = W * SC; cv.height = Math.ceil(h) * SC; ctx.scale(SC, SC);
-    ctx.fillStyle = '#0a0d12'; ctx.fillRect(0, 0, W, h); ctx.fillStyle = '#ffb000'; ctx.fillRect(0, 0, W, 4);
-    ctx.textBaseline = 'top'; let y = PAD;
-    for (const it of items) { y += it.mt; for (const ln of it.lines) { if (it.bullet) { ctx.font = F(11); ctx.fillStyle = '#ffb000'; ctx.fillText(it.bullet, PAD, y + 3); ctx.font = it.font; ctx.fillStyle = it.color; ctx.fillText(ln, PAD + 18, y); } else { ctx.font = it.font; ctx.fillStyle = it.color; ctx.fillText(ln, PAD, y); } y += it.lh; } }
-    ctx.strokeStyle = '#1c2530'; ctx.beginPath(); ctx.moveTo(PAD, footTop); ctx.lineTo(W - PAD, footTop); ctx.stroke();
-    if (qr) { const n = qr.size, cell = qrSize / n, qx = W - PAD - qrSize, qy = footTop + 16; ctx.fillStyle = '#fff'; ctx.fillRect(qx - 6, qy - 6, qrSize + 12, qrSize + 12); ctx.fillStyle = '#000'; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (qr.matrix[i][j]) ctx.fillRect(qx + j * cell, qy + i * cell, cell + 0.6, cell + 0.6); }
-    ctx.font = F(16, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('稻草财经 · 提前发现', PAD, footTop + 16);
-    ctx.font = F(12); ctx.fillStyle = '#8a93a0'; ctx.fillText('扫码看实时资讯 · ' + site.replace(/^https?:\/\//, ''), PAD, footTop + 42);
-    ctx.font = F(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('数据 + AI 综述 · 仅供研究参考，不构成投资建议', PAD, footTop + 62);
-    return await new Promise<Blob | null>(res => cv.toBlob(res, 'image/png'));
-  }, [reviewData, qrShareTarget]);
 
-  const shareReviewImage = useCallback(async () => {
-    setReviewImgBusy(true);
-    try { const blob = await drawReviewCard(); if (!blob) { showToast('⚠️ 图片生成失败，请重试'); return; } pingMetric('copy_image'); await presentImage(blob, '✅ 复盘图已复制，可直接粘贴到微信/朋友圈'); }
-    finally { setReviewImgBusy(false); }
-  }, [drawReviewCard, presentImage, pingMetric, showToast]);
+
+
+
 
   // ⭐先知卡：把「我们提前发现的」做成用户的炫耀战绩图（提前 X 小时 + 品牌 + 二维码）——自发传播引擎
-  const _leadLabel = (h: any): string => (typeof h === 'number' && h >= 1) ? (h >= 24 ? `${(h / 24).toFixed(0)} 天` : `${h.toFixed(0)} 小时`) : '';
-  const drawForesightCard = useCallback(async (): Promise<Blob | null> => {
-    const r = reviewData; if (!r) return null;
-    const edges = ((r.our_edge || []) as any[]).filter(e => typeof e.pct === 'number' && typeof e.lead_hours === 'number' && e.lead_hours >= 1)
-      .sort((a, b) => (b.lead_hours || 0) - (a.lead_hours || 0));
-    const hero = edges[0]; if (!hero) return null;
-    const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-    let qr: { size: number; matrix: number[][] } | null = null;
-    try { qr = await apiGet<{ size: number; matrix: number[][] }>('/api/qr', { params: { data: qrShareTarget(site) } }); } catch { qr = null; }
-    const cv = document.createElement('canvas'); const ctx = cv.getContext('2d'); if (!ctx) return null;
-    const SC = 2, W = 720, PAD = 44, maxW = W - PAD * 2;
-    const F = (s: number, w = '400') => `${w} ${s}px "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif`;
-    const wrap = (text: string, font: string, mw: number): string[] => {
-      ctx.font = font; const out: string[] = []; let line = '';
-      for (const ch of String(text || '')) { if (line && ctx.measureText(line + ch).width > mw) { out.push(line); line = ch; } else line += ch; }
-      if (line) out.push(line); return out;
-    };
-    type Block = { lines: string[]; font: string; lh: number; color: string; mt: number; bullet?: string };
-    const items: Block[] = []; let h = PAD;
-    const push = (lines: string[], font: string, lh: number, color: string, mt = 0, bullet?: string) => { items.push({ lines, font, lh, color, mt, bullet }); h += mt + lines.length * lh; };
-    const tag = (e: any) => e.kind === 'stock' ? '个股' : '板块';
-    const pctOf = (e: any) => `${e.pct > 0 ? '+' : ''}${e.pct.toFixed(2)}%`;
-    push(['稻草财经 · 信息领先 📈'], F(16, '800'), 26, '#ffb000');
-    push(['🎯 我的先知战绩'], F(23, '800'), 38, '#ffffff', 8);
-    push([`提前 ${_leadLabel(hero.lead_hours)}`], F(50, '900'), 60, '#ffd166', 6);
-    push(['我在 稻草财经 比市场早看到了 ↓'], F(15, '600'), 24, '#cfd6e0', 2);
-    const sigTitle = (hero.signals && hero.signals[0] && hero.signals[0].title) || hero.name;
-    push(wrap(`【${sigTitle}】`, F(18, '700'), maxW), F(18, '700'), 28, '#ffe6a3', 18);
-    push([`${tag(hero)} ${hero.name}　今日 ${pctOf(hero)}　⚡领先约 ${_leadLabel(hero.lead_hours)}`], F(14, '700'), 24, '#ffcf72', 6);
-    if (edges.length > 1) {
-      push(['还提前发现 ——'], F(14, '700'), 22, '#9fc0ff', 18);
-      edges.slice(1, 4).forEach((e: any) => push(wrap(`${tag(e)} ${e.name} ${pctOf(e)} · 领先约${_leadLabel(e.lead_hours)}`, F(13.5, '600'), maxW - 18), F(13.5, '600'), 21, '#cdd3dc', 4, '◆'));
-    }
-    const footTop = h + 20; const qrSize = qr ? 104 : 0; h = footTop + Math.max(qrSize, 84) + PAD;
-    cv.width = W * SC; cv.height = Math.ceil(h) * SC; ctx.scale(SC, SC);
-    ctx.fillStyle = '#0a0d12'; ctx.fillRect(0, 0, W, h); ctx.fillStyle = '#ffb000'; ctx.fillRect(0, 0, W, 5);
-    ctx.textBaseline = 'top'; let y = PAD;
-    for (const it of items) { y += it.mt; for (const ln of it.lines) { if (it.bullet) { ctx.font = F(11); ctx.fillStyle = '#ffb000'; ctx.fillText(it.bullet, PAD, y + 3); ctx.font = it.font; ctx.fillStyle = it.color; ctx.fillText(ln, PAD + 18, y); } else { ctx.font = it.font; ctx.fillStyle = it.color; ctx.fillText(ln, PAD, y); } y += it.lh; } }
-    ctx.strokeStyle = '#1c2530'; ctx.beginPath(); ctx.moveTo(PAD, footTop); ctx.lineTo(W - PAD, footTop); ctx.stroke();
-    if (qr) { const n = qr.size, cell = qrSize / n, qx = W - PAD - qrSize, qy = footTop + 16; ctx.fillStyle = '#fff'; ctx.fillRect(qx - 6, qy - 6, qrSize + 12, qrSize + 12); ctx.fillStyle = '#000'; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (qr.matrix[i][j]) ctx.fillRect(qx + j * cell, qy + i * cell, cell + 0.6, cell + 0.6); }
-    ctx.font = F(19, '800'); ctx.fillStyle = '#ffb000'; ctx.fillText('比别人早一步看懂行情', PAD, footTop + 18);
-    ctx.font = F(13); ctx.fillStyle = '#cfd6e0'; ctx.fillText('扫码也当「先知」· ' + site.replace(/^https?:\/\//, ''), PAD, footTop + 48);
-    ctx.font = F(10.5); ctx.fillStyle = '#5f6671'; ctx.fillText('数据 + AI · 仅供研究参考，不构成投资建议', PAD, footTop + 70);
-    return await new Promise<Blob | null>(res => cv.toBlob(res, 'image/png'));
-  }, [reviewData, qrShareTarget]);
 
-  const shareForesight = useCallback(async () => {
-    setReviewImgBusy(true);
-    try { const blob = await drawForesightCard(); if (!blob) { showToast('⚠️ 暂无可炫耀的先知战绩'); return; } pingMetric('copy_image'); logAct('share_foresight', reviewData?.date || ''); await presentImage(blob, '✅ 先知战绩图已生成，晒到微信/朋友圈吧'); }
-    finally { setReviewImgBusy(false); }
-  }, [drawForesightCard, presentImage, pingMetric, showToast, logAct, reviewData]);
 
-  const copyReviewText = useCallback(async () => {
-    const r = reviewData; if (!r) return; const nar = r.narrative || {};
-    const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
-    const L: string[] = [`📊 A股${r.session_label || '复盘'} · ${r.date || ''}`];
-    if (nar.one_liner) L.push(`「${nar.one_liner}」`);
-    const idx = (r.indices || []).filter((i: any) => typeof i.pct === 'number').map((i: any) => `${i.name} ${i.close}(${i.pct > 0 ? '+' : ''}${i.pct.toFixed(2)}%)`).join('  ');
-    if (idx) L.push('', idx);
-    const seg = (h: string, t: string) => { if (t) L.push('', `【${h}】${t}`); };
-    seg('导读', nar.plain); seg('大盘', nar.market); seg('板块', nar.sectors); seg('资金面', nar.funds);
-    if (nar.our_value || (r.our_edge || []).length) {
-      L.push('', `【⭐ 稻草财经 提前发现】${nar.our_value || ''}`);
-      (r.our_edge || []).slice(0, 5).forEach((e: any) => {
-        const lead = (typeof e.lead_hours === 'number' && e.lead_hours >= 1) ? (e.lead_hours >= 24 ? `领先约${(e.lead_hours / 24).toFixed(0)}天` : `领先约${e.lead_hours.toFixed(0)}小时`) : '同日捕捉';
-        L.push(`  · ${e.kind === 'stock' ? '个股' : '板块'} ${e.name}${typeof e.pct === 'number' ? ` ${e.pct > 0 ? '+' : ''}${e.pct.toFixed(2)}%` : ''}  ⚡${lead}${e.evidence ? `（${e.evidence}条佐证）` : ''}`);
-      });
-    }
-    seg('下一交易日', nar.tomorrow);
-    L.push('', `—— 稻草财经 终端 · 实时资讯，提前发现`, site.replace(/^https?:\/\//, ''));
-    const text = L.join('\n');
-    if (await copyText(text)) { pingMetric('copy_text'); showToast('✅ 复盘已复制，可直接粘贴分享'); }
-    else showToast('⚠️ 复制失败，请长按文本手动复制');
-  }, [reviewData, pingMetric, showToast]);
+
+
+
+
 
   // ===== AI 助手分享(快速问答 / 深度研判)——仿复盘卡:画布出图 + QR + 品牌水印 + 强制免责 =====
   // ⭐合规:只走本地出图/复制文字(无公开 hosted 链接/SEO);深度研判只画叙述结论,绝不含 iFinD 原始数据表;args 不入分享物。
@@ -5897,7 +5685,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (key === 'market' && nextFeed === '快讯') setFastNewsRefresh(value => value + 1);
     window.setTimeout(() => {
       const heading = gridRef.current?.closest('.bbt')?.querySelector('.dc-page-heading, .dc-intro');
-      const target = key === 'ai' ? aiWorkspaceRef.current : key === 'review' ? reviewWorkspaceRef.current : key === 'risk' || key === 'strategy' ? toolWorkspaceRef.current : heading || gridRef.current;
+      const target = key === 'ai' ? aiWorkspaceRef.current : key === 'risk' || key === 'strategy' ? toolWorkspaceRef.current : heading || gridRef.current;
       target?.scrollIntoView({ behavior: 'auto', block: 'start' });
     }, 0);
   };
@@ -5986,9 +5774,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <button type="button" title="市场快讯" className={`bbt-side-item${sideNavKey === 'market' ? ' active' : ''}`} onClick={() => { setActive(null); focusSideModule('market', '快讯'); }}>
             <span className="bbt-side-icon"><WorkspaceIcon name="market" /></span><span>市场快讯</span>
           </button>
-          <button type="button" title="每日复盘" className={`bbt-side-item${sideNavKey === 'review' ? ' active' : ''}`} onClick={() => focusSideModule('review')}>
-            <span className="bbt-side-icon"><WorkspaceIcon name="review" /></span><span>每日复盘</span>
-          </button>
+
         </nav>
         <div className="bbt-side-kicker bbt-side-kicker--nested">研究资料</div>
         <nav className="bbt-side-menu bbt-side-research-menu">
@@ -6027,7 +5813,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <span className="bbt-mobile-brand" aria-label="稻草财经">稻草财经</span>
         </span>
         <nav className="bbt-cmd-nav" aria-label="主导航">
-          <a href="/review" title="每个交易日自动生成的大盘复盘">每日复盘</a>
+
           <a href="/stocks" title="多维证据速判热门个股">个股研究</a>
           <a href="/articles" title="财经资讯文章">财经资讯</a>
           <a href="/ai-fund" title="AI 策略模拟盘业绩">策略业绩</a>
@@ -6036,7 +5822,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         <span className="bbt-cmd-right">
           <button className="bbt-review-entry bbt-aiqa-entry bbt-primary-action"
             onClick={() => focusSideModule('ai')}
-            title="AI 投研问答：自动调行情、估值、快讯、研报和复盘">问 AI</button>
+            title="AI 投研问答：自动调行情、估值、快讯和研报">问 AI</button>
           {membership?.tier !== 'lifetime' && (() => {
             const isMember = membership?.tier === 'premium';   // 已是尊享会员 → 显示「续费」（可能提前续期），永久会员不显示
             const promoActive = false;  // 价格不以本地滚动倒计时为依据
@@ -6061,7 +5847,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <div className="bbt-more-section">我的工作区</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); focusSideModule('stocks', '自选'); }}>◌ 我的股票{watchlist.length ? ` · ${watchlist.length} 只` : ''}</button>
                   <div className="bbt-more-section">研究工具</div>
-                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); openReview(); }}>📊 A股收盘复盘{authUser && checkin && checkin.streak > 0 ? ` · 连续 ${checkin.streak} 天` : ''}</button>
+
                   <button className="bbt-acct-row" title="A/H/美 Top20 每日风险预警" onClick={() => { setHelpMenuOpen(false); openSideTool('risk'); }}>🛡️ 跨市场风险预警 · A/H/美</button>
                   <button className="bbt-acct-row" title="信号 / 仓位 / 回测" onClick={() => { setHelpMenuOpen(false); openSideTool('strategy'); if (!authUser) { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); } }}>🧪 QuantLab 量化系统</button>
                   <button className="bbt-acct-row" onClick={() => { logAct('open_aifund', 'AI模拟盘'); window.location.href = '/ai-fund'; }}>🤖 AI 模拟盘</button>
@@ -6239,8 +6025,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <button type="button" onClick={() => { setActive(null); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
             <b>我的股票</b><span>看变化与风险</span>
           </button>
-          <button type="button" onClick={() => openReview()}>
-            <b>今天市场</b><span>晨报和复盘先看</span>
+          <button type="button" onClick={() => focusSideModule('market')}>
+            <b>今天市场</b><span>先看市场快讯</span>
           </button>
           <button type="button" onClick={() => { openAi(); setAiInput('帮我用简单的话说说：我现在最该关注什么？'); }}>
             <b>问 AI</b><span>带着上下文回答</span>
@@ -6256,7 +6042,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         onSelectSymbol={(symbol) => { setActive(symbol); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
         onAddSymbol={(symbol, name) => requireLogin(() => { requestAddSymbol(symbol, name, false); }, '添加关注股票')}
         onRequireLogin={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '添加关注股票')}
-        onOpenMarket={() => { void openReview(); }}
+        onOpenMarket={() => focusSideModule('market')}
       />
 
       {sideNavKey === 'market' && <details className="bbt-market-tools">
@@ -6266,7 +6052,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         key={`stories:${getAuthSnapshot().revision}`}
         loggedIn={!!authUser}
         onSelectSymbol={(symbol) => { setActive(symbol); setFeedFilter('自选'); gridRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-        onOpenMarket={() => { void openReview(); }}
+        onOpenMarket={() => focusSideModule('market')}
         onRequireLogin={() => requireLogin(() => { setPaletteOpen(true); setPq(''); }, '登录后开启千人千面推荐')}
       />
 
@@ -6292,15 +6078,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       )}
       {/* ⭐单一 promo 槽：一次只显一条（匿名=战绩证据优先、无数据回退价值主张+领会员；登录=仅领会员待领）——
           此前最多 5 层转化组件同屏打架，反而稀释了唯一有说服力的「提前发现」证据 */}
-      {!authUser && (trackRecord && trackRecord.hit_count > 0 ? (
-        <div className="bbt-tr-hero" onClick={() => { logAct('tr_hero_cta', '首屏战绩'); openReview(); }} role="button" title="看今天的 A 股复盘 · 稻草财经 提前发现的资讯">
-          <span className="bbt-tr-hero-ico">📡</span>
-          <span className="bbt-tr-hero-text">
-            近 {trackRecord.days} 天，稻草财经 用快讯/研报<b> 提前覆盖 {trackRecord.hit_count} 次</b>异动 · 平均提前 <b>{trackRecord.avg_lead_hours}h</b> — 关键消息比你的券商 App 早一步
-          </span>
-          <button className="bbt-tr-hero-btn" onClick={e => { e.stopPropagation(); logAct('tr_hero_cta', '首屏战绩按钮'); openReview(); }}>看今天的复盘 →</button>
-        </div>
-      ) : (
+      {!authUser && (
         <div className="bbt-trial-banner" onClick={onClaimTrial} role="button" title="登录后保存自选、开启盯盘并使用 AI 研判">
           <span className="bbt-trial-gift">新手入口</span>
           <span className="bbt-trial-text">登录后可保存自选、开启盯盘，并使用 <b>AI 研判</b></span>
@@ -6308,7 +6086,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             {trialClaiming ? '处理中…' : '登录体验'}
           </button>
         </div>
-      ))}
+      )}
       {primaryBanner === 'trial-claim' && (
         <div className="bbt-trial-banner" onClick={onClaimTrial} role="button" title="领取体验会员，邀好友得 ¥698 年度会员">
           <span className="bbt-trial-gift">👑</span>
@@ -6320,11 +6098,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       )}
       {/* 到期转化：尊享会员剩 ≤2 天 → 醒目续费条（最高意向时刻），可本次关闭 */}
       {primaryBanner === 'expiry' && typeof memDaysLeft === 'number' && (
-        <div className="bbt-expiry-banner" onClick={openBuy} role="button" title="续费会员，不中断 AI 解读 / 复盘 / 微信推送">
+        <div className="bbt-expiry-banner" onClick={openBuy} role="button" title="续费会员，不中断 AI 解读 / 微信推送">
           <span className="bbt-expiry-ico">⏰</span>
           <span className="bbt-expiry-text">
             你的尊享会员{memDaysLeft <= 0 ? <> <b>今天到期</b></> : memDaysLeft === 1 ? <> <b>明天到期</b></> : <> 仅剩 <b>{memDaysLeft} 天</b></>}
-            {' · '}续费立享 AI 解读 / 复盘 / 原文不中断
+            {' · '}续费立享 AI 解读 / 原文不中断
           </span>
           <button className="bbt-expiry-btn" onClick={e => { e.stopPropagation(); openBuy(); }}>立即续费</button>
           <button className="bbt-expiry-x" onClick={e => { e.stopPropagation(); setExpiryDismissed(true); }} title="本次不再提示">✕</button>
@@ -6445,49 +6223,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </section>
       )}
 
-      {sideNavKey === 'review' && (
-        <section ref={reviewWorkspaceRef} className="bbt-review-workspace" aria-label="每日复盘工作区">
-          <header className="bbt-review-workspace-head">
-            <div>
-              <div className="bbt-review-workspace-eyebrow">DAILY MARKET REVIEW</div>
-              <h1>每日复盘</h1>
-              <p>把大盘、板块、个股与 稻草财经 提前发现的线索，集中收在一个独立模块里。</p>
-            </div>
-            <button type="button" className="bbt-review-workspace-open" onClick={() => openReview()}>打开完整复盘 ↗</button>
-          </header>
-          <CategoryTabs label="复盘内容" value={reviewCategory} onChange={setReviewCategory} options={[
-            { key: 'all', label: '综合' },
-            { key: 'market', label: '大盘', disabled: !reviewToday?.narrative?.market },
-            { key: 'sectors', label: '板块', disabled: !reviewToday?.narrative?.sectors },
-            { key: 'funds', label: '资金', disabled: !reviewToday?.narrative?.funds },
-          ]} />
-          {reviewToday ? (() => {
-            const rIsToday = reviewToday.date === new Date().toLocaleDateString('en-CA');
-            const narrative = reviewToday.narrative || {};
-            return (
-              <article className="bbt-review-workspace-card" onClick={() => openReview()} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openReview(); }}>
-                <div className="bbt-review-workspace-card-top">
-                  <span className="bbt-review-workspace-card-ico">📊</span>
-                  <div className="bbt-review-workspace-card-main">
-                    <div className="bbt-review-workspace-card-meta">{rIsToday ? '今日 ' : ''}A股{reviewToday.session_label || '复盘'} · {reviewToday.date}{rIsToday && reviewToday.session === 'midday' ? <span className="bbt-review-card-mid">盘中</span> : null}</div>
-                    <h2>{narrative.one_liner || '今日市场复盘已准备好'}</h2>
-                    <p>{(reviewCategory === 'all' ? narrative.plain : narrative[reviewCategory]) || '当前复盘暂无这类内容，可查看综合复盘。'}</p>
-                  </div>
-                  <span className="bbt-review-workspace-card-go">查看完整复盘 ↗</span>
-                </div>
-                {(reviewToday.our_edge || []).length > 0 && (
-                  <div className="bbt-review-workspace-edge">⭐ 稻草财经 提前发现 · {(reviewToday.our_edge || []).length} 条线索</div>
-                )}
-                <div className="bbt-review-workspace-card-foot">数据 + AI 综述 · 仅供研究参考，不构成投资建议</div>
-              </article>
-            );
-          })() : (
-            <div className="bbt-review-workspace-empty">
-              <span>📊</span><h2>今日复盘正在准备</h2><p>交易日 15:35 后自动更新，也可以稍后从这里重新查看。</p>
-            </div>
-          )}
-        </section>
-      )}
+
 
       {sideNavKey === 'ai' && (
         <section ref={aiWorkspaceRef} className="bbt-ai-workspace" aria-label="AI 对话工作区">
@@ -7085,9 +6821,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   : searchLoading ? '检索中…'
                     : newsQuery.trim() ? `无「${newsQuery.trim()}」相关${feedFilter === '快讯' ? '快讯' : feedFilter === '文章' ? '深度文章' : '资讯'}`
                       : active ? `无 ${activeName} 相关${feedFilter === '快讯' ? '快讯' : feedFilter === '文章' ? '深度文章' : '资讯'}` : '暂无最新快讯 · 开市后实时滚动更新'}</div>}
-              {/* ⭐内容优先：真实资讯头条放在本区最上面(用户反馈"把大家关注的新闻放在最上面")，
-                  运营/激活类卡片(开启盯盘/复盘)统一挪到本区末尾，见下方。
-                  宽屏右栏「市场雷达」已承载头条 → 内联头条不再重复渲染（窄屏/最大化时照旧） */}
+              {/* 真实资讯头条置顶；宽屏右栏已承载头条，内联头条仅在窄屏或最大化时显示。 */}
               {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && feedFilter === 'all' && renderHeads([...heads.kx.map((m: any) => headlineRow('kx', m)), ...heads.wz.map((m: any) => headlineRow('wz', m)), ...heads.yb.map((m: any) => headlineRow('yb', m))])}
               {/* 自选相关已独立成「自选」tab，ALL 里不再内嵌 */}
               {newsPageCur === 1 && !active && !newsQuery.trim() && !railOn && !classificationActive && feedFilter === '快讯' && renderHeads(heads.kx.map((m: any) => headlineRow('kx', m)))}
@@ -7744,7 +7478,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           </div>
           <div className="bbt-footer-col">
             <div className="bbt-footer-h">市场洞察</div>
-            <a href="/review">A 股每日复盘</a>
+
             <a href="/stocks">个股多维证据速判</a>
             <a href="/articles">财经资讯</a>
           </div>
@@ -7784,7 +7518,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         const site = (typeof window !== 'undefined' && window.location.origin) || 'https://daocaijing.com';
         const perks: string[] = Array.isArray(g.perks) && g.perks.length
           ? g.perks
-          : ['🗣️ 和同样在看盘的人聊行情、唠个股', '⚡ 第一手快讯、每日 A 股收盘复盘，群里同步划重点', '🎁 不定期群友专属福利 / 限时会员口令'];
+          : ['🗣️ 和同样在看盘的人聊行情、唠个股', '⚡ 第一手快讯与市场动态，群里同步划重点', '🎁 不定期群友专属福利 / 限时会员口令'];
         const cs = (g.cs_wechat || '').trim();
         const copyCs = async () => {
           try { await navigator.clipboard.writeText(cs); showToast('✓ 已复制客服微信号 · 去微信搜索添加，备注「进群」'); }
@@ -7832,228 +7566,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           </div>
         );
       })()}
-      {reviewOpen && (() => {
-        const r = reviewData;
-        const nar = (r && r.narrative) || {};
-        const pctCls = (p: number) => p > 0 ? 'bbt-up' : p < 0 ? 'bbt-down' : 'bbt-flat';
-        const pctTxt = (p: any) => (typeof p === 'number') ? `${p > 0 ? '+' : ''}${p.toFixed(2)}%` : '—';
-        const flowTxt = (v: any) => { if (typeof v !== 'number') return ''; const a = Math.abs(v); return a >= 1e8 ? `${(v / 1e8).toFixed(1)}亿` : a >= 1e4 ? `${(v / 1e4).toFixed(0)}万` : `${v.toFixed(0)}`; };
-        const sources: any[] = (r && r.sources) || [];
-        // 点开复盘里提及的来源 → 关掉复盘、直接出 AI 解读版本（登录网关 + 每日免费额度，复用文章解读）
-        const openSource = (s: any) => { setReviewOpen(false); runNewsAi({ id: s.id || '', title: s.title || '', content: '', url: s.url || '', topic: s.topic || '资讯', severity: 'info', created_at: s.created_at || '', source_name: '', tags: [], metadata: {} } as any); };
-        const _norm = (s: string) => (s || '').replace(/[\s·｜|，,。.、:：()（）【】[\]"'《》]/g, '');
-        // 把文中的【标题】渲染成可点链接（模糊匹配 sources 标题）
-        const linkify = (text: string): React.ReactNode[] => {
-          const out: React.ReactNode[] = []; if (!text) return out;
-          const re = /【([^】]+)】/g; let last = 0, mm: RegExpExecArray | null, idx = 0;
-          while ((mm = re.exec(text))) {
-            if (mm.index > last) out.push(text.slice(last, mm.index));
-            const inner = mm[1]; const nin = _norm(inner);
-            const hit = nin.length >= 3 ? sources.find(s => { const ns = _norm(s.title); return ns && (ns.includes(nin) || nin.includes(ns)); }) : null;
-            out.push(hit ? <a key={'lk' + idx++} className="bbt-review-link" onClick={() => openSource(hit)} title="点开看原内容">【{inner}】</a> : ('【' + inner + '】'));
-            last = mm.index + mm[0].length;
-          }
-          if (last < text.length) out.push(text.slice(last));
-          return out;
-        };
-        // 按句切分，每句独立成行（不堆在一起；标题【】仍可点）
-        const sentences = (text: string): string[] => text ? text.split(/(?<=[。！；!?])/).map(s => s.trim()).filter(Boolean) : [];
-        const hasBreadth = r && r.breadth && (r.breadth.advancers != null || r.breadth.decliners != null);
-        return (
-        <div className="bbt-doc-overlay" onMouseDown={() => setReviewOpen(false)}>
-          <div className="bbt-doc bbt-doc--review" role="dialog" aria-modal="true" aria-label="A股收盘复盘" onMouseDown={e => e.stopPropagation()}>
-            <div className="bbt-doc-bar">
-              <span className="bbt-doc-tag bbt-review-tag">📊 A股{(r && r.session_label) || '收盘复盘'}</span>
-              <span className="bbt-doc-title">{r ? r.date : '加载中…'}</span>
-              {r && <span className="bbt-review-prov">{r.narrative_provider === 'ai' ? 'AI 综述' : '数据综述'}</span>}
-              {checkin && checkin.streak > 0 && (
-                <span className="bbt-review-streak" title={`累计看盘 ${checkin.total} 天 · 最长连续 ${checkin.longest} 天`}>
-                  🔥 连续 {checkin.streak} 天
-                </span>
-              )}
-              {r && (r.narrative || (r.our_edge || []).length > 0) && <span className="bbt-review-actions">
-                {(r.our_edge || []).some((e: any) => typeof e.lead_hours === 'number' && e.lead_hours >= 1) &&
-                  <button className="bbt-review-act bbt-review-act--hero" onClick={shareForesight} disabled={reviewImgBusy} title="把『我提前X小时发现』做成战绩图，晒朋友圈">{reviewImgBusy ? '生成中…' : '🎯 晒先知战绩'}</button>}
-                <button className="bbt-review-act" onClick={copyReviewText} title="复制复盘文字（带网站）">📋 复制</button>
-                <button className="bbt-review-act" onClick={shareReviewImage} disabled={reviewImgBusy} title="生成分享长图（带二维码）">{reviewImgBusy ? '生成中…' : '🖼 生成图片'}</button>
-              </span>}
-              <button className="bbt-doc-close" onClick={() => setReviewOpen(false)}>✕ 关闭</button>
-            </div>
-            <div className="bbt-review-body">
-              {/* 🎯 「我们提前发现的」量化战绩：只计经 AI 验证的命中，可点开溯源 */}
-              {trackRecord && trackRecord.hit_count > 0 && (
-                <div className="bbt-tr">
-                  <div className="bbt-tr-h">📡 我们提前发现的 · 资讯覆盖<span className="bbt-tr-sub">近 {trackRecord.days} 天 · 仅计经 AI 验证的覆盖样本</span></div>
-                  <div className="bbt-tr-stats">
-                    <div className="bbt-tr-stat"><b>{trackRecord.hit_count}</b><span>条提前覆盖</span></div>
-                    <div className="bbt-tr-stat"><b>{trackRecord.avg_lead_hours}h</b><span>平均提前</span></div>
-                    <div className="bbt-tr-stat"><b>{trackRecord.max_lead_hours}h</b><span>最早提前</span></div>
-                  </div>
-                  {trackRecord.personal && trackRecord.personal.hit_count > 0 && (
-                    <div className="bbt-tr-personal">⭐ 你的自选里，我们已为你提前覆盖 <b>{trackRecord.personal.hit_count}</b> 次</div>
-                  )}
-                  <div className="bbt-tr-list">
-                    {trackRecord.recent.slice(0, 6).map((h, k) => {
-                      const lead = (typeof h.lead_hours === 'number' && h.lead_hours >= 1) ? (h.lead_hours >= 24 ? `领先${(h.lead_hours / 24).toFixed(0)}天` : `领先${h.lead_hours.toFixed(0)}h`) : '同日捕捉';
-                      const s0 = (h.signals || [])[0];
-                      return (
-                        <button key={k} className="bbt-tr-item" onClick={() => s0 && openSource({ id: s0.id, title: s0.title, url: s0.url, topic: s0.topic })} title={h.reason || '点开看当时的原始资讯证据'}>
-                          <span className="bbt-tr-date">{(h.date || '').slice(5)}</span>
-                          <span className={`bbt-tr-tag ${(h.pct || 0) < 0 ? 'warn' : 'find'}`}>{(h.pct || 0) < 0 ? '预警' : '发现'}</span>
-                          <span className={`bbt-tr-kind ${h.kind === 'stock' ? 'stk' : 'sec'}`}>{h.kind === 'stock' ? '个股' : '板块'}</span>
-                          <span className="bbt-tr-name">{h.name}</span>
-                          {typeof h.pct === 'number' && <span className={pctCls(h.pct)}>{pctTxt(h.pct)}</span>}
-                          <span className="bbt-tr-lead">⚡{lead}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="bbt-tr-disc">仅统计经验证的提前覆盖样本，存在选择偏差；领先时长不代表收益，历史表现不代表未来，不构成投资建议。</div>
-                </div>
-              )}
-              {reviewLoading && !r && <div className="bbt-empty">加载中…</div>}
-              {!reviewLoading && !r && reviewError && (
-                <div className="bbt-empty">复盘加载失败，请检查网络后重试
-                  <button className="bbt-retry-btn" onClick={() => openReview(reviewRetryRef.current)}>↻ 重试</button>
-                </div>
-              )}
-              {!reviewLoading && !r && !reviewError && <div className="bbt-empty">今日复盘尚未生成（交易日 15:35 后自动更新）</div>}
-              {r && <>
-                {nar.one_liner && <div className="bbt-review-oneliner">{nar.one_liner}</div>}
 
-                {/* 指数 */}
-                <div className="bbt-review-idx">
-                  {(r.indices || []).map((i: any, k: number) => (
-                    <div key={k} className="bbt-review-idx-cell">
-                      <div className="bbt-review-idx-name">{i.name}</div>
-                      <div className="bbt-review-idx-close">{i.close}</div>
-                      <div className={`bbt-review-idx-pct ${pctCls(i.pct)}`}>{pctTxt(i.pct)}</div>
-                    </div>
-                  ))}
-                </div>
-                {/* 涨跌家数：缺数据的项不显示，避免「涨 — 跌 —」 */}
-                <div className="bbt-review-breadth">
-                  {hasBreadth && <><span className="bbt-up">涨 {r.breadth.advancers ?? '—'}</span><span className="bbt-down">跌 {r.breadth.decliners ?? '—'}</span></>}
-                  <span className="bbt-up">涨停 {r.breadth?.limit_up ?? '—'}</span>
-                  <span className="bbt-down">跌停 {r.breadth?.limit_down ?? '—'}</span>
-                </div>
-
-                {/* 小白解读：大白话讲清今天发生了什么，放最前面 */}
-                {nar.plain && <div className="bbt-review-plain">
-                  <div className="bbt-review-plain-h">💡 导读</div>
-                  {sentences(nar.plain).map((s, k) => <div key={k} className="bbt-review-plain-line">{linkify(s)}</div>)}
-                </div>}
-
-                {/* 大盘 */}
-                {nar.market && <div className="bbt-review-card-sec">
-                  <div className="bbt-review-h">📈 大盘</div>
-                  {sentences(nar.market).map((s, k) => <div key={k} className="bbt-review-line">{linkify(s)}</div>)}
-                </div>}
-
-                {/* 板块 */}
-                {(nar.sectors || (r.sectors?.top || []).length > 0) && <div className="bbt-review-card-sec">
-                  <div className="bbt-review-h">🧩 板块</div>
-                  {(r.sectors?.top || []).length > 0 && <div className="bbt-review-chips">
-                    {(r.sectors.top || []).map((b: any, k: number) => (
-                      <span key={'t' + k} className="bbt-sec-chip up" title={`主力 ${flowTxt(b.main_flow)} · 领涨 ${b.leader || ''}`}>{b.name} <b>{pctTxt(b.pct)}</b></span>
-                    ))}
-                    {(r.sectors.bottom || []).map((b: any, k: number) => (
-                      <span key={'b' + k} className="bbt-sec-chip down">{b.name} <b>{pctTxt(b.pct)}</b></span>
-                    ))}
-                  </div>}
-                  {sentences(nar.sectors).map((s, k) => <div key={k} className="bbt-review-line">{linkify(s)}</div>)}
-                </div>}
-
-                {/* 资金面 */}
-                {nar.funds && <div className="bbt-review-card-sec">
-                  <div className="bbt-review-h">💰 资金面</div>
-                  {sentences(nar.funds).map((s, k) => <div key={k} className="bbt-review-line">{linkify(s)}</div>)}
-                </div>}
-
-                {/* ⭐ 我们提前发现的：突出信息价值 + 快讯领先时长 + 可点开原文 */}
-                {(nar.our_value || (r.our_edge || []).length > 0) && <div className="bbt-review-edge">
-                  <div className="bbt-review-edge-h">⭐ 稻草财经 提前发现{(r.our_edge || []).length > 0 ? <span className="bbt-review-edge-n">{(r.our_edge || []).length} 条线索</span> : null}</div>
-                  {nar.our_value && sentences(nar.our_value).map((s, k) => <div key={'ov' + k} className="bbt-review-edge-val">{linkify(s)}</div>)}
-                  {(r.our_edge || []).slice(0, 8).map((e: any, k: number) => {
-                    const lead = e.lead_hours;
-                    const leadTxt = (typeof lead === 'number' && lead >= 1) ? (lead >= 24 ? `领先约${(lead / 24).toFixed(0)}天` : `领先约${lead.toFixed(0)}小时`) : '同日捕捉';
-                    return (
-                      <div key={k} className="bbt-review-edge-item">
-                        <div className="bbt-review-edge-top">
-                          <span className={`bbt-tr-tag ${(e.direction === 'down' || (e.pct || 0) < 0) ? 'warn' : 'find'}`}>{(e.direction === 'down' || (e.pct || 0) < 0) ? '预警' : '发现'}</span>
-                          <span className={`bbt-review-edge-kind ${e.kind === 'stock' ? 'stk' : 'sec'}`}>{e.kind === 'stock' ? '个股' : '板块'}</span>
-                          <span className="bbt-review-edge-name">{e.name}</span>
-                          {typeof e.pct === 'number' && <span className={pctCls(e.pct)}>{pctTxt(e.pct)}</span>}
-                          {typeof e.evidence === 'number' && e.evidence > 0 && <span className="bbt-review-edge-ev">{e.evidence} 条佐证</span>}
-                          <span className="bbt-review-edge-lead">⚡ {leadTxt}</span>
-                        </div>
-                        {e.reason && <div className="bbt-review-edge-reason">💬 {e.reason}</div>}
-                        <div className="bbt-review-edge-sigs">
-                          {(e.signals || []).slice(0, 3).map((s: any, j: number) => (
-                            <button key={j} className="bbt-review-edge-sig" title="点开看我们当时发的原内容"
-                              onClick={() => openSource({ id: s.id, title: s.title, url: s.url, topic: s.topic, created_at: s.created_at })}>
-                              <span className={`bbt-review-edge-sigtag t-${s.topic}`}>{s.topic}</span>
-                              <span className="bbt-review-edge-sigtitle">{s.title}</span>
-                              {s.lead && <span className="bbt-review-edge-sigwhen">{s.lead}</span>}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>}
-
-                {/* 机构观点：今日异动个股近一个多月的东财券商研报覆盖（公开数据） */}
-                {(r.broker_views || []).length > 0 && <div className="bbt-review-card-sec">
-                  <div className="bbt-review-h">🏦 机构观点 <span className="bbt-review-edge-n">{(r.broker_views || []).length} 只异动股有研报覆盖</span></div>
-                  {(r.broker_views || []).slice(0, 6).map((v: any, k: number) => {
-                    const lt = v.latest || {};
-                    return (
-                      <div key={k} className="bbt-review-broker-item">
-                        <div className="bbt-review-broker-top">
-                          <span className={`bbt-review-edge-kind stk`}>个股</span>
-                          <span className="bbt-review-edge-name">{v.name}</span>
-                          {typeof v.pct === 'number' && <span className={pctCls(v.pct)}>{pctTxt(v.pct)}</span>}
-                          <span className="bbt-review-edge-ev">近一月 {v.count} 家覆盖</span>
-                          {(v.orgs || []).length > 0 && <span className="bbt-review-broker-orgs">{(v.orgs || []).slice(0, 3).join('·')}</span>}
-                        </div>
-                        {lt.title && <div className="bbt-review-broker-latest bbt-review-broker-latest--static">
-                          {lt.rating && <span className="bbt-review-broker-rating">{lt.rating}</span>}
-                          <span className="bbt-review-broker-title">{lt.org ? `${lt.org}：` : ''}{lt.title}</span>
-                          {lt.date && <span className="bbt-review-edge-sigwhen">{lt.date}</span>}
-                        </div>}
-                      </div>
-                    );
-                  })}
-                  <div className="bbt-review-srchint">机构研报来自公开券商研报库，仅供研究参考，不构成投资建议。</div>
-                </div>}
-
-                {/* 下一交易日关注 */}
-                {nar.tomorrow && <div className="bbt-review-card-sec">
-                  <div className="bbt-review-h">🔭 下一交易日</div>
-                  {sentences(nar.tomorrow).map((s, k) => <div key={k} className="bbt-review-line">{linkify(s)}</div>)}
-                </div>}
-
-                {/* 文中【标题】即本站相关资讯，可直接点开（润物细无声地体现信息价值） */}
-                {sources.length > 0 && (nar.market || nar.sectors) && <div className="bbt-review-srchint">文中蓝色【标题】可点开查看本站对应的快讯 / 文章 / 研报</div>}
-
-                <div className="bbt-review-disc">本复盘由数据 + AI 综述生成，面向普通投资者，仅供研究参考，不构成投资建议。</div>
-              </>}
-
-              {/* 历史复盘 */}
-              {reviewList.length > 0 && <div className="bbt-review-sec">
-                <div className="bbt-review-h">历史复盘</div>
-                <div className="bbt-review-hist">
-                  {reviewList.map((it: any, k: number) => (
-                    <button key={k} className={`bbt-review-hist-btn${r && r.date === it.date && (r.session || 'close') === (it.session || 'close') ? ' on' : ''}`} onClick={() => openReview(it.date)} title={`${it.date} ${it.session_label || ''}`}>{it.date.slice(5)} <span className="bbt-review-hist-sess">{(it.session_label || '').replace('复盘', '')}</span></button>
-                  ))}
-                </div>
-              </div>}
-            </div>
-          </div>
-        </div>
-        );
-      })()}
       {bookmarksOpen && (
         <div className="bbt-doc-overlay" onMouseDown={() => setBookmarksOpen(false)}>
           <div className="bbt-doc bbt-doc--review bbt-doc--bm" role="dialog" aria-modal="true" aria-label="我的收藏" onMouseDown={e => e.stopPropagation()}>
@@ -8212,14 +7725,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   ['qa', 'AI 投研问答不限次 + 🔬 深度研判（多空辩论式深度报告）'],
                   ['read', 'AI 多模态解读无限次 · 研报 / 文章随便读'],
                   ['push', '关键资讯比别人早一步 · 微信快讯推送第一时间到'],
-                  ['review', '每日 A 股收盘复盘全量解锁 · 看 稻草财经 提前发现的资讯'],
-                  ['sync', '自选云端同步 · 连续看复盘冲会员里程碑'],
+                  ['sync', '自选云端同步'],
                 ];
                 const r = upgradeReason || '';
                 const hot = r.includes('问答') || r.includes('研判') ? 'qa'
                   : r.includes('解读') ? 'read'
                   : r.includes('推送') || r.includes('快讯') ? 'push'
-                  : r.includes('复盘') ? 'review' : '';
+                  : '';
                 const ordered = hot ? [...items.filter(i => i[0] === hot), ...items.filter(i => i[0] !== hot)] : items;
                 return (
                   <ul className="bbt-up-benefits">
@@ -8257,7 +7769,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <div className="bbt-doc bbt-doc--review bbt-ai-chat" role="dialog" aria-modal="true" aria-label="AI 投研助手" onMouseDown={e => e.stopPropagation()}>
             <div className="bbt-doc-bar">
               <span className="bbt-doc-tag bbt-review-tag">🤖 AI 投研助手</span>
-              <span className="bbt-doc-title">{deepMode ? '多智能体深度研判 · 取证→多空辩论→风控→裁决' : '自动调行情 / 估值 + 检索我们的快讯·研报·复盘'}</span>
+              <span className="bbt-doc-title">{deepMode ? '多智能体深度研判 · 取证→多空辩论→风控→裁决' : '自动调行情 / 估值 + 检索我们的快讯·研报'}</span>
               <span className="bbt-review-prov">内测</span>
               <button className="bbt-doc-close" onClick={() => setAiOpen(false)} aria-label="关闭">✕ 关闭</button>
             </div>

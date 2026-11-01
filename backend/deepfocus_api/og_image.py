@@ -114,13 +114,6 @@ def stock_card(ts: dict[str, Any], symbol: str) -> bytes:
                   lambda: render_og(title, sub, stats))
 
 
-def review_card(review: dict[str, Any], date: str) -> bytes:
-    label = str((review or {}).get("session_label") or "收盘复盘")
-    one = str(((review or {}).get("narrative") or {}).get("one_liner") or "")
-    idx = (review or {}).get("indices") or []
-    stats = [f"{i.get('name')} {'+' if (i.get('pct') or 0) > 0 else ''}{i.get('pct')}%" for i in idx[:3] if i.get("name")]
-    return cached(f"review:{date}:{(review or {}).get('generated_at','')}",
-                  lambda: render_og(f"{date} A股{label}", one, stats))
 
 
 def qa_card(qa: dict[str, Any], slug: str) -> bytes:

@@ -1759,8 +1759,8 @@ class CloudResearchLLM:
             "答案第一句必须直接给出『更偏向谁』或按用户目标给条件化选择，再用同一组维度解释。"
             "网页比较题还会补查稻草财经站内快讯/文章/投行研报；命中就只把与标的直接相关的催化剂和风险写进结论，未命中必须明确写『本站暂无相关内容』，不得用常识补齐。"
             "只有某只标的确实无法识别时才追问；个别数据缺失时应基于已核验信息降低置信度，不要整篇停在『无法判断』。\n"
-            "2) 大盘/盘面/复盘/今日行情：先调 get_daily_review 取本站最新复盘；问『为什么涨/跌』再叠加 search_our_content 找驱动。\n"
-            "get_daily_review 若返回 data=null，不能直接说无法回答：立即调 get_market_data，至少用上证/沪深300/创业板当日涨跌给出客观快照。\n"
+            "2) 大盘/盘面/今日行情：优先调 get_market_structure 或 get_market_data 获取当日结构化行情，再结合 search_our_content 检索驱动。\n"
+            ""
             "用户只问大盘时，不得把内部简报里的组合空仓、持仓或仓位建议混入回答，除非用户本轮明确问了组合或操作策略。\n"
             "3) 板块/题材/找受益股/连板打板：用 get_theme_stocks(某题材有哪些股/今日板块涨幅)、get_limit_up_ladder(连板梯队)。\n"
             "⭐全市场选股（如『推荐买哪些股票/筛3只候选』）绝不是当前页面单股研究："
@@ -1771,10 +1771,10 @@ class CloudResearchLLM:
             "只能列它返回的 candidates，必须说明这是6只核心样本池初筛、不是全市场扫描，绝不在池外凭常识补股票。"
             "all_scores/not_selected_from_pool 是池内未入选者，不得称为『池外』；报告期累计ROE不得冒充全年ROE评判高低，"
             "使用 score_inputs.roe_annualized_for_screen 做比较；quote.is_realtime=false 必须写『非实时行情快照』。"
-            "再按需补市场复盘或近期内容解释环境；答案最多给3—5只，每只必须引用本轮返回的评分/维度并给淘汰条件，"
+            "再按需补结构化行情或近期内容解释环境；答案最多给3—5只，每只必须引用本轮返回的评分/维度并给淘汰条件，"
             "证据不足就少给，绝不凑数。港美股没有对应筛选工具时要诚实说明覆盖边界，不凭记忆列名单。\n"
             "4) 快讯/资讯/研报/『你看了我们网站吗』类总结：用 search_our_content(快讯+文章，query 留空=近期全部；做近24h总结用 days=1、limit=40~60) "
-            "与 get_recent_research(海外投行研报)、get_daily_review。可如实告诉用户你已结合【本站近期快讯/研报/复盘】作答(但绝不点名任何外部数据源/服务商)。\n"
+            "与 get_recent_research(海外投行研报)、get_market_structure。可如实告诉用户你已结合【本站近期快讯/研报/行情】作答(但绝不点名任何外部数据源/服务商)。\n"
             "⭐用户要求『最近N天全部/所有』『最近两天机构纪要总结』或四类资料汇总时，必须先调用 get_recent_content_digest(days=N, query留空=窗口内全部)。"
             "该工具会对快讯、文章、投行研报、机构纪要使用同一截止时间并返回扫描/命中/是否完整；不得用单次8条结果冒充全量，也不得在未完成扫描时写『全部』。"
             "此类总结的呈现红线：禁止用『主要涵盖了多个行业和主题』这类空泛概述段落开场；第一句先给量化概览（本窗口命中多少条、归成几组），"
@@ -2033,49 +2033,6 @@ class CloudResearchLLM:
                 message = response.choices[0].message
                 tool_calls = list(getattr(message, "tool_calls", None) or [])
                 if not tool_calls:
-                    review_empty = any(
-                        item.get("tool") == "get_daily_review" and "暂无数据" in str(item.get("summary") or "")
-                        for item in trace
-                    )
-                    market_question = bool(re.search(r"A股|大盘|上证|沪深300|创业板|盘面|今日市场", question, re.I))
-                    market_already_fetched = any(item.get("tool") == "get_market_data" for item in trace)
-                    if review_empty and market_question and not market_already_fetched:
-                        # 复盘在盘中/生成空窗期可能为空。模型实测会直接回「无法核实」，
-                        # 即使实时指数工具正常。在编排层自动注入一次指数快照，
-                        # 确保「今天 A 股怎样」至少有客观行情可答。
-                        fallback_id = f"market-fallback-{round_index}"
-                        fallback_args = {"query": question}
-                        messages.append({
-                            "role": "assistant",
-                            "content": "复盘内容暂缺，改用市场指数快照。",
-                            "tool_calls": [{
-                                "id": fallback_id,
-                                "type": "function",
-                                "function": {"name": "get_market_data", "arguments": json.dumps(fallback_args, ensure_ascii=False)},
-                            }],
-                        })
-                        await _safe_emit(emit, "tool_start", {"tool": "get_market_data", "args": fallback_args})
-                        if allowed_names is not None and "get_market_data" not in allowed_names:
-                            fallback_result = {"ok": False, "error": "该工具不在当前 CoreAgent 能力范围内。"}
-                        else:
-                            fallback_result = await execute_tool("get_market_data", fallback_args, extra_tools=mcp_tools, ifind_user=ifind_user)
-                        from . import privacy_guard
-                        fallback_result = privacy_guard.scrub_internal_fields(fallback_result)
-                        fallback_summary = _summarize_tool_result(fallback_result)
-                        await _safe_emit(emit, "tool_result", {
-                            "tool": "get_market_data", "ok": bool(fallback_result.get("ok")), "summary": fallback_summary,
-                            "references": live_references_for_trace("get_market_data", fallback_result),
-                        })
-                        trace.append({
-                            "tool": "get_market_data", "args": fallback_args,
-                            "ok": bool(fallback_result.get("ok")), "summary": fallback_summary,
-                            "references": live_references_for_trace("get_market_data", fallback_result),
-                        })
-                        messages.append({
-                            "role": "tool", "tool_call_id": fallback_id, "name": "get_market_data",
-                            "content": json.dumps(fallback_result, ensure_ascii=False),
-                        })
-                        continue
                     if require_tool_first and not trace and round_index == 0 and max_rounds > 1:
                         # 真实红队测试发现：模型偶尔会对「黄金现价」「茅台价格」
                         # 直接编一段「暂无行情源」，完全绕过已接入的工具。研究路由
@@ -2171,7 +2128,7 @@ class CloudResearchLLM:
                     })
                     if tc.function.name in {
                         "search_our_content", "get_site_fast_news", "get_site_articles",
-                        "get_recent_research", "get_stock_research", "get_institution_notes", "get_recent_content_digest", "get_daily_review",
+                        "get_recent_research", "get_stock_research", "get_institution_notes", "get_recent_content_digest",
                     }:
                         site_evidence_seen = True
                     if tc.function.name in {"get_recent_research", "get_stock_research"}:
@@ -2260,7 +2217,7 @@ class CloudResearchLLM:
                         "role": "user",
                         "content": (
                             "这是网页端的投研问题，请在公开数据快照之外，再调用一个最相关的站内资料工具"
-                            "（search_our_content 或 get_recent_research，必要时 get_daily_review），"
+                            "（search_our_content 或 get_recent_research，必要时 get_market_structure），"
                             "核对标的近期催化剂/风险。若没有命中，返回空结果并在最终答案里明确说明，"
                             "不要凭常识或记忆补充站内事实。"
                         ),

@@ -86,7 +86,6 @@ from .auto_suspension import AutoSuspensionMiddleware, evaluate_pageview
 from . import membership_codes
 from . import payment_config
 from . import community_config
-from . import ashare_review
 from . import ai_fund
 from .investment_ontology import (
     OntologyDemoActionRecord,
@@ -99,7 +98,6 @@ from .investment_ontology import (
 from .content_ontology import annotate_content, build_content_map, init_content_ontology_db
 from . import research_archive
 from . import engagement
-from . import track_record
 from . import story_engine
 from .story_engine import init_story_db, run_story_engine
 from . import story_events
@@ -603,7 +601,6 @@ async function load(){
     '<div id="ftkey"><div class="sub">富途数据源 token 加载中…</div></div>'+
     '<div id="pkeys"><div class="panel"><h2>🔌 合作方 API</h2><div class="sub">加载中…</div></div></div>'+
     '<div id="act"><div class="sub">操作流水加载中…</div></div>'+
-    '<div id="rq"><div class="panel"><h2>🤖 复盘 AI 质量</h2><div class="sub">加载中…</div></div></div>'+
     '<div class="ft">稻草财经 金融终端 · 内部数据，请勿外传</div>';
   loadGrowth();
   loadMarketing();
@@ -618,7 +615,6 @@ async function load(){
   loadCodes();
   loadPay();
   loadCommunity();
-  loadReviewQuality();
 }
 // ===== AI 增长分析：KPI 卡 + DAU 趋势 + AI 报告 =====
 async function loadGrowth(){
@@ -967,33 +963,6 @@ async function loadDM(){
   await refreshDMList();
   if(!_dmPoll) _dmPoll=setInterval(pollDM, 15000);
 }
-async function loadReviewQuality(){
-  let d;
-  try{ const r=await fetch('/api/metrics/review-quality?token='+encodeURIComponent(token)); if(!r.ok) throw new Error(r.status); d=await r.json(); }
-  catch(e){ const el=$('#rq'); if(el) el.innerHTML='<div class="panel"><h2>🤖 复盘 AI 质量</h2><div class="sub">读取失败('+e.message+')</div></div>'; return; }
-  const rec=d.recent||[];
-  const tr=d.trend||{};
-  // 环比箭头：按 good 着色（改善=绿/变差=红/持平=灰），与指标方向无关
-  const arrow=(t,isRate)=>{ if(!t||t.cur==null||t.prev==null) return '<span class="sub" style="font-size:10px">环比无</span>';
-    const c=t.good===true?'#2bd96a':(t.good===false?'#ff5a52':'#8a94a3');
-    const a=t.dir==='down'?'↓':(t.dir==='up'?'↑':'→');
-    const dv=isRate? ((t.delta>0?'+':'')+Math.round(t.delta*100)+'pp') : ((t.delta>0?'+':'')+t.delta);
-    return '<span style="color:'+c+';font-size:11px;font-weight:700">'+a+' '+dv+'</span> <span class="sub" style="font-size:10px">vs前7天</span>'; };
-  const kpi=(label,val,hint,t,isRate)=>'<div style="flex:1;min-width:120px;background:#11161f;border:1px solid var(--line);border-radius:8px;padding:8px 10px"><div class="sub" style="font-size:11px">'+label+'</div><div style="font-size:20px;font-weight:800;color:#e6ebf2">'+val+'</div><div style="font-size:10px;margin-top:2px">'+(t?arrow(t,isRate):'<span class="sub">'+(hint||'')+'</span>')+'</div></div>';
-  const rows = rec.length? rec.map(function(x){
-    const sess = x.session==='midday'?'午盘':'收盘';
-    const after = x.numviol_after>0? '<span style="color:#ff5a52;font-weight:700">'+x.numviol_after+'</span>' : '<span style="color:#2bd96a">0</span>';
-    return '<tr><td>'+esc(x.date)+' '+sess+'</td><td>'+x.critic_issues+'</td><td>'+x.numviol_before+'</td><td>'+after+'</td><td>'+(x.revised?'✓':'—')+'</td><td class="sub">'+esc(x.provider)+'</td></tr>';
-  }).join('') : '<tr><td colspan=6 class="sub" style="padding:10px">暂无数据（生成一次复盘后出现）</td></tr>';
-  $('#rq').innerHTML='<div class="panel"><h2>🤖 复盘 AI 质量 <span class="sub" style="font-weight:400">近 '+d.count+' 次生成</span></h2>'+
-    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
-      kpi('初稿问题/次', d.avg_critic_issues, '', tr.critic_issues)+
-      kpi('编造数字/次', d.avg_numviol_before, '', tr.numviol_before)+
-      kpi('修订率', Math.round((d.revise_rate||0)*100)+'%', '触发自动修订占比')+
-      kpi('修订后干净率', Math.round((d.clean_after_rate||0)*100)+'%', '', tr.clean_after, true)+
-    '</div>'+
-    '<table style="width:100%;font-size:12px"><thead><tr><th>日期/场次</th><th>初稿问题</th><th>编造数字</th><th>残留</th><th>已修订</th><th>来源</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-}
 async function refreshDMList(){
   let data;
   try{ const r=await fetch('/api/admin/support/threads?token='+encodeURIComponent(token)); if(!r.ok) throw new Error(r.status); data=await r.json(); }
@@ -1138,7 +1107,7 @@ async function saveFutouToken(){
     setTimeout(loadFutouToken,1200);
   }catch(e){ $('#ftmsg').innerHTML='<span style="color:#ff5a52">✗ '+esc(e.message)+'</span>'; }
 }
-const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',reset_password:'运营重置密码',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',open_review:'查看复盘',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',share_foresight:'分享预判',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'提交兑换码',redeem_success:'兑换成功',redeem_repeat:'重复提交兑换码',redeem_failed:'兑换失败',redeem_rate_limited:'兑换过于频繁',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
+const ACT_LABEL={pageview:'进入页面',login:'登录',logout:'登出',signup:'注册成功',reset_password:'运营重置密码',open_report:'打开研报',ai_report:'研报AI解读',ai_news:'文章AI解读',copy:'复制',open_pdf:'看原文PDF',download:'下载',search:'搜索',tab:'切换板块',open_news:'查看资讯',invite_click:'点击邀请得会员',claim_trial:'领取体验会员',open_buy:'💎打开购买会员页',buy_pkg_select:'选套餐',buy_qr_view:'看收款码',buy_close:'关闭购买页',buy_paid_click:'点已完成付款',buy_contact:'💰发凭证联系开通',ai_chat:'AI问答提问',weixin_qa:'📱微信AI提问',deep_research_done:'深度研究完成',deep_share_img:'分享深研图',deep_share_text:'分享深研文',ai_share_img:'分享AI解读图',bookmark:'收藏',unbookmark:'取消收藏',select_stock:'下钻个股',watch_add:'加自选',watch_remove:'移除自选',reaction:'资讯表态',weixin_bind:'打开绑定微信',redeem:'提交兑换码',redeem_success:'兑换成功',redeem_repeat:'重复提交兑换码',redeem_failed:'兑换失败',redeem_rate_limited:'兑换过于频繁',support_msg:'发私信给管理员',open_referral:'打开邀请面板',theme:'切换主题',tts:'语音播报开关',call_create:'📌表态开单',call_cancel:'撤销表态',call_view:'查看战绩'};
 function alabel(a){return ACT_LABEL[a]||a;}
 function tshort(s){
   if(!s) return '';
@@ -1622,8 +1591,6 @@ async def lifespan(app: FastAPI):
     capacity_monitor_task = _spawn_bg("capacity_monitor", run_capacity_monitor)
     # AI 解读缓存：每日清理过期(默认 >90 天)条目，防长期累积
     cache_pruner_task = _spawn_bg("cache_pruner", run_cache_pruner)
-    # A股收盘复盘：每个交易日 15:35 生成「大盘+板块+个股 × 我们提前发现的资讯」复盘
-    ashare_review_task = _spawn_bg("ashare_review", run_ashare_review)
     # 投研晨报：每个交易日盘前 08:30 推送「宏观×组合」晨会一句话 → 全员盯盘送达（每日盘前回访仪式）
     morning_briefing_task = _spawn_bg("morning_briefing", run_morning_briefing)
     # 收盘自选巡检：每交易日 15:12 全体自选并集 × 确定性异动（|涨跌|≥5% / 龙虎榜）→「异动」聚合消息
@@ -1633,8 +1600,6 @@ async def lifespan(app: FastAPI):
     # 增长分析师：每日 16:20 自动计算 KPI（用户/留存/日活/付费转化）+ AI 改进建议 → 运营看板
     growth_analytics.init_growth_db()
     growth_analyst_task = _spawn_bg("growth_analyst", run_growth_analyst)
-    from .checkin import init_checkin_db
-    init_checkin_db()  # 连续看复盘签到表
     init_story_db()  # 事件簇（故事）库：今日看板 / 千人千面推荐 / 大众简报的公共资产
     story_events.init_events_db()  # 故事级埋点库：个人化排序的隐式兴趣信号源
     ai_fund.init_ai_fund_db()  # A股 AI 模拟盘（虚拟基金）账户表
@@ -1643,8 +1608,6 @@ async def lifespan(app: FastAPI):
     ai_fund_task = _spawn_bg("ai_fund_trader", run_ai_fund_trader)
     from .partner_api import init_partner_db
     init_partner_db()  # 合作方/开发者 API（自有内容对外）
-    # T+1 召回：每日 10:30 给「注册 24~72h 未回访且留邮箱」的新用户发带当日复盘内容的召回邮件
-    t1_recall_task = _spawn_bg("t1_recall", run_t1_recall)
     # 到期转化：每日 11:00 给「会员 48h 内到期、非付费、留邮箱」的用户发续费提醒（最高意向时刻）
     expiry_reminder_task = _spawn_bg("expiry_reminder", run_expiry_reminder)
     # 合作方 API 续费/对账告警：每日 09:30 给管理员汇总近配额/近到期/待收款
@@ -1674,7 +1637,6 @@ async def lifespan(app: FastAPI):
     # 给一个总超时，超时就直接放手让进程退出（避免每次重启都等满 systemd 停服超时）。
     _bg_tasks = (memory_cache_task, dao_bridge_task, recall_ingest_task, cache_warmer_task, research_prewarm_task,
                  wire_refresher_task, news_prewarm_task, headline_task, zsxq_health_task, wechat_health_task, capacity_monitor_task, cache_pruner_task,
-                 ashare_review_task, morning_briefing_task, watchlist_scan_task, call_settle_task, growth_analyst_task, t1_recall_task, expiry_reminder_task, partner_alert_task,
                  ai_fund_task, stock_name_task, seo_submit_task, seo_prewarm_task, feed_watchdog_task, weixin_sched_task, marketing_task, story_engine_task)
     for _task in _bg_tasks:
         _task.cancel()
@@ -2444,23 +2406,8 @@ async def membership_claim_trial(request: Request) -> dict[str, Any]:
     return {"ok": True, "days": res.get("days", 3), "membership": res.get("membership")}
 
 
-@app.post("/api/checkin")
-async def api_checkin(request: Request) -> dict[str, Any]:
-    """连续看复盘签到：登录用户打开当日复盘即记一次（幂等）。返回连续/累计 + 新达成的里程碑奖励。"""
-    claims = require_current_user(request)
-    uid = str(claims.get("sub", ""))
-    uname = str(claims.get("username") or claims.get("email") or uid)
-    from .checkin import record_checkin
-    return record_checkin(uid, uname)
 
 
-@app.get("/api/checkin/me")
-async def api_checkin_me(request: Request) -> dict[str, Any]:
-    """当前用户签到状态：今天是否已签 / 连续 / 累计 / 距下一个里程碑还差几天。"""
-    claims = require_current_user(request)
-    uid = str(claims.get("sub", ""))
-    from .checkin import checkin_status
-    return checkin_status(uid)
 
 
 # ===== iFinD 专业数据（同花顺）——目前只对白名单账号开放（默认 lx199710）=====
@@ -6882,48 +6829,16 @@ async def api_headlines(request: Request) -> dict[str, Any]:
     }
 
 
-@app.get("/api/review/today")
-async def api_review_today() -> dict[str, Any]:
-    """最新一期 A股收盘复盘（首页置顶卡片用）。无则返回 {exists:false}。"""
-    rv = ashare_review.latest_review()
-    if not rv:
-        return {"exists": False}
-    return {"exists": True, "review": rv}
 
 
-@app.get("/api/review/list")
-async def api_review_list(limit: int = 60) -> dict[str, Any]:
-    """历史复盘列表（轻量摘要，新→旧）。"""
-    return {"items": ashare_review.list_reviews(limit=max(1, min(int(limit or 60), 120)))}
 
 
-@app.get("/api/track-record")
-async def api_track_record(request: Request) -> dict[str, Any]:
-    """「我们提前发现的」量化战绩：只统计经 AI 判定层验证的命中(真实可溯源，不强行归因)。
-    平台战绩公开(信任引流)；登录则附「你的自选相关」个人战绩(保守匹配)。"""
-    hits = track_record._collect_hits(30)
-    tr = {**track_record._summarize(hits), "days": 30, "recent": hits[:12]}
-    claims = current_claims(request)
-    if claims:
-        wl = get_user_watchlist(str(claims.get("sub", "")))
-        names = (list((wl.get("names") or {}).values()) + list(wl.get("symbols") or [])) if wl else []
-        tr["personal"] = track_record.personal_track_record(hits, names)
-    return tr
 
 
-@app.get("/api/review/{date_str}")
-async def api_review_by_date(date_str: str) -> dict[str, Any]:
-    """某一天的完整复盘。"""
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str or ""):
-        raise HTTPException(status_code=422, detail="日期格式需为 YYYY-MM-DD")
-    rv = ashare_review.review_for_date(date_str)
-    if not rv:
-        raise HTTPException(status_code=404, detail="该日期暂无复盘")
-    return {"exists": True, "review": rv}
 
 
 # ============================================================================ #
-# 合作方 / 开发者 API（/api/v1/*）——只对外开放「自有内容」(复盘 / 速判卡)。
+# 合作方 / 开发者 API（/api/v1/*）——只对外开放个股速判卡等自有内容。
 # 第三方版权内容(投行研报原文、聚合快讯/文章全文)绝不在此暴露。
 # 访问凭 Header `X-API-Key`，按 key 限流 + 计量。
 # ============================================================================ #
@@ -6988,7 +6903,7 @@ a{color:var(--blue)}.ft{margin-top:40px;color:var(--mute);font-size:12px;border-
 </style></head><body><div class="wrap">
 <h1>稻草财经 Open API <span class="sub">v1</span></h1>
 <p class="sub">稻草财经 金融终端面向合作方/开发者的只读内容 API。基地址 <code>https://daocaijing.com</code>，所有业务端点形如 <code>/api/v1/*</code>，返回 JSON。</p>
-<div class="note">⚠️ 仅开放 稻草财经 自有内容（A股复盘、个股速判卡、资讯流、研报）。密钥由 稻草财经 按需签发，无自助注册——请联系商务对接。</div>
+<div class="note">⚠️ 仅开放 稻草财经 自有内容（个股速判卡、资讯流、研报）。密钥由 稻草财经 按需签发，无自助注册——请联系商务对接。</div>
 
 <h2>鉴权</h2>
 <p>每个业务请求都需在 HTTP Header 传入密钥：</p>
@@ -7000,22 +6915,6 @@ a{color:var(--blue)}.ft{margin-top:40px;color:var(--mute);font-size:12px;border-
 </ul>
 
 <h2>端点</h2>
-
-<div class="ep"><span class="m">GET</span><span class="path">/api/v1/review/today</span>
-<p class="sub">最新一期 A股复盘（盘中=午盘版，收盘后=收盘版）。无复盘时 <code>exists:false</code>。</p>
-<pre>curl -s https://daocaijing.com/api/v1/review/today -H 'X-API-Key: dfk_xxx'</pre>
-<pre>{ "exists": true, "review": { "date": "2026-06-12", "session_label": "收盘复盘",
-  "narrative": { "one_liner": "…一句话盘面…", "market": "…", "sectors": "…", "tomorrow": "…" },
-  "our_edge": [ { "name": "某标的", "pct": 3.2, "lead_hours": 18 } ] } }</pre></div>
-
-<div class="ep"><span class="m">GET</span><span class="path">/api/v1/review/{date}</span>
-<p class="sub">指定日期（<code>YYYY-MM-DD</code>）的完整复盘。无则 404。</p>
-<pre>curl -s https://daocaijing.com/api/v1/review/2026-06-12 -H 'X-API-Key: dfk_xxx'</pre></div>
-
-<div class="ep"><span class="m">GET</span><span class="path">/api/v1/reviews</span>
-<p class="sub">历史复盘列表（轻量摘要，新→旧）。</p>
-<table><tr><th>参数</th><th>必填</th><th>说明</th></tr><tr><td>limit</td><td>否</td><td>条数，默认 30，上限 120</td></tr></table>
-<pre>curl -s "https://daocaijing.com/api/v1/reviews?limit=10" -H 'X-API-Key: dfk_xxx'</pre></div>
 
 <div class="ep"><span class="m">GET</span><span class="path">/api/v1/stock/{symbol}/verdict</span>
 <p class="sub">个股证据速判卡（确定性引擎，多维证据 + 信号灯 + 可信度）。</p>
@@ -7052,8 +6951,8 @@ a{color:var(--blue)}.ft{margin-top:40px;color:var(--mute);font-size:12px;border-
 <tr><td>200</td><td>成功</td></tr>
 <tr><td>401</td><td>密钥无效（含前缀非 dfk_/查无此 key）、已吊销、已过期，或未在 Header 传 X-API-Key</td></tr>
 <tr><td>403</td><td>已达总次数上限（max_calls）</td></tr>
-<tr><td>404</td><td>资源不存在（如该日期无复盘）</td></tr>
-<tr><td>422</td><td>参数格式错误（如日期非 YYYY-MM-DD）</td></tr>
+<tr><td>404</td><td>资源不存在（如标的代码无对应内容）</td></tr>
+<tr><td>422</td><td>参数格式错误</td></tr>
 <tr><td>429</td><td>超出每分钟速率、每日配额，或无效请求过多（IP 限速）</td></tr>
 <tr><td>502</td><td>上游数据源暂时不可用（速判卡生成失败 / 研报源不可用），稍后重试</td></tr></table>
 
@@ -7071,9 +6970,6 @@ async def api_v1_index() -> dict[str, Any]:
         "auth": "在请求 Header 传 X-API-Key: <你的密钥>（仅 Header，勿放 URL 参数）。密钥由 稻草财经 签发，请妥善保管、仅服务端使用。",
         "note": "稻草财经 金融终端内容 API。",
         "endpoints": [
-            {"method": "GET", "path": "/api/v1/review/today", "desc": "最新一期 A股收盘复盘"},
-            {"method": "GET", "path": "/api/v1/review/{date}", "desc": "指定日期(YYYY-MM-DD)的复盘"},
-            {"method": "GET", "path": "/api/v1/reviews?limit=30", "desc": "历史复盘列表(摘要)"},
             {"method": "GET", "path": "/api/v1/stock/{symbol}/verdict", "desc": "个股证据速判卡(确定性引擎)"},
             {"method": "GET", "path": "/api/v1/news?topic=快讯&limit=80", "desc": "资讯流(快讯/文章，可按 symbol、q 过滤)"},
             {"method": "GET", "path": "/api/v1/research?q=&limit=60", "desc": "研报流(标题/机构/日期/预览链接)"},
@@ -7088,32 +6984,10 @@ async def api_v1_docs() -> HTMLResponse:
     return HTMLResponse(_PARTNER_API_DOCS_HTML)
 
 
-@app.get("/api/v1/review/today")
-async def api_v1_review_today(request: Request) -> dict[str, Any]:
-    rec = _require_api_key(request)
-    rv = ashare_review.latest_review()
-    _count_v1_success(rec, request)
-    return {"exists": bool(rv), "review": rv} if rv else {"exists": False}
 
 
-@app.get("/api/v1/reviews")
-async def api_v1_reviews(request: Request, limit: int = 30) -> dict[str, Any]:
-    rec = _require_api_key(request)
-    out = {"items": ashare_review.list_reviews(limit=max(1, min(int(limit or 30), 120)))}
-    _count_v1_success(rec, request)
-    return out
 
 
-@app.get("/api/v1/review/{date_str}")
-async def api_v1_review_by_date(request: Request, date_str: str) -> dict[str, Any]:
-    rec = _require_api_key(request)
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str or ""):
-        raise HTTPException(status_code=422, detail="日期格式需为 YYYY-MM-DD")
-    rv = ashare_review.review_for_date(date_str)
-    if not rv:
-        raise HTTPException(status_code=404, detail="该日期暂无复盘")
-    _count_v1_success(rec, request)
-    return {"exists": True, "review": rv}
 
 
 @app.get("/api/v1/stock/{symbol}/verdict")
@@ -7252,71 +7126,8 @@ async def api_admin_partner_key_renew(request: Request, prefix: str, token: str 
     return {"ok": True, "expires_at": new_exp}
 
 
-@app.post("/api/admin/review/generate")
-async def api_review_generate(request: Request, token: str = "", force: bool = False) -> dict[str, Any]:
-    """手动生成今日复盘（管理端，需令牌）。force=true 跳过交易日校验（便于测试）。"""
-    if not _admin_token_ok(request, token):
-        raise HTTPException(status_code=403, detail="需要有效的管理令牌")
-    if not force and not await ashare_review.traded_today():
-        return {"ok": False, "reason": "今日非交易日（上证最新日线≠今天）"}
-    review = await ashare_review.build_review()
-    if not ashare_review.save_review(review):
-        return {"ok": False, "reason": "行情源暂不可用（东财限流/网络），仅取到指数、未取到板块/个股，未落库", "review": review}
-    return {"ok": True, "review": review}
 
 
-async def run_ashare_review() -> None:
-    """A股复盘：每个交易日两场——11:40 午盘复盘（上午收盘后）、15:35 收盘复盘（全天定稿），自动生成并落库。
-    交易日以「上证最新日线==今天」判定（免维护节假日表）；同日每场次独立去重（午盘不顶替收盘）。"""
-    from .ashare_review import CN_TZ as _CNTZ
-    await asyncio.sleep(30)
-    print("[ashare-review] 启动：每交易日 11:40 午盘 / 15:35 收盘 生成 A股复盘")
-    SLOTS = ((11, 40, "midday"), (15, 35, "close"))  # 北京时间
-    while True:
-        try:
-            now = datetime.now(_CNTZ)
-            # 选下一个最近的场次时间点
-            cands = []
-            for h, m, sess in SLOTS:
-                t = now.replace(hour=h, minute=m, second=0, microsecond=0)
-                if t <= now:
-                    t = t + timedelta(days=1)
-                cands.append((t, sess))
-            target, session = min(cands, key=lambda x: x[0])
-            await asyncio.sleep(max(30, (target - now).total_seconds()))
-            today = ashare_review.cn_today_str()
-            if ashare_review.has_review_today(session):
-                continue  # 今天这一场已生成
-            if not await ashare_review.traded_today():
-                continue  # 周末/节假日：上证日线不是今天
-            review = await ashare_review.build_review(today)
-            saved = ashare_review.save_review(review)
-            tries = 0
-            while not saved and tries < 4:  # 行情源不全（限流？）→ 当天最多重试 4×30min
-                print(f"[ashare-review] {today} {session} 行情源不全，30 分钟后重试")
-                await asyncio.sleep(1800)
-                review = await ashare_review.build_review(today)
-                saved = ashare_review.save_review(review)
-                tries += 1
-            if saved:
-                _edge_n = len(review.get('our_edge') or [])
-                print(f"[ashare-review] 已生成 {today} {ashare_review.session_label(session)}（提前发现 {_edge_n} 条）")
-                # 发一条「复盘已生成」信号 → post_message_hook→dispatch_recall 推给所有开盯盘的人(每日回访钩子,留存核心)
-                try:
-                    _lab = ashare_review.session_label(session)
-                    create_realtime_message(RealtimeMessageCreateRequest(
-                        title=f"📊 今日A股{_lab}已生成",
-                        content="大盘 · 板块 · 个股全维度" + _lab + (f",含我们提前发现的 {_edge_n} 条信号" if _edge_n else "") + " → 点开看复盘。",
-                        topic="复盘", severity="info", source_name="稻草财经 复盘",
-                        url=f"/?review={today}",
-                    ))
-                except Exception as _rexc:  # noqa: BLE001
-                    print(f"[ashare-review] 复盘信号发送失败：{type(_rexc).__name__}")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            print(f"[ashare-review] 异常：{type(exc).__name__}")
-            await asyncio.sleep(300)
 
 
 async def run_morning_briefing() -> None:
@@ -7525,9 +7336,7 @@ async def _send_settlement_digests(events_by_user: dict, now_bj: datetime) -> tu
             first = real_new > 0 and total.get("settled") == real_new
             digest = _sc.render_settlement_digest(items, month_summary=month_summary,
                                                   first_settlement=first, day=day)
-            # ★CTA 指向 SPA(?review=1 自动弹复盘=签到,喂既有 streak;不用公开 SEO /review 页——
-            #   零埋点/零签到触发/微信 webview 登出态);utm=wxsettle 走既有 pageview UTM 归因
-            digest += "\n查看完整战绩与今日复盘 👉 https://daocaijing.com/?review=1&utm=wxsettle"
+            digest += "\n查看稻草财经终端，继续跟进持仓与研究。https://daocaijing.com/"
             text = _wx_sched_guard(digest)  # 合规中性化 + 泄密扫描出站护栏
             if not _sc.log_push(uid, day):
                 continue  # 先记后发(唯一索引兜底并发):宁可漏发不可双发
@@ -8054,14 +7863,6 @@ async def api_qr(data: str = "") -> dict[str, Any]:
     return {"size": len(matrix), "matrix": matrix}
 
 
-@app.get("/api/metrics/review-quality")
-async def api_metrics_review_quality(request: Request, token: str = "", limit: int = 60) -> dict[str, Any]:
-    """复盘 AI 质量趋势（管理员，需令牌）：批评家初稿问题数 / 数字违规 / 修订率 / 残留违规，量化幻觉率随时间下降。"""
-    expected = (os.getenv("DEEPFOCUS_METRICS_TOKEN") or "").strip()
-    provided = (token or request.headers.get("X-Metrics-Token") or "").strip()
-    if not expected or provided != expected:
-        raise HTTPException(status_code=403, detail="需要有效的 metrics 令牌")
-    return ashare_review.review_quality_stats(limit=max(1, min(int(limit or 60), 200)))
 
 
 @app.get("/api/metrics/summary")
@@ -8253,65 +8054,19 @@ async def run_growth_analyst() -> None:
             await asyncio.sleep(1800)
 
 
-async def run_t1_recall() -> None:
-    """T+1 召回：每日北京时间 10:30（上午开盘时段，打开率最好）执行一轮。
-
-    候选筛选 / 发信都在 t1_recall 模块里且绝不抛出；这里只管定时。"""
-    from .t1_recall import run_t1_recall_once
-    bj = timezone(timedelta(hours=8))
-    await asyncio.sleep(240)
-    print("[t1-recall] 启动：每日 10:30 给 24h 未回访的新注册用户发内容召回邮件")
-    while True:
-        try:
-            now = datetime.now(bj)
-            target = now.replace(hour=10, minute=30, second=0, microsecond=0)
-            if target <= now:
-                target += timedelta(days=1)
-            await asyncio.sleep(max(60, (target - now).total_seconds()))
-            out = await asyncio.to_thread(run_t1_recall_once)  # SMTP 是阻塞 IO，挪到线程
-            print(f"[t1-recall] 本轮完成：候选{out['candidates']} 发送{out['sent']} 跳过{out['skipped']} 失败{out['errors']} 留待下轮{out.get('deferred', 0)}")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            print(f"[t1-recall] 本轮失败：{exc}，6 小时后重试")
-            await asyncio.sleep(21600)
 
 
-@app.post("/api/recall/t1/run")
-async def api_t1_recall_run(request: Request, token: str = "") -> dict[str, Any]:
-    """手动触发一轮 T+1 召回（管理员，需 metrics 令牌）：上线验证 / SMTP 配好后补发用。"""
-    expected = (os.getenv("DEEPFOCUS_METRICS_TOKEN") or "").strip()
-    provided = (token or request.headers.get("X-Metrics-Token") or "").strip()
-    if not expected or provided != expected:
-        raise HTTPException(status_code=403, detail="需要有效的 metrics 令牌")
-    from .t1_recall import run_t1_recall_once
-    return await asyncio.to_thread(run_t1_recall_once)
 
 
-@app.get("/api/recall/t1/stats")
-async def api_t1_recall_stats(request: Request, token: str = "") -> dict[str, Any]:
-    """T+1 召回累计效果（管理员，需 metrics 令牌）。"""
-    expected = (os.getenv("DEEPFOCUS_METRICS_TOKEN") or "").strip()
-    provided = (token or request.headers.get("X-Metrics-Token") or "").strip()
-    if not expected or provided != expected:
-        raise HTTPException(status_code=403, detail="需要有效的 metrics 令牌")
-    from .t1_recall import t1_recall_stats
-    return t1_recall_stats()
 
 
 # ===== 自动营销引擎 API（看板「📣 自动营销」区块，设计: marketing_engine.py 模块 docstring）=====
 @app.get("/api/metrics/marketing")
 async def api_metrics_marketing(request: Request, token: str = "") -> dict[str, Any]:
-    """自动营销总览（管理员，需 metrics 令牌）：通道状态 + 分群规模 + 各 campaign 触达效果 + 最近触达
-    + 顺带带上 T+1/到期两条既有召回管道的 stats（同屏看全部自动触达）。"""
+    """自动营销总览（管理员，需 metrics 令牌）：通道状态 + 分群规模 + 各 campaign 触达效果 + 最近触达。"""
     _require_metrics_token(request, token)
     from . import marketing_engine as _me
     out = await asyncio.to_thread(_me.marketing_stats)
-    try:
-        from .t1_recall import t1_recall_stats
-        out["t1_recall"] = t1_recall_stats()
-    except Exception:  # noqa: BLE001
-        out["t1_recall"] = {}
     try:
         from .expiry_reminder import expiry_reminder_stats
         out["expiry"] = expiry_reminder_stats()
@@ -8617,11 +8372,8 @@ async def run_seo_submit() -> None:
     print(f"[seo-submit] 启动：每 {interval:.0f}s diff sitemap 推送新 URL")
     while True:
         try:
-            urls = [f"{base}/", f"{base}/review", f"{base}/stocks", f"{base}/stocks/all",
+            urls = [f"{base}/", f"{base}/stocks", f"{base}/stocks/all",
                     f"{base}/qa", f"{base}/articles", f"{base}/feed.xml"]
-            for it in ashare_review.list_reviews(limit=60):
-                if it.get("date"):
-                    urls.append(f"{base}/review/{it['date']}")
             for sym, _lm in _indexable_stock_symbols(200):  # C6：只推已 build 且过质量门控的个股
                 urls.append(f"{base}/stock/{sym}")
             for qa in _public_qa_items(200):  # C3：投研问答页
@@ -10716,7 +10468,7 @@ async def public_share_page(snapshot_id: str, request: Request) -> HTMLResponse:
 
 
 # --------------------------------------------------------------------------- #
-# 公开 SEO 落地页（曝光增长）：复盘页 / 个股速判页 / 聚合页 / 站点地图。
+# 公开 SEO 落地页（曝光增长）：个股速判页 / 聚合页 / 站点地图。
 # 非 /api/ 路径，鉴权中间件天然放行；生产 nginx 需把这些 location 代理到后端。
 # --------------------------------------------------------------------------- #
 
@@ -10800,15 +10552,7 @@ async def public_sitemap() -> Response:
     if _sitemap_cache is not None and time.monotonic() - _sitemap_cache[0] < _SITEMAP_CACHE_TTL:
         return Response(_sitemap_cache[1], media_type="application/xml")
     base = seo_pages.BASE_URL
-    dates: list[str] = []
-    seen: set[str] = set()
     lastmod: dict[str, str] = {}
-    for it in ashare_review.list_reviews(limit=120):
-        d = it.get("date") or ""
-        if d and d not in seen:
-            seen.add(d)
-            dates.append(d)
-            lastmod[f"{base}/review/{d}"] = str(it.get("generated_at") or d)
     symbols: list[str] = []
     for sym, lm in _indexable_stock_symbols(200):  # C1+C7：只放已 build 且过质量门控的个股
         symbols.append(sym)
@@ -10853,7 +10597,7 @@ async def public_sitemap() -> Response:
             research_fids.append(p["fid"])
             if p.get("date"):
                 lastmod[f"{base}/research/{p['fid']}"] = str(p["date"])
-    xml = seo_pages.render_sitemap_xml(dates, symbols, article_ids, lastmod_map=lastmod,
+    xml = seo_pages.render_sitemap_xml(symbols, article_ids, lastmod_map=lastmod,
                                        qa_slugs=qa_slugs, report_ids=report_ids,
                                        flash_ids=flash_ids, note_ids=note_ids,
                                        research_fids=research_fids)
@@ -10861,27 +10605,8 @@ async def public_sitemap() -> Response:
     return Response(xml, media_type="application/xml")
 
 
-@app.get("/review", response_class=HTMLResponse, include_in_schema=False)
-async def public_review_hub() -> HTMLResponse:
-    return HTMLResponse(seo_pages.render_review_hub_html(ashare_review.list_reviews(limit=90)))
 
 
-@app.get("/review/{date_str}", response_class=HTMLResponse, include_in_schema=False)
-async def public_review_page(date_str: str, request: Request) -> HTMLResponse:
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str or ""):
-        return HTMLResponse(render_not_found_html(), status_code=404)
-    review = ashare_review.review_for_date(date_str)
-    if not review:
-        return HTMLResponse(render_not_found_html(), status_code=404)
-    recent = ashare_review.list_reviews(limit=12)
-    try:
-        return HTMLResponse(seo_pages.render_review_page_html(review, recent, page_url=_canonical_url(request)))
-    except Exception:  # noqa: BLE001 — 复盘页是 SEO 主入口+签到载体，渲染失败宁出摘要版不出 500
-        logging.getLogger(__name__).exception("review page render failed, serving fallback: %s", date_str)
-        try:
-            return HTMLResponse(seo_pages.render_review_fallback_html(review, page_url=_canonical_url(request)))
-        except Exception:  # noqa: BLE001
-            return HTMLResponse(render_not_found_html(), status_code=404)
 
 
 def _seo_related_stocks(symbol: str, market: str) -> list[dict[str, Any]]:
@@ -10923,10 +10648,9 @@ async def public_stocks_all(page: int = 1) -> HTMLResponse:
 
 @app.get("/feed.xml", include_in_schema=False)
 async def public_feed() -> Response:
-    """RSS 2.0（C6）：复盘 + 资讯增量发现通道。"""
-    reviews = ashare_review.list_reviews(limit=25)
+    """RSS 2.0：财经资讯增量发现通道。"""
     articles = [m.model_dump(mode="json") for m in list_realtime_messages(topic="文章", exclude_futoucaixin=True, limit=25)]
-    return Response(seo_pages.render_feed_xml(reviews, articles),
+    return Response(seo_pages.render_feed_xml(articles),
                     media_type="application/rss+xml; charset=utf-8")
 
 
@@ -11244,12 +10968,6 @@ async def api_universal_search(request: Request, q: str = "") -> dict[str, Any]:
     return {"q": query, "stocks": stocks, "news": news, "reports": reports, "terms": terms, "boards": boards}
 
 
-@app.get("/track-record", response_class=HTMLResponse, include_in_schema=False)
-async def public_track_record_page(request: Request) -> HTMLResponse:
-    """「提前覆盖」战绩公开页：track_record 的确定性统计（每条可溯源），零 AI 叙述。
-    ⚠️只做「提前覆盖 N 次」事实表述，绝不出现命中率/准确率/收益归因（投顾红线）。"""
-    tr = track_record.platform_track_record(30, recent=30)
-    return HTMLResponse(seo_pages.render_track_record_page_html(tr, page_url=_canonical_url(request)))
 
 
 @app.get("/qa", response_class=HTMLResponse, include_in_schema=False)
@@ -11279,12 +10997,6 @@ async def og_stock(symbol: str) -> Response:
     return Response(og_image.stock_card(await asyncio.to_thread(data_latest, "seo_tear_sheet", sym) or {}, sym), media_type="image/png")
 
 
-@app.get("/og/review/{date_str}.png", include_in_schema=False)
-async def og_review(date_str: str) -> Response:
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str or ""):
-        return Response(og_image.generic_card(), media_type="image/png")
-    return Response(og_image.review_card(ashare_review.review_for_date(date_str) or {}, date_str),
-                    media_type="image/png")
 
 
 @app.get("/og/qa/{slug}.png", include_in_schema=False)
@@ -13723,7 +13435,7 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
                 # 短暂超时，回答仍然有真实指数、成交额和涨跌家数可引用。
                 if not stock and re.search(r"大盘|盘面|A股|股市|指数|行情|怎么走|为什么这样", message):
                     try:
-                        from .ashare_review import gather_market_structure
+                        from .market_structure import gather_market_structure
                         market_structure = await asyncio.wait_for(gather_market_structure(), timeout=10.0)
                         if market_structure:
                             run_hint = f"{run_hint}\n\n【本轮预取的A股市场硬数据】{json.dumps(market_structure, ensure_ascii=False)}"

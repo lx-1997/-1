@@ -1017,7 +1017,6 @@ PUBLIC_PREFIXES = (
     "/api/marketing/click",        # 自动营销邮件点击回流：用户无 JWT 也要能点回站（同 recall/click）
     "/api/realtime/messages",      # 实时快讯列表 + /stream SSE：免登录免费看（终端公开页核心体验）
     "/api/report/view/",           # 研报解读分享记录按 id 读（深链 ?report={id} 登录前先取标题/导语）；POST /api/report/share 不在此列、仍须登录
-    "/api/review/",                # A股收盘复盘：免登录可看（信息价值引流位）；/api/admin/review/* 仍受保护
     "/api/zsxq/",                  # 机构纪要：用户拍板放开给所有人含匿名（2026-07-06）；匿名负载在 handler 限为缓存首页
     "/research-workbench",
     # 管理端点（会员管理 / 看板私信）：无用户 JWT，由各 handler 自校验 DEEPFOCUS_MEMBERSHIP_TOKEN /
@@ -1057,7 +1056,6 @@ PUBLIC_EXACT = frozenset(
         "/api/glossary/index",     # 术语表索引（前端 termLinkify 词典，纯静态科普）
         "/api/headlines",           # AI 今日头条（免费引流位）
         "/api/news/reactions",      # 资讯聚合情绪（看多/看空计数）：匿名也可看，handler 内 mine 仅登录可见
-        "/api/track-record",        # 「我们提前发现的」平台战绩：公开引流（登录附个人战绩）
         "/api/ai-fund/snapshot",    # AI 模拟盘快照：公开展示位（净值/持仓/决策日志），/api/ai-fund/tick 仍受管理员保护
         "/api/ai-fund/arena",       # AI 策略竞技场排行榜：公开展示位（各派收益/排名/观点 + 沪深300）
         "/api/ai-fund/stock-factors", # 公开行情因子：只读资金统计与筹码模型，无策略执行/AI/账户资料
@@ -1086,7 +1084,6 @@ PUBLIC_EXACT = frozenset(
         "/api/metrics/referrals",   # 邀请活动看板数据（handler 自校验 metrics token）
         "/api/metrics/summary",
         "/api/metrics/activity",
-        "/api/metrics/review-quality",
         "/api/metrics/growth",      # 增长分析看板数据（handler 自校验 metrics token）
         "/api/metrics/marketing",   # 自动营销看板数据（handler 自校验 metrics token，同 growth）
         "/api/metrics/system",      # 系统连接/句柄容量监控（handler 自校验 metrics token）

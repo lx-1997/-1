@@ -15,6 +15,7 @@ interface GaugeData {
   temperature?: number;
   regime_label?: string;
   signal_usable?: boolean;
+  research_exposure_pct?: number | null;
   freshness?: string;
   reason?: string;
   model_version?: string;
@@ -43,6 +44,7 @@ interface GaugeData {
     evaluation?: string;
     execution?: string;
     validation?: string;
+    adopted_for_advice?: boolean;
     limitations?: string[];
     holdout?: {
       excess_pct: number;
@@ -67,8 +69,13 @@ interface Experiment {
 function Backtest({ data }: { data: NonNullable<GaugeData['backtest']> }) {
   if (!data.available || !data.holdout) return <div className="mp-disc">回测暂不可用：{data.reason || '共同历史不足'}</div>;
   const h = data.holdout;
+  const folds = data.folds || [];
+  const wins = folds.filter(f => f.excess_pct > 0).length;
+  const losses = folds.filter(f => f.excess_pct < 0).length;
+  const ties = folds.length - wins - losses;
+  const highCost = (data.cost_sensitivity || []).find(c => c.cost_bps_per_side === 10);
   return <details className="mp-bt">
-    <summary>固定规则回测 · {h.strategy.days} 日留出检验</summary>
+    <summary>策略复核 · {data.adopted_for_advice === true ? '通过研究门槛' : '暂不用于仓位建议'}</summary>
     <div className="mp-bt-note">{data.split_date} 至 {data.end} · 四指数同口径</div>
     <table className="mp-bt-table"><thead><tr><th>模拟对照</th><th>收益</th><th>最大回撤</th></tr></thead>
       <tbody>{[['环境规则', h.strategy], ['沪深300持有', h.benchmark], ['固定半仓', h.fixed_half]].map(([name, result]) => {
@@ -77,6 +84,8 @@ function Backtest({ data }: { data: NonNullable<GaugeData['backtest']> }) {
       })}</tbody></table>
     <div className="mp-bt-row">相对持有：{h.excess_pct > 0 ? '+' : ''}{h.excess_pct.toFixed(2)} 个百分点</div>
     <div className="mp-bt-row">{data.validation}</div>
+    <div className="mp-bt-row">留出分窗：{folds.length} 组，跑赢 {wins} / 跑输 {losses} / 持平 {ties}</div>
+    {highCost && <div className="mp-bt-row">每边成本升至 10bp：相对持有 {highCost.excess_pct > 0 ? '+' : ''}{highCost.excess_pct.toFixed(2)} 个百分点</div>}
     <div className="mp-bt-note">双边成本与滑点假设：每边 5bp；{data.execution}。</div>
     <div className="mp-bt-note">留出段分窗对照</div>
     {(data.folds || []).map(f => <div className="mp-bt-row" key={f.start}>{f.start} · {f.days}日 · 规则 {f.return_pct.toFixed(2)}% / 持有 {f.benchmark_pct.toFixed(2)}%</div>)}
@@ -256,56 +265,51 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
             <div className={`mp-disc ${gauge.signal_usable === false ? 'mp-quality-warning' : ''}`}>
               已完成日线 · {gauge.as_of} {gauge.freshness === 'lagging' ? '· 数据滞后' : ''}
             </div>
-            <div className="mp-row">
-              <span className="mp-k">技术形态</span>
-              {(gauge.temperature_trend?.length || 0) >= 2 && (
-                <Sparkline values={(gauge.temperature_trend || []).map(t => t.tech_score ?? 50)} width={64} height={16} />
-              )}
-              <span className={`mp-state ${TECH_POSITIVE.has(gauge.tech_state || '') ? 'up' : TECH_NEGATIVE.has(gauge.tech_state || '') ? 'down' : ''}`}>
-                {gauge.tech_state || '未知'}
-              </span>
-            </div>
-            <div className="mp-bands mp-bands--tight">
-              {TECH_BANDS.map(b => (
-                <span
-                  key={b.name}
-                  className={`mp-band ${gauge.tech_state === b.name ? 'on' : ''}`}
-                  title={`${b.name}：${b.desc}`}
-                >
-                  {b.name}
-                </span>
-              ))}
-            </div>
-            <div className="mp-row">
-              <span className="mp-k">资金热度</span>
-              {(gauge.temperature_trend?.length || 0) >= 2 && (
-                <Sparkline values={(gauge.temperature_trend || []).map(t => t.heat_score ?? 50)} width={64} height={16} />
-              )}
-              <span className={`mp-state ${HEAT_POSITIVE.has(gauge.heat_state || '') ? 'up' : HEAT_NEGATIVE.has(gauge.heat_state || '') ? 'down' : ''}`}>
-                {gauge.heat_state || '未知'}
-              </span>
-            </div>
-            <div className="mp-bands mp-bands--tight">
-              {HEAT_BANDS.map(b => (
-                <span
-                  key={b.name}
-                  className={`mp-band ${gauge.heat_state === b.name ? 'on' : ''}`}
-                  title={`${b.name}：${b.desc}`}
-                >
-                  {b.name}
-                </span>
-              ))}
-            </div>
-            {(gauge.dimensions || []).some(d => d.used && d.key !== 'technique') && (
-              <div className="mp-dims">
-                {(gauge.dimensions || []).filter(d => d.used && d.key !== 'technique').map(d => (
-                  <div className="mp-row" key={d.key}>
-                    <span className="mp-k">{d.name}</span>
-                    <span className="mp-dim">{d.score ?? '—'}</span>
-                  </div>
-                ))}
+            <div className="mp-position" aria-label="策略模拟敞口与仓位建议状态">
+              <div className="mp-position-head">
+                <span className="mp-k">策略模拟档位</span>
+                <strong>{typeof gauge.research_exposure_pct === 'number' ? `${gauge.research_exposure_pct}%` : gauge.signal_usable === false ? '暂停参考' : '暂不可用'}</strong>
               </div>
-            )}
+              <div className="mp-position-note">
+                {gauge.signal_usable === false
+                  ? '行情滞后或来源冲突，暂不显示研究档位。'
+                  : typeof gauge.research_exposure_pct === 'number'
+                    ? gauge.backtest?.adopted_for_advice === true
+                      ? '历史规则的模拟敞口，不等于个体账户仓位建议。'
+                      : '历史回测规则的模拟敞口；策略未通过建议门槛，不生成账户仓位建议。'
+                    : '暂无可复核档位；不生成账户仓位建议。'}
+              </div>
+            </div>
+            <div className="mp-row">
+              <span className="mp-k">趋势 · 量能</span>
+              <strong>{gauge.tech_state || '未知'} · {gauge.heat_state || '未知'}</strong>
+            </div>
+            <details className="mp-bt mp-breakdown">
+              <summary>评分拆解</summary>
+              <div className="mp-row">
+                <span className="mp-k">技术形态</span>
+                {(gauge.temperature_trend?.length || 0) >= 2 && <Sparkline values={(gauge.temperature_trend || []).map(t => t.tech_score ?? 50)} width={64} height={16} />}
+                <span className={`mp-state ${TECH_POSITIVE.has(gauge.tech_state || '') ? 'up' : TECH_NEGATIVE.has(gauge.tech_state || '') ? 'down' : ''}`}>{gauge.tech_state || '未知'}</span>
+              </div>
+              <div className="mp-bands mp-bands--tight">
+                {TECH_BANDS.map(b => <span key={b.name} className={`mp-band ${gauge.tech_state === b.name ? 'on' : ''}`} title={`${b.name}：${b.desc}`}>{b.name}</span>)}
+              </div>
+              <div className="mp-row">
+                <span className="mp-k">资金热度</span>
+                {(gauge.temperature_trend?.length || 0) >= 2 && <Sparkline values={(gauge.temperature_trend || []).map(t => t.heat_score ?? 50)} width={64} height={16} />}
+                <span className={`mp-state ${HEAT_POSITIVE.has(gauge.heat_state || '') ? 'up' : HEAT_NEGATIVE.has(gauge.heat_state || '') ? 'down' : ''}`}>{gauge.heat_state || '未知'}</span>
+              </div>
+              <div className="mp-bands mp-bands--tight">
+                {HEAT_BANDS.map(b => <span key={b.name} className={`mp-band ${gauge.heat_state === b.name ? 'on' : ''}`} title={`${b.name}：${b.desc}`}>{b.name}</span>)}
+              </div>
+              {(gauge.dimensions || []).some(d => d.used && d.key !== 'technique') && (
+                <div className="mp-dims">
+                  {(gauge.dimensions || []).filter(d => d.used && d.key !== 'technique').map(d => (
+                    <div className="mp-row" key={d.key}><span className="mp-k">{d.name}</span><span className="mp-dim">{d.score ?? '—'}</span></div>
+                  ))}
+                </div>
+              )}
+            </details>
             <details className="mp-bt">
               <summary>数据与评分依据</summary>
               <div className="mp-bt-note">{gauge.universe?.join(' / ')}；共用完成日线，当前分数与10日曲线使用相同规则。</div>
@@ -316,7 +320,7 @@ const MarketPulse: React.FC<{ variant?: 'rail' | 'strip' }> = ({ variant = 'rail
               <div className="mp-bt-note">规则版本 {gauge.model_version}</div>
             </details>
             {gauge.backtest && <Backtest data={gauge.backtest} />}
-            <div className="mp-disc">描述市场环境 · 不提供精确仓位建议</div>
+            <div className="mp-disc">模型档位仅用于复核策略；当前回测不足以生成账户仓位建议。</div>
           </div>
         ) : (
           <div className="mp-empty">{gauge?.reason || '市场状态暂不可用'}</div>

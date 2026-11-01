@@ -1,13 +1,12 @@
-"""公开 SEO / GEO 落地页：每日复盘页 + 个股速判卡页 + 文章软墙页 + 聚合页 + 站点地图 + llms.txt。
+"""公开 SEO / GEO 落地页：个股速判卡页 + 文章软墙页 + 聚合页 + 站点地图 + llms.txt。
 
 与 share_snapshots.py（一次性结论快照）互补：这里是**机器每天自动生产的常青内容**——
-- /review/{date}  每个交易日一篇收盘复盘 → 长期积累成可收录页面库
 - /stock/{symbol} 个股速判卡落地页 → 承接「XX股票 怎么样/估值」长尾搜索
 - /article/{id}   财经资讯软墙落地页（标题+来源+短导语公开可收录，全文需会员解锁）
-- /review、/stocks、/articles 聚合页 + /sitemap.xml、/robots.txt、/llms.txt → 给搜索/AI 爬虫一条完整的发现路径
+- /stocks、/articles 聚合页 + /sitemap.xml、/robots.txt、/llms.txt → 给搜索/AI 爬虫一条完整的发现路径
 
 设计要点：
-- 页面之间互相内链（复盘→近期复盘、个股→相关热门个股），既是站内推荐也是 SEO 内链。
+- 页面之间互相内链（个股→相关热门个股），既是站内推荐也是 SEO 内链。
 - 所有用户/数据内容均 html.escape 后注入；薄内容页（数据不足）输出 noindex 且不发结构化数据。
 - 结构化数据用单一 JSON-LD @graph：站级 Organization + WebSite(SearchAction) + 面包屑 + 主实体，
   publisher/author 用 @id 互引——这正是 AI 生成式引擎做归因/引用时抓取的实体骨架（GEO）。
@@ -268,7 +267,7 @@ def _page(
   <div class="brand"><a href="{_esc(BASE_URL)}/">◆ 稻草财经 金融数据</a></div>
   {body}
   <a class="cta" href="{_esc(cta_href or APP_URL)}">{_esc(cta_text or "在 稻草财经 上做深度研究 →")}</a>
-  <footer>{ai_notice}{_esc(_DISCLAIMER)} · <a href="{_esc(BASE_URL)}/review">每日复盘</a> · <a href="{_esc(BASE_URL)}/stocks">热门个股速判</a> · <a href="{_esc(BASE_URL)}/articles">财经资讯</a>{_icp_footer()}</footer>
+  <footer>{ai_notice}{_esc(_DISCLAIMER)} · <a href="{_esc(BASE_URL)}/stocks">热门个股速判</a> · <a href="{_esc(BASE_URL)}/articles">财经资讯</a>{_icp_footer()}</footer>
 </main>
 </body>
 </html>"""
@@ -281,190 +280,11 @@ def _icp_footer() -> str:
 
 
 # --------------------------------------------------------------------------- #
-# 每日复盘页
 # --------------------------------------------------------------------------- #
-def render_review_page_html(review: dict[str, Any], recent: list[dict[str, Any]], page_url: str = "") -> str:
-    date = str(review.get("date") or "")
-    session_label = str(review.get("session_label") or ("午盘复盘" if review.get("session") == "midday" else "收盘复盘"))
-    nar = review.get("narrative") or {}
-    # 源头中性化：one_liner 同时进 H1/标题/TL;DR/meta description，统一过一遍护栏，保证各处一致。
-    one_liner = neutralize_text(str(nar.get("one_liner") or ""))
-    title = f"{date} A股{session_label}：{one_liner[:40]}" if one_liner else f"{date} A股{session_label}"
-    canonical = page_url or f"{BASE_URL}/review/{date}"
-
-    # C5 内链：复盘里点名的个股 → /stock/{code}（最新内容→个股页，给爬虫一条到全市场速判面的发现路径）。
-    try:
-        from . import stock_name_index
-        _name2code = stock_name_index.all_name_code()
-    except Exception:  # noqa: BLE001
-        _name2code = {}
-
-    def _slink(name: Any) -> str:
-        code = _name2code.get(str(name or "").strip())
-        return (f'<a style="color:#9fd9c3;text-decoration:none" href="{_esc(BASE_URL)}/stock/{_esc(code)}">{_esc(name)}</a>'
-                if code else _esc(name))
-
-    parts: list[str] = [f"<h1>{_esc(title)}</h1>"]
-    parts.append(f'<div class="meta">{_esc(date)} · {_esc(session_label)} · 稻草财经 自动复盘</div>')
-    if one_liner:
-        # answer-first：开门见山一句可被 AI 引擎整段抽取的结论（自带日期，脱离上下文也成立）。
-        parts.append(f'<div class="tldr"><b>一句话</b>：截至 {_esc(date)} A股{_esc(session_label)}，{_esc(neutralize_text(one_liner))}</div>')
-
-    # C10 数字密集可抽取句（自带日期/单位、自洽，AI 引擎整段引用友好）。
-    _br = review.get("breadth") or {}
-    _topsec = (review.get("sectors") or {}).get("top") or []
-    _qbits = [f"{i.get('name')} {_fmt_pct(i.get('pct'))}" for i in (review.get("indices") or [])[:3] if i.get("name")]
-    if _br.get("total"):
-        _qbits.append(f"全市场上涨 {_br.get('advancers')} 家、下跌 {_br.get('decliners')} 家")
-    if _topsec:
-        _qbits.append(f"领涨 {_topsec[0].get('name')}（{_fmt_pct(_topsec[0].get('pct'))}）")
-    if _qbits:
-        parts.append(f'<p><strong>数据速览</strong>（截至 {_esc(date)}）：' + _esc("；".join(_qbits)) + "。</p>")
-
-    indices = review.get("indices") or []
-    if indices:
-        rows = "".join(
-            f"<tr><td>{_esc(i.get('name'))}</td><td>{_esc(i.get('close'))}</td>"
-            f"<td class=\"{'up' if _num(i.get('pct')) > 0 else 'down'}\">{_esc(_fmt_pct(i.get('pct')))}</td></tr>"
-            for i in indices[:6]
-        )
-        parts.append(f"<h2>大盘指数</h2><table><tr><th>指数</th><th>收盘</th><th>涨跌</th></tr>{rows}</table>")
-
-    breadth = review.get("breadth") or {}
-    if breadth.get("total"):
-        parts.append(
-            "<p>"
-            + _esc(
-                f"全市场 {breadth.get('total')} 家：上涨 {breadth.get('advancers')} / 下跌 {breadth.get('decliners')}，"
-                f"涨停 {breadth.get('limit_up')} 家、跌停 {breadth.get('limit_down')} 家。"
-            )
-            + "</p>"
-        )
-
-    sectors = review.get("sectors") or {}
-    sector_bits = []
-    for label, key in (("领涨板块", "top"), ("领跌板块", "bottom")):
-        items = sectors.get(key) or []
-        if items:
-            txt = "、".join(f"{s.get('name')}({_fmt_pct(s.get('pct'))})" for s in items[:5])
-            sector_bits.append(f"<p><strong>{_esc(label)}</strong>：{_esc(txt)}</p>")
-    if sector_bits:
-        parts.append("<h2>板块脉络</h2>" + "".join(sector_bits))
-
-    # 差异化卖点：我们提前发现的资讯 × 当日行情验证
-    edges = review.get("our_edge") or []
-    if edges:
-        rows = []
-        for e in edges[:8]:
-            lead = e.get("lead_hours")
-            lead_txt = f"提前 {lead:.0f} 小时" if isinstance(lead, (int, float)) and lead > 0 else "盘前"
-            rows.append(
-                f"<div class=\"dim\"><div class=\"hl\">{_slink(e.get('name'))} · {_esc(e.get('theme') or e.get('kind'))} "
-                f"<span class=\"{'up' if _num(e.get('pct')) > 0 else 'down'}\">{_esc(_fmt_pct(e.get('pct')))}</span></div>"
-                f"<ul><li>{_esc(lead_txt)}在 稻草财经 出现相关信号：{_esc(str(e.get('evidence') or '')[:160])}</li></ul></div>"
-            )
-        parts.append("<h2>我们提前发现了什么</h2>" + "".join(rows))
-
-    for label, key in (("市场怎么走", "market"), ("板块在交易什么", "sectors"), ("资金动向", "funds"), ("明日关注", "tomorrow")):
-        text = str(nar.get(key) or "").strip()
-        if text:
-            paras = "".join(f"<p>{_esc(neutralize_text(line))}</p>" for line in text.splitlines() if line.strip())
-            parts.append(f"<h2>{_esc(label)}</h2>{paras}")
-
-    others = [r for r in recent if r.get("date") and r.get("date") != date][:10]
-    if others:
-        links = "".join(
-            f'<a href="{_esc(BASE_URL)}/review/{_esc(r["date"])}">{_esc(r["date"])} {_esc(r.get("session_label") or "")}</a>'
-            for r in others
-        )
-        parts.append(f'<h2>近期复盘</h2><div class="chips">{links}</div>')
-
-    published = _iso(review.get("generated_at") or date)
-    article = {
-        "@type": "Article",
-        "headline": title[:110],
-        "description": (one_liner or f"{date} A股{session_label}复盘")[:200],
-        "inLanguage": "zh-CN",
-        "datePublished": published,
-        "dateModified": published,
-        "articleSection": "A股复盘",
-        "image": DEFAULT_OG_IMAGE,
-        "author": {"@id": ORG_ID},
-        "publisher": {"@id": ORG_ID},
-        "isAccessibleForFree": True,
-        **({"mainEntityOfPage": canonical} if canonical else {}),
-    }
-    trail = [("首页", f"{BASE_URL}/"), ("每日复盘", f"{BASE_URL}/review"), (f"{date} {session_label}", canonical)]
-    return _page(
-        title=title,
-        description=one_liner or f"{date} A股{session_label}：大盘、板块、资金与我们提前发现的资讯复盘。",
-        body="".join(parts),
-        canonical=canonical,
-        graph=_graph(_breadcrumb_node(trail), article),
-        image=f"{BASE_URL}/og/review/{date}.png",
-        ai_generated=True,  # 复盘叙述为 AI 合成 → 显式+隐式标识（《标识办法》硬要求）
-    )
 
 
-def render_review_fallback_html(review: dict[str, Any], page_url: str = "") -> str:
-    """复盘页降级兜底：完整渲染抛错时输出「日期+指数表+免责」摘要版，宁可薄不可 500。
-
-    只用防御式格式化（_esc/_fmt_pct/_num），不碰 narrative/our_edge 等复杂字段。
-    """
-    date = _esc(str(review.get("date") or ""))
-    session_label = _esc(str(review.get("session_label") or "收盘复盘"))
-    title = f"{date} A股{session_label}"
-    parts: list[str] = [f"<h1>{title}</h1>",
-                        f'<div class="meta">{date} · {session_label} · 稻草财经 自动复盘（摘要版）</div>']
-    rows = "".join(
-        f"<tr><td>{_esc(i.get('name'))}</td><td>{_esc(i.get('close'))}</td>"
-        f"<td class=\"{'up' if _num(i.get('pct')) > 0 else 'down'}\">{_esc(_fmt_pct(i.get('pct')))}</td></tr>"
-        for i in (review.get("indices") or [])[:6] if isinstance(i, dict) and i.get("name")
-    )
-    if rows:
-        parts.append(f"<h2>大盘指数</h2><table><tr><th>指数</th><th>收盘</th><th>涨跌</th></tr>{rows}</table>")
-    parts.append("<p>本期完整复盘正文暂时无法展示，可先查看近期其他复盘。</p>")
-    return _page(
-        title=title,
-        description=f"{title}：大盘指数摘要。",
-        body="".join(parts),
-        canonical=page_url or f"{BASE_URL}/review/{review.get('date') or ''}",
-        ai_generated=True,
-    )
 
 
-def render_review_hub_html(items: list[dict[str, Any]]) -> str:
-    # 按月分组：90 条一次铺开难读，按月份折叠成段，最新的月份在最前
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for it in items:
-        d = str(it.get("date") or "")[:7]
-        if d:
-            groups.setdefault(d, []).append(it)
-    if groups:
-        bits: list[str] = []
-        for month in sorted(groups, reverse=True):
-            rows = "".join(
-                f'<div class="dim"><div class="hl"><a style="color:#9fd9c3;text-decoration:none" '
-                f'href="{_esc(BASE_URL)}/review/{_esc(it.get("date"))}">{_esc(it.get("date"))} · {_esc(it.get("session_label") or "收盘复盘")}</a></div>'
-                f'<ul><li>{_esc((it.get("one_liner") or "")[:120])}</li></ul></div>'
-                for it in groups[month]
-            )
-            bits.append(f'<h2>{_esc(month)} · {len(groups[month])} 篇</h2>' + rows)
-        rows_html = "".join(bits)
-    else:
-        rows_html = "<p>暂无复盘，交易日 15:35 后自动生成。</p>"
-    body = (
-        "<h1>A股每日复盘归档</h1>"
-        '<div class="meta">每个交易日 11:40 / 15:35 自动生成：大盘 × 板块 × 资金 × 我们提前发现的资讯</div>' + rows_html
-    )
-    trail = [("首页", f"{BASE_URL}/"), ("每日复盘", f"{BASE_URL}/review")]
-    return _page(
-        title="A股每日复盘归档",
-        description="稻草财经 每个交易日自动生成的 A 股复盘：大盘指数、领涨领跌板块、资金动向，以及我们提前发现的资讯如何被当日行情验证。",
-        body=body,
-        canonical=f"{BASE_URL}/review",
-        graph=_graph(_breadcrumb_node(trail)),
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -801,7 +621,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
             '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
             '<li>解锁本文及全部财经资讯的<strong>完整原文</strong></li>'
             '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
-            '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>，以及每日 A 股收盘复盘</li>'
+            '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong></li>'
             '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">文章全文会员专享 · 行情与自选登录即用</p></div>'
         )
     else:
@@ -810,7 +630,7 @@ def render_article_page_html(article: dict[str, Any], recent: list[dict[str, Any
             '<h2>登录后你可以</h2>'
             '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
             '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
-            '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>，以及每日 A 股收盘复盘</li>'
+            '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong></li>'
             '<li>全部财经快讯第一时间<strong>推送提醒</strong></li>'
             '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">快讯免费 · 登录即用</p></div>'
         )
@@ -904,7 +724,7 @@ def render_note_page_html(topic: dict[str, Any], page_url: str = "") -> str:
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
         '<li>盘中<strong>机构调研纪要 / 个股动态点评</strong>持续更新</li>'
         '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
-        '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>与每日 A 股收盘复盘</li>'
+        '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong></li>'
         '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 打开即用</p></div>'
     )
     trail = [("首页", f"{BASE_URL}/"), ("机构纪要", f"{BASE_URL}/notes"), (title[:30], canonical)]
@@ -991,7 +811,7 @@ def render_report_page_html(report: dict[str, Any], recent: list[dict[str, Any]]
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
         '<li>阅读这份研报的<strong>完整 AI 解读</strong>（投资逻辑 / 利好利空 / 一句话启示）</li>'
         '<li>实时 A 股 / 港美股<strong>行情与自选盯盘</strong></li>'
-        '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong>，以及每日 A 股收盘复盘</li>'
+        '<li>个股 / 研报 / 快讯的<strong> AI 解读</strong></li>'
         '</ul><p style="margin:8px 0 0;color:#8b939b;font-size:13px">行情与资讯免费 · 登录即用</p></div>'
     )
 
@@ -1042,12 +862,12 @@ def render_reports_hub_html(items: list[dict[str, Any]]) -> str:
     ) or "<p>暂无研报解读。</p>"
     body = (
         "<h1>研报 AI 解读</h1>"
-        '<div class="meta">稻草财经 对券商 / 投行研报的 AI 速读，登录后查看完整解读并解锁行情 / 自选 / 复盘</div>' + rows
+        '<div class="meta">稻草财经 对券商 / 投行研报的 AI 速读，登录后查看完整解读并解锁行情 / 自选</div>' + rows
     )
     trail = [("首页", f"{BASE_URL}/"), ("研报解读", f"{BASE_URL}/reports")]
     return _page(
         title="研报 AI 解读",
-        description="稻草财经 对券商 / 投行研报的 AI 速读解读：登录后查看完整解读，并解锁实时行情、自选与每日复盘。",
+        description="稻草财经 对券商 / 投行研报的 AI 速读解读：登录后查看完整解读，并解锁实时行情与自选。",
         body=body,
         canonical=f"{BASE_URL}/reports",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1248,82 +1068,6 @@ def render_research_blog_index_html(items: list[dict[str, Any]]) -> str:
 # ⚠️措辞铁律：只用「提前覆盖 N 次」类事实表述——绝不出现命中率/准确率/收益归因
 # （帮你抓住 X% 涨幅等），那是变相宣传预测能力（无牌照投顾红线）。
 # --------------------------------------------------------------------------- #
-def render_track_record_page_html(record: dict[str, Any], page_url: str = "") -> str:
-    """近 30 天「提前覆盖」明细页：每条 = 标的/主题 + 日期 + 领先小时数 + 佐证链接（可溯源）。
-
-    record 为 track_record.platform_track_record() 输出：
-    {hit_count, avg_lead_hours, max_lead_hours, sector_hits, stock_hits, days_covered, days, recent:[…]}。
-    确定性统计（非 AI 生成）→ ai_generated=False。"""
-    rec = record or {}
-    days = rec.get("days") or 30
-    n = rec.get("hit_count") or 0
-    avg_lead = rec.get("avg_lead_hours") or 0
-    max_lead = rec.get("max_lead_hours") or 0
-    days_covered = rec.get("days_covered") or 0
-    canonical = page_url or f"{BASE_URL}/track-record"
-
-    parts: list[str] = [f"<h1>信息时效记录：近 {_esc(days)} 天提前覆盖 {_esc(n)} 次</h1>"]
-    parts.append(
-        '<div class="meta">稻草财经 聚合快讯/研报信号的发布时间 × 次日盘面事实的自动比对 · 每条均可溯源</div>'
-    )
-    if n:
-        # answer-first：一句纯事实概括（次数/领先小时数都是时间戳比对结果，非预测能力表述）。
-        parts.append(
-            f'<div class="tldr"><b>事实速览</b>：近 {_esc(days)} 天，稻草财经 站内信号在相关标的/板块被市场'
-            f"关注之前平均提前 {_esc(avg_lead)} 小时出现，共提前覆盖 {_esc(n)} 次、最长领先 {_esc(max_lead)} 小时，"
-            f"覆盖 {_esc(days_covered)} 个交易日（板块 {_esc(rec.get('sector_hits') or 0)} 次 / "
-            f"个股 {_esc(rec.get('stock_hits') or 0)} 次）。</div>"
-        )
-    else:
-        parts.append("<p>近期暂无可展示的提前覆盖记录，交易日复盘生成后自动更新。</p>")
-
-    rows: list[str] = []
-    for h in (rec.get("recent") or []):
-        name = str(h.get("name") or "").strip()
-        if not name:
-            continue
-        lead = h.get("lead_hours")
-        lead_txt = f"提前 {lead:.0f} 小时" if isinstance(lead, (int, float)) and lead > 0 else "盘前已覆盖"
-        kind_txt = "板块" if h.get("kind") == "sector" else "个股"
-        sig_bits: list[str] = []
-        for s in (h.get("signals") or [])[:3]:
-            st = str(s.get("title") or "").strip()
-            if not st:
-                continue
-            su = str(s.get("url") or "").strip()
-            if su.startswith("http"):
-                sig_bits.append(
-                    f'<li>佐证：<a style="color:#9fd9c3" href="{_esc(su)}" rel="nofollow">{_esc(st[:80])}</a></li>'
-                )
-            else:
-                sig_bits.append(f"<li>佐证：{_esc(st[:80])}</li>")
-        if not sig_bits and (h.get("reason") or "").strip():
-            sig_bits.append(f"<li>{_esc(str(h.get('reason'))[:120])}</li>")
-        rows.append(
-            f'<div class="dim"><div class="hl">{_esc(h.get("date"))} · {_esc(name)}'
-            f'<span style="color:#8b939b;font-size:13px">（{_esc(kind_txt)}）</span> · {_esc(lead_txt)}</div>'
-            f'<ul>{"".join(sig_bits)}</ul></div>'
-        )
-    if rows:
-        parts.append(f"<h2>近 {_esc(days)} 天提前覆盖明细</h2>" + "".join(rows))
-
-    parts.append(
-        "<h2>统计口径</h2>"
-        "<p>「提前覆盖」指：站内快讯/研报信号的发布时间戳，早于该标的/板块出现在次日复盘盘面事实中的时间，"
-        "且经复核确认相关（有判定理由或多条佐证）。本页只统计时间先后这一客观事实，"
-        "不代表因果关系，不代表未来会重复，不构成任何投资建议。</p>"
-    )
-    trail = [("首页", f"{BASE_URL}/"), ("提前覆盖记录", canonical)]
-    return _page(
-        title=f"信息时效记录：近{days}天提前覆盖{n}次",
-        description=f"稻草财经 近 {days} 天信息时效记录：站内信号提前覆盖 {n} 次、平均领先 {avg_lead} 小时，"
-                    "每条附时间戳与佐证链接，可逐条溯源。仅为发布时间事实统计，不构成投资建议。",
-        body="".join(parts),
-        canonical=canonical,
-        graph=_graph(_breadcrumb_node(trail)),
-        cta_href=APP_URL,
-        cta_text="到 稻草财经 看实时信号 →",
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1547,7 +1291,6 @@ def _sitemap_url(loc: str, lastmod: str = "", changefreq: str = "", priority: st
 
 
 def render_sitemap_xml(
-    review_dates: list[str],
     symbols: list[str],
     article_ids: Optional[list[str]] = None,
     lastmod_map: Optional[dict[str, str]] = None,
@@ -1564,13 +1307,11 @@ def render_sitemap_xml(
     lm = lastmod_map or {}
     entries: list[str] = [
         _sitemap_url(f"{BASE_URL}/", changefreq="daily", priority="1.0"),
-        _sitemap_url(f"{BASE_URL}/review", changefreq="daily", priority="0.9"),
         _sitemap_url(f"{BASE_URL}/stocks", changefreq="daily", priority="0.8"),
         _sitemap_url(f"{BASE_URL}/stocks/all", changefreq="daily", priority="0.7"),
         _sitemap_url(f"{BASE_URL}/qa", changefreq="daily", priority="0.7"),
         _sitemap_url(f"{BASE_URL}/articles", changefreq="hourly", priority="0.7"),
         _sitemap_url(f"{BASE_URL}/reports", changefreq="daily", priority="0.7"),
-        _sitemap_url(f"{BASE_URL}/track-record", changefreq="daily", priority="0.7"),
         _sitemap_url(f"{BASE_URL}/lhb", changefreq="daily", priority="0.7"),
         _sitemap_url(f"{BASE_URL}/notes", changefreq="hourly", priority="0.7"),
     ]
@@ -1581,9 +1322,6 @@ def render_sitemap_xml(
     entries.append(_sitemap_url(f"{BASE_URL}/learn", changefreq="weekly", priority="0.6"))
     for t in GLOSSARY:
         entries.append(_sitemap_url(f"{BASE_URL}/learn/{t['slug']}", changefreq="monthly", priority="0.5"))
-    for d in review_dates:
-        u = f"{BASE_URL}/review/{d}"
-        entries.append(_sitemap_url(u, lastmod=lm.get(u) or d, changefreq="weekly", priority="0.8"))
     for s in symbols:
         u = f"{BASE_URL}/stock/{s}"
         entries.append(_sitemap_url(u, lastmod=lm.get(u), changefreq="daily", priority="0.6"))
@@ -1640,12 +1378,11 @@ def render_llms_txt() -> str:
     """llms.txt（GEO）：给 AI 引擎一张「这站有什么可引用内容、在哪」的速查表（markdown）。"""
     return f"""# 稻草财经 金融数据 (daocaijing.com)
 
-> 面向中文投资者的 AI 投研工作台：A股每日收盘复盘、个股多维证据速判、财经资讯聚合与 AI 解读。
+> 面向中文投资者的 AI 投研工作台：个股多维证据速判、财经资讯聚合与 AI 解读。
 > 下列页面为证据引擎每日自动生成的常青内容，结构清晰、自带日期与证据，欢迎检索与引用。
 > 免责声明：所有内容由机器自动生成，仅供研究参考，不构成任何投资建议。
 
 ## 可引用内容
-- [A股每日复盘归档]({BASE_URL}/review)：每个交易日自动生成的大盘指数 / 领涨领跌板块 / 资金动向复盘，并标注我们提前发现的资讯如何被当日行情验证。
 - [热门个股多维证据速判]({BASE_URL}/stocks)：动量 / 催化 / 估值 / 资金面等多维证据，含信号方向、证据与置信度。单只个股见 {BASE_URL}/stock/{{symbol}}（如 {BASE_URL}/stock/AAPL）；全市场索引见 {BASE_URL}/stocks/all。
 - [投研问答]({BASE_URL}/qa)：用户高频股票 / 市场问题的 AI 多维取数解答，answer-first + FAQ 结构，每问一页。
 - [财经术语科普]({BASE_URL}/learn)：市盈率 / 换手率 / ROE / MACD / 杯柄形态等常用概念一文看懂（纯科普）。
@@ -1658,7 +1395,7 @@ def render_llms_txt() -> str:
 - {BASE_URL}/feed.xml（RSS 增量）
 
 ## 机器接入（MCP）
-- MCP Server：{BASE_URL}/api/mcp — 标准 Model Context Protocol（Streamable HTTP），提供每日复盘、个股证据速判、财经资讯检索、AI 投研问答等工具。
+- MCP Server：{BASE_URL}/api/mcp — 标准 Model Context Protocol（Streamable HTTP），提供个股证据速判、财经资讯检索、AI 投研问答等工具。
 - 接入方式：Bearer 个人接入令牌；到 {BASE_URL}/api/mcp/setup 自助创建令牌并查看连接说明。
 
 ## 引用规范
@@ -1668,16 +1405,9 @@ def render_llms_txt() -> str:
 """
 
 
-def render_feed_xml(reviews: list[dict[str, Any]], articles: list[dict[str, Any]]) -> str:
-    """RSS 2.0（C6）：每日复盘 + 资讯增量发现通道，喂百度/豆包/Kimi 等的 feed 抓取。"""
+def render_feed_xml(articles: list[dict[str, Any]]) -> str:
+    """RSS 2.0 财经资讯增量发现通道。"""
     items: list[tuple[str, str, str]] = []
-    for r in reviews[:25]:
-        d = str(r.get("date") or "")
-        if not d:
-            continue
-        label = str(r.get("session_label") or "收盘复盘")
-        items.append((f"{d} A股{label}", f"{BASE_URL}/review/{d}",
-                      neutralize_text(str(r.get("one_liner") or ""))))
     for a in articles[:25]:
         aid = str(a.get("id") or "")
         if not aid:
@@ -1692,9 +1422,9 @@ def render_feed_xml(reviews: list[dict[str, Any]], articles: list[dict[str, Any]
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<rss version="2.0"><channel>'
-        '<title>稻草财经 · A股每日复盘与财经资讯</title>'
+        '<title>稻草财经 · 财经资讯</title>'
         f'<link>{html.escape(BASE_URL)}/</link>'
-        '<description>每个交易日自动生成的 A 股复盘与财经资讯（仅供研究参考，不构成投资建议）。</description>'
+        '<description>财经资讯（仅供研究参考，不构成投资建议）。</description>'
         '<language>zh-CN</language>'
         f'{item_xml}</channel></rss>'
     )
@@ -1718,7 +1448,6 @@ def render_about_page_html() -> str:
         '<div class="meta">现代化个股投研智库 —— 从信息到决策，钻井式深度研究</div>'
         "<h2>我们做什么</h2>"
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
-        "<li><strong>A 股每日复盘</strong>：每个交易日 11:40 / 15:35 自动生成大盘 × 板块 × 资金复盘，并标注我们提前发现的资讯如何被当日行情验证</li>"
         "<li><strong>个股多维证据速判</strong>：动量 / 催化 / 估值 / 资金面等多维证据链，给出信号方向、证据与置信度</li>"
         "<li><strong>AI 策略实验室</strong>：五只 AI 策略模拟盘的公开业绩，与沪深 300 逐日对比</li>"
         "<li><strong>AI 蒸馏资讯</strong>：从海量快讯 / 研报中蒸馏出与持仓相关的决策内参</li>"
@@ -1731,7 +1460,6 @@ def render_about_page_html() -> str:
         "</ul></div>"
         "<h2>从这里开始</h2>"
         '<div class="chips">'
-        f'<a href="{_esc(BASE_URL)}/review">每日复盘</a>'
         f'<a href="{_esc(BASE_URL)}/stocks">个股研究</a>'
         f'<a href="{_esc(BASE_URL)}/articles">财经资讯</a>'
         f'<a href="{_esc(BASE_URL)}/ai-fund">AI 策略业绩</a>'
@@ -1742,7 +1470,7 @@ def render_about_page_html() -> str:
     trail = [("首页", f"{BASE_URL}/"), ("关于我们", f"{BASE_URL}/about")]
     return _page(
         title="关于 稻草财经",
-        description="稻草财经（深度焦点）是现代化个股投研智库：A 股每日复盘、个股多维证据速判、AI 策略模拟盘业绩与 AI 蒸馏资讯，钻井式深度研究。",
+        description="稻草财经（深度焦点）是现代化个股投研智库：个股多维证据速判、AI 策略模拟盘业绩与 AI 蒸馏资讯，钻井式深度研究。",
         body=body,
         canonical=f"{BASE_URL}/about",
         graph=_graph(_breadcrumb_node(trail)),
@@ -1757,13 +1485,13 @@ def render_partners_page_html() -> str:
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
         "<li>个股证据速判卡（verdict）：确定性引擎输出的信号 / 证据 / 置信度</li>"
         "<li>个股 tearsheet：多维证据的结构化快照</li>"
-        "<li>每日复盘与财经资讯的结构化数据</li>"
+        "<li>财经资讯的结构化数据</li>"
         "</ul></div>"
         f'<div class="chips"><a href="{_esc(BASE_URL)}/api/v1/docs">查看完整 API 文档 →</a></div>'
         "<h2>数据覆盖</h2>"
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'
         "<li>A 股 / 港股 / 美股标的的多维证据与热度数据</li>"
-        "<li>交易日自动生成的复盘与解读内容</li>"
+        "<li>财经资讯与解读内容</li>"
         "</ul></div>"
         "<h2>合作通道</h2>"
         '<div class="dim"><ul style="margin:0;padding-left:18px;color:#c7ccd1">'

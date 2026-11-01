@@ -1505,42 +1505,13 @@ register_tool(AgentTool(
 ))
 
 
-async def _tool_get_daily_review(date: Optional[str] = None) -> Any:
-    """本平台最新一期 A股收盘复盘（大盘/板块/资金主线 + 我们提前发现的资讯对照）。这是平台自有的差异化内容。"""
-    from .ashare_review import latest_review, review_for_date
-    rv = review_for_date(date) if (date or "").strip() else latest_review()
-    if not rv:
-        return None
-    nar = rv.get("narrative") or {}
-    return {
-        "date": rv.get("date"), "session": rv.get("session_label") or rv.get("session"),
-        "one_liner": nar.get("one_liner", ""),
-        "market": nar.get("market", ""), "sectors": nar.get("sectors", ""),
-        "funds": nar.get("funds", ""), "tomorrow": nar.get("tomorrow", ""),
-        "our_edge": [e.get("title") or e.get("name") for e in (rv.get("our_edge") or [])[:8] if isinstance(e, dict)],
-    }
 
-
-register_tool(AgentTool(
-    name="get_daily_review",
-    description=(
-        "获取本平台最新（或指定日期）的 A股收盘复盘：大盘/板块/资金主线的买方综述，以及"
-        "『我们提前发现的资讯』与盘面的对照。回答大盘行情、板块轮动、今日盘面时优先引用本工具（平台自有内容）。"
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "date": {"type": "string", "description": "YYYY-MM-DD，缺省取最新一期"},
-        },
-    },
-    handler=_tool_get_daily_review,
-))
 
 
 async def _tool_get_market_structure() -> Any:
     """A股市场结构硬数据：指数涨跌/两市成交额vs昨日/涨跌家数/涨停跌停/板块分布+主力净额/连板梯队。
     盘中问也能拿到当时的真实快照。回答『今天股市为什么这样走/量能如何/赚钱效应』必须先取本工具。"""
-    from .ashare_review import gather_market_structure
+    from .market_structure import gather_market_structure
     d = await gather_market_structure()
     # 有任一硬数据块就算可用（各部分独立降级）
     if not (d.get("indices") or d.get("breadth", {}).get("total") or d.get("turnover") or d.get("sectors_top")):

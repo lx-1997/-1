@@ -41,7 +41,7 @@ TOOL_ALLOWLIST = frozenset({
     "assess_long_term_bull", "search_our_content", "get_site_fast_news",
     "get_site_articles", "get_industry_context", "get_peer_comparison",
     "get_supply_chain_context", "get_theme_stocks", "get_limit_up_ladder",
-    "get_stock_research", "get_daily_review", "get_recent_research",
+    "get_stock_research", "get_recent_research",
     "get_institution_notes", "get_ai_fund_snapshot", "get_ai_fund_arena",
     "get_recent_content_digest",
     "get_hot_stocks", "get_market_data", "get_celebrity_views",

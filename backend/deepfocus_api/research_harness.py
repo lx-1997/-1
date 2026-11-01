@@ -213,7 +213,6 @@ _LIVE_REFERENCE_LABELS = {
     "get_recent_research": "投行研报",
     "get_institution_notes": "机构纪要",
     "get_recent_content_digest": "资料",
-    "get_daily_review": "复盘",
     "get_stock_news": "公开资讯",
     "get_stock_announcements": "公告",
     "evidence_rag": "证据资料",
@@ -226,7 +225,6 @@ _LIVE_REFERENCE_SOURCE_LABELS = {
     "get_stock_research": "公开研报库",
     "get_recent_research": "稻草财经投行研报",
     "get_institution_notes": "稻草财经机构纪要",
-    "get_daily_review": "稻草财经复盘",
     "get_stock_news": "公开财经资讯",
     "get_stock_announcements": "公司公告",
 }
@@ -363,8 +361,7 @@ def _trace(tool: str, result: dict[str, Any], *, args: dict[str, Any]) -> dict[s
             "get_institution_notes": "稻草财经机构纪要",
             "get_recent_content_digest": "稻草财经四类资料统一索引",
             "get_celebrity_views": "名人观点（白名单）",
-            "get_daily_review": "稻草财经复盘",
-            "get_industry_context": "行业归属与行业资料",
+                    "get_industry_context": "行业归属与行业资料",
             "get_peer_comparison": "同行候选",
             "get_supply_chain_context": "上下游资料",
         }.get(tool, source)
@@ -749,7 +746,6 @@ async def build_research_packet(
             # 名人观点是白名单专属工具。普通用户会得到“未开放”的结构化提示，
             # 不会泄露内容；白名单用户则由 execute_tool 的 ContextVar 门控后纳入综合。
             ("get_celebrity_views", {"query": content_query}),
-            ("get_daily_review", {}),
         ])
     else:
         # 非个股问题用宏观/站内内容，不强行拼一个标的。
@@ -763,8 +759,7 @@ async def build_research_packet(
         else:
             calls.extend([
                 ("get_market_data", {"query": objective[:120]}),
-                ("get_daily_review", {}),
-                ("search_our_content", {"query": objective[:80], "days": 3, "limit": 20}),
+                    ("search_our_content", {"query": objective[:80], "days": 3, "limit": 20}),
                 ("get_recent_research", {"query": objective[:80], "limit": 8}),
             ])
 

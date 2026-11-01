@@ -319,7 +319,7 @@ def _evidence_q_context(name: str, symbol: str) -> str:
         f"你是观点与情报取证分析师。对 {name}（{symbol}）依次：①调用 get_analyst_consensus 取卖方一致预期；"
         f"②**必须调用 get_stock_research（symbol={symbol}）取本平台研报面板的券商研报**（东财近 2 年，标题/机构/评级/"
         "日期）——这是核实『我们网站能查到的研报』的主力，务必调用；③用 search_our_content 换 2-3 个关键词（公司名/"
-        "所属板块/近期催化）补检索快讯·文章；④调用 get_daily_review 取最新 A股复盘看板块资金主线。"
+        "所属板块/近期催化）补检索快讯·文章；④必要时调用 get_market_structure 读取结构化市场数据。"
         "**不要调用 get_stock_verdict**。汇总『券商研报怎么看（列机构+评级+标题）+ 外部一致预期 + 我们提前覆盖了什么』，"
         "不做方向判断，≤220字。"
     )

@@ -127,17 +127,10 @@
 .bbt.bbt-with-sidebar .bbt-side-item.active { box-shadow: none; }
 .bbt.bbt-with-sidebar .bbt-side-item.active .bbt-side-icon { color: var(--accent); }
 .bbt.bbt-with-sidebar .bbt-ph { border-bottom-color: var(--border-soft); }
-.bbt.bbt-with-sidebar .bbt-review-workspace { margin: 24px var(--dc-gutter); background: var(--surface); border-color: var(--border-soft); border-radius: var(--r-m); box-shadow: none; }
-.bbt.bbt-with-sidebar .bbt-review-workspace-head { background: var(--surface); border-color: var(--border-soft); }
-.bbt.bbt-with-sidebar .bbt-review-workspace-head h1 { color: var(--text); font-weight: 650; }
-.bbt.bbt-with-sidebar .bbt-review-workspace-head p { color: var(--text-muted); }
-.bbt.bbt-with-sidebar .bbt-review-workspace-eyebrow { color: var(--text-muted); }
-.bbt.bbt-with-sidebar .bbt-review-workspace-open { background: var(--accent-soft); color: var(--accent); border-color: transparent; box-shadow: none; }
 @media (max-width: 820px) {
   .bbt.bbt-with-sidebar.bbt-side-market .bbt-grid.bbt-grid--rail { grid-template-columns: minmax(0,1fr); }
   .bbt.bbt-with-sidebar .bbt-mobile-nav button.active > span { color: var(--accent); }
   .bbt.bbt-with-sidebar .bbt-mobile-nav button > span { display: flex; justify-content: center; }
-  .bbt.bbt-with-sidebar .bbt-review-workspace { margin: 16px var(--dc-gutter); }
 }
 .bbt.bbt-with-sidebar :is(.dc-intro,.dc-page-heading) { scroll-margin-top: 76px; }
 /* Responsive type and spacing replace whole-document zoom. Fixed navigation
