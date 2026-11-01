@@ -19,7 +19,7 @@ from .quant_corporate_actions import BJ, timestamp
 from .quant_research_engine import digest
 
 VERSION = 'qr-financial-receipt-v1'
-VALIDATOR_VERSION = 'qr-financial-source-validator-v5'
+VALIDATOR_VERSION = 'qr-financial-source-validator-v6'
 # Exact reviewed source identity of the original immutable v1 archive (af7e1a8).
 # This is a data/source whitelist, never permission to execute archived code.
 KNOWN_V1_SOURCE_PINS = {
@@ -43,8 +43,13 @@ KNOWN_V3_SOURCE_PINS = {'quant_financial_vintages.py': '3a04a0a6a71489ba81f58366
 # Exact pre-path-upgrade source: ASCII org IDs, uppercase-only PDF URLs.
 KNOWN_V4_SOURCE_PINS = {'quant_financial_vintages.py': '0eb2193a9a4531264b8b0bdfa9194ac38a5940e40078a0d0da2cd6d4dd994a9b', 'quant_corporate_actions.py': '89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996', 'quant_research_engine.py': 'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5', 'quant_financial_store.py': 'b28cfb10f735fb8a29cb7624c0ee04ac886597c538eb7ff6299ebf8d2baa9998'}
 
+# Exact pre-capacity-upgrade source; its URL/identity domain already permits both PDF cases.
+KNOWN_V5_SOURCE_PINS = {'quant_financial_vintages.py': '16481fb39bd8ec6a49b7109b3aa85f50e189db8e93a5969aceaab1091ab43c7c', 'quant_corporate_actions.py': '89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996', 'quant_research_engine.py': 'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5', 'quant_financial_store.py': 'd387866948aa5e82180aec2f1ffd409d789d63aaebe53400f53d48cbb35cde8f'}
+
 VISIBILITY = 'next_beijing_calendar_day_after_transaction_recording'
-MAX_OWNER_BYTES = 100 * 1024 * 1024
+# Aggregate retained source budget for the declared 64-company internal cohort.
+# Per-import, PDF, identity, clock and strategy eligibility limits are unchanged.
+MAX_OWNER_BYTES = 512 * 1024 * 1024
 MAX_BUNDLES = 100
 
 
@@ -90,6 +95,7 @@ def source_profile(value):
     if archived==KNOWN_V2_SOURCE_PINS:return 'known_v2_revalidated'
     if archived==KNOWN_V3_SOURCE_PINS:return 'known_v3_revalidated'
     if archived==KNOWN_V4_SOURCE_PINS:return 'known_v4_revalidated'
+    if archived==KNOWN_V5_SOURCE_PINS:return 'known_v5_revalidated'
     raise ValueError('Financial receipt source identity is unknown')
 
 
@@ -111,7 +117,7 @@ def verify_row(c, row):
         if any(not re.fullmatch(r'cninfo:[0-9]{5,20}',r['issuer_id'])
                for manifest in (incoming['manifest'],effective) for r in manifest['vintages']):
             raise ValueError('Legacy financial source requires numeric issuer identity')
-    if profile!='current' and any(not record['source_url'].endswith('.PDF')
+    if profile not in {'current','known_v5_revalidated'} and any(not record['source_url'].endswith('.PDF')
                                     for manifest in (incoming['manifest'],effective) for record in manifest['vintages']):
         raise ValueError('Legacy financial source requires uppercase PDF URL')
     created = timestamp(row['created'])

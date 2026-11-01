@@ -18,7 +18,9 @@ KNOWN_V1_SOURCE_PINS={**base.KNOWN_V3_SOURCE_PINS,
     'quant_financial_fact_store.py':'9f5f4c27f77179ff66bc1c4085c5da4c8e273923eaf943713aaa01d230f3ce55'}
 KNOWN_V2_SOURCE_PINS={**base.KNOWN_V4_SOURCE_PINS,
     'quant_financial_fact_store.py':'7966de573e89c1e80252843633d9dd62e09269ef99cf67fcc75d818056dbd972'}
-VALIDATOR_VERSION='qr-typed-source-validator-v3'
+# Exact pre-capacity-upgrade typed source, with both exact PDF URL cases.
+KNOWN_V3_SOURCE_PINS={'quant_financial_vintages.py': '16481fb39bd8ec6a49b7109b3aa85f50e189db8e93a5969aceaab1091ab43c7c', 'quant_corporate_actions.py': '89fadf0d5369ef7d7c8a0aeec368124cef8eaca5dcb5371298c4204206ee3996', 'quant_research_engine.py': 'b3852688c331aebfe06515f54fc2b7a35191e90a587697f4424e771eea9893d5', 'quant_financial_store.py': 'd387866948aa5e82180aec2f1ffd409d789d63aaebe53400f53d48cbb35cde8f', 'quant_financial_fact_store.py': '7d565efb59bc2e418980977adb5eab168427229efca372d60b026e3dfcf5df7a'}
+VALIDATOR_VERSION='qr-typed-source-validator-v4'
 FLOW_METRICS={'consolidated_net_profit','minority_net_profit','cashflow_asset_impairment',
  'cashflow_fixed_asset_depreciation','cashflow_right_of_use_depreciation','cashflow_intangible_amortization',
  'cashflow_deferred_expense_amortization','cashflow_long_asset_disposal_loss','cashflow_scrapping_loss',
@@ -50,6 +52,7 @@ def source_profile(value):
     if archived==LOADED_PINS:return 'current'
     if archived==KNOWN_V1_SOURCE_PINS:return 'known_v1_revalidated'
     if archived==KNOWN_V2_SOURCE_PINS:return 'known_v2_revalidated'
+    if archived==KNOWN_V3_SOURCE_PINS:return 'known_v3_revalidated'
     raise ValueError('Typed extraction source identity is unknown')
 
 
@@ -139,7 +142,7 @@ def verify_row(c,row,cache=None):
     if profile=='known_v1_revalidated' and any(not re.fullmatch(r'cninfo:[0-9]{5,20}',r['issuer_id'])
                                   for r in parent['effective_manifest']['vintages']):
         raise ValueError('Legacy typed source requires numeric issuer identity')
-    if profile!='current' and any(not r['source_url'].endswith('.PDF') for r in parent['effective_manifest']['vintages']):
+    if profile not in {'current','known_v3_revalidated'} and any(not r['source_url'].endswith('.PDF') for r in parent['effective_manifest']['vintages']):
         raise ValueError('Legacy typed source requires uppercase PDF URL')
     if v['parent_fingerprint']!=digest(parent) or timestamp(row['created'])<timestamp(parent['recorded_at']):raise ValueError('Parent provenance or clock changed')
     validate_facts(incoming['facts'],parent)
