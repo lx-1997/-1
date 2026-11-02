@@ -2,11 +2,12 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { apiGet, apiPost } from '../services/apiClient';
 import { getAuthSnapshot, isAuthRevisionCurrent, subscribeAuth } from '../state/authSession';
 import './ResearchWorkspace.css';
+import ResearchScenarioCalculator, { SavedScenario, ScenarioInput } from './ResearchScenarioCalculator';
 
 interface Fact { status: string; value: string | number | null }
 interface Evidence { status: string; fields?: Record<string, Fact>; currency?: string; source?: string; report_date?: string; published_date?: string; period_basis?: string; issues?: string[] }
 interface Revision { id: string; created: number; config_version: number; payload: { evidence: Record<string, Evidence>; changed_modules?: string[]; changes?: {tool: string; field: string; before?: Fact; after?: Fact}[]; report: { analysis_status?: string; evidence_audit?: {checks?: {tool: string; market_time?: string; fetched_at?: string}[]}; followup_question?: string; summary?: string; observations?: { tool: string; field: string; interpretation: string }[]; hypothesis_updates?: string[] }; project_context?: { notes: string; hypotheses: string[] } } }
-interface Project { id: string; title: string; symbol: string; market: string; objective: string; notes: string; hypotheses: string[]; interval_seconds: number; version: number; next_due: number; revision_cursor?: string | null; revisions?: Revision[]; runs?: { id: string; status: string; progress: number }[]; last_observation?: { created: number; changed: number } }
+interface Project { id: string; title: string; symbol: string; market: string; objective: string; notes: string; hypotheses: string[]; interval_seconds: number; version: number; next_due: number; revision_cursor?: string | null; revisions?: Revision[]; scenarios?: SavedScenario[]; runs?: { id: string; status: string; progress: number }[]; last_observation?: { created: number; changed: number } }
 const labels: Record<string, string> = { get_market_quote: '行情', get_valuation: '估值', get_financials: '财报', get_financial_statements: '财务三表', get_analyst_consensus: '卖方观点', price: '价格', change_percent: '涨跌幅', pe_ratio: 'PE（以来源口径为准）', pe_dynamic: '动态 PE', forward_pe: '前瞻 PE', pb_ratio: 'PB', market_cap: '总市值', revenue: '营业收入', net_income: '净利润', eps: '每股收益', revenue_yoy: '营收同比', profit_yoy: '利润同比', roe: 'ROE', capex: '资本开支', free_cash_flow: '自由现金流', rating: '评级', consensus_rating: '聚合评级', analyst_count: '分析师人数', institution_count: '机构覆盖', target_price: '目标价', avg_target_price: '平均目标价', forecast_eps_this_year: '来源本年预测 EPS' };
 const statuses: Record<string, string> = { usable: '结构检查通过', limited: '存在口径限制', rejected: '已拒绝引用', no_data: '暂无数据', unavailable: '暂不可用', pending: '排队中', running: '核验与分析中', completed: '本轮检查完成', failed: '检查失败，可重试', cancelled: '已取消', generated: 'AI 研究解读', insufficient_data: '事实不足', unchanged: '事实未变化' };
 const issueLabels: Record<string, string> = { market_time_timezone_unspecified: '行情时间未说明时区，不能据此认定实时性', issuer_not_returned: '来源未返回主体代码', currency_unspecified: '来源未说明币种', source_unspecified: '来源标识缺失', as_of_missing: '来源时点未返回', period_basis_unspecified: '累计或单季口径未说明', publication_date_missing_not_point_in_time: '披露时间缺失，不可用于历史时点验证', report_period_missing: '报告期间缺失', historical_report_only: '仅有历史财报，不能称为最新', historical_snapshot_only: '仅有历史快照', pe_basis_unspecified: 'PE 的 TTM 或前瞻口径未说明' };
@@ -70,10 +71,11 @@ export default function ResearchWorkspace() {
     return () => { controller.abort(); clearTimeout(timer); };
   }, [selected, session.revision, session.token]);
 
+  const storedHypotheses = (detail?.hypotheses || []).join('\n');
   useEffect(() => {
-    setNotes(detail?.notes || ''); setHypotheses((detail?.hypotheses || []).join('\n'));
+    setNotes(detail?.notes || ''); setHypotheses(storedHypotheses);
     setIntervalValue(detail?.interval_seconds || 0);
-  }, [detail?.id, detail?.version]);
+  }, [detail?.id, detail?.notes, detail?.interval_seconds, storedHypotheses]);
 
   async function action(work: () => Promise<void>) {
     const revision = session.revision;
@@ -98,6 +100,19 @@ export default function ResearchWorkspace() {
     if (isAuthRevisionCurrent(requestRevision) && selectedRef.current === current.id) {
       setDetail(next); setFollowup(''); refreshRequest.current = null;
     }
+  }
+  async function saveScenario(input: ScenarioInput) {
+    if (!current) return;
+    const authRevision = session.revision;
+    setBusy(true); setError('');
+    try {
+      await apiPost(`/api/research/projects/${current.id}/scenarios`, input);
+      const next = await apiGet<Project>(`/api/research/projects/${current.id}`);
+      if (isAuthRevisionCurrent(authRevision) && selectedRef.current === current.id) setDetail(next);
+    } catch (err) {
+      if (isAuthRevisionCurrent(authRevision)) setError(errorText(err));
+      throw err;
+    } finally { if (isAuthRevisionCurrent(authRevision)) setBusy(false); }
   }
   if (!session.token) return <section className="rw-space"><h2>研究空间</h2><p>登录后保存私有研究、笔记和跟踪设置。</p></section>;
 
@@ -140,6 +155,7 @@ export default function ResearchWorkspace() {
           <h4>事实与覆盖</h4><p className="rw-caption">以下为数据源原始数值。结构检查通过不代表独立原文审计；缺失字段保持为空。</p>
           <div className="rw-evidence">{Object.entries(revision.payload.evidence).filter(([, value]) => value.fields).map(([tool, evidence]) => <article key={tool}><header><b>{labels[tool] || tool}</b><span>{statuses[evidence.status] || evidence.status}</span></header><p className="rw-caption">{evidence.report_date ? `报告期 ${evidence.report_date} · ${evidence.period_basis || '累计/单季口径未返回'}` : '请以本轮来源时点为准'}{evidence.currency ? ` · ${evidence.currency}` : ' · 币种未返回'}{evidence.published_date ? ` · 披露 ${evidence.published_date}` : ''}</p>{!!evidence.issues?.length && <p className="rw-caption">{evidence.issues.map(issue => issueLabels[issue] || '此项元数据需复核').join('；')}</p>}<p className="rw-caption">来源时间：{report?.evidence_audit?.checks?.find(check => check.tool === tool)?.market_time || report?.evidence_audit?.checks?.find(check => check.tool === tool)?.fetched_at || '未返回'}</p><dl>{Object.entries(evidence.fields || {}).map(([field, fact]) => <div key={field}><dt>{labels[field] || field}</dt><dd>{['usable', 'limited'].includes(fact.status) ? String(fact.value) : '—'}</dd></div>)}</dl>{evidence.source && (/^https:\/\//i.test(evidence.source) ? <a href={evidence.source} target="_blank" rel="noreferrer">查看数据来源 ↗</a> : <small>来源：{evidence.source}</small>)}</article>)}</div>
         </>}
+        {revision && <ResearchScenarioCalculator revisionId={revision.id} quote={revision.payload.evidence.get_market_quote} scenarios={current.scenarios || []} busy={busy} blocked={running || notes !== current.notes || hypotheses !== current.hypotheses.join('\n') || interval !== current.interval_seconds} onSave={saveScenario} />}
         <details className="rw-settings" open={!revision}><summary>研究笔记、假设与持续跟踪</summary><label>个人笔记（观点，不作为已核实事实）<textarea value={notes} maxLength={8000} onChange={event => setNotes(event.target.value)} /></label><label>待验证假设（每行一条，最多十二条）<textarea value={hypotheses} onChange={event => setHypotheses(event.target.value)} /></label><label>自动跟踪频率<select value={interval} onChange={event => setIntervalValue(Number(event.target.value))}><option value={0}>手动检查</option><option value={86400}>每天检查</option><option value={604800}>每周检查</option></select></label><p className="rw-caption">检查行情、财报、估值、卖方观点及资料变化；仅变化时更新解读。可随时改为手动停止定期跟踪。</p><button disabled={busy} onClick={() => { const requestRevision = session.revision; void action(async () => {
           const updated = await apiPost<Project>(`/api/research/projects/${current.id}/settings`, { expected_version: current.version, notes, hypotheses: hypotheses.split('\n').map(item => item.trim()).filter(Boolean), interval_seconds: interval });
           if (isAuthRevisionCurrent(requestRevision) && selectedRef.current === current.id) setDetail(updated);

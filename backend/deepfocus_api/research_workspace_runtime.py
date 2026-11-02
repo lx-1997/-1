@@ -55,11 +55,13 @@ async def process_project_task(task, lease: str, progress, llm_factory):
                     "只有当期EPS时不能声称EPS同比或环比增长；ROE是期间比率，不是存量指标，不得将累计ROE当成年化ROE。"
                     "没有现金流证据不能断言盈利质量或现金转化改善，没有同行基准不能直接断言估值便宜或盈利水平行业领先。"
                     "不要补写未在本轮结构化字段出现的新闻、资本开支或股价事件。"
+                    "用户保存的情景仅是自选参数，不是财报或预测证据，不能作为盈利已改善或估值合理的依据。"
                     "不要给下单指令。历史版本仅供对比，不能当本轮新证据。\n"
                     "summary、interpretation和hypothesis_updates只写不含数字的定性解释；所有数值由系统用关联字段单独展示，不在解释中重写数字或百分比。\n"
                     + json.dumps({"objective": project["objective"], "current_followup_question": followup_question,
                                   "evidence": {key: value for key, value in state.items() if "fields" in value},
                                   "user_opinions_not_evidence": {"notes": project["notes"], "hypotheses": project["hypotheses"]},
+                                  "user_scenarios_not_evidence": [item["payload"] for item in project.get("scenarios", [])[:3]],
                                   "previous": {"evidence": {key: value for key, value in previous["payload"].get("evidence", {}).items() if "fields" in value},
                                                "report": {key: previous["payload"].get("report", {}).get(key) for key in ("summary", "observations", "hypothesis_updates")}} if previous else None}, ensure_ascii=False)
                 )

@@ -32,6 +32,17 @@ class RefreshRequest(BaseModel):
     followup_question: str = Field(default="", max_length=2000)
 
 
+class ScenarioRequest(BaseModel):
+    request_key: str = Field(min_length=1, max_length=100)
+    revision_id: str = Field(min_length=1, max_length=100)
+    annual_eps: str = Field(min_length=1, max_length=50)
+    pe: str = Field(min_length=1, max_length=50)
+    fiscal_year: int = Field(ge=1900, le=2200)
+    currency: str = Field(min_length=3, max_length=3)
+    share_basis_confirmed: bool = False
+    source_note: str = Field(default="", max_length=500)
+
+
 def owner(user):
     key = str(user.get("sub") or "").strip()
     if not key:
@@ -77,3 +88,8 @@ def project_revisions(project_id: str, before: str, limit: int = Query(default=3
 def refresh_project(project_id: str, body: RefreshRequest, user: dict = Depends(require_current_user)):
     task_id = call(store.enqueue_refresh, owner(user), project_id, body.request_key, followup_question=body.followup_question)
     return {"task_id": task_id, "status": "accepted"}
+
+
+@router.post("/{project_id}/scenarios")
+def save_scenario(project_id: str, body: ScenarioRequest, user: dict = Depends(require_current_user)):
+    return call(store.save_scenario, owner(user), project_id, **body.model_dump())

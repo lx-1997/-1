@@ -65,6 +65,9 @@ def init_store(connection=None):
         connection.execute("""CREATE TABLE IF NOT EXISTS rw_observation(
             task_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner TEXT NOT NULL,
             evidence_hash TEXT NOT NULL, changed INTEGER NOT NULL, created REAL NOT NULL)""")
+        connection.execute("""CREATE TABLE IF NOT EXISTS rw_scenario(
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner TEXT NOT NULL,
+            revision_id TEXT NOT NULL, payload TEXT NOT NULL, created REAL NOT NULL)""")
         if own:
             connection.commit()
     finally:
@@ -88,6 +91,8 @@ def get_project(owner: str, project_id: str) -> dict:
         revisions = conn.execute("SELECT * FROM rw_revision WHERE project_id=? AND owner=? ORDER BY created DESC,id DESC LIMIT 31", (project_id, owner)).fetchall()
         result["revisions"] = [dict(r, payload=json.loads(r["payload"])) for r in revisions[:30]]
         result["revision_cursor"] = revisions[29]["id"] if len(revisions) > 30 else None
+        result["scenarios"] = [dict(row, payload=json.loads(row["payload"])) for row in conn.execute(
+            "SELECT * FROM rw_scenario WHERE project_id=? AND owner=? ORDER BY created DESC,id DESC LIMIT 20", (project_id, owner))]
         result["runs"] = [dict(r) for r in conn.execute("""SELECT r.id,r.config_version,r.created,
             t.status,t.progress,t.error FROM rw_run r LEFT JOIN agent_tasks t ON t.id=r.id AND t.owner_user_id=r.owner
             WHERE r.project_id=? AND r.owner=? ORDER BY r.created DESC LIMIT 30""", (project_id, owner))]
@@ -113,6 +118,40 @@ def revision_page(owner: str, project_id: str, before: str, limit: int = 30) -> 
             (project_id, owner, cursor["created"], cursor["created"], cursor["id"], limit + 1)).fetchall()
         return {"revisions": [dict(row, payload=json.loads(row["payload"])) for row in rows[:limit]],
                 "next_cursor": rows[limit - 1]["id"] if len(rows) > limit else None}
+
+
+def save_scenario(owner: str, project_id: str, revision_id: str, *, annual_eps, pe,
+                  fiscal_year: int, currency: str, share_basis_confirmed: bool,
+                  request_key: str, source_note: str = "") -> dict:
+    from .research_scenario import calculate
+    owner = _owner(owner)
+    if len(source_note) > 500:
+        raise ValueError("假设说明最多500字")
+    if not request_key or len(request_key) > 100:
+        raise ValueError("情景请求标识不合法")
+    with transaction() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT payload FROM rw_revision WHERE id=? AND project_id=? AND owner=?", (revision_id, project_id, owner)).fetchone()
+        if row is None:
+            raise LookupError("research revision not found")
+        quote = json.loads(row["payload"]).get("evidence", {}).get("get_market_quote", {})
+        fact = quote.get("fields", {}).get("price", {})
+        reference = fact.get("value") if fact.get("status") in {"usable", "limited"} else None
+        result = calculate(annual_eps, pe, fiscal_year, currency, share_basis_confirmed=share_basis_confirmed,
+                           reference_price=reference, reference_currency=quote.get("currency"))
+        result.update(source_note=source_note, reference_source=quote.get("source"), reference_limitations=quote.get("issues", []))
+        key = uuid.uuid5(uuid.NAMESPACE_URL, _json([owner, project_id, request_key])).hex
+        existing = conn.execute("SELECT * FROM rw_scenario WHERE id=? AND owner=? AND project_id=?", (key, owner, project_id)).fetchone()
+        if existing:
+            if existing["revision_id"] != revision_id or json.loads(existing["payload"]) != result:
+                raise ValueError("请求标识已被另一组假设使用")
+            return dict(existing, payload=json.loads(existing["payload"]))
+        now = time.time()
+        if conn.execute("SELECT COUNT(*) FROM rw_scenario WHERE owner=? AND created>?", (owner, now - 86400)).fetchone()[0] >= 100:
+            raise ValueError("今日情景保存预算已用完")
+        conn.execute("INSERT INTO rw_scenario VALUES(?,?,?,?,?,?)", (key, project_id, owner, revision_id, _json(result), now))
+        conn.execute("UPDATE rw_project SET version=version+1,updated=? WHERE id=? AND owner=?", (now, project_id, owner))
+        return {"id": key, "project_id": project_id, "revision_id": revision_id, "created": now, "payload": result}
 
 
 def create_project(owner: str, *, title: str, symbol: str, market: str, objective: str,

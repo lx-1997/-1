@@ -601,7 +601,17 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
     }
     periods = {period for period in periods_by_symbol.values() if period}
     all_have_period = len(items) < 2 or all(periods_by_symbol.values())
-    strictly_comparable = len(items) < 2 or (all_have_period and len(periods) == 1)
+    # Equal end dates alone do not align a single quarter with cumulative
+    # year-to-date results, different fiscal starts, or different currencies.
+    basis_by_symbol = {
+        str(item.get("symbol") or ""): {
+            key: (item.get("financials") or {}).get(key)
+            for key in ("report_date", "period_start", "period_basis", "currency")
+        } for item in items
+    }
+    complete_basis = all(all(isinstance(value, str) and value.strip() for value in basis.values()) for basis in basis_by_symbol.values())
+    basis_keys = {tuple(str(value) for value in basis.values()) for basis in basis_by_symbol.values()}
+    strictly_comparable = len(items) < 2 or (all_have_period and len(periods) == 1 and complete_basis and len(basis_keys) == 1)
     comparison_basis = {
         "is_strictly_comparable": strictly_comparable,
         "financials": "common_period" if strictly_comparable and len(items) >= 2 else (
@@ -612,7 +622,8 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
             "revenue_yoy", "profit_yoy", "roe", "gross_margin", "eps", "peg",
         ],
         "periods_by_symbol": periods_by_symbol,
-        "warning": "财报截止期不同；营收/利润增速、ROE、毛利率和 EPS 只能分别展示，不得横向排名。"
+        "basis_by_symbol": basis_by_symbol,
+        "warning": "财报期间、累计/单季或币种口径未确认一致；财务数值分别展示，不得横向排名。"
         if not strictly_comparable and len(items) >= 2 else "",
     }
     for item in items:

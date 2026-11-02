@@ -5850,7 +5850,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <div className="bbt-more-section">我的工作区</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); focusSideModule('stocks', '自选'); }}>◌ 我的股票{watchlist.length ? ` · ${watchlist.length} 只` : ''}</button>
                   <div className="bbt-more-section">研究工具</div>
-                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setResearchSpaceOpen(true); }}>研究空间 · 持续跟踪</button>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); requireLogin(() => setResearchSpaceOpen(true), '使用研究空间与持续跟踪'); }}>研究空间 · 持续跟踪</button>
 
                   <button className="bbt-acct-row" title="A/H/美 Top20 每日风险预警" onClick={() => { setHelpMenuOpen(false); openSideTool('risk'); }}>🛡️ 跨市场风险预警 · A/H/美</button>
                   <button className="bbt-acct-row" title="信号 / 仓位 / 回测" onClick={() => { setHelpMenuOpen(false); openSideTool('strategy'); if (!authUser) { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); } }}>🧪 QuantLab 量化系统</button>

@@ -186,6 +186,54 @@ def test_older_revisions_remain_accessible_through_owner_bound_pagination(databa
         ws.revision_page("bob", p["id"], current["revision_cursor"])
 
 
+def test_scenarios_are_private_immutable_and_idempotent(database):
+    p = project()
+    task, lease = claimed("alice", p["id"], "baseline")
+    facts = state()
+    facts["get_market_quote"] = {"currency": "USD", "fields": {"price": {"value": 100, "status": "limited"}}, "issues": ["market_time_timezone_unspecified"]}
+    assert ws.finalize_refresh("alice", p["id"], task.id, lease, 1, facts, {"summary": "基线"})
+    revision = ws.get_project("alice", p["id"])["revisions"][0]
+    inputs = dict(annual_eps='6', pe='20', fiscal_year=2027, currency='USD', share_basis_confirmed=True, request_key='scenario-one')
+    saved = ws.save_scenario("alice", p["id"], revision["id"], **inputs)
+    assert saved["payload"]["conditional_price"] == '120'
+    assert float(saved["payload"]["relative_to_snapshot_pct"]) == 20
+    assert saved["payload"]["kind"] == 'user_assumption'
+    assert ws.save_scenario("alice", p["id"], revision["id"], **inputs)["id"] == saved["id"]
+    assert ws.get_project("alice", p["id"])["version"] == 2
+    with pytest.raises(ValueError):
+        ws.save_scenario("alice", p["id"], revision["id"], **{**inputs, 'annual_eps': '7'})
+    with pytest.raises(LookupError):
+        ws.save_scenario("bob", p["id"], revision["id"], **inputs)
+    another = ws.save_scenario("alice", p["id"], revision["id"], **{**inputs, 'annual_eps': '7', 'request_key': 'scenario-two'})
+    assert another["id"] != saved["id"]
+    current = ws.get_project("alice", p["id"])
+    assert len(current["scenarios"]) == 2
+    assert current["revisions"][0] == revision
+
+
+@pytest.mark.asyncio
+async def test_scenario_http_uses_archived_reference_not_client_price(database):
+    p = project()
+    task, lease = claimed("alice", p["id"], "baseline")
+    facts = state()
+    facts["get_market_quote"] = {"currency": "USD", "fields": {"price": {"value": 100, "status": "usable"}}}
+    assert ws.finalize_refresh("alice", p["id"], task.id, lease, 1, facts, {"summary": "基线"})
+    revision = ws.get_project("alice", p["id"])["revisions"][0]
+    body = {"revision_id": revision["id"], "request_key": "http-case", "annual_eps": "6", "pe": "20", "fiscal_year": 2027,
+            "currency": "USD", "share_basis_confirmed": True, "reference_price": 1}
+    app = FastAPI(); app.include_router(api.router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        url = f"/api/research/projects/{p['id']}/scenarios"
+        assert (await client.post(url, json=body)).status_code == 401
+        app.dependency_overrides[api.require_current_user] = lambda: {"sub": "alice"}
+        response = await client.post(url, json=body)
+        assert response.status_code == 200
+        assert float(response.json()["payload"]["relative_to_snapshot_pct"]) == 20
+        assert response.json()["payload"]["reference_price"] == '100'
+        app.dependency_overrides[api.require_current_user] = lambda: {"sub": "bob", "role": "admin"}
+        assert (await client.post(url, json=body)).status_code == 404
+
+
 @pytest.mark.asyncio
 async def test_project_adapter_skips_model_when_facts_unchanged(database, monkeypatch):
     p = project()

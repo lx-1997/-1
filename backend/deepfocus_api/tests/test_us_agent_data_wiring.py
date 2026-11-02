@@ -34,6 +34,27 @@ def test_us_period_zero_and_loss_are_not_rewritten():
     assert value['period_start'] == '2025-07-01' and value['published_date'] == '2025-10-29'
 
 
+@pytest.mark.parametrize('changes,expected', [
+    ({}, True), ({'period_basis': '累计季报'}, False),
+    ({'period_start': '2025-01-01'}, False), ({'period_basis': None}, False),
+    ({'currency': 'HKD'}, False),
+])
+def test_same_period_end_is_not_enough_to_rank_mixed_financial_bases(monkeypatch, changes, expected):
+    async def empty(*args, **kwargs):
+        return None
+    async def finance(symbol, *args, **kwargs):
+        result = us_financials.normalize_earnings(row(SECURITY_CODE=symbol), symbol)
+        if symbol == 'AAPL':
+            result.update(changes)
+        return result
+    for name in ['_tool_get_market_quote', '_tool_get_valuation', '_tool_get_analyst_consensus']:
+        monkeypatch.setattr(agent_tools, name, empty)
+    monkeypatch.setattr(agent_tools, '_tool_get_financials', finance)
+    bundle = run(agent_tools._tool_compare_stocks('GOOGL,AAPL'))
+    assert bundle['comparison_basis']['is_strictly_comparable'] is expected
+    assert all(item['financials']['same_period_as_peers'] is expected for item in bundle['items'])
+
+
 def test_us_routing_keeps_cn_separate(monkeypatch):
     calls = []
     async def us(symbol, market=None):
