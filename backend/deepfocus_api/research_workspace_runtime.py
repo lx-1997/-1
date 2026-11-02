@@ -46,15 +46,22 @@ async def process_project_task(task, lease: str, progress, llm_factory):
                 prompt = (
                     "你是内部研究员，仅根据输入事实更新研究判断。只输出JSON：summary(最多500字)、"
                     "observations(最多6项，每项含tool、field、interpretation)、hypothesis_updates(最多6条)。"
+                    '严格遵守字段类型：{"summary":"定性结论","observations":[{"tool":"get_financials","field":"revenue_yoy","interpretation":"有来源的定性解释"}],"hypothesis_updates":["待验证事项"]}。'
+                    "hypothesis_updates必须是字符串数组，不能是对象数组。"
                     "observations的tool和field必须引用evidence中状态usable/limited的字段。"
                     "只解释该事实支持或不支持什么；limited的限制必须说明。评级不等于盈利预测，市值不等于PE。"
                     "缺一类数据只限制相应判断，不能抹掉已有财报分析。禁止编造估值、目标价、收益、因果贡献比例和实时性；"
                     "禁止根据用户笔记认定事实。hypothesis_updates全部是待验证判断，不能宣称已验证假设。"
+                    "只有当期EPS时不能声称EPS同比或环比增长；ROE是期间比率，不是存量指标，不得将累计ROE当成年化ROE。"
+                    "没有现金流证据不能断言盈利质量或现金转化改善，没有同行基准不能直接断言估值便宜或盈利水平行业领先。"
+                    "不要补写未在本轮结构化字段出现的新闻、资本开支或股价事件。"
                     "不要给下单指令。历史版本仅供对比，不能当本轮新证据。\n"
                     "summary、interpretation和hypothesis_updates只写不含数字的定性解释；所有数值由系统用关联字段单独展示，不在解释中重写数字或百分比。\n"
-                    + json.dumps({"objective": project["objective"], "current_followup_question": followup_question, "evidence": state,
+                    + json.dumps({"objective": project["objective"], "current_followup_question": followup_question,
+                                  "evidence": {key: value for key, value in state.items() if "fields" in value},
                                   "user_opinions_not_evidence": {"notes": project["notes"], "hypotheses": project["hypotheses"]},
-                                  "previous": previous["payload"] if previous else None}, ensure_ascii=False)
+                                  "previous": {"evidence": {key: value for key, value in previous["payload"].get("evidence", {}).items() if "fields" in value},
+                                               "report": {key: previous["payload"].get("report", {}).get(key) for key in ("summary", "observations", "hypothesis_updates")}} if previous else None}, ensure_ascii=False)
                 )
                 try:
                     generated = await asyncio.wait_for(model.complete_json(prompt, max_tokens=1800, timeout_seconds=35), timeout=40)

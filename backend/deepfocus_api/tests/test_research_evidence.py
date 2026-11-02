@@ -93,6 +93,18 @@ def test_cn_naive_market_time_is_local_and_delayed_status_preserved():
     assert result["evidence_check"]["is_realtime"] is False
 
 
+def test_timezone_less_us_clock_is_limited_not_assumed_new_york_future():
+    row = {"symbol": "GOOGL", "price": 100, "currency": "USD", "provider": "test",
+           "market_time": "2026-11-02T16:00:00", "fetched_at": "2026-11-02T09:00:00Z", "is_realtime": True}
+    result = check({"quotes": [row]}, "get_market_quote")
+    assert result["data"]["quotes"][0]["price"] == 100
+    assert result["evidence_check"]["status"] == "limited"
+    assert "market_time_timezone_unspecified" in result["evidence_check"]["issues"]
+    assert result["evidence_check"]["is_realtime"] is False
+    row["market_time"] = "2026-11-02T16:00:00-05:00"
+    assert check({"quotes": [row]}, "get_market_quote")["data"] is None
+
+
 def test_stale_report_is_historical_and_never_promoted_by_fresh_fetch():
     result = check(finance(report_date="2023-09-30", period_start="2023-01-01",
                            published_date="2023-10-29", fetched_at="2026-11-02T08:00:00Z"))

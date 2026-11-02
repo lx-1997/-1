@@ -172,10 +172,25 @@ def test_cold_backup_retains_revisions_and_owner_checks(database, tmp_path, monk
         ws.get_project("bob", p["id"])
 
 
+def test_older_revisions_remain_accessible_through_owner_bound_pagination(database):
+    p = project()
+    for index in range(32):
+        task, lease = claimed("alice", p["id"], str(index))
+        assert ws.finalize_refresh("alice", p["id"], task.id, lease, 1, state(index), {"summary": "归档"})
+    current = ws.get_project("alice", p["id"])
+    assert len(current["revisions"]) == 30 and current["revision_cursor"]
+    older = ws.revision_page("alice", p["id"], current["revision_cursor"])
+    assert len(older["revisions"]) == 2 and older["next_cursor"] is None
+    assert not {row["id"] for row in current["revisions"]} & {row["id"] for row in older["revisions"]}
+    with pytest.raises(LookupError):
+        ws.revision_page("bob", p["id"], current["revision_cursor"])
+
+
 @pytest.mark.asyncio
 async def test_project_adapter_skips_model_when_facts_unchanged(database, monkeypatch):
     p = project()
     packet = {"evidence_audit": {"checks": [{"tool": "get_financials", **state()["get_financials"]}]}}
+    packet["traces"] = [{"references": [{"title": "未经核验的新闻不能写成结论", "url": "https://example.test/news"}]}]
     async def build(*a, **kw):
         return packet
     monkeypatch.setattr(runner, "build_research_packet", build)
@@ -183,6 +198,8 @@ async def test_project_adapter_skips_model_when_facts_unchanged(database, monkey
     class Model:
         provider = "test"
         async def complete_json(self, *a, **kw):
+            assert "未经核验的新闻不能写成结论" not in a[0]
+            assert "只有当期EPS时不能声称EPS同比或环比增长" in a[0]
             calls.append(1)
             return {"summary": "盈利仍待核验", "observations": [{"tool": "get_financials", "field": "eps", "interpretation": "该期间盈利为正，期间口径仍需核验"}]}
     for key in ("first", "second"):
@@ -190,6 +207,7 @@ async def test_project_adapter_skips_model_when_facts_unchanged(database, monkey
         await runner.process_project_task(task, lease, lambda *a: None, Model)
     assert calls == [1]
     assert len(ws.get_project("alice", p["id"])["revisions"]) == 1
+    assert ws.get_project("alice", p["id"])["revisions"][0]["payload"]["evidence"]["content_signals"]["context_only"] is True
 
 
 @pytest.mark.asyncio
@@ -207,6 +225,9 @@ def test_model_observations_cannot_reference_missing_fields_or_invent_numeric_na
     ]:
         with pytest.raises(ValueError):
             runner.validate_report({"summary": "待核验", "observations": [row]}, state())
+    with pytest.raises(ValueError, match="hypotheses"):
+        runner.validate_report({"summary": "待核验", "observations": [{"tool": "get_financials", "field": "eps", "interpretation": "当期盈利为正"}],
+                                "hypothesis_updates": [{"hypothesis": "不能接受非约定类型"}]}, state())
 
 
 @pytest.mark.asyncio

@@ -85,8 +85,9 @@ def get_project(owner: str, project_id: str) -> dict:
         if row is None:
             raise LookupError("project not found")
         result = _project(row)
-        result["revisions"] = [dict(r, payload=json.loads(r["payload"])) for r in conn.execute(
-            "SELECT * FROM rw_revision WHERE project_id=? AND owner=? ORDER BY created DESC,id DESC LIMIT 30", (project_id, owner))]
+        revisions = conn.execute("SELECT * FROM rw_revision WHERE project_id=? AND owner=? ORDER BY created DESC,id DESC LIMIT 31", (project_id, owner)).fetchall()
+        result["revisions"] = [dict(r, payload=json.loads(r["payload"])) for r in revisions[:30]]
+        result["revision_cursor"] = revisions[29]["id"] if len(revisions) > 30 else None
         result["runs"] = [dict(r) for r in conn.execute("""SELECT r.id,r.config_version,r.created,
             t.status,t.progress,t.error FROM rw_run r LEFT JOIN agent_tasks t ON t.id=r.id AND t.owner_user_id=r.owner
             WHERE r.project_id=? AND r.owner=? ORDER BY r.created DESC LIMIT 30""", (project_id, owner))]
@@ -98,6 +99,20 @@ def get_project(owner: str, project_id: str) -> dict:
 def list_projects(owner: str) -> list[dict]:
     with transaction() as conn:
         return [_project(row) for row in conn.execute("SELECT * FROM rw_project WHERE owner=? ORDER BY updated DESC LIMIT 100", (_owner(owner),))]
+
+
+def revision_page(owner: str, project_id: str, before: str, limit: int = 30) -> dict:
+    owner = _owner(owner)
+    limit = max(1, min(int(limit), 50))
+    with transaction() as conn:
+        cursor = conn.execute("SELECT created,id FROM rw_revision WHERE id=? AND project_id=? AND owner=?", (before, project_id, owner)).fetchone()
+        if cursor is None:
+            raise LookupError("revision not found")
+        rows = conn.execute("""SELECT * FROM rw_revision WHERE project_id=? AND owner=?
+            AND (created<? OR (created=? AND id<?)) ORDER BY created DESC,id DESC LIMIT ?""",
+            (project_id, owner, cursor["created"], cursor["created"], cursor["id"], limit + 1)).fetchall()
+        return {"revisions": [dict(row, payload=json.loads(row["payload"])) for row in rows[:limit]],
+                "next_cursor": rows[limit - 1]["id"] if len(rows) > limit else None}
 
 
 def create_project(owner: str, *, title: str, symbol: str, market: str, objective: str,

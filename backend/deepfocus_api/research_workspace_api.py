@@ -1,7 +1,7 @@
 """Authenticated, owner-only research workspace endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .auth import require_current_user
@@ -66,6 +66,11 @@ def get_project(project_id: str, user: dict = Depends(require_current_user)):
 @router.post("/{project_id}/settings")
 def update_project(project_id: str, body: ProjectUpdate, user: dict = Depends(require_current_user)):
     return call(store.update_project, owner(user), project_id, **body.model_dump())
+
+
+@router.get("/{project_id}/revisions")
+def project_revisions(project_id: str, before: str, limit: int = Query(default=30, ge=1, le=50), user: dict = Depends(require_current_user)):
+    return call(store.revision_page, owner(user), project_id, before, limit)
 
 
 @router.post("/{project_id}/refresh", status_code=202)

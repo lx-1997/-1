@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -123,6 +123,12 @@ def check_tool_evidence(tool: str, args: dict, result: dict, *, now: datetime | 
             stamp = _instant(row[name], market_zone if name == "market_time" else "UTC")
             if stamp is None:
                 hard_errors.append(f"invalid_{name}")
+            elif name == "market_time" and datetime.fromisoformat(str(row[name]).strip().replace("Z", "+00:00")).tzinfo is None:
+                # A US quote provider may report its server's clock rather than
+                # New York time. Never infer that timezone from the stock market.
+                issues.append("market_time_timezone_unspecified")
+                if stamp.date() > now.date() + timedelta(days=1):
+                    hard_errors.append("future_market_time")
             elif (stamp.date() > now.date() if name in {"published_date", "report_date", "period_start"} else (stamp - now).total_seconds() > 300):
                 hard_errors.append(f"future_{name}")
     start, end, publication = (_instant(row.get(k)) for k in ("period_start", "report_date", "published_date"))
@@ -158,7 +164,7 @@ def check_tool_evidence(tool: str, args: dict, result: dict, *, now: datetime | 
                  pe_basis=row.get("pe_basis"),
                  report_date=row.get("report_date"), period_basis=row.get("period_basis"),
                  published_date=row.get("published_date"), fetched_at=row.get("fetched_at"),
-                 market_time=row.get("market_time"), is_realtime=row.get("is_realtime") is True)
+                 market_time=row.get("market_time"), is_realtime=row.get("is_realtime") is True and "market_time_timezone_unspecified" not in issues)
     present = 0
     for field in _FIELDS[tool]:
         value = row.get(field)

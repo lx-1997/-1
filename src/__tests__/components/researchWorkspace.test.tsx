@@ -68,3 +68,18 @@ it('shows an authenticated empty state after logout', async () => {
   expect(screen.getByText('登录后保存私有研究、笔记和跟踪设置。')).toBeVisible();
   expect(screen.queryByText('私人谷歌研究')).not.toBeInTheDocument();
 });
+
+it('loads older immutable revisions and lets the user read their original report', async () => {
+  const current = { ...project, revision_cursor: 'rev-one' };
+  const older = { ...project.revisions[0], id: 'older-version', created: 1600000000,
+    payload: { ...project.revisions[0].payload, report: { analysis_status: 'generated', summary: '较早版本的原始研究判断' } } };
+  get.mockImplementation((path: string) => Promise.resolve(path.includes('/revisions?') ? { revisions: [older], next_cursor: null }
+    : path.endsWith('/projects') ? { projects: [current] } : current));
+  render(<ResearchWorkspace />);
+  await screen.findByText('测试有依据的研究解读');
+  fireEvent.click(screen.getByRole('button', { name: '加载更早的研究版本' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: '研究版本' })).toContainHTML('older-version'));
+  fireEvent.change(screen.getByRole('combobox', { name: '研究版本' }), { target: { value: 'older-version' } });
+  expect(screen.getByText('较早版本的原始研究判断')).toBeVisible();
+  expect(screen.queryByRole('button', { name: '加载更早的研究版本' })).not.toBeInTheDocument();
+});
