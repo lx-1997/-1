@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from .market_data import fetch_market_quotes
 from .realtime_messages import is_futoucaixin_restricted_user, list_realtime_messages
 from .shared_utils import safe_float
 from .valuation_source import fetch_valuation
+from .research_evidence import check_tool_evidence
 
 
 def _exclude_restricted_news_source() -> bool:
@@ -206,6 +208,10 @@ async def execute_tool(
     _tok = _IFIND_GRADE.set(bool(ifind_user))
     try:
         data = await tool.handler(**(arguments or {}))
+    except (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException):
+        return {"ok": False, "error": "数据源取数超时", "error_type": "timeout"}
+    except httpx.TransportError:
+        return {"ok": False, "error": "数据源暂时连接失败", "error_type": "transient"}
     except TypeError as exc:
         return {"ok": False, "error": f"参数不合法：{exc}"}
     except Exception as exc:  # noqa: BLE001 - 工具失败不能拖垮 agent 循环
@@ -214,7 +220,7 @@ async def execute_tool(
         _IFIND_GRADE.reset(_tok)  # 任何 return/异常都复位，灰度位绝不残留
     if data is None or (isinstance(data, (list, dict)) and not data):
         return {"ok": True, "data": None, "data_status": "no_data", "note": "该数据源对此标的暂无可用数据（已优雅降级）。"}
-    return {"ok": True, "data": data}
+    return check_tool_evidence(name, arguments or {}, {"ok": True, "data": data})
 
 
 # --- 参数 schema 复用 -------------------------------------------------------
@@ -505,12 +511,16 @@ def _financial_period_key(report_date: Any) -> str | None:
 _SNAPSHOT_SOURCE_TIMEOUTS = {"quote": 8.0, "valuation": 8.0, "financials": 12.0, "consensus": 6.0}
 
 
-async def _snapshot_component(name: str, awaitable) -> dict[str, Any]:
+async def _snapshot_component(name: str, awaitable, *, symbol: str = "") -> dict[str, Any]:
     # One unavailable enrichment must not hold back every usable sibling.
     # wait_for cancels and joins the owned coroutine; caller cancellation propagates.
     try:
         value = await asyncio.wait_for(awaitable, timeout=_SNAPSHOT_SOURCE_TIMEOUTS[name])
-        return {"value": value, "status": "completed" if value else "no_data"}
+        tools = {"quote": "get_market_quote", "valuation": "get_valuation", "financials": "get_financials", "consensus": "get_analyst_consensus"}
+        result = check_tool_evidence(tools[name], {"symbol": symbol}, {"ok": True, "data": value}) if symbol else {"data": value}
+        audit = result.get("evidence_check") or {}
+        clean = result.get("data") if audit.get("status") not in {"no_data", "rejected"} else None
+        return {"value": clean, "status": "rejected" if audit.get("status") == "rejected" else "completed" if clean else "no_data", "evidence_check": audit}
     except asyncio.TimeoutError:
         return {"value": None, "status": "timeout"}
     except Exception:
@@ -525,10 +535,10 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
 
     async def one(symbol: str) -> dict[str, Any]:
         components = await asyncio.gather(
-            _snapshot_component("quote", _tool_get_market_quote(symbol)),
-            _snapshot_component("valuation", _tool_get_valuation(symbol)),
-            _snapshot_component("financials", _tool_get_financials(symbol)),
-            _snapshot_component("consensus", _tool_get_analyst_consensus(symbol)),
+            _snapshot_component("quote", _tool_get_market_quote(symbol), symbol=symbol),
+            _snapshot_component("valuation", _tool_get_valuation(symbol), symbol=symbol),
+            _snapshot_component("financials", _tool_get_financials(symbol), symbol=symbol),
+            _snapshot_component("consensus", _tool_get_analyst_consensus(symbol), symbol=symbol),
         )
         quote, valuation, financials, consensus = (item["value"] for item in components)
         source_status = dict(zip(_SNAPSHOT_SOURCE_TIMEOUTS, (item["status"] for item in components)))
@@ -581,6 +591,7 @@ async def _tool_compare_stocks(symbols: str = "") -> Any:
             "consensus": _compact_fields(crow, ("consensus_rating", "rating_summary", "report_count", "period", "avg_target_price", "target_price_low", "target_price_high", "currency", "rating", "analyst_count", "target_price", "upside_pct", "fetched_at", "source_url")),
             "data_gaps": gaps,
             "source_status": source_status,
+            "evidence_checks": {key: component.get("evidence_check", {}) for key, component in zip(_SNAPSHOT_SOURCE_TIMEOUTS, components)},
         }
 
     items = await asyncio.gather(*(one(symbol) for symbol in parts))

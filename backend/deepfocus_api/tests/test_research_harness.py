@@ -86,7 +86,7 @@ async def test_harness_collects_real_modules_and_rag(monkeypatch) -> None:
     async def fake_execute(name, arguments, **kwargs):
         calls.append(name)
         if name == "get_market_quote":
-            return {"ok": True, "data": {"quotes": [{"name": "测试股份", "price": 12.3, "change_percent": 1.2}], "provider": "test-market"}}
+            return {"ok": True, "data": {"quotes": [{"symbol": "600519", "name": "测试股份", "price": 12.3, "change_percent": 1.2}], "provider": "test-market"}}
         return {"ok": True, "data": {"value": name}, "provider": "test-source"}
 
     monkeypatch.setattr(rh, "execute_tool", fake_execute)
@@ -106,6 +106,7 @@ async def test_harness_collects_real_modules_and_rag(monkeypatch) -> None:
 
     packet = await rh.build_research_packet(
         "研究这只股票的估值和风险",
+        include_industry=True,
         stock=StockSnapshot(symbol="600519", name="测试股份", market="CN"),
     )
 
@@ -127,7 +128,8 @@ async def test_harness_collects_real_modules_and_rag(monkeypatch) -> None:
     assert packet["content_scope"]["快讯"]["status"] == "available"
     assert packet["content_scope"]["文章"]["status"] == "available"
     assert packet["content_scope"]["机构纪要"]["status"] == "available"
-    assert packet["content_scope"]["公开数据"]["status"] == "available"
+    assert packet["content_scope"]["公开数据"]["status"] == "partial"
+    assert packet["content_scope"]["公开数据"]["field_checks"]["估值"]["status"] == "no_data"
     assert "research_index" in packet["modules"]
     assert packet["modules"]["research_index"]["stats"]["annotation_version"] == "rules-v2"
     assert "evidence_rag" in packet["modules"]
@@ -153,6 +155,7 @@ async def test_harness_streams_auditable_progress_without_model_reasoning(monkey
     await rh.build_research_packet(
         "建滔集团值得买吗",
         progress=progress,
+        include_industry=True,
     )
     assert any(phase == "start" and tool == "get_industry_context" for phase, tool in events)
     assert any(phase == "result" and tool == "get_supply_chain_context" for phase, tool in events)

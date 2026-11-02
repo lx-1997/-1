@@ -20,6 +20,7 @@ from .agent_tools import execute_tool, known_symbol_name, resolve_known_symbol
 from .data_sources import list_data_items
 from .research_index import build_research_index
 from .schemas import StockSnapshot
+from .research_evidence import CORE_TOOLS, check_tool_evidence, evidence_summary
 from .stock_name_index import all_name_code, name_of_code, resolve_to_code
 
 
@@ -658,11 +659,33 @@ async def _call_with_flags(
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     if progress:
         await progress("start", {"tool": tool, "args": args})
+    attempts: list[dict[str, Any]] = []
     try:
-        result = await execute_tool(tool, args, ifind_user=ifind_user)
+        # Only retry explicit transient failures, once, within a separate small
+        # budget. Empty/unauthorized/rejected data never trigger retry loops.
+        if tool in CORE_TOOLS:
+            try:
+                result = await asyncio.wait_for(execute_tool(tool, args, ifind_user=ifind_user), timeout=14.0)
+            except asyncio.TimeoutError:
+                result = {"ok": False, "error": "数据源取数超时", "error_type": "timeout"}
+            attempts.append({"attempt": 1, "ok": bool(result.get("ok")), "error_type": result.get("error_type")})
+            if not result.get("ok") and result.get("error_type") in {"timeout", "transient"}:
+                if progress:
+                    await progress("start", {"tool": tool, "args": args, "attempt": 2, "reason": "限时补取暂时失败的数据源"})
+                try:
+                    result = await asyncio.wait_for(execute_tool(tool, args, ifind_user=ifind_user), timeout=4.0)
+                except asyncio.TimeoutError:
+                    result = {"ok": False, "error": "限时补取超时", "error_type": "timeout"}
+                attempts.append({"attempt": 2, "ok": bool(result.get("ok")), "error_type": result.get("error_type")})
+        else:
+            result = await execute_tool(tool, args, ifind_user=ifind_user)
     except Exception as exc:  # execute_tool 已经收敛异常，这里再守一层
         result = {"ok": False, "error": str(exc)[:160]}
+    result = check_tool_evidence(tool, args, result)
     trace = _trace(tool, result, args=args)
+    if "evidence_check" in result:
+        trace["evidence_check"] = result["evidence_check"]
+        trace["attempts"] = attempts
     if progress:
         await progress("result", trace)
     return tool, result, trace
@@ -675,6 +698,7 @@ async def build_research_packet(
     *,
     ifind_user: bool = False,
     progress: Optional[ResearchProgressCallback] = None,
+    include_industry: bool = True,
 ) -> dict[str, Any]:
     """并行准备一份可交给模型/多 Agent/RAG 的统一研究数据包。"""
     if not is_research_question(objective):
@@ -763,6 +787,8 @@ async def build_research_packet(
                 ("get_recent_research", {"query": objective[:80], "limit": 8}),
             ])
 
+    if not include_industry:
+        calls = [(tool, args) for tool, args in calls if tool not in {"get_industry_context", "get_peer_comparison", "get_supply_chain_context"}]
     outcomes = await asyncio.gather(
         *[_call_with_flags(tool, args, ifind_user=ifind_user, progress=progress) for tool, args in calls],
         return_exceptions=True,
@@ -790,7 +816,8 @@ async def build_research_packet(
                 module_key = f"{tool}:{side_symbol}"
             elif tool in modules:
                 module_key = f"{tool}:{len([key for key in modules if key.startswith(tool + ':')]) + 1}"
-        modules[module_key] = result.get("data") if result.get("ok") else None
+        audit = result.get("evidence_check") or {}
+        modules[module_key] = result.get("data") if result.get("ok") and audit.get("status") not in {"no_data", "rejected"} else None
         traces.append(trace)
         # sources 是“实际命中过的来源”列表；工具虽然注册了某来源，但返回空/未授权时
         # 不把它冒充成已使用的数据源，缺口由 gaps/content_scope 单独展示。
@@ -1059,6 +1086,20 @@ async def build_research_packet(
             content_scope[label]["top_tags"] = indexed.get("top_tags", [])
 
     evidence_references = _evidence_references(research_index, traces)
+    evidence_audit = evidence_summary(traces)
+    if not is_comparison and "公开数据" in content_scope and evidence_audit["checks"]:
+        public_scope = content_scope["公开数据"]
+        public_scope["field_checks"] = {
+            check["label"]: {"status": check["status"],
+                             "fields": {field: detail["status"] for field, detail in check["fields"].items()}}
+            for check in evidence_audit["checks"]
+        }
+        # A nonempty module is only partial coverage when fields/metadata fail.
+        if public_scope["available"] and any(
+            check["status"] != "usable" or any(field["status"] != "usable" for field in check["fields"].values())
+            for check in evidence_audit["checks"]
+        ):
+            public_scope["status"] = "partial"
     compact_modules = {key: _json_size(value) for key, value in modules.items()}
     readable_gaps = "; ".join(_friendly_gap(item) for item in dict.fromkeys(gaps))
     comparison_context = ""
@@ -1090,6 +1131,7 @@ async def build_research_packet(
         "并额外扫描行业归属、公开同行候选和上下游/价格传导线索；"
         "回答时必须区分公司直接事实、行业背景、机构观点和名人观点，按来源交叉核验，未命中或未授权的类别不得补写。\n"
         f"资料覆盖：{json.dumps(content_scope, ensure_ascii=False)}\n"
+        f"字段证据核验（优先于模块覆盖标签）：{json.dumps(evidence_audit, ensure_ascii=False)}\n"
         f"数据模块：{json.dumps(compact_modules, ensure_ascii=False)}\n"
         f"证据缺口：{readable_gaps[:1200] or '未发现明显缺口'}\n"
     )
@@ -1110,5 +1152,6 @@ async def build_research_packet(
             ),
         },
         "evidence_references": evidence_references,
+        "evidence_audit": evidence_audit,
         "context": packet_context,
     }

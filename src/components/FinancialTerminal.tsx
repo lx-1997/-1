@@ -98,6 +98,7 @@ import { assistantReferenceKey, assistantRequestContext, assistantErrorMessage, 
 // 生产环境默认是 TERMINAL_ONLY；风险雷达按需加载，既能从真实线上终端进入，
 // 又不会把 antd 表格/抽屉代码塞进金融终端首屏主包。
 const MarketRiskRadar = React.lazy(() => import('./MarketRiskRadar'));
+const ResearchWorkspaceDialog = React.lazy(() => import('./ResearchWorkspaceDialog'));
 const QuantLab = React.lazy(() => import('./QuantLab'));
 // 工具页暂时保留实现与其他入口，但先从主侧栏收起，避免导航过于拥挤。
 const SHOW_SIDEBAR_TOOLS = false;
@@ -1225,6 +1226,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 配置走公开端点（活码：群码每周后台换、客服名片码兜底），不入鉴权链路。
   const [groupCfg, setGroupCfg] = useState<any>(null);   // 后端 /api/community/group 配置（含 enabled / 文案 / 失效日 / 客服号）
   const [groupOpen, setGroupOpen] = useState(false);
+  const [researchSpaceOpen, setResearchSpaceOpen] = useState(false);
+  useEffect(() => { setResearchSpaceOpen(false); }, [session.revision]);
   const [groupSeen, setGroupSeen] = useState<boolean>(() => { try { return localStorage.getItem('df_group_seen') === '1'; } catch { return true; } });
   const openGroup = useCallback(() => {
     setGroupOpen(true);
@@ -5847,6 +5850,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                   <div className="bbt-more-section">我的工作区</div>
                   <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); focusSideModule('stocks', '自选'); }}>◌ 我的股票{watchlist.length ? ` · ${watchlist.length} 只` : ''}</button>
                   <div className="bbt-more-section">研究工具</div>
+                  <button className="bbt-acct-row" onClick={() => { setHelpMenuOpen(false); setResearchSpaceOpen(true); }}>研究空间 · 持续跟踪</button>
 
                   <button className="bbt-acct-row" title="A/H/美 Top20 每日风险预警" onClick={() => { setHelpMenuOpen(false); openSideTool('risk'); }}>🛡️ 跨市场风险预警 · A/H/美</button>
                   <button className="bbt-acct-row" title="信号 / 仓位 / 回测" onClick={() => { setHelpMenuOpen(false); openSideTool('strategy'); if (!authUser) { setAuthReason('使用 QuantLab 量化系统'); setAuthOpen(true); } }}>🧪 QuantLab 量化系统</button>
@@ -7980,6 +7984,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         </div>
       )}
 
+      {researchSpaceOpen && <React.Suspense fallback={<div role="status">正在加载研究空间…</div>}><ResearchWorkspaceDialog onClose={() => setResearchSpaceOpen(false)} /></React.Suspense>}
       {riskRadarOpen && (
         <div className="bbt-risk-radar-overlay" onMouseDown={() => setRiskRadarOpen(false)}>
           <div

@@ -130,6 +130,8 @@ def init_task_db() -> None:
             if column not in columns:
                 conn.execute(f"ALTER TABLE agent_tasks ADD COLUMN {column} TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_tasks_owner ON agent_tasks(owner_user_id, created_at)")
+        from .research_workspace import init_store
+        init_store(conn)
         conn.commit()
     recover_stale_running_tasks()
 
@@ -372,6 +374,9 @@ async def _worker_loop(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         with suppress(Exception):
             recover_stale_running_tasks()
+        with suppress(Exception):
+            from .research_workspace import enqueue_due
+            enqueue_due()
         task = _claim_next_task()
         if task:
             lease = _worker_leases.pop(task.id)
@@ -457,6 +462,17 @@ async def _maintain_task_lease(task_id: str, lease: str, execution: asyncio.Task
 async def _process_task(task: InvestmentTaskRecord) -> None:
     try:
         payload = task.input
+        if (payload.get("engine_config") or {}).get("research_project_id"):
+            from .research_workspace_runtime import process_project_task
+            active = _active_lease.get()
+            if not active or active[0] != task.id:
+                raise ValueError("研究项目任务必须由持有有效租约的 worker 执行")
+            await process_project_task(
+                task, active[1],
+                lambda agent, message, progress: _append_log(task.id, agent, message, progress=progress),
+                CloudResearchLLM,
+            )
+            return
         if task.task_type == "customs_trade_analysis" or payload.get("analysis_domain") == "customs_trade":
             await _process_customs_trade_task(task)
             return

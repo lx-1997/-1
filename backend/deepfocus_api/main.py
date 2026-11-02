@@ -1952,6 +1952,8 @@ app.include_router(market_extras_router)
 from .research_stream import router as research_stream_router  # noqa: E402 - 研报深度解读 SSE 流式端点（懒导入 main，须在 main 定义后挂载）
 
 app.include_router(research_stream_router)
+from .research_workspace_api import router as research_workspace_router
+app.include_router(research_workspace_router)
 
 
 @app.get("/api/ontology/demo")

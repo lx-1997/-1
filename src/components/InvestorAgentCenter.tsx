@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import ResearchWorkspace from './ResearchWorkspace';
 import {
   Alert,
   Badge,
@@ -264,6 +265,7 @@ const isHeartbeatDelayed = (task: InvestmentTaskRecord): boolean => (
 );
 
 const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) => {
+  const [workspaceMode, setWorkspaceMode] = useState(true);
   const [health, setHealth] = useState<AgentRuntimeHealth | null>(null);
   const [tasks, setTasks] = useState<InvestmentTaskRecord[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -359,6 +361,8 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
 
   return (
     <div className="agent-desk-shell">
+      <nav className="rw-mode-switch" aria-label="研究模式"><button aria-pressed={workspaceMode} onClick={() => setWorkspaceMode(true)}>研究空间</button><button aria-pressed={!workspaceMode} onClick={() => setWorkspaceMode(false)}>单次任务</button></nav>
+      {workspaceMode ? <ResearchWorkspace /> : <>
       <section className="agent-command-bar">
         <div className="agent-command-title">
           <RobotOutlined />
@@ -518,6 +522,7 @@ const InvestorAgentCenter: React.FC<InvestorAgentCenterProps> = ({ appState }) =
       <section className="agent-artifact-panel">
         <ArtifactPanel task={selectedTask} />
       </section>
+      </>}
     </div>
   );
 };
