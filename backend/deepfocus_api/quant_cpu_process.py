@@ -16,7 +16,7 @@ import time
 from . import quant_research_store as jobs, quant_worker_slots as slots
 from .quant_research_engine import digest
 
-FILES=('quant_research_engine.py','quant_research_candidates.py','quant_research.py',
+FILES=('quant_research_config.py','quant_research_engine.py','quant_research_candidates.py','quant_research.py',
        'quant_calendar.py','quant_paper_calendar.py','quant_calendar_service.py',
        'quant_calendar_store.py','quant_exchange_schedule.py','quant_research_store.py',
        'quant_worker_slots.py','backtest_data.py','ai_fund_ledger.py','ai_fund_policy.py',

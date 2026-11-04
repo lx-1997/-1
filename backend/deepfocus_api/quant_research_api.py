@@ -1,7 +1,7 @@
 """JWT-owned research API; no account may see another account's experiments."""
 import asyncio
 from datetime import date, timedelta
-from typing import Annotated
+from typing import Annotated, Optional
 from typing import Literal
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -27,6 +27,14 @@ class ExperimentRequest(BaseModel):
     start_date: date = Field(default_factory=lambda: today()-timedelta(days=1100))
     end_date: date = Field(default_factory=today)
     capital: float = Field(default=1000000, ge=10000, le=100000000, allow_inf_nan=False)
+
+    configuration: Optional[dict] = None
+
+    @field_validator('configuration')
+    @classmethod
+    def configuration_valid(cls, value):
+        from .quant_research_config import validate
+        return validate(value) if value is not None else None
 
     @field_validator('symbols')
     @classmethod
@@ -76,6 +84,7 @@ def visible(item):
 @router.post('/experiments', status_code=202)
 async def create(payload: ExperimentRequest, uid=Depends(owner)):
     values = payload.model_dump(mode='json'); key = values.pop('request_id')
+    if values.get('configuration') is None: values.pop('configuration', None)
     try: return await service.submit_async(uid, key, values)
     except LookupError as e: raise HTTPException(404, str(e)) from e
     except ValueError as e: raise HTTPException(422, str(e)) from e

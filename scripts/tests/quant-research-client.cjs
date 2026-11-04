@@ -17,10 +17,11 @@ async function fetch(url,options={}){
  if(url.endsWith('/experiments')||url.endsWith('/paper'))return response(200,{items:[]});
  throw Error('unexpected test request '+url);
 }
-const document={body:node('body'),hidden:false,getElementById:node,querySelector:selector=>selector==='main'?node('main'):null,addEventListener(type,fn){listeners.set('document:'+type,fn)}};
+const document={body:node('body'),hidden:false,getElementById:node,querySelectorAll:()=>[],querySelector:selector=>selector==='main'?node('main'):null,addEventListener(type,fn){listeners.set('document:'+type,fn)}};
 // main.scrollIntoView is needed only at mobile size; transport assertions use desktop.
 const context={document,localStorage:auth,sessionStorage:session,fetch,AbortController,Date,JSON,Number,String,Set,Promise,console,crypto:{randomUUID:()=> 'stable-test-request'},setTimeout(fn,ms){timers.set(++timerId,fn);return timerId},clearTimeout(id){timers.delete(id)}};
 context.window={innerWidth:390,addEventListener(){},matchMedia:()=>({matches:false})};
+for(const m of html.matchAll(/<input[^>]*id="(cfg_[^"]+)"[^>]*value="([^"]*)"/g))node(m[1]).value=m[2];node('cfg_strategy').value='momentum';
 vm.createContext(context);vm.runInContext(script,context);
 (async()=>{
  await new Promise(setImmediate);node('name').value=request.name;node('symbols').value='600519';node('benchmark').value='000300';node('start').value=request.start_date;node('end').value=request.end_date;

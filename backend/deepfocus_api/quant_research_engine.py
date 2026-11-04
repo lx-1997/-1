@@ -80,17 +80,30 @@ def metrics(curve, capital):
 
 
 def replay(dataset, symbols, params, *, start=None, end=None, state=None, capital=1000000,
-           profile='legacy', benchmark=None):
+           profile='legacy', benchmark=None, configuration=None):
     dates = validate_dataset(dataset)
     if set(symbols) - set(dataset) or not symbols or len(symbols) > 5 or len(set(symbols)) != len(symbols):
         raise ValueError('标的集合无效')
-    if params not in CANDIDATES:
+    from . import quant_research_config as config
+    configured = config.effective(configuration)
+    limits = {**ASSUMPTIONS, **(configured or {})}
+    trading_fee = (lambda amount, side: config.charge(amount, side, configured)) if configured else fee
+    if configured and (profile != 'legacy' or benchmark not in dataset or benchmark in symbols):
+        raise ValueError('配置实验与旧研发候选不能混用，须提供独立基准')
+    if params not in (config.candidates(configured) if configured else CANDIDATES):
         raise ValueError('策略参数未登记')
     if profile != 'legacy':
         from .quant_research_candidates import PROFILES, decision
         if profile not in PROFILES or benchmark not in dataset or benchmark in symbols:
             raise ValueError('研究候选或价格基准未登记')
     state = copy.deepcopy(state if state is not None else initial_state(capital))
+    if configured:
+        identity = digest(configured)
+        if state.get('cursor') and state.get('configuration_digest') != identity:
+            raise ValueError('增量回放不能更改冻结配置')
+        state['configuration_digest'] = identity
+    elif state.get('configuration_digest'):
+        raise ValueError('不能将自定义账户切换回默认配置')
     maps = {s: {b['date']: b for b in dataset[s]['bars']} for s in dataset}
     histories = {s: [b for b in dataset[s]['bars']] for s in symbols}
     fills, curve, blocks = [], [], []
@@ -106,15 +119,17 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
             return state['cash'] + sum(p['qty'] * today[s][field] for s, p in state['positions'].items())
         open_nav = nav('open')
         state['peak'] = max(state['peak'], open_nav)
-        if open_nav / state['peak'] - 1 <= -ASSUMPTIONS['drawdown_pause']:
+        if open_nav / state['peak'] - 1 <= -limits['drawdown_pause']:
             state['paused'] = True
         scores = {s: prior[s][-1]['close']/prior[s][-lookback-1]['close']-1 for s in symbols}
         chosen = set(s for s in symbols if scores[s] > params['threshold']) if not state['paused'] else set()
-        target = min(ASSUMPTIONS['single_weight'], ASSUMPTIONS['gross_weight']/len(chosen)) if chosen else 0
+        target = min(limits['single_weight'], limits['gross_weight']/len(chosen)) if chosen else 0
         policy = None
         if profile != 'legacy':
             policy = decision(profile, prior, [b for b in dataset[benchmark]['bars'] if b['date']<d],
                               scores, params['threshold'], session_index, ASSUMPTIONS)
+        if configured:
+            policy = config.decision(configured, prior, [b for b in dataset[benchmark]['bars'] if b['date']<d], scores, params['threshold'], session_index)
         # Sell first; no intraday decision uses the current close/high/low signal.
         touched = set()
         for side in ('sell', 'buy'):
@@ -124,7 +139,7 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
                 if bar['volume'] <= 0:
                     blocks.append({'date': d, 'symbol': s, 'reason': 'suspended_or_missing_volume', 'side': side}); continue
                 pos = state['positions'].get(s, {'qty': 0, 'cost': 0, 'opened': ''})
-                stop = pos['qty'] > 0 and prev['close'] / pos['cost'] - 1 <= -ASSUMPTIONS['stop_loss']
+                stop = pos['qty'] > 0 and prev['close'] / pos['cost'] - 1 <= -limits['stop_loss']
                 desired = open_nav*target if s in chosen and not stop else 0
                 current = pos['qty']*bar['open']
                 if policy is not None:
@@ -147,19 +162,27 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
                 change = bar['open']/prev['close']-1
                 if (side == 'buy' and change >= limit-.003) or (side == 'sell' and change <= -limit+.003):
                     blocks.append({'date': d, 'symbol': s, 'reason': 'price_limit', 'side': side}); continue
-                cap = max(0, int(prev['volume']*ASSUMPTIONS['volume_participation']))
-                unrounded = bar['open'] * (1 + (.001 if side == 'buy' else -.001))
+                cap = max(0, int(prev['volume']*limits['volume_participation']))
+                unrounded = bar['open'] * (1 + (limits['slippage_bps']/10000 if side == 'buy' else -limits['slippage_bps']/10000))
                 price = (math.ceil(unrounded*100-1e-8) if side=='buy' else math.floor(unrounded*100+1e-8))/100
                 if side == 'buy':
                     budget = min(max(0, desired-current), state['cash'])
+                    if configured:
+                        exposure = sum(v['qty']*today[k]['open'] for k,v in state['positions'].items())
+                        if not pos['qty'] and len(state['positions']) >= configured['max_holdings']:
+                            budget = 0
+                        budget = min(budget, max(0, open_nav*limits['gross_weight']-exposure), max(0, open_nav*limits['single_weight']-current))
                     qty = order_quantity(s, budget, price)
                     qty = min(qty, order_quantity(s, cap*price, price))
-                    while qty > 0 and qty*price + fee(qty*price, side) > state['cash']:
+                    while qty > 0 and qty*price + trading_fee(qty*price, side) > state['cash']:
                         qty = qty-1 if s.startswith(('688','689')) else qty-100
                         if s.startswith(('688','689')) and qty < 200: qty = 0
                 else:
                     if pos['opened'] >= d: continue  # T+1
                     want = pos['qty'] if not desired else min(pos['qty'], int((current-desired)/price))
+                    if configured and desired:
+                        lot = 1 if s.startswith(('688','689')) else 100
+                        want = min(pos['qty'], math.ceil((current-desired)/price/lot)*lot)
                     qty = min(want, cap)
                     if qty < pos['qty']:
                         qty = int(qty) if s.startswith(('688','689')) else int(qty//100)*100
@@ -167,7 +190,7 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
                     qty = 0
                 if qty <= 0:
                     blocks.append({'date': d, 'symbol': s, 'reason': 'volume_or_cash_or_lot', 'side': side}); continue
-                amount, charge = qty*price, fee(qty*price, side)
+                amount, charge = qty*price, trading_fee(qty*price, side)
                 if side == 'sell' and amount <= charge:
                     blocks.append({'date': d, 'symbol': s, 'reason': 'fee_exceeds_proceeds', 'side': side}); continue
                 touched.add(s)
@@ -184,11 +207,12 @@ def replay(dataset, symbols, params, *, start=None, end=None, state=None, capita
                 assert state['cash'] >= 0, 'cash invariant'
                 fill_key = [VERSION, d, s, side, qty, price]
                 if profile != 'legacy': fill_key += [profile, params]
+                if configured: fill_key += [digest(configured), params]
                 fills.append({'id': digest(fill_key), 'date': d, 'signal_date': prev['date'],
                               'symbol': s, 'side': side, 'qty': qty, 'price': price, 'fee': charge, 'realized_pnl': pnl, 'reason': reason})
         close_nav = round(nav('close'), 2)
         state['peak'] = max(state['peak'], close_nav)
-        if close_nav/state['peak']-1 <= -.08: state['paused'] = True
+        if close_nav/state['peak']-1 <= -limits['drawdown_pause']: state['paused'] = True
         state['cursor'] = d
         curve.append({'date': d, 'nav': close_nav, 'return_pct': (close_nav/state['initial']-1)*100,
                       'cash': state['cash'], 'exposure_pct': (close_nav-state['cash'])/close_nav*100 if close_nav else 0})
@@ -201,7 +225,7 @@ def benchmark_return(dataset, benchmark, dates):
     return (rows[dates[-1]]['close']/rows[dates[0]]['open']-1)*100
 
 
-def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None, *, profile='legacy'):
+def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None, *, profile='legacy', configuration=None):
     dates = validate_dataset(dataset)
     if len(dates) < 300:
         raise ValueError(f'共同交易日仅 {len(dates)} 天，完整验证至少需要 300 天')
@@ -209,7 +233,14 @@ def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None, *,
     protocol = {'version': VERSION, 'candidates': list(CANDIDATES), 'train_min': 126, 'test_days': 42,
                 'gap_days': 5, 'holdout_days': 63, 'last_test_window': 'partial_if_needed', 'selection': 'train_return_minus_absolute_drawdown',
                 'universe': 'user_selected_current_universe_not_survivorship_free', 'capital': capital}
+    from . import quant_research_config as config
+    configured = config.effective(configuration)
+    if configured and profile != 'legacy': raise ValueError('配置实验与旧研发候选不能混用')
+    parameter_grid = config.candidates(configured) if configured else CANDIDATES
     replay_kwargs = {}
+    if configured:
+        protocol.update(configuration=configured, configuration_digest=digest(configured), candidates=list(parameter_grid), validation_status='development_configured_history')
+        replay_kwargs = {'configuration': configured, 'benchmark': benchmark}
     if profile != 'legacy':
         from .quant_research_candidates import PROFILES, RULES
         if profile not in PROFILES: raise ValueError('研究候选未登记')
@@ -218,7 +249,7 @@ def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None, *,
     holdout_start = len(dates)-63
     def select(stop):
         trials = []
-        for p in CANDIDATES:
+        for p in parameter_grid:
             train_start = dates[max(0,stop-252)] if profile!='legacy' else None
             r = replay(dataset, symbols, p, start=train_start, end=dates[stop-1], capital=capital, **replay_kwargs)
             m = r['metrics']
@@ -267,10 +298,11 @@ def walk_forward(dataset, symbols, benchmark, capital=1000000, progress=None, *,
     if oos['return_pct'] <= 0: reasons.append('滚动样本外成本后收益未为正')
     if final['metrics']['excess_pct'] <= 0: reasons.append('最终留出集未跑赢价格基准')
     if min(oos['max_drawdown_pct'], final['metrics']['max_drawdown_pct']) < -8: reasons.append('回撤超过研究门槛')
+    if configured: reasons.append('自定义参数实验为开发研究，须冻结后在全新数据验证，禁止直接晋级')
     if profile!='legacy': reasons.append('候选使用已见历史开发数据，须完成冻结后的全新验证，禁止晋级')
     return {'protocol': protocol, 'parameters': chosen, 'selection_trials': trials, 'folds': folds,
             'oos': {**oos, 'curve': oos_curve, 'capital_resets_per_fold': False, 'risk_paused': oos_state['paused']}, 'holdout': final,
             'gate': {'passed': not reasons, 'reasons': reasons, 'purpose': 'paper_research_only',
                      'commercial_data_licensed': False, 'live_trading_enabled': False,
                      'unresolved': ['公司行为未核验', 'ST/IPO/退市历史池未覆盖', '公开行情商用授权未确认', '日线撮合无法证明盘口可成交']},
-            'assumptions': ASSUMPTIONS, 'dataset_digest': digest(dataset)}
+            'assumptions': {**ASSUMPTIONS, **(configured or {})} if configured else ASSUMPTIONS, 'dataset_digest': digest(dataset)}

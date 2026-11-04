@@ -45,7 +45,7 @@ def calculate(value):
         if supervisor.pins()!=frozen:raise ValueError('CPU source changed')
         if not jobs.update(owner,identity,progress=percent,stage=stage):raise InterruptedError('CPU job cancelled')
     request=value['request']
-    result=engine.walk_forward(value['dataset'],request['symbols'],request['benchmark'],request['capital'],progress)
+    result=engine.walk_forward(value['dataset'],request['symbols'],request['benchmark'],request['capital'],progress, configuration=request.get('configuration'))
     bound()
     if supervisor.pins()!=frozen:raise ValueError('CPU source changed at completion')
     return {'ok':True,'result':result,'result_digest':engine.digest(result),

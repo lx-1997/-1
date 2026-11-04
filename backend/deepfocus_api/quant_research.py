@@ -284,6 +284,9 @@ def promote(owner, identity):
     require_aligned(job['dataset'], benchmark=job['request']['benchmark'],
                     expected_symbols=job['request']['symbols']+[job['request']['benchmark']])
     calendar = _calendar_veto(owner, job, required=False)
+    from .quant_research_config import effective
+    if effective(job['request'].get('configuration')) is not None:
+        raise ValueError('自定义参数仍为开发研究，须在冻结后全新数据验证，不能直接晋级')
     if not job['result']['gate']['passed']: raise ValueError('未通过研究门槛，不能转入模拟跟踪')
     if (job['result'].get('oos', {}).get('risk_paused') is not False
             or job['result'].get('holdout', {}).get('state', {}).get('paused') is not False):
