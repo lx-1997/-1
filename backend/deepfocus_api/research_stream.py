@@ -199,7 +199,7 @@ async def api_research_deep_draft_stream(
             return None
 
         try:
-            yield _sse({"type": "stage", "stage": "resolve", "detail": "正在获取研报原文…"})
+            yield _sse({"type": "stage", "stage": "cache", "detail": "正在检查已有解读…"})
             lookup_task = budget_task(cached_draft)
             async for heartbeat in waiting(lookup_task):
                 yield heartbeat
@@ -227,6 +227,18 @@ async def api_research_deep_draft_stream(
             metrics_incr("ai_research")
             metrics_incr_ai_ref((request.file_id or request.workbench_filename or request.filename or "").strip(), title)
 
+            # A cached preview needs no PDF download or model admission. Deliver
+            # it immediately after the quota gate, while the full draft continues.
+            try:
+                early_quick = await within_deadline(asyncio.to_thread(metrics_get_ai_cache, quick_cache_key)) if quick_cache_key else None
+            except Exception:
+                early_quick = None  # Optional cache failure must not stop deep generation.
+            early_quick_delivered = isinstance(early_quick, dict) and bool(early_quick.get("one_liner"))
+            if early_quick_delivered:
+                complete_once()
+                yield _sse({"type": "quick", "data": early_quick})
+
+            yield _sse({"type": "stage", "stage": "resolve", "detail": "正在获取研报原文…"})
             # Parsing owns the same deadline and emits heartbeats while waiting.
             resolve_task = budget_task(lambda: resolve_source_documents(request))
             async for heartbeat in waiting(resolve_task):
@@ -280,8 +292,10 @@ async def api_research_deep_draft_stream(
                 # before deep starts only if the limiter can still reserve an
                 # interactive slot; overload skips generation, not the report.
                 try:
+                    value = early_quick if early_quick_delivered else await quick_cached()
+                    if value is not None:
+                        return value
                     async with _AI_ANALYZE_SEM.background():
-                        value = await quick_cached()
                         if value is None:
                             value = await generate_deep_quick(request, documents=docs, allow_vision=False)
                             if isinstance(value, dict) and value.get("one_liner") and quick_cache_key:
@@ -325,7 +339,7 @@ async def api_research_deep_draft_stream(
             gen_task = budget_task(_generate)
             yield _sse({"type": "stage", "stage": "generate", "detail": "正在排队或生成深度解读，速览就绪后先展示"})
             get_task = None
-            quick_delivered = False
+            quick_delivered = early_quick_delivered
             body_delivered = False
             body_sent = {}
             quick_pending = True
@@ -367,7 +381,7 @@ async def api_research_deep_draft_stream(
                     if quick_pending and quick_task in done:
                         quick_pending = False
                         quick = quick_task.result()
-                        if isinstance(quick, dict) and quick.get("one_liner"):
+                        if not early_quick_delivered and isinstance(quick, dict) and quick.get("one_liner"):
                             complete_once()
                             quick_delivered = True
                             yield _sse({"type": "quick", "data": quick})

@@ -79,7 +79,7 @@ async function openReport() {
 }
 
 async function clickReport() {
-  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'AI解析' })[0]); });
+  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: /^(AI解析|解读中…|✓ 查看解读|↻ 重试解读)$/ })[0]); });
 }
 
 function pendingResearch() {
@@ -226,7 +226,7 @@ it.each([
     : {});
   await openReport();
   expect(apiPost).toHaveBeenCalledWith('/api/research/vision-analyze', expect.objectContaining({ file_id: report.file_id }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /解读完成：研报断流集成回归/ })); });
+  expect(screen.queryByRole('button', { name: /解读完成：研报断流集成回归/ })).not.toBeInTheDocument();
   expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toHaveTextContent('兼容后端解读完成');
   await act(async () => { jest.advanceTimersByTime(18_000); });
   expect(research).toHaveBeenCalledTimes(1);
@@ -307,4 +307,49 @@ it('keeps auxiliary market dashboards collapsed while preserving access to them'
   await act(async () => { fireEvent.click(summary); });
   expect(disclosure).not.toHaveAttribute('open');
   await act(async () => { view.unmount(); });
+});
+
+it('shows server cache availability before a report is opened', async () => {
+  (apiPost as jest.Mock).mockImplementation(async (path: string) => path === '/api/ai/interpretation-status'
+    ? { statuses: { 'report:same-report': true } } : {});
+  await act(async () => { render(<AuthProvider><FinancialTerminal /></AuthProvider>); });
+  expect(screen.getAllByRole('button', { name: '✓ 查看解读' })[0]).toHaveAttribute('data-state', 'cached');
+  expect(research).not.toHaveBeenCalled();
+});
+
+it('lets the task dock reopen a running report without another request', async () => {
+  pendingResearch();
+  await openReport();
+  await act(async () => { fireEvent.click(document.querySelector('.bbt-doc-close')!); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'AI 助手' }), { detail: 0 }); });
+  const tab = screen.getByRole('button', { name: /解读记录/ });
+  await act(async () => { fireEvent.click(tab); });
+  await act(async () => { fireEvent.click(document.querySelector('.bbt-ai-task-main')!); });
+  expect(screen.getByRole('dialog', { name: 'AI 深度稿' })).toBeInTheDocument();
+  expect(research).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the initial summary readable as streamed paragraphs arrive', async () => {
+  pendingResearch();
+  await openReport();
+  await act(async () => { research.mock.calls[0][2]!({ one_liner: '先看到的结论', summary: '保留的速览摘要', quick: true } as any); });
+  const summary = screen.getByRole('region', { name: '速览摘要' });
+  await act(async () => { research.mock.calls[0][4]!({ sections: [{ title: '正文', paragraphs: ['后续生成正文'] }] }); });
+  expect(screen.getByRole('region', { name: '速览摘要' })).toBe(summary);
+  expect(summary).toHaveTextContent('先看到的结论');
+  expect(screen.getByRole('region', { name: '正在生成的研报正文' })).toHaveTextContent('后续生成正文');
+});
+
+it.each([false, true])('acknowledges completion after reading (background=%s)', async background => {
+  let finish!: (value: any) => void;
+  research.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await openReport();
+  if (background) await act(async () => { fireEvent.click(document.querySelector('.bbt-doc-close')!); });
+  await act(async () => { finish({ title: report.title, sections: [{ title: '正文', paragraphs: ['完成的解读正文'] }] }); });
+  if (background) {
+    expect(screen.getByLabelText('1 项解读待查看')).toBeInTheDocument();
+    await clickReport();
+  }
+  expect(screen.queryByLabelText('1 项解读待查看')).not.toBeInTheDocument();
+  if (!background) expect(screen.queryByRole('button', { name: /解读完成：研报断流集成回归/ })).not.toBeInTheDocument();
 });

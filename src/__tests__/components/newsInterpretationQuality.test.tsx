@@ -233,3 +233,26 @@ it('switches from the original into the pending analysis instead of opening it u
   expect(reader().closest('.bbt-doc-overlay--ai')).not.toBeNull();
   await act(async () => { finish(good); });
 });
+
+it('queries cache availability for the independent article list before opening it', async () => {
+  (apiPost as jest.Mock).mockImplementation(async (path: string) => path === '/api/ai/interpretation-status'
+    ? { statuses: { [cacheKey]: true } } : {});
+  await mountArticles();
+  const row = screen.getByRole('article', { name: `资讯：${article.title}` });
+  expect(within(row).getByRole('button', { name: '✓ 查看解读' })).toBeInTheDocument();
+  expect(newsCalls()).toHaveLength(0);
+});
+
+it('reopens a running article from its list entry without resubmitting generation', async () => {
+  let finish!: (value: unknown) => void;
+  (apiPost as jest.Mock).mockImplementation((path: string) => path === '/api/news/ai-analyze'
+    ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({}));
+  await mountArticles();
+  await clickArticleAi();
+  await act(async () => { fireEvent.click(within(reader()).getByRole('button', { name: '关闭', exact: true })); });
+  const row = screen.getByRole('article', { name: `资讯：${article.title}` });
+  await act(async () => { fireEvent.click(within(row).getByRole('button', { name: '解读中…' })); });
+  expect(reader()).toBeInTheDocument();
+  expect(newsCalls()).toHaveLength(1);
+  await act(async () => { finish(good); });
+});

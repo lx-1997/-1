@@ -659,3 +659,22 @@ async def test_full_model_failure_keeps_preview_instead_of_replacing_it_with_exc
     assert "已保留初步速览" in events[-1]["detail"]
     assert not any(event["type"] == "done" for event in events)
     assert quotas.used("quick-test") == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_preview_is_delivered_before_source_download(monkeypatch):
+    resolved = False
+    monkeypatch.setattr(main, 'metrics_get_ai_cache', lambda key: QUICK if key == 'quick:quick-test' else None)
+    async def resolve(request):
+        nonlocal resolved
+        resolved = True
+        return []
+    monkeypatch.setattr(research_stream, 'resolve_source_documents', resolve)
+    response = await _response()
+    try:
+        async for chunk in response.body_iterator:
+            if _event(chunk)['type'] == 'quick':
+                assert not resolved
+                break
+    finally:
+        await response.body_iterator.aclose()

@@ -1092,6 +1092,9 @@ button.bbt-rtick--act:hover { border-color: var(--amber); color: var(--amber); b
 .bbt-nai { background: rgba(255,176,0,.09); color: var(--amber-2); border: 1px solid rgba(255,176,0,.26); }
 .bbt-nai:hover { background: rgba(255,176,0,.16); color: var(--amber-2); border-color: rgba(255,176,0,.45); }
 .bbt-nai:active { transform: translateY(.5px); }
+.bbt-nai[data-state="cached"] { color: var(--green, #39b98a); border-color: currentColor; background: rgba(57,185,138,.09); }
+.bbt-nai[data-state="running"] { opacity: .8; }
+
 .bbt-nsrc { background: rgba(255,255,255,.035); color: var(--text-soft); border: 1px solid rgba(255,255,255,.12); }
 .bbt-nsrc:hover { background: rgba(255,255,255,.08); color: var(--text-soft); border-color: rgba(255,255,255,.22); }
 /* 收藏 */
@@ -6065,3 +6068,10 @@ html:not([data-theme="light"]) .bbt-with-sidebar {
 .bbt .bbt-ai-history-search { background: var(--input-bg); border-color: var(--line-2); color: var(--mute); }
 .bbt .bbt-ai-history-search input { color: var(--text-strong); font-size: 12px; }
 .bbt .bbt-ai-history-search input::placeholder { color: var(--mute); }
+
+/* Keep the first readable summary mounted as the full report arrives. */
+.bbt-ai-retained-preview { border: 1px solid var(--line, rgba(128,128,128,.25)); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; text-align: left; }
+.bbt-ai-retained-preview > b { display: block; font-size: 14px; }
+.bbt-ai-retained-preview > span { display: block; font-size: 12px; opacity: .7; margin-top: 4px; }
+.bbt-ai-retained-preview > p { margin: 10px 0 0; line-height: 1.8; overflow-wrap: anywhere; }
+.bbt-nai[data-state="reading"] { color: var(--green, #39b98a); }

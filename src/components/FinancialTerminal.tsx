@@ -49,6 +49,7 @@ import { copyText } from '../utils/clipboard';
 import { shareImageNative } from '../utils/share';
 import { drawResearchDeepDraftImage, researchDeepDraftToText } from '../utils/researchDeepDraftImage';
 import { normalizeAiConversationHistory } from '../utils/aiConversationHistory';
+import { interpretationAction, reportInterpretationKey } from '../utils/aiInterpretStatus';
 import { hydrateInterpretCache, persistInterpretEntry, readAiTaskHistory, removeAiTaskHistory, upsertAiTaskHistory, readSyncedInterpretKeys, markInterpretSynced, isReusableNewsInterpretation, newsInterpretationCacheKey, dropInterpretCache } from '../utils/aiInterpretCache';
 import { planLocalRestores, planCloudRestores, type RestorableTaskSeed } from '../utils/aiTaskRestore';
 import { normalizePublisherName } from '../utils/displayBrand';
@@ -234,6 +235,8 @@ interface AiBgTask {
   quick?: AiAnalysisLike | null;  // 快轨速览卡：深稿完成前先行渲染
   deepDraft: ResearchDeepDraftInput;
   error: string;
+  viewed?: boolean;  // Completed results are unread until opened.
+  readingCache?: boolean;
   hidden?: boolean;   // 运行中被移除：完成后静默入缓存，不再提醒
   restored?: boolean; // 从本机历史恢复的已完成任务：不进「待看」角标
   cloud?: boolean;    // 从服务端同步取回的跨端记录：本机无正文缓存，点击重新拉取（研报类）
@@ -1603,6 +1606,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   // 重复打开同一条资讯/研报时直接复用已完成的解读（内存 + 本机持久，刷新/隔天仍秒开）；
   // 服务端仍负责跨用户持久缓存，这里只影响打开速度，不改变额度口径。
   const aiInterpretCacheRef = useRef<Map<string, { result: AiAnalysis; deepDraft?: ResearchDeepDraftInput }>>(new Map());
+  const [serverInterpretReady, setServerInterpretReady] = useState<Record<string, boolean>>({});
+  const serverInterpretReadyRef = useRef(serverInterpretReady);
+  serverInterpretReadyRef.current = serverInterpretReady;
   // 云端解读记录的「点击取回」需要触发最新一次 runAiAnalysis；它定义在组件后段，
   // 用 latest-ref 解耦（声明在前、赋值在后），避免同步 effect 依赖其身份导致反复重跑。
   const runAiAnalysisRef = useRef<(r: ResearchWireItem, hidden?: boolean) => Promise<void> | void>(() => {});
@@ -3644,6 +3650,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const openAiTaskView = useCallback((key: string) => {
     const t = aiTasksRef.current.get(key);
     if (!t) return;
+    if (t.status === 'done' && !t.viewed) { t.viewed = true; setAiTasksVersion(v => v + 1); }
     // 本机从未有过正文的条目（云端跨端记录 / 上次会话的中断·失败）：点击直接续跑重取，
     // 不打开错误弹层（错误弹层的「↻ 重试」留给本会话内失败的任务，那里有原始报错上下文）
     if (!t.result && t.restart && (t.cloud || t.restored)) {
@@ -3672,6 +3679,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
 
   const registerAiTask = useCallback((task: AiBgTask) => {
     aiTasksRef.current.get(task.key)?.cancel?.();
+    if (task.readingCache) task.stage = '正在读取已有解读…';
     task.activity = task.activity || [{ detail: task.stage || '已提交解读请求，等待服务返回', at: task.startedAt }];
     aiTasksRef.current.set(task.key, task);
     // 启动即写历史（status=running）：刷新后进行中的解读显示为「中断 · 点击继续」而非凭空消失
@@ -3720,8 +3728,10 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
         }).then(() => markInterpretSynced(key)).catch(() => { /* 下次重试 */ });
       }
     }
-    if (aiViewingTaskRef.current === key) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); setAiQuickPending(false); }
-    if (!cur || !cur.hidden) showToast(`✅ 解读完成：${clipTitle(title)}，点击查看`, () => openAiTaskView(key));
+    const viewing = aiViewingTaskRef.current === key;
+    cur.viewed = viewing;
+    if (viewing) { setAiResult(result); setAiDeepDraft(deepDraft); setAiLoading(false); setAiError(''); setAiQuickPending(false); }
+    if (!viewing && !cur.hidden) showToast(`✅ 解读完成：${clipTitle(title)}，点击查看`, () => openAiTaskView(key));
   }, [showToast, openAiTaskView, aiRetries]);
 
   const failAiTask = useCallback((key: string, msg: string) => {
@@ -3761,8 +3771,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (!existing) return false;
     if (existing.status === 'running') {
       if (existing.hidden) { existing.hidden = false; setAiTasksVersion(v => v + 1); }
-      if (existing.kind === 'report') openAiTaskView(key);
-      else showToast('✦ 正在后台解读中，完成后提醒你');
+      openAiTaskView(key);
     } else if (existing.status === 'done') openAiTaskView(key);
     else existing.restart();
     return true;
@@ -3781,10 +3790,12 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const sourceBody: Record<string, any> = { title: r.title, max_pages: RESEARCH_AI_MAX_PAGES };
     if (fid) { sourceBody.file_id = fid; sourceBody.filename = r.filename; }
     else { sourceBody.workbench_filename = r.filename; sourceBody.workbench_out = r.out || 'downloads/海外投行报告'; }
-    const cacheKey = `report:${fid || r.filename || r.title}`;
+    const cacheKey = reportInterpretationKey(r);
     const meta = { org: (r as any).org || '', symbol: (r.instruments && r.instruments[0]) || '', preview_url: r.preview_url || '' };
     const cached = aiInterpretCacheRef.current.get(cacheKey);
     if (cached) {
+      const task = aiTasksRef.current.get(cacheKey);
+      if (task?.status === 'done') { task.viewed = true; setAiTasksVersion(v => v + 1); }
       openAiReading({ report: r, meta, result: cached.result, deepDraft: cached.deepDraft || null });
       return;
     }
@@ -3792,6 +3803,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const controller = new AbortController();
     const task: AiBgTask = {
       key: cacheKey, kind: 'report', title: r.title, report: r, meta,
+      readingCache: !!serverInterpretReadyRef.current[cacheKey],
       cancel: () => controller.abort(),
       hidden,
       restart: () => { removeAiTask(cacheKey); runAiAnalysis(r); },
@@ -3811,6 +3823,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       }, (detail) => {
         if (!isTaskCurrent()) return;
         const cur = aiTasksRef.current.get(cacheKey);
+        if (cur && /正在获取研报原文|原文已获取|正在排队|模型解读中/.test(detail)) cur.readingCache = false;
         // 速览已出后，深度阶段的「模型解读中」让位给更准确的速览文案
         const stageText = cur?.quick && detail.startsWith('模型解读中') ? '速览完成 · 深度解读继续生成中' : detail;
         if (cur && cur.stage !== stageText) { cur.stage = stageText; cur.activity = appendGenerationActivity(cur.activity, stageText); setAiTasksVersion(v => v + 1); }
@@ -3910,6 +3923,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     }
     const cached = aiInterpretCacheRef.current.get(cacheKey);
     if (cached && isReusableNewsInterpretation(cached.result)) {
+      const task = aiTasksRef.current.get(cacheKey);
+      if (task?.status === 'done') { task.viewed = true; setAiTasksVersion(v => v + 1); }
       openAiReading({ report, meta: null, result: cached.result, deepDraft: null, retry: () => void runNewsAi(m, true) });
       return;
     }
@@ -3917,13 +3932,13 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     if (resumeAiTask(cacheKey)) return;
     registerAiTask({
       key: cacheKey, kind: 'news', title: m.title, report, meta: null,
+      readingCache: !refresh && !!serverInterpretReadyRef.current[cacheKey],
       content: ((articleOriginal?.id === m.id ? articleOriginal.content : '') || m.content || '').slice(0, 20000),
       restart: () => { void runNewsAi(m, true); },
       startedAt: Date.now(), status: 'running', stage: '已提交解读请求，等待服务返回', result: null, deepDraft: null, error: '',
     });
     // 立即打开阅读模态展示文章原文：解读在后台生成，完成后自动切换为解读结果
     openAiTaskView(cacheKey);
-    showToast('✦ 已转入后台解读，完成后提醒你');
     try {
       const res = await apiPost<AiAnalysis>('/api/news/ai-analyze',
         { title: m.title, content: m.content || '', url: m.url || '', message_id: m.id, refresh }, { timeout: 150000 });
@@ -5278,6 +5293,51 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       </span>
     : null;
 
+  // Availability is metadata only; checking never starts generation.
+  useEffect(() => { setServerInterpretReady({}); }, [session.revision]);
+  useEffect(() => {
+    if (!authUser) return;
+    let cancelled = false;
+    const revision = getAuthSnapshot().revision;
+    const entries = [
+      ...reports.map(r => ({ key: reportInterpretationKey(r), kind: 'report',
+        title: r.title, file_id: r.file_id || (r.preview_url?.includes('wire-file') ? new URLSearchParams(r.preview_url.split('?')[1]).get('file_id') : '') || '',
+        filename: r.filename, out: r.out || 'downloads/海外投行报告' })),
+      ...Array.from(new Map([...messages, ...articles, ...articleHistory, ...searchMsgs, ...(newsPreview ? [newsPreview] : [])].filter(m => m.topic === '文章').map(m => [m.id, m])).values()).map(m => ({
+        key: newsInterpretationCacheKey(m.id, m.title, m.content || ''), kind: 'news', message_id: m.id,
+      })),
+    ];
+    if (!entries.length) return;
+    let checking = false;
+    const refresh = async () => {
+      if (document.hidden || checking) return;
+      checking = true;
+      try {
+        const statuses: Record<string, boolean> = {};
+        for (let i = 0; i < entries.length; i += 100) {
+          if (cancelled || !isAuthRevisionCurrent(revision)) return;
+          const response = await apiPost<{ statuses: Record<string, boolean> }>('/api/ai/interpretation-status', { entries: entries.slice(i, i + 100) });
+          Object.assign(statuses, response.statuses || {});
+        }
+        if (!cancelled && isAuthRevisionCurrent(revision)) setServerInterpretReady(statuses);
+      } catch { /* Older backends still use the account-scoped local cache. */ }
+      finally { checking = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 60000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [reports, messages, articles, articleHistory, searchMsgs, newsPreview, authUser, session.revision]);
+
+  const renderInterpretAction = (kind: 'report' | 'news', item: any, idleLabel?: string) => {
+    const key = kind === 'report' ? reportInterpretationKey(item) : newsInterpretationCacheKey(item.id, item.title, item.content || '');
+    const task = aiTasksRef.current.get(key);
+    const cached = aiInterpretCacheRef.current.get(key);
+    const reusable = !!cached && (kind === 'report' || isReusableNewsInterpretation(cached.result));
+    const action = interpretationAction(reusable || (task?.status !== 'running' && task?.status !== 'error' && !!serverInterpretReady[key]), task?.status, task?.readingCache);
+    return <button className="bbt-nai" data-state={action.state} title={action.title}
+      onClick={e => { e.stopPropagation(); kind === 'report' ? void runAiAnalysis(item) : void runNewsAi(item); }}>{action.state === 'idle' ? (idleLabel || (kind === 'report' ? 'AI解析' : 'AI 解读')) : action.label}</button>;
+  };
+
   // 研报行（研报 tab 与 ALL 选股态共用）
   const renderResearchRow = (r: ResearchWireItem, isHead = false) => (
     <div key={r.id + r.filename} className={`bbt-rrow${isHead ? ' bbt-rrow--pin' : ''}`} onClick={() => runAiAnalysis(r)} title="AI解析研报">
@@ -5285,7 +5345,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       <span className="bbt-rmid"><span className="bbt-rtitle">{stripUrls(r.title) || r.title}</span>{instChips(r.instruments)}</span>
       <span className="bbt-nact">
         <button className={'bbt-nbm' + (bookmarks.has(bmId(r)) ? ' on' : '')} aria-label="收藏" aria-pressed={bookmarks.has(bmId(r))} title={bookmarks.has(bmId(r)) ? '取消收藏' : '收藏'} onClick={e => { e.stopPropagation(); toggleBookmark(r, '研报'); }}>{bookmarks.has(bmId(r)) ? '★' : '☆'}</button>
-        <button className="bbt-nai" title="AI解析研报" onClick={e => { e.stopPropagation(); runAiAnalysis(r); }}>AI解析</button>
+        {renderInterpretAction('report', r)}
         {r.preview_url && canViewResearchOriginal && <button className="bbt-nsrc" title="查看研报原文 PDF（会员）" disabled={pdfLoadingUrl === r.preview_url} onClick={e => { e.stopPropagation(); openResearchOriginal(r.preview_url); }}>{pdfLoadingUrl === r.preview_url ? '加载中…' : '原文'}</button>}
       </span>
     </div>
@@ -5321,7 +5381,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           {kind === 'kx'
             ? <button className="bbt-nsrc" title="复制" onClick={e => { e.stopPropagation(); copyNews(m); }}>{copiedNewsId === m.id ? '✓' : '复制'}</button>
             : <>
-                <button className="bbt-nai" title={kind === 'yb' ? 'AI解析研报' : 'AI 解读'} onClick={e => { e.stopPropagation(); kind === 'yb' ? runAiAnalysis(m) : runNewsAi(m); }}>{kind === 'yb' ? 'AI解析' : 'AI 解读'}</button>
+                {renderInterpretAction(kind === 'yb' ? 'report' : 'news', m)}
                 {kind === 'yb' && m.preview_url && canViewResearchOriginal && <button className="bbt-nsrc" title="查看研报原文 PDF（会员）" disabled={pdfLoadingUrl === m.preview_url} onClick={e => { e.stopPropagation(); openResearchOriginal(m.preview_url); }}>{pdfLoadingUrl === m.preview_url ? '加载中…' : '原文'}</button>}
                 {kind === 'wz' && (articleOriginalUrl(m)
                   ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
@@ -5469,7 +5529,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </>
           ) : (
             <>
-              <button className="bbt-nai" title="AI 解读" onClick={e => { e.stopPropagation(); runNewsAi(m); }}>AI 解读</button>
+              {renderInterpretAction('news', m)}
               {/* 文章原文统一进入站内纯文字阅读器；研报仍走独立的 renderResearchRow。 */}
               {articleOriginalUrl(m)
                 ? <button className="bbt-nsrc" title="查看原文" onClick={e => { e.stopPropagation(); openOriginal(m); }}>原文</button>
@@ -7051,7 +7111,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               <button className="bbt-doc-close" onClick={() => setNewsPreview(null)}>✕ 关闭</button>
             </div>
             <div className="bbt-news-actions">
-              <button className="bbt-news-btn bbt-news-btn--ai" onClick={() => runNewsAi(newsPreview)}>✦ AI 解读</button>
+              {renderInterpretAction('news', newsPreview, '✦ AI 解读')}
               {!isArticlePreview && newsPreview.url && !isImg && <a className="bbt-news-btn bbt-news-btn--src" href={newsPreview.url} target="_blank" rel="noopener noreferrer">查看原文 ↗</a>}
             </div>
             {isImg ? (
@@ -7128,6 +7188,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               onCopied={kind => { pingMetric(kind === 'text' ? 'copy_text' : 'copy_image'); logAct('copy', aiReport.title); }}
             />}
             <div className={`bbt-ai-body${aiDeepDraft ? ' bbt-ai-body--deep' : ''}`}>
+              {(() => {
+                const quick = aiTasksRef.current.get(aiViewingTaskRef.current)?.quick;
+                return quick ? <section className="bbt-ai-retained-preview" aria-label="速览摘要">
+                  <b>速览摘要</b><span>{aiLoading ? '完整解读生成中，可先阅读摘要' : aiError ? '完整解读未完成，已保留摘要' : '完整解读已就绪'}</span>
+                  <p>{quick.one_liner || quick.summary}</p>
+                  {quick.summary && quick.summary !== quick.one_liner && <p>{quick.summary}</p>}
+                  {((quick.bullish?.length || 0) + (quick.bearish?.length || 0) > 0) && <details><summary>速览要点与风险</summary>{[...(quick.bullish || []), ...(quick.bearish || [])].map((text, i) => <p key={i}>{text}</p>)}</details>}
+                  <small>{aiError ? '初步速览 · 完整解读未生成，请以原文为准' : 'AI 初步解读，证据与风险以完整解读为准'}</small>
+                </section> : null;
+              })()}
               {aiDeepDraft ? (
                 <div className="bbt-ai-deep-wrap">
                   <ResearchDeepDraft
@@ -7156,7 +7226,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               })()}
               {(() => { const prose = aiTasksRef.current.get(aiViewingTaskRef.current)?.prose; return prose && !aiDeepDraft ? <StreamedResearchBody prose={prose} interrupted={!aiLoading} /> : null; })()}
               {!aiLoading && aiError && <div className="bbt-empty bbt-ai-err">⚠ {aiError}</div>}
-              {aiResult && (!aiLoading || aiQuickPending) && !aiTasksRef.current.get(aiViewingTaskRef.current)?.prose && (() => {
+              {aiResult && !aiQuickPending && !aiTasksRef.current.get(aiViewingTaskRef.current)?.quick && !aiTasksRef.current.get(aiViewingTaskRef.current)?.prose && (() => {
                 const compactReport = !!aiReportMeta;
                 const newsReport = !compactReport;
                 const allBull = aiResult.bullish?.length ? aiResult.bullish : (aiResult.key_points || []);
@@ -7264,7 +7334,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       {sideNavKey !== 'ai' && (() => {
         const running = aiTasks.filter(t => t.status === 'running');
         // 「待看」只数本次会话完成的；历史存档不常驻角标
-        const done = aiTasks.filter(t => t.status === 'done' && !t.restored).length;
+        const done = aiTasks.filter(t => t.status === 'done' && !t.restored && !t.viewed).length;
         return (
           <div
             ref={aiDockRef}
@@ -7324,7 +7394,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                       const p = aiTaskPulse(t);
                       return (
                         <div key={t.key} className={`bbt-ai-task is-${t.status}`}>
-                          <button type="button" className="bbt-ai-task-main" onClick={() => { if (!isRun) openAiTaskView(t.key); }}>
+                          <button type="button" className="bbt-ai-task-main" onClick={() => openAiTaskView(t.key)}>
                             <span className={`bbt-ai-task-dot${isRun ? ' is-run' : ''}`}>{isRun ? '' : t.status === 'done' ? '✓' : '!'}</span>
                             <span className="bbt-ai-task-txt">
                               <b>{clipTitle(t.title, 30)}</b>
