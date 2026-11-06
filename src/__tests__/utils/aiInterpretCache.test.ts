@@ -295,3 +295,17 @@ it('isolates interpretation history between A, B and guests and leaves old metad
   expect(localStorage.getItem('df_ai_task_history_v1')).not.toBeNull();
   invalidateAuthSession(); localStorage.clear();
 });
+
+it('reopens an old numbered scan with its missing table and retains a complete correction', () => {
+  const key = 'report:oversold';
+  const result = { summary: '筛选条件' };
+  const oldScan = { title: '值得关注的十只超跌股票', subtitle: '基于研报页面的结构化深度整理' };
+  localStorage.setItem(STORE_KEY, JSON.stringify({ [key]: { result, deepDraft: oldScan, savedAt: Date.now() } }));
+  const cache = new Map<string, CachedInterpretation>();
+  hydrateInterpretCache(cache, entry => entry);
+  expect(cache.has(key)).toBe(false);
+  expect(persistInterpretEntry(key, { result, deepDraft: { ...oldScan, stock_list_complete: false } })).toBe(false);
+  expect(persistInterpretEntry(key, { result, deepDraft: { ...oldScan, stock_list_complete: true } })).toBe(true);
+  hydrateInterpretCache(cache, entry => entry);
+  expect(cache.has(key)).toBe(true);
+});

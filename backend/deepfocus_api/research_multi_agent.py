@@ -22,6 +22,7 @@ import fitz
 
 from .llm import CloudResearchLLM, VisionUnavailableError
 from . import research_vision as rv
+from .research_cache import expected_oversold_count
 
 
 _ENABLED = os.getenv("DEEPFOCUS_RESEARCH_MULTI_AGENT", "0").strip().lower() not in {
@@ -422,13 +423,14 @@ def _page_summary_key(
     digest = hashlib.md5(
         pdf_bytes + str(max_pages).encode() + (title or "").encode() + (symbol or "").encode()
     ).hexdigest()
-    return f"VIS:{_PAGE_CACHE_VERSION}:{digest}"
+    version = "stock-table-v2" if expected_oversold_count(title or "") else _PAGE_CACHE_VERSION
+    return f"VIS:{version}:{digest}"
 
 
 def _page_result_is_usable(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
-    return bool(str(value.get("summary") or "").strip() or value.get("facts") or value.get("logic_lines"))
+    return bool(str(value.get("summary") or "").strip() or value.get("facts") or value.get("logic_lines") or value.get("stock_rows"))
 
 
 def _compact_page_result(value: Any, page: int) -> dict[str, Any]:
@@ -454,8 +456,18 @@ def _compact_page_result(value: Any, page: int) -> dict[str, Any]:
                 key: str(row.get(key) or "").strip()[:180]
                 for key in ("title", "evidence", "chain", "impact", "watch")
             })
+    stock_rows = []
+    raw_rows = data.get("stock_rows")
+    if isinstance(raw_rows, list):
+        for row in raw_rows[:30]:
+            if not isinstance(row, list) or len(row) < 2:
+                continue
+            name, ticker = (str(cell or "").strip()[:100] for cell in row[:2])
+            if name and re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,15}", ticker.upper()):
+                stock_rows.append([name, ticker.upper()])
     return {
         "page": page,
+        "stock_rows": stock_rows,
         "summary": str(data.get("summary") or "").strip()[:600],
         "facts": _items("facts", 4),
         "bullish": _items("bullish", 3),
@@ -468,6 +480,33 @@ def _compact_page_result(value: Any, page: int) -> dict[str, Any]:
     }
 
 
+
+def _stock_table_details(pdf_bytes: bytes, page_count: int, expected: int) -> list[bytes | None]:
+    """Render the left columns of a wide, shaded table at readable scale."""
+    details: list[bytes | None] = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        for index in range(min(page_count, doc.page_count)):
+            page = doc.load_page(index)
+            thumb = page.get_pixmap(colorspace=fitz.csGRAY, alpha=False)
+            pixels = thumb.samples
+            width = thumb.width
+            header = None
+            for y in range(thumb.height):
+                dark = [x for x, value in enumerate(pixels[y * width:(y + 1) * width]) if value < 110]
+                if len(dark) >= width * 0.45:
+                    header = y, dark[0], dark[-1]
+                    break
+            if header is None:
+                details.append(None)
+                continue
+            y, x0, x1 = header
+            rect = page.rect
+            clip = fitz.Rect(x0, max(0, y - 4), x0 + (x1 - x0) * 0.46,
+                             min(rect.height, y + 12 + expected * 8))
+            zoom = min(8, rv.MAX_RENDER_PX / max(clip.width, clip.height))
+            details.append(rv._pix_png(page, zoom, clip))
+    return details
+
 async def _call_page(
     llm: CloudResearchLLM,
     page: int,
@@ -475,15 +514,32 @@ async def _call_page(
     *,
     title: Optional[str],
     symbol: Optional[str],
+    table_detail: bytes | None = None,
 ) -> dict[str, Any]:
     """Read one page in isolation and retry once with a shorter JSON contract."""
     prompt = _build_page_prompt(title, symbol, page)
+    expected = expected_oversold_count(title or "")
+    if expected:
+        prompt += (
+            f"\n研报标题声明筛选 {expected} 只股票。若本页有筛选名单表，优先提取全部可读行，"
+            '另加 "stock_rows":[["原表公司名称","原表股票代码"]]。只录名单表中的成分，'
+            "保留原顺序和交易所后缀，逐行核对，不合并、不截断；正文中举例的公司不得混入。"
+            "无名单表或不可读则留空。"
+        )
+    images = [image]
+    if table_detail:
+        images.append(table_detail)
+        prompt += "\n第 2 张图是同页名单表局部放大。公司名称和代码逐行以放大图为准；看不清就省略该行。"
+    retry_hint = (
+        "\n精简摘要与其他字段，保留全部可读的 stock_rows。"
+        if expected else "\n只保留 summary、facts、bullish、bearish、rating、target_price、confidence。"
+    )
     async with _page_semaphore():
         for attempt in range(2):
             try:
                 raw = await llm.complete_vision(
-                    prompt if attempt == 0 else prompt + "\n只保留 summary、facts、bullish、bearish、rating、target_price、confidence。",
-                    [image],
+                    prompt if attempt == 0 else prompt + retry_hint,
+                    images,
                     max_tokens=1500 if attempt == 0 else 900,
                     timeout_seconds=_PAGE_TIMEOUT_SECONDS,
                 )
@@ -615,15 +671,19 @@ async def _analyze_images_per_page(
         llm = CloudResearchLLM()
         if not getattr(llm, "has_vision_provider", lambda: True)():
             raise VisionUnavailableError("当前没有可用的视觉模型")
-        images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages)
+        render_options = {"dpi": 195} if expected_oversold_count(title or "") else {}
+        images = await asyncio.to_thread(rv.render_pdf_to_pngs, pdf_bytes, max_pages=max_pages, **render_options)
         if not images:
             raise RuntimeError("PDF 没有可渲染的页面")
         if llm.provider == "mock":
             raise RuntimeError("当前为本地演示模型，无法做页级视觉解读")
         total_pages = len(images)
+        expected = expected_oversold_count(title or "")
+        details = await asyncio.to_thread(_stock_table_details, pdf_bytes, total_pages, expected) if expected else []
         tasks = [
             asyncio.create_task(
-                _call_page(llm, index, image, title=title, symbol=symbol),
+                _call_page(llm, index, image, title=title, symbol=symbol,
+                           **({"table_detail": details[index - 1]} if len(details) == total_pages else {})),
                 name=f"research-page-{index}",
             )
             for index, image in enumerate(images, 1)
@@ -660,7 +720,13 @@ async def _analyze_images_per_page(
             result = _merge_page_fallback(
                 page_results, provider=f"{llm.model} · page merge", total_pages=total_pages,
             )
-        await asyncio.to_thread(_cache_put, key, result)
+        # Preserve page rows through both synthesis and emergency merge.
+        if expected_oversold_count(title or ""):
+            result["page_results"] = sorted(page_results, key=lambda item: item["page"])
+        expected = expected_oversold_count(title or "")
+        tickers = {row[1] for page in page_results for row in page.get("stock_rows", [])}
+        if not expected or len(tickers) == expected:
+            await asyncio.to_thread(_cache_put, key, result)
     return result
 
 

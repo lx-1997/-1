@@ -1125,6 +1125,32 @@ def _fallback_from_compact(
     if not sections:
         summary = _clean(compact.get("summary") or compact.get("one_liner"), 1_200) or _MISSING
         sections = [{"id": "s1", "title": "模型读取摘要", "summary": summary, "paragraphs": [], "bullets": _list(compact.get("bullish") or compact.get("key_points"), 6), "evidence": [], "tables": []}]
+    from .research_cache import expected_oversold_count
+
+    expected = expected_oversold_count(request.title or "")
+    if expected:
+        rows: dict[str, list[str]] = {}
+        pages: set[int] = set()
+        for page in compact.get("page_results") or []:
+            for name, ticker in page.get("stock_rows") or []:
+                rows.setdefault(ticker, [name, ticker])
+                pages.add(page["page"])
+        complete = len(rows) == expected
+        summary = (
+            f"从扫描表识别到 {expected} 家公司，名称及代码以原表为准。"
+            if complete else f"标题列出 {expected} 家，本次识别到 {len(rows)} 家，请以原表为准。"
+        )
+        sections.insert(0, {
+            "id": "source-stock-list",
+            "title": "入选公司名单",
+            "summary": summary,
+            "tables": [{
+                "title": "原研报名单",
+                "columns": ["公司", "股票代码"],
+                "rows": list(rows.values()),
+                "note": "原文页码 " + "、".join(str(page) for page in sorted(pages)),
+            }] if rows else [],
+        })
     data = {
         "subtitle": "基于研报页面的结构化深度整理",
         "subject": compact.get("subject") or request.symbol or "",
@@ -1139,6 +1165,10 @@ def _fallback_from_compact(
         "confidence": min(_clamp(compact.get("confidence"), 0.25), 0.55),
     }
     response = _base_response(request, docs, data=data, provider="vision-compact-fallback", disclaimer=disclaimer)
+    if expected:
+        response.stock_list_complete = complete
+        # The list is already shown in its own section.
+        response.tables = []
     # ``page_texts`` is empty for image-only PDFs, but the compact visual
     # analyzer reports how many rendered pages it actually saw.  Preserve that
     # coverage instead of returning the misleading default zero.
@@ -1224,8 +1254,12 @@ async def generate_deep_draft(
         vision_bytes = next((doc.pdf_bytes for doc in docs if doc.pdf_bytes), b"")
         if vision_bytes and total_pages > 0:
             try:
+                from .research_cache import expected_oversold_count
+                from .research_multi_agent import _analyze_images_per_page
+
+                analyze = _analyze_images_per_page if expected_oversold_count(request.title or "") else analyze_pdf_adaptive
                 compact = await asyncio.wait_for(
-                    analyze_pdf_adaptive(
+                    analyze(
                         vision_bytes,
                         title=request.title,
                         symbol=request.symbol,

@@ -83,8 +83,13 @@ export function newsInterpretationCacheKey(id: string | number | null | undefine
   return `${NEWS_CACHE_PREFIX}${identity || `${title}:${content.slice(0, 80)}`}`;
 }
 
-function canReuseInterpretation(key: string, result: unknown): boolean {
-  return !key.startsWith('news:') || (key.startsWith(NEWS_CACHE_PREFIX) && isReusableNewsInterpretation(result));
+function canReuseInterpretation(key: string, entry: { result: unknown; deepDraft?: unknown }): boolean {
+  if (key.startsWith('news:')) return key.startsWith(NEWS_CACHE_PREFIX) && isReusableNewsInterpretation(entry.result);
+  const draft = entry.deepDraft as { title?: unknown; subtitle?: unknown; stock_list_complete?: boolean } | undefined;
+  if (draft?.stock_list_complete === false) return false;
+  // Older scan summaries omitted the constituent table entirely.
+  const oldScan = draft?.subtitle === '基于研报页面的结构化深度整理' && draft.stock_list_complete !== true;
+  return !oldScan || !/(?:[一二三四五六七八九十\d]+\s*只\s*超跌\s*(?:股票|个股)|\b[1-9]\d?\s+oversold\s+stocks?\b)/i.test(newsText(draft?.title));
 }
 
 /** 当前账号域下的真实存储键（未登录 → guest 命名空间）。 */
@@ -114,7 +119,7 @@ export function hydrateInterpretCache<T>(
   const now = Date.now();
   for (const [key, entry] of Object.entries(store)) {
     if (!entry || typeof entry.savedAt !== 'number' || now - entry.savedAt > TTL_MS) continue;
-    if (!canReuseInterpretation(key, entry.result)) continue;
+    if (!canReuseInterpretation(key, entry)) continue;
     const value = revive(entry);
     if (value !== null) into.set(key, value);
   }
@@ -122,7 +127,7 @@ export function hydrateInterpretCache<T>(
 
 /** 保存一条解读；返回是否真正落盘。超大条目与配额耗尽时会放弃（调用方据此决定是否入历史）。 */
 export function persistInterpretEntry(key: string, entry: { result: unknown; deepDraft?: unknown }): boolean {
-  if (!canReuseInterpretation(key, entry.result)) return false;
+  if (!canReuseInterpretation(key, entry)) return false;
   try {
     const store = readStore();
     const record: CachedInterpretation = { result: entry.result, deepDraft: entry.deepDraft, savedAt: Date.now() };

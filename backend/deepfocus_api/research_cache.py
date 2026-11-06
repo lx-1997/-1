@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import posixpath
+import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -16,6 +17,23 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 DEEP_DRAFT_CACHE_VERSION = "v3"
 _DEFAULT_WORKBENCH_OUT = "downloads/海外投行报告"
 
+
+
+def expected_oversold_count(title: str) -> int:
+    """Recognise numbered stock screen titles in the supported 1–30 row window."""
+    english = re.search(r"\b([1-9]\d?)\s+oversold\s+stocks?\b", title, re.I)
+    chinese = re.search(r"([一二三四五六七八九十\d]{1,3})\s*只\s*超跌\s*(?:股票|个股)", title)
+    raw = english[1] if english else chinese[1] if chinese else ""
+    if raw.isascii() and raw.isdigit():
+        count = int(raw)
+    else:
+        digits = {char: index for index, char in enumerate("一二三四五六七八九", 1)}
+        if "十" in raw:
+            tens, _, units = raw.partition("十")
+            count = 10 * (digits.get(tens, 0) if tens else 1) + digits.get(units, 0)
+        else:
+            count = digits.get(raw, 0)
+    return count if 1 <= count <= 30 else 0
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
