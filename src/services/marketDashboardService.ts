@@ -1,6 +1,4 @@
-import { getApiBaseUrls, formatErrorMessage } from './apiClient';
-
-const API_BASE = () => getApiBaseUrls()[0];
+import { apiGet, apiPost, formatErrorMessage } from './apiClient';
 
 export interface MarketIndicator {
   key: string;
@@ -36,11 +34,7 @@ export interface MarketDashboardResponse {
 
 export async function fetchMarketDashboard(): Promise<MarketDashboardResponse> {
   try {
-    const resp = await fetch(`${API_BASE()}/api/market-dashboard`);
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
-    return resp.json();
+    return await apiGet<MarketDashboardResponse>('/api/market-dashboard');
   } catch (error) {
     throw new Error(formatErrorMessage(error));
   }
@@ -48,11 +42,7 @@ export async function fetchMarketDashboard(): Promise<MarketDashboardResponse> {
 
 export async function fetchAshareDashboard(): Promise<MarketDashboardResponse> {
   try {
-    const resp = await fetch(`${API_BASE()}/api/market-dashboard/ashare`);
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
-    return resp.json();
+    return await apiGet<MarketDashboardResponse>('/api/market-dashboard/ashare');
   } catch (error) {
     throw new Error(formatErrorMessage(error));
   }
@@ -71,13 +61,7 @@ export interface DashboardAnalysisResponse {
 
 export async function analyzeGlobalDashboard(): Promise<DashboardAnalysisResponse> {
   try {
-    const resp = await fetch(`${API_BASE()}/api/market-dashboard/analyze`, {
-      method: 'POST',
-    });
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
-    return resp.json();
+    return await apiPost<DashboardAnalysisResponse>('/api/market-dashboard/analyze');
   } catch (error) {
     throw new Error(formatErrorMessage(error));
   }
@@ -85,13 +69,7 @@ export async function analyzeGlobalDashboard(): Promise<DashboardAnalysisRespons
 
 export async function analyzeAshareDashboard(): Promise<DashboardAnalysisResponse> {
   try {
-    const resp = await fetch(`${API_BASE()}/api/market-dashboard/ashare/analyze`, {
-      method: 'POST',
-    });
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
-    return resp.json();
+    return await apiPost<DashboardAnalysisResponse>('/api/market-dashboard/ashare/analyze');
   } catch (error) {
     throw new Error(formatErrorMessage(error));
   }

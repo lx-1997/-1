@@ -15,6 +15,14 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
+
+@router.get("/api/market-dashboard/insight-study")
+async def macro_insight_study_report() -> dict[str, Any]:
+    """Frozen research summary only; no account data or arbitrary file access."""
+    from .macro_insight_report import REPORT
+    return REPORT
+
+
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Referer": "https://quote.eastmoney.com/",

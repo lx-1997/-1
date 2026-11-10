@@ -5830,6 +5830,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
           <button type="button" title="AI 对话" className={`bbt-side-item${sideNavKey === 'ai' ? ' active' : ''}`} onClick={() => focusSideModule('ai')}>
             <span className="bbt-side-icon"><WorkspaceIcon name="ai" /></span><span>AI 对话</span><i>AI</i>
           </button>
+          <a href="/macro/" title="宏观雷达" className="bbt-side-item" data-macro-entry="true" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <span className="bbt-side-icon">◉</span><span>宏观雷达</span>
+          </a>
         </nav>
         <div className="bbt-side-divider" />
         <div className="bbt-side-kicker">信息</div>

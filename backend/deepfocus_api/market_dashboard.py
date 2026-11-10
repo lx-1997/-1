@@ -265,8 +265,8 @@ _INSIGHT_TEMPLATES = {
         "unit": "%",
     },
     "put_call_ratio": {
-        "description": "CBOE总Put/Call比率。高于1.0为恐慌（看跌>看涨），低于0.6为贪婪。",
-        "historical_context": "0.6-0.9为正常区间。>1.0短期看反弹（过度恐慌），<0.5注意反转。",
+        "description": "Cboe期权成交Put/Call比率，衡量看跌期权相对看涨期权的成交活跃度。它是对冲/情绪代理，不等于股票市场的净空头持仓。",
+        "historical_context": "需区分总量、指数与个股期权口径；比率升高可能来自保护性对冲，也可能来自方向性看空，单独使用容易误读。",
         "interpret": lambda v: (
             "极度恐慌 — 逆向指标暗示短期反弹" if v > 1.2 else
             "偏恐慌 — 防御情绪上升" if v > 0.9 else
@@ -876,7 +876,7 @@ async def fetch_market_dashboard(force: bool = False) -> dict[str, Any]:
     categories["volatility"].append(_make("VIX 恐慌指数", "vix", "volatility", vix_val, _INSIGHT_TEMPLATES["vix"],
                                              change=safe_float(vix_q.get("change")), change_pct=safe_float(vix_q.get("change_pct")),
                                              source="新浪财经 (VIX 期货)"))
-    categories["volatility"].append(_make("Put/Call 比率", "put_call_ratio", "volatility", put_call, _INSIGHT_TEMPLATES["put_call_ratio"],
+    categories["sentiment_risk"].append(_make("Cboe Put/Call 比率", "put_call_ratio", "sentiment_risk", put_call, _INSIGHT_TEMPLATES["put_call_ratio"],
                                              source="CBOE"))
 
     categories["interest_rate"].append(_make("10年期美债收益率", "ten_year", "interest_rate", ten_year_val, _INSIGHT_TEMPLATES["ten_year"],
@@ -1161,6 +1161,34 @@ async def _fetch_eastmoney_margin_balance() -> Optional[float]:
     return None
 
 
+async def _fetch_eastmoney_short_balance() -> Optional[float]:
+    """A股融券余额（人民币元）；这是披露的融券持仓快照，不是全部市场做空量。"""
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=EASTMONEY_HEADERS, trust_env=False) as client:
+            resp = await client.get(
+                "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                params={
+                    "sortColumns": "DIM_DATE",
+                    "sortTypes": "-1",
+                    "pageSize": "1",
+                    "pageNumber": "1",
+                    "reportName": "RPTA_RZRQ_LSHJ",
+                    "columns": "DIM_DATE,RQYE",
+                    "source": "WEB",
+                    "client": "WEB",
+                },
+            )
+            resp.raise_for_status()
+            records = (resp.json().get("result") or {}).get("data") or []
+            if records:
+                short_balance = to_float(records[0].get("RQYE"))
+                if short_balance is not None:
+                    return round(short_balance / 1e8, 2)
+    except Exception:
+        pass
+    return None
+
+
 async def _fetch_china_bond_yield() -> Optional[float]:
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=EASTMONEY_HEADERS, trust_env=False) as client:
@@ -1194,6 +1222,7 @@ async def fetch_ashare_dashboard(force: bool = False) -> dict[str, Any]:
         em_snapshot,
         northbound,
         margin_balance,
+        short_balance,
         china_bond,
         usd_cny_from_fred,
         sina_fx_raw,
@@ -1202,6 +1231,7 @@ async def fetch_ashare_dashboard(force: bool = False) -> dict[str, Any]:
         _fetch_eastmoney_ashare_snapshot(),
         _fetch_eastmoney_northbound(),
         _fetch_eastmoney_margin_balance(),
+        _fetch_eastmoney_short_balance(),
         _fetch_china_bond_yield(),
         _fetch_fred_series("DEXCHUS"),
         _fetch_sina_quotes([_SINA_USD_CNY[0]]),
@@ -1274,6 +1304,15 @@ async def fetch_ashare_dashboard(force: bool = False) -> dict[str, Any]:
                                source="东方财富"))
     indicators.append(_make("融资余额", "margin_balance", margin_balance, T["margin_balance"],
                                source="东方财富"))
+    short_balance_template = {
+        "description": "A股市场公开披露的融券余额，表示融券卖出后尚未偿还头寸的市值估算。仅覆盖融资融券体系，不含股指期货、场外衍生品等空头或对冲头寸。",
+        "historical_context": "作为持仓规模观察应结合自身历史变化、融券余量与市场成交额；市场制度和券源变化会显著影响该数值，不宜直接解读为全市场看空程度。",
+        "interpret": lambda v: "公开融券余额快照；请结合口径、披露日期和历史变化解读",
+        "signal": lambda v: "neutral",
+        "unit": "亿",
+    }
+    indicators.append(_make("融券余额", "short_balance", short_balance, short_balance_template,
+                               source="东方财富（市场汇总，通常滞后一交易日）"))
     indicators.append(_make("涨停家数", "limit_up_count", limit_up, T["limit_up_count"],
                                source="东方财富"))
     indicators.append(_make("跌停家数", "limit_down_count", limit_down, T["limit_down_count"],
@@ -1313,7 +1352,7 @@ def _category_name(key: str) -> str:
         "volatility": "波动率与恐慌",
         "interest_rate": "利率与信用",
         "currency_commodity": "汇率与大宗商品",
-        "sentiment_risk": "情绪与风险偏好",
+        "sentiment_risk": "空头与对冲情绪",
         "macro": "宏观经济",
         "breadth": "市场广度与指数",
     }.get(key, key)

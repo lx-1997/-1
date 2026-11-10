@@ -41,6 +41,7 @@ import { useRegisterModuleContext } from '../contexts/ModuleContext';
 import CenterShell from './common/CenterShell';
 import ShareButton from './common/ShareButton';
 import './MacroDashboard.css';
+import MacroInsightStudy from './MacroInsightStudy';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -74,7 +75,7 @@ const _fmtValue = (indicator: MarketIndicator): string => {
   if (u === '$') return `$${fmtNum(v)}`;
   if (u === '%') return `${v.toFixed(2)}%`;
   if (u === 'bp') return `${v.toFixed(0)}bp`;
-  return fmtNum(v);
+  return u ? `${fmtNum(v)} ${u}` : fmtNum(v);
 };
 
 const _fmtChange = (indicator: MarketIndicator): string | null => {
@@ -202,7 +203,7 @@ const CategorySection: React.FC<{ category: DashboardCategory }> = ({ category }
 
 function MacroDashboard() {
   const { message } = AntdApp.useApp();
-  const [activeTab, setActiveTab] = useState<string>('global');
+  const [activeTab, setActiveTab] = useState<string>(() => new URLSearchParams(window.location.search).get('tab') === 'study' ? 'insight-study' : 'global');
   const [globalData, setGlobalData] = useState<MarketDashboardResponse | null>(null);
   const [ashareData, setAshareData] = useState<MarketDashboardResponse | null>(null);
   const [loadingGlobal, setLoadingGlobal] = useState(false);
@@ -268,8 +269,8 @@ function MacroDashboard() {
     loadAshare();
   }, [loadGlobal, loadAshare]);
 
-  const activeData = activeTab === 'global' ? globalData : ashareData;
-  const activeAnalysis = activeTab === 'global' ? globalAnalysis : ashareAnalysis;
+  const activeData = activeTab === 'global' ? globalData : activeTab === 'ashare' ? ashareData : null;
+  const activeAnalysis = activeTab === 'global' ? globalAnalysis : activeTab === 'ashare' ? ashareAnalysis : null;
 
   const moduleContext = useMemo(() => {
     if (!activeData) return null;
@@ -479,7 +480,7 @@ function MacroDashboard() {
                   />
                 </div>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  {data.available_indicators}/{data.total_indicators} 项指标可用 · 每2-5分钟自动刷新
+                  {data.available_indicators}/{data.total_indicators} 项指标可用 · 各指标按来源频率更新
                 </Text>
                 <div className="macro-dashboard-scope-note">{subtitle}</div>
               </div>
@@ -496,6 +497,11 @@ function MacroDashboard() {
 
   const tabItems = [
     {
+      key: 'insight-study',
+      label: '洞察回测',
+      children: <MacroInsightStudy />,
+    },
+    {
       key: 'global',
       label: '全球宏观',
       children: loadingGlobal ? (
@@ -503,6 +509,13 @@ function MacroDashboard() {
       ) : globalData ? (
         <>
           {renderAnalysisPanel(globalAnalysis, analyzingGlobal, runGlobalAnalysis, '全球宏观')}
+          <Alert
+            type="info"
+            showIcon
+            message="空头相关数据采用不同代理口径"
+            description="Cboe Put/Call 是期权成交情绪指标，可能反映保护性对冲，不代表股票净空头持仓；美国市场没有单一、实时的全市场空头持仓数。不要把日度卖空成交量当作未平仓空头数量。"
+            style={{ marginBottom: 20 }}
+          />
           {renderDashboard(globalData, '涵盖波动率、利率、汇率、商品、宏观经济、市场广度等华尔街经典指标体系')}
         </>
       ) : (
@@ -517,7 +530,14 @@ function MacroDashboard() {
       ) : ashareData ? (
         <>
           {renderAnalysisPanel(ashareAnalysis, analyzingAshare, runAshareAnalysis, 'A股大盘')}
-          {renderDashboard(ashareData, '上证/深证/创业板、成交额、北向资金、融资融券、涨停跌停等A股经典指标')}
+          <Alert
+            type="info"
+            showIcon
+            message="融券余额是已披露持仓快照"
+            description="该指标统计融资融券体系内未偿还融券头寸的余额，不覆盖股指期货、场外衍生品等空头或对冲；通常滞后一交易日，适合观察变化，不宜单独判断大盘方向。"
+            style={{ marginBottom: 20 }}
+          />
+          {renderDashboard(ashareData, '上证/深证/创业板、成交额、融资融券余额、涨停跌停等A股经典指标')}
         </>
       ) : (
         <Alert type="error" message="加载失败" description={error} showIcon style={{ margin: 40 }} />
@@ -529,7 +549,7 @@ function MacroDashboard() {
     <CenterShell
       className="macro-dashboard-shell"
       title="宏观雷达"
-      subtitle="涵盖华尔街经典指标体系与A股本土核心指标，多维度评估市场状态"
+      subtitle="宏观环境、市场广度与空头/对冲情绪指标"
     >
       <Tabs
         activeKey={activeTab}

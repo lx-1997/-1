@@ -1,0 +1,445 @@
+{
+  "available": true,
+  "version": "macro-insights-v1",
+  "evaluation": "回顾性时间留出，历史数据曾用于平台研究",
+  "as_of": "2026-10-28",
+  "start": "2022-09-01",
+  "split_date": "2025-06-12",
+  "holdout_days": 335,
+  "cost_bps_per_side": 5,
+  "promotion_allowed": false,
+  "benchmarks": {
+    "buy_hold": {
+      "days": 335,
+      "return_pct": 5.0,
+      "annualized_pct": 3.738,
+      "max_drawdown_pct": -20.226,
+      "sharpe": 0.301,
+      "turnover": 2.0,
+      "cost_pct_initial": 0.1025,
+      "avg_exposure_pct": 100.0
+    },
+    "fixed_half": {
+      "days": 335,
+      "return_pct": 2.92,
+      "annualized_pct": 2.189,
+      "max_drawdown_pct": -10.561,
+      "sharpe": 0.298,
+      "turnover": 1.688,
+      "cost_pct_initial": 0.0881,
+      "avg_exposure_pct": 50.0
+    }
+  },
+  "candidates": [
+    {
+      "key": "trend",
+      "name": "沪深300单指数趋势",
+      "holdout": {
+        "days": 335,
+        "return_pct": 2.485,
+        "annualized_pct": 1.863,
+        "max_drawdown_pct": -14.661,
+        "sharpe": 0.212,
+        "turnover": 32.163,
+        "cost_pct_initial": 1.7544,
+        "avg_exposure_pct": 68.2
+      },
+      "matched_exposure": {
+        "days": 335,
+        "return_pct": 3.778,
+        "annualized_pct": 2.829,
+        "max_drawdown_pct": -14.182,
+        "sharpe": 0.299,
+        "turnover": 1.961,
+        "cost_pct_initial": 0.1029,
+        "avg_exposure_pct": 68.2
+      },
+      "folds": [
+        {
+          "start": "2025-06-12",
+          "end": "2025-09-03",
+          "excess_vs_trend_pct": 0.0
+        },
+        {
+          "start": "2025-09-04",
+          "end": "2025-12-04",
+          "excess_vs_trend_pct": 0.0
+        },
+        {
+          "start": "2025-12-05",
+          "end": "2026-03-10",
+          "excess_vs_trend_pct": 0.0
+        },
+        {
+          "start": "2026-03-11",
+          "end": "2026-06-08",
+          "excess_vs_trend_pct": 0.0
+        },
+        {
+          "start": "2026-06-09",
+          "end": "2026-09-01",
+          "excess_vs_trend_pct": 0.0
+        },
+        {
+          "start": "2026-09-02",
+          "end": "2026-10-28",
+          "excess_vs_trend_pct": 0.0
+        }
+      ],
+      "stress_10bps": {
+        "days": 335,
+        "return_pct": 0.849,
+        "annualized_pct": 0.638,
+        "max_drawdown_pct": -15.017,
+        "sharpe": 0.113,
+        "turnover": 32.157,
+        "cost_pct_initial": 3.4802,
+        "avg_exposure_pct": 68.2
+      },
+      "checks": {
+        "return_vs_trend": false,
+        "return_vs_exposure_matched": false,
+        "sharpe_vs_trend": false,
+        "drawdown_vs_trend": true,
+        "fold_consistency": false,
+        "cost_stress": false
+      },
+      "screen_passed": false,
+      "promotion_allowed": false
+    },
+    {
+      "key": "resonance",
+      "name": "四指数趋势共振",
+      "holdout": {
+        "days": 335,
+        "return_pct": 1.024,
+        "annualized_pct": 0.769,
+        "max_drawdown_pct": -14.626,
+        "sharpe": 0.124,
+        "turnover": 32.162,
+        "cost_pct_initial": 1.7607,
+        "avg_exposure_pct": 68.2
+      },
+      "matched_exposure": {
+        "days": 335,
+        "return_pct": 3.778,
+        "annualized_pct": 2.829,
+        "max_drawdown_pct": -14.182,
+        "sharpe": 0.299,
+        "turnover": 1.961,
+        "cost_pct_initial": 0.1029,
+        "avg_exposure_pct": 68.2
+      },
+      "folds": [
+        {
+          "start": "2025-06-12",
+          "end": "2025-09-03",
+          "excess_vs_trend_pct": 1.567
+        },
+        {
+          "start": "2025-09-04",
+          "end": "2025-12-04",
+          "excess_vs_trend_pct": -3.259
+        },
+        {
+          "start": "2025-12-05",
+          "end": "2026-03-10",
+          "excess_vs_trend_pct": 0.128
+        },
+        {
+          "start": "2026-03-11",
+          "end": "2026-06-08",
+          "excess_vs_trend_pct": 4.305
+        },
+        {
+          "start": "2026-06-09",
+          "end": "2026-09-01",
+          "excess_vs_trend_pct": -1.299
+        },
+        {
+          "start": "2026-09-02",
+          "end": "2026-10-28",
+          "excess_vs_trend_pct": -2.414
+        }
+      ],
+      "stress_10bps": {
+        "days": 335,
+        "return_pct": -0.588,
+        "annualized_pct": -0.443,
+        "max_drawdown_pct": -15.362,
+        "sharpe": 0.021,
+        "turnover": 32.156,
+        "cost_pct_initial": 3.4931,
+        "avg_exposure_pct": 68.2
+      },
+      "checks": {
+        "return_vs_trend": false,
+        "return_vs_exposure_matched": false,
+        "sharpe_vs_trend": false,
+        "drawdown_vs_trend": true,
+        "fold_consistency": false,
+        "cost_stress": false
+      },
+      "screen_passed": false,
+      "promotion_allowed": false
+    },
+    {
+      "key": "volume",
+      "name": "沪深300量价确认",
+      "holdout": {
+        "days": 335,
+        "return_pct": -1.567,
+        "annualized_pct": -1.181,
+        "max_drawdown_pct": -12.482,
+        "sharpe": -0.078,
+        "turnover": 51.762,
+        "cost_pct_initial": 2.7073,
+        "avg_exposure_pct": 49.4
+      },
+      "matched_exposure": {
+        "days": 335,
+        "return_pct": 2.89,
+        "annualized_pct": 2.166,
+        "max_drawdown_pct": -10.44,
+        "sharpe": 0.298,
+        "turnover": 1.676,
+        "cost_pct_initial": 0.0874,
+        "avg_exposure_pct": 49.4
+      },
+      "folds": [
+        {
+          "start": "2025-06-12",
+          "end": "2025-09-03",
+          "excess_vs_trend_pct": -4.263
+        },
+        {
+          "start": "2025-09-04",
+          "end": "2025-12-04",
+          "excess_vs_trend_pct": 0.241
+        },
+        {
+          "start": "2025-12-05",
+          "end": "2026-03-10",
+          "excess_vs_trend_pct": -2.456
+        },
+        {
+          "start": "2026-03-11",
+          "end": "2026-06-08",
+          "excess_vs_trend_pct": 0.621
+        },
+        {
+          "start": "2026-06-09",
+          "end": "2026-09-01",
+          "excess_vs_trend_pct": 1.528
+        },
+        {
+          "start": "2026-09-02",
+          "end": "2026-10-28",
+          "excess_vs_trend_pct": 0.0
+        }
+      ],
+      "stress_10bps": {
+        "days": 335,
+        "return_pct": -4.083,
+        "annualized_pct": -3.087,
+        "max_drawdown_pct": -13.956,
+        "sharpe": -0.283,
+        "turnover": 51.752,
+        "cost_pct_initial": 5.3447,
+        "avg_exposure_pct": 49.4
+      },
+      "checks": {
+        "return_vs_trend": false,
+        "return_vs_exposure_matched": false,
+        "sharpe_vs_trend": false,
+        "drawdown_vs_trend": true,
+        "fold_consistency": false,
+        "cost_stress": false
+      },
+      "screen_passed": false,
+      "promotion_allowed": false
+    },
+    {
+      "key": "divergence",
+      "name": "权重与其他指数同步",
+      "holdout": {
+        "days": 335,
+        "return_pct": 3.468,
+        "annualized_pct": 2.598,
+        "max_drawdown_pct": -11.248,
+        "sharpe": 0.282,
+        "turnover": 35.179,
+        "cost_pct_initial": 1.8903,
+        "avg_exposure_pct": 65.3
+      },
+      "matched_exposure": {
+        "days": 335,
+        "return_pct": 3.649,
+        "annualized_pct": 2.733,
+        "max_drawdown_pct": -13.611,
+        "sharpe": 0.299,
+        "turnover": 1.929,
+        "cost_pct_initial": 0.1012,
+        "avg_exposure_pct": 65.3
+      },
+      "folds": [
+        {
+          "start": "2025-06-12",
+          "end": "2025-09-03",
+          "excess_vs_trend_pct": 0.0
+        },
+        {
+          "start": "2025-09-04",
+          "end": "2025-12-04",
+          "excess_vs_trend_pct": -3.259
+        },
+        {
+          "start": "2025-12-05",
+          "end": "2026-03-10",
+          "excess_vs_trend_pct": 0.346
+        },
+        {
+          "start": "2026-03-11",
+          "end": "2026-06-08",
+          "excess_vs_trend_pct": 3.979
+        },
+        {
+          "start": "2026-06-09",
+          "end": "2026-09-01",
+          "excess_vs_trend_pct": 0.0
+        },
+        {
+          "start": "2026-09-02",
+          "end": "2026-10-28",
+          "excess_vs_trend_pct": 0.0
+        }
+      ],
+      "stress_10bps": {
+        "days": 335,
+        "return_pct": 1.663,
+        "annualized_pct": 1.249,
+        "max_drawdown_pct": -12.031,
+        "sharpe": 0.166,
+        "turnover": 35.173,
+        "cost_pct_initial": 3.7471,
+        "avg_exposure_pct": 65.3
+      },
+      "checks": {
+        "return_vs_trend": true,
+        "return_vs_exposure_matched": false,
+        "sharpe_vs_trend": true,
+        "drawdown_vs_trend": true,
+        "fold_consistency": false,
+        "cost_stress": true
+      },
+      "screen_passed": false,
+      "promotion_allowed": false
+    }
+  ],
+  "limitations": [
+    "四指数共振不等于全市场成分股广度",
+    "指数价格代理，未含分红、现金利息、ETF跟踪误差、税费及冲击",
+    "匹配敞口对照按评估期平均敞口事后计算，仅用于风险暴露归因",
+    "财报、新闻与持仓缺少已核实的历史可见性快照，本轮未纳入",
+    "所有规则固定，保留失败结果；历史通过也需新的前瞻数据验证"
+  ],
+  "provenance": {
+    "dataset_sha256": "5026c9afedbf9eacbf9a6960f1901c13a10137c559cf2f4f202615feb645ce13",
+    "captured_at": "2026-10-28T16:07:02.891120+08:00",
+    "protocol_sha256": "ed6cc738873430705e43c0a1c0691ea8535502eae84980f130c7f5f5bf63ee9a",
+    "source_sha256": {
+      "backend/deepfocus_api/macro_insight_study.py": "9a13aa310e3311d1a9c4002516804e097ec79328d8af46b0631813896f13aaad",
+      "backend/deepfocus_api/market_regime.py": "91e51327f801546298f069d5f3a23cbe55b39bd3d88ae40cb268863c94ce1b25"
+    },
+    "providers": [
+      {
+        "key": "csi300",
+        "name": "沪深300",
+        "provider": "sina",
+        "as_of": "2026-10-28",
+        "rows": 1023,
+        "cross_checked": false,
+        "close_deviation_pct": null,
+        "conflict": false,
+        "vendors": [
+          {
+            "provider": "eastmoney",
+            "as_of": null,
+            "rows": 0
+          },
+          {
+            "provider": "sina",
+            "as_of": "2026-10-28",
+            "rows": 1023
+          }
+        ]
+      },
+      {
+        "key": "csi500",
+        "name": "中证500",
+        "provider": "sina",
+        "as_of": "2026-10-28",
+        "rows": 1023,
+        "cross_checked": false,
+        "close_deviation_pct": null,
+        "conflict": false,
+        "vendors": [
+          {
+            "provider": "eastmoney",
+            "as_of": null,
+            "rows": 0
+          },
+          {
+            "provider": "sina",
+            "as_of": "2026-10-28",
+            "rows": 1023
+          }
+        ]
+      },
+      {
+        "key": "chinext",
+        "name": "创业板指",
+        "provider": "sina",
+        "as_of": "2026-10-28",
+        "rows": 1023,
+        "cross_checked": false,
+        "close_deviation_pct": null,
+        "conflict": false,
+        "vendors": [
+          {
+            "provider": "eastmoney",
+            "as_of": null,
+            "rows": 0
+          },
+          {
+            "provider": "sina",
+            "as_of": "2026-10-28",
+            "rows": 1023
+          }
+        ]
+      },
+      {
+        "key": "sse",
+        "name": "上证指数",
+        "provider": "sina",
+        "as_of": "2026-10-28",
+        "rows": 1023,
+        "cross_checked": false,
+        "close_deviation_pct": null,
+        "conflict": false,
+        "vendors": [
+          {
+            "provider": "eastmoney",
+            "as_of": null,
+            "rows": 0
+          },
+          {
+            "provider": "sina",
+            "as_of": "2026-10-28",
+            "rows": 1023
+          }
+        ]
+      }
+    ]
+  }
+}

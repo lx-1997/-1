@@ -1043,6 +1043,8 @@ PUBLIC_EXACT = frozenset(
         "/api/market/kline",        # 个股日线 K 线（OHLC，终端蜡烛图，免费层）
         "/api/stock/tear-sheet",    # 个股速判卡首张免费预览；完整历史/横向数据仍由前端登录墙控制
         "/api/market-dashboard",    # 大盘指标盘
+        "/api/market-dashboard/insight-study",  # 封存公开指数研究报告，仅只读
+        "/api/market-dashboard/ashare",  # 公开A股汇总指标，不含账号数据
         "/api/market-risk-radar",   # A/H/美股市值前20风险预警（只读公开数据）
         "/api/themes/boards",      # A股概念板块涨幅榜（题材导航·免费引流）
         "/api/themes/detail",      # 题材→受益股（顺藤摸瓜·免费）

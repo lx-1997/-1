@@ -1,0 +1,19 @@
+{
+  "version": "macro-insights-v1",
+  "registered_at": "2026-11-10",
+  "dataset": "artifacts/market-radar-v4-20261028/real-data.json",
+  "knowledge": "Prior platform research used this historical dataset. All results are retrospective, not genuinely unseen OOS.",
+  "universe": ["csi300", "csi500", "chinext", "sse"],
+  "rules": {
+    "trend": "CSI300 close above trailing 20-session SMA: 100%; otherwise 25%",
+    "resonance": "At least 3 of 4 indices above own trailing 20-session SMA: 100%; otherwise 25%",
+    "volume": "CSI300 above trailing SMA20 AND volume above trailing volume SMA20: 100%; otherwise 25%",
+    "divergence": "CSI300 above SMA20 AND at least 2 other indices above SMA20: 100%; otherwise 25%"
+  },
+  "execution": "Close t signal, next session open rebalance using existing market_regime.simulate; no parameter search; last-bar liquidation; single-side cost 5bps, stress 10bps",
+  "split": "First two thirds development, final third retrospective holdout; 60-session chronological folds, omit tail shorter than 20",
+  "comparison": "buy-hold, fixed 50%, single-index trend, same-period constant exposure matching each candidate mean exposure",
+  "screen": "holdout return greater than trend and matched-exposure benchmark; Sharpe greater than trend; drawdown no worse than trend; positive excess versus trend in majority of at least 3 folds; stress net excess versus trend positive",
+  "promotion": false,
+  "limitations": ["Price index proxies; no dividends, cash interest, ETF tracking, taxes or impact", "Four-index confirmation is not constituent breadth", "Retrospective historical reconstruction; data vendor single-source coverage", "News/earnings/holdings PIT archive unverified and excluded"]
+}
