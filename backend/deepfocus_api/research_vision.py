@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from html import unescape as _html_unescape
 from typing import Any, Optional
@@ -89,6 +90,8 @@ MIN_TEXT_CHARS = 400  # 文本层够多时走快速文本通道（~5-10s），�
 MAX_TEXT_CHARS = 7000
 OCR_MAX_PAGES = 32
 OCR_TOTAL_SECONDS = max(5.0, float(os.getenv("DEEPFOCUS_RESEARCH_OCR_TOTAL_SECONDS", "45") or 45))
+_OCR_SEMAPHORE = threading.BoundedSemaphore(1)
+_OCR_SLOT_WAIT_SECONDS = 2.0
 _VISION_DISCLAIMER = "本结论基于研报页面图像的 AI 视觉解读，非逐句溯源，可能遗漏或误读，请以原文为准。"
 _TEXT_DISCLAIMER = "本结论基于研报文本的 AI 摘要，可能遗漏图表信息，请以原文为准。"
 
@@ -652,8 +655,26 @@ def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int = MAX_VISION_PAGES) -> 
 
 def extract_pdf_ocr_text(pdf_bytes: bytes, *, max_pages: int = OCR_MAX_PAGES) -> str:
     """OCR scanned PDF pages into plain text; never asks a vision model to interpret them."""
-    if not pdf_bytes or shutil.which("tesseract") is None:
+    if not pdf_bytes:
         return ""
+    # OCR is CPU-bound. Keep one process at a time and give API work priority on
+    # small production hosts; if the slot stays busy, let the caller use vision.
+    if not _OCR_SEMAPHORE.acquire(timeout=_OCR_SLOT_WAIT_SECONDS):
+        return ""
+    try:
+        return _extract_pdf_ocr_text_locked(pdf_bytes, max_pages=max_pages)
+    finally:
+        _OCR_SEMAPHORE.release()
+
+
+def _extract_pdf_ocr_text_locked(pdf_bytes: bytes, *, max_pages: int = OCR_MAX_PAGES) -> str:
+    tesseract = shutil.which("tesseract")
+    if tesseract is None:
+        return ""
+    nice = shutil.which("nice")
+    command = ([nice, "-n", "10", tesseract] if nice else [tesseract]) + [
+        "stdin", "stdout", "-l", "chi_sim+eng", "--psm", "6"
+    ]
     parts: list[str] = []
     deadline = time.monotonic() + OCR_TOTAL_SECONDS
     try:
@@ -666,7 +687,7 @@ def extract_pdf_ocr_text(pdf_bytes: bytes, *, max_pages: int = OCR_MAX_PAGES) ->
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                 try:
                     proc = subprocess.run(
-                        ["tesseract", "stdin", "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+                        command,
                         # 封面页版式复杂时 tesseract 会跑满超时；预算从 12s 收紧到 6s，
                         # 避免无文字层 PDF 在注定为空的 OCR 上白等（实测这类页面成功识别
                         # 通常 <3s，超时页多数到 12s 也出不了字）。
