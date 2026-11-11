@@ -50,18 +50,23 @@ export default function ContentCategories({ entries, value, onChange, sourceLabe
   sourceLabel?: string; kinds?: Array<{ key: string; label: string }>; unit?: string;
 }) {
   const id = useId();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const count = (next: ContentSelection) => entries.filter(entry => matchesContent(entry, next)).length;
-  const sources = Array.from(new Set(entries.map(entry => entry.source?.trim() || '未标明来源'))).sort((a,b) => a.localeCompare(b, 'zh-CN'));
-  if (value.source !== 'all' && !sources.includes(value.source)) sources.push(value.source);
+  const sources = Array.from(new Set(entries
+    .map(entry => entry.source?.trim() || '')
+    // This selector is for external publishers and institutions, not our own product label.
+    .filter(source => source && !/(?:稻草财经|daocaijing|dao\s*财经)/i.test(source))))
+    .sort((a,b) => a.localeCompare(b, 'zh-CN'));
+  if (value.source !== 'all' && !sources.includes(value.source)
+    && !/(?:稻草财经|daocaijing|dao\s*财经)/i.test(value.source)) sources.push(value.source);
   const selected = hasContentSelection(value);
   const path = resolveTaxonomyPath(value.topic, value.subtopic, value.detail);
   const levels: Array<{ label: string; nodes: TaxonomyNode[]; selected: string; ready: boolean }> = [
     { label: '一级分类', nodes: [...CONTENT_TAXONOMY, { key: 'other', label: '其他主题' }], selected: value.topic, ready: true },
     { label: '二级行业', nodes: path[0]?.children || [], selected: value.subtopic || 'all', ready: Boolean(path[0]?.children?.length) },
-    { label: '三级细分', nodes: path[1]?.children || [], selected: value.detail || 'all', ready: Boolean(path[1]?.children?.length) },
   ];
-  const summary = path.length ? path.map(node => node.label).join(' / ') : value.topic === 'other' ? '其他主题' : '全部行业';
+  const visiblePath = path.slice(0, 2);
+  const summary = visiblePath.length ? visiblePath.map(node => node.label).join(' / ') : value.topic === 'other' ? '其他主题' : '全部行业';
   return <section className="dc-categories dc-categories-compact" aria-label="内容分类">
     <div className="dc-filter-summary">
       <button type="button" className="dc-filter-toggle" aria-expanded={expanded} aria-controls={`${id}-filters`} onClick={() => setExpanded(!expanded)}><span aria-hidden="true">☷</span><span>{summary}</span><span className="dc-filter-action">{expanded ? '收起筛选' : '筛选'}</span></button>
@@ -69,7 +74,7 @@ export default function ContentCategories({ entries, value, onChange, sourceLabe
       {selected && <button type="button" className="dc-filter-reset" onClick={() => onChange(ALL_CONTENT)}>清除分类</button>}
     </div>
     <div id={`${id}-filters`} className="dc-filter-panel" hidden={!expanded}>
-      <nav className="dc-category-breadcrumb" aria-label="分类路径"><button type="button" onClick={() => onChange(changeCategoryLevel(value, 0, 'all'))}>全部内容</button>{path.map((node, index) => <React.Fragment key={node.key}><span aria-hidden="true">›</span><button type="button" aria-current={index === path.length - 1 ? 'location' : undefined} onClick={() => onChange(changeCategoryLevel(value, index, node.key))}>{node.label}</button></React.Fragment>)}</nav>
+      <nav className="dc-category-breadcrumb" aria-label="分类路径"><button type="button" onClick={() => onChange(changeCategoryLevel(value, 0, 'all'))}>全部内容</button>{visiblePath.map((node, index) => <React.Fragment key={node.key}><span aria-hidden="true">›</span><button type="button" aria-current={index === visiblePath.length - 1 ? 'location' : undefined} onClick={() => onChange(changeCategoryLevel(value, index, node.key))}>{node.label}</button></React.Fragment>)}</nav>
       <div className="dc-filter-fields" role="group" aria-label="内容主题">
         {levels.map((level,index) => <label key={level.label} className="dc-filter-field">{level.label}<select aria-label={level.label} value={level.selected} disabled={!level.ready} onChange={event => onChange(changeCategoryLevel(value,index,event.target.value))}>
           <option value="all">{!level.ready ? (index === 1 ? '先选择一级分类' : '先选择二级行业') : index === 0 ? '全部行业' : index === 1 ? '全部二级行业' : '全部细分'}</option>

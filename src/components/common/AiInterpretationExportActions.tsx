@@ -12,6 +12,9 @@ export interface AiInterpretationExportActionsProps {
   className?: string;
   onCopied?: (kind: 'text' | 'image') => void;
   scopeKey?: string;
+  /** Use the caller's branded WeChat share card instead of the generic full-text export. */
+  onShareImage?: () => void;
+  shareImageBusy?: boolean;
 }
 
 interface PreviewPage {
@@ -51,7 +54,7 @@ function canCopyImage(): boolean {
 
 /** Copy the complete interpretation locally, with a visible fallback for restricted WebViews. */
 const AiInterpretationExportActions: React.FC<AiInterpretationExportActionsProps> = ({
-  text, title = 'AI 解读', disabled = false, className, onCopied, scopeKey,
+  text, title = 'AI 解读', disabled = false, className, onCopied, scopeKey, onShareImage, shareImageBusy = false,
 }) => {
   const revision = useSyncExternalStore(subscribeAuth,
     () => getAuthSnapshot().revision, () => getAuthSnapshot().revision);
@@ -195,8 +198,8 @@ const AiInterpretationExportActions: React.FC<AiInterpretationExportActionsProps
         <button type="button" className="ai-interpretation-export__button" disabled={unavailable} onClick={copyInterpretationText}>
           {shown.busy === 'text' ? '正在复制…' : '复制文字'}
         </button>
-        <button type="button" className="ai-interpretation-export__button ai-interpretation-export__button--image" disabled={unavailable} onClick={generateImages}>
-          {shown.busy === 'image' ? '正在处理图片…' : '复制完整图片'}
+        <button type="button" className="ai-interpretation-export__button ai-interpretation-export__button--image" disabled={unavailable || shareImageBusy} onClick={onShareImage || generateImages}>
+          {shareImageBusy ? '正在生成分享图…' : onShareImage ? '微信分享图' : shown.busy === 'image' ? '正在处理图片…' : '复制完整图片'}
         </button>
       </div>
       {!shown.previewOpen && shown.feedback && <p role="status" className="ai-interpretation-export__status">{shown.feedback}</p>}

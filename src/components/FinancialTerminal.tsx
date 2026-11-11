@@ -4225,9 +4225,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
       && aiImageScopeRef.current.draft === snapshot.draft && aiImageScopeRef.current.report === snapshot.report;
     setAiImgBusy(true);
     try {
-      // 微信转发优先使用紧凑卡片，避免把完整 32 页研报塞进一张超长图。
-      // 完整研报仍可在当前阅读器中查看和复制文字。
-      const blob = await drawShareCard();
+      // 深度稿用专门排版的分享卡片；普通解读使用紧凑摘要卡片。
+      const blob = aiDeepDraft ? await drawDeepDraftCard() : await drawShareCard();
       if (!isCurrent()) return;
       if (!blob) { showToast('⚠️ 图片生成失败，请重试'); return; }
       pingMetric('copy_image');
@@ -7189,6 +7188,8 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
               title={aiReport.title}
               scopeKey={`${aiReport.title || ''}:${aiReport.date || ''}`}
               onCopied={kind => { pingMetric(kind === 'text' ? 'copy_text' : 'copy_image'); logAct('copy', aiReport.title); }}
+              onShareImage={aiDeepDraft ? shareAiImage : undefined}
+              shareImageBusy={aiImgBusy}
             />}
             <div className={`bbt-ai-body${aiDeepDraft ? ' bbt-ai-body--deep' : ''}`}>
               {(() => {
