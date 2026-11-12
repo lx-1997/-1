@@ -81,7 +81,7 @@ import { QuoteStatus, QuoteValue } from './market-ui';
 import { TerminalQuoteName } from './terminal/TerminalQuoteName';
 import { toTerminalQuoteDisplay } from './terminal/terminalQuoteDisplay';
 import { useTheme } from '../context/ThemeContext';
-import ContentCategories, { ALL_CONTENT, NEWS_KINDS, CategoryTabs, matchesContent, hasContentSelection, type ContentSelection, type ContentEntry } from './terminal/ContentCategories';
+import ContentCategories, { ALL_CONTENT, NEWS_KINDS, CategoryTabs, ReportCategoryFilters, matchesContent, hasContentSelection, type ContentSelection, type ContentEntry } from './terminal/ContentCategories';
 import WorkspaceIcon from './terminal/WorkspaceIcon';
 import './FinancialTerminal.css';
 import './TerminalSimpleStart.css';
@@ -5268,8 +5268,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   const isZsxqStream = canViewZsxq && feedFilter === '机构纪要'; // 机构调研纪要帖子流（所有登录用户）
 
   // 研报按源端机构与标题/标签主题筛选；不从中英文标题推断上市市场。
-  const reportCategoryEntry = (report: ResearchWireItem): ContentEntry => ({ title: report.title, tags: [report.hashtag || ''], source: report.org, publishedAt: report.created_at || report.date });
-  const resFiltered = reportFeed.filter(report => matchesContent(reportCategoryEntry(report), contentSelection));
+  const reportCategoryEntries = useMemo<ContentEntry[]>(() => reportFeed.map(report => ({
+    title: report.title,
+    tags: report.hashtag ? [report.hashtag] : [],
+    source: report.org,
+    publishedAt: report.created_at || report.date,
+  })), [reportFeed]);
+  const resFiltered = useMemo(
+    () => reportFeed.filter((_, index) => matchesContent(reportCategoryEntries[index], contentSelection)),
+    [reportFeed, reportCategoryEntries, contentSelection],
+  );
   useEffect(() => { setResPage(1); }, [resSearchKw, feedFilter, pageSize, contentSelection]);
   // 研报日期手风琴:某天是否展开 = 用户显式展开 ∨ (它是最新一天 ∧ 没被用户收起)。点头部切换。
   const resDayOpen = useCallback((day: string, isLatest: boolean) =>
@@ -6741,10 +6749,16 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             </div>
           )}
 
-          {(feedFilter === '快讯' || feedFilter === '文章' || isResearch) && <ContentCategories
-            entries={isResearch ? reportFeed.map(reportCategoryEntry) : newsCategoryEntries}
+          {isResearch && <ReportCategoryFilters
+            entries={reportCategoryEntries}
+            matchedCount={resFiltered.length}
+            value={contentSelection}
+            onChange={changeContentSelection}
+          />}
+          {(feedFilter === '快讯' || feedFilter === '文章') && <ContentCategories
+            entries={newsCategoryEntries}
             value={contentSelection} onChange={changeContentSelection}
-            sourceLabel={isResearch ? '机构' : '来源'} kinds={feedFilter === '快讯' ? NEWS_KINDS : undefined}
+            sourceLabel="来源" kinds={feedFilter === '快讯' ? NEWS_KINDS : undefined}
             unit={feedFilter === '快讯' ? '条' : '篇'} />}
           {sideNavKey === 'market' && <MarketPulse variant="strip" />}
           {isCelebrity ? (
@@ -6818,7 +6832,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 });
               })()}
               {/* 加载更早研报:默认只显最新一档,历史按需翻(归档一条不丢)。搜索/选股态(全量命中)不显 */}
-              {!resQuery.trim() && !active && resFiltered.length > 0 && !resHistDone && (
+              {!resQuery.trim() && !active && reportFeed.length > 0 && !resHistDone && (
                 <button className="bbt-rmore" disabled={resMoreLoading} onClick={loadMoreReports}>
                   {resMoreLoading ? '加载中…' : '↓ 加载全部历史研报'}
                 </button>

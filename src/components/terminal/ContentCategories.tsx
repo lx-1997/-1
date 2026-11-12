@@ -45,6 +45,21 @@ export function noteKind(title: string, tags: string[] = []): string {
   return 'other';
 }
 
+function isExternalContentSource(source: string): boolean {
+  return Boolean(source) && !/(?:稻草财经|daocaijing|dao\s*财经)/i.test(source);
+}
+
+function ContentPeriodSelect({ value, onChange }: { value?: string; onChange: (period: string) => void }) {
+  return (
+    <select aria-label="时间" value={value || 'all'} onChange={event => onChange(event.target.value)}>
+      <option value="all">全部时间</option>
+      <option value="today">今天</option>
+      <option value="3d">近 3 天</option>
+      <option value="7d">近 7 天</option>
+    </select>
+  );
+}
+
 export default function ContentCategories({ entries, value, onChange, sourceLabel, kinds, unit = '篇' }: {
   entries: ContentEntry[]; value: ContentSelection; onChange: (next: ContentSelection) => void;
   sourceLabel?: string; kinds?: Array<{ key: string; label: string }>; unit?: string;
@@ -55,10 +70,10 @@ export default function ContentCategories({ entries, value, onChange, sourceLabe
   const sources = Array.from(new Set(entries
     .map(entry => entry.source?.trim() || '')
     // This selector is for external publishers and institutions, not our own product label.
-    .filter(source => source && !/(?:稻草财经|daocaijing|dao\s*财经)/i.test(source))))
+    .filter(isExternalContentSource)))
     .sort((a,b) => a.localeCompare(b, 'zh-CN'));
   if (value.source !== 'all' && !sources.includes(value.source)
-    && !/(?:稻草财经|daocaijing|dao\s*财经)/i.test(value.source)) sources.push(value.source);
+    && isExternalContentSource(value.source)) sources.push(value.source);
   const selected = hasContentSelection(value);
   const path = resolveTaxonomyPath(value.topic, value.subtopic, value.detail);
   const levels: Array<{ label: string; nodes: TaxonomyNode[]; selected: string; ready: boolean }> = [
@@ -74,21 +89,104 @@ export default function ContentCategories({ entries, value, onChange, sourceLabe
       {selected && <button type="button" className="dc-filter-reset" onClick={() => onChange(ALL_CONTENT)}>清除分类</button>}
     </div>
     <div id={`${id}-filters`} className="dc-filter-panel" hidden={!expanded}>
-      <nav className="dc-category-breadcrumb" aria-label="分类路径"><button type="button" onClick={() => onChange(changeCategoryLevel(value, 0, 'all'))}>全部内容</button>{visiblePath.map((node, index) => <React.Fragment key={node.key}><span aria-hidden="true">›</span><button type="button" aria-current={index === visiblePath.length - 1 ? 'location' : undefined} onClick={() => onChange(changeCategoryLevel(value, index, node.key))}>{node.label}</button></React.Fragment>)}</nav>
+      {visiblePath.length > 0 && <nav className="dc-category-breadcrumb" aria-label="分类路径"><button type="button" onClick={() => onChange(changeCategoryLevel(value, 0, 'all'))}>全部内容</button>{visiblePath.map((node, index) => <React.Fragment key={node.key}><span aria-hidden="true">›</span><button type="button" aria-current={index === visiblePath.length - 1 ? 'location' : undefined} onClick={() => onChange(changeCategoryLevel(value, index, node.key))}>{node.label}</button></React.Fragment>)}</nav>}
       <div className="dc-filter-fields" role="group" aria-label="内容主题">
         {levels.map((level,index) => <label key={level.label} className="dc-filter-field">{level.label}<select aria-label={level.label} value={level.selected} disabled={!level.ready} onChange={event => onChange(changeCategoryLevel(value,index,event.target.value))}>
           <option value="all">{!level.ready ? (index === 1 ? '先选择一级分类' : '先选择二级行业') : index === 0 ? '全部行业' : index === 1 ? '全部二级行业' : '全部细分'}</option>
           {level.nodes.map(node => <option key={node.key} value={node.key}>{node.label}（{count(changeCategoryLevel(value,index,node.key))}）</option>)}
         </select></label>)}
-      </div>
-      <div className="dc-filter-fields">
         {sourceLabel && <label className="dc-filter-field">{sourceLabel}<select aria-label={sourceLabel} value={value.source} onChange={event => onChange({...value,source:event.target.value})}><option value="all">全部{sourceLabel}</option>{sources.map(source => <option key={source} value={source}>{source}</option>)}</select></label>}
-        <label className="dc-filter-field">时间<select aria-label="时间" value={value.period || 'all'} onChange={event => onChange({...value,period:event.target.value})}><option value="all">全部时间</option><option value="today">今天</option><option value="3d">近 3 天</option><option value="7d">近 7 天</option></select></label>
+        <label className="dc-filter-field">时间<ContentPeriodSelect value={value.period} onChange={period => onChange({ ...value, period })} /></label>
         {kinds && <label className="dc-filter-field">类型<select aria-label="内容类型" value={value.kind} onChange={event => onChange({...value,kind:event.target.value})}><option value="all">全部类型</option>{kinds.map(kind => <option key={kind.key} value={kind.key}>{kind.label}</option>)}</select></label>}
       </div>
       <div className="dc-filter-footer"><span className="dc-category-scope">已加载 {entries.length} {unit} · 匹配 {count(value)} {unit}<span title="历史资料按标题与标签辅助归类，一篇内容可属于多个主题。">仅筛选已加载内容</span></span><button type="button" className="dc-filter-done" onClick={() => setExpanded(false)}>查看结果</button></div>
     </div>
   </section>;
+}
+
+const REPORT_TOPICS = [...CONTENT_TAXONOMY, { key: 'other', label: '其他主题' }];
+
+function ReportFilterRow({ label, value, options, limit, onChange, children }: {
+  label: string;
+  value: string;
+  options: Array<{ key: string; label: string }>;
+  limit: number;
+  onChange: (key: string) => void;
+  children?: React.ReactNode;
+}) {
+  const visibleOptions = [{ key: 'all', label: '全部' }, ...options.slice(0, limit)];
+  const inChips = visibleOptions.some(option => option.key === value);
+  return (
+    <div className="dc-report-filter-row">
+      <div className="dc-report-filter-options" role="group" aria-label={`${label}筛选`}>
+        <span className="dc-report-filter-label">{label}</span>
+        <div className="dc-report-filter-chips">
+          {visibleOptions.map(option => (
+            <button key={option.key} type="button" aria-pressed={value === option.key}
+              title={option.label} onClick={() => onChange(option.key)}>
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {options.length > limit && (
+          <select aria-label={`更多${label}`} value={inChips ? '' : value}
+            className={inChips ? undefined : 'dc-report-filter-selected'}
+            onChange={event => onChange(event.target.value)}>
+            <option value="" disabled>更多{label}</option>
+            {options.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
+          </select>
+        )}
+      </div>
+      {children && <div className="dc-report-filter-extra">{children}</div>}
+    </div>
+  );
+}
+
+export function ReportCategoryFilters({ entries, matchedCount, value, onChange }: {
+  entries: ContentEntry[];
+  matchedCount: number;
+  value: ContentSelection;
+  onChange: (next: ContentSelection) => void;
+}) {
+  const institutions = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of entries) {
+      const source = entry.source?.trim() || '';
+      if (isExternalContentSource(source)) counts.set(source, (counts.get(source) || 0) + 1);
+    }
+    if (value.source !== 'all' && isExternalContentSource(value.source) && !counts.has(value.source)) {
+      counts.set(value.source, 0);
+    }
+    return [...counts]
+      .sort(([a, aCount], [b, bCount]) => bCount - aCount || a.localeCompare(b, 'zh-CN'))
+      .map(([name]) => ({ key: name, label: name }));
+  }, [entries, value.source]);
+
+  const subtopics = resolveTaxonomyPath(value.topic)[0]?.children || [];
+  const hasSelection = hasContentSelection(value);
+  return (
+    <section className="dc-categories dc-report-filters" aria-label="投行研报筛选">
+      <ReportFilterRow label="机构" options={institutions} value={value.source} limit={7}
+        onChange={source => onChange({ ...value, source })}>
+        <ContentPeriodSelect value={value.period} onChange={period => onChange({ ...value, period })} />
+        <span className="dc-report-filter-count" title={`仅筛选已加载的 ${entries.length} 篇研报`}>
+          {hasSelection ? `匹配 ${matchedCount} 篇` : `已加载 ${entries.length} 篇`}
+        </span>
+      </ReportFilterRow>
+      <ReportFilterRow label="行业" options={REPORT_TOPICS} value={value.topic} limit={9}
+        onChange={topic => onChange(changeCategoryLevel(value, 0, topic))}>
+        {subtopics.length > 0 && (
+          <select aria-label="二级行业" value={value.subtopic || 'all'}
+            className={value.subtopic && value.subtopic !== 'all' ? 'dc-report-filter-selected' : undefined}
+            onChange={event => onChange(changeCategoryLevel(value, 1, event.target.value))}>
+            <option value="all">全部二级行业</option>
+            {subtopics.map(node => <option key={node.key} value={node.key}>{node.label}</option>)}
+          </select>
+        )}
+        {hasSelection && <button type="button" onClick={() => onChange(ALL_CONTENT)}>清除筛选</button>}
+      </ReportFilterRow>
+    </section>
+  );
 }
 
 export function CategoryTabs({ label, value, options, onChange }: {
