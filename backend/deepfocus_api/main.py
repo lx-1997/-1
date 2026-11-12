@@ -97,6 +97,7 @@ from .investment_ontology import (
 )
 from .content_ontology import annotate_content, build_content_map, init_content_ontology_db
 from . import research_archive
+from .research_publishers import index_new_cached_publishers, with_publishers
 from . import engagement
 from . import story_engine
 from .story_engine import init_story_db, run_story_engine
@@ -6095,9 +6096,9 @@ _WIRE_RESP_CACHE = ByteBoundedTTLCache(
 
 
 def _wire_etag(resp: "ResearchWireResponse") -> str:
-    """内容指纹：列表条目 id + 总数。列表没变 → ETag 不变 → 浏览器拿 304（0 流量）。"""
+    """机构归属可在条目 ID 不变时补齐，缓存指纹需包含机构。"""
     import hashlib as _h
-    raw = "|".join(str(it.id) for it in resp.items) + f"#{resp.total}#{resp.source}"
+    raw = json.dumps(([(it.id, it.org) for it in resp.items], resp.total, resp.source), ensure_ascii=False)
     return _h.md5(raw.encode("utf-8")).hexdigest()[:20]
 
 
@@ -6145,7 +6146,7 @@ _WIRE_ENRICH_CACHE: dict[str, ResearchWireItem] = {}
 
 
 def _enrich_research_wire_item_cached(item: ResearchWireItem) -> ResearchWireItem:
-    key = f"{item.id}|{item.title}"
+    key = f"{item.id}|{item.title}|{item.org}"
     hit = _WIRE_ENRICH_CACHE.get(key)
     if hit is not None:
         return hit
@@ -6180,11 +6181,12 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
             rows = online.get("items") or []
             archived = False
         if rows:
+            rows = with_publishers(rows)
             # 一次性批量取所有研报的 AI 缓存（替代逐条 2 次 SQLite 读，几十并发下从 ~1.6s 降到几十 ms）
             cache_map = await asyncio.to_thread(metrics_get_ai_cache_many, [row["file_id"] for row in rows if row.get("file_id")])
             online_items = [
                 ResearchWireItem(
-                    id=row["id"], title=row["title"], org=row.get("org") or "海外投行", date=row["date"],
+                    id=row["id"], title=row["title"], org=row["org"], date=row["date"],
                     created_at=row.get("created_at") or "", filename=row.get("filename") or "", out=row.get("out") or "",
                     size=row.get("size") or 0, hashtag=row.get("hashtag") or "#海外投行报告#",
                     download_count=row.get("download_count") or 0, file_id=row.get("file_id") or "",
@@ -6217,10 +6219,11 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
     except Exception:  # 在线失败（工作台未起/cookie 失效/网络）→ 先试归档，再回退本地抓取舱
         arch_rows = research_archive.query(limit=limit, query_text=q, before=before, before_id=before_id)
         if arch_rows:
+            arch_rows = with_publishers(arch_rows)
             cache_map = await asyncio.to_thread(metrics_get_ai_cache_many, [r["file_id"] for r in arch_rows if r.get("file_id")])
             return _wire_conditional(request, ResearchWireResponse(
                 items=[_enrich_research_wire_item_cached(ResearchWireItem(
-                    id=r["id"], title=r["title"], org=r.get("org") or "海外投行", date=r["date"],
+                    id=r["id"], title=r["title"], org=r["org"], date=r["date"],
                     created_at=r.get("created_at") or "", filename=r.get("filename") or "", out=r.get("out") or "",
                     size=r.get("size") or 0, hashtag=r.get("hashtag") or "#海外投行报告#",
                     download_count=r.get("download_count") or 0, file_id=r.get("file_id") or "",
@@ -6252,7 +6255,7 @@ async def api_research_wire(request: Request, limit: int = 60, q: str = "", befo
                 f"?filename={quote(row['filename'])}&out={quote(row['out'])}&brand=v17"
             ),
         )
-        for row in result["items"]
+        for row in with_publishers(result["items"])
     ]
     items = [_enrich_research_wire_item(item) for item in items]
 
@@ -8344,6 +8347,12 @@ async def run_wire_refresher() -> None:
             _trigger_local_pdf_prewarm(local.get("items") or [])
         except Exception as exc:  # noqa: BLE001 - 本地舱失败不影响在线预热
             print(f"[wire-refresh] 本地 PDF 预热扫描失败：{type(exc).__name__}")
+        try:
+            stats = await asyncio.to_thread(index_new_cached_publishers)
+            if stats["identified"]:
+                _WIRE_RESP_CACHE.clear()
+        except Exception as exc:  # noqa: BLE001 - 机构识别不能影响研报列表
+            print(f"[wire-refresh] 机构识别失败：{type(exc).__name__}")
         await asyncio.sleep(interval)
 
 
