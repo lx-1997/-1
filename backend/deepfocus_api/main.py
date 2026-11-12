@@ -336,7 +336,10 @@ from .article_original_text import (
     looks_like_article_image,
     prewarm_article_original_text,
 )
-from .eastmoney_reports import eastmoney_report_pdf_url, query_eastmoney_reports
+from .eastmoney_reports import (
+    DOMESTIC_BROKER_LABEL, EASTMONEY_FILE_PREFIX, eastmoney_report_pdf_url,
+    fetch_eastmoney_report_pdf, query_domestic_broker_reports, query_eastmoney_reports,
+)
 from .async_singleflight import AsyncSingleFlight
 from .news_analysis_cache import NewsAnalysisCoordinator
 from .research_prewarm_policy import research_prewarm_download_cap
@@ -6158,12 +6161,36 @@ def _enrich_research_wire_item_cached(item: ResearchWireItem) -> ResearchWireIte
 
 
 @app.get("/api/research/wire", response_model=ResearchWireResponse)
-async def api_research_wire(request: Request, limit: int = 60, q: str = "", before: str = "", before_id: str = ""):
+async def api_research_wire(
+    request: Request, limit: int = 60, q: str = "", before: str = "", before_id: str = "", source_group: str = "",
+):
     """知识星球「海外投行报告」研报流：终端「研报」面板的数据源。
 
     优先**在线**（同机 Node 工作台直连知识星球：空 q=最新、带 q=搜索），在线不可用时回退本地。
     ⭐每次在线拉取都 upsert 进**持久归档**，最新视图合并「在线最新 + 历史归档」——老研报不再随
     星球最新窗口滑出而消失；`before=YYYY-MM-DD&before_id=...` 组成稳定游标，可在同一天内安全翻页。每条带 preview_url 可内联预览。"""
+    if source_group == "domestic":
+        rows = await query_domestic_broker_reports(q) if not before else []
+        items = []
+        for row in rows[:max(1, min(limit, 100))]:
+            file_id = EASTMONEY_FILE_PREFIX + row["info_code"]
+            filename = row["info_code"] + ".pdf"
+            items.append(ResearchWireItem(
+                id=file_id, file_id=file_id, title=row["title"], org=DOMESTIC_BROKER_LABEL,
+                filename=filename, out="", date=row["date"], created_at=row["published_at"],
+                hashtag=row["industry"], tags=[row["org"]] if row["org"] else [],
+                instruments=[row["stock_code"]] if row["stock_code"] else [],
+                preview_url=f"/api/research/wire-file?file_id={quote(file_id)}&name={quote(filename)}",
+            ))
+        return _wire_conditional(request, ResearchWireResponse(
+            items=items, total=len(items), source="东方财富研报 · 国内券商",
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            data_quality=DataQuality(
+                level="live" if items else "degraded",
+                label="国内券商" if items else "暂无匹配",
+                detail=f"近期券商个股与行业研报 · {len(items)} 篇",
+            ),
+        ))
     # 响应级缓存：富化(市场分类/标的)有 CPU 成本，几十并发下重复请求同一列表直接命中，避免重复计算
     _rk = f"{q.strip()}|{limit}|{(before or '').strip()}|{(before_id or '').strip()}"
     _hit = _WIRE_RESP_CACHE.get(_rk)
@@ -6480,6 +6507,10 @@ async def _fetch_research_online_pdf(file_id: str, name: str = "") -> tuple[byte
     except Exception:
         logger.warning("pdf-cache-read failed", exc_info=True)
 
+    if file_id.startswith(EASTMONEY_FILE_PREFIX):
+        raw = await fetch_eastmoney_report_pdf(file_id.removeprefix(EASTMONEY_FILE_PREFIX))
+        return raw, "application/pdf"
+
     base = f"http://127.0.0.1:{os.getenv('RESEARCH_WORKBENCH_INTERNAL_PORT', '3927')}"
     safe_name = (name or f"{file_id}.pdf").strip()
     async with httpx.AsyncClient(trust_env=False) as client:
@@ -6673,7 +6704,11 @@ async def api_research_wire_file(
         return _pdf_stream_landing(landing_url)
     safe_name = (name or f"{file_id}.pdf").strip()
     try:
-        response = await _stream_research_online_pdf(file_id, safe_name)
+        if file_id.startswith(EASTMONEY_FILE_PREFIX):
+            raw = await fetch_eastmoney_report_pdf(file_id.removeprefix(EASTMONEY_FILE_PREFIX))
+            response = Response(raw, media_type="application/pdf", headers={"Cache-Control": "private, no-store"})
+        else:
+            response = await _stream_research_online_pdf(file_id, safe_name)
     except HTTPException:
         raise
     except Exception as exc:

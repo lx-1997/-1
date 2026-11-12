@@ -1010,6 +1010,7 @@ function fmtResGroup(key: string): string {
 }
 const MAX_KEEP = 6000;   // 内存里保留的最大消息数（支持向历史翻页，不再丢历史）
 const RES_RECENT_LIMIT = 250;  // 研报默认取最近一档(约覆盖最新 3 天完整;单日可达 80~90 篇,60 太小会把昨天挤成几篇);更早历史靠「加载全部历史」按需翻(归档 before=)。配合按日期手风琴折叠,默认仍只展开今天、界面干净
+const DOMESTIC_BROKER_LABEL = '国内券商';
 const EQ_MIN = 180, EQ_MAX = 560, EQ_NARROW = 360;   // 行情监视列宽拖拽：最小/最大/窄列阈值(px)
 const PAGE_SIZES = [20, 30, 50];                          // 每页条数可选项
 const isMobileView = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches;
@@ -1465,6 +1466,9 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     window.addEventListener('touchmove', onTouch, { passive: false }); window.addEventListener('touchend', stop);
   }, []);
   const [reports, setReports] = useState<ResearchWireItem[]>([]);
+  const [domesticReports, setDomesticReports] = useState<ResearchWireItem[]>([]);
+  const [domesticReportsLoading, setDomesticReportsLoading] = useState(false);
+  const [domesticReportsRefresh, setDomesticReportsRefresh] = useState(0);
   const [reportDq, setReportDq] = useState<{ level?: string; label?: string; detail?: string } | null>(null);
   const [resQuery, setResQuery] = useState('');           // 研报在线全局搜索关键词
   const [resLoading, setResLoading] = useState(false);
@@ -2012,6 +2016,34 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     const t = window.setTimeout(() => { loadReports(kws); logAct('search', '研报:' + kws.join('+')); }, 350);
     return () => window.clearTimeout(t);
   }, [resSearchKws, loadReports, logAct]);
+
+  const domesticReportQuery = resSearchKws.join('\n');
+  useEffect(() => {
+    if (feedFilter !== '研报') return;
+    const controller = new AbortController();
+    setDomesticReports([]);
+    const load = async () => {
+      setDomesticReportsLoading(true);
+      try {
+        const data = await apiGet<{ items: ResearchWireItem[] }>('/api/research/wire', {
+          signal: controller.signal,
+          params: { source_group: 'domestic', limit: 100, q: domesticReportQuery },
+        });
+        if (!controller.signal.aborted) setDomesticReports(data.items || []);
+      } catch {
+        // A domestic source failure leaves the overseas list available.
+      } finally {
+        if (!controller.signal.aborted) setDomesticReportsLoading(false);
+      }
+    };
+    const initial = window.setTimeout(load, domesticReportQuery ? 350 : 0);
+    const poll = domesticReportQuery ? undefined : visiblePoll(load, 60_000);
+    return () => {
+      controller.abort();
+      window.clearTimeout(initial);
+      if (poll !== undefined) window.clearInterval(poll);
+    };
+  }, [feedFilter, domesticReportQuery, domesticReportsRefresh]);
 
   // ---- 账号登录态（终端独占页：AI 解读 / 查看原文 = 登录网关，行情与资讯免费）----
   // 刷新时从本地会话快照同步恢复登录态（有 token 才信缓存）：首帧直接渲染已登录工作台，
@@ -5257,8 +5289,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
   }, [newsQuery, logAct]);
 
   // 研报列表保持源端时间顺序；头条只做行内标记，不能把更早日期的报告提到日期分组之前。
-  const reportFeed = useMemo(() => reports, [reports]);
   const isResearch = feedFilter === '研报';        // 研报标签：信息流面板切换为研报视图
+  const reportFeed = useMemo(
+    () => isResearch ? [...reports, ...domesticReports] : reports,
+    [isResearch, reports, domesticReports],
+  );
   // 名人观点：仅白名单(lx199710)在资讯流加一个「名人观点」标签（研报旁），切到内联名人观点视图。
   const isCelebUser = IFIND_USERS.has((authUser || '').toLowerCase());
   // 机构纪要：用户拍板放开给所有人含匿名(2026-07-06)——不需登录即可见；名人观点仍限白名单。
@@ -5307,7 +5342,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     let cancelled = false;
     const revision = getAuthSnapshot().revision;
     const entries = [
-      ...reports.map(r => ({ key: reportInterpretationKey(r), kind: 'report',
+      ...reportFeed.map(r => ({ key: reportInterpretationKey(r), kind: 'report',
         title: r.title, file_id: r.file_id || (r.preview_url?.includes('wire-file') ? new URLSearchParams(r.preview_url.split('?')[1]).get('file_id') : '') || '',
         filename: r.filename, out: r.out || 'downloads/海外投行报告' })),
       ...Array.from(new Map([...messages, ...articles, ...articleHistory, ...searchMsgs, ...(newsPreview ? [newsPreview] : [])].filter(m => m.topic === '文章').map(m => [m.id, m])).values()).map(m => ({
@@ -5333,7 +5368,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
     void refresh();
     const timer = window.setInterval(refresh, 60000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [reports, messages, articles, articleHistory, searchMsgs, newsPreview, authUser, session.revision]);
+  }, [reportFeed, messages, articles, articleHistory, searchMsgs, newsPreview, authUser, session.revision]);
 
   const renderInterpretAction = (kind: 'report' | 'news', item: any, idleLabel?: string) => {
     const key = kind === 'report' ? reportInterpretationKey(item) : newsInterpretationCacheKey(item.id, item.title, item.content || '');
@@ -6732,8 +6767,11 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 <input className="bbt-res-input" value={resQuery} placeholder="🔍 在线搜全球研报（公司 / 主题）…" onChange={e => setResQuery(e.target.value)} />
                 {resQuery && <button className="bbt-clear" aria-label="清除搜索" title="清除搜索" onClick={() => setResQuery('')}>✕</button>}
               </span>
-              {resLoading && <span className="bbt-breadth bbt-mute">检索中…</span>}
-              <button className="bbt-max-btn" title="刷新研报" onClick={() => loadReports(resQuery)}>⟳</button>
+              {(resLoading || domesticReportsLoading) && <span className="bbt-breadth bbt-mute">检索中…</span>}
+              <button className="bbt-max-btn" title="刷新研报" onClick={() => {
+                void loadReports(resQuery);
+                setDomesticReportsRefresh(value => value + 1);
+              }}>⟳</button>
             </div>
           )}
 
@@ -6769,7 +6807,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
             <div className="bbt-res">
               {resFiltered.length === 0 && (
                 <div className="bbt-empty">{
-                  resLoading ? '检索中…'
+                  (resLoading || domesticReportsLoading) ? '检索中…'
                     : classificationActive ? '当前已加载研报中没有匹配此分类的内容，可清除分类或调整搜索。'
                     : resQuery.trim() ? `无「${resQuery.trim()}」相关研报`
                       : active ? `无 ${activeName} 相关研报`
@@ -6832,7 +6870,7 @@ const FinancialTerminal: React.FC<{ appState?: any }> = () => {
                 });
               })()}
               {/* 加载更早研报:默认只显最新一档,历史按需翻(归档一条不丢)。搜索/选股态(全量命中)不显 */}
-              {!resQuery.trim() && !active && reportFeed.length > 0 && !resHistDone && (
+              {!resQuery.trim() && !active && reports.length > 0 && !resHistDone && contentSelection.source !== DOMESTIC_BROKER_LABEL && (
                 <button className="bbt-rmore" disabled={resMoreLoading} onClick={loadMoreReports}>
                   {resMoreLoading ? '加载中…' : '↓ 加载全部历史研报'}
                 </button>

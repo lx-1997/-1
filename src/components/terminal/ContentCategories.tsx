@@ -157,7 +157,7 @@ export function ReportCategoryFilters({ entries, matchedCount, value, onChange }
     if (value.source !== 'all' && isExternalContentSource(value.source) && !counts.has(value.source)) {
       counts.set(value.source, 0);
     }
-    return [...counts]
+    return Array.from(counts.entries())
       .sort(([a, aCount], [b, bCount]) => bCount - aCount || a.localeCompare(b, 'zh-CN'))
       .map(([name]) => ({ key: name, label: name }));
   }, [entries, value.source]);
