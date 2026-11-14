@@ -813,7 +813,7 @@
   /* ===== V7 · New-user tour ===== */
   #tourRoot{position:fixed;inset:0;z-index:2000;pointer-events:none}
   #tourRoot[aria-hidden="true"]{display:none}
-  .tour-backdrop{position:fixed;inset:0;background:transparent;pointer-events:auto}
+  .tour-backdrop{position:fixed;inset:0;background:transparent;pointer-events:auto;touch-action:pan-y}
   .tour-spot{position:fixed;border:2px solid #9b8cff;border-radius:14px;box-shadow:0 0 0 9999px rgba(10,12,20,.68),0 0 0 7px rgba(155,140,255,.16);pointer-events:none;transition:top .24s ease,left .24s ease,width .24s ease,height .24s ease}
   .tour-dialog{position:fixed;width:min(330px,calc(100vw - 32px));padding:17px 18px 15px;border:1px solid rgba(255,255,255,.16);border-radius:14px;background:#171b24;color:#fff;box-shadow:0 18px 55px rgba(5,7,14,.35);pointer-events:auto;animation:tourIn .24s ease both}
   .tour-dialog::before{content:"";position:absolute;top:-6px;left:28px;width:11px;height:11px;border-left:1px solid rgba(255,255,255,.16);border-top:1px solid rgba(255,255,255,.16);background:#171b24;transform:rotate(45deg)}

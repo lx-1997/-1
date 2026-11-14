@@ -13353,15 +13353,17 @@ async def tool_research_stream(request: Request, message: str = "", symbol: str 
 
     async def event_generator() -> AsyncIterator[str]:
         _ai_started = time.perf_counter()
-        queue: asyncio.Queue = asyncio.Queue()
-
-        preview_parts = []
+        # Bound per-stream buffering so a slow/disconnected client cannot let
+        # generated events accumulate without limit while research continues.
+        queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+        preview_text = ""
         async def emit(event_type: str, payload: dict) -> None:
+            nonlocal preview_text
             if event_type == "answer_delta":
                 from .privacy_guard import scrub_internal_text
-                preview_parts.append(str(payload.get("delta") or ""))
+                preview_text = (preview_text + str(payload.get("delta") or ""))[-20000:]
                 event_type = "answer_preview"
-                payload = {"text": scrub_internal_text("".join(preview_parts)[:20000]), "provisional": True}
+                payload = {"text": scrub_internal_text(preview_text), "provisional": True}
             await queue.put(_sse_frame(event_type, payload))
 
         hint_parts = [p for p in (context_hint, _history_context_prefix(history)) if p]
