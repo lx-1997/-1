@@ -173,9 +173,11 @@ def build_gauge(series: dict[str, list[dict]], sources: list[dict], now: datetim
     core = series['csi300']; bydate = {r['date']: i for i,r in enumerate(core)}; idx = bydate[last['date']]
     core_features = features(core)[last['date']]
     ratio = last['heat_ratio']
+    usable = not lag and not conflicts
+    bt = backtest(daily)
     return {'available': True, 'model_version': VERSION, 'as_of': last['date'], 'index': '沪深300',
             'generated_at': local.isoformat(), 'freshness': 'lagging' if lag else 'completed_daily',
-            'lag_calendar_days': lag, 'signal_usable': not lag and not conflicts,
+            'lag_calendar_days': lag, 'signal_usable': usable,
             'regime_label': '数据待更新' if lag else '来源待核对' if conflicts else regime,
             'temperature': last['temperature'], 'close': last['close'],
             'chg_1d_pct': round((last['close']/core[idx-1]['close']-1)*100, 2) if idx else None,
@@ -184,5 +186,9 @@ def build_gauge(series: dict[str, list[dict]], sources: list[dict], now: datetim
             'temperature_trend': daily[-10:], 'temp_delta_1d': last['temperature']-daily[-2]['temperature'] if len(daily)>1 else None,
             'dimensions': [{'key': k, 'name': NAMES[k], 'score': round(last['dimensions'][k]), 'weight': WEIGHTS[k], 'used': True, 'as_of': last['date']} for k in WEIGHTS],
             'universe': list(UNIVERSE.values()), 'sources': sources, 'warnings': warnings,
-            'backtest': backtest(daily), 'position_pct': None, 'position_band': None,
+            'backtest': bt,
+            # Expose only the frozen rule's simulated bucket for transparency.
+            # It is deliberately separate from the account-position fields below.
+            'research_exposure_pct': round(exposure(last['temperature']) * 100) if usable and bt.get('available') else None,
+            'position_pct': None, 'position_band': None,
             'disclaimer': '市场环境描述，非买卖或仓位建议；固定规则未经过前瞻验证'}
